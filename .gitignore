@@ -33,3 +33,6 @@ pnpm-debug.log*
 Thumbs.db
 .idea/
 *.swp
+
+# local git worktrees (scratch, per-agent-session isolation)
+.worktrees/
