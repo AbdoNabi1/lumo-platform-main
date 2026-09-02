@@ -1,0 +1,40 @@
+{
+  "name": "@platform/customer-360",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Customer 360 bounded context — identity resolution engine (Phase 6.1, CONTRACT docs/platform/03-CUSTOMER_360_SPEC.md; D-058). Read-model-first: stitches identity from @platform/tracking's event graph, owns no source data.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@platform/application": "workspace:*",
+    "@platform/contracts": "workspace:*",
+    "@platform/db": "workspace:*",
+    "@platform/domain": "workspace:*",
+    "@platform/domain-events": "workspace:*",
+    "@platform/expression": "workspace:*",
+    "@platform/messaging": "workspace:*",
+    "@platform/repository": "workspace:*",
+    "@platform/rules": "workspace:*",
+    "@platform/tracking": "workspace:*",
+    "@platform/types": "workspace:*",
+    "@platform/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@platform/eslint-config": "workspace:*",
+    "@platform/tsconfig": "workspace:*",
+    "@vitest/coverage-v8": "^2.1.4",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

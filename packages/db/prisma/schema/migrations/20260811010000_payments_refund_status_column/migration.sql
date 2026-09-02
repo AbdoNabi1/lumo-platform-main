@@ -1,0 +1,30 @@
+-- Phase A.7 (PostgreSQL Database Production Audit) — additive, expand-only.
+--
+-- Schema/migration drift: `payments.prisma`'s `Refund` model has declared a required
+-- `status String @default("completed")` field (see doc comment on the model, added alongside the
+-- Phase A.4 refund-concurrency remediation: `pending` written before the PSP call, then
+-- `completed`/`failed` on settlement) since that phase landed. No migration ever added this
+-- column — `20260704000000_init` created "payments"."refunds" with only
+-- (id, tenant_id, intent_id, amount_minor, occurred_at), and the only later migration touching
+-- this table (`20260811000000_phase_a5_refund_idempotency`) added `idempotency_key`, not `status`.
+--
+-- Impact: `prisma migrate deploy` (the production/CI path — see .github/workflows/db-integration.yml)
+-- never created this column, so the Prisma Client generated from the current schema (which expects
+-- `status` on every `Refund` read/write) would fail against a real Postgres database with
+-- `column "status" does not exist` on the very first refund write
+-- (`PrismaPaymentIntentRepository.save`'s `client.refund.upsert(..., update: { status: ... })`,
+-- services/payments/src/infrastructure/prisma-payment-intent-repository.ts) — silently undermining
+-- the Phase A.3/A.4 refund-concurrency settlement mechanism in any environment that actually runs
+-- migrations rather than `prisma db push`. No integration test caught this because
+-- services/payments has no DATABASE_URL_TEST-gated repository test (unlike orders/customer-360).
+--
+-- Fix: add the column exactly as the schema already declares it (TEXT NOT NULL DEFAULT
+-- 'completed'). Safe to backfill instantly (metadata-only default, Postgres 11+): every existing
+-- row (if any — the column never existed, so nothing has ever written a different status) becomes
+-- "completed", matching the schema default and the domain's actual default for pre-A.4 refunds
+-- (which were always synchronous PSP-then-write, i.e. always terminal/"completed" by the time they
+-- were persisted). The deferred `CHECK (status IN ('pending','completed','failed'))` constraint
+-- (payments.prisma Refund doc comment, MIGRATIONS.md §3) remains intentionally deferred here — this
+-- migration only closes the drift, it does not add new constraints beyond what the schema already
+-- declares.
+ALTER TABLE "payments"."refunds" ADD COLUMN "status" TEXT NOT NULL DEFAULT 'completed';

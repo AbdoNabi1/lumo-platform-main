@@ -1,0 +1,27 @@
+# P2 — Kubernetes deployment for the Lumo runtime processes (api / worker / scheduler).
+# Manifests only: they package the SAME image and endpoints from P1 (lumo-runtime:local,
+# /healthz /readyz /metrics on port 3080) and consume ONLY the existing runtime env contract.
+# No application, Dockerfile, port, or behavior changes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    # Enforce the restricted Pod Security Standard — the pods below are already compliant
+    # (non-root, drop ALL caps, no privilege escalation, seccomp RuntimeDefault, read-only rootfs).
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+# Dedicated ServiceAccount with the API token NOT mounted — the runtime never calls the
+# Kubernetes API, so no token is exposed in the pods (least privilege).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lumo-runtime
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+automountServiceAccountToken: false

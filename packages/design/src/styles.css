@@ -1,0 +1,405 @@
+/*
+ * Lumo Design System — token stylesheet (Tailwind v4, CSS-first).
+ *
+ * This file is the runtime source of truth. `./primitives.ts` + `./semantic.ts` mirror the
+ * same values for programmatic (TS) consumers such as `services/theme`; the two must stay
+ * in step — `contrast.test.ts` guards the pairs that carry accessibility guarantees.
+ *
+ * Usage (in an app's globals.css):
+ *   @import "tailwindcss";
+ *   @import "@platform/design/styles.css";
+ *
+ * Layers:
+ *   1. --lumo-*        primitive scales. Never referenced by a component.
+ *   2. semantic tokens roles (--background, --card, --primary …). What components use.
+ *   3. @theme inline   exposes the semantic layer to Tailwind utilities.
+ *
+ * Docs: docs/ui/LUMO_DESIGN_SYSTEM.md
+ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* ---------------------------------------------------------------- 1. Primitives */
+
+  /* Lumo Primary — brand ramp around #635BFF (hue 243°) */
+  --lumo-primary-50: #f2f1ff;
+  --lumo-primary-100: #e7e5ff;
+  --lumo-primary-200: #d1cdff;
+  --lumo-primary-300: #b2abff;
+  --lumo-primary-400: #8c83ff;
+  --lumo-primary-500: #635bff;
+  --lumo-primary-600: #4f46e8;
+  --lumo-primary-700: #4038c4;
+  --lumo-primary-800: #352e9e;
+  --lumo-primary-900: #2e297d;
+  --lumo-primary-950: #1b1849;
+
+  /* Lumo Neutral — cool/slate ramp */
+  --lumo-neutral-0: #ffffff;
+  --lumo-neutral-50: #f8fafc;
+  --lumo-neutral-100: #f1f5f9;
+  --lumo-neutral-200: #e2e8f0;
+  --lumo-neutral-300: #cbd5e1;
+  --lumo-neutral-400: #94a3b8;
+  --lumo-neutral-500: #64748b;
+  --lumo-neutral-600: #475569;
+  --lumo-neutral-700: #334155;
+  --lumo-neutral-800: #1e293b;
+  --lumo-neutral-900: #0f172a;
+  --lumo-neutral-950: #020617;
+
+  /* Status ramps (light authored) */
+  --lumo-success: #16a34a;
+  --lumo-success-soft: #dcfce7;
+  --lumo-success-strong: #166534;
+  --lumo-warning: #d97706;
+  --lumo-warning-soft: #fef3c7;
+  --lumo-warning-strong: #92400e;
+  --lumo-error: #dc2626;
+  --lumo-error-soft: #fee2e2;
+  --lumo-error-strong: #991b1b;
+  --lumo-info: #2563eb;
+  --lumo-info-soft: #dbeafe;
+  --lumo-info-strong: #1e40af;
+
+  /* ------------------------------------------------------------ 2. Semantic (light) */
+
+  --background: var(--lumo-neutral-50);
+  --foreground: var(--lumo-neutral-900);
+  --card: var(--lumo-neutral-0);
+  --card-foreground: var(--lumo-neutral-900);
+  --popover: var(--lumo-neutral-0);
+  --popover-foreground: var(--lumo-neutral-900);
+  --surface: var(--lumo-neutral-100);
+  --surface-foreground: var(--lumo-neutral-900);
+  --muted: var(--lumo-neutral-100);
+  --muted-foreground: var(--lumo-neutral-500);
+  --subtle-foreground: var(--lumo-neutral-400);
+  --secondary: var(--lumo-neutral-100);
+  --secondary-foreground: var(--lumo-neutral-700);
+  --accent: var(--lumo-neutral-100);
+  --accent-foreground: var(--lumo-neutral-900);
+  --border: var(--lumo-neutral-200);
+  --border-strong: var(--lumo-neutral-300);
+  --input: var(--lumo-neutral-500);
+  --ring: var(--lumo-primary-500);
+
+  --primary: var(--lumo-primary-500);
+  --primary-foreground: var(--lumo-neutral-0);
+  --primary-hover: var(--lumo-primary-600);
+  --primary-active: var(--lumo-primary-700);
+  --primary-subtle: var(--lumo-primary-100);
+  --primary-subtle-foreground: var(--lumo-primary-700);
+
+  --success: var(--lumo-success);
+  --success-subtle: var(--lumo-success-soft);
+  --success-foreground: var(--lumo-success-strong);
+  --warning: var(--lumo-warning);
+  --warning-subtle: var(--lumo-warning-soft);
+  --warning-foreground: var(--lumo-warning-strong);
+  --destructive: var(--lumo-error);
+  --destructive-foreground: var(--lumo-neutral-0);
+  --destructive-subtle: var(--lumo-error-soft);
+  --destructive-subtle-foreground: var(--lumo-error-strong);
+  --info: var(--lumo-info);
+  --info-subtle: var(--lumo-info-soft);
+  --info-foreground: var(--lumo-info-strong);
+
+  --chart-1: var(--lumo-primary-500);
+  --chart-2: var(--lumo-neutral-500);
+  --chart-3: var(--lumo-info);
+  --chart-4: var(--lumo-warning);
+  --chart-5: var(--lumo-success);
+
+  /*
+   * Elevation — borders separate, shadows only lift. Named `--lumo-shadow-*` (not
+   * `--shadow-*`) so `@theme inline` can bridge them: that indirection is what lets the
+   * `shadow-md` utility resolve to a *different* value under `.dark`.
+   */
+  --lumo-shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --lumo-shadow-md: 0 2px 4px -1px rgb(15 23 42 / 0.06), 0 4px 8px -2px rgb(15 23 42 / 0.06);
+  --lumo-shadow-lg: 0 4px 8px -2px rgb(15 23 42 / 0.06), 0 12px 24px -4px rgb(15 23 42 / 0.08);
+  --lumo-shadow-xl: 0 8px 16px -4px rgb(15 23 42 / 0.08), 0 24px 48px -8px rgb(15 23 42 / 0.12);
+  /* Soft, brand-tinted "floating card" shadow — the default resting/hover elevation for
+     every card surface in the soft-premium design language. */
+  --lumo-shadow-card: 0 1px 2px 0 rgb(99 91 255 / 0.04), 0 12px 28px -8px rgb(99 91 255 / 0.1);
+  --lumo-shadow-card-hover:
+    0 2px 4px 0 rgb(99 91 255 / 0.06), 0 16px 36px -8px rgb(99 91 255 / 0.16);
+
+  /* Atmospheric background glow — an almost-white canvas with a whisper of lavender and
+     blue light. Applied via the `.lumo-canvas` utility (below), never the whole page. */
+  --lumo-glow-purple: color-mix(in srgb, var(--lumo-primary-300) 22%, transparent);
+  --lumo-glow-blue: color-mix(in srgb, var(--lumo-info) 14%, transparent);
+
+  /* Typography. Apps assign --font-geist / --font-arabic when they load the webfonts. */
+  --font-sans:
+    var(--font-geist, "Geist"), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  --font-arabic:
+    var(--font-arabic-family, "IBM Plex Sans Arabic"), var(--font-geist, "Geist"), ui-sans-serif,
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Motion durations. Consumed as `duration-(--duration-fast)`; easings live in @theme. */
+  --duration-instant: 100ms;
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-medium: 300ms;
+  --duration-slow: 400ms;
+}
+
+/*
+ * Arabic swaps the *family behind the token* rather than overriding `font-family` on every
+ * element. A rule like `[lang="ar"] { font-family: … }` loses to any explicit `body`
+ * declaration; redefining `--font-sans` cannot lose, because everything already resolves
+ * through it.
+ */
+:root:lang(ar) {
+  --font-sans: var(--font-arabic);
+}
+
+/*
+ * Dark theme — authored, not inverted. Surfaces step *up* in lightness as they come
+ * forward, borders are picked for contrast against `--card` (not against the canvas),
+ * and status text uses the lighter ramp step so it stays legible on dark fills.
+ */
+.dark {
+  --lumo-success-soft: #0b2e1b;
+  --lumo-success-strong: #4ade80;
+  --lumo-warning-soft: #34240a;
+  --lumo-warning-strong: #fbbf24;
+  --lumo-error-soft: #3a1416;
+  --lumo-error-strong: #f87171;
+  --lumo-info-soft: #10233f;
+  --lumo-info-strong: #60a5fa;
+
+  --background: var(--lumo-neutral-950);
+  --foreground: var(--lumo-neutral-50);
+  --card: var(--lumo-neutral-900);
+  --card-foreground: var(--lumo-neutral-50);
+  --popover: var(--lumo-neutral-800);
+  --popover-foreground: var(--lumo-neutral-50);
+  --surface: var(--lumo-neutral-800);
+  --surface-foreground: var(--lumo-neutral-50);
+  --muted: var(--lumo-neutral-800);
+  --muted-foreground: var(--lumo-neutral-400);
+  --subtle-foreground: var(--lumo-neutral-500);
+  --secondary: var(--lumo-neutral-800);
+  --secondary-foreground: var(--lumo-neutral-300);
+  --accent: var(--lumo-neutral-800);
+  --accent-foreground: var(--lumo-neutral-50);
+  --border: var(--lumo-neutral-800);
+  --border-strong: var(--lumo-neutral-700);
+  --input: var(--lumo-neutral-500);
+  --ring: var(--lumo-primary-400);
+
+  --primary-subtle: var(--lumo-primary-950);
+  --primary-subtle-foreground: var(--lumo-primary-300);
+
+  --chart-1: var(--lumo-primary-400);
+  --chart-2: var(--lumo-neutral-400);
+  --chart-3: var(--lumo-info-strong);
+  --chart-4: var(--lumo-warning-strong);
+  --chart-5: var(--lumo-success-strong);
+
+  --lumo-shadow-sm: 0 1px 2px 0 rgb(2 6 23 / 0.5);
+  --lumo-shadow-md: 0 2px 4px -1px rgb(2 6 23 / 0.6), 0 4px 8px -2px rgb(2 6 23 / 0.5);
+  --lumo-shadow-lg: 0 4px 8px -2px rgb(2 6 23 / 0.6), 0 12px 24px -4px rgb(2 6 23 / 0.55);
+  --lumo-shadow-xl: 0 8px 16px -4px rgb(2 6 23 / 0.7), 0 24px 48px -8px rgb(2 6 23 / 0.6);
+  --lumo-shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 12px 28px -8px rgb(0 0 0 / 0.45);
+  --lumo-shadow-card-hover: 0 2px 4px 0 rgb(0 0 0 / 0.35), 0 16px 36px -8px rgb(0 0 0 / 0.55);
+
+  --lumo-glow-purple: color-mix(in srgb, var(--lumo-primary-800) 30%, transparent);
+  --lumo-glow-blue: color-mix(in srgb, var(--lumo-info) 10%, transparent);
+}
+
+/* ------------------------------------------------------- 3. Tailwind utility bridge */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-surface: var(--surface);
+  --color-surface-foreground: var(--surface-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-active: var(--primary-active);
+  --color-primary-subtle: var(--primary-subtle);
+  --color-primary-subtle-foreground: var(--primary-subtle-foreground);
+
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-subtle: var(--destructive-subtle);
+  --color-destructive-subtle-foreground: var(--destructive-subtle-foreground);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+  --color-info-foreground: var(--info-foreground);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --font-sans: var(--font-sans);
+  --font-arabic: var(--font-arabic);
+  --font-mono: var(--font-mono);
+
+  /* 4px base grid. Allowed steps: 1 2 3 4 6 8 10 12 16 20 (= 4…80px). */
+  --spacing: 0.25rem;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-3xl: 28px;
+
+  --shadow-sm: var(--lumo-shadow-sm);
+  --shadow-md: var(--lumo-shadow-md);
+  --shadow-lg: var(--lumo-shadow-lg);
+  --shadow-xl: var(--lumo-shadow-xl);
+  --shadow-card: var(--lumo-shadow-card);
+  --shadow-card-hover: var(--lumo-shadow-card-hover);
+
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /*
+   * The only animations in the system. They exist to communicate that a floating surface
+   * arrived or left — nothing here is decorative. Kept transform-free on the translate
+   * axis so RTL positioning is never fought by a keyframe.
+   */
+  --animate-fade-in: lumo-fade-in var(--duration-fast) var(--ease-out);
+  --animate-fade-out: lumo-fade-out var(--duration-fast) var(--ease-in);
+  --animate-surface-in: lumo-surface-in var(--duration-normal) var(--ease-out);
+  --animate-surface-out: lumo-surface-out var(--duration-fast) var(--ease-in);
+
+  @keyframes lumo-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes lumo-fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes lumo-surface-in {
+    from {
+      opacity: 0;
+      scale: 0.97;
+    }
+    to {
+      opacity: 1;
+      scale: 1;
+    }
+  }
+  @keyframes lumo-surface-out {
+    from {
+      opacity: 1;
+      scale: 1;
+    }
+    to {
+      opacity: 0;
+      scale: 0.97;
+    }
+  }
+
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
+  --text-base: 14px;
+  --text-base--line-height: 20px;
+  --text-md: 15px;
+  --text-md--line-height: 22px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 18px;
+  --text-xl--line-height: 26px;
+  --text-2xl: 20px;
+  --text-2xl--line-height: 28px;
+  --text-3xl: 24px;
+  --text-3xl--line-height: 32px;
+  --text-4xl: 30px;
+  --text-4xl--line-height: 38px;
+
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1440px;
+}
+
+/* --------------------------------------------------------------- 4. Base behaviour */
+
+@layer base {
+  /*
+   * An Arabic island inside an otherwise-English page (a language switcher's own label, a
+   * quoted product name) gets the right face without a wrapper component. Whole-page
+   * Arabic is handled by the `:root:lang(ar)` token swap above.
+   */
+  [lang="ar"],
+  [lang^="ar-"] {
+    font-family: var(--font-arabic);
+  }
+
+  /*
+   * Atmospheric page canvas: an almost-white/near-black surface with two soft, fixed
+   * radial glows (lavender top-start, blue bottom-end). Logical positioning (`start`)
+   * flips correctly under RTL without a separate rule. Apply once, on the page's
+   * outermost scroll container — never per-card.
+   */
+  .lumo-canvas {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(60rem 34rem at 12% -10%, var(--lumo-glow-purple), transparent 60%),
+      radial-gradient(50rem 30rem at 100% 30%, var(--lumo-glow-blue), transparent 55%);
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+  }
+
+  /* Motion is a state signal; users who ask for less get none. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

@@ -1,0 +1,29 @@
+// `reviews` schema — Review (services/reviews). Never modifies products (product/customer refs
+// only). Verified-purchase is decided by OrdersPort at creation time.
+
+model Review {
+  id               String   @id @db.Uuid
+  tenantId         String   @map("tenant_id")
+  productRef       String   @map("product_ref")
+  customerRef      String   @map("customer_ref")
+  rating           Int
+  bodyText         String   @map("body_text")
+  assetRefs        Json     @default("[]") @map("asset_refs")
+  verifiedPurchase Boolean  @default(false) @map("verified_purchase")
+  status           String // 5-value lifecycle union (domain-enforced, see ReviewStatusValue)
+  /// Append-only vote log (one-per-customer, replaced in place) and moderation-action audit log —
+  /// both embedded JSONB arrays on this row.
+  votes            Json     @default("[]")
+  moderations      Json     @default("[]")
+  reportCount      Int      @default(0) @map("report_count")
+  merchantResponse String?  @map("merchant_response")
+  version          Int      @default(0)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, customerRef, productRef])
+  @@index([tenantId, productRef])
+  @@index([tenantId, status])
+  @@map("reviews")
+  @@schema("reviews")
+}

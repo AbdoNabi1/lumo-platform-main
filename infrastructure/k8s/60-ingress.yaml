@@ -1,0 +1,181 @@
+# API-only Ingress. Deliberately routes ONLY the business path (/api). The operational endpoints
+# (/metrics, /healthz, /readyz) are unauthenticated and MUST stay cluster-internal — they are
+# reached via the Service by Prometheus (metrics) and the kubelet (probes), never through the
+# public Ingress. Adjust host, ingressClassName, and annotations to your controller; the TLS
+# cert (runtime-api-tls) is provisioned externally (cert-manager / secret manager).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: runtime-api
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-api
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    # H-5 security hardening — TLS + response headers terminated at the edge (docs/operations/SECURITY_HARDENING.md).
+    # Modern TLS only; HSTS with preload; the API is JSON-only so the CSP is maximally restrictive.
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.3 TLSv1.2"
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "63072000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    nginx.ingress.kubernetes.io/hsts-preload: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: no-referrer";
+      more_set_headers "Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=()";
+      more_set_headers "Cross-Origin-Opener-Policy: same-origin";
+      more_set_headers "Cross-Origin-Resource-Policy: same-origin";
+      more_clear_headers "Server";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.lumo.example.com
+      secretName: runtime-api-tls
+  rules:
+    - host: api.lumo.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: runtime-api
+                port:
+                  name: http
+---
+# H-07: the collector Ingress. Deliberately routes ONLY /collect — CORS is handled by the collector
+# itself (apps/collector/src/server.ts resolves the allow-listed origin per request), so no CORS
+# annotation is added here to avoid two competing sources of truth for allowed origins. /healthz and
+# /readyz stay cluster-internal, same rule as the API Ingress above.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: collector
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: collector
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.3 TLSv1.2"
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "63072000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    nginx.ingress.kubernetes.io/hsts-preload: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_clear_headers "Server";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - collect.lumo.example.com
+      secretName: collector-tls
+  rules:
+    - host: collect.lumo.example.com
+      http:
+        paths:
+          - path: /collect
+            pathType: Exact
+            backend:
+              service:
+                name: collector
+                port:
+                  name: http
+---
+# M2-6: the storefront Ingress — the customer-facing entry point that had no path to production at
+# all. Unlike the API/collector Ingresses above, this serves HTML, so it deliberately does NOT copy
+# their `default-src 'none'` CSP verbatim (docs/operations/SECURITY_HARDENING.md explicitly warns
+# against that — an HTML surface needs a script/style-permissive, nonce-based CSP, which belongs to
+# the web edge and is unscoped here). The headers below are the subset that's safe and correct for
+# any HTML surface regardless of its script/style needs; Content-Security-Policy is intentionally
+# left unset rather than fabricated, pending that dedicated nonce-wiring work.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: storefront
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: storefront
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.3 TLSv1.2"
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "63072000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    nginx.ingress.kubernetes.io/hsts-preload: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=()";
+      more_clear_headers "Server";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - www.lumo.example.com
+      secretName: storefront-tls
+  rules:
+    - host: www.lumo.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: storefront
+                port:
+                  name: http
+---
+# Phase A.34 (A.33 P0 #5/#6, Task 9/17) — the admin-web Ingress. Deliberately does NOT set
+# Content-Security-Policy here (same reasoning as the storefront Ingress above: this is an HTML+JS
+# surface, not a JSON API, and a real CSP needs to be script/style-aware) — CSP is instead owned by
+# the app itself (`next.config.ts`'s `headers()`, Phase A.34 Task 9) so it works identically whether
+# this app is deployed here or on Vercel. The headers below are the safe, host-agnostic subset.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: admin-web
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: admin-web
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.3 TLSv1.2"
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "63072000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    nginx.ingress.kubernetes.io/hsts-preload: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_clear_headers "Server";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - admin.lumo.example.com
+      secretName: admin-web-tls
+  rules:
+    - host: admin.lumo.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-web
+                port:
+                  name: http

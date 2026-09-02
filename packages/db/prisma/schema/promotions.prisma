@@ -1,0 +1,33 @@
+// `promotions` schema — Promotion (services/promotions). Source of truth for a promotion's own
+// lifecycle and discount **determination** only — Pricing owns prices, Checkout applies, Orders
+// only snapshot.
+
+model Promotion {
+  id                          String    @id @db.Uuid
+  tenantId                    String    @map("tenant_id")
+  name                        String
+  ruleType                    String    @map("rule_type") // automatic | buy_x_get_y
+  scope                       String // cart | product | category
+  targetRefs                  Json      @default("[]") @map("target_refs")
+  minimumQuantity             Int?      @map("minimum_quantity")
+  minimumSubtotalAmountMinor  Int?      @map("minimum_subtotal_amount_minor")
+  reward                      Json // { type, value?, buyQuantity?, getQuantity? }
+  stackable                   Boolean   @default(false)
+  priority                    Int       @default(0)
+  startsAt                    DateTime  @map("starts_at")
+  endsAt                      DateTime? @map("ends_at")
+  customerRefs                Json?     @map("customer_refs")
+  segmentRefs                 Json?     @map("segment_refs")
+  campaignRef                 String?   @map("campaign_ref")
+  usageLimit                  Int?      @map("usage_limit")
+  usageCount                  Int       @default(0) @map("usage_count")
+  status                      String // 8-value lifecycle union (domain-enforced, see PromotionStatusValue)
+  version                     Int       @default(0)
+  createdAt                   DateTime  @default(now()) @map("created_at")
+  updatedAt                   DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId, status])
+  @@index([tenantId, campaignRef])
+  @@map("promotions")
+  @@schema("promotions")
+}

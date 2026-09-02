@@ -1,0 +1,321 @@
+// `customer_360` schema — Identity Engine (services/customer-360, Phase 6.1).
+// Both tables are append-only ledgers, matching @platform/tracking's identity-graph invariant
+// (an edge is never updated or deleted; a wrong observation is retracted via a new
+// IdentityDecision row, never edited in place). No `version` column — there is nothing to
+// optimistically lock, only rows to append.
+
+/// One persisted edge of the identity graph (doc 17 §4). `confidence`/`from_type`/`to_type` are
+/// text, validated by the domain against `@platform/tracking`'s closed `IdentifierType` union.
+model IdentityLink {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  fromType   String   @map("from_type")
+  fromValue  String   @map("from_value")
+  toType     String   @map("to_type")
+  toValue    String   @map("to_value")
+  confidence String // deterministic | probabilistic
+  observedAt DateTime @map("observed_at")
+  source     String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, fromType, fromValue])
+  @@index([tenantId, toType, toValue])
+  @@map("identity_links")
+  @@schema("customer_360")
+}
+
+/// An explicit merge/split decision (FF-CDP-03: provenance is mandatory). `retracted*` columns are
+/// populated only for `kind = "split"` — the exact edge (by full evidence, not just endpoints)
+/// excluded from resolution going forward.
+model IdentityDecision {
+  id                  String    @id @db.Uuid
+  tenantId            String    @map("tenant_id")
+  kind                String // merge | split
+  subjectType         String    @map("subject_type")
+  subjectValue        String    @map("subject_value")
+  relatedType         String    @map("related_type")
+  relatedValue        String    @map("related_value")
+  retractedFromType   String?   @map("retracted_from_type")
+  retractedFromValue  String?   @map("retracted_from_value")
+  retractedToType     String?   @map("retracted_to_type")
+  retractedToValue    String?   @map("retracted_to_value")
+  retractedConfidence String?   @map("retracted_confidence") // deterministic | probabilistic
+  retractedObservedAt DateTime? @map("retracted_observed_at")
+  retractedSource     String?   @map("retracted_source")
+  reason              String
+  actor               String
+  occurredAt          DateTime  @map("occurred_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId, subjectType, subjectValue])
+  @@index([tenantId, relatedType, relatedValue])
+  @@map("identity_decisions")
+  @@schema("customer_360")
+}
+
+// Phase 6.2 — Profile Engine. Two tables, same ledger + cache split as Identity Engine: the ledger
+// (`ProfileSnapshot`) is append-only and durable; the cache (`CustomerProfileCache`) is a rebuildable
+// projection allowed to be upserted in place (03-CUSTOMER_360_SPEC.md §15: "Projection is rebuildable
+// by event replay"). `fields` is `Json` — a serialized `Record<string, ProfileField>` — because the
+// field set is open-ended (Phase 6.2 owns no fixed schema of which fields exist; that is exactly the
+// "owns no source-of-truth fields" contract) and every field already self-describes its own
+// source/updatedAt/confidence/version inside the JSON value, so no relational column is missing.
+
+/// The current materialized profile — a disposable serving cache, not the source of truth.
+model CustomerProfileCache {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id")
+  identifierType  String   @map("identifier_type")
+  identifierValue String   @map("identifier_value")
+  fields          Json
+  version         Int
+  updatedAt       DateTime @map("updated_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, identifierType, identifierValue])
+  @@map("customer_profile_cache")
+  @@schema("customer_360")
+}
+
+/// Append-only profile snapshot ledger (FF-CDP-03-style provenance discipline) — the durable record
+/// `CustomerProfileCache` is rebuilt from. Each row is a *full* capture of the profile's fields as of
+/// that version, not a diff (see `domain/profile-snapshot.ts`), so `RebuildProfileProjection` only
+/// ever needs the latest row per identifier.
+model ProfileSnapshot {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id")
+  identifierType  String   @map("identifier_type")
+  identifierValue String   @map("identifier_value")
+  version         Int
+  fields          Json
+  capturedAt      DateTime @map("captured_at")
+  reason          String // created | updated | rebuilt
+
+  @@index([tenantId, identifierType, identifierValue, capturedAt])
+  @@map("profile_snapshots")
+  @@schema("customer_360")
+}
+
+// Phase 6.3 — Session Stitching Engine. Same two-ledgers-plus-cache shape as above: `SessionSnapshot`
+// and `SessionTransition` are append-only; `CustomerSessionCache` is a disposable, rebuildable
+// projection (`RebuildSessions` is the escape hatch, same role `RebuildProfileProjection` plays for
+// `CustomerProfileCache`). Unlike `CustomerProfileCache`'s open-ended `fields: Json`, a session's
+// shape is fixed, so both tables here use plain columns rather than a JSON blob — nothing in a
+// session is a dynamic, caller-defined field set the way a profile's asserted facts are.
+
+/// The current materialized session — a disposable serving cache, not the source of truth.
+model CustomerSessionCache {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id")
+  sessionId      String    @map("session_id")
+  visitorId      String    @map("visitor_id")
+  deviceId       String?   @map("device_id")
+  journeyId      String?   @map("journey_id")
+  source         String?
+  status         String // open | closed
+  startedAt      DateTime  @map("started_at")
+  lastActivityAt DateTime  @map("last_activity_at")
+  closedAt       DateTime? @map("closed_at")
+  closeReason    String?   @map("close_reason")
+  pageCount      Int       @map("page_count")
+  version        Int
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([tenantId, sessionId])
+  @@index([tenantId, visitorId, status])
+  @@map("customer_session_cache")
+  @@schema("customer_360")
+}
+
+/// Append-only session snapshot ledger — the durable record `CustomerSessionCache` is rebuilt from.
+/// Each row is a full capture (not a diff), same tradeoff `ProfileSnapshot` accepts. No `version`
+/// column beyond the session's own `version` field — same "nothing to optimistically lock, only
+/// rows to append" reasoning `IdentityLink`/`IdentityDecision` already document.
+model SessionSnapshot {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id")
+  sessionId      String    @map("session_id")
+  visitorId      String    @map("visitor_id")
+  deviceId       String?   @map("device_id")
+  journeyId      String?   @map("journey_id")
+  source         String?
+  status         String
+  startedAt      DateTime  @map("started_at")
+  lastActivityAt DateTime  @map("last_activity_at")
+  closedAt       DateTime? @map("closed_at")
+  closeReason    String?   @map("close_reason")
+  pageCount      Int       @map("page_count")
+  version        Int
+  capturedAt     DateTime  @map("captured_at")
+  reason         String // started | activity | closed | merged | split | rebuilt
+
+  @@index([tenantId, sessionId, capturedAt])
+  @@map("session_snapshots")
+  @@schema("customer_360")
+}
+
+/// Append-only journey-graph edges — one row per `SessionTransition` (organic or explicit), same
+/// discipline as `IdentityDecision`. `fromSessionId`/`toSessionId` are independently nullable — see
+/// `domain/session-transition.ts` for which kinds populate which side.
+model SessionTransition {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id")
+  kind          String
+  visitorId     String   @map("visitor_id")
+  fromSessionId String?  @map("from_session_id")
+  toSessionId   String?  @map("to_session_id")
+  reason        String?
+  actor         String?
+  occurredAt    DateTime @map("occurred_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, visitorId, occurredAt])
+  @@index([tenantId, fromSessionId])
+  @@index([tenantId, toSessionId])
+  @@map("session_transitions")
+  @@schema("customer_360")
+}
+
+// Phase 6.4 — Computed Attributes Engine. Same ledger/cache split as Profile/Session: the ledger
+// (`ComputedAttributeSnapshot`) is append-only and durable; the cache (`ComputedAttributeCache`) is a
+// rebuildable projection allowed to be upserted in place. `attributes` is `Json` (open-ended, like
+// `CustomerProfileCache.fields`) — a serialized `Record<string, ComputedAttributeValue>`, each value
+// self-describing its own `definitionId`/`definitionVersion`/`matchedRuleIds`/`inputs`/`evaluatedAt`/
+// `version`, so full explainability round-trips with no relational column missing.
+//
+// `ComputedAttributeDefinition` is a third, distinct table: authored configuration (a `RuleSet`,
+// stored as `Json` because — per ADR-0053 — a rule set is already plain, serializable data, never
+// code), not a per-identifier projection. It has no append-only ledger of its own: a definition is
+// edited rarely and directly (upsert), the way any configuration table in this repo is, not observed
+// as an event stream the way an identifier's own facts are.
+
+/// The current materialized computed-attribute set — a disposable serving cache, not the source of
+/// truth.
+model ComputedAttributeCache {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id")
+  identifierType  String   @map("identifier_type")
+  identifierValue String   @map("identifier_value")
+  attributes      Json
+  version         Int
+  updatedAt       DateTime @map("updated_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, identifierType, identifierValue])
+  @@map("computed_attribute_cache")
+  @@schema("customer_360")
+}
+
+/// Append-only computed-attribute snapshot ledger — the durable record `ComputedAttributeCache` is
+/// rebuilt from. Each row is a *full* capture of the attribute set as of that version, not a diff
+/// (see `domain/attribute-snapshot.ts`), so `RebuildComputedAttributes` only ever needs the latest
+/// row per identifier.
+model ComputedAttributeSnapshot {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id")
+  identifierType  String   @map("identifier_type")
+  identifierValue String   @map("identifier_value")
+  version         Int
+  attributes      Json
+  capturedAt      DateTime @map("captured_at")
+  reason          String // created | updated | rebuilt
+
+  @@index([tenantId, identifierType, identifierValue, capturedAt])
+  @@map("computed_attribute_snapshots")
+  @@schema("customer_360")
+}
+
+/// Authored rule-set configuration for one computed attribute (`ports/computed-attribute-
+/// definition.ts`). `ruleSet`/`dependencies` are `Json` — both already plain, serializable data
+/// (ADR-0053 §5: expressions/rule sets round-trip through JSON with no loss).
+model ComputedAttributeDefinition {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id")
+  definitionId String   @map("definition_id")
+  version      Int
+  ruleSet      Json     @map("rule_set")
+  dependencies Json
+  description  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, definitionId])
+  @@map("computed_attribute_definitions")
+  @@schema("customer_360")
+}
+
+/// Authored rule-set configuration for one segment (`ports/segment-definition.ts`). Unlike
+/// `ComputedAttributeDefinition` (seed-only, no CRUD), this table is read-write — `CreateSegment`/
+/// `UpdateSegment`/`DeleteSegment` are a real authoring lifecycle (`SEGMENTATION_MODEL.md` §2/§3).
+/// `ruleSet` is `Json` — already plain, serializable data (ADR-0053 §5).
+model SegmentDefinition {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id")
+  segmentId    String   @map("segment_id")
+  name         String
+  description  String?
+  version      Int
+  ruleSet      Json     @map("rule_set")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, segmentId])
+  @@map("segment_definitions")
+  @@schema("customer_360")
+}
+
+/// The current materialized segment-membership cache — one row per `(identifier, segmentId)` pair,
+/// **not** one JSON blob per identifier the way `ComputedAttributeCache` is
+/// (`SEGMENTATION_MODEL.md` §2): `GetSegmentMembers` needs `WHERE segment_id = X AND status =
+/// 'entered'`, only achievable with a per-membership row. `version` doubles as the CAS predicate
+/// column, same D-042 convention `ComputedAttributeCache.version` already establishes.
+model SegmentMembership {
+  id                String    @id @db.Uuid
+  tenantId          String    @map("tenant_id")
+  identifierType    String    @map("identifier_type")
+  identifierValue   String    @map("identifier_value")
+  segmentId         String    @map("segment_id")
+  status            String // entered | exited
+  enteredAt         DateTime? @map("entered_at")
+  exitedAt          DateTime? @map("exited_at")
+  definitionId      String    @map("definition_id")
+  definitionVersion Int       @map("definition_version")
+  matchedRuleIds    Json      @map("matched_rule_ids")
+  inputs            Json
+  evaluatedAt       DateTime  @map("evaluated_at")
+  version           Int
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  @@unique([tenantId, identifierType, identifierValue, segmentId])
+  @@index([tenantId, segmentId, status])
+  @@map("segment_memberships")
+  @@schema("customer_360")
+}
+
+/// Append-only segment-membership transition ledger — the durable record `SegmentMembership` (the
+/// cache) is rebuilt from. Each row is a *full* capture of the membership row as of that version, not
+/// a diff (see `domain/segment-history.ts`), so `RebuildSegmentMembership` only ever needs the latest
+/// row per `(identifier, segmentId)` pair.
+model SegmentHistory {
+  id                String    @id @db.Uuid
+  tenantId          String    @map("tenant_id")
+  identifierType    String    @map("identifier_type")
+  identifierValue   String    @map("identifier_value")
+  segmentId         String    @map("segment_id")
+  status            String // entered | exited
+  enteredAt         DateTime? @map("entered_at")
+  exitedAt          DateTime? @map("exited_at")
+  definitionId      String    @map("definition_id")
+  definitionVersion Int       @map("definition_version")
+  matchedRuleIds    Json      @map("matched_rule_ids")
+  inputs            Json
+  evaluatedAt       DateTime  @map("evaluated_at")
+  version           Int
+  capturedAt        DateTime  @map("captured_at")
+  reason            String // entered | exited | refreshed | rebuilt
+
+  @@index([tenantId, identifierType, identifierValue, segmentId, capturedAt])
+  @@map("segment_history")
+  @@schema("customer_360")
+}

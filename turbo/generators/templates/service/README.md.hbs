@@ -1,0 +1,25 @@
+# @platform/{{ kebabCase name }}
+
+## Purpose
+
+{{ description }}
+
+## Architecture (clean-architecture slice, docs/architecture/02)
+
+- **domain/** — aggregates, value objects, domain events, repository ports. Pure (`@platform/domain`).
+- **application/** — use-cases + outbound port usage. Depends on domain + ports only.
+- **infrastructure/** — adapters (persistence, outbox/messaging, external). Implements the ports.
+- **interfaces/** — inbound boundary (controllers, event consumers).
+
+Add building blocks with `pnpm gen aggregate` and `pnpm gen use-case`. Dependency direction
+`domain ← application ← messaging ← infrastructure` is enforced by `pnpm arch`. See
+`services/example` for a complete reference.
+
+## Dependencies
+
+`@platform/{domain, application, contracts, repository, types, utils}` (add `@platform/messaging` /
+`@platform/domain-events` when the context emits or consumes integration events).
+
+## Extension points
+
+Wire the slice in a composition root and add a transport adapter at the interfaces boundary.

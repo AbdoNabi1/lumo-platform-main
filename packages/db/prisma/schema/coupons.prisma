@@ -1,0 +1,28 @@
+// `coupons` schema — Coupon (services/coupons). Only authorizes a promotion — never computes a
+// discount itself (Promotion.evaluate() owns that).
+
+model Coupon {
+  id           String    @id @db.Uuid
+  tenantId     String    @map("tenant_id")
+  code         String
+  promotionRef String    @map("promotion_ref") // bare id into Promotions — never an FK
+  multiUse     Boolean   @default(false) @map("multi_use")
+  customerRef  String?   @map("customer_ref") // null = public coupon
+  campaignRef  String?   @map("campaign_ref")
+  usageLimit   Int?      @map("usage_limit")
+  usageCount   Int       @default(0) @map("usage_count")
+  expiresAt    DateTime? @map("expires_at")
+  status       String // 4-value lifecycle union (domain-enforced, see CouponStatusValue)
+  /// Append-only redemption ledger — embedded JSONB array on this row (unlike Notifications' split
+  /// `attempts`/`history`, Coupons keeps a single ledger since every redemption is the same shape).
+  redemptions  Json      @default("[]")
+  version      Int       @default(0)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, code])
+  @@index([tenantId, promotionRef])
+  @@index([tenantId, status])
+  @@map("coupons")
+  @@schema("coupons")
+}

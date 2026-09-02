@@ -1,0 +1,12 @@
+.pnpm-store/
+node_modules/
+.turbo/
+.qa-preview/
+.claude/
+.git/
+.env
+*.log
+.next/
+dist/
+build/
+coverage/

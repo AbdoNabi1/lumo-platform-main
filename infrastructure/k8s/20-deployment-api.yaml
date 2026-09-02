@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runtime-api
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-api
+    app.kubernetes.io/component: api
+spec:
+  # Replicas are managed by the HPA at runtime; this is the initial value.
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # zero-downtime rollout
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/name: runtime-api
+        app.kubernetes.io/component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: lumo-runtime
+      automountServiceAccountToken: false
+      # F4 graceful shutdown is bounded at 10s; allow that + preStop drain + buffer.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: runtime-api
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: runtime-api
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: runtime-api
+      containers:
+        - name: runtime-api
+          image: lumo-runtime:local # production: a registry-pushed, immutable tag or digest
+          imagePullPolicy: IfNotPresent
+          # Override args only (keeps the image's tini ENTRYPOINT → SIGTERM forwarding, F4).
+          args: ["node", "--import", "tsx", "src/api.ts"]
+          ports:
+            - name: http
+              containerPort: 3080
+          envFrom:
+            - configMapRef:
+                name: lumo-runtime-config
+            - secretRef:
+                name: lumo-runtime-secrets
+          startupProbe: # protects a slow boot (tsx transpile + lazy client connect) from liveness
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                # Let endpoint removal propagate before SIGTERM so in-flight requests drain.
+                command: ["/bin/sleep", "5"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp # tsx cache (XDG_CACHE_HOME=/tmp is set in the image); rootfs stays read-only
+      volumes:
+        - name: tmp
+          emptyDir: {}

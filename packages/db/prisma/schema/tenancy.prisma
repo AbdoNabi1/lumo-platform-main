@@ -1,0 +1,37 @@
+// `tenancy` schema — Tenant, Workspace (services/tenancy). Upstream of everything; owns tenant
+// identity + white-label workspace configuration (ADR-0008 Sprint 5.5/5.6 addenda).
+
+model Tenant {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id")
+  slug            String
+  name            String
+  status          String // active | suspended | cancelled (domain-enforced, see TenantStatus)
+  isolationTier   String   @map("isolation_tier") // pooled | dedicated_schema | dedicated_db
+  branding        Json     @default("{}")
+  subscriptionRef String?  @map("subscription_ref")
+  version         Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, slug])
+  @@map("tenants")
+  @@schema("tenancy")
+}
+
+model Workspace {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  tenantRef String   @map("tenant_ref")
+  env       String // production | staging | development (domain-enforced, see WorkspaceEnv)
+  name      String
+  status    String // active | archived (domain-enforced, see WorkspaceStatus)
+  config    Json     @default("{}")
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, tenantRef, name])
+  @@map("workspaces")
+  @@schema("tenancy")
+}

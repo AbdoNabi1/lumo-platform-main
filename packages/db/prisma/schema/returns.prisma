@@ -1,0 +1,55 @@
+// `returns` schema — ReturnRequest (services/returns). Source of truth for the RMA lifecycle,
+// inspection results, return decisions, return history, reasons, and dispositions.
+
+model ReturnRequest {
+  id       String @id @db.Uuid
+  tenantId String @map("tenant_id")
+  orderRef String @map("order_ref") // bare id into Orders — never an FK
+  items    Json // ReturnItem[] snapshot: [{ orderItemRef, productRef, quantity, reason, disposition? }]
+  status   String // 12-value lifecycle union (domain-enforced, see ReturnStatusValue)
+  /// `{}`-means-unset (Sprint 4.6/4.8/4.9/4.10 convention) — never actually NULL.
+  approval       Json     @default("{}")
+  rmaNumber      String?  @map("rma_number")
+  inspections    Json     @default("[]")
+  refundDecision Json     @default("{}") @map("refund_decision")
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  attempts ReturnAttempt[]
+
+  @@index([tenantId, orderRef])
+  @@index([tenantId, status])
+  @@map("return_requests")
+  @@schema("returns")
+}
+
+/// Append-only lifecycle-attempt log (Sprint 4.11) — retry-safe observability trail, never rewritten.
+model ReturnAttempt {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  returnId   String   @map("return_id") @db.Uuid
+  kind       String
+  outcome    String
+  reference  String?
+  occurredAt DateTime @map("occurred_at")
+
+  returnRequest ReturnRequest @relation(fields: [returnId], references: [id], onDelete: Restrict)
+
+  @@index([returnId])
+  @@map("return_attempts")
+  @@schema("returns")
+}
+
+/// Replay-safe warehouse-callback dedup (Sprint 4.11) — unique per (tenant, source, callback_id).
+model ProcessedWarehouseCallback {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  source     String
+  callbackId String   @map("callback_id")
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  @@unique([tenantId, source, callbackId])
+  @@map("processed_callbacks")
+  @@schema("returns")
+}

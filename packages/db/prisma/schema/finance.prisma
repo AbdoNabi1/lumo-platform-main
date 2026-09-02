@@ -1,0 +1,200 @@
+// `finance` schema — the financial source of truth (ADR-0024, D-075, services/finance).
+// Journal + LedgerEntry are append-only (the immutable double-entry ledger); ExchangeRate and
+// CogsSnapshot are append-only/effective-dated (never updated — a new record supersedes, the old
+// one stays for historical reporting). No FK to Orders/Payments/Inventory (D-002: Finance
+// consumes their events and references them only by bare id, e.g. `sourceRef`/`accountRef`).
+//
+// ShippingRateCard/ShippingRate/QuoteShippingRates persistence is explicitly out of scope for
+// this schema (T1-Core freeze, `T1_PRE_FLIGHT_REPORT.md` §9) — no table for it exists here.
+
+model Journal {
+  id                 String   @id @db.Uuid
+  tenantId           String   @map("tenant_id")
+  sourceRef          String   @map("source_ref")
+  currency           String
+  reversalOfJournalId String? @map("reversal_of_journal_id") @db.Uuid
+  postedAt           DateTime? @map("posted_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  lines   LedgerEntry[]
+
+  @@index([tenantId, sourceRef])
+  @@index([tenantId, postedAt])
+  @@map("journals")
+  @@schema("finance")
+}
+
+/// The append-only ledger itself — one row per {@link JournalLine} once its Journal is posted.
+model LedgerEntry {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  journalId   String   @map("journal_id") @db.Uuid
+  sourceRef   String   @map("source_ref")
+  accountRef  String   @map("account_ref")
+  direction   String // debit | credit (domain-enforced)
+  amountMinor Int      @map("amount_minor")
+  currency    String
+  memo        String?
+  postedAt    DateTime @map("posted_at")
+
+  journal Journal @relation(fields: [journalId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, accountRef])
+  @@index([tenantId, postedAt])
+  @@map("ledger_entries")
+  @@schema("finance")
+}
+
+model Account {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  code      String
+  name      String
+  type      String // asset | liability | equity | revenue | expense (domain-enforced)
+  active    Boolean  @default(true)
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, code])
+  @@map("accounts")
+  @@schema("finance")
+}
+
+model CostCenter {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  code      String
+  name      String
+  active    Boolean  @default(true)
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, code])
+  @@map("cost_centers")
+  @@schema("finance")
+}
+
+model ExpenseCategory {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id")
+  name         String
+  costCenterRef String? @map("cost_center_ref")
+  version      Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("expense_categories")
+  @@schema("finance")
+}
+
+model Expense {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id")
+  costCenterRef String   @map("cost_center_ref")
+  categoryRef   String   @map("category_ref")
+  amountMinor   Int      @map("amount_minor")
+  currency      String
+  description   String
+  incurredAt    DateTime @map("incurred_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, incurredAt])
+  @@index([tenantId, costCenterRef])
+  @@map("expenses")
+  @@schema("finance")
+}
+
+model Budget {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id")
+  costCenterRef String   @map("cost_center_ref")
+  period        String
+  amountMinor   Int      @map("amount_minor")
+  currency      String
+  revisions     Int      @default(0)
+  version       Int      @default(0)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, costCenterRef, period])
+  @@map("budgets")
+  @@schema("finance")
+}
+
+/// Immutable historical rate — never updated; a new effective rate is a new row.
+model ExchangeRate {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  baseCurrency   String   @map("base_currency")
+  quoteCurrency  String   @map("quote_currency")
+  rate           Float
+  effectiveAt    DateTime @map("effective_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, baseCurrency, quoteCurrency, effectiveAt])
+  @@map("exchange_rates")
+  @@schema("finance")
+}
+
+model FiscalPeriod {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id")
+  startDate DateTime  @map("start_date")
+  endDate   DateTime  @map("end_date")
+  closed    Boolean   @default(false)
+  version   Int       @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId, startDate, endDate])
+  @@map("fiscal_periods")
+  @@schema("finance")
+}
+
+model TaxProfile {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id")
+  jurisdiction String
+  /// Serialized `TaxRate[]` (basis points) — a small, cohesive VO list; not its own table.
+  rates        Json
+  version      Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, jurisdiction])
+  @@map("tax_profiles")
+  @@schema("finance")
+}
+
+/// Immutable, effective-dated landed-cost record — never updated; a cost change is a new row.
+model CogsSnapshot {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  productRef  String   @map("product_ref")
+  /// Serialized `CostComponent[]` (type + amountMinor breakdown).
+  components  Json
+  currency    String
+  effectiveAt DateTime @map("effective_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, productRef, effectiveAt])
+  @@map("cogs_snapshots")
+  @@schema("finance")
+}
+
+model FinancialSnapshot {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  period    String
+  currency  String
+  /// Serialized `Record<string, { amountMinor, currency }>` (the `figures` map).
+  figures   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, period])
+  @@map("financial_snapshots")
+  @@schema("finance")
+}

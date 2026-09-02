@@ -1,0 +1,75 @@
+// `platform` schema — cross-cutting messaging + audit tables (no business models).
+//
+// Single shared outbox for the modular monolith: every context appends here inside its own
+// aggregate transaction (same database ⇒ same-tx guarantee holds across Postgres schemas), and
+// one Debezium connector streams it (docs/architecture/05 §1.1). `producer` disambiguates the
+// owning context; the table is monthly-partitioned by `created_at` via migration SQL once
+// volume demands it (MIGRATIONS.md §4).
+
+/// Transactional outbox (ADR-0003). Rows are append-only until `published`, then pruned.
+model OutboxEntry {
+  id          String    @id @db.Uuid
+  topic       String
+  key         String
+  contentType String    @map("content_type")
+  payload     Bytes
+  headers     Json
+  status      String // pending | published
+  tenantId    String?   @map("tenant_id")
+  producer    String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  publishedAt DateTime? @map("published_at")
+
+  @@index([status, createdAt]) // relay/CDC fetch order (OutboxStore contract)
+  @@index([createdAt]) // pruning
+  @@map("outbox")
+  @@schema("platform")
+}
+
+/// Consumer idempotency (inbox) — ADR-0005. One row per (consumer group, message); the
+/// unique PK **is** the atomic `recordIfNew` (INSERT … ON CONFLICT DO NOTHING).
+model ProcessedEvent {
+  consumerGroup String   @map("consumer_group")
+  messageId     String   @map("message_id") @db.Uuid
+  processedAt   DateTime @map("processed_at")
+
+  @@id([consumerGroup, messageId])
+  @@index([processedAt]) // retention sweep (port contract)
+  @@map("inbox_processed_events")
+  @@schema("platform")
+}
+
+/// Dead letters — original bytes + headers preserved verbatim for byte-identical replay.
+model DeadLetter {
+  id            String   @id @db.Uuid
+  messageId     String   @map("message_id") @db.Uuid
+  consumerGroup String   @map("consumer_group")
+  topic         String
+  value         Bytes
+  headers       Json
+  attempts      Int
+  error         String
+  failedAt      DateTime @map("failed_at")
+
+  @@index([consumerGroup, failedAt])
+  @@map("dead_letters")
+  @@schema("platform")
+}
+
+/// Immutable audit trail (ADR-0009). Append-only by contract — no update/delete path exists
+/// in any adapter; archival + hash chaining happen downstream.
+model AuditEvent {
+  id            String   @id @db.Uuid
+  principalId   String   @map("principal_id")
+  principalKind String   @map("principal_kind")
+  permission    String
+  decision      String // allow | deny
+  tenantId      String?  @map("tenant_id")
+  metadata      Json?
+  occurredAt    DateTime @map("occurred_at")
+
+  @@index([tenantId, occurredAt])
+  @@index([principalId, occurredAt])
+  @@map("audit_events")
+  @@schema("platform")
+}

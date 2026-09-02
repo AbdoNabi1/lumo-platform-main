@@ -1,0 +1,8 @@
+import type { TransactionalUnitOfWork } from "@platform/repository";
+
+/** In-memory unit of work — runs the work with a no-op transaction context. */
+export class InMemoryUnitOfWork implements TransactionalUnitOfWork<unknown> {
+  async run<T>(work: (context: unknown) => Promise<T>): Promise<T> {
+    return work(undefined);
+  }
+}

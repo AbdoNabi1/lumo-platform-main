@@ -1,0 +1,10 @@
+import { describe, expect, it } from "vitest";
+import { UniqueEntityId } from "@platform/domain";
+import { {{ pascalCase name }} } from "./{{ kebabCase name }}";
+
+describe("{{ pascalCase name }}", () => {
+  it("is created with a supplied identity", () => {
+    const entity = {{ pascalCase name }}.create(UniqueEntityId.from("{{ kebabCase name }}-1"), "example");
+    expect(entity.name).toBe("example");
+  });
+});

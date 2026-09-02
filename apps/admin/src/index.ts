@@ -1,0 +1,9 @@
+export { wireAdmin } from "./composition";
+export type { AdminWiringDeps, WiredAdmin } from "./composition";
+export type { AdminResponse } from "./interfaces/admin-response";
+export { ProductsAdminController } from "./interfaces/products.admin-controller";
+export { InventoryAdminController } from "./interfaces/inventory.admin-controller";
+export { OrdersAdminController } from "./interfaces/orders.admin-controller";
+export { CustomersAdminController } from "./interfaces/customers.admin-controller";
+export { PricingAdminController } from "./interfaces/pricing.admin-controller";
+export { createAdminHttpApi, type AdminHttpDeps } from "./http/server";

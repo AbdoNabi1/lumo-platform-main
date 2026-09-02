@@ -1,0 +1,62 @@
+// `inventory` schema — InventoryItem (+Reservation) (services/inventory).
+//
+// NOTE (G-7 / gap register): the write-hot path. When the reservation-ledger ADR lands,
+// `reservations` becomes the insert-only ledger and `on_hand`/`reserved` become maintained
+// counters — this shape is forward-compatible with that change.
+
+model InventoryItem {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  productRef  String   @map("product_ref") // bare id into Catalog — never an FK
+  warehouseId String   @map("warehouse_id")
+  onHand      Int      @map("on_hand")
+  reserved    Int
+  version     Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  reservations Reservation[]
+
+  @@unique([tenantId, productRef, warehouseId])
+  @@map("inventory_items")
+  @@schema("inventory")
+}
+
+/// `@@unique([tenantId, itemId, reference])` (Sprint A0 precondition, A3): closes the retried-saga-
+/// activity duplicate-reservation gap ahead of A3's own idempotency work landing. Additive on
+/// already-populated columns — deploy requires the pre-migration duplicate audit in
+/// `docs/implementation/SPRINT_A0_REPORT.md` (migration notes) to run first; see that report for
+/// the exact audit query. No business logic reads/writes against this constraint yet.
+model Reservation {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  itemId    String   @map("item_id") @db.Uuid
+  quantity  Int
+  reference String // cart/order ref (bare id)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, itemId, reference])
+  @@index([itemId])
+  @@index([tenantId, reference])
+  @@map("reservations")
+  @@schema("inventory")
+}
+
+/// Sprint 4.3 — lean warehouse registry (ADR-0013 scope: registry only, no stock columns here;
+/// stock stays on `InventoryItem` keyed `(tenant, product_ref, warehouse_id)`).
+model Warehouse {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  code      String
+  name      String
+  status    String   @default("active")
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, code])
+  @@map("warehouses")
+  @@schema("inventory")
+}

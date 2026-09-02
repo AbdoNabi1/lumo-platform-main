@@ -1,0 +1,271 @@
+# Horizontal autoscaling for the stateless/parallelizable workloads. CPU-based (utilisation is
+# relative to the pods' CPU requests). No HPA for the scheduler (singleton by design).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runtime-api
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: runtime-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runtime-worker
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: runtime-worker
+  minReplicas: 2
+  # Consumer parallelism is bounded by the topic's 6 partitions — never scale past useful readers.
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+# Disruption budgets keep availability during voluntary disruptions (node drains, upgrades).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: runtime-api
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: runtime-worker
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-worker
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-worker
+---
+# Singleton scheduler: allow the single pod to be evicted for node maintenance (it reschedules
+# and re-acquires the Redis lock). minAvailable:1 here would wedge drains.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: runtime-scheduler
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-scheduler
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-scheduler
+---
+# H-07: the collector is public-facing and stateless — same CPU-based scaling + disruption budget
+# shape as runtime-api.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: collector
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: collector
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: collector
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: collector
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: collector
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: collector
+---
+# M2-6: the storefront is public-facing and stateless — same CPU-based scaling + disruption budget
+# shape as runtime-api/collector.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: storefront
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: storefront
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: storefront
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: storefront
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: storefront
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: storefront
+---
+# Phase A.34: admin-web is public-facing and stateless (session lives in the JWT cookie, not
+# server memory) — same CPU-based scaling + disruption budget shape as storefront/runtime-api.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: admin-web
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: admin-web
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: admin-web
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: admin-web
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: admin-web
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: admin-web
+---
+# Phase A.34: Hydra/Kratos/Keto keep static replicas (71/72/73-*.yaml, 2 each) rather than HPA —
+# their load scales with admin-web's own bounded operator traffic, not customer-facing peaks
+# (contrast doc 15 §1.3's 50x Black-Friday planning, which is about storefront/checkout/runtime-api).
+# A disruption budget alone is what's needed to keep availability during node drains.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: hydra
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: hydra
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hydra
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kratos
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: kratos
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kratos
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: keto
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: keto
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keto

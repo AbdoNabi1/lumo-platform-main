@@ -1,0 +1,32 @@
+// `checkout` schema — CheckoutSession (services/checkout).
+//
+// Snapshot columns (items/addresses/selections/totals) are JSONB. `{}` (empty object) means
+// unset — never bare `null` — per the mapper's own convention (Sprint 4.6).
+
+model CheckoutSession {
+  id                String   @id @db.Uuid
+  tenantId          String   @map("tenant_id")
+  cartRef           String   @map("cart_ref") // bare id into Cart — never an FK
+  customerRef       String?  @map("customer_ref") // bare id into Identity — never an FK; null for a guest checkout
+  sessionRef        String   @map("session_ref") // bare session reference — present for guest and customer sessions alike
+  currency          String
+  state             String // started | locked | completed | failed | expired (domain-enforced)
+  orderRef          String?  @map("order_ref") // bare id into Orders — never an FK
+  items             Json     @default("[]")
+  billingAddress    Json     @default("{}") @map("billing_address")
+  shippingAddress   Json     @default("{}") @map("shipping_address")
+  shippingSelection Json     @default("{}") @map("shipping_selection")
+  paymentSelection  Json     @default("{}") @map("payment_selection")
+  taxMinor          Int?     @map("tax_minor")
+  discountMinor     Int?     @map("discount_minor")
+  totals            Json     @default("{}")
+  version           Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, cartRef])
+  @@index([tenantId, sessionRef])
+  @@index([tenantId, state])
+  @@map("checkout_sessions")
+  @@schema("checkout")
+}

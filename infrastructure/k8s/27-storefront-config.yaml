@@ -1,0 +1,23 @@
+# M2-6: non-secret runtime configuration for the storefront (apps/storefront/src/lib/runtime-api.ts
+# is the only reader of RUNTIME_API_URL/TENANT_DEFAULT_ID; Next.js itself reads PORT/NODE_ENV). Same
+# convention as 10-config.yaml / 25-collector-config.yaml: no secrets here, no invented keys — only
+# the storefront's actual, current env contract. The storefront has no credentialed dependencies, so
+# it has no matching Secret (unlike runtime-api/collector).
+#
+# RUNTIME_API_URL points at the Runtime API's in-cluster Service DNS (30-services.yaml) rather than
+# the code's `http://localhost:3080` fallback — that fallback exists only so `next dev`/`next build`
+# keep working before this ConfigMap exists (see runtime-api.ts's own comment); supplying the real
+# value here, not by hardcoding it in source, is what makes the storefront's production API target
+# config-driven.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lumo-storefront-config
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  RUNTIME_API_URL: "http://runtime-api.lumo-runtime.svc.cluster.local:3080"
+  TENANT_DEFAULT_ID: "tenant-local"

@@ -1,0 +1,22 @@
+// `automation` schema — AutomationWorkflow (services/automation). Orchestrates only — owns no
+// business entities; actions dispatch via ActionDispatcherPort.
+
+model AutomationWorkflow {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  name           String
+  triggerType    String   @map("trigger_type")
+  eventType      String?  @map("event_type")
+  cronExpression String?  @map("cron_expression")
+  actions        Json     @default("[]")
+  status         String // 4-value lifecycle union (domain-enforced, see WorkflowStatusValue)
+  /// Append-only execution history — embedded JSONB array on this row.
+  executions     Json     @default("[]")
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("automation_workflows")
+  @@schema("automation")
+}

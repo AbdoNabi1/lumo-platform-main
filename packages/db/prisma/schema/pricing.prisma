@@ -1,0 +1,76 @@
+// `pricing` schema — PriceList, Price (services/pricing).
+// Price ↔ PriceList are distinct aggregates: the reference is a bare indexed column, not an FK.
+
+model PriceList {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id")
+  name      String
+  currency  String
+  status    String // draft | active (domain-enforced)
+  version   Int       @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("price_lists")
+  @@schema("pricing")
+}
+
+model Price {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id")
+  productRef     String    @map("product_ref") // bare id into Catalog — never an FK
+  priceListRef   String?   @map("price_list_ref") @db.Uuid
+  amountMinor    Int       @map("amount_minor")
+  currency       String
+  compareAtMinor Int?      @map("compare_at_minor")
+  costMinor      Int?      @map("cost_minor")
+  effectiveFrom  DateTime? @map("effective_from")
+  effectiveTo    DateTime? @map("effective_to")
+  taxClassRef    String?   @map("tax_class_ref") @db.Uuid
+  status         String    @default("draft") // draft | published (domain-enforced)
+  version        Int       @default(0)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  @@index([tenantId, productRef])
+  @@index([tenantId, priceListRef])
+  @@map("prices")
+  @@schema("pricing")
+}
+
+/// Sprint 4.4 — tax classification only (Pricing computes no tax, ADR-0024).
+model TaxClass {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id")
+  code      String
+  name      String
+  version   Int       @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, code])
+  @@map("tax_classes")
+  @@schema("pricing")
+}
+
+/// Sprint 4.4 — list-price adjustment rule (determination only, never applied at checkout).
+model PricingRule {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  type      String // percentage | fixed_amount (domain-enforced)
+  value     Float
+  priority  Int
+  active    Boolean  @default(true)
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, priority])
+  @@map("pricing_rules")
+  @@schema("pricing")
+}

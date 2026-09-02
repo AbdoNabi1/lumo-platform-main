@@ -1,0 +1,88 @@
+# Ory Kratos — dev config (Runtime Platform boot). In-memory DSN (SQLite): no external DB,
+# migrations run at boot via `migrate sql -e --yes`. Session-based identity — the whoami
+# endpoint (public :4433 /sessions/whoami) is what KratosSessionAuthenticator calls (D-048).
+#
+# Phase A.34 — production posture: every value in this file can be overridden without editing
+# it, via Ory's built-in config-path env vars (ory/x/configx — same mechanism Hydra/Keto use):
+# the production k8s manifests (infrastructure/k8s/72-kratos.yaml) set DSN, SERVE_PUBLIC_BASE_URL,
+# SERVE_PUBLIC_CORS_ALLOWED_ORIGINS, SELFSERVICE_DEFAULT_BROWSER_RETURN_URL,
+# SELFSERVICE_ALLOWED_RETURN_URLS, SELFSERVICE_FLOWS_ERROR_UI_URL, SELFSERVICE_FLOWS_LOGIN_UI_URL,
+# SELFSERVICE_FLOWS_REGISTRATION_UI_URL, SESSION_COOKIE_DOMAIN, SESSION_COOKIE_SAME_SITE,
+# SECRETS_COOKIE, SECRETS_CIPHER, and HASHERS_BCRYPT_COST from real values/secrets — this file
+# stays the local-dev default and is never hand-edited per environment. `dsn: memory` below is
+# the LOCAL DEV default only; production sets DSN to a dedicated Postgres database (init script:
+# infrastructure/docker/postgres/init/01-roles-and-cdc.sql).
+version: v1.1.0
+
+dsn: memory
+
+# session.cookie.domain is unset (host-only cookie) for local dev — that's what lets Kratos's
+# cookie (set at :4433) reach admin-web at :3100 via RFC 6265 port-blindness (see login/page.tsx's
+# doc comment). Production, where Kratos and admin-web are genuinely different hosts, MUST set
+# SESSION_COOKIE_DOMAIN to the shared registrable parent domain (e.g. ".lumo.example.com") so the
+# browser sends this cookie to both — this only works if admin-web's own cookies (COOKIE_DOMAIN,
+# apps/admin-web/src/lib/auth/config.ts) are scoped to the SAME parent domain. If Kratos ever ends
+# up on a domain that shares no parent with admin-web, this login bridge needs a different
+# mechanism entirely (out of scope here — no such redesign was requested).
+session:
+  cookie:
+    same_site: Lax
+
+serve:
+  public:
+    base_url: http://localhost:4433/
+    cors:
+      enabled: true
+      allowed_origins:
+        - http://localhost:3100
+  admin:
+    base_url: http://localhost:4434/
+
+# Phase A.32: admin-web (port 3100, not Next.js's default 3000 — that's apps/storefront) is the
+# Kratos-backed login UI this self-service config points at.
+selfservice:
+  default_browser_return_url: http://localhost:3100/
+  allowed_return_urls:
+    - http://localhost:3100
+  methods:
+    password:
+      enabled: true
+  flows:
+    error:
+      ui_url: http://localhost:3100/error
+    login:
+      ui_url: http://localhost:3100/login
+    registration:
+      ui_url: http://localhost:3100/registration
+
+identity:
+  default_schema_id: default
+  schemas:
+    - id: default
+      url: file:///etc/config/kratos/identity.schema.json
+
+courier:
+  smtp:
+    connection_uri: smtp://mailpit:1025/?disable_starttls=true
+
+secrets:
+  cookie:
+    - dev-only-cookie-secret-change-me-32chars
+  cipher:
+    - 0123456789abcdef0123456789abcdef
+
+log:
+  level: warning
+  format: json
+
+ciphers:
+  algorithm: xchacha20-poly1305
+
+hashers:
+  algorithm: bcrypt
+  bcrypt:
+    # Phase A.34 (A.33 P0 #9): was 8 (OWASP-weak). 12 is OWASP's recommended floor for bcrypt in
+    # 2026 and applies to local dev too — there's no local-only reason to hash passwords weakly,
+    # and a single secure default means production can't forget to override it. Override via
+    # HASHERS_BCRYPT_COST if a specific environment needs a different value.
+    cost: 12

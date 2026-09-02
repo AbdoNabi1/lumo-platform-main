@@ -1,0 +1,125 @@
+# M2-6: the storefront had no Deployment/Service/Ingress anywhere in this directory and no image
+# build job — this manifest, its Service (30-services.yaml), Ingress (60-ingress.yaml), and
+# autoscaling (40-autoscaling.yaml) entries close that gap. Mirrors the collector Deployment's
+# structure (26-deployment-collector.yaml) exactly, which itself mirrors the runtime Deployments
+# (20-deployment-api.yaml): non-root, dropped capabilities, read-only rootfs, topology spread, PDB.
+#
+# Probes use `/` rather than `/healthz`/`/readyz`: apps/storefront has no API routes (Sprint 0.1
+# foundation shell — only layout.tsx + page.tsx), so no dedicated health endpoint exists yet. This
+# is not an invented shortcut — it is the SAME convention the image itself already uses (web.
+# Dockerfile's own HEALTHCHECK and docker-compose.yml's `web` service healthcheck both probe `/`).
+# Revisit once the storefront gains real routes and a dedicated health endpoint is worth adding.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: storefront
+    app.kubernetes.io/component: storefront
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: storefront
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/name: storefront
+        app.kubernetes.io/component: storefront
+    spec:
+      serviceAccountName: lumo-runtime
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001 # web.Dockerfile creates `nextjs` as uid 1001 (runtime/collector images use 1000)
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: storefront
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: storefront
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: storefront
+      containers:
+        - name: storefront
+          image: lumo-storefront:local # production: a registry-pushed, immutable tag or digest
+          imagePullPolicy: IfNotPresent
+          # No args override: web.Dockerfile's own CMD (node apps/storefront/server.js) is correct
+          # as-is (unlike runtime/collector, this image has no tini ENTRYPOINT to preserve here).
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: lumo-storefront-config
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

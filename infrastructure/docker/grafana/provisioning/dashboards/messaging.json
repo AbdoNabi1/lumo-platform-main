@@ -1,0 +1,113 @@
+{
+  "uid": "lumo-messaging",
+  "title": "Lumo — Messaging (Consumers)",
+  "tags": ["lumo", "messaging", "h-5"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Messaging Success (5m SLI)",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.99 },
+              { "color": "green", "value": 0.995 }
+            ]
+          }
+        }
+      },
+      "targets": [{ "expr": "sli:messaging_success:ratio5m", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Dead-Letter Rate",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.001 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(messaging_messages_dead_lettered_total{job=\"lumo-runtime\"}[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Duplicate (Inbox) Rate",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "cps" } },
+      "targets": [
+        {
+          "expr": "sum(rate(messaging_messages_duplicate_total{job=\"lumo-runtime\"}[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Processed vs Failed vs Retried by Topic",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "cps" } },
+      "targets": [
+        {
+          "expr": "sum by (topic) (rate(messaging_messages_processed_total{job=\"lumo-runtime\"}[5m]))",
+          "legendFormat": "processed {{topic}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (topic) (rate(messaging_messages_failed_total{job=\"lumo-runtime\"}[5m]))",
+          "legendFormat": "failed {{topic}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (topic) (rate(messaging_messages_retried_total{job=\"lumo-runtime\"}[5m]))",
+          "legendFormat": "retried {{topic}}",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Avg Processing Duration by Topic (ms)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        {
+          "expr": "sum by (topic) (rate(messaging_process_duration_ms_sum{job=\"lumo-runtime\"}[5m])) / clamp_min(sum by (topic) (rate(messaging_messages_processed_total{job=\"lumo-runtime\"}[5m])), 1)",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

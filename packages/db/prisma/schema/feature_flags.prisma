@@ -1,0 +1,23 @@
+// `feature_flags` schema — FeatureFlag (services/feature-flags). The production implementation of
+// the @platform/feature-flags contract — extends it, never duplicates it.
+
+model FeatureFlag {
+  id                String   @id @db.Uuid
+  tenantId          String   @map("tenant_id")
+  key               String
+  name              String
+  description       String?
+  status            String // 3-value lifecycle union (domain-enforced, see FlagStatusValue)
+  environments      Json     @default("[]")
+  rules             Json     @default("[]")
+  rolloutPercentage Int      @default(0) @map("rollout_percentage")
+  /// Append-only config/lifecycle audit log — embedded JSONB array on this row.
+  changes           Json     @default("[]")
+  version           Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, key])
+  @@map("feature_flags")
+  @@schema("feature_flags")
+}

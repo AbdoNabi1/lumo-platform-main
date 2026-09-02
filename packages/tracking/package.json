@@ -1,0 +1,31 @@
+{
+  "name": "@platform/tracking",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Universal Event & Tracking Platform (ADR-0032) — Platform Foundation. Owns the one event schema, consent gate, identity/attribution context and cross-emitter dedup. Imports no bounded context; the only component permitted to emit tracking events to a vendor.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@platform/expression": "workspace:*",
+    "@platform/messaging": "workspace:*",
+    "@platform/rules": "workspace:*"
+  },
+  "devDependencies": {
+    "@platform/eslint-config": "workspace:*",
+    "@platform/tsconfig": "workspace:*",
+    "@vitest/coverage-v8": "^2.1.4",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

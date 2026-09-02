@@ -1,0 +1,13 @@
+-- Production Integration Verification Sprint — Outbox CDC wiring gap.
+--
+-- infrastructure/docker/postgres/init/01-roles-and-cdc.sql creates the `lumo_outbox` publication
+-- empty and says, in its own comment, that "platform.outbox is added by migration #2 right after
+-- the initial Prisma migration creates it: ALTER PUBLICATION lumo_outbox ADD TABLE
+-- platform.outbox;" -- but no migration ever did this. Verified live against a fresh Postgres 16 +
+-- all prior migrations applied: `select * from pg_publication_tables where pubname='lumo_outbox'`
+-- returned zero rows. Debezium's connector (infrastructure/docker/debezium/outbox-connector.json,
+-- infrastructure/k8s/70-debezium.yaml) subscribes to this publication by name (`publication.name:
+-- lumo_outbox`) — with the table never added, Debezium would never see a single outbox row in any
+-- environment, in production or locally. This is CDC plumbing only (MIGRATIONS.md §3 category):
+-- no schema, column, or application-visible change.
+ALTER PUBLICATION lumo_outbox ADD TABLE platform.outbox;

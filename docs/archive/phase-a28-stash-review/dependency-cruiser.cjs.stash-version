@@ -1,0 +1,232 @@
+/**
+ * Architecture fitness functions (docs/architecture/02, docs/development/WORKSPACE_GUIDE.md).
+ * Enforces the dependency direction `domain ← application ← messaging ← infrastructure`, the
+ * leaf/port boundaries, the public-entry import rule, and the absence of cycles. Run with
+ * `pnpm arch`; runs in CI.
+ *
+ * @type {import('dependency-cruiser').IConfiguration}
+ */
+module.exports = {
+  forbidden: [
+    {
+      name: "no-circular",
+      severity: "error",
+      comment:
+        "Runtime circular dependencies are forbidden. Type-only cycles (erased at compile time, e.g. a barrel re-export importing its own type back) are tolerated.",
+      from: {},
+      to: { circular: true, viaOnly: { dependencyTypesNot: ["type-only"] } },
+    },
+    {
+      name: "no-deep-package-imports",
+      severity: "error",
+      comment:
+        "Import a workspace package via its public entry (`@platform/<pkg>` or a declared subpath such as `/testing`), never a deep internal `src/*` path.",
+      from: { path: "^(packages|services)/([^/]+)/" },
+      to: {
+        path: "^(packages|services)/([^/]+)/src/",
+        pathNot: [
+          "^$1/$2/", // same package — relative imports are fine
+          "(^|/)src/index\\.ts$", // the public entry
+          "/src/[^/]+/index\\.ts$", // a declared subpath entry (e.g. `/testing`)
+        ],
+      },
+    },
+    {
+      name: "domain-stays-pure",
+      severity: "error",
+      comment:
+        "Domain depends only on the kernel (`@platform/types`, `@platform/utils`) and the shared `@platform/domain` building blocks — never application, messaging, contracts, or infrastructure.",
+      from: { path: "(^packages/domain/src/)|(^services/[^/]+/src/domain/)" },
+      to: {
+        path: "^(packages|services)/",
+        pathNot: [
+          "^packages/(types|utils|domain)/src/",
+          "(^packages/domain/src/)|(^services/[^/]+/src/domain/)",
+        ],
+      },
+    },
+    {
+      name: "application-no-messaging-no-infra",
+      severity: "error",
+      comment:
+        "Application must not import `@platform/messaging` or any infrastructure adapter — it depends on domain + ports only (Dependency Inversion).",
+      from: { path: "(^packages/application/src/)|(^services/[^/]+/src/application/)" },
+      to: {
+        path: "^packages/(messaging|db|kafka|redis|clickhouse|storage|secrets|observability|health|id|clock)/src/",
+      },
+    },
+    {
+      name: "messaging-no-application-no-infra",
+      severity: "error",
+      comment:
+        "Messaging sits above application and below infrastructure: it must not import the application layer or any infrastructure adapter.",
+      from: { path: "^packages/messaging/src/" },
+      to: {
+        path: "^packages/(application|db|kafka|redis|clickhouse|storage|secrets|observability|health|id|clock)/src/",
+      },
+    },
+    {
+      name: "packages-never-import-apps-or-services",
+      severity: "error",
+      comment: "Shared packages must never import from `apps/`, `services/`, or `edge/`.",
+      from: { path: "^packages/" },
+      to: { path: "^(apps|services|edge)/" },
+    },
+    {
+      name: "no-cross-service-internals",
+      severity: "error",
+      comment:
+        "A service may not import another service's internals — only shared `@platform/*` packages (and, later, `@platform/domain-events` / `@platform/api-clients`).",
+      from: { path: "^services/([^/]+)/" },
+      to: {
+        path: "^services/([^/]+)/src/",
+        pathNot: ["^services/$1/"],
+      },
+    },
+    {
+      name: "feature-definitions-only-via-registry",
+      severity: "error",
+      comment:
+        "Feature Registry FREEZE (ADR-0028, P1.1.2): no bounded context imports Feature Definitions/Bundles/CapabilityGraph directly. Access to feature capabilities must go through the Feature Registry public port (`@platform/feature-registry` barrel) or the Registry Engine (`@platform/registry`). This rule is redundant with `no-cross-service-internals` today but is pinned permanently so the boundary survives future refactors.",
+      from: { pathNot: "^services/feature-registry/" },
+      to: { path: "^services/feature-registry/src/(domain|infrastructure|application)/" },
+    },
+
+    // -----------------------------------------------------------------------
+    // FF-ARCH-10..15 — Universal Tracking Platform layering (frozen at P5.5/M7;
+    // docs/implementation/ARCHITECTURE_GOVERNANCE.md documents every rule and why it exists).
+    // -----------------------------------------------------------------------
+    //
+    // Browser SDK, Collector, Execution Runtime and Delivery Runtime (`runtime/`) already communicate
+    // ONLY through the published event bridge (`tracking.event.captured`) or injected ports — never
+    // through a direct import of one another (see each area's own module docs: `sdk.ts`'s "never call
+    // a vendor" note, `collector.ts`'s "the one bridge is the topic", `install.ts`'s "the only file
+    // that knows browser globals exist"). That decoupling already existed in the code; these rules
+    // make regressing it a build failure instead of something that only a reviewer might catch.
+    //
+    // The one deliberate exception is `runtime -> execution`: the Delivery Runtime is the orchestrator
+    // that calls the Execution Planner/Pipeline library (`execute()`), so it legitimately imports it —
+    // an orchestrator importing a library it invokes is normal and is not a "shortcut". No other cross
+    // edge among these five areas is legitimate, including the reverse (`execution -> runtime`), which
+    // would mean a library depending on its own caller.
+    {
+      name: "ff-arch-10-browser-sdk-boundary",
+      severity: "error",
+      comment:
+        "FF-ARCH-10: the Browser SDK must never import the Delivery Runtime, the Execution Runtime, the Registry (definitions/), Replay or Delivery (mapping/adapters). It knows only the Collector's HTTP contract.",
+      from: { path: "^packages/tracking/src/browser/" },
+      to: { path: "^packages/tracking/src/(runtime|execution|definitions|replay|delivery)/" },
+    },
+    {
+      name: "ff-arch-11-collector-boundary",
+      severity: "error",
+      comment:
+        "FF-ARCH-11: the Collector must never import the Browser SDK. It is a server-side, unauthenticated public endpoint; the SDK is untrusted client code and the two never share a process.",
+      from: { path: "^packages/tracking/src/collector/" },
+      to: { path: "^packages/tracking/src/browser/" },
+    },
+    {
+      name: "ff-arch-12-execution-runtime-boundary",
+      severity: "error",
+      comment:
+        "FF-ARCH-12: the Execution Runtime (Planner + Pipeline Executor) must never import the Browser SDK. It runs entirely server-side on an already-captured envelope and has no reason to reach into client code.",
+      from: { path: "^packages/tracking/src/execution/" },
+      to: { path: "^packages/tracking/src/browser/" },
+    },
+    {
+      name: "ff-arch-13-delivery-runtime-boundary",
+      severity: "error",
+      comment:
+        "FF-ARCH-13: the Delivery Runtime (`runtime/` — ingest, delivery, replay orchestration) must never import the Collector or the Browser SDK. It receives envelopes over the published topic, never by calling the Collector directly, and has no reason to touch client code.",
+      from: { path: "^packages/tracking/src/runtime/" },
+      to: { path: "^packages/tracking/src/(collector|browser)/" },
+    },
+    {
+      name: "ff-arch-14-cdp-boundary",
+      severity: "error",
+      comment:
+        "FF-ARCH-14: the Customer Data Platform must never deep-import the Browser SDK, the Collector or the Delivery Runtime. Matches zero files until `packages/cdp` exists — the rule activates automatically the day it is created, with no governance edit required. Symbol-level enforcement (CDP importing a browser/collector/runtime-originating export via the `@platform/tracking` barrel, which this path-based rule cannot see) is FF-ARCH-14's other half, in `scripts/governance/run.mjs`'s `checkCdpBarrelBoundary` — see ARCHITECTURE_GOVERNANCE.md.",
+      from: { path: "^packages/cdp/" },
+      to: { path: "^packages/tracking/src/(browser|collector|runtime)/" },
+    },
+    {
+      name: "ff-arch-15-browser-collector-shortcut",
+      severity: "error",
+      comment:
+        "FF-ARCH-15 (no package may bypass the Execution Runtime): the Browser SDK must never import the Collector either. They communicate over HTTP, never by import — the Collector call is itself the boundary, not a shortcut around it.",
+      from: { path: "^packages/tracking/src/browser/" },
+      to: { path: "^packages/tracking/src/collector/" },
+    },
+    {
+      name: "ff-arch-15-collector-shortcut",
+      severity: "error",
+      comment:
+        "FF-ARCH-15: the Collector must never import the Execution Runtime or the Delivery Runtime directly — doing so would let it perform (or trigger) processing the published event topic exists to hand off, bypassing the one place that processing is supposed to happen.",
+      from: { path: "^packages/tracking/src/collector/" },
+      to: { path: "^packages/tracking/src/(execution|runtime)/" },
+    },
+    {
+      name: "ff-arch-15-execution-runtime-shortcut",
+      severity: "error",
+      comment:
+        "FF-ARCH-15: the Execution Runtime must never import the Collector, and must never import the Delivery Runtime (`runtime/`) — the reverse of the one legitimate edge (`runtime` imports `execution`, its orchestrator calling the library it invokes). A library depending on its own caller is a shortcut, not a layer.",
+      from: { path: "^packages/tracking/src/execution/" },
+      to: { path: "^packages/tracking/src/(collector|runtime)/" },
+    },
+    {
+      name: "ff-arch-15-cdp-execution-shortcut",
+      severity: "error",
+      comment:
+        "FF-ARCH-15: the Customer Data Platform must never import the Execution Runtime either, beyond what FF-ARCH-14 already forbids (Browser SDK/Collector/Delivery Runtime) — CDP consumes what the Delivery Runtime produces, never the planning engine that produced it.",
+      from: { path: "^packages/cdp/" },
+      to: { path: "^packages/tracking/src/execution/" },
+    },
+    {
+      name: "ff-arch-15-tracking-never-imports-cdp",
+      severity: "error",
+      comment:
+        "FF-ARCH-15: nothing in the Universal Tracking Platform may import the Customer Data Platform — CDP is the terminal consumer of the flow (Browser SDK -> Collector -> Execution Runtime -> Delivery Runtime -> CDP); no upstream layer depends on it. Matches zero files until `packages/cdp` exists.",
+      from: { path: "^packages/tracking/" },
+      to: { path: "^packages/cdp/" },
+    },
+
+    // -----------------------------------------------------------------------
+    // FF-ARCH-17 — Friend Package Protection (docs/implementation/ARCHITECTURE_GOVERNANCE.md).
+    // -----------------------------------------------------------------------
+    //
+    // `no-deep-package-imports` (above) already forbids importing anything under a package's `src/`
+    // other than its declared public entry — EXCEPT a declared subpath entry (its own exemption,
+    // `/src/[^/]+/index\.ts$`, added for legitimate cases like `/testing`). That exemption is exactly
+    // the hole this rule closes for a specific, reserved class of directory: `internal/`, `private/`
+    // and `implementation/` (at any depth under `src/`) are never part of a package's public contract,
+    // no matter what a future `package.json#exports` entry might declare. Only code inside the SAME
+    // package may reach them (`pathNot` mirrors `no-deep-package-imports`'s own same-package carve-out)
+    // — every other package must go through the public barrel (`@platform/<pkg>`).
+    {
+      name: "ff-arch-17-friend-package-protection",
+      severity: "error",
+      comment:
+        "FF-ARCH-17: internal/private/implementation directories are never part of a package's public contract, regardless of any declared subpath export. Only same-package (relative) imports may reach them — every other package must import the public barrel (`@platform/<pkg>`), never `@platform/<pkg>/internal` or a deep path into it.",
+      from: { path: "^(packages|services|apps)/([^/]+)/" },
+      to: {
+        // Matches `src/internal/...` AND `src/<area>/internal/...` (one directory of nesting, e.g.
+        // `execution/internal`, `browser/internal`) without a `*`/`+` repetition on top of `[^/]+` —
+        // dependency-cruiser's `safe-regex` check rejects `(?:[^/]+/)*` as an unbounded nested
+        // quantifier even though it cannot actually backtrack ambiguously here. Two explicit
+        // alternatives cover every example this rule names and stay within that check's comfort zone.
+        path: "^(packages|services|apps)/[^/]+/src/(?:internal|private|implementation)(?:/|$)|^(packages|services|apps)/[^/]+/src/[^/]+/(?:internal|private|implementation)(?:/|$)",
+        pathNot: ["^$1/$2/"],
+      },
+    },
+  ],
+  options: {
+    tsPreCompilationDeps: "specify",
+    doNotFollow: { path: "node_modules" },
+    exclude: { path: "\\.(test|spec)\\.ts$" },
+    enhancedResolveOptions: {
+      exportsFields: ["exports"],
+      conditionNames: ["import", "require", "types", "default"],
+      mainFields: ["module", "main", "types"],
+    },
+  },
+};

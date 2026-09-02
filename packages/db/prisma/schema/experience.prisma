@@ -1,0 +1,20 @@
+// `experience` schema — Experience (services/experience). Owns layouts (Canvas→Section→Slot→
+// ComponentInstance); references Components/Content/Theme only by ref.
+
+model Experience {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  name           String
+  experienceType String   @map("experience_type")
+  sections       Json     @default("[]")
+  status         String // draft | published | archived (domain-enforced, see ExperienceStatusValue)
+  /// Append-only published-version history — embedded JSONB array on this row.
+  versions       Json     @default("[]")
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("experiences")
+  @@schema("experience")
+}

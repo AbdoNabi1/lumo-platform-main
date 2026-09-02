@@ -1,0 +1,74 @@
+// `orders` schema — Order (+OrderItem, +OrderEvent) (services/orders).
+// Order status is DERIVED from the append-only `order_events` history (never a column) —
+// the financial record is the events, exactly like the aggregate (docs/architecture/03).
+
+model Order {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  orderNumber    String   @map("order_number")
+  customerRef    String   @map("customer_ref") // bare id into Identity — never an FK
+  currency       String
+  checkoutRef    String?  @map("checkout_ref") // bare id into Checkout — never an FK
+  paymentRef     String?  @map("payment_ref") // bare id into Payments — never an FK
+  fulfillmentRef String?  @map("fulfillment_ref") // bare id into Fulfillment/Shipping — never an FK
+  billingAddress Json?    @map("billing_address")
+  totals         Json?
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  items  OrderItem[]
+  events OrderEvent[]
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId, customerRef, createdAt])
+  @@map("orders")
+  @@schema("orders")
+}
+
+/// Immutable product snapshot at order time (ADR-0001 trade-offs): no live Catalog reference.
+model OrderItem {
+  id                   String @id @db.Uuid
+  tenantId             String @map("tenant_id")
+  orderId              String @map("order_id") @db.Uuid
+  productRef           String @map("product_ref") // snapshot of the bare id — never an FK
+  name                 String
+  unitPriceAmountMinor Int    @map("unit_price_amount_minor")
+  quantity             Int
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("order_items")
+  @@schema("orders")
+}
+
+/// Append-only lifecycle history. Legacy placed → paid → refunded, or the full Sprint 4.7
+/// lifecycle (created → ... → closed). Never updated, never deleted.
+model OrderEvent {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  orderId    String   @map("order_id") @db.Uuid
+  type       String // 21-value lifecycle union (domain-enforced, see OrderEventType)
+  occurredAt DateTime @map("occurred_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, occurredAt])
+  @@map("order_events")
+  @@schema("orders")
+}
+
+/// Shipping-address snapshot, one owned row per order — kept off the hot `orders` row so
+/// address PII stays isolated (simpler encryption/erasure scope) and order scans stay narrow.
+model OrderShippingAddress {
+  orderId    String @id @map("order_id") @db.Uuid
+  tenantId   String @map("tenant_id")
+  line1      String
+  city       String
+  postalCode String @map("postal_code")
+  country    String
+
+  @@map("order_shipping_addresses")
+  @@schema("orders")
+}

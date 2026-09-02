@@ -1,0 +1,57 @@
+// `fulfillment` schema — FulfillmentOrder (services/fulfillment). Source of truth for how an order
+// is fulfilled and shipped (carrier reference, tracking, packages, delivery status, attempts).
+// Carrier-agnostic: `carrier_reference` identifies the shipment at whichever carrier
+// `ShippingProviderPort` was configured for, never a provider-specific table.
+
+model FulfillmentOrder {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  orderRef  String   @map("order_ref") // bare id into Orders — never an FK
+  items     Json // FulfillmentItem[] snapshot: [{ productRef, quantity }]
+  status    String // 18-value lifecycle union (domain-enforced, see FulfillmentStatusValue)
+  /// `{}`-means-unset (Sprint 4.6/4.8 convention) — never actually NULL.
+  carrierReference  Json      @default("{}") @map("carrier_reference")
+  trackingNumber    String?   @map("tracking_number")
+  packages          Json      @default("[]")
+  deliveredAt       DateTime? @map("delivered_at")
+  version           Int       @default(0)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  attempts FulfillmentAttempt[]
+
+  @@index([tenantId, orderRef])
+  @@index([tenantId, status])
+  @@map("fulfillment_orders")
+  @@schema("fulfillment")
+}
+
+/// Append-only lifecycle-attempt log (Sprint 4.9) — retry-safe observability trail, never rewritten.
+model FulfillmentAttempt {
+  id                 String   @id @db.Uuid
+  tenantId           String   @map("tenant_id")
+  fulfillmentOrderId String   @map("fulfillment_order_id") @db.Uuid
+  kind               String
+  outcome            String
+  reference          String?
+  occurredAt         DateTime @map("occurred_at")
+
+  fulfillmentOrder FulfillmentOrder @relation(fields: [fulfillmentOrderId], references: [id], onDelete: Restrict)
+
+  @@index([fulfillmentOrderId])
+  @@map("fulfillment_attempts")
+  @@schema("fulfillment")
+}
+
+/// Replay-safe carrier-webhook dedup (Sprint 4.9) — unique per (tenant, carrier, webhook_event_id).
+model ProcessedCarrierWebhook {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  carrier        String
+  webhookEventId String   @map("webhook_event_id")
+  receivedAt     DateTime @default(now()) @map("received_at")
+
+  @@unique([tenantId, carrier, webhookEventId])
+  @@map("processed_carrier_webhooks")
+  @@schema("fulfillment")
+}

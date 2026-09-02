@@ -1,0 +1,19 @@
+{
+  "path": ["packages", "services", "apps"],
+  "format": ["typescript"],
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.next/**",
+    "**/.turbo/**",
+    "**/*.test.ts",
+    "**/*.d.ts",
+    "**/migrations/**"
+  ],
+  "minTokens": 60,
+  "minLines": 8,
+  "reporters": ["console"],
+  "absolute": true,
+  "gitignore": true,
+  "threshold": 3.2
+}

@@ -1,0 +1,20 @@
+# @platform/{{ kebabCase name }}
+
+## Purpose
+
+{{ description }}
+
+## Architecture
+
+Framework-free shared package. Public API is the single `src/index.ts` entry; import it as
+`@platform/{{ kebabCase name }}` (never a deep `src/*` path — enforced by `pnpm arch`).
+
+## Dependencies
+
+_None yet_ — add workspace dependencies in `package.json` as needed, respecting the dependency
+direction `domain ← application ← messaging ← infrastructure`.
+
+## Extension points
+
+Replace the sample export in `src/index.ts` with the package's real public API and keep its tests
+alongside (`*.test.ts`).

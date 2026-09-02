@@ -1,0 +1,196 @@
+# Phase A.34 (A.33 P0 #1/#2/#10) — production deployment for Ory Hydra (OAuth2/OIDC). Closes the
+# gap A.33 found: no k8s manifest existed for Hydra at all, and it ran `--dev` + `dsn: memory`
+# everywhere. This mounts the SAME infrastructure/docker/hydra/hydra.yml local-dev config (via
+# kustomize's configMapGenerator in kustomization.yaml) — one file, not two that can drift — and
+# overrides it for production via Ory's built-in config-path env vars (URLS_SELF_ISSUER,
+# URLS_LOGIN, URLS_CONSENT, DSN, SECRETS_SYSTEM), same mechanism hydra.yml's own header documents.
+#
+# `serve all` (NOT `--dev`): --dev relaxes HTTPS-issuer enforcement and the secret-length check —
+# both are exactly the production risks A.33 flagged. Without --dev, Hydra also stops
+# auto-migrating on boot, which is why the Job below exists.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lumo-hydra-config
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: hydra
+data:
+  # Must equal AUTH_ISSUER_URL everywhere admin-web/runtime verify the JWT `iss` claim
+  # (10-config.yaml, 76-admin-web-config.yaml) — same value, not independently chosen here.
+  URLS_SELF_ISSUER: "https://auth.lumo.example.com/"
+  URLS_LOGIN: "https://admin.lumo.example.com/login"
+  URLS_CONSENT: "https://admin.lumo.example.com/consent"
+  LOG_LEVEL: "info"
+---
+# One-shot schema migration — the k8s equivalent of the compose stack's `--dev` auto-migrate,
+# which production deliberately does not use. Idempotent (`migrate sql` no-ops on an
+# already-current schema); re-run safely on every rollout via Helm/ArgoCD pre-sync hook or by
+# `kubectl apply`-ing this Job before the Deployment on first install.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hydra-migrate
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: hydra
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/name: hydra
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: oryd/hydra:v2.2.0 # same tag as infrastructure/docker/docker-compose.yml
+          command: ["hydra", "migrate", "sql", "-e", "--yes", "-c", "/etc/config/hydra/hydra.yml"]
+          envFrom:
+            - secretRef:
+                name: lumo-hydra-secrets # DSN, SECRETS_SYSTEM
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config/hydra
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: hydra-file-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hydra
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: hydra
+    app.kubernetes.io/component: identity
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hydra
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/name: hydra
+        app.kubernetes.io/component: identity
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4445"
+        prometheus.io/path: "/metrics/prometheus"
+    spec:
+      serviceAccountName: lumo-runtime
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: hydra
+      containers:
+        - name: hydra
+          image: oryd/hydra:v2.2.0
+          imagePullPolicy: IfNotPresent
+          command: ["hydra", "serve", "all", "-c", "/etc/config/hydra/hydra.yml"]
+          ports:
+            - name: public
+              containerPort: 4444
+            - name: admin
+              containerPort: 4445
+          envFrom:
+            - configMapRef:
+                name: lumo-hydra-config
+            - secretRef:
+                name: lumo-hydra-secrets
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: admin
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/alive
+              port: admin
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: admin
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: "1"
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config/hydra
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: hydra-file-config
+---
+# Public OAuth2 endpoints only (4444) go through the Ingress (74-ingress-identity.yaml). The admin
+# API (4445 — client/login/consent management, ZERO auth of its own by Ory's own design) is
+# reachable only in-cluster, via this Service, from admin-web's pods (50-networkpolicy.yaml)  —
+# never through the public Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hydra
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: hydra
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: hydra
+  ports:
+    - name: public
+      port: 4444
+      targetPort: public
+    - name: admin
+      port: 4445
+      targetPort: admin

@@ -1,0 +1,142 @@
+# H-5 — Production alerting rules. Every alert references a metric the platform actually exposes
+# and carries a runbook link (docs/operations/RUNBOOKS.md#<anchor>). Severities: page = wake a human,
+# ticket = handle in business hours.
+groups:
+  - name: lumo-availability
+    rules:
+      - alert: RuntimeProcessDown
+        expr: up{job="lumo-runtime"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "Runtime {{ $labels.component }} is down"
+          description: "Prometheus cannot scrape {{ $labels.instance }} (component={{ $labels.component }}) for 2m."
+          runbook: "docs/operations/RUNBOOKS.md#runtime-process-down"
+
+      - alert: RuntimeNotReady
+        expr: runtime_ready == 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Runtime {{ $labels.component }} reporting NOT ready"
+          description: "readiness probe has reported unhealthy for 5m — a critical dependency is down."
+          runbook: "docs/operations/RUNBOOKS.md#runtime-not-ready"
+
+      - alert: DependencyDown
+        expr: runtime_dependency_up == 0
+        for: 3m
+        labels: { severity: page }
+        annotations:
+          summary: "Dependency {{ $labels.name }} unavailable"
+          description: "{{ $labels.component }} reports dependency '{{ $labels.name }}' down for 3m."
+          runbook: "docs/operations/RUNBOOKS.md#dependency-down"
+
+  - name: lumo-slo
+    rules:
+      # Fast burn: 14.4x over 1h exhausts a 30-day budget in ~2 days — page.
+      - alert: ApiErrorBudgetFastBurn
+        expr: slo:api_error_budget:burn5m > 14.4 and slo:api_error_budget:burn1h > 14.4
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "API error budget burning fast (>14.4x)"
+          description: "5xx error ratio is consuming the 99.9% availability budget 14.4x too fast."
+          runbook: "docs/operations/RUNBOOKS.md#api-error-budget-burn"
+
+      # Slow burn: 3x over 1h — ticket, investigate before it accelerates.
+      - alert: ApiErrorBudgetSlowBurn
+        expr: slo:api_error_budget:burn1h > 3
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "API error budget burning (>3x)"
+          description: "Sustained elevated 5xx ratio against the availability SLO."
+          runbook: "docs/operations/RUNBOOKS.md#api-error-budget-burn"
+
+      - alert: ApiLatencyBudgetBreached
+        expr: sli:api_latency_ms:avg5m > 300
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "API average latency above 300ms budget"
+          description: '5m average request handling time is {{ $value | printf "%.0f" }}ms (budget 300ms).'
+          runbook: "docs/operations/RUNBOOKS.md#api-latency"
+
+  - name: lumo-messaging
+    rules:
+      - alert: MessagingDeadLettering
+        expr: rate(messaging_messages_dead_lettered_total{job="lumo-runtime"}[10m]) > 0
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Messages dead-lettering on {{ $labels.topic }}"
+          description: "Consumer group {{ $labels.group }} is dead-lettering {{ $labels.topic }} — poison messages or a broken handler."
+          runbook: "docs/operations/RUNBOOKS.md#messaging-dead-letter"
+
+      - alert: MessagingSuccessSloBreached
+        expr: sli:messaging_success:ratio5m < 0.995
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Messaging success below 99.5% SLO"
+          description: "Processed/dead-lettered ratio dropped below the messaging SLO."
+          runbook: "docs/operations/RUNBOOKS.md#messaging-dead-letter"
+
+  - name: lumo-saturation
+    rules:
+      - alert: RuntimeHighMemory
+        expr: process_resident_memory_bytes{job="lumo-runtime"} > 480 * 1024 * 1024
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Runtime {{ $labels.component }} memory near the 512Mi limit"
+          description: "RSS above 480Mi for 10m — risk of OOMKill against the container limit."
+          runbook: "docs/operations/RUNBOOKS.md#high-memory"
+
+  - name: lumo-cdc
+    rules:
+      # Phase A.23: the CDC watchdog (apps/runtime/src/scheduler.ts) restarts a FAILED Kafka Connect
+      # task automatically — A.22 proved that restart always works and loses zero events, so a task
+      # staying FAILED long enough to page means either the watchdog itself is down (KAFKA_CONNECT_URL
+      # is misconfigured, or Connect can't be reached) or its restart cap (Case D) was hit, i.e. this
+      # is no longer a transient outage the platform can self-heal. `for: 3m` is 6 watchdog polls at the default
+      # 30s interval — long enough that the watchdog has certainly already tried and failed.
+      - alert: CdcConnectorTaskFailed
+        expr: cdc_connector_task_failed == 1
+        for: 3m
+        labels: { severity: page }
+        annotations:
+          summary: "CDC connector task {{ $labels.connector }}/{{ $labels.task }} stuck FAILED"
+          description: "Kafka Connect task has reported FAILED for 3m — the watchdog either hasn't restarted it yet or its restart cap was reached (see CdcWatchdogRestartCapReached)."
+          runbook: "docs/operations/RUNBOOKS.md#cdc-connector-task-failed"
+
+      - alert: CdcWatchdogRestartCapReached
+        expr: increase(cdc_watchdog_restarts_skipped_total[1h]) > 0
+        for: 0m
+        labels: { severity: page }
+        annotations:
+          summary: "CDC watchdog gave up restarting {{ $labels.connector }}/{{ $labels.task }}"
+          description: "The watchdog's rolling-window restart cap (Task 4 Case D) was reached — automatic recovery has stopped for this task; it needs a human (or a config-level fix) now."
+          runbook: "docs/operations/RUNBOOKS.md#cdc-watchdog-restart-cap-reached"
+
+  - name: lumo-security
+    rules:
+      # Requires the OTel pipeline (H-4). Absent metric → no alert, which is correct here.
+      - alert: ElevatedFailedLogins
+        expr: sum(rate(failed_logins[5m])) > 5
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Elevated failed login rate"
+          description: "Failed logins exceeding 5/s for 5m — possible credential-stuffing."
+          runbook: "docs/operations/RUNBOOKS.md#failed-logins"
+
+      - alert: AuthorizationLatencyHigh
+        expr: |
+          histogram_quantile(0.95, sum(rate(authorization_latency_bucket[5m])) by (le)) > 150
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Authorization p95 latency above 150ms"
+          description: "Zero-trust decision latency degraded — check Keto/registry cache."
+          runbook: "docs/operations/RUNBOOKS.md#authorization-latency"

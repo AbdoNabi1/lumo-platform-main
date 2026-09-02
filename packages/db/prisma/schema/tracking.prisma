@@ -1,0 +1,131 @@
+// `tracking` schema — the immutable Event Record store (@platform/tracking, ADR-0032, M6).
+//
+// This is a **SYSTEM OF RECORD, not telemetry.** Replay re-sends the stored business payload rather
+// than re-deriving it, so losing a row does not degrade observability — it permanently and silently
+// destroys the ability to replay that event. Operate it with ledger seriousness: replicated, in
+// backup/restore with a *tested* restore, retained at least as long as the longest replay window.
+//
+// ## Why two tables instead of one mutable row
+//
+// The domain contract is append-only: `EventRecordWriterPort` has an `append` and an `appendHistory`
+// and deliberately no `update`. A single row updated as deliveries progress would satisfy the
+// contract's shape while violating its intent — the prior state would be gone, and with it the
+// forensic history replay depends on. So:
+//
+//   - `tracking_event_records` — written ONCE per event, at capture, before any vendor call. Holds
+//     the frozen envelope, consent/identity/attribution snapshots and pinned processing versions.
+//   - `tracking_event_revisions` — one INSERT per subsequent fact (stage outcomes, delivery
+//     attempts, state transitions). A read folds the base row with its revisions in sequence order.
+//
+// Neither table is ever UPDATEd. `revision_seq` orders the fold; `(event_id, revision_seq)` is
+// unique, so a concurrent double-write collides rather than silently interleaving.
+//
+// ## What is deliberately absent
+//
+// No transport metadata. Authorization headers, bearer tokens, HMAC signatures, nonces, request ids
+// and request timestamps are regenerated per transmission and are never written here — the payload
+// column holds the *business* payload only, enforced by `toBusinessPayload` at write time and by
+// `HttpJsonAdapter` refusing to transmit a payload containing transport keys.
+
+// Registry definitions the tracking engine executes against (M6.6.2). Tracking owns no definition
+// *semantics* — the Registry Engine (@platform/registry, ADR-0055) does — but the definitions have
+// to live somewhere durable, and the engine is explicit that persistence is its consumer's concern.
+//
+// One row per immutable definition VERSION, never updated. Editing a destination appends the next
+// version; the previous row stays exactly as it was, which is the only reason replay can ask "what
+// did version 4 look like?" months later. A single table with a `kind` discriminator rather than
+// three near-identical tables: the Registry Engine is generic, so its storage is too.
+model TrackingRegistryEntry {
+  id       String @id @db.Uuid
+  tenantId String @map("tenant_id")
+
+  kind    String // destination | mapping | rule_set
+  key     String
+  version Int
+  status  String // draft | active | deprecated | retired
+
+  // The definition itself — a DestinationDefinition, MappingProfile or RuleSet. All three are pure
+  // configuration by contract (no functions), so they round-trip through JSONB without loss.
+  // Credentials appear here only as `vault://` REFERENCES; a secret value in this column would be
+  // a defect, not a configuration choice.
+  value Json
+
+  registeredAt DateTime @map("registered_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Re-registering the same version must collide rather than overwrite: a silently replaced
+  // definition version would make every event record pinned to it describe bytes it never produced.
+  @@unique([tenantId, kind, key, version])
+  @@index([tenantId, kind, status])
+  @@map("tracking_registry_entries")
+  @@schema("tracking")
+}
+
+model TrackingEventRecord {
+  id        String @id @db.Uuid
+  tenantId  String @map("tenant_id")
+  eventId   String @map("event_id")
+  dedupId   String @map("dedup_id")
+  eventName String @map("event_name")
+
+  capturedAt DateTime @map("captured_at")
+
+  // Frozen snapshots — copied at processing time, never re-derived on read. Storing them as JSONB
+  // rather than normalized columns is deliberate: their schema is versioned by `versions`, and
+  // normalizing would force a migration to rewrite history whenever the envelope contract evolves.
+  envelope   Json
+  consent    Json
+  identity   Json
+  attribution Json?
+  versions   Json
+
+  hashStatus         String? @map("hash_status")
+  identityConfidence Float?  @map("identity_confidence")
+
+  // The initial fold: stage history and per-destination entries (with rendered business payload and
+  // its SHA-256 digest) as they stood when the record was appended, before delivery began.
+  stageHistory       Json @default("[]") @map("stage_history")
+  destinationHistory Json @default("[]") @map("destination_history")
+
+  state     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  revisions TrackingEventRevision[]
+
+  // One record per event: a duplicate `event_id` must be REJECTED, never overwrite. `event_id` is
+  // the ingest idempotency key (UUIDv7, unique per occurrence) — distinct from `dedup_id`, which is
+  // deterministic and deliberately shared by the browser and server copies of the same occurrence.
+  @@unique([tenantId, eventId])
+  @@index([tenantId, capturedAt])
+  @@index([tenantId, eventName, capturedAt])
+  @@index([tenantId, state])
+  @@index([tenantId, dedupId])
+  @@map("tracking_event_records")
+  @@schema("tracking")
+}
+
+model TrackingEventRevision {
+  id       String @id @db.Uuid
+  tenantId String @map("tenant_id")
+  eventId  String @map("event_id")
+
+  // Monotonic per event. The fold applies revisions in this order; gaps are visible rather than
+  // silently absorbed, which is what makes a partial write detectable.
+  revisionSeq Int @map("revision_seq")
+
+  stages       Json @default("[]")
+  destinations Json @default("[]")
+  state        String
+
+  at        DateTime
+  createdAt DateTime @default(now()) @map("created_at")
+
+  record TrackingEventRecord @relation(fields: [tenantId, eventId], references: [tenantId, eventId], onDelete: Restrict)
+
+  // `onDelete: Restrict` above and this unique together mean history cannot be orphaned or
+  // rewritten: deleting a record with revisions fails rather than cascading the audit trail away.
+  @@unique([tenantId, eventId, revisionSeq])
+  @@index([tenantId, eventId])
+  @@map("tracking_event_revisions")
+  @@schema("tracking")
+}

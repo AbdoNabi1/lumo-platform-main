@@ -1,0 +1,31 @@
+# Ory Keto — dev config (Runtime Platform boot). In-memory DSN: no persistence, no migration —
+# tuples are seeded at boot. The `permissions` namespace is the one KetoAccessControl checks
+# (D-048): tuple (namespace=permissions, object=<permission>, relation=granted, subject_id=<principalId>).
+#
+# Phase A.34 — production posture: DSN below can be overridden without editing this file via
+# Ory's built-in config-path env var (ory/x/configx). The production k8s manifest
+# (infrastructure/k8s/73-keto.yaml) sets DSN from a real secret — this file stays the local-dev
+# default. `dsn: memory` is the LOCAL DEV default only; production points DSN at a dedicated
+# Postgres database (init script: infrastructure/docker/postgres/init/01-roles-and-cdc.sql) and
+# relation tuples are re-applied via the same seed mechanism (scripts/ops/register-oauth-client.mjs
+# does not seed Keto grants — that remains an explicit operator/CI step, same as local dev's
+# scripts/dev/seed-auth-local.mjs).
+version: v0.6.0
+
+dsn: memory
+
+namespaces:
+  - id: 0
+    name: permissions
+
+serve:
+  read:
+    host: 0.0.0.0
+    port: 4466
+  write:
+    host: 0.0.0.0
+    port: 4467
+
+log:
+  level: warn
+  format: json

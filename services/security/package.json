@@ -1,0 +1,38 @@
+{
+  "name": "@platform/security",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Security bounded context - Enterprise identity, authentication, authorization, zero-trust policy, WORM audit, delegation, tenant isolation, risk/trust and compliance primitives (ADR-0023, Sprint P2.0). Owns non-human identity + security policy/decision; references Identity for human identity/consent; owns NO enforcement (evaluates + decides).",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@platform/application": "workspace:*",
+    "@platform/contracts": "workspace:*",
+    "@platform/db": "workspace:*",
+    "@platform/domain": "workspace:*",
+    "@platform/domain-events": "workspace:*",
+    "@platform/messaging": "workspace:*",
+    "@platform/registry": "workspace:*",
+    "@platform/repository": "workspace:*",
+    "@platform/types": "workspace:*",
+    "@platform/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@platform/eslint-config": "workspace:*",
+    "@platform/tsconfig": "workspace:*",
+    "@vitest/coverage-v8": "^2.1.4",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

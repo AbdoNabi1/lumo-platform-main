@@ -1,0 +1,409 @@
+// `security` schema — the Enterprise Security, Identity & Trust Platform (services/security, ADR-0023,
+// Sprint P2.0 + Phase-2 hardening G-SEC-1). Durable persistence for the security aggregates. Follows the
+// platform conventions: app-generated UUIDv7 PKs (`@platform/id`), `tenant_id` (injected row scope) on
+// every row, `version` optimistic lock (except the append-only WORM ledger + relation tuples), no
+// cross-context FKs (bare id/ref columns), complex value-objects/collections stored as `Json`. Security
+// owns identity/authz/policy/decision + WORM audit; it owns no commerce state and no enforcement.
+
+// ── Identity ─────────────────────────────────────────────────────────────────────────────────────────
+model SecurityPrincipal {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  externalId  String   @map("external_id")
+  kind        String // human | service_account | machine | api_key | robot | partner | marketplace | ai
+  displayName String   @map("display_name")
+  subjectRef  String?  @map("subject_ref") // human ⇒ Identity user id; non-human ⇒ null
+  tenantRef   String?  @map("tenant_ref") // owning tenant, or null for platform principals
+  status      String // active | suspended | disabled
+  attributes  Json     @default("{}") // non-PII ABAC attribute bag
+  version     Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, externalId])
+  @@index([tenantId, kind])
+  @@index([tenantId, subjectRef])
+  @@map("principals")
+  @@schema("security")
+}
+
+model SecurityCredential {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id")
+  principalRef   String    @map("principal_ref")
+  kind           String // api_key | secret | certificate | signing_key | oauth_client
+  fingerprint    String // non-reversible; the secret value is NEVER stored
+  kmsKeyRef      String?   @map("kms_key_ref")
+  status         String // active | rotated | revoked | expired
+  supersedesRef  String?   @map("supersedes_ref")
+  issuedAt       DateTime  @map("issued_at")
+  expiresAt      DateTime? @map("expires_at")
+  rotationPolicy Json?     @map("rotation_policy") // { intervalDays, graceSeconds, autoRotate }
+  rotationDueAt  DateTime? @map("rotation_due_at")
+  graceUntil     DateTime? @map("grace_until")
+  version        Int       @default(0)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId, principalRef])
+  @@index([tenantId, status, rotationDueAt])
+  @@map("credentials")
+  @@schema("security")
+}
+
+model SecuritySession {
+  id                String   @id @db.Uuid
+  tenantId          String   @map("tenant_id")
+  principalRef      String   @map("principal_ref")
+  status            String // active | expired | revoked
+  /// Upstream IdP session id (Kratos/OIDC `sid`) this session mirrors — null for Security-native sessions (ADR-0031).
+  externalRef       String?  @map("external_ref")
+  deviceRef         String?  @map("device_ref")
+  refreshFingerprint String  @map("refresh_fingerprint")
+  refreshCount      Int      @default(0) @map("refresh_count")
+  riskAtLastEval    Int      @default(0) @map("risk_at_last_eval")
+  impersonatedBy    String?  @map("impersonated_by")
+  delegationRef     String?  @map("delegation_ref")
+  establishedAt     DateTime @map("established_at")
+  lastSeenAt        DateTime @map("last_seen_at")
+  expiresAt         DateTime @map("expires_at")
+  version           Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, principalRef])
+  @@index([tenantId, status])
+  @@index([tenantId, externalRef])
+  @@map("sessions")
+  @@schema("security")
+}
+
+model SecurityDevice {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id")
+  fingerprint  String
+  principalRef String?  @map("principal_ref")
+  tenantRef    String?  @map("tenant_ref")
+  trustLevel   String   @map("trust_level") // untrusted | recognized | trusted | blocked
+  reputation   Int      @default(50)
+  metadata     Json     @default("{}")
+  signals      Json     @default("[]") // bounded recent DeviceSignal[]
+  anomalyCount Int      @default(0) @map("anomaly_count")
+  firstSeenAt  DateTime @map("first_seen_at")
+  lastSeenAt   DateTime @map("last_seen_at")
+  version      Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, fingerprint])
+  @@index([tenantId, principalRef])
+  @@index([tenantId, trustLevel])
+  @@map("devices")
+  @@schema("security")
+}
+
+model SecurityMfaEnrollment {
+  id               String    @id @db.Uuid
+  tenantId         String    @map("tenant_id")
+  principalRef     String    @map("principal_ref")
+  method           String // totp | webauthn | sms_otp | email_otp | backup_code
+  status           String // pending | active | revoked
+  secretRef        String?   @map("secret_ref") // reference only; never the seed
+  backupCodeHashes Json      @default("[]") @map("backup_code_hashes")
+  deviceRef        String?   @map("device_ref")
+  activatedAt      DateTime? @map("activated_at")
+  createdAtDomain  DateTime  @map("created_at_domain")
+  version          Int       @default(0)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId, principalRef])
+  @@map("mfa_enrollments")
+  @@schema("security")
+}
+
+// ── Authorization ────────────────────────────────────────────────────────────────────────────────────
+model SecurityRole {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  key         String
+  name        String
+  scope       Json     @default("{}") // SecurityScope
+  permissions Json     @default("[]") // string[] "<resource>:<action>"
+  parentKey   String?  @map("parent_key")
+  isTemplate  Boolean  @default(false) @map("is_template")
+  status      String // active | archived
+  version     Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, key])
+  @@index([tenantId, status])
+  @@map("roles")
+  @@schema("security")
+}
+
+model SecurityRoleAssignment {
+  id           String    @id @db.Uuid
+  tenantId     String    @map("tenant_id")
+  principalRef String    @map("principal_ref")
+  roleKey      String    @map("role_key")
+  scope        Json      @default("{}")
+  grantedBy    String    @map("granted_by")
+  status       String // active | revoked | expired
+  expiresAt    DateTime? @map("expires_at")
+  reason       String?
+  grantedAt    DateTime  @map("granted_at")
+  version      Int       @default(0)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId, principalRef])
+  @@index([tenantId, roleKey])
+  @@map("role_assignments")
+  @@schema("security")
+}
+
+model SecurityRelationTuple {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  namespace String
+  object    String
+  relation  String
+  subject   String
+  tupleKey  String   @map("tuple_key") // namespace:object#relation@subject
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, tupleKey])
+  @@index([tenantId, namespace, object, relation])
+  @@map("relation_tuples")
+  @@schema("security")
+}
+
+// ── Policy ───────────────────────────────────────────────────────────────────────────────────────────
+model SecurityPolicy {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id")
+  key           String
+  name          String
+  mode          String // strict | balanced | relaxed | custom
+  status        String // draft | active | archived
+  versions      Json     @default("[]") // immutable PolicyVersion[]
+  activeVersion Int?     @map("active_version")
+  version       Int      @default(0)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, key])
+  @@index([tenantId, status])
+  @@map("policies")
+  @@schema("security")
+}
+
+model SecurityDelegation {
+  id           String    @id @db.Uuid
+  tenantId     String    @map("tenant_id")
+  delegatorRef String    @map("delegator_ref")
+  delegateRef  String    @map("delegate_ref")
+  scope        Json      @default("{}")
+  permissions  Json      @default("[]")
+  status       String // active | revoked | expired
+  expiresAt    DateTime? @map("expires_at")
+  reason       String?
+  grantedAt    DateTime  @map("granted_at")
+  version      Int       @default(0)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId, delegateRef])
+  @@index([tenantId, delegatorRef])
+  @@map("delegations")
+  @@schema("security")
+}
+
+// ── Tenant + machine + AI governance ───────────────────────────────────────────────────────────────
+model SecurityTenantProfile {
+  id                String   @id @db.Uuid
+  tenantId          String   @map("tenant_id")
+  tenantRef         String   @map("tenant_ref")
+  isolationTier     String   @map("isolation_tier")
+  residencyRegion   String   @map("residency_region")
+  securityMode      String   @map("security_mode")
+  mfaRequired       Boolean  @default(false) @map("mfa_required")
+  allowedAuthMethods Json    @default("[]") @map("allowed_auth_methods")
+  defaultPolicyKey  String?  @map("default_policy_key")
+  version           Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, tenantRef])
+  @@map("tenant_profiles")
+  @@schema("security")
+}
+
+model SecurityMachineIdentity {
+  id                    String   @id @db.Uuid
+  tenantId              String   @map("tenant_id")
+  principalRef          String   @map("principal_ref")
+  owner                 String
+  purpose               String
+  allowedEnvironments   Json     @default("[]") @map("allowed_environments")
+  maxCredentialTtlSeconds Int?   @map("max_credential_ttl_seconds")
+  rotationIntervalDays  Int?     @map("rotation_interval_days")
+  allowedScopes         Json     @default("[]") @map("allowed_scopes")
+  status                String // active | suspended
+  version               Int      @default(0)
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, principalRef])
+  @@map("machine_identities")
+  @@schema("security")
+}
+
+model SecurityAiGovernance {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  principalRef   String   @map("principal_ref")
+  tokenBudget    Int?     @map("token_budget")
+  callQuota      Int?     @map("call_quota")
+  windowSeconds  Int      @map("window_seconds")
+  tokensConsumed Int      @default(0) @map("tokens_consumed")
+  callsConsumed  Int      @default(0) @map("calls_consumed")
+  windowResetAt  DateTime @map("window_reset_at")
+  allowedTools   Json     @default("[]") @map("allowed_tools")
+  allowedResources Json   @default("[]") @map("allowed_resources")
+  isolationLevel String   @map("isolation_level") // none | sandboxed | isolated
+  status         String // active | suspended
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, principalRef])
+  @@map("ai_governance_profiles")
+  @@schema("security")
+}
+
+// ── Incidents ────────────────────────────────────────────────────────────────────────────────────────
+model SecurityIncident {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  reference  String
+  title      String
+  severity   String // low | medium | high | critical
+  status     String // detected | triaged | mitigating | resolved | closed
+  category   String
+  tenantRef  String?  @map("tenant_ref")
+  assignee   String?
+  resolution String?
+  timeline   Json     @default("[]") // append-only TimelineEntry[]
+  evidence   Json     @default("[]") // EvidenceEntry[] (references only)
+  detectedAt DateTime @map("detected_at")
+  version    Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, status])
+  @@index([tenantId, severity])
+  @@map("incidents")
+  @@schema("security")
+}
+
+// ── WORM audit ledger — append-only, hash-chained. No `version`/`updated_at` (immutable). ────────────
+model SecurityAuditRecord {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id")
+  tenantScope  String?  @map("tenant_scope") // ledger bucket (null = platform)
+  sequence     Int
+  principalRef String   @map("principal_ref")
+  action       String
+  decision     String
+  resource     String?
+  occurredAt   String   @map("occurred_at") // RFC 3339 UTC (caller-supplied, deterministic)
+  metadata     Json     @default("{}")
+  prevHash     String   @map("prev_hash")
+  hash         String
+  signature    String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, tenantScope, sequence])
+  @@index([tenantId, tenantScope, sequence])
+  @@map("audit_records")
+  @@schema("security")
+}
+
+// ── Consent projection (H-2, G-SEC-4) ────────────────────────────────────────────────────────────
+// A read-optimised copy of Identity's consent decisions, kept current by consuming
+// `identity.customer.consent_changed`. Identity OWNS consent; this is a projection Security references
+// for compliance/data-handling reads — never the source of truth. Last-writer-wins by `occurred_at`
+// (the consumer only upserts a strictly newer decision), so redelivery/out-of-order converge.
+model SecurityConsentProjection {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  subjectRef String   @map("subject_ref") // Identity customer/subject id
+  purpose    String // the consent scope
+  granted    Boolean
+  occurredAt String   @map("occurred_at") // RFC 3339 UTC — source event time (LWW key)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, subjectRef, purpose])
+  @@index([tenantId, subjectRef])
+  @@map("consent_projection")
+  @@schema("security")
+}
+
+// ── Identity projection (H-2, G-SEC-4) ───────────────────────────────────────────────────────────
+// Read-only projections of Identity-owned Users/Organizations/Memberships, kept current by consuming
+// the `identity.user.*` / `identity.organization.*` / `identity.membership.*` events. Identity OWNS
+// these; Security holds a query copy for principal/membership/organization resolution during
+// authorization — never a source of truth, never written back. `tenant_id` = the deployment row scope
+// (ADR-0008); the Identity entity's own tenant is a business column. LWW by `occurred_at`. No PII
+// (ADR-0006): ids, tenant, org slug, role name only.
+model SecurityIdentityUser {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  userId     String   @map("user_id")
+  userTenant String?  @map("user_tenant")
+  status     String // active | deactivated
+  occurredAt String   @map("occurred_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, userId])
+  @@map("identity_user_projection")
+  @@schema("security")
+}
+
+model SecurityIdentityOrganization {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  organizationId String   @map("organization_id")
+  slug           String
+  orgTenant      String?  @map("org_tenant")
+  occurredAt     String   @map("occurred_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, organizationId])
+  @@map("identity_organization_projection")
+  @@schema("security")
+}
+
+model SecurityIdentityMembership {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  membershipId   String   @map("membership_id")
+  userId         String   @map("user_id")
+  organizationId String   @map("organization_id")
+  role           String
+  occurredAt     String   @map("occurred_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, membershipId])
+  @@index([tenantId, userId])
+  @@map("identity_membership_projection")
+  @@schema("security")
+}

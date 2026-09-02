@@ -1,0 +1,64 @@
+// `seo` schema — SeoProfile, Redirect, Sitemap, RobotsPolicy (services/seo). Metadata only;
+// consumes content by ref, never owns pages.
+
+model SeoProfile {
+  id            String  @id @db.Uuid
+  tenantId      String  @map("tenant_id")
+  pageRef       String  @map("page_ref")
+  title         String?
+  description   String?
+  canonicalUrl  String? @map("canonical_url")
+  ogImageRef    String? @map("og_image_ref")
+  version       Int     @default(0)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, pageRef])
+  @@map("seo_profiles")
+  @@schema("seo")
+}
+
+model Redirect {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  fromPath   String   @map("from_path")
+  toPath     String   @map("to_path")
+  statusCode Int      @map("status_code")
+  active     Boolean  @default(true)
+  version    Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, fromPath])
+  @@map("redirects")
+  @@schema("seo")
+}
+
+model Sitemap {
+  id              String    @id @db.Uuid
+  tenantId        String    @map("tenant_id")
+  name            String
+  urls            Json      @default("[]")
+  lastGeneratedAt DateTime? @map("last_generated_at")
+  version         Int       @default(0)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("sitemaps")
+  @@schema("seo")
+}
+
+model RobotsPolicy {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  userAgent String   @map("user_agent")
+  rules     Json     @default("[]")
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, userAgent])
+  @@map("robots_policies")
+  @@schema("seo")
+}

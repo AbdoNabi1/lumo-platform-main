@@ -1,0 +1,106 @@
+// `identity` schema — Customer (+Address, +ConsentRecord) (services/identity).
+// Email uniqueness is PER TENANT (ADR-0008) — this unique index replaces the in-memory scan
+// (D-032 trade-off repaid). PII encryption at rest (G-4) lands as column-level changes here.
+
+model Customer {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id")
+  email     String // stored trimmed + lower-cased (domain `Email` VO)
+  name      String
+  version   Int       @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at") // GDPR erasure = anonymize + soft delete (G-25)
+
+  addresses Address[]
+  consents  ConsentRecord[]
+
+  @@unique([tenantId, email])
+  @@map("customers")
+  @@schema("identity")
+}
+
+model Address {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  customerId String   @map("customer_id") @db.Uuid
+  line1      String
+  city       String
+  postalCode String   @map("postal_code")
+  country    String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("addresses")
+  @@schema("identity")
+}
+
+/// Append-only consent log (D-032): consent state is DERIVED from the latest record per scope.
+model ConsentRecord {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  customerId String   @map("customer_id") @db.Uuid
+  scope      String // marketing | analytics | data_sharing (domain-enforced)
+  granted    Boolean
+  occurredAt DateTime @map("occurred_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, scope, occurredAt])
+  @@map("consent_records")
+  @@schema("identity")
+}
+
+// -- Access: User / Organization / Membership (Sprint 4.1, Option A) --------------------------
+// Additive to the Customer vertical above (SPRINT_4_1_IDENTITY_CORE_REPORT.md §1: "left
+// untouched"). No cross-aggregate FK (D-002): Membership's userId/organizationId are bare text
+// references, not relations — consistent with the rest of this schema's Address/ConsentRecord
+// FKs being intra-aggregate only. Roles/permissions are Keto's; roleName is a bare reference.
+
+model User {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id")
+  email     String // stored trimmed + lower-cased (domain `Email` VO)
+  name      String
+  status    String    @default("active") // active | deactivated (domain-enforced)
+  version   Int       @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, email])
+  @@map("users")
+  @@schema("identity")
+}
+
+model Organization {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id")
+  slug      String
+  name      String
+  status    String    @default("active") // active | archived (domain-enforced)
+  version   Int       @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, slug])
+  @@map("organizations")
+  @@schema("identity")
+}
+
+model Membership {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  userId         String   @map("user_id") @db.Uuid // bare reference (D-002), no FK
+  organizationId String   @map("organization_id") @db.Uuid // bare reference (D-002), no FK
+  roleName       String   @map("role_name") // Keto-owned role, referenced by name only
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, userId, organizationId])
+  @@index([tenantId, organizationId])
+  @@map("memberships")
+  @@schema("identity")
+}

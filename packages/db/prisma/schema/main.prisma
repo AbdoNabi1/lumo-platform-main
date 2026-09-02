@@ -1,0 +1,38 @@
+// Prisma schema root — Phase 2 Step 1 (production business models).
+//
+// Organization: one file per bounded context in this folder (Prisma multi-file schema),
+// one PostgreSQL schema per bounded context (docs/architecture/03, D-002) plus a `platform`
+// schema for cross-cutting messaging/audit tables. Conventions (enforced across every file):
+//
+// - `tenant_id` (text) on EVERY business row; all natural-key uniques and hot indexes are
+//   tenant-led: `@@unique([tenantId, …])` / `@@index([tenantId, …])` (ADR-0008).
+// - `version` int for optimistic locking — repositories update with
+//   `WHERE id = ? AND version = ?` and increment, mapping 0 rows to `ConcurrencyError`.
+// - `created_at` / `updated_at` on every mutable row; `deleted_at` (soft delete) only where
+//   the domain needs recoverability (merchant-managed catalogs, customers).
+// - Primary keys are app-generated UUIDv7 (`@platform/id`), stored as `uuid`. Cross-context
+//   references are **plain text columns** (bare ids, never FKs — D-002); FKs exist only
+//   INSIDE an aggregate (Order→OrderItem, Customer→Address, …).
+// - Money is integer minor units (`Int`, matches the kernel `Money`); currency is a 3-letter
+//   code validated by the domain. Closed-set states are text validated by the domain (Prisma
+//   enums complicate migrations without adding an enforcement point we don't already have).
+// - Postgres extras Prisma cannot express (monthly partitioning of `platform.outbox`,
+//   row-level-security tenant policies, CHECK constraints) land as hand-written SQL in
+//   migrations — see ../MIGRATIONS.md.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Phase A.43 — Supabase pooler prep: DATABASE_URL points at the Transaction Pooler (port 6543,
+  // pgbouncer transaction mode) for runtime queries; directUrl points at Supabase's direct/session
+  // connection (port 5432) and is used exclusively by Prisma's migration/introspection tooling
+  // (`migrate`, `db pull`, `studio`), which need a real session (prepared statements, advisory
+  // locks) that a transaction-mode pooler cannot provide. Locally both env vars can point at the
+  // same docker-compose Postgres. See docs/development/SETUP.md / .env.example.
+  directUrl = env("DIRECT_URL")
+  schemas   = ["platform", "catalog", "media", "pricing", "inventory", "cart", "checkout", "orders", "payments", "identity", "finance", "fulfillment", "shipping", "returns", "notifications", "promotions", "coupons", "loyalty", "wishlist", "reviews", "search", "recommendations", "reporting", "feature_flags", "experiment", "automation", "content", "localization", "seo", "components", "theme", "experience", "pages", "tenancy", "licensing", "feature_registry", "security", "tracking", "customer_360"]
+}

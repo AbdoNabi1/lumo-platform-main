@@ -1,0 +1,62 @@
+// Lumo internal service contracts — Orders v1 (Sprint 2.6, doc 04 §3).
+// Versioned by package: breaking changes create lumo.orders.v2, never mutate v1.
+// These contracts back the future generated `@platform/api-clients` (G-18) and the
+// Temporal saga's sync calls (doc 22). Money is integer minor units (kernel `Money`).
+syntax = "proto3";
+
+package lumo.orders.v1;
+
+service OrdersService {
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse);
+  rpc MarkOrderPaid(MarkOrderPaidRequest) returns (MarkOrderPaidResponse);
+  rpc RefundOrder(RefundOrderRequest) returns (RefundOrderResponse);
+}
+
+message OrderItemInput {
+  string product_id = 1;
+  string name = 2;
+  int32 unit_price_amount_minor = 3;
+  int32 quantity = 4;
+}
+
+message AddressInput {
+  string line1 = 1;
+  string city = 2;
+  string postal_code = 3;
+  string country = 4;
+}
+
+message PlaceOrderRequest {
+  string tenant_id = 1; // ADR-0008: every call is tenant-scoped
+  string customer_ref = 2;
+  string currency = 3;
+  repeated OrderItemInput items = 4;
+  AddressInput shipping_address = 5;
+}
+
+message PlaceOrderResponse {
+  string order_id = 1;
+  string order_number = 2;
+  int64 total_amount_minor = 3;
+}
+
+message MarkOrderPaidRequest {
+  string tenant_id = 1;
+  string order_id = 2;
+  string payment_ref = 3;
+}
+
+message MarkOrderPaidResponse {
+  string order_id = 1;
+  string status = 2;
+}
+
+message RefundOrderRequest {
+  string tenant_id = 1;
+  string order_id = 2;
+}
+
+message RefundOrderResponse {
+  string order_id = 1;
+  string status = 2;
+}

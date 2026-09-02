@@ -1,0 +1,33 @@
+# Sprint 2.2.5 — Prometheus scrape config. Infrastructure metrics only; application metrics
+# arrive via the OTel Collector's prometheus exporter (:8889) once instrumentation lands.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"] # application telemetry (future)
+      - targets: ["otel-collector:8888"] # collector self-metrics
+
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["redpanda:9644"]
+
+  # H-08: SLO recording rules and alerts (rules/*.yml) select on job="lumo-runtime" — this job did
+  # not exist, so up{job="lumo-runtime"}, RuntimeProcessDown, MessagingDeadLettering and
+  # RuntimeHighMemory could never evaluate. Targets are docker-compose.runtime.yml's three
+  # processes (added alongside this), each on the shared internal port 3080.
+  - job_name: lumo-runtime
+    static_configs:
+      - targets: ["api:3080"]
+        labels: { component: api }
+      - targets: ["worker:3080"]
+        labels: { component: worker }
+      - targets: ["scheduler:3080"]
+        labels: { component: scheduler }

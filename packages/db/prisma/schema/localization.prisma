@@ -1,0 +1,35 @@
+// `localization` schema — Locale, TranslationSet (services/localization). Owns translations only;
+// other contexts reference by ref.
+
+model Locale {
+  id               String   @id @db.Uuid
+  tenantId         String   @map("tenant_id")
+  code             String
+  name             String
+  isDefault        Boolean  @default(false) @map("is_default")
+  fallbackLocaleRef String? @map("fallback_locale_ref")
+  status           String // active | inactive (domain-enforced, see LocaleStatusValue)
+  version          Int      @default(0)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, code])
+  @@map("locales")
+  @@schema("localization")
+}
+
+model TranslationSet {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id")
+  localeRef    String   @map("locale_ref")
+  namespace    String
+  /// Individual translation entries — embedded JSONB array on this row.
+  translations Json     @default("[]")
+  version      Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, localeRef, namespace])
+  @@map("translation_sets")
+  @@schema("localization")
+}

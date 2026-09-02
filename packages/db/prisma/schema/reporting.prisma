@@ -1,0 +1,52 @@
+// `reporting` schema — ReportDefinition/Dashboard/AnalyticsReport (services/reporting). References
+// the Analytics semantic catalog by ref (AnalyticsQueryPort); never redefines a metric/dimension.
+
+model ReportDefinition {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  name      String
+  type      String
+  metrics   Json     @default("[]")
+  dimensions Json    @default("[]")
+  filters   Json     @default("[]")
+  cronExpression String? @map("cron_expression")
+  status    String // 3-value lifecycle union (domain-enforced, see ReportDefinitionStatusValue)
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("report_definitions")
+  @@schema("reporting")
+}
+
+model Dashboard {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  name      String
+  tileRefs  Json     @default("[]") @map("tile_refs")
+  status    String // 2-value lifecycle union (domain-enforced, see DashboardStatusValue)
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("dashboards")
+  @@schema("reporting")
+}
+
+/// Write-once run of a ReportDefinition, generated through AnalyticsQueryPort.
+model AnalyticsReport {
+  id                 String   @id @db.Uuid
+  tenantId           String   @map("tenant_id")
+  reportDefinitionRef String  @map("report_definition_ref")
+  outcome            String
+  resultData         Json?    @map("result_data")
+  errorMessage       String?  @map("error_message")
+  generatedAt        DateTime @map("generated_at")
+  version            Int      @default(0)
+
+  @@index([tenantId, reportDefinitionRef])
+  @@map("analytics_reports")
+  @@schema("reporting")
+}

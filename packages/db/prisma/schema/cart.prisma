@@ -1,0 +1,43 @@
+// `cart` schema — Cart (+CartItem) (services/cart).
+//
+// Postgres is the durable cart store so cart events keep the transactional-outbox guarantee;
+// Redis (Phase 2 Step 3) fronts it as the hot read/session layer, not as the source of truth.
+
+model Cart {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  customerRef String?  @map("customer_ref") // bare id into Identity — never an FK; null for a guest cart (Sprint 4.5)
+  sessionRef  String   @map("session_ref") // bare session reference — present for guest and customer carts alike
+  currency    String
+  status      String // active | checked_out | abandoned | locked | saved | expired (domain-enforced)
+  version     Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  items CartItem[]
+
+  @@index([tenantId, customerRef, status])
+  @@index([tenantId, sessionRef])
+  @@index([tenantId, status, updatedAt]) // abandonment sweeps
+  @@map("carts")
+  @@schema("cart")
+}
+
+model CartItem {
+  id                   String  @id @db.Uuid
+  tenantId             String  @map("tenant_id")
+  cartId               String  @map("cart_id") @db.Uuid
+  productRef           String  @map("product_ref") // bare id into Catalog — never an FK
+  quantity             Int
+  unitPriceAmountMinor Int     @map("unit_price_amount_minor")
+  /// Inventory's `available` snapshot at add-time (Sprint 4.5, caller-supplied — never computed here).
+  inventorySnapshot    Json?   @map("inventory_snapshot")
+  /// Free-form caller metadata (e.g. selected variant options), stored verbatim (Sprint 4.5).
+  metadata             Json?
+
+  cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, productRef])
+  @@map("cart_items")
+  @@schema("cart")
+}

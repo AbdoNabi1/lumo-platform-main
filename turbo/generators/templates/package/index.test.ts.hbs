@@ -1,0 +1,8 @@
+import { describe, expect, it } from "vitest";
+import { {{ camelCase name }}Name } from "./index";
+
+describe("{{ camelCase name }}Name", () => {
+  it("returns the package name", () => {
+    expect({{ camelCase name }}Name()).toBe("{{ kebabCase name }}");
+  });
+});

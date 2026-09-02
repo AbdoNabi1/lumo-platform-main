@@ -1,0 +1,209 @@
+# P2.0.1 (blocker D) — production CDC for the transactional outbox on Kubernetes.
+#
+# The outbox is written transactionally by every context; a single Debezium Postgres connector streams
+# `platform.outbox` to Kafka via the EventRouter transform (identical config to the compose stack —
+# infrastructure/docker/debezium/outbox-connector.json). Without this, outbox rows never reach Kafka in
+# k8s and NO integration event flows (certification finding H-3). Kafka Connect is stateless — its state
+# lives in the `_connect.*` Kafka topics — so it runs as a normal Deployment here.
+#
+# Secrets: the CDC database role (replication-capable `debezium` user) is provisioned out-of-band as the
+# `lumo-cdc-secrets` Secret (same convention as `lumo-runtime-secrets`; see secret.example.yaml). No
+# placeholder secret is applied by kustomize.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debezium-connect-config
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: debezium-connect
+data:
+  # Kafka Connect worker settings. Brokers match the runtime's KAFKA_BROKERS (10-config.yaml).
+  BOOTSTRAP_SERVERS: "redpanda.data.svc.cluster.local:9092"
+  GROUP_ID: "lumo-connect"
+  CONFIG_STORAGE_TOPIC: "_connect.configs"
+  OFFSET_STORAGE_TOPIC: "_connect.offsets"
+  STATUS_STORAGE_TOPIC: "_connect.status"
+  # Production durability for Connect's own internal topics (compose uses 1; a real cluster uses 3).
+  CONFIG_STORAGE_REPLICATION_FACTOR: "3"
+  OFFSET_STORAGE_REPLICATION_FACTOR: "3"
+  STATUS_STORAGE_REPLICATION_FACTOR: "3"
+  KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+  VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: debezium-connect
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: debezium-connect
+    app.kubernetes.io/component: cdc
+spec:
+  replicas: 1 # a single connector; scale the Connect cluster only if more connectors are added
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: debezium-connect
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/name: debezium-connect
+        app.kubernetes.io/component: cdc
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: debezium-connect
+          image: debezium/connect:2.7.3.Final # same image as the compose stack
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: rest
+              containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: debezium-connect-config
+          readinessProbe:
+            httpGet:
+              path: /connectors
+              port: rest
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: rest
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: debezium-connect
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: debezium-connect
+spec:
+  selector:
+    app.kubernetes.io/name: debezium-connect
+  ports:
+    - name: rest
+      port: 8083
+      targetPort: rest
+---
+# The connector registration Job — the k8s equivalent of register-connector.sh. It waits for the
+# Connect REST API, then PUTs the outbox connector config (idempotent: PUT /connectors/<name>/config
+# creates or updates). The EventRouter transform + converter settings are byte-identical to
+# infrastructure/docker/debezium/outbox-connector.json; only the DB coordinates come from the Secret.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: debezium-register-outbox
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: debezium-connect
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/name: debezium-connect
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: register
+          image: curlimages/curl:8.11.0
+          env:
+            - name: CONNECT_URL
+              value: "http://debezium-connect:8083"
+            # Replication-capable CDC database role, provisioned out-of-band as lumo-cdc-secrets.
+            - name: DB_HOSTNAME
+              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_HOSTNAME } }
+            - name: DB_PORT
+              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_PORT } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_USER } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_PASSWORD } }
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_NAME } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "waiting for Kafka Connect at ${CONNECT_URL} ..."
+              until curl -sf "${CONNECT_URL}/connectors" >/dev/null; do sleep 3; done
+              echo "connect is up; registering lumo-outbox connector"
+              # Config mirrors infrastructure/docker/debezium/outbox-connector.json (transforms +
+              # converters identical); DB coordinates injected from the Secret.
+              curl -sf -X PUT "${CONNECT_URL}/connectors/lumo-outbox/config" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+                  "database.hostname": "'"${DB_HOSTNAME}"'",
+                  "database.port": "'"${DB_PORT}"'",
+                  "database.user": "'"${DB_USER}"'",
+                  "database.password": "'"${DB_PASSWORD}"'",
+                  "database.dbname": "'"${DB_NAME}"'",
+                  "topic.prefix": "lumo",
+                  "plugin.name": "pgoutput",
+                  "publication.name": "lumo_outbox",
+                  "slot.name": "lumo_outbox",
+                  "schema.include.list": "platform",
+                  "table.include.list": "platform.outbox",
+                  "tombstones.on.delete": "false",
+                  "transforms": "outbox",
+                  "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+                  "transforms.outbox.table.field.event.id": "id",
+                  "transforms.outbox.table.field.event.key": "key",
+                  "transforms.outbox.table.field.event.payload": "payload",
+                  "transforms.outbox.route.by.field": "topic",
+                  "transforms.outbox.route.topic.replacement": "${routedByValue}",
+                  "transforms.outbox.table.expand.json.payload": "false",
+                  "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+                  "value.converter": "io.debezium.converters.BinaryDataConverter",
+                  "value.converter.delegate.converter.type": "org.apache.kafka.connect.json.JsonConverter",
+                  "value.converter.delegate.converter.type.schemas.enable": "false",
+                  "snapshot.mode": "no_data",
+                  "heartbeat.interval.ms": "10000",
+                  "errors.max.retries": "10",
+                  "errors.retry.delay.max.ms": "60000"
+                }'
+              echo
+              echo "registered; connector status:"
+              curl -sf "${CONNECT_URL}/connectors/lumo-outbox/status"

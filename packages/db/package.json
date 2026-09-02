@@ -1,0 +1,49 @@
+{
+  "name": "@platform/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PostgreSQL + Prisma infrastructure: client, pooling, transactions, migrations, seed, health, backup config. No business models.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "db:seed": "prisma db seed",
+    "postinstall": "prisma generate"
+  },
+  "prisma": {
+    "schema": "prisma/schema",
+    "seed": "tsx ../../apps/runtime/src/seed.ts"
+  },
+  "dependencies": {
+    "@platform/config": "workspace:*",
+    "@platform/contracts": "workspace:*",
+    "@platform/health": "workspace:*",
+    "@platform/messaging": "workspace:*",
+    "@platform/repository": "workspace:*",
+    "@platform/utils": "workspace:*",
+    "@prisma/client": "^6.5.0"
+  },
+  "devDependencies": {
+    "@platform/eslint-config": "workspace:*",
+    "@platform/tsconfig": "workspace:*",
+    "@types/node": "^22.7.5",
+    "@vitest/coverage-v8": "^2.1.4",
+    "eslint": "^9.13.0",
+    "prisma": "^6.5.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

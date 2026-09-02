@@ -1,0 +1,52 @@
+// `media` schema — Asset (services/media). Extended additively (Sprint 5.4) with the Media Library
+// (Folder/MediaAsset) — asset organization over object storage; the Asset model above is untouched.
+
+model Asset {
+  id          String    @id @db.Uuid
+  tenantId    String    @map("tenant_id")
+  storageKey  String    @map("storage_key")
+  contentType String    @map("content_type")
+  status      String // registered | ready (domain-enforced)
+  version     Int       @default(0)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@unique([tenantId, storageKey])
+  @@index([tenantId, status])
+  @@map("assets")
+  @@schema("media")
+}
+
+/// Media Library extension (Sprint 5.4) — organizational folder over media assets.
+model Folder {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  name           String
+  parentFolderRef String? @map("parent_folder_ref")
+  status         String // active | archived (domain-enforced, see LibraryEntryStatusValue)
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, parentFolderRef]) // children-of-folder lookup (media-library.use-cases.ts)
+  @@map("folders")
+  @@schema("media")
+}
+
+/// Media Library extension (Sprint 5.4) — asset organization over @platform/storage; never stores files itself.
+model MediaAsset {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  name      String
+  storageKey String  @map("storage_key")
+  folderRef String?  @map("folder_ref")
+  status    String // active | archived (domain-enforced, see LibraryEntryStatusValue)
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, storageKey])
+  @@map("media_assets")
+  @@schema("media")
+}

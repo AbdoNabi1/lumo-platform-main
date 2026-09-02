@@ -1,0 +1,64 @@
+# Non-secret runtime configuration. Keys are EXACTLY the runtime config contract (apps/runtime
+# config.ts, post-F6) — no invented configuration. Values are environment-specific; adjust the
+# service DNS / issuer per cluster. Credentialed URLs (DATABASE_URL, REDIS_URL) live in the
+# referenced Secret, never here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lumo-runtime-config
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+data:
+  APP_ENV: "production"
+  NODE_ENV: "production"
+  PORT: "3080"
+  REDIS_KEY_PREFIX: "lumo:"
+  KAFKA_BROKERS: "redpanda.data.svc.cluster.local:9092"
+  KAFKA_CLIENT_ID: "lumo-runtime"
+  KETO_READ_URL: "http://keto.data.svc.cluster.local:4466"
+  # H-2 (G-SEC-4): the live Ory identity binding. Required outside APP_ENV=local (config.ts
+  # superRefine) — without these three the runtime fails closed at boot rather than falling back to
+  # a fake identity provider. Same non-secret, in-cluster-DNS convention as KETO_READ_URL above.
+  KETO_WRITE_URL: "http://keto.data.svc.cluster.local:4467"
+  KRATOS_PUBLIC_URL: "http://kratos.data.svc.cluster.local:4433"
+  KRATOS_ADMIN_URL: "http://kratos.data.svc.cluster.local:4434"
+  # AUTH_ISSUER_URL must equal the token `iss` claim exactly (Hydra's public issuer).
+  AUTH_ISSUER_URL: "https://auth.lumo.example.com/"
+  # JWKS may be resolved in-cluster; keys are cached lazily by the verifier.
+  AUTH_JWKS_URL: "http://hydra.data.svc.cluster.local:4444/.well-known/jwks.json"
+  AUTH_AUDIENCE: "lumo-admin"
+  TENANT_DEFAULT_ID: "tenant-local"
+  OUTBOX_RETENTION_DAYS: "7"
+  # Phase A.13 (Task 1/2): explicit production pool size — matches the value already declared as
+  # this platform's production intent (packages/config/src/server/config.ts's ENVIRONMENT_PROFILES,
+  # production: DATABASE_POOL_MAX="20"), now realized for the entrypoint that actually runs in
+  # production (apps/runtime), which previously had no DATABASE_POOL_MAX field at all. Connect/
+  # statement timeouts are left to apps/runtime/src/config.ts's schema defaults (10000ms/30000ms —
+  # same defaults @platform/config/server uses) since no other part of this codebase documents a
+  # different production value for those two.
+  DATABASE_POOL_MAX: "20"
+  # P2.0.1 (blocker B): activate OpenTelemetry export to the collector so traces + OTel metrics
+  # (incl. the security dashboards) receive data. The collector is provisioned in the observability
+  # plane; disable by setting these to "false" if no collector is present.
+  OTEL_SERVICE_NAME: "lumo-runtime"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
+  OTEL_TRACES_ENABLED: "true"
+  OTEL_METRICS_ENABLED: "true"
+  # H-06: the tracking.event.captured.v1 consumer (C-07) is config-gated. Values below match
+  # config.ts's own defaults, so this changes no current behaviour — it makes the gate visible and
+  # discoverable in the deployment manifest instead of only in source. Sequence to enable ingest in
+  # a real cluster: 1) topic exists (bootstrap-topics.sh, added alongside this), 2) the tracking
+  # registry is seeded (loadTrackingRegistry refuses to start against an empty one — correct), THEN
+  # 3) flip TRACKING_INGEST_ENABLED to "true". Flipping it here first would crash-loop the worker.
+  TRACKING_INGEST_ENABLED: "false"
+  TRACKING_RULE_SET_KEY: "tracking.routing.default"
+  TRACKING_REGISTRY_POLL_MS: "30000"
+  # Phase A.23 (Task 3): activates the scheduler's CDC watchdog job — same-namespace Service defined
+  # in 70-debezium.yaml (debezium-connect, port 8083). Absent ⇒ the job no-ops (config.ts's
+  # present/absent convention), so this is the switch that turns it on in this cluster. Connector
+  # name/poll-interval/restart-cap are left at apps/runtime/src/config.ts's schema defaults
+  # (KAFKA_CONNECT_CDC_CONNECTORS=lumo-outbox, CDC_WATCHDOG_INTERVAL_MS=30000,
+  # CDC_WATCHDOG_MAX_RESTARTS=5, CDC_WATCHDOG_RESTART_WINDOW_MS=3600000) — no production-specific
+  # override is justified by any evidence gathered in this phase.
+  KAFKA_CONNECT_URL: "http://debezium-connect.lumo-runtime.svc.cluster.local:8083"

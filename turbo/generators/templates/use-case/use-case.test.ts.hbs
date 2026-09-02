@@ -1,0 +1,13 @@
+import { describe, expect, it } from "vitest";
+import { {{ pascalCase name }} } from "./{{ kebabCase name }}.use-case";
+
+describe("{{ pascalCase name }}", () => {
+  it("returns a successful result", async () => {
+    const result = await new {{ pascalCase name }}().execute({ value: "example" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.value).toBe("example");
+    }
+  });
+});

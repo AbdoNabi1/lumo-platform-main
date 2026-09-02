@@ -1,0 +1,36 @@
+@import "tailwindcss";
+@import "@platform/design/styles.css";
+
+/* Generate the utility classes used inside the shared component library. */
+@source "../../../../packages/ui/src/**/*.{ts,tsx}";
+
+:root {
+  /*
+   * Bind the webfonts this app loads to the design system's font slots. `geist` and
+   * `@fontsource/ibm-plex-sans-arabic` both self-host, so nothing is fetched at build time.
+   */
+  --font-geist: var(--font-geist-sans);
+  --font-arabic-family: "IBM Plex Sans Arabic";
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+/*
+ * Deliberately no `overflow-x: hidden` on html/body. That would hide horizontal overflow
+ * rather than prevent it; the contract is that wide content (tables, charts) scrolls
+ * inside its own container, and any page-level overflow is a bug we want to see.
+ */

@@ -1,0 +1,36 @@
+// `pages` schema — Page, Template (services/pages). Own routing + reusable templates; bind
+// Experience/SEO/Theme/Locale by ref, never store duplicated content.
+
+model Page {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  name           String
+  routePath      String   @map("route_path")
+  templateRef    String?  @map("template_ref")
+  experienceRef  String?  @map("experience_ref")
+  seoProfileRef  String?  @map("seo_profile_ref")
+  localeRef      String?  @map("locale_ref")
+  status         String // draft | published | archived (domain-enforced, see PageStatusValue)
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, routePath])
+  @@map("pages")
+  @@schema("pages")
+}
+
+model Template {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id")
+  name          String
+  experienceRef String   @map("experience_ref")
+  status        String // active | archived (domain-enforced, see TemplateStatusValue)
+  version       Int      @default(0)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("templates")
+  @@schema("pages")
+}

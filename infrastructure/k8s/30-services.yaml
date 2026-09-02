@@ -1,0 +1,119 @@
+# One ClusterIP Service per workload on the shared http port (3080). The API Service is the
+# Ingress backend and the in-cluster business endpoint; the worker/scheduler Services exist only
+# so Prometheus/monitoring can discover their /metrics + /healthz (no business traffic).
+apiVersion: v1
+kind: Service
+metadata:
+  name: runtime-api
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-api
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: runtime-api
+  ports:
+    - name: http
+      port: 3080
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runtime-worker
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-worker
+    app.kubernetes.io/component: worker
+spec:
+  type: ClusterIP
+  clusterIP: None # headless: metrics/health discovery only
+  selector:
+    app.kubernetes.io/name: runtime-worker
+  ports:
+    - name: http
+      port: 3080
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runtime-scheduler
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: runtime-scheduler
+    app.kubernetes.io/component: scheduler
+spec:
+  type: ClusterIP
+  clusterIP: None # headless: metrics/health discovery only
+  selector:
+    app.kubernetes.io/name: runtime-scheduler
+  ports:
+    - name: http
+      port: 3080
+      targetPort: http
+---
+# H-07: the collector Ingress backend and the in-cluster metrics/health endpoint.
+apiVersion: v1
+kind: Service
+metadata:
+  name: collector
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: collector
+    app.kubernetes.io/component: collector
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: collector
+  ports:
+    - name: http
+      port: 3200
+      targetPort: http
+---
+# M2-6: the storefront Ingress backend and in-cluster endpoint (runtime-api reaches it never; this
+# is a leaf — only the Ingress and, if ever added, a browser call it).
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: storefront
+    app.kubernetes.io/component: storefront
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: storefront
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+# Phase A.34: the admin-web Ingress backend and in-cluster endpoint. Hydra/Kratos/Keto's own
+# Services are defined alongside their Deployments (71-hydra.yaml, 72-kratos.yaml, 73-keto.yaml)
+# rather than here, matching debezium-connect's precedent (70-debezium.yaml) of keeping a
+# workload's Service with its Deployment when the workload was added as its own numbered file.
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-web
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: admin-web
+    app.kubernetes.io/component: admin-web
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: admin-web
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http

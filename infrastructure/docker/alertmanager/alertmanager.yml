@@ -1,0 +1,41 @@
+# H-5 — Alertmanager routing. Receivers are placeholders wired by environment secrets at deploy
+# time (SLACK_WEBHOOK_URL / PagerDuty routing key injected via the secret manager, never committed).
+# The routing tree itself is production shape: page → on-call, ticket → chatops, with inhibition so
+# a process-down page suppresses the downstream symptom noise.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: chatops
+  group_by: ["alertname", "component"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: ['severity="page"']
+      receiver: oncall
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+    - matchers: ['severity="ticket"']
+      receiver: chatops
+
+inhibit_rules:
+  # A downed process is the root cause; suppress the readiness/dependency symptoms it triggers.
+  - source_matchers: ['alertname="RuntimeProcessDown"']
+    target_matchers: ['alertname=~"RuntimeNotReady|DependencyDown"']
+    equal: ["component"]
+  # A fast burn implies the slow burn; page, don't also ticket.
+  - source_matchers: ['alertname="ApiErrorBudgetFastBurn"']
+    target_matchers: ['alertname="ApiErrorBudgetSlowBurn"']
+
+receivers:
+  - name: oncall
+    # Configure a real PagerDuty/Opsgenie integration via env at deploy time.
+    webhook_configs:
+      - url: "http://alert-sink:9099/oncall"
+        send_resolved: true
+  - name: chatops
+    webhook_configs:
+      - url: "http://alert-sink:9099/chatops"
+        send_resolved: true

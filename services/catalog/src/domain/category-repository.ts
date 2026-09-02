@@ -1,0 +1,13 @@
+import type { CursorPage, Paginated } from "@platform/types";
+import type { Category } from "./category";
+
+/** Persistence port for {@link Category}. Implemented in infrastructure. The optional `tx` scopes the call to the caller's transaction (ADR-0003). */
+export interface CategoryRepository {
+  save(category: Category, tx?: unknown): Promise<void>;
+  findById(id: string, tx?: unknown): Promise<Category | null>;
+  findBySlug(slug: string, tx?: unknown): Promise<Category | null>;
+  /** Persists a category already marked `deleted` (via `Category.delete`) — same shape as `save`. */
+  delete(category: Category, tx?: unknown): Promise<void>;
+  list(page: CursorPage, tx?: unknown): Promise<Paginated<Category>>;
+  hasChildren(id: string, tx?: unknown): Promise<boolean>;
+}

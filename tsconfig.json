@@ -1,0 +1,9 @@
+{
+  "//": "Root tsconfig for the editor. Each app/package extends @platform/tsconfig and owns its own compilation.",
+  "extends": "@platform/tsconfig/base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [],
+  "exclude": ["node_modules", "**/dist", "**/.next", "**/.turbo"]
+}

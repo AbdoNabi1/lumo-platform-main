@@ -1,0 +1,177 @@
+name: Build
+
+# Builds the monorepo (turbo) and the runtime container image from the EXISTING P1 Dockerfile.
+# Reusable: callers decide whether to push. On GitHub-hosted runners the dependency fetch that was
+# network-blocked locally (P1) succeeds normally.
+on:
+  workflow_call:
+    inputs:
+      push:
+        description: Push the image to GHCR (otherwise build + load locally for scanning only).
+        type: boolean
+        default: false
+    outputs:
+      image:
+        description: Primary image ref (tag) that was built.
+        value: ${{ jobs.image.outputs.image }}
+      digest:
+        description: Immutable image digest (sha256).
+        value: ${{ jobs.image.outputs.digest }}
+      collector_image:
+        description: Collector image ref (tag) that was built (H-07).
+        value: ${{ jobs.collector-image.outputs.image }}
+      collector_digest:
+        description: Collector immutable image digest (sha256) (H-07).
+        value: ${{ jobs.collector-image.outputs.digest }}
+      storefront_image:
+        description: Storefront image ref (tag) that was built (M2-6).
+        value: ${{ jobs.storefront-image.outputs.image }}
+      storefront_digest:
+        description: Storefront immutable image digest (sha256) (M2-6).
+        value: ${{ jobs.storefront-image.outputs.digest }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  monorepo:
+    name: monorepo build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      # turbo build: `next build` for the storefront; backend packages have no build (tsx runtime).
+      - run: pnpm build
+
+  image:
+    name: runtime image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata (immutable tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/runtime
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,format=long
+            type=ref,event=branch
+            type=ref,event=pr
+      - name: Build (and optionally push) runtime image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/runtime.Dockerfile
+          push: ${{ inputs.push }}
+          load: ${{ !inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true # build provenance attestation
+          sbom: true # SBOM attestation (buildx-native, when the registry supports it)
+
+  collector-image:
+    name: collector image
+    # H-07: the collector had no Dockerfile and no image build — build.yml built exactly the runtime
+    # image. Mirrors the `image` job above exactly (same auth, same attestations); a separate job
+    # rather than a matrix so each keeps its own simple, readable `outputs`.
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata (immutable tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/collector
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,format=long
+            type=ref,event=branch
+            type=ref,event=pr
+      - name: Build (and optionally push) collector image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/collector.Dockerfile
+          push: ${{ inputs.push }}
+          load: ${{ !inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  storefront-image:
+    name: storefront image
+    # M2-6: the storefront had no Dockerfile-build job at all — build.yml built only runtime +
+    # collector (H-07) images. Mirrors the `collector-image` job above exactly (same auth, same
+    # attestations, same target stage default); a separate job for the same reason collector got its
+    # own rather than a matrix — each keeps its own simple, readable `outputs`.
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata (immutable tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/storefront
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,format=long
+            type=ref,event=branch
+            type=ref,event=pr
+      - name: Build (and optionally push) storefront image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/web.Dockerfile
+          # web.Dockerfile's default (final) stage is `runner` (production); `dev` is used only by
+          # docker-compose for local hot-reload and is never built here.
+          push: ${{ inputs.push }}
+          load: ${{ !inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true

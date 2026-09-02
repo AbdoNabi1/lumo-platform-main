@@ -1,0 +1,77 @@
+# H-5 — SLI recording rules + error-budget burn.
+#
+# SLIs are derived ONLY from metrics the runtime actually exposes (see apps/runtime/src/metrics.ts):
+#   http_requests_total{method,status}         counter
+#   http_request_duration_ms_sum{method,status} counter (ms accumulator — average latency only;
+#                                                percentiles need histogram buckets, tracked as a
+#                                                future OTel enhancement, so we intentionally do NOT
+#                                                fabricate a p95 here)
+#   runtime_ready                              gauge (1 healthy/degraded, 0 unhealthy)
+#   messaging_messages_{processed,failed,dead_lettered}_total{topic,group} counters
+#
+# SLO targets (see docs/operations/SLO_SLI.md):
+#   - API availability   : 99.9%  (request-success ratio)
+#   - API latency         : 99%  of the 30-day window under the 300ms average budget
+#   - Messaging success   : 99.5% of consumed messages processed without dead-lettering
+groups:
+  - name: lumo-sli
+    interval: 30s
+    rules:
+      # ---- API request rates ----
+      - record: job:http_requests:rate5m
+        expr: sum(rate(http_requests_total{job="lumo-runtime"}[5m]))
+      - record: job:http_requests_errors:rate5m
+        expr: sum(rate(http_requests_total{job="lumo-runtime",status=~"5.."}[5m]))
+
+      # ---- SLI: API availability (fraction of successful requests) ----
+      # Guarded against divide-by-zero: falls back to 1 (perfectly available) when no traffic.
+      - record: sli:api_availability:ratio5m
+        expr: |
+          1 - (
+            job:http_requests_errors:rate5m
+            /
+            clamp_min(job:http_requests:rate5m, 1)
+          )
+
+      # ---- SLI: API average latency (ms) over 5m ----
+      - record: sli:api_latency_ms:avg5m
+        expr: |
+          sum(rate(http_request_duration_ms_sum{job="lumo-runtime"}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total{job="lumo-runtime"}[5m])), 1)
+
+      # ---- SLI: messaging processing success ----
+      - record: job:messaging_processed:rate5m
+        expr: sum(rate(messaging_messages_processed_total{job="lumo-runtime"}[5m]))
+      - record: job:messaging_dead_lettered:rate5m
+        expr: sum(rate(messaging_messages_dead_lettered_total{job="lumo-runtime"}[5m]))
+      - record: sli:messaging_success:ratio5m
+        expr: |
+          1 - (
+            job:messaging_dead_lettered:rate5m
+            /
+            clamp_min(job:messaging_processed:rate5m + job:messaging_dead_lettered:rate5m, 1)
+          )
+
+  - name: lumo-error-budget
+    interval: 30s
+    rules:
+      # Multi-window burn rate against the 99.9% availability SLO (0.1% budget).
+      # Burn rate = observed error ratio / (1 - SLO). >1 means the budget is being spent
+      # faster than sustainable for the window.
+      - record: slo:api_availability:target
+        expr: vector(0.999)
+      - record: slo:api_error_budget:burn5m
+        expr: |
+          (
+            job:http_requests_errors:rate5m
+            /
+            clamp_min(job:http_requests:rate5m, 1)
+          ) / (1 - 0.999)
+      - record: slo:api_error_budget:burn1h
+        expr: |
+          (
+            sum(rate(http_requests_total{job="lumo-runtime",status=~"5.."}[1h]))
+            /
+            clamp_min(sum(rate(http_requests_total{job="lumo-runtime"}[1h])), 1)
+          ) / (1 - 0.999)

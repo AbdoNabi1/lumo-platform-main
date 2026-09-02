@@ -1,0 +1,100 @@
+# Phase A.34 (A.33 P0 #2, Task 8 domain matrix) — public Ingresses for Hydra's and Kratos's PUBLIC
+# APIs only. Same `default-src 'none'` posture as runtime-api's Ingress (60-ingress.yaml): both are
+# JSON/redirect APIs, never HTML. The admin APIs (Hydra :4445, Kratos :4434) are deliberately absent
+# from every Ingress here — they have zero auth of their own by Ory's design and must never be
+# reachable outside the cluster (71-hydra.yaml / 72-kratos.yaml Service comments).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hydra
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: hydra
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.3 TLSv1.2"
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "63072000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    nginx.ingress.kubernetes.io/hsts-preload: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: no-referrer";
+      more_set_headers "Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=()";
+      more_clear_headers "Server";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - auth.lumo.example.com
+      secretName: hydra-tls
+  rules:
+    - host: auth.lumo.example.com
+      http:
+        paths:
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service: { name: hydra, port: { name: public } }
+          - path: /.well-known
+            pathType: Prefix
+            backend:
+              service: { name: hydra, port: { name: public } }
+          - path: /userinfo
+            pathType: Exact
+            backend:
+              service: { name: hydra, port: { name: public } }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kratos
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: kratos
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.3 TLSv1.2"
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "63072000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    nginx.ingress.kubernetes.io/hsts-preload: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: no-referrer";
+      more_set_headers "Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=()";
+      more_clear_headers "Server";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - identity.lumo.example.com
+      secretName: kratos-tls
+  rules:
+    - host: identity.lumo.example.com
+      http:
+        paths:
+          - path: /self-service
+            pathType: Prefix
+            backend:
+              service: { name: kratos, port: { name: public } }
+          - path: /sessions
+            pathType: Prefix
+            backend:
+              service: { name: kratos, port: { name: public } }
+          - path: /schemas
+            pathType: Prefix
+            backend:
+              service: { name: kratos, port: { name: public } }
+          - path: /.well-known
+            pathType: Prefix
+            backend:
+              service: { name: kratos, port: { name: public } }

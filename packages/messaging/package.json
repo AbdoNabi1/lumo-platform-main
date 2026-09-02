@@ -1,0 +1,33 @@
+{
+  "name": "@platform/messaging",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Event backbone runtime: transactional outbox write-side, publisher/consumer abstractions, idempotency, retry, and DLQ, with in-memory adapters. Broker-agnostic; Redpanda/Debezium adapters added later.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@platform/contracts": "workspace:*",
+    "@platform/domain": "workspace:*",
+    "@platform/domain-events": "workspace:*",
+    "@platform/repository": "workspace:*",
+    "@platform/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@platform/eslint-config": "workspace:*",
+    "@platform/tsconfig": "workspace:*",
+    "@vitest/coverage-v8": "^2.1.4",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

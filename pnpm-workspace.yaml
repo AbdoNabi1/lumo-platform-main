@@ -1,0 +1,91 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "services/*"
+
+# H-09: force patched versions of transitive dependencies carrying High-severity advisories
+# (FINAL_PRODUCTION_READINESS_AUDIT_v2.md H2-8) that no direct dependency bump reaches —
+# next@15.5.x's own optionalDependencies still request sharp ^0.34.3 (checked against the
+# installed next package.json), and @fastify/swagger-ui@5.x still requests @fastify/static ^9.x.
+# Bumping @fastify/swagger-ui to its 6.x major (which pulls a patched @fastify/static) or pinning
+# an unreleased-for-next sharp major are both larger changes than this finding's fix shape.
+overrides:
+  sharp: ">=0.35.0"
+  find-my-way: ">=9.6.1"
+  "@fastify/static": ">=10.1.2"
+  postcss: ">=8.5.23"
+  nanoid: ">=3.3.18 <4"
+  js-yaml: ">=4.3.1 <5"
+
+# Approve build scripts for these trusted dependencies. pnpm sandboxes dependency
+# build scripts by default; these are required to run (Prisma query engine, esbuild
+# binary for Vitest/tsx, sharp native, protobufjs).
+allowBuilds:
+  "@swc/core": true
+  "@temporalio/core-bridge": true
+  "@prisma/client": true
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true
+  protobufjs: true
+  sharp: true
+
+# H-09: the remaining High/Critical advisories after the overrides above, allowlisted by GHSA ID
+# per the audit's own recommendation ("allowlist them explicitly by advisory ID rather than
+# disabling the gate wholesale") now that ci.yml's `pnpm audit` is a hard gate again
+# (continue-on-error removed). Every one of these sits entirely in devDependencies-only tool
+# chains that never ship a reachable code path in the built runtime/collector/storefront images —
+# re-verify this classification (`pnpm why <package>`) before adding to this list, and prefer
+# fixing/overriding (see `overrides` above) over ignoring wherever the fix is safe and cheap.
+#   - GHSA-5xrq-8626-4rwp / GHSA-fx2h-pf6j-xcff — vitest/vite (test runner only)
+#   - GHSA-3jxr-9vmj-r5cp / GHSA-mh99-v99m-4gvg / GHSA-rgw5-rvv9-x895 — brace-expansion, via
+#     eslint's and typescript-eslint's own minimatch (two different major-version populations
+#     already coexisting; a blanket override risks breaking whichever consumer expects the other
+#     major — lint-time only regardless)
+#   - GHSA-v2hh-gcrm-f6hx / GHSA-7p8r-x3mc-p8w7 / GHSA-4c8g-83qw-93j6 — fast-uri, via ajv used by
+#     commitlint and dependency-cruiser (commit-time/lint-time schema validation only)
+#   - GHSA-ggr8-5vv4-36mx — deepmerge-ts@7.1.5, via @prisma/config (the prisma CLI's
+#     config-file loader) <- prisma <- @prisma/client. Unlike the entries above, this one IS
+#     resolved into the `--prod` graph (pnpm resolves `prisma` as @prisma/client's declared
+#     peerDependency), so it can't be waved off as devDependencies-only. Verified by direct
+#     instrumentation (a Node module hook logging every real deepmerge-ts call + stack trace,
+#     run against `prisma validate`, which shares the same config-bootstrap path as every other
+#     prisma subcommand): deepmerge-ts's merge DOES execute on every single Prisma CLI
+#     invocation, unconditionally — including Railway's `runtime-api` preDeployCommand
+#     (`prisma migrate deploy`, infrastructure/railway/runtime-api.railway.json). This is
+#     broader than earlier phrasing here implied; it is not a rare/theoretical code path.
+#     What's actually merged, traced to @prisma/config's own call into c12's loadConfig
+#     (c12 merges configs.overrides/main/rc/packageJson/defaultConfig — @prisma/config passes
+#     rcFile/packageJson/giget/extend: false, so only the `main` slot, i.e. a prisma.config.ts
+#     default export, can ever be non-null; this repo has no prisma.config.ts, so all 5 args
+#     traced as null): the sole potentially non-null input is developer/repository-controlled
+#     Prisma config code, never external data. The advisory itself (GHSA-ggr8-5vv4-36mx,
+#     CWE-674 Uncontrolled Recursion, fetched directly from GitHub Advisories) requires a
+#     self-referential/circular JS object graph (e.g. `left.self = left`) — its own text states
+#     plain JSON alone does not create the condition, and JSON.parse structurally cannot produce
+#     a circular reference. That rules out every HTTP/API/DB/env-var vector definitively, not
+#     just practically: there is no serialization boundary that can carry the trigger shape.
+#     The only way to get a circular object into this merge call would be planting one directly
+#     in a committed prisma.config.ts, which jiti then loads and executes as real code with no
+#     sandbox — an attacker in a position to do that already has code-execution-level control
+#     over the Prisma CLI/deploy environment, a strictly worse compromise than this DoS, and
+#     outside the external-attacker threat model this exception addresses. No override:
+#     deepmerge-ts's fix is 8.0.0, a major bump inside Prisma's own dependency tree — Prisma
+#     hasn't taken it in any release up to and including 7.9.1 (checked via `npm view
+#     @prisma/config@<version> dependencies` across 6.19.3 and latest 7.x), so forcing it via
+#     pnpm override would run an untested deepmerge-ts major under Prisma's config loader for
+#     no production benefit. Revisit if: Prisma changes its config-loading behavior, an
+#     untrusted/external source becomes able to reach the merge inputs, this repo starts
+#     building Prisma config dynamically from external data, or Prisma ships a release that
+#     bumps deepmerge-ts itself.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-5xrq-8626-4rwp
+    - GHSA-fx2h-pf6j-xcff
+    - GHSA-3jxr-9vmj-r5cp
+    - GHSA-v2hh-gcrm-f6hx
+    - GHSA-mh99-v99m-4gvg
+    - GHSA-7p8r-x3mc-p8w7
+    - GHSA-rgw5-rvv9-x895
+    - GHSA-4c8g-83qw-93j6
+    - GHSA-ggr8-5vv4-36mx

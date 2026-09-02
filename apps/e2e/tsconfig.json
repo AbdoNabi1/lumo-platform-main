@@ -1,0 +1,5 @@
+{
+  "extends": "@platform/tsconfig/node.json",
+  "include": ["tests"],
+  "exclude": ["node_modules", "test-results", "playwright-report", "playwright.config.ts"]
+}

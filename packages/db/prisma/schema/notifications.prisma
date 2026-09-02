@@ -1,0 +1,45 @@
+// `notifications` schema — Notification (services/notifications). Source of truth for the
+// delivery lifecycle, delivery attempts/history, retry policy, template rendering, and channel
+// routing. No contact PII (ADR-0006) — `recipient` stores a bare reference only.
+
+model Notification {
+  id             String @id @db.Uuid
+  tenantId       String @map("tenant_id")
+  idempotencyKey String @map("idempotency_key")
+  sourceRef      String @map("source_ref") // bare id into whichever context triggered this — never an FK
+  recipient      Json // { customerRef } — reference only, no contact address/PII
+  channels       Json // NotificationChannel[] snapshot, priority order
+  channelIndex   Int    @default(0) @map("channel_index")
+  template       Json // { templateId, bodyPattern, subjectPattern? }
+  variables      Json   @default("{}")
+  policy         Json // { maxAttempts, expiresAt? }
+  status         String // 9-value lifecycle union (domain-enforced, see NotificationStatusValue)
+  /// Append-only provider-attempt log and lifecycle-status history — both embedded JSONB arrays on
+  /// this row (unlike every prior context's separate `*_attempts` child table); never rewritten,
+  /// only appended.
+  attempts    Json      @default("[]")
+  history     Json      @default("[]")
+  deliveredAt DateTime? @map("delivered_at")
+  version     Int       @default(0)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, sourceRef])
+  @@index([tenantId, status])
+  @@map("notifications")
+  @@schema("notifications")
+}
+
+/// Replay-safe provider-callback dedup (Sprint 4.12) — unique per (tenant, provider, callback_id).
+model ProcessedProviderCallback {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  provider   String
+  callbackId String   @map("callback_id")
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  @@unique([tenantId, provider, callbackId])
+  @@map("processed_callbacks")
+  @@schema("notifications")
+}

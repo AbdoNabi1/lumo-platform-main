@@ -1,0 +1,21 @@
+// `theme` schema — Theme (services/theme). Owns appearance; seeded from @platform/design tokens,
+// never duplicates them.
+
+model Theme {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  name       String
+  colors     Json     @default("{}")
+  typography Json     @default("{}")
+  spacing    Json     @default("{}")
+  status     String // draft | active | archived (domain-enforced, see ThemeStatusValue)
+  /// Append-only published-version history — embedded JSONB array on this row.
+  versions   Json     @default("[]")
+  version    Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("themes")
+  @@schema("theme")
+}

@@ -1,0 +1,111 @@
+// `payments` schema — PaymentIntent (+Charge, +Refund) (services/payments).
+// Card data NEVER touches these tables: `psp_token` is the provider's tokenized reference
+// (PCI scope containment, gap register G-27).
+
+model PaymentIntent {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  orderRef    String   @map("order_ref") // bare id into Orders — never an FK
+  amountMinor Int      @map("amount_minor")
+  currency    String
+  status      String // 12-value lifecycle union (domain-enforced, see PaymentStatusValue)
+  /// Caller-supplied idempotency key for intent creation (Sprint A0 precondition, A3). Nullable —
+  /// no code path writes it yet (the domain aggregate carries no such field); A3 threads it through
+  /// `CreatePaymentIntent` to dedupe retried saga-activity calls. New column, all-NULL today, so
+  /// the unique constraint below is safe to apply without a data audit (Postgres treats each NULL
+  /// as distinct in a unique index).
+  idempotencyKey        String?  @map("idempotency_key")
+  pspReference          String?  @map("psp_reference")
+  paymentMethod         Json     @default("{}") @map("payment_method")
+  authorizedAmountMinor Int?     @map("authorized_amount_minor")
+  version               Int      @default(0)
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  charges  Charge[]
+  refunds  Refund[]
+  attempts PaymentAttempt[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, orderRef])
+  @@index([tenantId, status])
+  /// Phase A.10 (Tasks 4-6): backs `findByPspReference`, used by Stripe webhook correlation
+  /// (`data.object.id` for `payment_intent.*` events is this value, never `id`).
+  @@index([tenantId, pspReference])
+  @@map("payment_intents")
+  @@schema("payments")
+}
+
+/// Append-only lifecycle-attempt log (Sprint 4.8) — retry-safe observability trail, never rewritten.
+model PaymentAttempt {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  intentId   String   @map("intent_id") @db.Uuid
+  kind       String
+  outcome    String
+  reference  String?
+  occurredAt DateTime @map("occurred_at")
+
+  intent PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Restrict)
+
+  @@index([intentId])
+  @@map("payment_attempts")
+  @@schema("payments")
+}
+
+/// Replay-safe webhook dedup (Sprint 4.8) — unique per (tenant, provider, event).
+model ProcessedWebhook {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  provider   String
+  eventId    String   @map("event_id")
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  @@unique([tenantId, provider, eventId])
+  @@map("processed_webhooks")
+  @@schema("payments")
+}
+
+model Charge {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  intentId    String   @map("intent_id") @db.Uuid
+  pspToken    String   @map("psp_token")
+  amountMinor Int      @map("amount_minor")
+  occurredAt  DateTime @map("occurred_at")
+
+  intent PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Restrict)
+
+  @@index([intentId])
+  @@map("charges")
+  @@schema("payments")
+}
+
+/// Refund rows are append-only in identity/amount/occurredAt, but `status` transitions exactly
+/// once (`pending` -> `completed`|`failed`) after Phase A.4 (refund-concurrency remediation):
+/// `pending` is written durably BEFORE any PSP call so it counts against the owning intent's
+/// `remaining()` capacity for every concurrent reader; `completed`/`failed` settle it after the
+/// PSP responds. A real migration would add `CHECK (status IN ('pending','completed','failed'))`
+/// (MIGRATIONS.md §3) — deferred alongside every other hand-written-SQL step in this schema until
+/// a live Postgres host is available (see MIGRATIONS.md §1).
+model Refund {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  intentId    String   @map("intent_id") @db.Uuid
+  amountMinor Int      @map("amount_minor")
+  status      String   @default("completed")
+  occurredAt  DateTime @map("occurred_at")
+  /// Caller-supplied stable identity of the LOGICAL refund (Phase A.5, refund-idempotency
+  /// remediation) — e.g. Returns' `<returnId>:refund`. Nullable, same precedent as
+  /// `PaymentIntent.idempotencyKey` above: no pre-A.5 row ever wrote it, so backfill-free. Scoped
+  /// unique per intent (not globally) — the same key on two different intents is a distinct bug
+  /// class this column does not need to prevent.
+  idempotencyKey String? @map("idempotency_key")
+
+  intent PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Restrict)
+
+  @@unique([intentId, idempotencyKey])
+  @@index([intentId])
+  @@map("refunds")
+  @@schema("payments")
+}

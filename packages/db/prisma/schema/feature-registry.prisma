@@ -1,0 +1,49 @@
+// `feature_registry` schema — FeatureDefinition (services/feature-registry, ADR-0027). The single source of truth
+// for every platform capability: versioned-immutable definitions (category, visibility, dependencies, required
+// plans/permissions/capabilities, deprecation, replacement, soft removal). Owns feature DEFINITIONS only — never
+// feature state, subscriptions, or developer flags. A consumer that pins a published version is unaffected by
+// later edits (the same discipline as licensing.PlanVersion). `category`/`visibility` are denormalized from the
+// effective version for discovery/filtering.
+
+model FeatureDefinition {
+  id                     String   @id @db.Uuid
+  tenantId               String   @map("tenant_id")
+  key                    String
+  name                   String
+  lifecycle              String // draft | active | deprecated | removed
+  category               String
+  visibility             String // public | internal | beta | hidden
+  publishedVersionNumber Int?     @map("published_version_number")
+  replacementKey         String?  @map("replacement_key")
+  versions               Json     @default("[]") // append-only FeatureVersion[] snapshots (immutable once published)
+  version                Int      @default(0)
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, key])
+  @@index([tenantId, lifecycle])
+  @@index([tenantId, category])
+  @@map("feature_definitions")
+  @@schema("feature_registry")
+}
+
+// FeatureBundle (P1.1.1 §2) — reusable commercial collections of features (AI Pack, Enterprise Pack, …). References
+// features by key; owns no business logic. Licensing references bundles to compose plan entitlements.
+model FeatureBundle {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id")
+  key         String
+  name        String
+  description String   @default("")
+  status      String // active | archived
+  featureKeys Json     @default("[]") @map("feature_keys") // string[] of feature keys (bare refs)
+  groups      Json     @default("[]") // string[] of group keys
+  version     Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, key])
+  @@index([tenantId, status])
+  @@map("feature_bundles")
+  @@schema("feature_registry")
+}

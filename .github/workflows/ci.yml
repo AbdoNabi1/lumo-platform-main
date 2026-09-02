@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, typecheck, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # M-10 fitness function: fails the build if a variable a running process requires goes
+      # undocumented in .env.example, or if .env.example documents a variable nothing reads.
+      - name: Verify env var documentation
+        run: node scripts/ops/check-env-docs.mjs
+
+      # G0-5 (launch-readiness review): `require-await` runs at "warn" (Stage 3, H-09) rather
+      # than "error" — a checked-in warning-count cap keeps that from being an open-ended pass, by
+      # failing the build if the total ever grows instead of only catching new hard errors. Wraps
+      # (does not duplicate) the same `turbo run lint` a plain `pnpm lint` would run.
+      - name: Lint (fails if lint errors OR the warning count exceeds the checked-in cap)
+        run: node scripts/ops/check-lint-warnings.mjs
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      # G-21 (Phase 6, T6.3): every package's vitest.config.ts carries a `coverage.thresholds`
+      # block, ratcheted to today's measured baseline where that's below the 80% target and capped
+      # at exactly 80 where it already clears it (see each config's own comment) — coverage is only
+      # instrumented/enforced here, not on the plain `pnpm test` above, so local runs stay fast.
+      - name: Coverage gate
+        run: pnpm test:coverage
+
+      - name: Architecture (dependency rules)
+        run: pnpm arch
+
+      # H-09: production-facing High advisories (@fastify/static, find-my-way, next, sharp) are
+      # fixed (pnpm-workspace.yaml overrides); postcss fixed too. The remaining High/Critical
+      # advisories are dev-tooling-only and explicitly allowlisted by GHSA ID in
+      # pnpm-workspace.yaml's auditConfig.ignoreGhsas (with the reasoning per advisory) rather than
+      # disabled wholesale — this is now a hard gate.
+      - name: Dependency audit
+        run: pnpm audit --audit-level high
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: storefront-build
+          path: apps/storefront/.next
+          if-no-files-found: ignore
+          retention-days: 7

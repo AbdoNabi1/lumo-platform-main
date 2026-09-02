@@ -1,0 +1,132 @@
+# H-08: local/production-parity runtime processes, overlaying docker-compose.yml's infra plane.
+# Documented since DEPLOYMENT_GUIDE.md's "Deploy locally (parity)" section, but this file did not
+# exist — `docker compose -f docker-compose.yml -f docker-compose.runtime.yml up` had nothing to
+# apply. One image (runtime.Dockerfile) for all three processes, differing only in `command` —
+# the same convention the Dockerfile's own comment and the k8s Deployments already use.
+#
+# AUTH_ISSUER_URL/AUTH_JWKS_URL are REQUIRED unconditionally (apps/runtime/src/composition.ts:118 —
+# "there is no fake identity provider"), but no Ory stack (Hydra/Kratos/Keto) runs in this compose
+# stack yet. The placeholder values below let the process boot (APP_ENV=local keeps every other
+# guard permissive — MFA, payments, Keto authorization all warn rather than throw) so /healthz,
+# /readyz and /metrics are real and scrapable; an actual authenticated request will fail verifying
+# against an unreachable JWKS endpoint until a real issuer is wired in. That gap is pre-existing and
+# out of this finding's scope (Prometheus scrape coverage), not introduced by this file.
+#
+# Run: docker compose -f infrastructure/docker/docker-compose.yml \
+#                      -f infrastructure/docker/docker-compose.runtime.yml up -d --build
+
+x-runtime-env: &runtime-env
+  APP_ENV: local
+  NODE_ENV: development
+  DATABASE_URL: postgresql://lumo:lumo@postgres:5432/lumo
+  REDIS_URL: redis://redis:6379
+  KAFKA_BROKERS: redpanda:9092
+  AUTH_ISSUER_URL: http://localhost:4444/ # placeholder — no issuer runs locally yet, see header note
+  AUTH_JWKS_URL: http://localhost:4444/.well-known/jwks.json # placeholder, same as above
+  TENANT_DEFAULT_ID: tenant-local
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_TRACES_ENABLED: "true"
+  OTEL_METRICS_ENABLED: "true"
+  # Phase A.23 (Task 3): activates the scheduler's CDC watchdog job in the parity stack too — same
+  # in-cluster-DNS convention as the other infra vars above (debezium is docker-compose.yml's own
+  # service name, port 8083, matching register-connector.sh).
+  KAFKA_CONNECT_URL: http://debezium:8083
+
+x-runtime-build: &runtime-build
+  context: ../..
+  dockerfile: infrastructure/docker/runtime.Dockerfile
+
+services:
+  api:
+    build: *runtime-build
+    restart: unless-stopped
+    command: ["node", "--import", "tsx", "src/api.ts"]
+    environment:
+      <<: *runtime-env
+      PORT: "3080"
+    ports:
+      - "3080:3080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    healthcheck:
+      # bookworm-slim (runtime.Dockerfile) has no wget/curl — same node one-liner the image's own
+      # HEALTHCHECK uses.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3080/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [data, messaging, observability]
+
+  worker:
+    build: *runtime-build
+    restart: unless-stopped
+    command: ["node", "--import", "tsx", "src/worker.ts"]
+    environment:
+      <<: *runtime-env
+      PORT: "3080"
+    ports:
+      - "3081:3080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    healthcheck:
+      # bookworm-slim (runtime.Dockerfile) has no wget/curl — same node one-liner the image's own
+      # HEALTHCHECK uses.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3080/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [data, messaging, observability]
+
+  scheduler:
+    build: *runtime-build
+    restart: unless-stopped
+    command: ["node", "--import", "tsx", "src/scheduler.ts"]
+    environment:
+      <<: *runtime-env
+      PORT: "3080"
+    ports:
+      - "3082:3080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # bookworm-slim (runtime.Dockerfile) has no wget/curl — same node one-liner the image's own
+      # HEALTHCHECK uses.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3080/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [data, messaging, observability]

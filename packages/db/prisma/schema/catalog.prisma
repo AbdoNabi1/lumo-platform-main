@@ -1,0 +1,117 @@
+// `catalog` schema — Product (+Variant), Brand, Category, Collection (services/catalog).
+// Brand/Category/Collection added Commerce Sprint 1 / Sprint 7.0 — additive to Sprint 1.1's base
+// Product/Category. `brandId`/`categoryRefs` and Collection's product refs are bare ids (D-002) —
+// never FKs across aggregates; the only FKs are intra-aggregate (ProductVariant, CollectionItem).
+
+model Product {
+  id           String    @id @db.Uuid
+  tenantId     String    @map("tenant_id")
+  sku          String
+  name         String
+  slug         String
+  publishState String    @map("publish_state") // draft | scheduled | published | archived (domain-enforced)
+  scheduledAt  DateTime? @map("scheduled_at")
+  brandId      String?   @map("brand_id") @db.Uuid // bare ref into Brand — never an FK (same package, still D-002)
+  categoryRefs String[]  @map("category_refs") // bare refs into Category — never FKs
+  options      Json      @default("[]") // ProductOption[] — written null-free
+  seo          Json?     // Seo — null when unset
+  mediaRefs    String[]  @map("media_refs") // bare asset ids into Media — never FKs
+  version      Int       @default(0)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  variants ProductVariant[]
+
+  @@unique([tenantId, sku])
+  @@unique([tenantId, slug])
+  @@index([tenantId, publishState])
+  @@index([tenantId, brandId])
+  @@map("products")
+  @@schema("catalog")
+}
+
+/// Owned by the Product aggregate (same-aggregate FK is allowed; cross-context refs are not).
+model ProductVariant {
+  id               String  @id @db.Uuid
+  tenantId         String  @map("tenant_id")
+  productId        String  @map("product_id") @db.Uuid
+  sku              String
+  priceAmountMinor Int     @map("price_amount_minor")
+  currency         String
+  selection        Json?   // VariantSelection.values — null when the product declares no options
+  mediaRef         String? @map("media_ref") // bare id into Media context — never an FK
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, sku])
+  @@index([productId])
+  @@map("product_variants")
+  @@schema("catalog")
+}
+
+model Brand {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id")
+  name      String
+  slug      String
+  version   Int       @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, slug])
+  @@map("brands")
+  @@schema("catalog")
+}
+
+model Category {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id")
+  name      String
+  slug      String
+  parentId  String?   @map("parent_id") @db.Uuid // bare ref, same-package self-hierarchy — never an FK
+  version   Int       @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, parentId])
+  @@map("categories")
+  @@schema("catalog")
+}
+
+/// Manual, merchant-curated, ordered product grouping (Sprint 7.0 — the one genuine gap).
+model Collection {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id")
+  name      String
+  slug      String
+  status    String    @default("draft") // draft | published (domain-enforced)
+  version   Int       @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  items CollectionItem[]
+
+  @@unique([tenantId, slug])
+  @@map("collections")
+  @@schema("catalog")
+}
+
+/// Owned by the Collection aggregate — `position` carries manual ordering (reorderProducts).
+model CollectionItem {
+  collectionId String @map("collection_id") @db.Uuid
+  tenantId     String @map("tenant_id")
+  productId    String @map("product_id") @db.Uuid // bare ref into Product — never an FK
+  position     Int
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, productId])
+  @@index([collectionId, position])
+  @@map("collection_items")
+  @@schema("catalog")
+}

@@ -1,0 +1,5 @@
+{
+  "extends": "@platform/tsconfig/react-library.json",
+  "include": ["src", "vitest.setup.ts"],
+  "exclude": ["node_modules", "dist"]
+}

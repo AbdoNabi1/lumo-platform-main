@@ -1,0 +1,7 @@
+import type { {{ pascalCase name }} } from "./{{ kebabCase name }}";
+
+/** Persistence port for {@link {{ pascalCase name }} }. Implemented in infrastructure. The optional `tx` scopes the call to the caller's transaction (ADR-0003). */
+export interface {{ pascalCase name }}Repository {
+  save(entity: {{ pascalCase name }}, tx?: unknown): Promise<void>;
+  findById(id: string, tx?: unknown): Promise<{{ pascalCase name }} | null>;
+}

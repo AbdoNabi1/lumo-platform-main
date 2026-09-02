@@ -1,0 +1,368 @@
+# Least-privilege network policies (default-deny + explicit allows). Additive-allow model.
+# NOTE: infra (postgres/redis/redpanda/keto/hydra) may live in another namespace or be external,
+# so egress is scoped by PORT (destination-open). Tighten `to:` with namespace/pod selectors or
+# ipBlocks once the infra placement is known. Kubelet probe traffic originates from the node, not
+# a pod — most CNIs permit host→pod probes; if yours enforces them, allow the node CIDR on 3080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: lumo-runtime
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: lumo-runtime
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-infra-egress
+  namespace: lumo-runtime
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - port: 5432 # postgres
+          protocol: TCP
+        - port: 6379 # redis
+          protocol: TCP
+        - port: 9092 # redpanda / kafka
+          protocol: TCP
+        - port: 4466 # ory keto read api
+          protocol: TCP
+        # KETO_WRITE_URL/KRATOS_PUBLIC_URL/KRATOS_ADMIN_URL (10-config.yaml) are required
+        # unconditionally outside APP_ENV=local (config.ts superRefine, H-2/G-SEC-4) but only
+        # port 4466 was open here — found during the Production Integration Verification Sprint's
+        # static cross-reference of 10-config.yaml against this file (INTEGRATION_VERIFICATION_REPORT.md):
+        # the runtime would fail closed calling Keto's write API or Kratos at all in a
+        # default-deny cluster. Adding the three missing ports.
+        - port: 4467 # ory keto write api
+          protocol: TCP
+        - port: 4433 # ory kratos public
+          protocol: TCP
+        - port: 4434 # ory kratos admin
+          protocol: TCP
+        - port: 4444 # ory hydra public (jwks)
+          protocol: TCP
+        # Phase A.34: admin-web (now in-cluster, 77-deployment-admin-web.yaml) calls Hydra's admin
+        # API server-side for the login/consent flows (login/page.tsx, consent/page.tsx) — the
+        # exact reason admin-web runs in-cluster instead of on Vercel (see that file's comment).
+        - port: 4445 # ory hydra admin
+          protocol: TCP
+        - port: 443 # outbound TLS (external issuer / secret manager)
+          protocol: TCP
+---
+# Public/business traffic to the API only, from the ingress controller, on the http port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3080
+          protocol: TCP
+---
+# Prometheus scrape of /metrics + /healthz on every runtime pod, from the monitoring namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 3080
+          protocol: TCP
+---
+# H-07: public/business traffic to the collector only, from the ingress controller, on its own port
+# (3200 — distinct from the runtime's 3080, so this is scoped by pod selector, not folded into the
+# blanket `allow-metrics-ingress`/`allow-api-ingress` rules above).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-collector-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: collector
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3200
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 3200
+          protocol: TCP
+---
+# Debezium Connect's REST API (70-debezium.yaml, port 8083) had no matching ingress rule under
+# default-deny-all — the debezium-register-outbox Job (same namespace) would block forever on
+# `curl ... $CONNECT_URL/connectors` with no NetworkPolicy allowing the connection through. Found
+# during the Production Integration Verification Sprint's static cross-reference of 70-debezium.yaml
+# against this file (INTEGRATION_VERIFICATION_REPORT.md). Same-namespace only — Connect's REST API
+# is never exposed outside the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-debezium-connect-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: debezium-connect
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8083
+          protocol: TCP
+---
+# M2-6: public/business traffic to the storefront only, from the ingress controller, on its own
+# port (3000). Same shape as allow-api-ingress/allow-collector-ingress above.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-storefront-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: storefront
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3000
+          protocol: TCP
+---
+# M2-6: the storefront's server components call the Runtime API in-cluster (runtime-api.ts's
+# RUNTIME_API_URL, wired to the runtime-api Service by 27-storefront-config.yaml) rather than
+# through the public Ingress. `allow-infra-egress` above is port-scoped for external stateful
+# stores, not the runtime-api pod's own port (3080), so without this pair of rules the storefront
+# could never reach it under this namespace's default-deny-all — every product/category/collection/
+# price/inventory fetch would fail closed (degrading to the page's "Connect the Runtime API" fallback,
+# never a hard error, but never real data either). Pod-selector-scoped, not just port-scoped, so this
+# stays least-privilege (only the storefront may reach the API pod-to-pod; ingress-nginx and
+# monitoring keep their own separate allows above).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-storefront-egress-to-api
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: storefront
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: runtime-api
+      ports:
+        - port: 3080
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-storefront-to-api-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: storefront
+      ports:
+        - port: 3080
+          protocol: TCP
+---
+# Phase A.34 — public/business traffic to admin-web only, from the ingress controller.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-admin-web-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: admin-web
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3100
+          protocol: TCP
+---
+# admin-web's Server Components/Route Handlers call the Runtime API in-cluster
+# (RUNTIME_API_URL in 76-admin-web-config.yaml) — same pair-of-rules shape as the storefront rules
+# immediately above (egress from admin-web + matching ingress on runtime-api).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-admin-web-egress-to-api
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: admin-web
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: runtime-api
+      ports:
+        - port: 3080
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-admin-web-to-api-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: admin-web
+      ports:
+        - port: 3080
+          protocol: TCP
+---
+# Phase A.34 (A.33 P0 #2) — public self-service traffic to Hydra's/Kratos's PUBLIC ports only, from
+# the ingress controller. Their admin ports are deliberately not opened to ingress-nginx here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-identity-public-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [hydra, kratos]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 4444 # hydra public
+          protocol: TCP
+        - port: 4433 # kratos public
+          protocol: TCP
+---
+# Hydra's/Kratos's admin APIs (zero auth of their own, by Ory's design) are reachable only from
+# admin-web's pods — the one in-cluster caller (login/page.tsx, consent/page.tsx, logout/route.ts).
+# Least-privilege by pod selector, not just by port, unlike the debezium-register Job's namespace-
+# wide `from: podSelector: {}` precedent — there's a single known caller here, so this is scoped to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-admin-web-to-identity-admin-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [hydra, kratos]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: admin-web
+      ports:
+        - port: 4445 # hydra admin
+          protocol: TCP
+        - port: 4434 # kratos admin
+          protocol: TCP
+---
+# Keto's read/write APIs are called by runtime-api (KetoAccessControl) and by the OAuth client
+# registration Job's Keto-grant step (scripts/ops/register-oauth-client.mjs is run out-of-cluster
+# by an operator against the public... no — Keto is never public; grants are applied via
+# `kubectl exec`/`kubectl port-forward` or a one-off in-cluster Job, both of which originate as
+# pods matched by this same namespace, so the permissive namespace-wide shape (matching the
+# existing debezium-register-outbox precedent) is kept here rather than invented narrower.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-keto-ingress
+  namespace: lumo-runtime
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keto
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 4466
+          protocol: TCP
+        - port: 4467
+          protocol: TCP

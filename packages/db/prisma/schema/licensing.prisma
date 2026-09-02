@@ -1,0 +1,121 @@
+// `licensing` schema — Plan, Subscription, MerchantFeatureOverride, MerchantCapabilities,
+// UsageCounter, Credit, Invoice (services/licensing). ADR-0018 Sprint 5.5/5.6 addenda.
+
+model Plan {
+  id                 String   @id @db.Uuid
+  tenantId           String   @map("tenant_id")
+  key                String
+  name               String
+  tier               String // free | starter | growth | pro | enterprise | custom
+  /// Append-only PlanVersion history — embedded JSONB array on this row.
+  versions           Json     @default("[]")
+  publishedVersionId String?  @map("published_version_id")
+  version            Int      @default(0)
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, key])
+  @@map("plans")
+  @@schema("licensing")
+}
+
+model Subscription {
+  id                 String    @id @db.Uuid
+  tenantId           String    @map("tenant_id")
+  tenantRef          String    @map("tenant_ref")
+  planVersionRef     String    @map("plan_version_ref")
+  status             String // trial | active | grace | expired | suspended | cancelled
+  renewalSchedule    Json?     @map("renewal_schedule")
+  gracePeriodDays    Int?      @map("grace_period_days")
+  retryPolicy        Json?     @map("retry_policy")
+  cancellationReason String?   @map("cancellation_reason")
+  pausedUntil        DateTime? @map("paused_until")
+  version            Int       @default(0)
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, tenantRef])
+  @@map("subscriptions")
+  @@schema("licensing")
+}
+
+model MerchantFeatureOverride {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id")
+  tenantRef  String    @map("tenant_ref")
+  featureKey String    @map("feature_key")
+  state      String // enabled | disabled | temp_grant | temp_block
+  expiresAt  DateTime? @map("expires_at")
+  notes      String?
+  version    Int       @default(0)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, tenantRef, featureKey])
+  @@map("merchant_feature_overrides")
+  @@schema("licensing")
+}
+
+model MerchantCapabilities {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id")
+  tenantRef    String   @map("tenant_ref")
+  grants       Json     @default("[]")
+  auditHistory Json     @default("[]") @map("audit_history")
+  version      Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, tenantRef])
+  @@map("merchant_capabilities")
+  @@schema("licensing")
+}
+
+model UsageCounter {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id")
+  tenantRef      String    @map("tenant_ref")
+  resource       String
+  amount         Float
+  unit           String
+  lastRecordedAt DateTime? @map("last_recorded_at")
+  version        Int       @default(0)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, tenantRef, resource])
+  @@map("usage_counters")
+  @@schema("licensing")
+}
+
+model Credit {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  tenantRef String   @map("tenant_ref")
+  amount    Float
+  reason    String
+  status    String // granted | consumed | expired
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("credits")
+  @@schema("licensing")
+}
+
+model Invoice {
+  id                String   @id @db.Uuid
+  tenantId          String   @map("tenant_id")
+  tenantRef         String   @map("tenant_ref")
+  subscriptionRef    String   @map("subscription_ref")
+  currency          String
+  lineItems         Json     @default("[]") @map("line_items")
+  status            String // draft | issued | paid | failed | voided
+  paymentReference  String?  @map("payment_reference")
+  version           Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("invoices")
+  @@schema("licensing")
+}

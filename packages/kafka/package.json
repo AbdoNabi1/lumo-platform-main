@@ -1,0 +1,36 @@
+{
+  "name": "@platform/kafka",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kafka/Redpanda runtime adapters: idempotent producer behind EventPublisher, consumer runtime with retry topics + DLQ, supervisor, health, metrics seam (Sprint 2.5).",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@platform/contracts": "workspace:*",
+    "@platform/domain-events": "workspace:*",
+    "@platform/health": "workspace:*",
+    "@platform/messaging": "workspace:*",
+    "@platform/repository": "workspace:*",
+    "@platform/utils": "workspace:*",
+    "kafkajs": "^2.2.4"
+  },
+  "devDependencies": {
+    "@platform/eslint-config": "workspace:*",
+    "@platform/tsconfig": "workspace:*",
+    "@types/node": "^22.7.5",
+    "@vitest/coverage-v8": "^2.1.4",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

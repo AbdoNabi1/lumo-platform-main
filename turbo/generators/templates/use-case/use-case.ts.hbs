@@ -1,0 +1,20 @@
+import type { UseCase } from "@platform/application";
+import { ok, type Result } from "@platform/types";
+import type { DomainError } from "@platform/utils";
+
+export interface {{ pascalCase name }}Input {
+  readonly value: string;
+}
+
+export interface {{ pascalCase name }}Output {
+  readonly value: string;
+}
+
+/** {{ pascalCase name }} use-case. Depends on the domain + ports only — never on infrastructure. */
+export class {{ pascalCase name }}
+  implements UseCase<{{ pascalCase name }}Input, {{ pascalCase name }}Output, DomainError>
+{
+  async execute(input: {{ pascalCase name }}Input): Promise<Result<{{ pascalCase name }}Output, DomainError>> {
+    return ok({ value: input.value });
+  }
+}

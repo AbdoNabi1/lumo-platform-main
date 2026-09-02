@@ -1,0 +1,100 @@
+name: Security
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # weekly baseline scan
+  workflow_call:
+
+permissions:
+  contents: read
+  security-events: write # upload SARIF to the Security tab
+
+jobs:
+  dependency-audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      # Production graph only, fail on High/Critical. Dev-tooling advisories (G-31) are excluded.
+      - run: pnpm audit --prod --audit-level=high
+
+  secret-scan:
+    name: secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks scans full history
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  license-report:
+    name: license report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      # pnpm-native license inventory of the production graph (artifact for review).
+      - run: pnpm licenses list --prod > licenses.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: licenses.txt
+
+  image-scan:
+    name: image scan (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build runtime image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/runtime.Dockerfile
+          push: false
+          load: true
+          tags: lumo-runtime:scan
+          cache-from: type=gha
+      - name: Trivy scan (image)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: lumo-runtime:scan
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+
+  sbom:
+    name: SBOM (Syft)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build runtime image for SBOM
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/runtime.Dockerfile
+          push: false
+          load: true
+          tags: lumo-runtime:sbom
+          cache-from: type=gha
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          image: lumo-runtime:sbom
+          format: spdx-json
+          output-file: sbom.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json

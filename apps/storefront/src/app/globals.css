@@ -1,0 +1,18 @@
+@import "tailwindcss";
+@import "@platform/design/styles.css";
+
+/* Scan the shared UI package so its utility classes are generated. */
+@source "../../../../packages/ui/src/**/*.{ts,tsx}";
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+}

@@ -1,0 +1,23 @@
+// `content` schema — ContentBlock (services/content). Reusable modular content, decoupled from
+// Catalog/Media (body references by ref only).
+
+model ContentBlock {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id")
+  name           String
+  blockType      String    @map("block_type")
+  format         String
+  content        String
+  locale         String?
+  status         String // 4-value lifecycle union (domain-enforced, see ContentStatusValue)
+  scheduledAt    DateTime? @map("scheduled_at")
+  /// Append-only published-version history — embedded JSONB array on this row.
+  versions       Json      @default("[]")
+  version        Int       @default(0)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("content_blocks")
+  @@schema("content")
+}

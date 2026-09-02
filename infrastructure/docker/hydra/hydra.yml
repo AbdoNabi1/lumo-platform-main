@@ -1,0 +1,48 @@
+# Ory Hydra — OAuth2/OIDC server (Identity Platform Phase). This is the REAL JWKS issuer the
+# runtime's JwtVerifier (D-048c) verifies against — no placeholder, no bypass. Access tokens are
+# RS256 JWTs (strategies.access_token=jwt) signed by keys Hydra auto-generates and publishes at
+# /.well-known/jwks.json. In-memory DSN keeps the verified PostgreSQL untouched (dev-only; clients
+# and signing keys are ephemeral across restarts — production uses a dedicated Hydra database).
+#
+# Phase A.34 — production posture: every value below can be overridden without editing this file,
+# via Ory's built-in config-path env vars (ory/x/configx). The production k8s manifests
+# (infrastructure/k8s/71-hydra.yaml) set DSN, URLS_SELF_ISSUER, URLS_LOGIN, URLS_CONSENT, and
+# SECRETS_SYSTEM from real values/secrets — this file stays the local-dev default. `dsn: memory`
+# is the LOCAL DEV default only; production points DSN at a dedicated Postgres database (init
+# script: infrastructure/docker/postgres/init/01-roles-and-cdc.sql).
+dsn: memory
+
+# JWT access tokens so the token is verifiable against the JWKS endpoint (opaque is Hydra's
+# default and would NOT be JWKS-verifiable).
+strategies:
+  access_token: jwt
+
+urls:
+  self:
+    issuer: http://localhost:4444/
+  # login/consent URLs are only exercised by the authorization_code (browser) flow. Phase A.32
+  # implements the Kratos-backed login-consent app inside admin-web (the only OAuth2 browser
+  # client wired up so far) — admin-web's dev server is port 3100 (apps/admin-web/package.json
+  # "dev": "next dev --port 3100"), NOT Next.js's default 3000 (that's apps/storefront).
+  login: http://localhost:3100/login
+  consent: http://localhost:3100/consent
+
+oidc:
+  subject_identifiers:
+    supported_types:
+      - public
+
+ttl:
+  access_token: 15m
+
+serve:
+  public:
+    port: 4444
+  admin:
+    port: 4445
+  cookies:
+    same_site_mode: Lax
+
+log:
+  level: warn
+  format: json

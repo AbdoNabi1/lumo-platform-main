@@ -1,0 +1,40 @@
+name: Validate
+
+# The quality gate: typecheck, lint, architecture fitness, and tests. Runs on every PR and is
+# reused (workflow_call) by build/release/deploy so nothing ships without passing it. Fail-fast.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: ${{ matrix.gate }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        # Each maps to an existing root script — no pipeline-local logic is duplicated.
+        #   pnpm typecheck | pnpm lint | pnpm arch | pnpm test
+        #   (turbo runs any ^build deps first)
+        #
+        # P1.1 scope note: this workflow originally also ran `governance` and `dup`. Neither script
+        # exists on `main` — `scripts/governance/**`, `.jscpd.json` and the `jscpd` devDependency were
+        # not carried over in the history reconstruction, and the governance ratchet BASELINES in the
+        # reference commit were computed against a tree that main has since diverged from, so
+        # restoring them here would fail for reasons unrelated to this milestone. They return as their
+        # own isolated change once the harness and its baselines are restored and re-ratcheted.
+        gate: [typecheck, lint, arch, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: pnpm ${{ matrix.gate }}
+        run: pnpm ${{ matrix.gate }}

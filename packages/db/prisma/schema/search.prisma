@@ -1,0 +1,22 @@
+// `search` schema — SearchIndex (services/search, ADR-0020). Owns indexing only — indexes product
+// **snapshots** via IndexProviderPort; Catalog remains the source of truth. No duplicate index
+// engine — the actual OpenSearch/pgvector backend is a deferred build milestone.
+
+model SearchIndex {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  name           String
+  status         String // 3-value lifecycle union (domain-enforced, see IndexStatusValue)
+  synonyms       Json     @default("[]")
+  facetFields    Json     @default("[]") @map("facet_fields")
+  sortableFields Json     @default("[]") @map("sortable_fields")
+  suggestions    Json     @default("[]")
+  documentCount  Int      @default(0) @map("document_count")
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("search_indexes")
+  @@schema("search")
+}

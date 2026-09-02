@@ -1,0 +1,118 @@
+name: Deploy
+
+# Deploys an already-built, scanned image (by digest) to a chosen environment using the EXISTING
+# P2 kustomize manifests. Environment separation is enforced by GitHub Environments (dev/staging/
+# production) — configure `production` with required reviewers so prod needs manual approval. The
+# quality gate (validate) runs first, and the target image is re-scanned before rollout.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment.
+        type: choice
+        options: [dev, staging, production]
+        default: dev
+      image_digest:
+        description: Immutable image ref to deploy, e.g. ghcr.io/OWNER/REPO/runtime@sha256:...
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false # never interrupt an in-flight deploy
+
+jobs:
+  validate:
+    uses: ./.github/workflows/validate.yml
+
+  scan:
+    name: scan target image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trivy scan (target digest)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ inputs.image_digest }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  verify-signature:
+    name: verify cosign signature (H-5 supply-chain gate)
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      packages: read
+    steps:
+      - uses: sigstore/cosign-installer@v3
+      # Fail the deploy if the target digest was not signed by THIS repo's release workflow.
+      - name: Verify signature
+        run: |
+          cosign verify "${{ inputs.image_digest }}" \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/.+" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+  migrate:
+    name: apply pending migrations (${{ inputs.environment }})
+    # C2-5: the only thing this workflow was missing before rollout. Runs the SAME
+    # `prisma migrate deploy` command db-integration.yml already runs in CI, against the target
+    # environment's own database, using the shared setup composite (no duplicated toolchain steps).
+    # Gated ahead of `deploy` below so a rolled-out image can never find tables that were never
+    # created (`relation does not exist` across every context simultaneously).
+    needs: [validate, scan, verify-signature]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }} # GitHub Environment gate (approvals/secrets per env)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Generate Prisma client
+        run: pnpm --filter @platform/db exec prisma generate
+      # C-01 fitness function: fails fast, listing every missing name, instead of letting
+      # `prisma migrate deploy` fail opaquely with P1012 partway through a deploy gate.
+      - name: Verify Prisma env contract
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: node scripts/ops/check-prisma-env.mjs
+      - name: Deploy migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # C-01: `prisma migrate deploy` validates the full datasource block (main.prisma's
+          # `directUrl = env("DIRECT_URL")`, Phase A.43) before it does anything else — the CLI
+          # requires this variable to be set even though this command itself only writes through
+          # DATABASE_URL. Each target environment's own direct/session connection string, provisioned
+          # alongside DATABASE_URL as a GitHub Environment secret (see infrastructure/railway/README.md
+          # §3 for the equivalent Railway-side variable).
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: pnpm --filter @platform/db exec prisma migrate deploy
+
+  deploy:
+    name: deploy (${{ inputs.environment }})
+    needs: [validate, scan, verify-signature, migrate]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }} # GitHub Environment gate (approvals/secrets per env)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure kubectl
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > "$HOME/.kube/config"
+      - name: Pin image + apply manifests (P2 kustomize)
+        run: |
+          cd infrastructure/k8s
+          kustomize edit set image lumo-runtime:local=${{ inputs.image_digest }}
+          kubectl apply -k .
+      - name: Wait for rollout
+        run: |
+          for d in runtime-api runtime-worker runtime-scheduler; do
+            kubectl -n lumo-runtime rollout status "deployment/$d" --timeout=180s
+          done
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          for d in runtime-api runtime-worker runtime-scheduler; do
+            kubectl -n lumo-runtime rollout undo "deployment/$d" || true
+          done

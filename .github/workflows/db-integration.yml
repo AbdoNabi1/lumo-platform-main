@@ -1,0 +1,97 @@
+name: DB Integration
+
+# Phase-2 hardening (G-SEC-1): runs the Prisma repository integration + migration verification against a
+# real PostgreSQL service. The unit CI (ci.yml) stays DB-free and fast; this job is the durable-persistence
+# gate. Integration suites are `describe.runIf(DATABASE_URL_TEST)` — they execute here, are skipped locally.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Migrations + Prisma repository integration
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lumo
+          POSTGRES_PASSWORD: lumo
+          POSTGRES_DB: lumo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lumo"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://lumo:lumo@localhost:5432/lumo_test?schema=public
+      DATABASE_URL_TEST: postgresql://lumo:lumo@localhost:5432/lumo_test?schema=public
+      # C-01: the Prisma schema's datasource block declares `directUrl = env("DIRECT_URL")`
+      # (Phase A.43, packages/db/prisma/schema/main.prisma) — the Prisma CLI requires this
+      # variable to be set for EVERY invocation (generate/validate/migrate/diff), not only when
+      # a pooled connection is actually in play. Same value as DATABASE_URL here since this job's
+      # Postgres service has no pooler in front of it; production's DIRECT_URL differs (Supabase
+      # session connection, port 5432, vs. DATABASE_URL's transaction-pooler port 6543).
+      DIRECT_URL: postgresql://lumo:lumo@localhost:5432/lumo_test?schema=public
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # C-01 fitness function: fails fast, listing every missing name, instead of letting
+      # `prisma migrate deploy` fail opaquely with P1012 several steps later.
+      - name: Verify Prisma env contract
+        run: node scripts/ops/check-prisma-env.mjs
+
+      - name: Generate Prisma client
+        run: pnpm --filter @platform/db exec prisma generate
+
+      - name: Deploy migrations (schema + seed verification)
+        run: pnpm --filter @platform/db exec prisma migrate deploy
+
+      # P1.4 (investigation C-04): the gate whose absence let 36 schema tables go unmigrated.
+      # `--exit-code` returns non-zero when the migration history and prisma/schema disagree, so
+      # drift fails CI here instead of surfacing as `relation does not exist` in production.
+      - name: Migration drift (schema vs migrations)
+        run: |
+          pnpm --filter @platform/db exec prisma migrate diff \
+            --from-migrations prisma/schema/migrations \
+            --to-schema-datamodel prisma/schema \
+            --shadow-database-url "$DATABASE_URL" \
+            --exit-code
+
+      # P1.1 correction: the seed entrypoint is declared in packages/db/package.json as
+      # `tsx ../../apps/runtime/src/seed.ts`, not `prisma/seed.ts` (which does not exist). Invoke it
+      # through the declared `db:seed` script so the path can never drift from the manifest again.
+      - name: Seed verification
+        run: pnpm --filter @platform/db db:seed
+        continue-on-error: true
+
+      # P1.1 correction: the original filter covered only @platform/security and @platform/identity,
+      # silently skipping the two largest DB-gated suites — @platform/customer-360 (56 integration
+      # tests) and @platform/orders (3). `pnpm test` runs every DATABASE_URL_TEST-gated suite, which
+      # is what this job exists to do; turbo caching keeps the already-green unit suites cheap.
+      - name: Integration tests (every DATABASE_URL_TEST-gated suite)
+        run: pnpm test

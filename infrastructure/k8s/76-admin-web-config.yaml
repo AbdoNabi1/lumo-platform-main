@@ -1,0 +1,36 @@
+# Phase A.34 (A.33 Task 1: admin-web had no deployment story at all) — non-secret runtime
+# configuration for admin-web. Same convention as 10-config.yaml/27-storefront-config.yaml: no
+# secrets here (AUTH_CLIENT_SECRET lives in lumo-admin-web-secrets, secret.example.yaml).
+#
+# Public-facing values (AUTH_ISSUER_URL, HYDRA_PUBLIC_URL, KRATOS_PUBLIC_URL) are the real public
+# HTTPS origins — the browser is redirected to these directly by middleware.ts/login/page.tsx, so
+# they cannot be in-cluster DNS names. Admin-only values (HYDRA_ADMIN_URL, AUTH_JWKS_URL) use
+# in-cluster DNS: admin-web itself now runs inside the cluster (this Deployment), so it reaches
+# Hydra's admin API pod-to-pod instead of needing that zero-auth endpoint exposed publicly — this
+# is what actually resolves A.33's Task 8 tension between "Hydra admin: internal-only, never
+# public" and admin-web's login/consent pages needing to call it (see 77-deployment-admin-web.yaml
+# and PHASE_A34_PRODUCTION_REMEDIATION_REPORT.md's deployment-target decision).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lumo-admin-web-config
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+data:
+  NODE_ENV: "production"
+  APP_ENV: "production"
+  PORT: "3100"
+  RUNTIME_API_URL: "http://runtime-api.lumo-runtime.svc.cluster.local:3080"
+  TENANT_DEFAULT_ID: "tenant-local"
+  AUTH_ISSUER_URL: "https://auth.lumo.example.com/"
+  AUTH_JWKS_URL: "http://hydra.lumo-runtime.svc.cluster.local:4444/.well-known/jwks.json"
+  AUTH_AUDIENCE: "lumo-admin"
+  AUTH_CLIENT_ID: "lumo-admin-web"
+  HYDRA_PUBLIC_URL: "https://auth.lumo.example.com"
+  HYDRA_ADMIN_URL: "http://hydra.lumo-runtime.svc.cluster.local:4445"
+  KRATOS_PUBLIC_URL: "https://identity.lumo.example.com"
+  # Shared registrable parent domain with Kratos (SESSION_COOKIE_DOMAIN in 72-kratos.yaml) — both
+  # sides MUST match, or the login bridge breaks (A.33 P0 #6; lib/auth/config.ts's doc comment).
+  COOKIE_DOMAIN: ".lumo.example.com"
+  COOKIE_SAME_SITE: "lax"

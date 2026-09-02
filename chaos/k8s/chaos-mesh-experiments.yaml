@@ -1,0 +1,85 @@
+# H-5 chaos — Chaos Mesh experiment library (reference). Apply these ONLY on a non-prod cluster that
+# has Chaos Mesh installed (https://chaos-mesh.org). They are declarative equivalents of the shell
+# experiments, for teams that run scheduled game-days. Each is scoped to the lumo-runtime namespace
+# and time-boxed so it auto-reverts.
+---
+# Pod kill: verify PDB + rolling replacement keep the API available (cf. pod-fault.sh).
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: runtime-api-pod-kill
+  namespace: lumo-runtime
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces: [lumo-runtime]
+    labelSelectors:
+      app.kubernetes.io/name: runtime-api
+  duration: "30s"
+---
+# Network latency to the database: verify graceful degradation (cf. network-degradation.sh).
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: db-latency
+  namespace: lumo-runtime
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces: [lumo-runtime]
+    labelSelectors:
+      app.kubernetes.io/name: runtime-api
+  direction: to
+  target:
+    mode: all
+    selector:
+      namespaces: [lumo-data]
+      labelSelectors:
+        app: postgres
+  delay:
+    latency: "200ms"
+    jitter: "50ms"
+    correlation: "50"
+  duration: "2m"
+---
+# Dependency outage: partition the API from Redis; verify fail-closed readiness (cf. dependency-failure.sh).
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: redis-partition
+  namespace: lumo-runtime
+spec:
+  action: partition
+  mode: all
+  selector:
+    namespaces: [lumo-runtime]
+    labelSelectors:
+      app.kubernetes.io/name: runtime-api
+  direction: to
+  target:
+    mode: all
+    selector:
+      namespaces: [lumo-data]
+      labelSelectors:
+        app: redis
+  duration: "1m"
+---
+# Resource pressure: stress memory to confirm limits + HPA + OOM handling (cf. RUNBOOKS#high-memory).
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: runtime-api-memory-stress
+  namespace: lumo-runtime
+spec:
+  mode: one
+  selector:
+    namespaces: [lumo-runtime]
+    labelSelectors:
+      app.kubernetes.io/name: runtime-api
+  stressors:
+    memory:
+      workers: 1
+      size: "384MB"
+  duration: "2m"

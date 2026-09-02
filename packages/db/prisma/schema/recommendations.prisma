@@ -1,0 +1,21 @@
+// `recommendations` schema — RecommendationModel (services/recommendations, ADR-0020). Owns no
+// products — relationship sets only, computed over the shared Search index.
+
+model RecommendationModel {
+  id       String   @id @db.Uuid
+  tenantId String   @map("tenant_id")
+  name     String
+  strategy String // related | frequently_bought_together | recently_viewed | personalized | trending | popular | similar
+  status   String // 4-value lifecycle union (domain-enforced, see ModelStatusValue)
+  /// Generated sets keyed by anchor ref — embedded JSONB array on this row; regenerate overwrites
+  /// the entry for its anchor in place.
+  sets     Json     @default("[]")
+  version  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("recommendation_models")
+  @@schema("recommendations")
+}

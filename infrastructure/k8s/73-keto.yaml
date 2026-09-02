@@ -1,0 +1,166 @@
+# Phase A.34 (A.33 P0 #1/#2) — production deployment for Ory Keto (authorization). Mounts the SAME
+# infrastructure/docker/keto/keto.yml local-dev config (kustomize configMapGenerator) and overrides
+# DSN for production via Ory's built-in config-path env var. Never public — both read (4466) and
+# write (4467) APIs stay cluster-internal (write in particular has zero auth of its own, per A.33
+# Task 5/10), reachable only from the runtime pods that already call it (50-networkpolicy.yaml,
+# unchanged — it already opened egress to these ports for exactly this workload).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keto-migrate
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: keto
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/name: keto
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: oryd/keto:v0.12.0
+          command: ["keto", "migrate", "up", "--yes", "-c", "/home/ory/keto.yml"]
+          envFrom:
+            - secretRef:
+                name: lumo-keto-secrets # DSN
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /home/ory
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: keto-file-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keto
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: keto
+    app.kubernetes.io/component: identity
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keto
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/name: keto
+        app.kubernetes.io/component: identity
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4466"
+        prometheus.io/path: "/metrics/prometheus"
+    spec:
+      serviceAccountName: lumo-runtime
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: keto
+      containers:
+        - name: keto
+          image: oryd/keto:v0.12.0
+          imagePullPolicy: IfNotPresent
+          command: ["keto", "serve", "-c", "/home/ory/keto.yml"]
+          ports:
+            - name: read
+              containerPort: 4466
+            - name: write
+              containerPort: 4467
+          envFrom:
+            - secretRef:
+                name: lumo-keto-secrets
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: read
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/alive
+              port: read
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: read
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /home/ory
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: keto-file-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keto
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/name: keto
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: keto
+  ports:
+    - name: read
+      port: 4466
+      targetPort: read
+    - name: write
+      port: 4467
+      targetPort: write

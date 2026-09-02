@@ -1,0 +1,640 @@
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# Lumo platform — local/production-parity infrastructure stack (Sprint 2.2.5).
+# Run from the repo root:
+#   docker compose -f infrastructure/docker/docker-compose.yml up -d
+# Operations guide: infrastructure/docker/README.md
+# Topology rationale: docs/architecture/26-infrastructure-topology.md
+#
+# Credentials below are LOCAL DEVELOPMENT ONLY. Production secrets come from the secret
+# manager / Vault (docs/architecture/14) — never from committed compose files.
+#
+# Networks (least privilege): `data` (stateful stores + app), `messaging` (broker plane),
+# `observability` (telemetry plane), `tools` (operator UIs). A service joins only the planes
+# it needs; operator UIs never join the messaging plane unless they operate it.
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+name: lumo
+
+networks:
+  data:
+    driver: bridge
+  messaging:
+    driver: bridge
+  observability:
+    driver: bridge
+  tools:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  clickhouse-data:
+  minio-data:
+  redpanda-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  tempo-data:
+  pgadmin-data:
+  redisinsight-data:
+
+services:
+  # ── Data plane ─────────────────────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # Logical replication ON from day one: Debezium streams `platform.outbox` via CDC
+    # (docs/architecture/05 §1.1). Replica/PITR settings are prepared, not enabled —
+    # archive_mode stays off locally; production turns it on with a WAL archive target.
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=8
+      - -c
+      - max_replication_slots=8
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=200
+    environment:
+      POSTGRES_USER: lumo
+      POSTGRES_PASSWORD: lumo
+      POSTGRES_DB: lumo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumo -d lumo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    networks:
+      - data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--maxmemory",
+        "256mb",
+        "--maxmemory-policy",
+        "noeviction",
+      ]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+    networks:
+      - data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: lumo
+      CLICKHOUSE_USER: lumo
+      CLICKHOUSE_PASSWORD: lumo
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "8123:8123"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test:
+        ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    networks:
+      - data
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - data
+
+  # Bucket conventions (docs/architecture/26 §5): media (served via signed URLs), exports/
+  # imports (short-lifecycle transfer areas, 30-day expiry), backups (versioned, long retention).
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/media local/exports local/imports local/backups &&
+        mc version enable local/backups &&
+        (mc ilm rule add local/exports --expire-days 30 2>/dev/null || true) &&
+        (mc ilm rule add local/imports --expire-days 30 2>/dev/null || true)
+    networks:
+      - data
+
+  # ── Messaging plane ────────────────────────────────────────────────────────────────────
+
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      # Effective memory limit (Compose ignores deploy.resources outside Swarm, so this is the
+      # REAL constraint). Sized for the platform's DELIBERATE partition count — 54 business topics
+      # + .retry/.dlq companions + audit ≈ 240 partitions (ADR-0004), plus Kafka Connect's own
+      # internal topics (_connect.offsets = 25 partitions). At topic_memory_per_partition = 4 MiB,
+      # ~270 partitions need ~1.1 GiB just for partition buffers; 2 GiB gives headroom without
+      # shrinking the event architecture. Raise further only if the topic set grows.
+      - --memory=2G
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --advertise-pandaproxy-addr=localhost:8082
+      - --rpc-addr=0.0.0.0:33145
+      - --advertise-rpc-addr=redpanda:33145
+    ports:
+      - "19092:19092" # Kafka API (host clients)
+      - "8082:8082" # HTTP proxy
+      - "9644:9644" # Admin API / Prometheus metrics
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    # Without an explicit ulimit, Redpanda's partition_allocator derives its FD budget from the
+    # container's default nofile limit and refuses new partitions once the (low) derived ceiling
+    # is reached: verified live — `rpk topic create` failed with "INVALID_PARTITIONS: unable to
+    # create topic with 6 partitions due to hardware constraints", and the broker's own log gave
+    # the exact cause: "Refusing to create 6 partitions as total partition count 210 would exceed
+    # FD limit 204" (partition_allocator.cc:231) — only ~210 of the ~291 partitions this compose
+    # file's topic set requires (see --memory comment above) could ever be created. Same fix
+    # shape as the clickhouse service below.
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2560m # advisory only under Compose; kept ≥ --memory=2G for Swarm/k8s parity
+    networks:
+      - messaging
+      - observability
+
+  # Topic bootstrap: business topics per docs/architecture/20 §1.1 + per-topic `.retry`/`.dlq`
+  # companions (docs/architecture/05 §2). Idempotent — safe to re-run.
+  redpanda-topics:
+    image: redpandadata/redpanda:v24.2.7
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/bootstrap/bootstrap-topics.sh"]
+    environment:
+      REDPANDA_BROKERS: redpanda:9092
+    volumes:
+      - ./redpanda/bootstrap-topics.sh:/bootstrap/bootstrap-topics.sh:ro
+    networks:
+      - messaging
+
+  redpanda-console:
+    image: redpandadata/console:v2.7.2
+    restart: unless-stopped
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      CONNECT_ENABLED: "true"
+      CONNECT_CLUSTERS_NAME: lumo-connect
+      CONNECT_CLUSTERS_URL: http://debezium:8083
+    ports:
+      - "8085:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks:
+      - messaging
+      - tools
+
+  debezium:
+    image: debezium/connect:2.7.3.Final
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: redpanda:9092
+      GROUP_ID: lumo-connect
+      CONFIG_STORAGE_TOPIC: _connect.configs
+      OFFSET_STORAGE_TOPIC: _connect.offsets
+      STATUS_STORAGE_TOPIC: _connect.status
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    networks:
+      - messaging
+      - data
+
+  apicurio:
+    image: apicurio/apicurio-registry-sql:2.6.5.Final
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      REGISTRY_DATASOURCE_URL: jdbc:postgresql://postgres:5432/apicurio
+      REGISTRY_DATASOURCE_USERNAME: apicurio
+      REGISTRY_DATASOURCE_PASSWORD: apicurio
+    ports:
+      - "8086:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+    networks:
+      - messaging
+      - data
+
+  # ── Identity & workflow plane (Runtime Platform boot) ──────────────────────────────────
+
+  # Ory Keto — authorization decision point (D-048). In-memory DSN (dev); the `permissions`
+  # namespace holds grant tuples. Read API 4466 (KetoAccessControl), write API 4467 (seeding).
+  keto:
+    image: oryd/keto:v0.12.0
+    restart: unless-stopped
+    command: ["serve", "-c", "/home/ory/keto.yml"]
+    volumes:
+      - ./keto/keto.yml:/home/ory/keto.yml:ro
+    ports:
+      - "4466:4466"
+      - "4467:4467"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4466/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+    networks:
+      - data
+
+  # Ory Kratos — identity/session management (D-048). `serve --dev` auto-migrates the
+  # in-memory DSN and relaxes dev-secret checks. Public 4433 (whoami), admin 4434.
+  kratos:
+    image: oryd/kratos:v1.1.0
+    restart: unless-stopped
+    command: ["serve", "--dev", "--watch-courier", "-c", "/etc/config/kratos/kratos.yml"]
+    volumes:
+      - ./kratos:/etc/config/kratos:ro
+    ports:
+      - "4433:4433"
+      - "4434:4434"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4434/admin/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks:
+      - data
+
+  # Ory Hydra — OAuth2/OIDC server (Identity Platform Phase). The REAL JWKS issuer the runtime's
+  # JwtVerifier verifies against (D-048c). RS256 JWT access tokens; JWKS at :4444/.well-known/jwks.json.
+  # `serve all --dev` allows the http issuer + auto-migrates the in-memory DSN. Public 4444, admin 4445.
+  hydra:
+    image: oryd/hydra:v2.2.0
+    restart: unless-stopped
+    command: ["serve", "all", "--dev", "-c", "/etc/config/hydra/hydra.yml"]
+    environment:
+      # System secret (cookie/token encryption) — Hydra requires >=16 chars. Dev value; NOT a JWKS.
+      SECRETS_SYSTEM: dev-hydra-system-secret-change-me-32
+    volumes:
+      - ./hydra:/etc/config/hydra:ro
+    ports:
+      - "4444:4444"
+      - "4445:4445"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4445/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks:
+      - data
+
+  # ── Observability plane (infrastructure bootstrap only — application instrumentation is
+  #    a later sprint; the collector's OTLP endpoints are the prepared seam) ──────────────
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC (applications send here)
+      - "4318:4318" # OTLP HTTP
+    depends_on:
+      - tempo
+      - loki
+    read_only: true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - observability
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - observability
+      - messaging
+
+  loki:
+    image: grafana/loki:3.2.1
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    user: "10001"
+    volumes:
+      - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test:
+        ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - observability
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    user: "10001"
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    expose:
+      - "3200" # query API (Grafana, observability network only)
+      - "4317" # OTLP gRPC from the collector
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - observability
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+    networks:
+      - observability
+      - tools
+
+  # ── Operator tools ─────────────────────────────────────────────────────────────────────
+
+  mailpit:
+    image: axllent/mailpit:v1.21.5
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP (applications send here)
+      - "8025:8025" # Web UI
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    networks:
+      - data
+      - tools
+
+  pgadmin:
+    image: dpage/pgadmin4:8.13
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Phase A.23 security finding: this previously hardcoded the operator's real personal email +
+      # password directly in a committed compose file. Sourced from the repo-root `.env` (gitignored,
+      # same convention every other credential in this repo already uses) with a generic local-only
+      # fallback so `docker compose up` still works out of the box for anyone who hasn't set it.
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      # Phase A.27: pgAdmin 8.13 already defaults this to True; set explicitly so the requirement
+      # can't silently change if the image's default ever does. The master password itself is
+      # never set here — it's entered interactively in the pgAdmin UI (Change Master Password),
+      # by design pgAdmin gives no env-var/config way to pre-seed it.
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "True"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+    networks:
+      - data
+      - tools
+
+  redisinsight:
+    image: redis/redisinsight:2.60
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - redisinsight-data:/data
+    ports:
+      - "5540:5540"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks:
+      - data
+      - tools
+
+  # ── Application (walking-skeleton web; joins only the planes it uses) ─────────────────
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/web.Dockerfile
+      target: dev
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      APP_ENV: local
+      LOG_LEVEL: info
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      PORT: "3000"
+    volumes:
+      - ../..:/app
+      - /app/node_modules
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - data
+      - messaging
+      - observability

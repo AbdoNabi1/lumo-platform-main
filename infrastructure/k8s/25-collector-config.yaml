@@ -1,0 +1,22 @@
+# H-07: non-secret runtime configuration for the tracking collector (apps/collector/src/main.ts —
+# the ONLY reader of these `process.env` keys). Mirrors 10-config.yaml's convention: credentialed/
+# secret values (COLLECTOR_WRITE_KEYS) live in the referenced Secret, never here. Adjust
+# COLLECTOR_ALLOWED_ORIGINS and COLLECTOR_COOKIE_DOMAIN per cluster/storefront domain.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lumo-collector-config
+  namespace: lumo-runtime
+  labels:
+    app.kubernetes.io/part-of: lumo
+data:
+  PORT: "3200"
+  KAFKA_BROKERS: "redpanda.data.svc.cluster.local:9092"
+  # Must NOT contain "*" — main.ts refuses to boot with a wildcard (credentialed CORS + first-party
+  # cookies cannot combine with one). List every storefront origin explicitly.
+  COLLECTOR_ALLOWED_ORIGINS: "https://www.lumo.example.com"
+  # 0 = ignore X-Forwarded-For entirely (safe default). Set to the real proxy hop count once the
+  # ingress topology in front of the collector is known — a wrong non-zero value makes the resolved
+  # client IP attacker-controlled.
+  COLLECTOR_TRUSTED_PROXIES: "0"
+  COLLECTOR_SECURE_COOKIES: "true"

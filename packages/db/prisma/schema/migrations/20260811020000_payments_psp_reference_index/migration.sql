@@ -1,0 +1,23 @@
+-- Phase A.11 (Payments Settlement & Webhook Production Readiness Audit, Task 9) — additive, expand-only.
+--
+-- Schema/migration drift: `payments.prisma`'s `PaymentIntent` model has declared
+-- `@@index([tenantId, pspReference])` since Phase A.10 (Tasks 4-6), backing the new
+-- `findByPspReference` repository method that Stripe webhook correlation depends on
+-- (`RecordWebhook.execute()` falls back to it whenever a webhook's `data.object.id` is Stripe's own
+-- PaymentIntent reference rather than our domain id — see
+-- PHASE_A10_REFUND_RECONCILIATION_STRIPE_WEBHOOK_SECURITY_CLOSURE_REPORT.md). No migration was ever
+-- generated for that index — this is the exact same class of drift Phase A.7 found and fixed for
+-- `Refund.status` (schema declares it, `prisma migrate deploy` never created it).
+--
+-- Impact: `findByPspReference`'s `WHERE tenant_id = ? AND psp_reference = ?` still returns correct
+-- results without this index (Postgres falls back to a sequential scan) — this is a PERFORMANCE gap,
+-- not a correctness one, unlike the A.7 finding (a genuinely missing column would have errored). But
+-- every real Stripe webhook for a `payment_intent.*` event reaches this exact query (Task 4's
+-- correlation path), so an unindexed lookup on `payment_intents` sits directly on the webhook
+-- ingress hot path at production scale ("thousands of merchants" per the standing architecture
+-- principle) — worth closing now that it's found, not deferred as speculative.
+--
+-- Fix: add the index exactly as the schema already declares it. Purely additive (CREATE INDEX),
+-- no backfill, no lock beyond a standard index build.
+CREATE INDEX "payment_intents_tenant_id_psp_reference_idx"
+  ON "payments"."payment_intents"("tenant_id", "psp_reference");

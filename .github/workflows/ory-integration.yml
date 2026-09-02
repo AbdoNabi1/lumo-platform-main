@@ -1,0 +1,63 @@
+name: Ory Integration
+
+# Phase-2 hardening (H-2 / G-SEC-4): runs the LIVE Ory Keto relationship-tuple integration suite against
+# a real Keto (read + write APIs) provisioned via docker. The unit CI (ci.yml) stays Ory-free; this job is
+# the live-identity gate. The suite is `describe.runIf(KETO_READ_URL_TEST && KETO_WRITE_URL_TEST)` — it
+# executes here, is skipped locally. Kratos-side session/identity behaviour is contract-tested in
+# packages/auth (ory.test.ts) and exercised end-to-end against a live stack in staging.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  keto-integration:
+    name: Keto relationship-tuple integration
+    runs-on: ubuntu-latest
+
+    env:
+      KETO_READ_URL_TEST: http://localhost:4466
+      KETO_WRITE_URL_TEST: http://localhost:4467
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start Ory Keto (read 4466 / write 4467, in-memory)
+        run: |
+          docker run -d --name keto \
+            -p 4466:4466 -p 4467:4467 \
+            -v ${{ github.workspace }}/infrastructure/ory/keto.yml:/home/ory/keto.yml \
+            oryd/keto:v0.11.1 serve --config /home/ory/keto.yml
+
+      - name: Wait for Keto read API
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4466/health/ready; then echo "keto ready"; exit 0; fi
+            sleep 2
+          done
+          echo "keto did not become ready"; docker logs keto; exit 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Keto integration tests (@platform/auth)
+        run: pnpm --filter @platform/auth test
+
+      - name: Keto logs on failure
+        if: failure()
+        run: docker logs keto

@@ -1,0 +1,66 @@
+// `shipping` schema — Shipment (services/shipping). Source of truth for carrier references,
+// shipping labels, tracking history, delivery estimates, and the shipment/carrier-communication
+// lifecycle. Distinct from `fulfillment` (pick/pack): this schema owns the *carrier* side.
+
+model Shipment {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  fulfillmentRef String   @map("fulfillment_ref") // bare id into Fulfillment — never an FK
+  packages       Json // ShipmentPackage[] snapshot
+  status         String // 13-value lifecycle union (domain-enforced, see ShipmentStatusValue)
+  /// Caller-supplied idempotency key for shipment creation (Sprint A0 precondition, reintroduced
+  /// here per this milestone's own additive migration rather than editing the frozen A0 migration
+  /// file). Nullable — no code path writes it yet (the domain aggregate carries no such field);
+  /// a future milestone threads it through `CreateShipment` to dedupe retried saga-activity calls.
+  idempotencyKey String?  @map("idempotency_key")
+  carrier        String?
+  carrierService String?   @map("carrier_service")
+  /// `{}`-means-unset (Sprint 4.6/4.8/4.9 convention) — never actually NULL.
+  label            Json      @default("{}")
+  trackingNumber   String?   @map("tracking_number")
+  trackingEvents   Json      @default("[]") @map("tracking_events")
+  deliveryEstimate Json      @default("{}") @map("delivery_estimate")
+  deliveredAt      DateTime? @map("delivered_at")
+  version          Int       @default(0)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  attempts ShippingAttempt[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, fulfillmentRef])
+  @@index([tenantId, status])
+  @@map("shipments")
+  @@schema("shipping")
+}
+
+/// Append-only lifecycle-attempt log (Sprint 4.10) — retry-safe observability trail, never rewritten.
+model ShippingAttempt {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  shipmentId String   @map("shipment_id") @db.Uuid
+  kind       String
+  outcome    String
+  reference  String?
+  occurredAt DateTime @map("occurred_at")
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+
+  @@index([shipmentId])
+  @@map("shipping_attempts")
+  @@schema("shipping")
+}
+
+/// Replay-safe carrier-webhook dedup (Sprint 4.10) — unique per (tenant, carrier, webhook_event_id).
+/// Named distinctly from Payments' own `ProcessedWebhook` model (Prisma model names are global).
+model ProcessedShippingWebhook {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  carrier        String
+  webhookEventId String   @map("webhook_event_id")
+  receivedAt     DateTime @default(now()) @map("received_at")
+
+  @@unique([tenantId, carrier, webhookEventId])
+  @@map("processed_webhooks")
+  @@schema("shipping")
+}

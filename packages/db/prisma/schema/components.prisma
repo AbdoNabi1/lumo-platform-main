@@ -1,0 +1,24 @@
+// `components` schema — ComponentDefinition (services/components). The schema-driven rendering
+// contract; Experience owns instances only.
+
+model ComponentDefinition {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  key            String
+  name           String
+  properties     Json     @default("[]")
+  defaults       Json     @default("{}")
+  slots          Json     @default("[]")
+  events         Json     @default("[]")
+  responsive     Boolean  @default(false)
+  permission     String?
+  featureFlagKey String?  @map("feature_flag_key")
+  status         String // draft | published | deprecated | archived (domain-enforced)
+  version        Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, key])
+  @@map("component_definitions")
+  @@schema("components")
+}

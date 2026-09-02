@@ -1,0 +1,21 @@
+// `loyalty` schema — LoyaltyAccount (services/loyalty). Points are not money — this context
+// captures no payment. Rewards emit events but never modify orders directly.
+
+model LoyaltyAccount {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id")
+  customerRef  String   @map("customer_ref")
+  tierName     String   @map("tier_name")
+  balance      Int      @default(0)
+  status       String // 3-value lifecycle union (domain-enforced, see AccountStatusValue)
+  /// Append-only points ledger — embedded JSONB array on this row (never rewritten, only appended).
+  transactions Json     @default("[]")
+  version      Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, customerRef])
+  @@index([tenantId, status])
+  @@map("loyalty_accounts")
+  @@schema("loyalty")
+}

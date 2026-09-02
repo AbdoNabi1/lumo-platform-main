@@ -1,0 +1,15 @@
+# H-5 — Grafana dashboard provisioning. The provisioning dir is already mounted read-only into the
+# Grafana container (see docker-compose.yml grafana volumes), so these JSON models load on boot.
+apiVersion: 1
+
+providers:
+  - name: lumo
+    orgId: 1
+    folder: Lumo
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

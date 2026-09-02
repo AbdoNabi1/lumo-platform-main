@@ -1,0 +1,29 @@
+{
+  "name": "@platform/clickhouse",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ClickHouse infrastructure: client, connection, retry/timeout config, health. No analytics tables or events.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"no tests yet\""
+  },
+  "dependencies": {
+    "@clickhouse/client": "^1.7.0",
+    "@platform/config": "workspace:*",
+    "@platform/health": "workspace:*"
+  },
+  "devDependencies": {
+    "@platform/eslint-config": "workspace:*",
+    "@platform/tsconfig": "workspace:*",
+    "@types/node": "^22.7.5",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3"
+  }
+}

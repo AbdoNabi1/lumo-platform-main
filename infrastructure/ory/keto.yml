@@ -1,0 +1,21 @@
+# Minimal Ory Keto config for the H-2 (G-SEC-4) live relationship-tuple integration test.
+# In-memory DSN ⇒ no migration step; a single `permissions` namespace matching the platform default
+# (KetoRelationshipClient / KetoAccessControl). CI only — never a production config.
+version: v0.11.1
+
+dsn: memory
+
+namespaces:
+  - id: 0
+    name: permissions
+
+serve:
+  read:
+    host: 0.0.0.0
+    port: 4466
+  write:
+    host: 0.0.0.0
+    port: 4467
+
+log:
+  level: error

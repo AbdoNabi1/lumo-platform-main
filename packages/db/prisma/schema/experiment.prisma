@@ -1,0 +1,25 @@
+// `experiment` schema — Experiment (services/experimentation). Analysis only — Feature Flags own
+// rollout (featureFlagRef is a bare reference, never a duplicate flag).
+
+model Experiment {
+  id                  String   @id @db.Uuid
+  tenantId            String   @map("tenant_id")
+  name                String
+  hypothesis          String?
+  variants            Json     @default("[]")
+  audiencePercentage  Int      @default(100) @map("audience_percentage")
+  audienceSegmentRefs Json?    @map("audience_segment_refs")
+  goalMetricRef       String   @map("goal_metric_ref")
+  featureFlagRef      String?  @map("feature_flag_ref")
+  status              String // 5-value lifecycle union (domain-enforced, see ExperimentStatusValue)
+  /// Append-only recorded metric observations — embedded JSONB array on this row.
+  results             Json     @default("[]")
+  winnerVariantKey    String?  @map("winner_variant_key")
+  version             Int      @default(0)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, name])
+  @@map("experiments")
+  @@schema("experiment")
+}

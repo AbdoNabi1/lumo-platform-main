@@ -1,0 +1,108 @@
+{
+  "uid": "lumo-security",
+  "title": "Lumo — Security (Zero-Trust)",
+  "tags": ["lumo", "security", "h-5"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "description": "Sourced from the OTel security instrumentation (H-4). Panels are empty until the OTel Collector pipeline exports security_* / *_latency series.",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Edge Zero-Trust Decisions by Outcome",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "cps" } },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(security_requests_total[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Failed Logins vs Step-Up Challenges",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "cps" } },
+      "targets": [
+        { "expr": "sum(rate(failed_logins[5m]))", "legendFormat": "failed logins", "refId": "A" },
+        {
+          "expr": "sum(rate(step_up_challenges[5m]))",
+          "legendFormat": "step-up challenges",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Authn / Authz p95 Latency (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(authentication_latency_bucket[5m])) by (le))",
+          "legendFormat": "authn p95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(authorization_latency_bucket[5m])) by (le))",
+          "legendFormat": "authz p95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Policy/Registry Cache Hit vs Miss",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "cps" } },
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(policy_cache_hits[5m]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Risk Band Distribution",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "cps" } },
+      "targets": [
+        {
+          "expr": "sum by (band) (rate(risk_score_distribution[5m]))",
+          "legendFormat": "{{band}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "WORM Audit Append p95 (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(audit_append_latency_bucket[5m])) by (le))",
+          "legendFormat": "audit append p95",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+import { AggregateRoot, type UniqueEntityId } from "@platform/domain";
+
+interface {{ pascalCase name }}Props {
+  readonly name: string;
+}
+
+/** {{ pascalCase name }} aggregate root. Identity is supplied by the application layer. */
+export class {{ pascalCase name }} extends AggregateRoot<{{ pascalCase name }}Props> {
+  static create(id: UniqueEntityId, name: string): {{ pascalCase name }} {
+    return new {{ pascalCase name }}({ name }, id);
+  }
+
+  get name(): string {
+    return this.props.name;
+  }
+}

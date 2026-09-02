@@ -1,0 +1,47 @@
+# Aggregates the runtime manifests for `kubectl apply -k infrastructure/k8s` (and dry-run/build).
+# `secret.example.yaml` is intentionally NOT listed — the real `lumo-runtime-secrets` Secret (and
+# the Phase A.34 lumo-{hydra,kratos,keto,admin-web}-secrets) is provisioned out-of-band by the
+# secret manager; no placeholder secret is ever applied.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lumo-runtime
+resources:
+  - 00-namespace.yaml
+  - 10-config.yaml
+  - 20-deployment-api.yaml
+  - 21-deployment-worker.yaml
+  - 22-deployment-scheduler.yaml
+  - 25-collector-config.yaml # H-07
+  - 26-deployment-collector.yaml # H-07
+  - 27-storefront-config.yaml # M2-6
+  - 28-deployment-storefront.yaml # M2-6
+  - 30-services.yaml
+  - 40-autoscaling.yaml
+  - 50-networkpolicy.yaml
+  - 60-ingress.yaml
+  - 70-debezium.yaml # P2.0.1: production CDC (outbox → Kafka)
+  - 71-hydra.yaml # Phase A.34
+  - 72-kratos.yaml # Phase A.34
+  - 73-keto.yaml # Phase A.34
+  - 74-ingress-identity.yaml # Phase A.34
+  - 76-admin-web-config.yaml # Phase A.34
+  - 77-deployment-admin-web.yaml # Phase A.34
+
+# Phase A.34: generates hydra-file-config/kratos-file-config/keto-file-config from the SAME files
+# infrastructure/docker/docker-compose.yml mounts for local dev — one hydra.yml/kratos.yml/keto.yml,
+# not a second copy pasted into these manifests that could drift. disableNameSuffixHash keeps the
+# generated ConfigMap names stable (71/72/73-*.yaml's volumeMounts reference them by fixed name)
+# rather than kustomize's usual content-hash-suffixed rollout convention.
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: hydra-file-config
+    files:
+      - ../docker/hydra/hydra.yml
+  - name: kratos-file-config
+    files:
+      - ../docker/kratos/kratos.yml
+      - ../docker/kratos/identity.schema.json
+  - name: keto-file-config
+    files:
+      - ../docker/keto/keto.yml
