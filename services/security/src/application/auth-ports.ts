@@ -57,7 +57,14 @@ export interface AuthenticationProviderResolver {
  */
 export interface MfaProviderPort {
   readonly method: MfaMethodKind;
-  enroll(input: { readonly principalRef: string }): Promise<{ readonly secretRef: string }>;
+  /**
+   * `provisioningUri` (an `otpauth://` URI, when the method has one) is returned to the caller
+   * exactly once, at enrollment — the same "shown once" convention `GenerateBackupCodes` uses for
+   * backup codes. Nothing persists it; a lost enrollment must be revoked and re-enrolled.
+   */
+  enroll(input: {
+    readonly principalRef: string;
+  }): Promise<{ readonly secretRef: string; readonly provisioningUri?: string }>;
   issueChallenge(input: {
     readonly secretRef: string | null;
     readonly deliveryHint?: string;

@@ -41,6 +41,7 @@ import {
 } from "@platform/orders";
 import { wirePayments, type PaymentController } from "@platform/payments";
 import { StripePaymentProvider } from "@platform/psp-stripe";
+import { NodeCrypto, TotpMfaProvider, MapMfaProviderResolver, type MfaProviderResolver } from "@platform/security";
 import type {
   PaymentsPort as ReturnsPaymentsPort,
   RefundVerificationPort,
@@ -113,6 +114,14 @@ export interface RuntimeCore {
    * this field existed. `apps/runtime/src/api.ts` refuses to boot outside `local` while absent.
    */
   readonly paymentProvider: PaymentProvider | undefined;
+  /**
+   * Production MFA provider resolver (C2-4). Real RFC 6238 `TotpMfaProvider` over `NodeCrypto`,
+   * built unconditionally — unlike `objectStorage`/`paymentProvider`, this needs no external
+   * account/credentials to be "real," only a `CryptoPort`, which is always available.
+   * `apps/runtime/src/api.ts` refuses to boot outside `local` only while the resolved `totp`
+   * provider is still the in-memory reference stub, which this composition never produces.
+   */
+  readonly mfaProviders: MfaProviderResolver;
 }
 
 export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
@@ -218,6 +227,14 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
         )
       : new InMemoryObjectStorage();
 
+  // C2-4: unlike objectStorage/paymentProvider, a real TotpMfaProvider needs no external
+  // account/credentials — only a CryptoPort — so it is built unconditionally rather than gated on
+  // config presence. `assertProductionMfaConfigured` (api.ts) checks the resolved provider's
+  // identity, not this composition's branching, so `local` and non-local share this exact path.
+  const mfaProviders: MfaProviderResolver = new MapMfaProviderResolver([
+    new TotpMfaProvider(new NodeCrypto(), clock),
+  ]);
+
   // C2-2: same present/absent convention as `objectStorage` above — `undefined` here is the exact
   // signal `assertProductionPaymentProviderConfigured` (`api.ts`) fails closed on outside `local`.
   const paymentProvider: PaymentProvider | undefined =
@@ -249,6 +266,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     metrics: new RuntimeMetrics(),
     objectStorage,
     paymentProvider,
+    mfaProviders,
   };
 }
 

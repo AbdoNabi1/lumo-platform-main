@@ -18,6 +18,7 @@ import {
   startApi,
 } from "./api";
 import { InMemoryObjectStorage, StorageServiceObjectStorage } from "@platform/media";
+import { TotpMfaProvider } from "@platform/security";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import type { Logger } from "@platform/utils";
 
@@ -162,6 +163,11 @@ describe("composition root (lazy clients — graph builds without any Docker run
     expect(core.objectStorage).toBeInstanceOf(StorageServiceObjectStorage);
   });
 
+  it("resolves a real TotpMfaProvider unconditionally (C2-4) — no external credentials needed, unlike Stripe/S3", () => {
+    const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(core.mfaProviders.get("totp")).toBeInstanceOf(TotpMfaProvider);
+  });
+
   it("resolves paymentProvider=undefined when no Stripe config is present (C2-2) — unchanged prior behavior", () => {
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     expect(core.paymentProvider).toBeUndefined();
@@ -180,27 +186,29 @@ describe("composition root (lazy clients — graph builds without any Docker run
 });
 
 describe("api entrypoint", () => {
-  it("FAILS CLOSED outside local without a production MFA provider (C2-4) — rejects before touching the network", async () => {
-    const core = buildRuntimeCore(loadRuntimeConfig(validEnv)); // local composition, always succeeds
+  it("no longer fails on MFA (C2-4 closed) — buildRuntimeCore's default composition now resolves a real TotpMfaProvider unconditionally, not just in local", async () => {
+    const core = buildRuntimeCore(loadRuntimeConfig(validEnv)); // local composition
     const prodConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
       KETO_READ_URL: "https://keto.lumo.local",
     });
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/MfaProviderResolver/);
+    // The remaining 4 guards (no Stripe/Licensing/S3/tax-shipping adapters wired) still reject —
+    // this proves specifically that MFA is no longer among the reasons, not that boot succeeds.
+    await expect(startApi(prodConfig, core)).rejects.not.toThrow(/MfaProviderResolver/);
   });
 
   it("G0-4 (launch-readiness review): a fresh non-local boot names EVERY failed guard in one error, not just the first", async () => {
-    // The default local composition core has no production MFA/PSP/Licensing/ObjectStorage/
-    // integration-port adapters wired at all — every one of the 5 guards should fail together.
+    // The default local composition core has no production PSP/Licensing/ObjectStorage/
+    // integration-port adapters wired at all — every one of the 4 still-open guards should fail
+    // together. MFA (C2-4) is deliberately absent from this list — closed above.
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     const prodConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
       KETO_READ_URL: "https://keto.lumo.local",
     });
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/5 production guards failed/);
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/MfaProviderResolver/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/4 production guards failed/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/PaymentProvider/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/Licensing/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/object-storage/);

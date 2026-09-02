@@ -99,7 +99,13 @@ export { RecordingSessionRevocation, InMemoryKms } from "./infrastructure/in-mem
 // Reference cryptography + threat providers reused by the runtime wiring layer (H-3): the cloud KMS
 // adapters delegate non-key ops (hash/verifyHash/randomToken) to NodeCrypto rather than duplicate them,
 // and the resilient threat resolver reuses MultiThreatIntelResolver for fan-out + the aggregator.
-export { NodeCrypto } from "./infrastructure/in-memory-auth-adapters";
+export {
+  NodeCrypto,
+  InMemoryTotpMfaProvider,
+  MapMfaProviderResolver,
+} from "./infrastructure/in-memory-auth-adapters";
+// Production totp MfaProviderPort (C2-4) — real RFC 6238 codes over the injected CryptoPort.
+export { TotpMfaProvider } from "./infrastructure/totp-mfa-provider";
 export {
   InMemoryThreatIntelProvider,
   MultiThreatIntelResolver,

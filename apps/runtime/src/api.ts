@@ -1,6 +1,7 @@
 import { createAdminHttpApi } from "@platform/admin";
 import { PrismaAuditTrail } from "@platform/db";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
+import { InMemoryTotpMfaProvider, type MfaProviderResolver } from "@platform/security";
 import { logger } from "@platform/utils";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
@@ -15,15 +16,18 @@ import { startRuntimeTelemetry } from "./telemetry";
 /**
  * C2-4: Security's default MFA provider (services/security/src/infrastructure/in-memory-auth-
  * adapters.ts) verifies against ONE hardcoded code — a reference/test stub, not proof of
- * possession. No real provider is wired anywhere in this codebase yet (building one is out of
- * scope here — see CRITICAL_4_REPORT.md). Fail closed outside `local` rather than let it answer
- * production MFA challenges; `local` gets a warning so the gap stays visible during development.
- * Same no-real-adapter-exists shape as `assertProductionLicensingBillingConfigured` — `appEnv`
- * only, nothing to tell "configured" from "not" yet. Extracted into its own function (previously
- * inlined directly in `startApi`) so G0-4's aggregated guard below can collect its failure
- * alongside the other four instead of it short-circuiting the whole boot on its own.
+ * possession. `buildRuntimeCore` now resolves a real `TotpMfaProvider` (RFC 6238) unconditionally
+ * (`apps/runtime/src/composition.ts`); this guard takes the already-resolved resolver (mirroring
+ * `assertProductionObjectStorageConfigured`'s shape) and fails closed outside `local` only while
+ * the `totp` method still resolves to the in-memory stub — same present/absent convention as the
+ * payment-provider and object-storage guards, not the appEnv-only shape this used to have before a
+ * real provider existed. `local` gets a warning so the gap stays visible during development.
  */
-export function assertProductionMfaConfigured(appEnv: RuntimeConfig["APP_ENV"]): void {
+export function assertProductionMfaConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+  mfaProviders: MfaProviderResolver,
+): void {
+  if (!(mfaProviders.get("totp") instanceof InMemoryTotpMfaProvider)) return;
   if (appEnv === "local") {
     logger.warn("MFA is permissive: no production mfaProviders configured, APP_ENV=local");
   } else {
@@ -326,7 +330,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   // so on. Every guard now always runs; every failure is collected and reported together, so a
   // single boot attempt on a fresh environment reveals everything still missing at once.
   const guardFailures = [
-    collectGuardFailure(() => assertProductionMfaConfigured(config.APP_ENV)),
+    collectGuardFailure(() => assertProductionMfaConfigured(config.APP_ENV, runtime.mfaProviders)),
     collectGuardFailure(() =>
       assertProductionPaymentProviderConfigured(config.APP_ENV, runtime.paymentProvider),
     ),
@@ -355,6 +359,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
 
   const app = await createAdminHttpApi({
     ...integrationPorts,
+    mfaProviders: runtime.mfaProviders,
     serializer: runtime.serializer,
     idGenerator: runtime.idGenerator,
     clock: runtime.clock,

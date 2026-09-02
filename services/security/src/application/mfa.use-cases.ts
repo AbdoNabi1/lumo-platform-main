@@ -14,15 +14,18 @@ export interface MfaEnrollmentOutput {
   readonly method: string;
   readonly status: string;
   readonly remainingBackupCodes: number;
+  /** Present only on the `EnrollMfa` response that created this enrollment — see {@link MfaProviderPort.enroll}. */
+  readonly provisioningUri?: string;
 }
 
-function present(e: MfaEnrollment): MfaEnrollmentOutput {
+function present(e: MfaEnrollment, provisioningUri?: string): MfaEnrollmentOutput {
   return {
     id: e.id.toString(),
     principalRef: e.principalRef,
     method: e.method,
     status: e.status,
     remainingBackupCodes: e.remainingBackupCodes,
+    ...(provisioningUri !== undefined ? { provisioningUri } : {}),
   };
 }
 
@@ -43,7 +46,9 @@ export class EnrollMfa implements UseCase<EnrollMfaInput, MfaEnrollmentOutput, D
     const registered = this.deps.mfaMethodRegistry.get(input.method);
     if (registered !== null && !registered.value.enabled)
       return err(new BusinessRuleError(`MFA method "${input.method}" is disabled`));
-    const { secretRef } = await provider.enroll({ principalRef: principal.id.toString() });
+    const { secretRef, provisioningUri } = await provider.enroll({
+      principalRef: principal.id.toString(),
+    });
     return this.deps.unitOfWork.run<Result<MfaEnrollmentOutput, DomainError>>(async (tx) => {
       const enrollment = MfaEnrollment.enroll(
         UniqueEntityId.from(this.deps.idGenerator.generate()),
@@ -59,7 +64,7 @@ export class EnrollMfa implements UseCase<EnrollMfaInput, MfaEnrollmentOutput, D
         tenantRef: principal.tenantRef,
         metadata: { method: input.method },
       });
-      return ok(present(enrollment));
+      return ok(present(enrollment, provisioningUri));
     });
   }
 }

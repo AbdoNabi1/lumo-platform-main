@@ -21,9 +21,14 @@ const body = <T>(r: { body: unknown }): T => r.body as T;
 
 class FakeTotpProvider implements MfaProviderPort {
   readonly method: MfaMethodKind = "totp";
-  constructor(private readonly validCode: string) {}
-  async enroll(input: { readonly principalRef: string }): Promise<{ readonly secretRef: string }> {
-    return { secretRef: `fake:${input.principalRef}` };
+  constructor(
+    private readonly validCode: string,
+    private readonly provisioningUri?: string,
+  ) {}
+  async enroll(input: {
+    readonly principalRef: string;
+  }): Promise<{ readonly secretRef: string; readonly provisioningUri?: string }> {
+    return { secretRef: `fake:${input.principalRef}`, provisioningUri: this.provisioningUri };
   }
   async issueChallenge(): Promise<{ readonly challengeRef: string }> {
     return { challengeRef: "chal" };
@@ -76,6 +81,33 @@ describe("MFA provider injection (C2-4)", () => {
     const verified = await app.security.verifyMfaEnrollment({ enrollmentId, code: "999999" });
     expect(verified.status).toBe(200);
     expect(body<{ status: string }>(verified).status).toBe("active");
+  });
+
+  it("surfaces the provider's provisioningUri on the enrollment response, once, at enroll time", async () => {
+    const injected = new FakeTotpProvider("999999", "otpauth://totp/Lumo:admin-1?secret=ABC");
+    const app = wireSecurity({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: sequentialIds(),
+      clock,
+      knownSubjects: ["user-1"],
+      mfaProviders: new SingleMethodResolver(injected),
+    });
+    await app.security.registerPrincipal({
+      externalId: "admin-1",
+      kind: "human",
+      displayName: "Admin",
+      subjectRef: "user-1",
+      tenantRef: "t1",
+    });
+
+    const enrolled = await app.security.enrollMfa({
+      principalExternalId: "admin-1",
+      method: "totp",
+    });
+
+    expect(body<{ provisioningUri?: string }>(enrolled).provisioningUri).toBe(
+      "otpauth://totp/Lumo:admin-1?secret=ABC",
+    );
   });
 
   it("falls back to the in-memory reference stub only when nothing is injected — unchanged prior behavior", async () => {
