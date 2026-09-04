@@ -12,6 +12,39 @@
 
 ---
 
+## Execution Status (updated 2026-09-04)
+
+Branch: `feat/cloud-platform-runtime`.
+
+| Task | Status | Evidence |
+|---|---|---|
+| 0 — Prerequisites | **partly done** | Developer Mode ON; Upstash provisioned. Ory Network project **not yet created** — Tasks 4/5/6 are blocked on it. |
+| 1 — Upstash Redis | **done** | `/readyz` → 200 `{postgres: healthy, redis: healthy}` (was 503). PING/SET/GET verified over TLS. |
+| 2 — Runtime Ory API key | **done** | `createOryFetch` + `ORY_API_KEY`; 6 new tests; runtime suite 223/223. |
+| 3 — admin-web Ory API key | **done** | `oryAdminHeaders` at all 4 Hydra Admin call sites; 5 new tests; admin-web suite 598/598. |
+| 7 — Windows build | **done** | Both apps build: storefront 13 routes, admin-web 82 routes. See correction below. |
+| 4, 5, 6 | **blocked** | Need the Ory Network project + API key. |
+| 8–18 | not started | |
+
+**Correction to Task 7's premise.** Developer Mode did fix the `EPERM: symlink` failure, so the
+conditional-`standalone` change the task describes was **not needed and was not made** — the
+Dockerfiles and `next.config.ts` are untouched. But admin-web then failed for a *second,
+unrelated and pre-existing* reason the plan did not anticipate: `next build` aborted with "You're
+importing a component that needs next/headers". Three Client Components imported constants **as
+values** from `@/lib/api/{finance,security}`, which import `./client` → `@/lib/auth/session` →
+`next/headers`. Confirmed pre-existing by rebuilding with the Task 2/3 commits reverted — it
+failed identically. Fixed by moving those constants into import-free sibling modules
+(`finance-read-models.ts`, `security-transitions.ts`) and re-exporting them.
+
+The reason this was a 3-file fix and not a 63-file one: every *other* Client Component importing
+from `@/lib/api/*` uses `import type`, which TypeScript erases before webpack sees it. Only value
+imports pull the module in. Any future work here should apply that same test before assuming scope.
+
+This also means `PHASE_A43`'s claim that `pnpm --filter admin-web build` passed with 20 routes no
+longer held at this commit — the real build emits 82 routes and was failing until this fix.
+
+---
+
 ## Verified Baseline (measured 2026-09-04, not assumed)
 
 Do **not** re-litigate these. They were verified by direct execution against the live system.
