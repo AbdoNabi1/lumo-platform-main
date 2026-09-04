@@ -8,6 +8,26 @@ export interface KetoOptions {
   readonly fetch: HttpFetch;
   /** Relation-tuple namespace holding permission grants. Default `permissions`. */
   readonly namespace?: string;
+  /**
+   * How the grant subject is expressed in the `/relation-tuples/check` query. Default
+   * `"subject_id"` — a direct `subject_id=<principalId>` param, matching
+   * `infrastructure/docker/keto/keto.yml`'s legacy (non-OPL) namespace config, which accepts it
+   * generically. `"subject_set"` sends `subject_set.namespace=<subjectSetNamespace>&
+   * subject_set.object=<principalId>&subject_set.relation=` instead — required by Ory Network,
+   * whose OPL-compiled namespaces reject `subject_id` outright ("please migrate to subject sets",
+   * measured directly against a live project on 2026-09-04). Same dual convention
+   * `KetoRelationshipClient.toBody`/`subjectParams` (`./keto-relationships.ts`) already uses for
+   * writes/deletes — this mirrors it for the read-side permission check instead of inventing a
+   * second shape.
+   */
+  readonly subjectConvention?: "subject_id" | "subject_set";
+  /**
+   * The Ory namespace a principal is a member of, used only when `subjectConvention` is
+   * `"subject_set"` (see `infrastructure/ory/network/permissions.opl.ts`'s `User` namespace,
+   * which every principal is a subject-set member of with an empty relation). Ignored under
+   * `"subject_id"`. Default `"User"`.
+   */
+  readonly subjectSetNamespace?: string;
   readonly logger: Logger;
 }
 
@@ -15,11 +35,12 @@ export interface KetoOptions {
  * Ory Keto `AccessControl` adapter (Sprint 2.7, D-048) — the SAME port `AdminGuard` and the
  * transport guard already consume; swapping `AllowAllAccessControl` for this is a
  * composition-root line. Model: a permission `"<module>:<action>"` is granted when the check
- * `(namespace, object=<permission>, relation="granted", subject_id=<principalId>)` holds.
- * Roles and hierarchy are Keto **subject-sets** (role tuples pointing at permission objects) —
- * expansion happens inside Keto, which is exactly the ReBAC-ready shape; ABAC/tenant-scoped
- * objects extend the tuple object (`tenant/<id>/<permission>`) when per-tenant grants arrive
- * with the Tenancy context (G-23/G-38) — no port change either way.
+ * `(namespace, object=<permission>, relation="granted", subject=<principalId>)` holds — the
+ * subject is a direct id or a subject-set membership depending on `subjectConvention` (see that
+ * option's doc). Roles and hierarchy are Keto **subject-sets** (role tuples pointing at
+ * permission objects) — expansion happens inside Keto, which is exactly the ReBAC-ready shape;
+ * ABAC/tenant-scoped objects extend the tuple object (`tenant/<id>/<permission>`) when
+ * per-tenant grants arrive with the Tenancy context (G-23/G-38) — no port change either way.
  *
  * Fail-closed: any non-200 or transport failure denies (never throws into the guard) — an
  * authorization outage must not become an authorization bypass.
@@ -33,11 +54,19 @@ export class KetoAccessControl implements AccessControl {
 
   async authorize(principal: Principal, permission: Permission): Promise<boolean> {
     const namespace = this.options.namespace ?? "permissions";
+    const subjectParams: Record<string, string> =
+      this.options.subjectConvention === "subject_set"
+        ? {
+            "subject_set.namespace": this.options.subjectSetNamespace ?? "User",
+            "subject_set.object": principal.id,
+            "subject_set.relation": "",
+          }
+        : { subject_id: principal.id };
     const query = new URLSearchParams({
       namespace,
       object: permission,
       relation: "granted",
-      subject_id: principal.id,
+      ...subjectParams,
     });
     try {
       const response = await this.options.fetch(

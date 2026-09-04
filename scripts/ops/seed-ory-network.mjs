@@ -28,32 +28,71 @@ const ORIGIN = process.env.ADMIN_WEB_ORIGIN ?? "http://localhost:3100";
 const SCHEMA_ID = process.env.ORY_IDENTITY_SCHEMA_ID ?? "preset://email";
 
 const PERMISSIONS = [
-  "analytics:read", "automation:create", "automation:read",
-  "brands:create", "brands:delete", "brands:read", "brands:update",
-  "cart:create", "cart:read",
-  "categories:create", "categories:delete", "categories:read", "categories:update",
-  "components:create", "components:read",
-  "content:create", "content:read", "content:update",
-  "coupons:create", "coupons:read",
-  "customer360:read", "customers:read",
-  "experience:create", "experience:read",
-  "experiments:create", "experiments:read",
-  "finance:manage", "finance:read",
-  "fulfillment:create", "fulfillment:read",
-  "inventory:read", "localization:read", "loyalty:read",
-  "notifications:create", "notifications:read",
-  "orders:read", "organizations:create",
-  "pages:read", "payments:read",
-  "products:create", "products:delete", "products:read", "products:update",
-  "promotions:create", "promotions:read",
-  "recommendations:create", "recommendations:read",
-  "reporting:read", "returns:create", "returns:read",
-  "reviews:create", "reviews:read",
-  "search:create", "search:read", "seo:read",
-  "shipping:create", "shipping:read",
-  "tenancy:create", "tenancy:read", "tenancy:update",
-  "theme:create", "theme:read",
-  "users:create", "wishlist:create", "wishlist:read",
+  "analytics:read",
+  "automation:create",
+  "automation:read",
+  "brands:create",
+  "brands:delete",
+  "brands:read",
+  "brands:update",
+  "cart:create",
+  "cart:read",
+  "categories:create",
+  "categories:delete",
+  "categories:read",
+  "categories:update",
+  "components:create",
+  "components:read",
+  "content:create",
+  "content:read",
+  "content:update",
+  "coupons:create",
+  "coupons:read",
+  "customer360:read",
+  "customers:read",
+  "experience:create",
+  "experience:read",
+  "experiments:create",
+  "experiments:read",
+  "finance:manage",
+  "finance:read",
+  "fulfillment:create",
+  "fulfillment:read",
+  "inventory:read",
+  "localization:read",
+  "loyalty:read",
+  "notifications:create",
+  "notifications:read",
+  "orders:read",
+  "organizations:create",
+  "pages:read",
+  "payments:read",
+  "products:create",
+  "products:delete",
+  "products:read",
+  "products:update",
+  "promotions:create",
+  "promotions:read",
+  "recommendations:create",
+  "recommendations:read",
+  "reporting:read",
+  "returns:create",
+  "returns:read",
+  "reviews:create",
+  "reviews:read",
+  "search:create",
+  "search:read",
+  "seo:read",
+  "shipping:create",
+  "shipping:read",
+  "tenancy:create",
+  "tenancy:read",
+  "tenancy:update",
+  "theme:create",
+  "theme:read",
+  "users:create",
+  "wishlist:create",
+  "wishlist:read",
 ];
 
 const api = (path, init = {}) =>
@@ -96,7 +135,8 @@ function clientBody() {
 async function ensureOAuthClient() {
   const existing = await api(`/admin/clients/${encodeURIComponent(CLIENT_ID)}`);
   const method = existing.status === 200 ? "PUT" : "POST";
-  const path = method === "PUT" ? `/admin/clients/${encodeURIComponent(CLIENT_ID)}` : "/admin/clients";
+  const path =
+    method === "PUT" ? `/admin/clients/${encodeURIComponent(CLIENT_ID)}` : "/admin/clients";
   const res = await api(path, { method, body: JSON.stringify(clientBody()) });
   if (!res.ok) throw new Error(`${method} client failed: ${res.status} ${await res.text()}`);
   console.log(`OAuth2 client "${CLIENT_ID}" ${method === "PUT" ? "updated" : "created"}.`);
@@ -135,40 +175,62 @@ async function ensureIdentity() {
       credentials: { password: { config: { password: ADMIN_PASSWORD } } },
     }),
   });
-  if (!created.ok) throw new Error(`create identity failed: ${created.status} ${await created.text()}`);
+  if (!created.ok)
+    throw new Error(`create identity failed: ${created.status} ${await created.text()}`);
   const identity = await created.json();
   console.log(`Identity ${ADMIN_EMAIL} created (${identity.id}).`);
   return identity.id;
 }
 
+// The Ory Network OPL namespace matching packages/auth/src/keto.ts's `subjectConvention:
+// "subject_set"` default (see infrastructure/ory/network/permissions.opl.ts's `User` class):
+// every principal is a subject-set member of `User` with an empty relation, not a direct
+// subject_id. Must match keto.ts's `subjectSetNamespace` default exactly, or checks silently deny.
+const SUBJECT_SET_NAMESPACE = "User";
+
+function grantTupleBody(subjectId, permission) {
+  return {
+    namespace: "permissions",
+    object: permission,
+    relation: "granted",
+    subject_set: { namespace: SUBJECT_SET_NAMESPACE, object: subjectId, relation: "" },
+  };
+}
+
 /**
- * Ory Permissions (Keto) is a separately-provisioned service on Ory Network: on a project where it
- * is not enabled, `/relation-tuples/check` answers 403 with the same API key that Identity and
- * OAuth2 accept. That is reported rather than thrown, because the client and identity above are
- * still fully usable without it — and because `KetoAccessControl` fails closed, a half-granted
- * store would be worse than none. See the runbook for what to do about the 403.
+ * Ory Permissions (Keto) is a separately-provisioned service on Ory Network, configured through
+ * OPL (Ory Permission Language) rather than accepting raw namespace writes. Two independent
+ * blockers were measured directly against a live project on 2026-09-04:
+ *  1. HTTP 400 "subject_id is not supported; please migrate to subject sets" writing with
+ *     `subject_id` — fixed by this function (and packages/auth/src/keto.ts's read-side match)
+ *     using `subject_set` instead, mirroring infrastructure/ory/network/permissions.opl.ts.
+ *  2. HTTP 404 "Unknown namespace" — the OPL file above is not yet uploaded to the project. That
+ *     upload (`ory patch opl` or Ory Console → Permissions → Configure) needs a WORKSPACE API key
+ *     (`ory_wak_...`, from api.console.ory.com), a different credential than this script's
+ *     `ORY_API_KEY` (a project-scoped `ory_pat_...`, confirmed to get HTTP 403 against the
+ *     workspace management API). Still blocked on that as of this fix — see the runbook.
+ * Separately, `/relation-tuples/check` (the read side) returned HTTP 403 with the *same* API key
+ * that successfully drives Identity/OAuth2/relation-tuple *writes*, for both subject_id and
+ * subject_set shaped queries — an as-yet-unexplained third blocker, independent of the above, that
+ * needs investigating once the namespace 404 is resolved. Reported rather than thrown either way:
+ * the client and identity above are still fully usable without Permissions, and `KetoAccessControl`
+ * fails closed, so a half-granted store would be worse than none.
  */
 async function grantAll(subjectId) {
   const probe = await api("/admin/relation-tuples", {
     method: "PUT",
-    body: JSON.stringify({
-      namespace: "permissions",
-      object: PERMISSIONS[0],
-      relation: "granted",
-      subject_id: subjectId,
-    }),
+    body: JSON.stringify(grantTupleBody(subjectId, PERMISSIONS[0])),
   });
 
   if (!probe.ok) {
     const body = await probe.text();
     console.warn(
-      `\n! Ory Permissions is not usable for this grant model (HTTP ${probe.status}).\n` +
+      `\n! Ory Permissions is not usable yet (HTTP ${probe.status}).\n` +
         `  ${body.slice(0, 300)}\n\n` +
-        `  Two distinct blockers were measured against this project on 2026-09-04:\n` +
-        `   1. HTTP 400 "subject_id is not supported; please migrate to subject sets" — Ory Network\n` +
-        `      refuses concrete-subject writes, but KetoAccessControl (packages/auth/src/keto.ts)\n` +
-        `      checks with subject_id. The repo's grant model and Ory Network's disagree.\n` +
-        `   2. HTTP 404 on a subject_set write — the OPL namespaces are not configured at all.\n\n` +
+        `  The grant model now matches Ory Network (subject_set, not subject_id — see this\n` +
+        `  function's doc comment). The remaining blocker is almost certainly the OPL namespace\n` +
+        `  never having been uploaded to this project, which needs a Workspace API key this script\n` +
+        `  does not have. See docs/operations/CLOUD_RUNBOOK.md for the exact unblock steps.\n\n` +
         `  The OAuth2 client and admin identity above ARE seeded and fully usable; authentication\n` +
         `  works. Only authorization is affected.\n\n` +
         `  Until this is resolved, leave KETO_READ_URL unset with APP_ENV=local so the runtime's\n` +
@@ -182,12 +244,7 @@ async function grantAll(subjectId) {
   for (const permission of PERMISSIONS.slice(1)) {
     const res = await api("/admin/relation-tuples", {
       method: "PUT",
-      body: JSON.stringify({
-        namespace: "permissions",
-        object: permission,
-        relation: "granted",
-        subject_id: subjectId,
-      }),
+      body: JSON.stringify(grantTupleBody(subjectId, permission)),
     });
     if (!res.ok) throw new Error(`grant "${permission}" failed: ${res.status} ${await res.text()}`);
   }
@@ -202,4 +259,6 @@ const permissionsGranted = await grantAll(identityId);
 console.log(`\nOry Network seeded.`);
 console.log(`  project      : ${ORY}`);
 console.log(`  identity id  : ${identityId}   (${ADMIN_EMAIL})`);
-console.log(`  permissions  : ${permissionsGranted ? `${PERMISSIONS.length} granted` : "SKIPPED — see warning above"}`);
+console.log(
+  `  permissions  : ${permissionsGranted ? `${PERMISSIONS.length} granted` : "SKIPPED — see warning above"}`,
+);

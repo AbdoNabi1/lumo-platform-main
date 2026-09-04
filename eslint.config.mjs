@@ -13,6 +13,10 @@ export default [
       // outside the turbo-scoped lint workspaces by design (P2 Batch G / H-5).
       "perf/**",
       "chaos/**",
+      // Ory Permission Language file: valid syntax for Ory's own OPL compiler (uploaded via
+      // `ory patch opl` or the Ory Console), not part of this repo's TypeScript build or any
+      // tsconfig — no project-service config covers it, by design.
+      "infrastructure/ory/network/**",
     ],
   },
   ...base,

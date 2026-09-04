@@ -41,7 +41,12 @@ import {
 } from "@platform/orders";
 import { wirePayments, type PaymentController } from "@platform/payments";
 import { StripePaymentProvider } from "@platform/psp-stripe";
-import { NodeCrypto, TotpMfaProvider, MapMfaProviderResolver, type MfaProviderResolver } from "@platform/security";
+import {
+  NodeCrypto,
+  TotpMfaProvider,
+  MapMfaProviderResolver,
+  type MfaProviderResolver,
+} from "@platform/security";
 import type {
   PaymentsPort as ReturnsPaymentsPort,
   RefundVerificationPort,
@@ -184,6 +189,10 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
       new KetoAccessControl({
         readUrl: config.KETO_READ_URL,
         fetch: createOryFetch(config.ORY_API_KEY),
+        // Same signal createOryFetch uses: an API key means Ory Network, whose OPL-compiled
+        // namespaces require subject-set tuples (see keto.ts's subjectConvention doc). Absent ⇒
+        // self-hosted Keto (infrastructure/docker/keto/keto.yml), unchanged subject_id behavior.
+        subjectConvention: config.ORY_API_KEY !== undefined ? "subject_set" : "subject_id",
         logger,
       }),
       redis.cache,
