@@ -22,10 +22,25 @@ export function createOryFetch(
   apiKey: string | undefined,
   inner: HttpFetch = (url, init) => fetch(url, init),
 ): HttpFetch {
-  if (apiKey === undefined || apiKey.length === 0) return inner;
+  if (!isOryNetworkApiKey(apiKey)) return inner;
   return (url, init) =>
     inner(url, {
       ...init,
       headers: { ...(init?.headers ?? {}), authorization: `Bearer ${apiKey}` },
     });
+}
+
+/**
+ * Whether `apiKey` should be treated as "this is Ory Network" — present AND non-empty. The single
+ * source of truth for that present/absent convention: `createOryFetch` above uses it to decide
+ * whether to attach the bearer token, and `composition.ts` uses it to decide `KetoAccessControl`'s
+ * `subjectConvention` (Ory Network's OPL namespaces require subject-set tuples; self-hosted Keto
+ * requires subject_id). A blank-but-set env var must resolve the same way in both places — an
+ * earlier version of the `subjectConvention` check only tested `!== undefined`, so a blank
+ * `ORY_API_KEY` picked "subject_set" (Ory Network's shape) while `createOryFetch` picked "no auth
+ * header" (self-hosted's shape) — sending unauthenticated subject_set queries at self-hosted Keto,
+ * which has no `User` namespace, failing every check closed with nothing in the logs to explain why.
+ */
+export function isOryNetworkApiKey(apiKey: string | undefined): apiKey is string {
+  return apiKey !== undefined && apiKey.length > 0;
 }

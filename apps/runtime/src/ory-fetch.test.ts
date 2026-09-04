@@ -1,6 +1,6 @@
 import type { HttpFetch } from "@platform/auth";
 import { describe, expect, it, vi } from "vitest";
-import { createOryFetch } from "./ory-fetch";
+import { createOryFetch, isOryNetworkApiKey } from "./ory-fetch";
 
 /** A stub matching `HttpFetch`'s narrow shape (not the global `fetch`/`Response` pair). */
 function stubFetch(): HttpFetch & { calls: { url: string; init?: Parameters<HttpFetch>[1] }[] } {
@@ -57,5 +57,17 @@ describe("createOryFetch", () => {
     const inner = stubFetch();
     await createOryFetch("", inner)("https://example.test/x");
     expect(inner.calls[0]?.init?.headers?.["authorization"]).toBeUndefined();
+  });
+});
+
+describe("isOryNetworkApiKey", () => {
+  // The single source of truth consumers outside this file must agree with — see
+  // composition.ts's subjectConvention selection, which uses this rather than a bare
+  // `!== undefined` (a blank-but-set ORY_API_KEY must resolve to "self-hosted" in both places,
+  // or the two seams disagree about which Keto topology is in play and every check denies).
+  it("is true only for a present, non-empty key", () => {
+    expect(isOryNetworkApiKey("ory_pat_abc")).toBe(true);
+    expect(isOryNetworkApiKey(undefined)).toBe(false);
+    expect(isOryNetworkApiKey("")).toBe(false);
   });
 });

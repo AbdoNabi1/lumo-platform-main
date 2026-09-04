@@ -73,6 +73,15 @@ export class KetoAccessControl implements AccessControl {
         `${this.options.readUrl}/relation-tuples/check?${query.toString()}`,
       );
       if (response.status !== 200) {
+        // Logged at warn, not error: a non-200 here is routine for a real "denied" (Keto answers
+        // non-200 for some deny shapes) as well as a real outage — this is a fail-closed decision
+        // either way, but silently returning false with no log line at all was exactly how the
+        // subjectConvention/isOryNetworkApiKey mismatch (see composition.ts) went unnoticed.
+        this.options.logger.warn("keto authorization check returned non-200 — denying", {
+          permission,
+          principalId: principal.id,
+          status: response.status,
+        });
         return false;
       }
       const body = (await response.json()) as { allowed?: boolean };

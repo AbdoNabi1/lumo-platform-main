@@ -16,13 +16,12 @@ const principal = { id: "principal:a", kind: "staff" as const, roles: [] };
 
 describe("KetoAccessControl — subject_id convention (default, self-hosted Keto)", () => {
   it("checks with subject_id and no subject_set params, honors allowed=true", async () => {
+    // `authorize` catches anything thrown inside its own `fetch` call, so an `expect()` failure
+    // in the stub would surface as a misleading "expected true, got false" instead of the real
+    // mismatch — capture the URL and assert on it after the call returns instead.
+    let calledUrl: string | undefined;
     const fetchImpl: HttpFetch = async (url) => {
-      const parsed = new URL(String(url));
-      expect(parsed.searchParams.get("namespace")).toBe("permissions");
-      expect(parsed.searchParams.get("object")).toBe("products:read");
-      expect(parsed.searchParams.get("relation")).toBe("granted");
-      expect(parsed.searchParams.get("subject_id")).toBe("principal:a");
-      expect(parsed.searchParams.has("subject_set.namespace")).toBe(false);
+      calledUrl = String(url);
       return { status: 200, json: async () => ({ allowed: true }) };
     };
     const ac = new KetoAccessControl({
@@ -31,6 +30,12 @@ describe("KetoAccessControl — subject_id convention (default, self-hosted Keto
       logger: silent,
     });
     expect(await ac.authorize(principal, "products:read")).toBe(true);
+    const parsed = new URL(calledUrl!);
+    expect(parsed.searchParams.get("namespace")).toBe("permissions");
+    expect(parsed.searchParams.get("object")).toBe("products:read");
+    expect(parsed.searchParams.get("relation")).toBe("granted");
+    expect(parsed.searchParams.get("subject_id")).toBe("principal:a");
+    expect(parsed.searchParams.has("subject_set.namespace")).toBe(false);
   });
 
   it("honors allowed=false", async () => {
@@ -64,15 +69,9 @@ describe("KetoAccessControl — subject_id convention (default, self-hosted Keto
 
 describe("KetoAccessControl — subject_set convention (Ory Network)", () => {
   it("checks with subject_set.namespace/object/relation instead of subject_id", async () => {
+    let calledUrl: string | undefined;
     const fetchImpl: HttpFetch = async (url) => {
-      const parsed = new URL(String(url));
-      expect(parsed.searchParams.get("namespace")).toBe("permissions");
-      expect(parsed.searchParams.get("object")).toBe("products:read");
-      expect(parsed.searchParams.get("relation")).toBe("granted");
-      expect(parsed.searchParams.has("subject_id")).toBe(false);
-      expect(parsed.searchParams.get("subject_set.namespace")).toBe("User");
-      expect(parsed.searchParams.get("subject_set.object")).toBe("principal:a");
-      expect(parsed.searchParams.get("subject_set.relation")).toBe("");
+      calledUrl = String(url);
       return { status: 200, json: async () => ({ allowed: true }) };
     };
     const ac = new KetoAccessControl({
@@ -82,12 +81,20 @@ describe("KetoAccessControl — subject_set convention (Ory Network)", () => {
       logger: silent,
     });
     expect(await ac.authorize(principal, "products:read")).toBe(true);
+    const parsed = new URL(calledUrl!);
+    expect(parsed.searchParams.get("namespace")).toBe("permissions");
+    expect(parsed.searchParams.get("object")).toBe("products:read");
+    expect(parsed.searchParams.get("relation")).toBe("granted");
+    expect(parsed.searchParams.has("subject_id")).toBe(false);
+    expect(parsed.searchParams.get("subject_set.namespace")).toBe("User");
+    expect(parsed.searchParams.get("subject_set.object")).toBe("principal:a");
+    expect(parsed.searchParams.get("subject_set.relation")).toBe("");
   });
 
   it("honors a custom subjectSetNamespace", async () => {
+    let calledUrl: string | undefined;
     const fetchImpl: HttpFetch = async (url) => {
-      const parsed = new URL(String(url));
-      expect(parsed.searchParams.get("subject_set.namespace")).toBe("Principal");
+      calledUrl = String(url);
       return { status: 200, json: async () => ({ allowed: true }) };
     };
     const ac = new KetoAccessControl({
@@ -98,6 +105,7 @@ describe("KetoAccessControl — subject_set convention (Ory Network)", () => {
       logger: silent,
     });
     expect(await ac.authorize(principal, "products:read")).toBe(true);
+    expect(new URL(calledUrl!).searchParams.get("subject_set.namespace")).toBe("Principal");
   });
 
   it("still fails closed on non-200 and transport error", async () => {
@@ -136,5 +144,46 @@ describe("CachedAccessControl", () => {
     expect(await cached.authorize(principal, "products:read")).toBe(true);
     expect(await cached.authorize(principal, "products:read")).toBe(true);
     expect(calls).toBe(1);
+  });
+
+  it("caches a false decision just as durably as a true one", async () => {
+    let calls = 0;
+    const inner = {
+      authorize: async () => {
+        calls += 1;
+        return false;
+      },
+    };
+    const store = new Map<string, boolean>();
+    const cache: Cache = {
+      get: async <T>(key: string) => (store.has(key) ? (store.get(key) as unknown as T) : null),
+      set: async (key: string, value: unknown) => {
+        store.set(key, value as boolean);
+      },
+      delete: async (key: string) => {
+        store.delete(key);
+      },
+      has: async (key: string) => store.has(key),
+    };
+    const cached = new CachedAccessControl(inner, cache);
+    expect(await cached.authorize(principal, "products:read")).toBe(false);
+    expect(await cached.authorize(principal, "products:read")).toBe(false);
+    expect(calls).toBe(1);
+  });
+
+  it("degrades to the inner decision point on a cache outage, without throwing", async () => {
+    const inner = { authorize: async () => true };
+    const cache: Cache = {
+      get: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+      set: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+      delete: async () => undefined,
+      has: async () => false,
+    };
+    const cached = new CachedAccessControl(inner, cache);
+    expect(await cached.authorize(principal, "products:read")).toBe(true);
   });
 });

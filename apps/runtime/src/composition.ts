@@ -64,7 +64,7 @@ import { createS3Client, S3StorageService } from "@platform/storage";
 import { logger, type Logger } from "@platform/utils";
 import type { RuntimeConfig } from "./config";
 import { RuntimeMetrics } from "./metrics";
-import { createOryFetch } from "./ory-fetch";
+import { createOryFetch, isOryNetworkApiKey } from "./ory-fetch";
 import { TrackingIngestHandler, type TrackingCapturedPayload } from "./tracking/tracking-ingest";
 import { loadTrackingRegistry, PrismaTrackingRegistryStore } from "./tracking/tracking-registry";
 import {
@@ -189,10 +189,12 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
       new KetoAccessControl({
         readUrl: config.KETO_READ_URL,
         fetch: createOryFetch(config.ORY_API_KEY),
-        // Same signal createOryFetch uses: an API key means Ory Network, whose OPL-compiled
-        // namespaces require subject-set tuples (see keto.ts's subjectConvention doc). Absent ⇒
-        // self-hosted Keto (infrastructure/docker/keto/keto.yml), unchanged subject_id behavior.
-        subjectConvention: config.ORY_API_KEY !== undefined ? "subject_set" : "subject_id",
+        // Same signal createOryFetch uses (isOryNetworkApiKey, not a bare !== undefined — a
+        // blank-but-set key must resolve the same way in both places, see that function's doc):
+        // an API key means Ory Network, whose OPL-compiled namespaces require subject-set tuples
+        // (see keto.ts's subjectConvention doc). Absent ⇒ self-hosted Keto
+        // (infrastructure/docker/keto/keto.yml), unchanged subject_id behavior.
+        subjectConvention: isOryNetworkApiKey(config.ORY_API_KEY) ? "subject_set" : "subject_id",
         logger,
       }),
       redis.cache,
