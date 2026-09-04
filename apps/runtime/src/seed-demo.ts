@@ -686,6 +686,13 @@ async function main(): Promise<void> {
         });
       }
     } catch (error: unknown) {
+      // Narrow on purpose: only the known "a persisted row fails domain validation" failure mode
+      // (PromotionMapper.toDomain's own error message, see the comment above) is safe to swallow
+      // and continue past. Anything else — a network blip, a real regression in this block — should
+      // fail the script loudly instead of being silently mistaken for the known corrupt-row issue.
+      const isKnownCorruptRowFailure =
+        error instanceof Error && error.message.includes("Corrupt promotion row");
+      if (!isKnownCorruptRowFailure) throw error;
       logger.error(
         "seed-demo: promotions step failed (likely the corrupt legacy 'Demo 15% Off Everything' row — see seed-demo.ts comment above); skipping promotions, continuing with reviews + content",
         { error: String(error) },
