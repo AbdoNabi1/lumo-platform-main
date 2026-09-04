@@ -70,10 +70,18 @@ const PRODUCT_SEEDS: readonly ProductSeed[] = [
 ];
 
 async function main(): Promise<void> {
+  // Every DatabaseConfig field is passed explicitly: `buildDatasourceUrl`
+  // (packages/db/src/client.ts) reads `poolMax` and `connectTimeoutMs` unconditionally, so a
+  // partial object cast with `as` produced the literal query string
+  // `?connection_limit=undefined&connect_timeout=NaN`, which Prisma rejects at connect time with
+  // "The provided arguments are not supported in database URL" — the seed could never run.
   const prisma = createPrismaClient({
     url: process.env.DATABASE_URL ?? "postgresql://lumo:lumo@localhost:5432/lumo",
+    poolMax: Number(process.env.DATABASE_POOL_MAX ?? 10),
+    connectTimeoutMs: Number(process.env.DATABASE_CONNECT_TIMEOUT_MS ?? 10_000),
+    statementTimeoutMs: Number(process.env.DATABASE_STATEMENT_TIMEOUT_MS ?? 30_000),
     logQueries: false,
-  } as Parameters<typeof createPrismaClient>[0]);
+  });
 
   try {
     await prisma.$connect();

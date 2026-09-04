@@ -20,6 +20,7 @@
     "start": "tsx src/api.ts",
     "start:worker": "tsx src/worker.ts",
     "start:scheduler": "tsx src/scheduler.ts",
+    "seed:demo": "tsx src/seed-demo.ts",
     "sandbox:stripe": "tsx scripts/c2-2-stripe-sandbox-validation.ts"
   },
   "dependencies": {
@@ -51,11 +52,14 @@
     "@platform/observability": "workspace:*",
     "@platform/orders": "workspace:*",
     "@platform/payments": "workspace:*",
+    "@platform/content": "workspace:*",
     "@platform/pricing": "workspace:*",
+    "@platform/promotions": "workspace:*",
     "@platform/psp-stripe": "workspace:*",
     "@platform/redis": "workspace:*",
     "@platform/registry": "workspace:*",
     "@platform/returns": "workspace:*",
+    "@platform/reviews": "workspace:*",
     "@platform/rules": "workspace:*",
     "@platform/secrets": "workspace:*",
     "@platform/security": "workspace:*",

@@ -98,6 +98,7 @@ export class PromotionMapper {
       targetRefs: promotion.rule.condition.targetRefs,
       reward: {
         type: promotion.rule.reward.type,
+        value: promotion.rule.reward.value,
         buyQuantity: promotion.rule.reward.buyQuantity,
         getQuantity: promotion.rule.reward.getQuantity,
       },

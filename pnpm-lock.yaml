@@ -403,6 +403,9 @@ importers:
       '@platform/clock':
         specifier: workspace:*
         version: link:../../packages/clock
+      '@platform/content':
+        specifier: workspace:*
+        version: link:../../services/content
       '@platform/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -475,6 +478,9 @@ importers:
       '@platform/pricing':
         specifier: workspace:*
         version: link:../../services/pricing
+      '@platform/promotions':
+        specifier: workspace:*
+        version: link:../../services/promotions
       '@platform/psp-stripe':
         specifier: workspace:*
         version: link:../../packages/psp-stripe
@@ -487,6 +493,9 @@ importers:
       '@platform/returns':
         specifier: workspace:*
         version: link:../../services/returns
+      '@platform/reviews':
+        specifier: workspace:*
+        version: link:../../services/reviews
       '@platform/rules':
         specifier: workspace:*
         version: link:../../packages/rules
