@@ -82,6 +82,14 @@ function clientBody() {
     scope: "openid offline_access lumo.admin",
     audience: [AUDIENCE],
     token_endpoint_auth_method: "client_secret_post",
+    // Ory Network's default is an OPAQUE access token (`ory_at_...`, 2 segments). The runtime's
+    // JwtVerifier (packages/auth/src/jwt-verifier.ts) only accepts a real RS256 JWT verifiable
+    // against AUTH_JWKS_URL — an opaque token fails verification outright, independent of any
+    // authorization/Keto concern. Measured directly against this project on 2026-09-04: setting
+    // this field is what turns `/api/v1/products` from 401 into 200. Hydra supports this as a
+    // per-client field since it introduced token strategies; no project-level (workspace-key-gated)
+    // config is needed.
+    access_token_strategy: "jwt",
   };
 }
 
