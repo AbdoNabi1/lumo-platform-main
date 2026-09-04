@@ -220,19 +220,15 @@ export async function fetchBalanceSheet(
 // ── Read models ──────────────────────────────────────────────────────────────────────────────────
 
 /**
- * The only three models `FinanceProjectionService.rebuild` ever populates
- * (`services/finance/src/application/finance-projection.service.ts`) — `readModels.put("profit"|
- * "margin"|"financial_health", period, …)`. `InMemoryReadModelStore.query` (the `ReadModelStore`
- * implementation) never 404s on an unknown model name — it silently returns an empty page — so the
- * explorer validates against this known list itself rather than trusting the backend to reject a
- * typo'd or unsupported model.
+ * Re-exported from `./finance-read-models`, which holds them so that Client Components can import
+ * them without pulling in this module's `./client` → `@/lib/auth/session` → `next/headers` chain.
+ * Server-side callers keep importing them from here unchanged.
  */
-export const FINANCE_READ_MODELS = ["profit", "margin", "financial_health"] as const;
-export type FinanceReadModelName = (typeof FINANCE_READ_MODELS)[number];
-
-export function isFinanceReadModelName(value: string): value is FinanceReadModelName {
-  return (FINANCE_READ_MODELS as readonly string[]).includes(value);
-}
+export {
+  FINANCE_READ_MODELS,
+  isFinanceReadModelName,
+  type FinanceReadModelName,
+} from "./finance-read-models";
 
 export interface ReadModelPageDto {
   readonly items: readonly unknown[];

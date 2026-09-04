@@ -1,4 +1,7 @@
 import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
+// Imported for local use as well as re-exported below: `export ... from` re-exports a name without
+// binding it in this module's scope, and `transitionPrincipal`'s signature annotates with it.
+import type { PrincipalTransitionTarget } from "./security-transitions";
 
 /**
  * The Security Console (T3.1) — one fetch function per GET endpoint across the six
@@ -1233,23 +1236,15 @@ export function registerPrincipal(
   );
 }
 
-export type PrincipalTransitionTarget = "suspended" | "active" | "disabled";
-
 /**
- * UI-only mirror of `Principal`'s private `TRANSITIONS` table
- * (`services/security/src/domain/principal.ts`), read directly rather than assumed — used only to
- * gate which `to` options a per-row transition control offers for a principal's current status.
- * Not authoritative: `Principal.transition` is the sole source of truth and still enforces this
- * itself server-side; a UI/domain drift here can only offer an option the backend then rejects
- * with a normal form error (constraint #3/#10), never silently allow an illegal one.
+ * Defined in `./security-transitions`, which holds the transition tables so that Client Components
+ * can import them without pulling in this module's `./client` → `@/lib/auth/session` →
+ * `next/headers` chain. Re-exported here so server-side callers are unaffected.
  */
-export const PRINCIPAL_STATUS_TRANSITIONS: Readonly<
-  Record<PrincipalTransitionTarget, readonly PrincipalTransitionTarget[]>
-> = {
-  active: ["suspended", "disabled"],
-  suspended: ["active", "disabled"],
-  disabled: [],
-};
+export {
+  PRINCIPAL_STATUS_TRANSITIONS,
+  type PrincipalTransitionTarget,
+} from "./security-transitions";
 
 /**
  * `POST /security/principals/:externalId/transitions` — `security:transition_principal`.
@@ -1406,25 +1401,11 @@ export function openIncident(
   );
 }
 
-export type IncidentLifecycleAction = "triage" | "mitigate" | "resolve" | "close";
-
 /**
- * UI-only mirror of `Incident`'s private `TRANSITIONS` table (`services/security/src/domain/
- * incident.ts`), read directly rather than assumed — used only to gate which lifecycle action a
- * per-row control on the incident explorer offers for an incident's current status: `detected` ->
- * triage or close, `triaged` -> mitigate or close, `mitigating` -> resolve or close, `resolved` ->
- * close only, `closed` -> none (terminal). Not authoritative: `Incident.transition` is the sole
- * source of truth and still enforces this itself server-side — a UI/domain drift here can only offer
- * an action the backend then rejects with a normal form error (constraint #3/#10), never silently
- * allow an illegal one.
+ * Defined in `./security-transitions` for the same reason as `PRINCIPAL_STATUS_TRANSITIONS` above:
+ * `audit-actions.tsx` is a Client Component and imports it as a value.
  */
-export const INCIDENT_NEXT_ACTIONS: Readonly<Record<string, readonly IncidentLifecycleAction[]>> = {
-  detected: ["triage", "close"],
-  triaged: ["mitigate", "close"],
-  mitigating: ["resolve", "close"],
-  resolved: ["close"],
-  closed: [],
-};
+export { INCIDENT_NEXT_ACTIONS, type IncidentLifecycleAction } from "./security-transitions";
 
 /**
  * `POST /security/incidents/:reference/triage` — `security:triage_incident`. Assigns an owner.

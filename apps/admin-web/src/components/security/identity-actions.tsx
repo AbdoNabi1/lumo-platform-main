@@ -12,7 +12,10 @@ import {
   suspendMachineIdentityAction,
   transitionPrincipalAction,
 } from "@/app/security/identity/actions";
-import { PRINCIPAL_STATUS_TRANSITIONS, type PrincipalTransitionTarget } from "@/lib/api/security";
+import {
+  PRINCIPAL_STATUS_TRANSITIONS,
+  type PrincipalTransitionTarget,
+} from "@/lib/api/security-transitions";
 import type { FormState } from "@/lib/api/mutation";
 import type { Dictionary } from "@/messages/en";
 

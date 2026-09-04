@@ -16,7 +16,10 @@ import {
   type CheckThreatIndicatorFormState,
   type EvaluateComplianceFormState,
 } from "@/app/security/audit/actions";
-import { INCIDENT_NEXT_ACTIONS, type IncidentLifecycleAction } from "@/lib/api/security";
+import {
+  INCIDENT_NEXT_ACTIONS,
+  type IncidentLifecycleAction,
+} from "@/lib/api/security-transitions";
 import type { FormState } from "@/lib/api/mutation";
 import type { Dictionary } from "@/messages/en";
 

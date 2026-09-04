@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Label } from "@platform/ui";
-import { FINANCE_READ_MODELS } from "@/lib/api/finance";
+import { FINANCE_READ_MODELS } from "@/lib/api/finance-read-models";
 import type { Dictionary } from "@/messages/en";
 
 /**
