@@ -62,6 +62,14 @@ const schema = z
     KRATOS_PUBLIC_URL: z.string().url().optional(),
     /** Ory Kratos admin-API base (identity lookup + session revocation); required outside `local` (H-2). */
     KRATOS_ADMIN_URL: z.string().url().optional(),
+    /**
+     * Ory Network project API key (`ory_pat_...`), attached to Ory's permission/identity APIs by
+     * `createOryFetch` (`./ory-fetch.ts`). Absent ⇒ the self-hosted Hydra/Kratos/Keto topology in
+     * `infrastructure/docker/docker-compose.yml`, which authenticates none of these calls. Same
+     * present/absent convention as S3/Stripe below — not required outside `local`, because
+     * self-hosted Ory remains a legitimate production topology (`infrastructure/k8s/` deploys it).
+     */
+    ORY_API_KEY: z.string().optional(),
 
     TENANT_MODE: z.enum(["single", "multi"]).default("single"),
     TENANT_DEFAULT_ID: z.string().default("tenant-local"),

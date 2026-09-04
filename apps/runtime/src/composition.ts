@@ -59,6 +59,7 @@ import { createS3Client, S3StorageService } from "@platform/storage";
 import { logger, type Logger } from "@platform/utils";
 import type { RuntimeConfig } from "./config";
 import { RuntimeMetrics } from "./metrics";
+import { createOryFetch } from "./ory-fetch";
 import { TrackingIngestHandler, type TrackingCapturedPayload } from "./tracking/tracking-ingest";
 import { loadTrackingRegistry, PrismaTrackingRegistryStore } from "./tracking/tracking-registry";
 import {
@@ -182,7 +183,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     accessControl = new CachedAccessControl(
       new KetoAccessControl({
         readUrl: config.KETO_READ_URL,
-        fetch: async (url, init) => fetch(url, init),
+        fetch: createOryFetch(config.ORY_API_KEY),
         logger,
       }),
       redis.cache,
