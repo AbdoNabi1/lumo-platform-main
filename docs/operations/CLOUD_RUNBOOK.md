@@ -168,14 +168,29 @@ sharp-hofstadter-ww7td17fbp` (needs the `ory` CLI, authenticated with the worksp
       there) to `$ORY_SDK_URL`, restart the runtime, and re-run Check 2. If it now returns `403`
       instead of `200`, see finding 3.3 below before assuming the Keto work is broken.
 
-3. **A third, unexplained blocker on the read side specifically.** `GET
-/relation-tuples/check` returned `HTTP 403` with body `{"allowed":false}` using the same
-   `ORY_API_KEY` that successfully drives relation-tuple _writes_ (`PUT
-/admin/relation-tuples`) — for both the old `subject_id` shape and the new `subject_set` shape,
-   so it is not a wire-format issue. Not yet root-caused (possibly a missing scope on the key, or a
-   check-endpoint-specific auth requirement). **Investigate this before assuming step 2 above is
-   sufficient** — it may need a separate fix (a different key, or a different endpoint/auth mode
-   for checks specifically).
+3. ~~**A third, unexplained blocker on the read side specifically.**~~ **RESOLVED 2026-09-04 — this
+   was never a blocker.** `GET /relation-tuples/check` returning `HTTP 403 {"allowed":false}` is
+   Keto's **normal "denied" answer**, not an authentication failure. Measured directly against the
+   live project, three requests to the same URL:
+
+   | Credential                | Status | Body                                                         |
+   | ------------------------- | ------ | ------------------------------------------------------------ |
+   | Valid `ORY_API_KEY`       | `403`  | `{"allowed":false}`                                          |
+   | Deliberately invalid key  | `401`  | `{"error":{...,"message":"Access credentials are invalid"}}` |
+   | No `Authorization` header | `401`  | `{"error":{...,"message":"Access credentials are invalid"}}` |
+
+   Auth failures are `401` with an error envelope; the valid key gets `403` with a _permission_
+   body. So the key authenticates the check endpoint correctly and there is no missing scope. A
+   deliberately bogus namespace returns the same `403 {"allowed":false}` — the check endpoint
+   answers "denied" for an unknown namespace rather than `404`-ing, which is why this looked like a
+   separate failure mode from the writes (`404 "Unknown namespace"`).
+
+   `KetoAccessControl` treating any non-200 as `false` is therefore **correct** here, not a
+   workaround: `403` genuinely means denied.
+
+   **Consequence for the unblock steps above: step 2 is sufficient.** Upload the OPL namespace,
+   re-run the seed, and Check 3 should go green. No different key and no check-specific auth mode
+   is needed. The only credential still required is the Workspace API key for the OPL upload itself.
 
 Until this is fully resolved, `KETO_READ_URL`/`KETO_WRITE_URL` stay commented out in `.env` and
 `APP_ENV=local` keeps the runtime's documented local escape hatch active
@@ -234,6 +249,36 @@ acceptable steady state.
 **Before running this script against Ory Network again**, generate a real random value for
 `DEV_CLI_CLIENT_SECRET` and keep it out of every committed file, the same as `AUTH_CLIENT_SECRET`.
 
+### 3.5 — The browser login loop, and the two Ory settings that fix it (found, fixed)
+
+`admin-web` redirect-looped forever on `/login?login_challenge=...`. Two distinct causes, fixed in
+order:
+
+1. **Cookie domain.** `login/page.tsx` resolves the caller's session by forwarding the browser's
+   `cookie` header to `${KRATOS_PUBLIC_URL}/sessions/whoami` server-side. Its own doc comment states
+   the assumption: _"localhost cookies are host-only … Kratos's session cookie (set at :4433) is
+   sent by the browser to this app at :3100 too."_ True for self-hosted Kratos — same host,
+   different port, and cookies are not port-scoped. False for Ory Network, which is a different
+   registrable domain, so the cookie never reaches `localhost:3100` and `whoami` 401s forever.
+   **Fixed** with the Ory Tunnel (`scripts/dev/ory-tunnel.mjs`), which mirrors the Network APIs on
+   `localhost`; `KRATOS_PUBLIC_URL` points at it (`http://localhost:4000`), not at the project URL.
+
+2. **Which UI renders the login form.** Kratos still redirected to Ory's own hosted login UI, which
+   is not what this repo expects: `admin-web`'s `/login` _is_ Kratos's self-service login UI (it has
+   a `?flow=` branch that renders the Kratos form itself, and its doc comment names
+   `selfservice.flows.login.ui_url` explicitly). **Fixed** by setting Ory Console → Branding → UI
+   URLs → Login UI to `http://localhost:3100/login`.
+
+   Note this is a _different_ setting from OAuth2 → URLs → Login UI, which was set earlier: that one
+   is Hydra's login provider (where OAuth2 sends the browser once the authorization request starts);
+   this one is Kratos's own login form UI. Both are required, and setting only the first produces
+   exactly the loop above.
+
+**Verified 2026-09-04:** `GET /self-service/login/browser` now `303`s to
+`http://localhost:3100/login?flow=…`, and that page renders Lumo's own branded sign-in form.
+**Completing a login was not verified** — entering a password is outside what the agent does; run it
+by hand with the seeded `admin@lumo.local` identity to close Task 9.
+
 ---
 
 ## 4. Deferred this session — needs a dashboard credential or an operator decision
@@ -250,7 +295,7 @@ session, and surface it here rather than silently treating it as done.
 | `DIRECT_URL` → true direct connection         | Direct connection string from Supabase dashboard                                      | §1 above                               |
 | Outbox relay                                  | A managed Kafka/Redpanda broker                                                       | §3.3 above                             |
 | Mount the zero-trust security guard (Task 14) | Depends on §3.2 being resolved first                                                  | Plan Task 14                           |
-| Expanded e2e coverage (Task 15)               | Depends on a working browser OAuth login flow, itself depends on §3.2                 | Plan Task 15                           |
+| Expanded e2e coverage (Task 15)               | A completed browser login (see §3.5) — does **not** depend on §3.2                    | Plan Task 15 · §3.5                    |
 | Deployment (Task 17)                          | Explicit human confirmation before any public deploy                                  | Plan Task 17                           |
 | Observability export (Task 18)                | A managed OTLP collector endpoint                                                     | Plan Task 18                           |
 

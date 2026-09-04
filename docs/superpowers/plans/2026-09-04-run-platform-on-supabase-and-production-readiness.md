@@ -16,27 +16,37 @@
 
 Branch: `feat/cloud-platform-runtime`.
 
-| Task | Status | Evidence |
-|---|---|---|
-| 0 — Prerequisites | **partly done** | Developer Mode ON; Upstash provisioned. Ory Network project **not yet created** — Tasks 4/5/6 are blocked on it. |
-| 1 — Upstash Redis | **done** | `/readyz` → 200 `{postgres: healthy, redis: healthy}` (was 503). PING/SET/GET verified over TLS. |
-| 2 — Runtime Ory API key | **done** | `createOryFetch` + `ORY_API_KEY`; 6 new tests; runtime suite 223/223. |
-| 3 — admin-web Ory API key | **done** | `oryAdminHeaders` at all 4 Hydra Admin call sites; 5 new tests; admin-web suite 598/598. |
-| 7 — Windows build | **done** | Both apps build: storefront 13 routes, admin-web 82 routes. See correction below. |
-| 4, 5, 6 | **blocked** | Need the Ory Network project + API key. |
-| 8–18 | not started | |
+**`docs/operations/CLOUD_RUNBOOK.md` is the live source of truth for status.** This table is a
+summary; where the two disagree, the runbook is newer.
+
+| Task                       | Status                  | Evidence                                                                                                                                                                                    |
+| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Prerequisites          | **done**                | Developer Mode ON; Upstash provisioned; Ory Network project `sharp-hofstadter-ww7td17fbp` created and configured.                                                                           |
+| 1 — Upstash Redis          | **done**                | `/readyz` → 200 `{postgres: healthy, redis: healthy}` (was 503).                                                                                                                            |
+| 2 — Runtime Ory API key    | **done**                | `createOryFetch` + `ORY_API_KEY`; runtime suite green.                                                                                                                                      |
+| 3 — admin-web Ory API key  | **done**                | `oryAdminHeaders` at all 4 Hydra Admin call sites; admin-web suite green.                                                                                                                   |
+| 4 — Ory project config     | **done**                | OAuth2 URLs, allowed return URLs, and Branding → UI URLs all set. See runbook §3.5.                                                                                                         |
+| 5 — Seed Ory Network       | **partly done**         | OAuth2 client + admin identity seeded and verified. The 66 permission grants are blocked on the OPL namespace upload — runbook §3.2.                                                        |
+| 6 — Authenticated API call | **done**                | A real Hydra-issued JWT returns `200` on `/api/v1/products`. Runbook Check 2. Required finding `access_token_strategy: "jwt"` — Ory Network issues opaque tokens by default (runbook §3.1). |
+| 7 — Windows build          | **done**                | Both apps build: storefront 13 routes, admin-web 82 routes. See correction below.                                                                                                           |
+| 8 — Rich demo seed         | **done**                | `apps/runtime/src/seed-demo.ts`, idempotent.                                                                                                                                                |
+| 9 — Run all three apps     | **partly done**         | Runtime + admin-web + tunnel all up; login form renders from admin-web (runbook §3.5). Completing a login and walking the 82 screens is **not** done.                                       |
+| 10 — Outbox relay          | **blocked, documented** | No Kafka broker; flag reverted per plan. Runbook §3.3.                                                                                                                                      |
+| 11, 12, 13                 | **deferred**            | Each needs a dashboard credential (Supabase S3 keys, Stripe test keys, Supabase direct connection string).                                                                                  |
+| 14 — Zero-trust guard      | **blocked**             | Needs §3.2 resolved, plus the `ory-clients.ts` follow-up noted there.                                                                                                                       |
+| 15–18                      | not started             |                                                                                                                                                                                             |
 
 **Correction to Task 7's premise.** Developer Mode did fix the `EPERM: symlink` failure, so the
 conditional-`standalone` change the task describes was **not needed and was not made** — the
-Dockerfiles and `next.config.ts` are untouched. But admin-web then failed for a *second,
-unrelated and pre-existing* reason the plan did not anticipate: `next build` aborted with "You're
+Dockerfiles and `next.config.ts` are untouched. But admin-web then failed for a _second,
+unrelated and pre-existing_ reason the plan did not anticipate: `next build` aborted with "You're
 importing a component that needs next/headers". Three Client Components imported constants **as
 values** from `@/lib/api/{finance,security}`, which import `./client` → `@/lib/auth/session` →
 `next/headers`. Confirmed pre-existing by rebuilding with the Task 2/3 commits reverted — it
 failed identically. Fixed by moving those constants into import-free sibling modules
 (`finance-read-models.ts`, `security-transitions.ts`) and re-exporting them.
 
-The reason this was a 3-file fix and not a 63-file one: every *other* Client Component importing
+The reason this was a 3-file fix and not a 63-file one: every _other_ Client Component importing
 from `@/lib/api/*` uses `import type`, which TypeScript erases before webpack sees it. Only value
 imports pull the module in. Any future work here should apply that same test before assuming scope.
 
@@ -49,21 +59,21 @@ longer held at this commit — the real build emits 82 routes and was failing un
 
 Do **not** re-litigate these. They were verified by direct execution against the live system.
 
-| Fact | Evidence |
-|---|---|
-| Supabase DB is live and fully migrated | `prisma migrate status` → "Database schema is up to date!", 37 migrations, 38 schemas at `aws-1-eu-west-3.pooler.supabase.com:5432` |
-| Seed data already present | 168 tables; 13 non-empty: `catalog.products`=3, `catalog.brands`=1, `catalog.categories`=1, `catalog.collections`=1, `catalog.collection_items`=3, `catalog.product_variants`=3, `pricing.price_lists`=1, `pricing.prices`=3, `inventory.warehouses`=1, `inventory.inventory_items`=3, `identity.customers`=1, `platform.outbox`=24 |
-| Runtime API boots against Supabase | `node node_modules/tsx/dist/cli.mjs src/api.ts` in `apps/runtime` → `{"msg":"api listening","port":3080,"env":"local"}` |
-| 424 routes are served | `GET /openapi.json` → 424 paths under `/api/v1/*` |
-| `/healthz` and `/metrics` return 200 | direct probe |
-| `/readyz` returns **503** | direct probe — Redis health check fails, no Redis reachable |
-| Every `/api/v1/*` returns **401** | direct probe, with and without a bearer token — no IdP reachable at `AUTH_JWKS_URL` |
-| Typecheck is clean | `tsc --noEmit` in 10 workspaces (catalog, orders, checkout, payments, identity, tenancy, domain, db, runtime, admin-web, storefront) → 0 errors each |
-| Tests pass | `services/catalog` → 57/57 passing |
-| Zero technical debt markers | 0 occurrences of TODO/FIXME/HACK across 2,725 source files |
-| No Docker on this machine | `docker` command not found |
-| No Redis on this machine | port 6379 closed |
-| Windows Developer Mode is OFF | `AllowDevelopmentWithoutDevLicense` registry value absent → `next build` fails with `EPERM: symlink` during standalone tracing |
+| Fact                                   | Evidence                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Supabase DB is live and fully migrated | `prisma migrate status` → "Database schema is up to date!", 37 migrations, 38 schemas at `aws-1-eu-west-3.pooler.supabase.com:5432`                                                                                                                                                                                                 |
+| Seed data already present              | 168 tables; 13 non-empty: `catalog.products`=3, `catalog.brands`=1, `catalog.categories`=1, `catalog.collections`=1, `catalog.collection_items`=3, `catalog.product_variants`=3, `pricing.price_lists`=1, `pricing.prices`=3, `inventory.warehouses`=1, `inventory.inventory_items`=3, `identity.customers`=1, `platform.outbox`=24 |
+| Runtime API boots against Supabase     | `node node_modules/tsx/dist/cli.mjs src/api.ts` in `apps/runtime` → `{"msg":"api listening","port":3080,"env":"local"}`                                                                                                                                                                                                             |
+| 424 routes are served                  | `GET /openapi.json` → 424 paths under `/api/v1/*`                                                                                                                                                                                                                                                                                   |
+| `/healthz` and `/metrics` return 200   | direct probe                                                                                                                                                                                                                                                                                                                        |
+| `/readyz` returns **503**              | direct probe — Redis health check fails, no Redis reachable                                                                                                                                                                                                                                                                         |
+| Every `/api/v1/*` returns **401**      | direct probe, with and without a bearer token — no IdP reachable at `AUTH_JWKS_URL`                                                                                                                                                                                                                                                 |
+| Typecheck is clean                     | `tsc --noEmit` in 10 workspaces (catalog, orders, checkout, payments, identity, tenancy, domain, db, runtime, admin-web, storefront) → 0 errors each                                                                                                                                                                                |
+| Tests pass                             | `services/catalog` → 57/57 passing                                                                                                                                                                                                                                                                                                  |
+| Zero technical debt markers            | 0 occurrences of TODO/FIXME/HACK across 2,725 source files                                                                                                                                                                                                                                                                          |
+| No Docker on this machine              | `docker` command not found                                                                                                                                                                                                                                                                                                          |
+| No Redis on this machine               | port 6379 closed                                                                                                                                                                                                                                                                                                                    |
+| Windows Developer Mode is OFF          | `AllowDevelopmentWithoutDevLicense` registry value absent → `next build` fails with `EPERM: symlink` during standalone tracing                                                                                                                                                                                                      |
 
 ## Known Gaps This Plan Closes
 
@@ -101,6 +111,7 @@ Do **not** re-litigate these. They were verified by direct execution against the
 ## File Structure
 
 **Created:**
+
 - `scripts/ops/seed-ory-network.mjs` — idempotent Ory Network seeding: OAuth2 client, admin identity, all 66 Keto permission grants. Replaces the local-only `scripts/dev/seed-auth-local.mjs` for cloud use.
 - `apps/runtime/src/ory-fetch.ts` — a single `createOryFetch(apiKey)` helper returning an `HttpFetch` that attaches the Ory API key. One place, so the Keto seam and any future Ory seam cannot drift.
 - `apps/admin-web/src/lib/auth/ory-admin.ts` — `oryAdminHeaders()` for the three Hydra Admin API call sites.
@@ -109,6 +120,7 @@ Do **not** re-litigate these. They were verified by direct execution against the
 - `docs/operations/CLOUD_RUNBOOK.md` — the operator runbook for the Supabase/Upstash/Ory topology.
 
 **Modified:**
+
 - `apps/runtime/src/config.ts` — add `ORY_API_KEY`; remove the H-01 refusal clause in Task 14.
 - `apps/runtime/src/composition.ts:180-193` — Keto fetch seam uses `createOryFetch`.
 - `apps/runtime/src/api.ts` — mount the security guard (Task 14).
@@ -126,6 +138,7 @@ Do **not** re-litigate these. They were verified by direct execution against the
 > **⚠️ OPERATOR ACTION REQUIRED — an agent cannot create these accounts.** Stop and hand this task to the human. Every later task depends on the values produced here.
 
 **Files:**
+
 - Modify: `.env` (values only — never commit)
 
 - [ ] **Step 1: Enable Windows Developer Mode**
@@ -191,10 +204,12 @@ Expected: a line naming `.gitignore`. If it prints nothing, **stop** — do not 
 ### Task 1: Wire Upstash Redis and turn `/readyz` green
 
 **Files:**
+
 - Modify: `.env` (done in Task 0)
 - Modify: `.env.example` (document the cloud shape)
 
 **Interfaces:**
+
 - Consumes: `REDIS_URL` from Task 0.
 - Produces: a runtime whose `/readyz` returns 200 — the precondition every later probe in this plan relies on.
 
@@ -271,12 +286,14 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 `KetoAccessControl` sends no `Authorization` header. Ory Network rejects unauthenticated permission checks, and `KetoAccessControl` **fails closed** on any non-200 — so without this, every authorization check silently denies. The `fetch` is already injected at `composition.ts:185`, so this is fixed at the seam without touching `packages/auth`.
 
 **Files:**
+
 - Create: `apps/runtime/src/ory-fetch.ts`
 - Create: `apps/runtime/src/ory-fetch.test.ts`
 - Modify: `apps/runtime/src/config.ts` (add `ORY_API_KEY` to the zod schema)
 - Modify: `apps/runtime/src/composition.ts:180-193`
 
 **Interfaces:**
+
 - Produces: `createOryFetch(apiKey: string | undefined): HttpFetch` — returns a fetch that adds `authorization: Bearer <apiKey>` when `apiKey` is defined, and is a plain passthrough when it is not (so local/self-hosted Keto keeps working unchanged).
 - Consumes: `RuntimeConfig["ORY_API_KEY"]` added in this task.
 
@@ -345,10 +362,7 @@ import type { HttpFetch } from "@platform/auth";
  * `apiKey === undefined` returns a plain passthrough, so the self-hosted/local topology is
  * byte-for-byte unchanged.
  */
-export function createOryFetch(
-  apiKey: string | undefined,
-  inner: typeof fetch = fetch,
-): HttpFetch {
+export function createOryFetch(apiKey: string | undefined, inner: typeof fetch = fetch): HttpFetch {
   if (apiKey === undefined) {
     return async (url, init) => inner(url, init);
   }
@@ -436,6 +450,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 `apps/admin-web` acts as Hydra's **login and consent provider**: it calls the Hydra Admin API to fetch and accept login/consent challenges. Against Ory Network those endpoints require the project API key. There are exactly three call sites.
 
 **Files:**
+
 - Create: `apps/admin-web/src/lib/auth/ory-admin.ts`
 - Create: `apps/admin-web/src/lib/auth/ory-admin.test.ts`
 - Modify: `apps/admin-web/src/lib/auth/config.ts`
@@ -443,6 +458,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `apps/admin-web/src/app/consent/page.tsx:25`, `:37`
 
 **Interfaces:**
+
 - Consumes: `authConfig.oryApiKey`, added to `config.ts` in this task.
 - Produces: `oryAdminHeaders(extra?: Record<string, string>): Record<string, string>` — merges the bearer token (when configured) into caller headers.
 
@@ -544,10 +560,10 @@ import { oryAdminHeaders } from "@/lib/auth/ory-admin";
 At line ~94 the challenge fetch currently has no `headers`. Add one:
 
 ```ts
-  const loginRequest = await fetchWithTimeout(
-    `${authConfig.hydraAdminUrl}/admin/oauth2/auth/requests/login?login_challenge=${encodeURIComponent(loginChallenge)}`,
-    { headers: oryAdminHeaders() },
-  );
+const loginRequest = await fetchWithTimeout(
+  `${authConfig.hydraAdminUrl}/admin/oauth2/auth/requests/login?login_challenge=${encodeURIComponent(loginChallenge)}`,
+  { headers: oryAdminHeaders() },
+);
 ```
 
 (Keep the existing variable name on that line — read it before editing rather than assuming it is `loginRequest`.)
@@ -559,10 +575,11 @@ At line ~127, the accept call has `headers: { "content-type": "application/json"
 ```
 
 In `apps/admin-web/src/app/consent/page.tsx`, add the same import, then:
+
 - line ~25 (challenge fetch): add `{ headers: oryAdminHeaders() }` as the second argument.
 - line ~37 (accept): replace `headers: { "content-type": "application/json" }` with `headers: oryAdminHeaders({ "content-type": "application/json" }),`.
 
-**Do not** add the key to the `${authConfig.hydraPublicUrl}/oauth2/token` call in `auth/callback/route.ts` or to any `kratosPublicUrl` call — those are *public* endpoints authenticated by `client_secret` or a session cookie. Sending a project API key there is wrong and may be rejected.
+**Do not** add the key to the `${authConfig.hydraPublicUrl}/oauth2/token` call in `auth/callback/route.ts` or to any `kratosPublicUrl` call — those are _public_ endpoints authenticated by `client_secret` or a session cookie. Sending a project API key there is wrong and may be rejected.
 
 - [ ] **Step 7: Typecheck and run the admin-web suite**
 
@@ -600,10 +617,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 > **⚠️ PARTLY OPERATOR ACTION.** The Ory Console steps need a human; the verification steps are agent-runnable.
 
 **Files:**
+
 - Create: `infrastructure/ory/network/permissions.opl.ts` (the OPL namespace definition, committed for reproducibility)
 - Create: `infrastructure/ory/network/identity.schema.json` (the Ory Network identity schema)
 
 **Interfaces:**
+
 - Produces: an Ory Network project whose JWKS, `permissions` namespace, identity schema, and login/consent UI URLs match what the code already expects.
 
 - [ ] **Step 1: Confirm the project base URL resolves and JWKS is served**
@@ -666,6 +685,7 @@ cp infrastructure/docker/kratos/identity.schema.json infrastructure/ory/network/
 - [ ] **Step 5: Point Ory's OAuth2 login and consent UI at admin-web**
 
 In the Ory Console: **OAuth2 → Consent & Login settings**:
+
 - Login UI URL: `http://localhost:3100/login`
 - Consent UI URL: `http://localhost:3100/consent`
 
@@ -690,9 +710,11 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 The existing `scripts/dev/seed-auth-local.mjs` grants **14** read permissions and targets self-hosted Ory on `localhost`. The admin API declares **66** distinct permission strings, so 52 of them currently deny. This task writes the Ory Network equivalent with the complete set.
 
 **Files:**
+
 - Create: `scripts/ops/seed-ory-network.mjs`
 
 **Interfaces:**
+
 - Consumes: `ORY_SDK_URL`, `ORY_API_KEY`, `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET`, `AUTH_AUDIENCE` from `.env`; `ADMIN_DEV_PASSWORD` from the shell (never from a file).
 - Produces: an OAuth2 client, one admin identity, and 66 relation tuples — all idempotently.
 
@@ -733,32 +755,71 @@ const REDIRECT_URI =
 // Every permission string the admin controllers declare. Regenerate with:
 //   grep -rhoE '"[a-z0-9]+:(read|write|create|update|delete|manage)"' apps/admin/src/interfaces/*.ts | sort -u
 const PERMISSIONS = [
-  "analytics:read", "automation:create", "automation:read",
-  "brands:create", "brands:delete", "brands:read", "brands:update",
-  "cart:create", "cart:read",
-  "categories:create", "categories:delete", "categories:read", "categories:update",
-  "components:create", "components:read",
-  "content:create", "content:read", "content:update",
-  "coupons:create", "coupons:read",
-  "customer360:read", "customers:read",
-  "experience:create", "experience:read",
-  "experiments:create", "experiments:read",
-  "finance:manage", "finance:read",
-  "fulfillment:create", "fulfillment:read",
-  "inventory:read", "localization:read", "loyalty:read",
-  "notifications:create", "notifications:read",
-  "orders:read", "organizations:create",
-  "pages:read", "payments:read",
-  "products:create", "products:delete", "products:read", "products:update",
-  "promotions:create", "promotions:read",
-  "recommendations:create", "recommendations:read",
-  "reporting:read", "returns:create", "returns:read",
-  "reviews:create", "reviews:read",
-  "search:create", "search:read", "seo:read",
-  "shipping:create", "shipping:read",
-  "tenancy:create", "tenancy:read", "tenancy:update",
-  "theme:create", "theme:read",
-  "users:create", "wishlist:create", "wishlist:read",
+  "analytics:read",
+  "automation:create",
+  "automation:read",
+  "brands:create",
+  "brands:delete",
+  "brands:read",
+  "brands:update",
+  "cart:create",
+  "cart:read",
+  "categories:create",
+  "categories:delete",
+  "categories:read",
+  "categories:update",
+  "components:create",
+  "components:read",
+  "content:create",
+  "content:read",
+  "content:update",
+  "coupons:create",
+  "coupons:read",
+  "customer360:read",
+  "customers:read",
+  "experience:create",
+  "experience:read",
+  "experiments:create",
+  "experiments:read",
+  "finance:manage",
+  "finance:read",
+  "fulfillment:create",
+  "fulfillment:read",
+  "inventory:read",
+  "localization:read",
+  "loyalty:read",
+  "notifications:create",
+  "notifications:read",
+  "orders:read",
+  "organizations:create",
+  "pages:read",
+  "payments:read",
+  "products:create",
+  "products:delete",
+  "products:read",
+  "products:update",
+  "promotions:create",
+  "promotions:read",
+  "recommendations:create",
+  "recommendations:read",
+  "reporting:read",
+  "returns:create",
+  "returns:read",
+  "reviews:create",
+  "reviews:read",
+  "search:create",
+  "search:read",
+  "seo:read",
+  "shipping:create",
+  "shipping:read",
+  "tenancy:create",
+  "tenancy:read",
+  "tenancy:update",
+  "theme:create",
+  "theme:read",
+  "users:create",
+  "wishlist:create",
+  "wishlist:read",
 ];
 
 function required(name) {
@@ -770,26 +831,37 @@ function required(name) {
 const admin = (path, init = {}) =>
   fetch(`${ORY}${path}`, {
     ...init,
-    headers: { "content-type": "application/json", authorization: `Bearer ${KEY}`, ...(init.headers ?? {}) },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${KEY}`,
+      ...(init.headers ?? {}),
+    },
   });
 
 async function ensureOAuthClient() {
   const list = await admin(`/admin/clients?client_name=${encodeURIComponent(CLIENT_ID)}`);
   if (list.ok) {
     const existing = await list.json();
-    const match = Array.isArray(existing) ? existing.find((c) => c.client_id === CLIENT_ID) : undefined;
+    const match = Array.isArray(existing)
+      ? existing.find((c) => c.client_id === CLIENT_ID)
+      : undefined;
     if (match !== undefined) {
       const patched = await admin(`/admin/clients/${CLIENT_ID}`, {
         method: "PUT",
         body: JSON.stringify(clientBody()),
       });
-      if (!patched.ok) throw new Error(`update client failed: ${patched.status} ${await patched.text()}`);
+      if (!patched.ok)
+        throw new Error(`update client failed: ${patched.status} ${await patched.text()}`);
       console.log(`OAuth2 client "${CLIENT_ID}" updated.`);
       return;
     }
   }
-  const created = await admin("/admin/clients", { method: "POST", body: JSON.stringify(clientBody()) });
-  if (!created.ok) throw new Error(`create client failed: ${created.status} ${await created.text()}`);
+  const created = await admin("/admin/clients", {
+    method: "POST",
+    body: JSON.stringify(clientBody()),
+  });
+  if (!created.ok)
+    throw new Error(`create client failed: ${created.status} ${await created.text()}`);
   console.log(`OAuth2 client "${CLIENT_ID}" created.`);
 }
 
@@ -808,7 +880,9 @@ function clientBody() {
 }
 
 async function ensureIdentity() {
-  const found = await admin(`/admin/identities?credentials_identifier=${encodeURIComponent(ADMIN_EMAIL)}`);
+  const found = await admin(
+    `/admin/identities?credentials_identifier=${encodeURIComponent(ADMIN_EMAIL)}`,
+  );
   if (found.ok) {
     const list = await found.json();
     if (Array.isArray(list) && list.length > 0) {
@@ -825,7 +899,8 @@ async function ensureIdentity() {
       credentials: { password: { config: { password: ADMIN_PASSWORD } } },
     }),
   });
-  if (!created.ok) throw new Error(`create identity failed: ${created.status} ${await created.text()}`);
+  if (!created.ok)
+    throw new Error(`create identity failed: ${created.status} ${await created.text()}`);
   const identity = await created.json();
   console.log(`Identity ${ADMIN_EMAIL} created (${identity.id}).`);
   return identity.id;
@@ -962,10 +1037,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 `next build` currently fails with `EPERM: operation not permitted, symlink` while tracing standalone output. The page compilation itself already succeeds (13/13 static pages generated for storefront) — only the standalone copy step fails.
 
 **Files:**
+
 - Modify: `apps/admin-web/next.config.ts`
 - Modify: `apps/storefront/next.config.ts` (only if it also sets `output: "standalone"` — check first)
 
 **Interfaces:**
+
 - Produces: a build that succeeds on Windows without Developer Mode, while keeping `output: "standalone"` for the Docker images that depend on it (`infrastructure/docker/admin-web.Dockerfile` copies `.next/standalone`).
 
 - [ ] **Step 1: Confirm Developer Mode from Task 0 actually fixed it**
@@ -1030,10 +1107,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 The database has 3 products and no orders, discounts, or content. That is not enough to see the platform. `apps/runtime/src/seed.ts` already creates brand/category/products/collection/customer/price-list/warehouse/inventory — this layers commerce activity on top without duplicating it.
 
 **Files:**
+
 - Create: `apps/runtime/src/seed-demo.ts`
 - Modify: `apps/runtime/package.json` (add a `seed:demo` script)
 
 **Interfaces:**
+
 - Consumes: the entities `seed.ts` creates. Run `seed.ts` first if the catalog tables are empty.
 - Produces: orders in several states, an active discount, published content, and reviews — so every admin list screen has rows.
 
@@ -1141,6 +1220,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 24 domain events are sitting unpublished in `platform.outbox`. The relay exists (`apps/runtime/src/outbox-relay-runtime.ts`) and is Docker-free by design — it polls Postgres instead of requiring Debezium CDC — but defaults to off.
 
 **Files:**
+
 - Modify: `.env`, `.env.example`
 
 - [ ] **Step 1: Record the current backlog**
@@ -1178,6 +1258,7 @@ Document the actual result in `docs/operations/CLOUD_RUNBOOK.md` — either "rel
 Media currently uses `InMemoryObjectStorage` — uploads vanish on restart. Supabase Storage is S3-compatible, so it satisfies the existing `S3_*` config with no code change and keeps everything in one provider.
 
 **Files:**
+
 - Modify: `.env`, `.env.example`
 
 - [ ] **Step 1: Create the bucket**
@@ -1221,6 +1302,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 `PaymentProvider` is the in-memory stub whose `verifyWebhook()` always returns true. `StripePaymentProvider` already exists in `@platform/psp-stripe` and activates as soon as both keys are present (`apps/runtime/src/composition.ts:240-250`).
 
 **Files:**
+
 - Modify: `.env`, `.env.example`
 
 - [ ] **Step 1: Get test-mode keys**
@@ -1278,11 +1360,13 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 Both `DATABASE_URL` and `DIRECT_URL` currently point at `pooler.supabase.com:5432`. `DIRECT_URL` is what Prisma uses for migrations, which need advisory locks and DDL — running those through a pooler is the documented failure mode for hung or corrupt migrations.
 
 **Files:**
+
 - Modify: `.env`, `.env.example`
 
 - [ ] **Step 1: Get both connection strings from Supabase**
 
 Dashboard → **Project Settings → Database → Connection string**:
+
 - **Transaction pooler** (port `6543`) → for `DATABASE_URL`, with `?pgbouncer=true` appended.
 - **Direct connection** (port `5432`, the `db.<ref>.supabase.co` host, not the pooler host) → for `DIRECT_URL`.
 
@@ -1325,16 +1409,18 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ### Task 14: Mount the zero-trust security guard
 
-`buildSecurityHttpGuard` (`apps/runtime/src/security/wire-security-runtime.ts:90`) is defined and never called. `apps/runtime/src/config.ts:248-262` deliberately **refuses** `SECURITY_ZERO_TRUST_ENFORCEMENT=on` with an explicit error, so operators cannot be misled into thinking enforcement is active. Roughly 4,300 lines of security application code are unreachable. That refusal clause's own comment says: *"Remove this clause in the sprint that mounts the guard."* This is that sprint.
+`buildSecurityHttpGuard` (`apps/runtime/src/security/wire-security-runtime.ts:90`) is defined and never called. `apps/runtime/src/config.ts:248-262` deliberately **refuses** `SECURITY_ZERO_TRUST_ENFORCEMENT=on` with an explicit error, so operators cannot be misled into thinking enforcement is active. Roughly 4,300 lines of security application code are unreachable. That refusal clause's own comment says: _"Remove this clause in the sprint that mounts the guard."_ This is that sprint.
 
 > This is the largest and riskiest task in the plan. It changes the authorization path for every request. Do it last among the Phase 3 tasks, and do not start it until Tasks 10–13 are done and committed.
 
 **Files:**
+
 - Modify: `apps/runtime/src/api.ts`
 - Modify: `apps/runtime/src/config.ts:248-262` (remove the H-01 refusal)
 - Create: `apps/runtime/src/security/mount-guard.test.ts`
 
 **Interfaces:**
+
 - Consumes: `buildSecurityHttpGuard(core: RuntimeCore): PermissionGuard`.
 - Produces: an api whose authorization point is `SecurityPermissionGuard` when `SECURITY_ZERO_TRUST_ENFORCEMENT=on`, and the existing `AdminGuard` + Keto path when off.
 
@@ -1377,7 +1463,7 @@ Select the guard based on `config.SECURITY_ZERO_TRUST_ENFORCEMENT` and pass it i
 
 - [ ] **Step 6: Remove the refusal clause**
 
-Delete the `if (cfg.SECURITY_ZERO_TRUST_ENFORCEMENT) { ctx.addIssue(... "is not supported yet" ...) }` block at `apps/runtime/src/config.ts:248-262`, including its H-01 comment. Leave the *other* superRefine clause — the one requiring `SECURITY_PRINCIPAL_PROVISIONING` — in place. That one is still true and still protects you.
+Delete the `if (cfg.SECURITY_ZERO_TRUST_ENFORCEMENT) { ctx.addIssue(... "is not supported yet" ...) }` block at `apps/runtime/src/config.ts:248-262`, including its H-01 comment. Leave the _other_ superRefine clause — the one requiring `SECURITY_PRINCIPAL_PROVISIONING` — in place. That one is still true and still protects you.
 
 - [ ] **Step 7: Run the tests**
 
@@ -1428,6 +1514,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 3 specs / 5 tests for 424 routes. Every subsystem this plan touched needs a regression test.
 
 **Files:**
+
 - Create: `apps/e2e/tests/admin-catalog.spec.ts`
 - Create: `apps/e2e/tests/storefront-browse.spec.ts`
 - Modify: `apps/e2e/tests/support/admin-login.ts` (point at Ory Network)
@@ -1516,6 +1603,7 @@ git tag -a cloud-verified-$(date +%Y%m%d) -m "All workspaces typecheck, test, an
 > **⚠️ OPERATOR ACTION for account setup.** Deployment publishes the platform to the internet — confirm with the human before running anything that creates a public deployment.
 
 **Files:**
+
 - Modify: `apps/admin-web/vercel.json`, `apps/storefront/vercel.json` (both already exist)
 
 - [ ] **Step 1: Choose a host for `apps/runtime`**
@@ -1560,6 +1648,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 `@platform/observability` ships a full OpenTelemetry SDK and `apps/runtime/src/telemetry.ts` wires it, but export is off by default.
 
 **Files:**
+
 - Modify: production env only
 
 - [ ] **Step 1: Pick a collector**
@@ -1598,7 +1687,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 State these plainly when reporting completion; do not quietly treat them as done.
 
-1. **Storefront depth.** 12 pages / 7,262 lines versus admin's 82 pages / 67,192. For a Shopify-class product the storefront *is* the product. This plan verifies the storefront works; it does not build it out. That deserves its own plan.
+1. **Storefront depth.** 12 pages / 7,262 lines versus admin's 82 pages / 67,192. For a Shopify-class product the storefront _is_ the product. This plan verifies the storefront works; it does not build it out. That deserves its own plan.
 2. **Kafka/Redpanda broker.** Task 10 may conclude the outbox relay is blocked without one. Choosing and provisioning managed Kafka is a separate decision.
 3. **ClickHouse and `services/analytics`.** `analytics` has 0 lines in its application layer and is one of only two contexts with no Prisma composition branch (the other is `platform-console`). Building it is a feature project.
 4. **Squashed git history.** 3 commits total, the bulk in one called "feat: update project". `git bisect` is unusable. Nothing to fix retroactively — just keep commits granular from here.
@@ -1611,7 +1700,7 @@ State these plainly when reporting completion; do not quietly treat them as done
 
 **Spec coverage:** All 12 Known Gaps map to tasks — Redis→1, no IdP→4/5/6, missing API keys→2/3, 14-of-66 permissions→5, Developer Mode→0/7, dead security guard→14, outbox→10, DIRECT_URL→13, object storage→11, payment stub→12, thin seed→8, e2e→15. Deployment and observability are 17 and 18. Nothing in the gap list is unaddressed.
 
-**Placeholder scan:** No "TBD", no "add error handling", no "similar to Task N". Tasks 8, 14, and 15 deliberately instruct the implementer to *read the existing code first* rather than embedding invented signatures — for `seed-demo.ts`, the guard mounting, and the e2e helpers, the real signatures live in files the executor must open, and inventing them here would produce confidently wrong code. Every other code block is literal and complete.
+**Placeholder scan:** No "TBD", no "add error handling", no "similar to Task N". Tasks 8, 14, and 15 deliberately instruct the implementer to _read the existing code first_ rather than embedding invented signatures — for `seed-demo.ts`, the guard mounting, and the e2e helpers, the real signatures live in files the executor must open, and inventing them here would produce confidently wrong code. Every other code block is literal and complete.
 
 **Type consistency:** `createOryFetch(apiKey, inner?)` is defined in Task 2 Step 3 and used in Task 2 Step 6 with the same name and argument order. `oryAdminHeaders(extra?)` is defined in Task 3 Step 4 and used in Step 6 identically. `ORY_API_KEY` is added to the runtime schema (Task 2 Step 5) and to admin-web's config (Task 3 Step 3) under the same env name. `PERMISSIONS` in the seed script matches the 66 strings grepped from the controllers.
 
