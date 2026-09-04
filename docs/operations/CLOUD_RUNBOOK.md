@@ -110,10 +110,12 @@ authenticated request, independent of and prior to any Keto/authorization questi
 original plan (Task 6) did not anticipate it.
 
 **Fix:** `access_token_strategy: "jwt"` is a per-OAuth2-client field Hydra has supported since it
-introduced token strategies — not a project-level (workspace-key-gated) setting. Set on both
-`lumo-admin-web` (the real client) and `lumo-dev-cli` (the dev token-minting client) via
-`scripts/ops/seed-ory-network.mjs`, which now sets it on every client it creates/updates. No-op
-against self-hosted Hydra (already JWT by default). Verified end-to-end (Check 2 above).
+introduced token strategies — not a project-level (workspace-key-gated) setting. Set on
+`lumo-admin-web` (the real client) via `scripts/ops/seed-ory-network.mjs`'s `clientBody`, and on
+`lumo-dev-cli` (the dev token-minting client) via `scripts/dev/mint-local-token.mjs`'s own
+`clientBody` — two different scripts, each owning its own client, each setting the field on every
+run (create **or** update — see §3.4 for why "every run" mattered here specifically). No-op against
+self-hosted Hydra (already JWT by default). Verified end-to-end (Check 2 above).
 
 ### 3.2 — Ory Network's Permissions (Keto) requires subject-set tuples, and its OPL namespace still needs uploading (found, partly fixed, partly deferred)
 
