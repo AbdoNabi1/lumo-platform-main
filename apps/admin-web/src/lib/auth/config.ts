@@ -26,6 +26,12 @@ export const authConfig = {
   // Production sets COOKIE_DOMAIN to the parent domain admin-web shares with Kratos/Hydra.
   cookieDomain: process.env["COOKIE_DOMAIN"],
   cookieSameSite: optionalEnv("COOKIE_SAME_SITE", "lax") as "lax" | "strict" | "none",
+  // Ory Network authenticates the Hydra *Admin* API (login/consent challenge fetch + accept) with
+  // a project API key; the self-hosted Hydra in docker-compose does not. Read raw rather than
+  // through requireProdEnv because self-hosted Ory stays a legitimate production topology
+  // (infrastructure/k8s/ deploys it), so an unset key must not fail the build outside dev — it
+  // just means "not Ory Network". Applied by ./ory-admin.ts; never sent to public endpoints.
+  oryApiKey: process.env["ORY_API_KEY"],
 } as const;
 
 export const SESSION_COOKIE = "lumo_admin_session";

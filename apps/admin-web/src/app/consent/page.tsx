@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { authConfig } from "@/lib/auth/config";
+import { oryAdminHeaders } from "@/lib/auth/ory-admin";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 
 /**
@@ -23,6 +24,7 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
 
   const requestInfo = await fetchWithTimeout(
     `${authConfig.hydraAdminUrl}/admin/oauth2/auth/requests/consent?consent_challenge=${encodeURIComponent(consentChallenge)}`,
+    { headers: oryAdminHeaders() },
   );
   if (!requestInfo.ok) {
     throw new Error(`Hydra rejected the consent request: ${requestInfo.status}`);
@@ -37,7 +39,7 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
     `${authConfig.hydraAdminUrl}/admin/oauth2/auth/requests/consent/accept?consent_challenge=${encodeURIComponent(consentChallenge)}`,
     {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: oryAdminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({
         grant_scope: info.requested_scope ?? [],
         grant_access_token_audience: info.requested_access_token_audience ?? [],

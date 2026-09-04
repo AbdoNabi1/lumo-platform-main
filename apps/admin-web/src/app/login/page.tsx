@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Button, Card, CardContent, Input, Label } from "@platform/ui";
 import { BrandMark } from "@/components/brand-mark";
 import { authConfig } from "@/lib/auth/config";
+import { oryAdminHeaders } from "@/lib/auth/ory-admin";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 
 /**
@@ -92,6 +93,7 @@ async function handleLoginChallenge(loginChallenge: string): Promise<void> {
   // (`skip`/`subject`) isn't needed — the Kratos session lookup below is the source of truth.
   const requestInfo = await fetchWithTimeout(
     `${authConfig.hydraAdminUrl}/admin/oauth2/auth/requests/login?login_challenge=${encodeURIComponent(loginChallenge)}`,
+    { headers: oryAdminHeaders() },
   );
   if (!requestInfo.ok) {
     throw new Error(`Hydra rejected the login request: ${requestInfo.status}`);
@@ -127,7 +129,7 @@ async function handleLoginChallenge(loginChallenge: string): Promise<void> {
     `${authConfig.hydraAdminUrl}/admin/oauth2/auth/requests/login/accept?login_challenge=${encodeURIComponent(loginChallenge)}`,
     {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: oryAdminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({
         subject: session.identity.id,
         remember: true,
