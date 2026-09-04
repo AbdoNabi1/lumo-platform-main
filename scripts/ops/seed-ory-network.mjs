@@ -74,7 +74,12 @@ function clientBody() {
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
     redirect_uris: [`${ORIGIN}/auth/callback`],
-    scope: "openid offline_access",
+    // Must cover every scope the middleware asks for, or Ory rejects the authorization request
+    // with `invalid_scope` and admin-web redirect-loops on /login?error=invalid_scope.
+    // `openid lumo.admin` is what apps/admin-web/src/middleware.ts requests; `lumo.admin` also
+    // matches scripts/dev/mint-local-token.mjs's own client. `offline_access` backs the
+    // refresh_token grant below.
+    scope: "openid offline_access lumo.admin",
     audience: [AUDIENCE],
     token_endpoint_auth_method: "client_secret_post",
   };
