@@ -15,10 +15,16 @@ export interface KetoOptions {
    * generically. `"subject_set"` sends `subject_set.namespace=<subjectSetNamespace>&
    * subject_set.object=<principalId>&subject_set.relation=` instead — required by Ory Network,
    * whose OPL-compiled namespaces reject `subject_id` outright ("please migrate to subject sets",
-   * measured directly against a live project on 2026-09-04). Same dual convention
-   * `KetoRelationshipClient.toBody`/`subjectParams` (`./keto-relationships.ts`) already uses for
-   * writes/deletes — this mirrors it for the read-side permission check instead of inventing a
-   * second shape.
+   * measured directly against a live project on 2026-09-04).
+   *
+   * This reuses `KetoRelationshipClient.toBody`/`subjectParams`'s field names, but NOT their
+   * semantics: that class always forces `subject_set.namespace` equal to the tuple's own namespace
+   * (via `namespaceOf`), and its `SUBJECT_SET` regex (`^([^#]+)#([^#]+)$`) cannot represent an
+   * empty relation at all. Neither holds here — this model needs a *separate* `User` namespace
+   * (`infrastructure/ory/network/permissions.opl.ts`) and an *empty* relation. So
+   * `KetoRelationshipClient.check` cannot express what this option sends; do not treat it as an
+   * equivalent read path without extending it first (tracked as a follow-up on
+   * `apps/runtime/src/security/ory-clients.ts`, which still uses that class unmigrated).
    */
   readonly subjectConvention?: "subject_id" | "subject_set";
   /**

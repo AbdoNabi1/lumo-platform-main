@@ -3,8 +3,10 @@
 // runtime's JwtVerifier verifies against exactly this issuer/JWKS — see
 // packages/auth/src/jwt-verifier.ts and D-048c). This is NOT an auth bypass: it drives the real
 // OAuth2 client_credentials grant so a human can call the Runtime API without a browser login flow.
-// Re-creates the client idempotently every run, so it works against both self-hosted Hydra
-// (docker-compose.yml, dsn=memory — clients don't survive restarts) and Ory Network.
+// Create-or-update (PUT) the client every run, so both the secret and access_token_strategy are
+// reasserted even against a client that already existed before a fix landed here — not just on
+// first creation. Works against both self-hosted Hydra (docker-compose.yml, dsn=memory — clients
+// don't survive restarts) and Ory Network.
 //
 // Ory Network specifics, measured directly against a live project on 2026-09-04:
 //  - Admin API calls need the project API key (ORY_API_KEY) — self-hosted Hydra needs none, so it
@@ -14,49 +16,85 @@
 //    supported since it introduced token strategies — no project-level (workspace-key-gated)
 //    config is needed. Harmless no-op against self-hosted Hydra, which already defaults to JWT.
 //
+// SECURITY: a hardcoded default secret is only safe against an ephemeral, unauthenticated,
+// localhost Hydra (self-hosted, dsn=memory — nothing to leak, gone on restart). The instant
+// ORY_API_KEY is set (Ory Network mode: a real, addressable, internet-reachable project), that
+// default would provision a well-known secret onto a live IdP — measured directly: this happened
+// for real on 2026-09-04, caught in review, and the resulting client was deleted from the live
+// project. So the default is refused outright in Ory Network mode; DEV_CLI_CLIENT_SECRET must be
+// set explicitly (and never committed).
+//
 // Usage: node scripts/dev/mint-local-token.mjs
-//   HYDRA_ADMIN_URL  (default http://localhost:4445)
-//   HYDRA_PUBLIC_URL (default http://localhost:4444)
-//   AUTH_AUDIENCE    (default lumo-admin, matches apps/runtime/src/config.ts default)
-//   ORY_API_KEY      (optional — required admin-auth on Ory Network, unused self-hosted)
+//   HYDRA_ADMIN_URL       (default http://localhost:4445)
+//   HYDRA_PUBLIC_URL      (default http://localhost:4444)
+//   AUTH_AUDIENCE         (default lumo-admin, matches apps/runtime/src/config.ts default)
+//   ORY_API_KEY           (optional — required admin-auth on Ory Network, unused self-hosted;
+//                          its presence is also what triggers the DEV_CLI_CLIENT_SECRET
+//                          requirement below)
+//   DEV_CLI_CLIENT_SECRET (required when ORY_API_KEY is set; ignored/defaulted otherwise)
 
 const HYDRA_ADMIN_URL = process.env.HYDRA_ADMIN_URL ?? "http://localhost:4445";
 const HYDRA_PUBLIC_URL = process.env.HYDRA_PUBLIC_URL ?? "http://localhost:4444";
 const AUDIENCE = process.env.AUTH_AUDIENCE ?? "lumo-admin";
 const ORY_API_KEY = process.env.ORY_API_KEY;
 const CLIENT_ID = "lumo-dev-cli";
-const CLIENT_SECRET = "lumo-dev-cli-secret-change-me";
+const IS_ORY_NETWORK = ORY_API_KEY !== undefined && ORY_API_KEY !== "";
+const CLIENT_SECRET = IS_ORY_NETWORK
+  ? requiredForOryNetwork("DEV_CLI_CLIENT_SECRET")
+  : (process.env.DEV_CLI_CLIENT_SECRET ?? "lumo-dev-cli-secret-change-me");
+
+function requiredForOryNetwork(name) {
+  const v = process.env[name];
+  if (v === undefined || v === "") {
+    throw new Error(
+      `${name} is required when ORY_API_KEY is set (Ory Network mode) — refusing to provision ` +
+        `a hardcoded default secret onto a live, internet-reachable Ory project. Set ${name} to a ` +
+        `strong random value and keep it out of any committed file.`,
+    );
+  }
+  return v;
+}
 
 function adminHeaders(extra = {}) {
   if (ORY_API_KEY === undefined || ORY_API_KEY === "") return extra;
   return { ...extra, authorization: `Bearer ${ORY_API_KEY}` };
 }
 
+function clientBody() {
+  return {
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    grant_types: ["client_credentials"],
+    token_endpoint_auth_method: "client_secret_post",
+    audience: [AUDIENCE],
+    scope: "lumo.admin",
+    access_token_strategy: "jwt",
+  };
+}
+
 async function ensureClient() {
   const existing = await fetch(`${HYDRA_ADMIN_URL}/admin/clients/${CLIENT_ID}`, {
     headers: adminHeaders(),
   });
-  if (existing.status === 200) return;
-  if (existing.status !== 404) {
+  if (existing.status !== 200 && existing.status !== 404) {
     throw new Error(`unexpected Hydra admin response checking client: ${existing.status}`);
   }
 
-  const created = await fetch(`${HYDRA_ADMIN_URL}/admin/clients`, {
-    method: "POST",
+  const method = existing.status === 200 ? "PUT" : "POST";
+  const path =
+    method === "PUT"
+      ? `${HYDRA_ADMIN_URL}/admin/clients/${CLIENT_ID}`
+      : `${HYDRA_ADMIN_URL}/admin/clients`;
+  const res = await fetch(path, {
+    method,
     headers: adminHeaders({ "content-type": "application/json" }),
-    body: JSON.stringify({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_types: ["client_credentials"],
-      token_endpoint_auth_method: "client_secret_post",
-      audience: [AUDIENCE],
-      scope: "lumo.admin",
-      access_token_strategy: "jwt",
-    }),
+    body: JSON.stringify(clientBody()),
   });
-  if (!created.ok) {
-    const body = await created.text();
-    throw new Error(`failed to create Hydra dev client: ${created.status} ${body}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `failed to ${method === "PUT" ? "update" : "create"} Hydra dev client: ${res.status} ${body}`,
+    );
   }
 }
 

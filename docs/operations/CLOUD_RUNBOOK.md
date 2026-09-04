@@ -16,7 +16,7 @@ secret manager.
 
 | Service               | Role                                                       | Env vars                                                                |
 | --------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------- |
-| **Supabase Postgres** | Primary datastore, 38 schemas / 132 models via Prisma      | `DATABASE_URL`, `DIRECT_URL`                                            |
+| **Supabase Postgres** | Primary datastore, 39 schemas / 132 models via Prisma      | `DATABASE_URL`, `DIRECT_URL`                                            |
 | **Upstash Redis**     | Cache, rate limiting, idempotency, distributed locks       | `REDIS_URL`, `REDIS_KEY_PREFIX`                                         |
 | **Ory Network**       | OAuth2/OIDC (Hydra), identity (Kratos), permissions (Keto) | `ORY_SDK_URL`, `ORY_API_KEY`, `AUTH_*`, `HYDRA_*`, `KRATOS_*`, `KETO_*` |
 
@@ -33,7 +33,9 @@ but needs a value from the Supabase dashboard (Project Settings → Database →
 Direct connection), deferred this session along with the other dashboard-only tasks below.
 
 Migrations: `node node_modules/prisma/build/index.js migrate status` from `packages/db` (load
-`.env` first). Expect "Database schema is up to date!", 37 migrations, 38 schemas.
+`.env` first). Expect "Database schema is up to date!", 37 migrations, 39 schemas (re-counted
+directly from `prisma migrate status`'s own output on 2026-09-04 — an earlier plan document said
+38, an off-by-one miscount of the same comma-separated schema list Prisma prints).
 
 ### Upstash Redis
 
@@ -121,12 +123,18 @@ Two independent, compounding blockers, both measured directly against the live p
    relation-tuple writes/checks outright: `HTTP 400 "subject_id is not supported; please migrate
 to subject sets"`. `KetoAccessControl` (`packages/auth/src/keto.ts`) and
    `scripts/ops/seed-ory-network.mjs`'s grant script both sent `subject_id`. **Fixed**: both now
-   support a `subject_set`-shaped convention
-   (`packages/auth/src/keto.ts`'s `subjectConvention` option, selected automatically for Ory
-   Network via the same signal `createOryFetch` uses for the API key), matching the sibling
-   `KetoRelationshipClient`'s existing dual `subject_id`/`subject_set` write convention rather than
-   inventing a new shape. Self-hosted Keto (`infrastructure/docker/keto/keto.yml`) is unaffected —
-   it stays on `subject_id`, its existing, working behavior.
+   support a `subject_set`-shaped convention (`packages/auth/src/keto.ts`'s `subjectConvention`
+   option, selected automatically for Ory Network via the same signal `createOryFetch` uses for the
+   API key). Verified consistent between the write side (`seed-ory-network.mjs`'s `grantTupleBody`)
+   and the read side (`keto.ts`) — both send `{namespace: "User", object: <principalId>, relation:
+""}` and agree with the OPL model. **Correction (caught in review):** this does _not_ reuse the
+   sibling `KetoRelationshipClient` (`packages/auth/src/keto-relationships.ts`)'s subject-set
+   _semantics_, only its field names — that class always forces `subject_set.namespace` equal to
+   the tuple's own namespace and its subject-parsing regex cannot represent an empty relation, so it
+   cannot actually express what this model needs. See `keto.ts`'s `subjectConvention` doc for the
+   detail; do not point a future migration (e.g. the `ory-clients.ts` follow-up below) at that class
+   as a ready-made equivalent. Self-hosted Keto (`infrastructure/docker/keto/keto.yml`) is
+   unaffected — it stays on `subject_id`, its existing, working behavior.
 
 2. **Namespace not configured.** Independent of the wire-format fix, any write/check against the
    `permissions` namespace also gets `HTTP 404 "Unknown namespace with name \"permissions\""` —
@@ -169,10 +177,11 @@ Until this is fully resolved, `KETO_READ_URL`/`KETO_WRITE_URL` stay commented ou
 boot). This is why Check 2 above passes without Check 3 passing — authentication and authorization
 are independent seams, and only the latter is still blocked.
 
-A second, currently-dormant Keto integration point (`apps/runtime/src/security/ory-clients.ts`,
-which backs the zero-trust security guard Task 14 would mount) has the same API-key and
-subject-convention gaps and has not yet been migrated — tracked as a separate follow-up, to be
-done before Task 14 is attempted.
+A second, currently-dormant integration point (`apps/runtime/src/security/ory-clients.ts`, which
+backs the zero-trust security guard Task 14 would mount) has the same gaps and has not yet been
+migrated — its `fetchFn` feeds **both** the `KetoRelationshipClient` (no API key, no subject-set
+support) **and** `KratosIdentityService` (also no API key), so this is an unauthenticated-Kratos
+gap too, not Keto-only. Tracked as a separate follow-up, to be done before Task 14 is attempted.
 
 ### 3.3 — Outbox relay has no Kafka broker to publish to (found, confirmed, reverted per plan)
 
@@ -184,6 +193,41 @@ Confirmed exactly the outcome the plan anticipated: `KAFKA_BROKERS` defaults to
 until a managed Kafka/Redpanda broker is provisioned — a separate infrastructure decision, out of
 scope here.
 
+### 3.4 — A dev token-minting script provisioned a hardcoded secret onto the live Ory Network project (found in final review, fixed)
+
+`scripts/dev/mint-local-token.mjs` has always had a hardcoded fallback client secret
+(`"lumo-dev-cli-secret-change-me"`) — harmless before this session's work, because the script only
+ever talked to an ephemeral, unauthenticated, `dsn=memory` self-hosted Hydra on `localhost:4445`
+(gone on restart, nothing to leak). Fixing §3.1 above made this script work against Ory Network
+too (added `ORY_API_KEY` admin auth, `access_token_strategy: "jwt"`), and it was then actually run
+against the live project while verifying that fix — provisioning a `client_credentials` OAuth2
+client with a well-known secret onto a real, internet-reachable IdP, with the project slug
+committed in this very document. Caught in the final whole-branch review, not before.
+
+**Impact, as measured:** anyone with read access to this repo could mint a valid
+`lumo.admin`-scoped JWT for this Ory Network project from anywhere, no other credential needed —
+Hydra's token endpoint is public. Current blast radius is bounded (the runtime isn't publicly
+deployed — Task 17 is deferred — and authorization is currently permissive under `APP_ENV=local`
+regardless of who holds a valid token), but this is a **hard pre-deploy blocker**, not an
+acceptable steady state.
+
+**Fixed:**
+
+1. The live `lumo-dev-cli` client was deleted from the Ory Network project immediately
+   (`DELETE /admin/clients/lumo-dev-cli` → `204`, verified gone → `404`).
+2. `mint-local-token.mjs` now refuses to run against Ory Network (detected via `ORY_API_KEY` being
+   set) unless `DEV_CLI_CLIENT_SECRET` is set explicitly — the hardcoded default is only used
+   against self-hosted Hydra, where it remains harmless. Re-verified end-to-end: refuses without
+   the var, works with it, and the client this leaves on the project carries an operator-chosen
+   secret, not the well-known one.
+3. Separately, the script's client-provisioning step was create-only (`if existing, return`), so
+   even the `access_token_strategy: "jwt"` fix from §3.1 would never have reached a client that
+   already existed before that fix landed — also caught in review, also fixed: it now creates-or-
+   updates (`PUT`) every run, matching `seed-ory-network.mjs`'s existing pattern.
+
+**Before running this script against Ory Network again**, generate a real random value for
+`DEV_CLI_CLIENT_SECRET` and keep it out of every committed file, the same as `AUTH_CLIENT_SECRET`.
+
 ---
 
 ## 4. Deferred this session — needs a dashboard credential or an operator decision
@@ -191,17 +235,18 @@ scope here.
 Explicit per user direction: skip anything needing a new credential from a web dashboard this
 session, and surface it here rather than silently treating it as done.
 
-| Item                                          | What's needed                                                         | Where documented |
-| --------------------------------------------- | --------------------------------------------------------------------- | ---------------- |
-| Ory Network OPL namespace upload              | Workspace API key (`ory_wak_...`)                                     | §3.2 above       |
-| Object storage (Supabase Storage)             | S3 access keys from Supabase dashboard                                | Plan Task 11     |
-| Payments (Stripe test mode)                   | `sk_test_...` / `whsec_...` from Stripe dashboard                     | Plan Task 12     |
-| `DIRECT_URL` → true direct connection         | Direct connection string from Supabase dashboard                      | §1 above         |
-| Outbox relay                                  | A managed Kafka/Redpanda broker                                       | §3.3 above       |
-| Mount the zero-trust security guard (Task 14) | Depends on §3.2 being resolved first                                  | Plan Task 14     |
-| Expanded e2e coverage (Task 15)               | Depends on a working browser OAuth login flow, itself depends on §3.2 | Plan Task 15     |
-| Deployment (Task 17)                          | Explicit human confirmation before any public deploy                  | Plan Task 17     |
-| Observability export (Task 18)                | A managed OTLP collector endpoint                                     | Plan Task 18     |
+| Item                                          | What's needed                                                                         | Where documented                       |
+| --------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------- |
+| Ory Network OPL namespace upload              | Workspace API key (`ory_wak_...`)                                                     | §3.2 above                             |
+| Custom Kratos identity schema upload          | Not currently needed — `preset://email` is in use; only relevant if that ever changes | `infrastructure/ory/network/README.md` |
+| Object storage (Supabase Storage)             | S3 access keys from Supabase dashboard                                                | Plan Task 11                           |
+| Payments (Stripe test mode)                   | `sk_test_...` / `whsec_...` from Stripe dashboard                                     | Plan Task 12                           |
+| `DIRECT_URL` → true direct connection         | Direct connection string from Supabase dashboard                                      | §1 above                               |
+| Outbox relay                                  | A managed Kafka/Redpanda broker                                                       | §3.3 above                             |
+| Mount the zero-trust security guard (Task 14) | Depends on §3.2 being resolved first                                                  | Plan Task 14                           |
+| Expanded e2e coverage (Task 15)               | Depends on a working browser OAuth login flow, itself depends on §3.2                 | Plan Task 15                           |
+| Deployment (Task 17)                          | Explicit human confirmation before any public deploy                                  | Plan Task 17                           |
+| Observability export (Task 18)                | A managed OTLP collector endpoint                                                     | Plan Task 18                           |
 
 ## 5. What's actually done and verified this session
 
