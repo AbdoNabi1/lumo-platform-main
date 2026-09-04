@@ -12,29 +12,30 @@
 
 ---
 
-## Execution Status (updated 2026-09-04)
+## Execution Status (updated 2026-09-05)
 
-Branch: `feat/cloud-platform-runtime`.
+Branch: `feat/cloud-platform-runtime-2` (the original `feat/cloud-platform-runtime` was merged to
+`main` and deleted on 2026-09-04; this branch continues from `main`).
 
 **`docs/operations/CLOUD_RUNBOOK.md` is the live source of truth for status.** This table is a
 summary; where the two disagree, the runbook is newer.
 
-| Task                       | Status                  | Evidence                                                                                                                                                                                    |
-| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Prerequisites          | **done**                | Developer Mode ON; Upstash provisioned; Ory Network project `sharp-hofstadter-ww7td17fbp` created and configured.                                                                           |
-| 1 — Upstash Redis          | **done**                | `/readyz` → 200 `{postgres: healthy, redis: healthy}` (was 503).                                                                                                                            |
-| 2 — Runtime Ory API key    | **done**                | `createOryFetch` + `ORY_API_KEY`; runtime suite green.                                                                                                                                      |
-| 3 — admin-web Ory API key  | **done**                | `oryAdminHeaders` at all 4 Hydra Admin call sites; admin-web suite green.                                                                                                                   |
-| 4 — Ory project config     | **done**                | OAuth2 URLs, allowed return URLs, and Branding → UI URLs all set. See runbook §3.5.                                                                                                         |
-| 5 — Seed Ory Network       | **partly done**         | OAuth2 client + admin identity seeded and verified. The 66 permission grants are blocked on the OPL namespace upload — runbook §3.2.                                                        |
-| 6 — Authenticated API call | **done**                | A real Hydra-issued JWT returns `200` on `/api/v1/products`. Runbook Check 2. Required finding `access_token_strategy: "jwt"` — Ory Network issues opaque tokens by default (runbook §3.1). |
-| 7 — Windows build          | **done**                | Both apps build: storefront 13 routes, admin-web 82 routes. See correction below.                                                                                                           |
-| 8 — Rich demo seed         | **done**                | `apps/runtime/src/seed-demo.ts`, idempotent.                                                                                                                                                |
-| 9 — Run all three apps     | **partly done**         | Runtime + admin-web + tunnel all up; login form renders from admin-web (runbook §3.5). Completing a login and walking the 82 screens is **not** done.                                       |
-| 10 — Outbox relay          | **blocked, documented** | No Kafka broker; flag reverted per plan. Runbook §3.3.                                                                                                                                      |
-| 11, 12, 13                 | **deferred**            | Each needs a dashboard credential (Supabase S3 keys, Stripe test keys, Supabase direct connection string).                                                                                  |
-| 14 — Zero-trust guard      | **blocked**             | Needs §3.2 resolved, plus the `ory-clients.ts` follow-up noted there.                                                                                                                       |
-| 15–18                      | not started             |                                                                                                                                                                                             |
+| Task                       | Status                     | Evidence                                                                                                                                                                                    |
+| -------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Prerequisites          | **done**                   | Developer Mode ON; Upstash provisioned; Ory Network project `sharp-hofstadter-ww7td17fbp` created and configured.                                                                           |
+| 1 — Upstash Redis          | **done**                   | `/readyz` → 200 `{postgres: healthy, redis: healthy}` (was 503).                                                                                                                            |
+| 2 — Runtime Ory API key    | **done**                   | `createOryFetch` + `ORY_API_KEY`; runtime suite green.                                                                                                                                      |
+| 3 — admin-web Ory API key  | **done**                   | `oryAdminHeaders` at all 4 Hydra Admin call sites; admin-web suite green.                                                                                                                   |
+| 4 — Ory project config     | **done**                   | OAuth2 URLs, allowed return URLs, Branding → UI URLs, and the OPL permission namespace all set. See runbook §3.2, §3.5.                                                                     |
+| 5 — Seed Ory Network       | **done**                   | OAuth2 client + admin identity seeded and verified; all 65 permissions granted (subject_set model) and confirmed with `{"allowed":true}` — runbook §3.2.                                    |
+| 6 — Authenticated API call | **done**                   | A real Hydra-issued JWT returns `200` on `/api/v1/products` **with real Keto authorization enforcing** (not the local escape hatch) — verified both an allow and a deny. Runbook Check 2/3. |
+| 7 — Windows build          | **done**                   | Both apps build: storefront 13 routes, admin-web 82 routes. See correction below.                                                                                                           |
+| 8 — Rich demo seed         | **done**                   | `apps/runtime/src/seed-demo.ts`, idempotent.                                                                                                                                                |
+| 9 — Run all three apps     | **partly done**            | Runtime + admin-web + tunnel all up; login form renders from admin-web (runbook §3.5). Completing a login and walking the 82 screens is **not** done — needs a human to type the password.  |
+| 10 — Outbox relay          | **blocked, documented**    | No Kafka broker; flag reverted per plan. Runbook §3.3.                                                                                                                                      |
+| 11, 12, 13                 | **deferred**               | Each needs a dashboard credential (Supabase S3 keys, Stripe test keys, Supabase direct connection string).                                                                                  |
+| 14 — Zero-trust guard      | **unblocked, not started** | §3.2's blocker is resolved; the remaining prerequisite is migrating `apps/runtime/src/security/ory-clients.ts` (tracked, see runbook §3.2's last paragraph).                                |
+| 15–18                      | not started                |                                                                                                                                                                                             |
 
 **Correction to Task 7's premise.** Developer Mode did fix the `EPERM: symlink` failure, so the
 conditional-`standalone` change the task describes was **not needed and was not made** — the

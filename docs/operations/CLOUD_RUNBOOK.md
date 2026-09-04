@@ -92,14 +92,21 @@ Expect `200` with the seeded products in the body. **Verified live on 2026-09-04
 and requires `access_token_strategy: "jwt"` on the OAuth2 client — see §3.1, this is the actual
 root cause the plan didn't anticipate and had to be found by direct measurement.
 
-**Check 3 — Keto permission check returns `{"allowed":true}` (currently blocked, see §3.2):**
+**Check 3 — Keto permission check returns `{"allowed":true}`:**
 
 ```bash
 curl -s -H "Authorization: Bearer $ORY_API_KEY" \
   "$ORY_SDK_URL/relation-tuples/check?namespace=permissions&object=products:read&relation=granted&subject_set.namespace=User&subject_set.object=<IDENTITY_ID>&subject_set.relation="
 ```
 
-Not yet green — deferred, see §3.2 for the exact unblock steps.
+**Green as of 2026-09-05** — see §3.2 for how it was unblocked (the OPL namespace upload, which
+needed a Workspace API key the operator obtained). With `KETO_READ_URL`/`KETO_WRITE_URL` now set in
+`.env`, the runtime's boot log no longer prints `authorization is permissive` — real enforcement is
+live. Verified **both directions**, not just the allow path: a `client_credentials` token for a
+principal with no grants gets `403 {"code":"FORBIDDEN","message":"Missing permission
+\"products:read\""}` on `GET /api/v1/products`; the same call with a temporary grant added for that
+principal gets `200` with real data. The temporary grant and its throwaway client were removed
+immediately after verifying — only `admin@lumo.local`'s identity holds standing permissions.
 
 ---
 
@@ -121,7 +128,7 @@ introduced token strategies — not a project-level (workspace-key-gated) settin
 run (create **or** update — see §3.4 for why "every run" mattered here specifically). No-op against
 self-hosted Hydra (already JWT by default). Verified end-to-end (Check 2 above).
 
-### 3.2 — Ory Network's Permissions (Keto) requires subject-set tuples, and its OPL namespace still needs uploading (found, partly fixed, partly deferred)
+### 3.2 — Ory Network's Permissions (Keto) requires subject-set tuples, and its OPL namespace needed uploading (found, fully resolved 2026-09-05)
 
 Two independent, compounding blockers, both measured directly against the live project:
 
@@ -155,18 +162,26 @@ to subject sets"`. `KetoAccessControl` (`packages/auth/src/keto.ts`) and
    `GET https://api.console.ory.com/projects/<project-id>`, the project-management API that both
    `ory patch opl` (CLI) and a direct `PATCH /projects/<id>` (API) go through.
 
-   **This is deferred**, per explicit direction to skip every task needing a new credential from a
-   web dashboard this session. **To unblock:**
-   1. Generate a Workspace API key in the Ory Console (Workspace Settings → API Keys).
-   2. Either run `ory patch opl --file infrastructure/ory/network/permissions.opl.ts --project
-sharp-hofstadter-ww7td17fbp` (needs the `ory` CLI, authenticated with the workspace key), or
-      paste the file's contents into Ory Console → Permissions → Configure → Permission Rules.
-   3. Re-run `ADMIN_DEV_PASSWORD='...' node scripts/ops/seed-ory-network.mjs` — its `grantAll` step
-      will now succeed instead of printing the "not usable yet" warning.
-   4. Run Check 3 above; expect `{"allowed":true}`.
-   5. Set `KETO_READ_URL`/`KETO_WRITE_URL` in `.env` (currently commented out — see the comment
-      there) to `$ORY_SDK_URL`, restart the runtime, and re-run Check 2. If it now returns `403`
-      instead of `200`, see finding 3.3 below before assuming the Keto work is broken.
+   **Resolved 2026-09-05.** The operator generated a Workspace API key in the Ory Console
+   (Workspace Settings → API Keys) and completed an interactive `ory auth login` (the `ory` CLI's
+   `patch opl` command requires a real browser-based session — it does not accept a workspace or
+   project API key directly via env var or flag, confirmed by testing `ORY_API_KEY`/`ORY_PAT` with
+   both `patch opl` and `auth login`; both always opened the interactive OAuth flow regardless).
+   Then: `npx @ory/cli patch opl --file infrastructure/ory/network/permissions.opl.ts --project
+8ef585e5-0c95-46ff-b8d3-c3060591cdea --yes` → "Project updated successfully!". Verified the
+   project's `services.permission.config.namespaces` changed from `[]` to a compiled-artifact
+   `location` reference (a GCS URL) — confirms the CLI compiles the OPL TypeScript server-side/
+   client-side into an internal representation; hand-crafting this JSON via a raw `PATCH
+/projects/{id}` (which was considered and rejected) would have required reverse-engineering that
+   compiled format, undocumented and not worth the risk.
+
+   Then `ADMIN_DEV_PASSWORD='<throwaway, unused for an existing identity>' node
+scripts/ops/seed-ory-network.mjs` → `Granted all 65 permissions` (not 66 — the admin
+   controllers' actual permission-string count as of this commit; regenerate via the grep in that
+   script's own header comment if this ever needs re-verifying). Check 3 now returns
+   `{"allowed":true}`. `KETO_READ_URL`/`KETO_WRITE_URL` are enabled in `.env`; the runtime's boot
+   log no longer prints the permissive-authorization warning. Verified both directions (Check 2
+   above): a principal with no grants gets a real `403`, a principal with a grant gets `200`.
 
 3. ~~**A third, unexplained blocker on the read side specifically.**~~ **RESOLVED 2026-09-04 — this
    was never a blocker.** `GET /relation-tuples/check` returning `HTTP 403 {"allowed":false}` is
@@ -191,12 +206,6 @@ sharp-hofstadter-ww7td17fbp` (needs the `ory` CLI, authenticated with the worksp
    **Consequence for the unblock steps above: step 2 is sufficient.** Upload the OPL namespace,
    re-run the seed, and Check 3 should go green. No different key and no check-specific auth mode
    is needed. The only credential still required is the Workspace API key for the OPL upload itself.
-
-Until this is fully resolved, `KETO_READ_URL`/`KETO_WRITE_URL` stay commented out in `.env` and
-`APP_ENV=local` keeps the runtime's documented local escape hatch active
-(`apps/runtime/src/composition.ts`): authorization is permissive (allow-all, logged as a warning on
-boot). This is why Check 2 above passes without Check 3 passing — authentication and authorization
-are independent seams, and only the latter is still blocked.
 
 A second, currently-dormant integration point (`apps/runtime/src/security/ory-clients.ts`, which
 backs the zero-trust security guard Task 14 would mount) has the same gaps and has not yet been
@@ -288,14 +297,13 @@ session, and surface it here rather than silently treating it as done.
 
 | Item                                          | What's needed                                                                         | Where documented                       |
 | --------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------- |
-| Ory Network OPL namespace upload              | Workspace API key (`ory_wak_...`)                                                     | §3.2 above                             |
 | Custom Kratos identity schema upload          | Not currently needed — `preset://email` is in use; only relevant if that ever changes | `infrastructure/ory/network/README.md` |
 | Object storage (Supabase Storage)             | S3 access keys from Supabase dashboard                                                | Plan Task 11                           |
 | Payments (Stripe test mode)                   | `sk_test_...` / `whsec_...` from Stripe dashboard                                     | Plan Task 12                           |
 | `DIRECT_URL` → true direct connection         | Direct connection string from Supabase dashboard                                      | §1 above                               |
 | Outbox relay                                  | A managed Kafka/Redpanda broker                                                       | §3.3 above                             |
-| Mount the zero-trust security guard (Task 14) | Depends on §3.2 being resolved first                                                  | Plan Task 14                           |
-| Expanded e2e coverage (Task 15)               | A completed browser login (see §3.5) — does **not** depend on §3.2                    | Plan Task 15 · §3.5                    |
+| Mount the zero-trust security guard (Task 14) | §3.2 is resolved; the `ory-clients.ts` follow-up (§3.2) is the remaining blocker      | Plan Task 14                           |
+| Expanded e2e coverage (Task 15)               | A completed browser login (see §3.5) — does **not** depend on §3.2 (now resolved)     | Plan Task 15 · §3.5                    |
 | Deployment (Task 17)                          | Explicit human confirmation before any public deploy                                  | Plan Task 17                           |
 | Observability export (Task 18)                | A managed OTLP collector endpoint                                                     | Plan Task 18                           |
 
