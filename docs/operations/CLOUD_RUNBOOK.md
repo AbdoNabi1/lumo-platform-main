@@ -75,6 +75,10 @@ Expect `{"status":"healthy","components":[{"name":"postgres","status":"healthy",
 
 **Check 2 — a real Hydra-issued JWT authenticates a real API call:**
 
+Against Ory Network (i.e. `ORY_API_KEY` is set — as it is once `.env` is loaded), also export
+`DEV_CLI_CLIENT_SECRET` first (see §3.4 — a real random value, never committed) or this refuses to
+run:
+
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" \
   -H "Authorization: Bearer $(node scripts/dev/mint-local-token.mjs 2>/dev/null)" \
