@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { optionalEnv, requireProdEnv } from "@/lib/env";
+import { readRolesClaim } from "@/lib/auth/claims";
 import { deriveCodeChallenge, generateCodeVerifier } from "@/lib/auth/pkce";
 
 /**
@@ -176,8 +177,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
         return NextResponse.next();
       }
 
-      const rolesClaim = payload["roles"];
-      const roles = Array.isArray(rolesClaim) ? rolesClaim : [];
+      // Hydra nests the consent UI's `session.access_token` claims under `ext` — see claims.ts.
+      // Reading only the top level made `roles` empty for every real browser login, so this
+      // redirected each gated page to /forbidden on a perfectly valid session.
+      const roles = readRolesClaim(payload);
       const role = highestRole(roles);
       const required = requiredRoleFor(pathname);
       if (role === undefined || ROLE_RANK[role] < ROLE_RANK[required]) {

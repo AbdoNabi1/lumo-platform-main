@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { readRolesClaim, readStringClaim } from "./claims";
 import { authConfig, SESSION_COOKIE } from "./config";
 
 export { SESSION_COOKIE } from "./config";
@@ -51,12 +52,12 @@ export async function readSession(): Promise<AdminSession | null> {
       audience: authConfig.audience,
     });
     if (typeof payload.sub !== "string" || payload.sub.length === 0) return null;
-    const rolesClaim = payload["roles"];
-    const roles = Array.isArray(rolesClaim)
-      ? rolesClaim.filter((role): role is string => typeof role === "string")
-      : [];
-    const kind = typeof payload["kind"] === "string" ? payload["kind"] : "customer";
-    const email = typeof payload["email"] === "string" ? payload["email"] : undefined;
+    // Hydra nests the consent UI's `session.access_token` claims under `ext` — see ./claims.ts for
+    // why reading only the top level silently produced a role-less session on every real login.
+    const claims = payload as Record<string, unknown>;
+    const roles = readRolesClaim(claims);
+    const kind = readStringClaim(claims, "kind") ?? "customer";
+    const email = readStringClaim(claims, "email");
     return { token, principalId: payload.sub, kind, roles, email };
   } catch {
     return null;

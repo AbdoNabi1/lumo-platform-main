@@ -80,3 +80,44 @@ describe("JwtVerifier", () => {
     expect(context?.principal.kind).toBe("customer");
   });
 });
+
+describe("JwtVerifier — Hydra's `ext` claim envelope", () => {
+  // Ory Hydra nests whatever a consent UI puts in `session.access_token` under an `ext` object in
+  // the issued JWT; they only appear top-level when the deployment sets `allowed_top_level_claims`,
+  // which neither infrastructure/docker/hydra/hydra.yml nor the Ory Network project does. Reading
+  // only the top level meant `roles` was always empty for a real browser login — the runtime never
+  // surfaced it (local authorization is permissive) but admin-web's role gate denied every page.
+  it("reads kind/roles from `ext` when Hydra nests them there", async () => {
+    const { verifier, sign } = await setup();
+    const token = await sign((j) => j, {
+      kind: undefined,
+      roles: undefined,
+      ext: { kind: "staff", roles: ["admin", "operator"] },
+    });
+    const context = await verifier.verifyWithClaims(token);
+    expect(context?.principal).toEqual({
+      id: "staff-1",
+      kind: "staff",
+      roles: ["admin", "operator"],
+    });
+  });
+
+  it("prefers a top-level claim over `ext` when both are present", async () => {
+    const { verifier, sign } = await setup();
+    const token = await sign((j) => j, {
+      kind: "staff",
+      roles: ["admin"],
+      ext: { kind: "service", roles: ["viewer"] },
+    });
+    const context = await verifier.verifyWithClaims(token);
+    expect(context?.principal.kind).toBe("staff");
+    expect(context?.principal.roles).toEqual(["admin"]);
+  });
+
+  it("ignores a non-object `ext` rather than throwing", async () => {
+    const { verifier, sign } = await setup();
+    const token = await sign((j) => j, { kind: undefined, roles: undefined, ext: "nonsense" });
+    const context = await verifier.verifyWithClaims(token);
+    expect(context?.principal).toEqual({ id: "staff-1", kind: "customer", roles: [] });
+  });
+});

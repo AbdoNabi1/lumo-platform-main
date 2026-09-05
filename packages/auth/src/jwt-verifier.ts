@@ -81,15 +81,36 @@ export class JwtVerifier implements ClaimsAuthenticator {
 
 const PRINCIPAL_KINDS: readonly PrincipalKind[] = ["customer", "staff", "service"];
 
+/**
+ * Reads a claim that Ory Hydra may deliver at the top level OR nested under `ext`.
+ *
+ * Whatever a consent UI puts in the accept call's `session.access_token`
+ * (`apps/admin-web/src/app/consent/page.tsx`) lands under an `ext` object in the issued JWT, not at
+ * the top level. Hydra only promotes it when the deployment configures `allowed_top_level_claims`,
+ * which neither `infrastructure/docker/hydra/hydra.yml` nor the Ory Network project sets — so the
+ * nested shape is what production actually produces on both topologies.
+ *
+ * Top level wins when both are present: a deployment that HAS configured `allowed_top_level_claims`
+ * is stating its intent explicitly, and honouring it keeps this readable against a plain
+ * (non-Hydra) issuer too.
+ */
+function readClaim(payload: JWTPayload, name: string): unknown {
+  const top = payload[name];
+  if (top !== undefined) return top;
+  const ext = payload["ext"];
+  if (typeof ext !== "object" || ext === null || Array.isArray(ext)) return undefined;
+  return (ext as Record<string, unknown>)[name];
+}
+
 function toPrincipal(payload: JWTPayload): Principal | null {
   if (typeof payload.sub !== "string" || payload.sub.length === 0) {
     return null;
   }
-  const kindClaim = payload["kind"];
+  const kindClaim = readClaim(payload, "kind");
   const kind = PRINCIPAL_KINDS.includes(kindClaim as PrincipalKind)
     ? (kindClaim as PrincipalKind)
     : "customer";
-  const rolesClaim = payload["roles"];
+  const rolesClaim = readClaim(payload, "roles");
   const roles = Array.isArray(rolesClaim)
     ? rolesClaim.filter((role): role is string => typeof role === "string")
     : [];
