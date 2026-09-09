@@ -123,9 +123,27 @@ unknown` already rides on every port method (ADR-0003). Concretely: a read metho
    the FIRST converted context, before any second context is touched, on a realistic paginated list
    read (a storefront product listing — `catalog.products` — not a single `findById`, which would
    hide the round-trip cost inside noise). Recorded p50/p99, bare read vs. `runReadScoped`-wrapped,
-   same query, same data, live Supabase session pooler: **see T10.3's first-context report for the
-   actual numbers** — this ADR states the gate, not a number measured before any code existed to
-   measure.
+   same query (`WHERE tenant_id = 'tenant-local' AND deleted_at IS NULL ... LIMIT 21` +
+   `variants` include), same 13-row live dataset, live Supabase session pooler, 30 iterations each,
+   measured **2026-09-09**:
+
+   |                         | p50           | p99           |
+   | ----------------------- | ------------- | ------------- |
+   | Bare read               | 118.21ms      | 137.43ms      |
+   | `runReadScoped`-wrapped | 283.48ms      | 333.60ms      |
+   | Delta                   | **+165.28ms** | **+196.16ms** |
+
+   **Result: the fallback threshold below is crossed, by roughly 16x on p50 and 6x on p99 — not a
+   borderline call.** `runReadScoped` more than doubles this read's latency. **Important caveat this
+   ADR does not resolve:** this was measured from the session that wrote this ADR, not from a
+   production-representative network path — round-trip time to Supabase's `aws-1-eu-west-3` pooler
+   from wherever the actual runtime is deployed could be materially different (better, if co-located
+   in the same AWS region; the delta could shrink substantially, though the 3-4x extra round trips
+   `BEGIN`+`SET LOCAL`+query+`COMMIT` requires over one bare query would still exist as a multiplier,
+   not just a constant). **Recommendation: re-run this exact benchmark from the actual deployment
+   network path before deciding whether to continue converting reads to `runReadScoped` for the
+   remaining 39 contexts.** Until that re-measurement happens, do not convert further reads on the
+   assumption this is a small constant cost — evidence says otherwise from where this was measured.
 
    **Fallback, stated now so it is a conscious choice and not a rediscovery under pressure:** reads
    may skip the transaction wrapper entirely and rely solely on Option A's TypeScript-layer
@@ -139,8 +157,9 @@ unknown` already rides on every port method (ADR-0003). Concretely: a read metho
    signals the pooler or connection reuse is behaving worse than assumed, not just "transactions cost
    something"), stop converting reads to `runReadScoped` and fall back to TypeScript-only enforcement
    for reads specifically; writes still get `SET LOCAL` regardless, since they pay no extra round trip
-   for it. This threshold is a judgment call recorded here precisely so it does not have to be
-   re-litigated mid-migration.
+   for it. **This threshold was crossed on first measurement (above)** — the fallback is the
+   currently-indicated choice pending re-measurement from a production-representative network path,
+   not a hypothetical to revisit later.
 
 4. **Consumers and other non-request paths obtain `tenantId` per the approved RLS section's per-path
    answers, not a single blanket rule:** Kafka consumers switch from `rootEventContext(idGen,

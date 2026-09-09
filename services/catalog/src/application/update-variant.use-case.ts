@@ -13,6 +13,8 @@ export interface UpdateVariantInput {
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface UpdateVariantOutput {
@@ -46,7 +48,7 @@ export class UpdateVariant implements UseCase<
     if (!price.ok) return err(price.error);
 
     return this.deps.unitOfWork.run<Result<UpdateVariantOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

@@ -7,6 +7,8 @@ import type { ProductRepository } from "../domain/product-repository";
 
 export interface ListProductsInput extends CursorPage {
   readonly query?: string;
+  /** ADR-0014: the caller's verified tenant — never accepted from an unauthenticated source. */
+  readonly tenantId: string;
 }
 
 export interface ListProductsDeps {
@@ -26,11 +28,11 @@ export class ListProducts implements UseCase<ListProductsInput, Paginated<Produc
   }
 
   async execute(input: ListProductsInput): Promise<Result<Paginated<Product>, DomainError>> {
-    const { query, ...page } = input;
+    const { query, tenantId, ...page } = input;
     return ok(
       query !== undefined
-        ? await this.deps.products.search(query, page)
-        : await this.deps.products.list(page),
+        ? await this.deps.products.search(query, page, tenantId)
+        : await this.deps.products.list(page, tenantId),
     );
   }
 }

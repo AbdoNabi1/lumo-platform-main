@@ -9,6 +9,8 @@ import type { ProductRepository } from "../domain/product-repository";
 
 export interface ListCollectionProductsInput extends CursorPage {
   readonly slug: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface ListCollectionProductsDeps {
@@ -42,9 +44,11 @@ export interface ListCollectionProductsDeps {
  * `publishedOnly` documents; callers must follow the cursor, not infer "that's everything" from a
  * short page.
  */
-export class ListCollectionProducts
-  implements UseCase<ListCollectionProductsInput, Paginated<Product>, DomainError>
-{
+export class ListCollectionProducts implements UseCase<
+  ListCollectionProductsInput,
+  Paginated<Product>,
+  DomainError
+> {
   private readonly deps: ListCollectionProductsDeps;
 
   constructor(deps: ListCollectionProductsDeps) {
@@ -54,7 +58,7 @@ export class ListCollectionProducts
   async execute(
     input: ListCollectionProductsInput,
   ): Promise<Result<Paginated<Product>, DomainError>> {
-    const { slug, ...page } = input;
+    const { slug, tenantId, ...page } = input;
     const collection = await this.deps.collections.findBySlug(slug);
     if (collection === null || collection.status !== "published") {
       return err(new NotFoundError("Collection not found"));
@@ -66,7 +70,9 @@ export class ListCollectionProducts
     const limit = normalizePageSize(page.first);
     const slice = productIds.slice(startIndex, startIndex + limit);
 
-    const resolved = await Promise.all(slice.map((id) => this.deps.products.findById(id)));
+    const resolved = await Promise.all(
+      slice.map((id) => this.deps.products.findById(id, tenantId)),
+    );
     const items = resolved.filter(
       (product): product is Product => product !== null && product.status.value === "published",
     );

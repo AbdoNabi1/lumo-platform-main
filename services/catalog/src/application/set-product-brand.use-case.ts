@@ -9,6 +9,8 @@ import { BrandRef } from "../domain/value-objects/brand-ref";
 export interface SetProductBrandInput {
   readonly productId: string;
   readonly brandId: string | null;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface SetProductBrandOutput {
@@ -42,7 +44,7 @@ export class SetProductBrand implements UseCase<
     }
 
     return this.deps.unitOfWork.run<Result<SetProductBrandOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

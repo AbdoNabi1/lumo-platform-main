@@ -52,13 +52,27 @@ import type {
 export class PromotionValidationAdapter implements PromotionValidationPort {
   private readonly products: Pick<ProductController, "get">;
   private readonly promotions: Pick<PromotionsController, "evaluate">;
+  private readonly tenantId: string | undefined;
 
+  /**
+   * ADR-0014: `ProductController.get` now requires `tenantId` per call (catalog's `GetProduct`
+   * use case, converted under WP-10/T10.3's first-context slice) — this adapter captures it at
+   * construction, the same not-yet-converted pattern `checkout`'s own `PromotionValidationPort`
+   * still uses everywhere else, rather than widening that port's `validate(items, customerRef,
+   * promotionRef)` signature, which is checkout-context work, not catalog's, and out of scope for
+   * this first-context slice. `tenantId` stays optional here only because `AdminWiringDeps.
+   * tenantId` is optional (in-memory/test composition omits it); `validate` fails closed if it is
+   * actually missing when a promotion lookup is attempted, per this WP's "never default a missing
+   * tenant" rule.
+   */
   constructor(
     products: Pick<ProductController, "get">,
     promotions: Pick<PromotionsController, "evaluate">,
+    tenantId?: string,
   ) {
     this.products = products;
     this.promotions = promotions;
+    this.tenantId = tenantId;
   }
 
   async validate(
@@ -69,10 +83,17 @@ export class PromotionValidationAdapter implements PromotionValidationPort {
     if (promotionRef === undefined) {
       return { valid: true, discountMinor: 0 };
     }
+    if (this.tenantId === undefined) {
+      throw new Error(
+        "PromotionValidationAdapter.validate: tenantId is required (ADR-0014) but this adapter " +
+          "was constructed without one — never default to a placeholder tenant.",
+      );
+    }
+    const tenantId = this.tenantId;
 
     const lines: CartSnapshotLine[] = [];
     for (const item of items) {
-      const response = await this.products.get({ productId: item.productRef });
+      const response = await this.products.get({ productId: item.productRef, tenantId });
       if (response.status !== 200) {
         return {
           valid: false,

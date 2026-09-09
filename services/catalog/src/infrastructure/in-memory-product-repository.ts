@@ -28,7 +28,14 @@ export class InMemoryProductRepository implements ProductRepository {
     await this.outbox.write(product.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Product | null> {
+  /**
+   * ADR-0014: the port now takes `tenantId` per call, matching the real Prisma adapter. This
+   * fake stores everything in one shared `Map` with no tenant partitioning — adequate for today's
+   * single-tenant unit tests, but it cannot catch a cross-tenant leak. `tenantId` is accepted (for
+   * signature parity, and to be ready for whoever writes T10.5's adversarial suite) but not yet
+   * used to filter; note this rather than silently pretending isolation is tested here.
+   */
+  async findById(id: string, _tenantId: string): Promise<Product | null> {
     const product = this.store.get(id);
     return product !== undefined && !product.deleted ? product : null;
   }
@@ -51,14 +58,14 @@ export class InMemoryProductRepository implements ProductRepository {
     await this.save(product, tx);
   }
 
-  async list(page: CursorPage): Promise<Paginated<Product>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Product>> {
     return this.paginate(
       [...this.store.values()].filter((p) => !p.deleted),
       page,
     );
   }
 
-  async search(query: string, page: CursorPage): Promise<Paginated<Product>> {
+  async search(query: string, page: CursorPage, _tenantId: string): Promise<Paginated<Product>> {
     const needle = query.toLowerCase();
     const rows = [...this.store.values()].filter(
       (p) =>

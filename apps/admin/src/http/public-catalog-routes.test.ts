@@ -94,6 +94,7 @@ describe("public catalog routes — DTO boundary", () => {
       await catalog.collections.addProduct({
         collectionId: collection.id,
         productId: product.id,
+        tenantId: "tenant-local",
       }),
       "add product to collection",
     );
@@ -242,7 +243,10 @@ describe("public catalog routes — DTO boundary", () => {
         }),
         "create product",
       );
-      unwrap(await catalog.products.publish({ productId: first.id }), "publish product");
+      unwrap(
+        await catalog.products.publish({ productId: first.id, tenantId: "tenant-local" }),
+        "publish product",
+      );
       const second = unwrap<{ id: string }>(
         await catalog.products.create({
           sku: "MC-001",
@@ -252,7 +256,10 @@ describe("public catalog routes — DTO boundary", () => {
         }),
         "create product",
       );
-      unwrap(await catalog.products.publish({ productId: second.id }), "publish product");
+      unwrap(
+        await catalog.products.publish({ productId: second.id, tenantId: "tenant-local" }),
+        "publish product",
+      );
       const collection = unwrap<{ id: string }>(
         await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
         "create collection",
@@ -262,6 +269,7 @@ describe("public catalog routes — DTO boundary", () => {
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: second.id,
+          tenantId: "tenant-local",
         }),
         "add second product",
       );
@@ -269,6 +277,7 @@ describe("public catalog routes — DTO boundary", () => {
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: first.id,
+          tenantId: "tenant-local",
         }),
         "add first product",
       );
@@ -323,7 +332,10 @@ describe("public catalog routes — DTO boundary", () => {
         }),
         "create product",
       );
-      unwrap(await catalog.products.publish({ productId: published.id }), "publish product");
+      unwrap(
+        await catalog.products.publish({ productId: published.id, tenantId: "tenant-local" }),
+        "publish product",
+      );
       const draft = unwrap<{ id: string }>(
         await catalog.products.create({
           sku: "MC-001",
@@ -342,6 +354,7 @@ describe("public catalog routes — DTO boundary", () => {
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: published.id,
+          tenantId: "tenant-local",
         }),
         "add published product",
       );
@@ -349,6 +362,7 @@ describe("public catalog routes — DTO boundary", () => {
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: draft.id,
+          tenantId: "tenant-local",
         }),
         "add draft product",
       );

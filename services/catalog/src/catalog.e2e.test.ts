@@ -31,7 +31,7 @@ describe("catalog (end to end)", () => {
     expect(created.status).toBe(201);
     const { id } = created.body as { id: string };
 
-    const published = await app.products.publish({ productId: id });
+    const published = await app.products.publish({ productId: id, tenantId: "tenant-1" });
     expect(published.status).toBe(200);
 
     const count = await app.drainOutbox();
@@ -55,7 +55,7 @@ describe("catalog (end to end)", () => {
 
   it("returns 404 when publishing a missing product", async () => {
     const app = wire();
-    const response = await app.products.publish({ productId: "missing" });
+    const response = await app.products.publish({ productId: "missing", tenantId: "tenant-1" });
     expect(response.status).toBe(404);
   });
 
@@ -86,7 +86,11 @@ describe("catalog (end to end)", () => {
     const { id: fromId } = from.body as { id: string };
     const { id: toId } = to.body as { id: string };
 
-    const added = await app.collections.addProduct({ collectionId: fromId, productId });
+    const added = await app.collections.addProduct({
+      collectionId: fromId,
+      productId,
+      tenantId: "tenant-1",
+    });
     expect(added.status).toBe(200);
 
     const moved = await app.collections.moveProductBetweenCollections({
@@ -113,9 +117,9 @@ describe("catalog (end to end)", () => {
       variants: [{ sku: "P-11-A", priceAmountMinor: 500, currency: "USD" }],
     });
     const { id: productId } = product.body as { id: string };
-    const deletedProduct = await app.products.delete({ productId });
+    const deletedProduct = await app.products.delete({ productId, tenantId: "tenant-1" });
     expect(deletedProduct.status).toBe(200);
-    const missing = await app.products.get({ productId });
+    const missing = await app.products.get({ productId, tenantId: "tenant-1" });
     expect(missing.status).toBe(404);
 
     const parent = await app.categories.create({ name: "Outdoor", slug: "outdoor-2" });

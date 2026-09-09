@@ -126,18 +126,23 @@ async function main(): Promise<void> {
       );
 
       unwrap(
-        await catalog.products.setBrand({ productId: created.id, brandId: brand.id }),
+        await catalog.products.setBrand({
+          productId: created.id,
+          brandId: brand.id,
+          tenantId: TENANT_ID,
+        }),
         `set brand on product "${seed.sku}"`,
       );
       unwrap(
         await catalog.products.assignCategories({
           productId: created.id,
           categoryIds: [category.id],
+          tenantId: TENANT_ID,
         }),
         `assign categories on product "${seed.sku}"`,
       );
       unwrap(
-        await catalog.products.publish({ productId: created.id }),
+        await catalog.products.publish({ productId: created.id, tenantId: TENANT_ID }),
         `publish product "${seed.sku}"`,
       );
 
@@ -159,6 +164,7 @@ async function main(): Promise<void> {
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: product.id,
+          tenantId: TENANT_ID,
         }),
         `add product "${product.id}" to collection`,
       );

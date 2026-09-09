@@ -8,6 +8,8 @@ import { ProductOption } from "../domain/value-objects/product-option";
 export interface SetProductOptionsInput {
   readonly productId: string;
   readonly options: readonly { readonly name: string; readonly values: readonly string[] }[];
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface SetProductOptionsOutput {
@@ -42,7 +44,7 @@ export class SetProductOptions implements UseCase<
     }
 
     return this.deps.unitOfWork.run<Result<SetProductOptionsOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

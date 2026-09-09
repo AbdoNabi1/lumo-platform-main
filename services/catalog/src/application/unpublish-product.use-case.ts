@@ -7,6 +7,8 @@ import type { ProductRepository } from "../domain/product-repository";
 
 export interface UnpublishProductInput {
   readonly productId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface UnpublishProductOutput {
@@ -36,7 +38,7 @@ export class UnpublishProduct implements UseCase<
     input: UnpublishProductInput,
   ): Promise<Result<UnpublishProductOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<UnpublishProductOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

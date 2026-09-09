@@ -10,6 +10,8 @@ export interface UpdateProductInput {
   readonly productId: string;
   readonly name: string;
   readonly slug: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface UpdateProductOutput {
@@ -40,7 +42,7 @@ export class UpdateProduct implements UseCase<
     if (!slug.ok) return err(slug.error);
 
     return this.deps.unitOfWork.run<Result<UpdateProductOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

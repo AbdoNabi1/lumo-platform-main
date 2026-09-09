@@ -6,6 +6,8 @@ import type { ProductRepository } from "../domain/product-repository";
 
 export interface GetProductInput {
   readonly productId: string;
+  /** ADR-0014: the caller's verified tenant — never accepted from an unauthenticated source. */
+  readonly tenantId: string;
 }
 
 export interface GetProductDeps {
@@ -21,7 +23,7 @@ export class GetProduct implements UseCase<GetProductInput, Product, DomainError
   }
 
   async execute(input: GetProductInput): Promise<Result<Product, DomainError>> {
-    const product = await this.deps.products.findById(input.productId);
+    const product = await this.deps.products.findById(input.productId, input.tenantId);
     return product === null ? err(new NotFoundError("Product not found")) : ok(product);
   }
 }

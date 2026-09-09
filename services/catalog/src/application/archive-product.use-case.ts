@@ -7,6 +7,8 @@ import type { ProductRepository } from "../domain/product-repository";
 
 export interface ArchiveProductInput {
   readonly productId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface ArchiveProductOutput {
@@ -34,7 +36,7 @@ export class ArchiveProduct implements UseCase<
 
   async execute(input: ArchiveProductInput): Promise<Result<ArchiveProductOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ArchiveProductOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

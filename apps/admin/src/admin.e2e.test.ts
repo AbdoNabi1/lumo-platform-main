@@ -34,7 +34,9 @@ describe("admin wiring (end to end)", () => {
     });
     expect(created.status).toBe(201);
     const productId = (created.body as { id: string }).id;
-    expect((await admin.products.publishProduct(staff, { productId })).status).toBe(200);
+    expect(
+      (await admin.products.publishProduct(staff, { productId, tenantId: "tenant-1" })).status,
+    ).toBe(200);
     expect(
       (await admin.products.createCategory(staff, { name: "Wagons", slug: "wagons" })).status,
     ).toBe(201);
@@ -94,7 +96,10 @@ describe("admin wiring (end to end)", () => {
 
   it("delegates not-found unchanged — publishing a missing product is 404", async () => {
     const admin = wire();
-    const response = await admin.products.publishProduct(staff, { productId: "missing" });
+    const response = await admin.products.publishProduct(staff, {
+      productId: "missing",
+      tenantId: "tenant-1",
+    });
     expect(response.status).toBe(404);
   });
 

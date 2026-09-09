@@ -217,7 +217,10 @@ function publishedOnly(response: PageResponse): PageResponse {
   const page = response.body as { items: readonly PublicPriceDto[]; pageInfo: unknown };
   return {
     status: response.status,
-    body: { items: page.items.filter((price) => price.status === "published"), pageInfo: page.pageInfo },
+    body: {
+      items: page.items.filter((price) => price.status === "published"),
+      pageInfo: page.pageInfo,
+    },
   };
 }
 
@@ -231,8 +234,15 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       public: true,
       summary: "Public: list products (cursor pagination, optional substring `query` search)",
       schema: { querystring: publicProductsQuery },
-      handle: async ({ query }) =>
-        mapPage(await admin.publicReads.products.list(query), toProductDto),
+      // ADR-0014: ListProductsInput now requires tenantId, from the already-verified
+      // context.tenantId (packages/http's tenant-resolution chain) — this route is `public: true`
+      // (no principal/authorization required) but still runs behind tenant resolution, per
+      // packages/http/src/server.ts's "nothing below runs tenant-less, public routes included".
+      handle: async ({ query, context }) =>
+        mapPage(
+          await admin.publicReads.products.list({ ...query, tenantId: context.tenantId }),
+          toProductDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -293,9 +303,13 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       summary:
         "Public: list a collection's published member products, in curated order (cursor pagination)",
       schema: { params: slugParams, querystring: pageQuery },
-      handle: async ({ params, query }) =>
+      handle: async ({ params, query, context }) =>
         mapPage(
-          await admin.publicReads.collections.listMemberProducts({ ...params, ...query }),
+          await admin.publicReads.collections.listMemberProducts({
+            ...params,
+            ...query,
+            tenantId: context.tenantId,
+          }),
           toProductDto,
         ),
     }),

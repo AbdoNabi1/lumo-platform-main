@@ -9,6 +9,8 @@ import { MediaRef } from "../domain/value-objects/media-ref";
 export interface AttachMediaInput {
   readonly productId: string;
   readonly assetId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface AttachMediaOutput {
@@ -35,7 +37,7 @@ export class AttachMedia implements UseCase<AttachMediaInput, AttachMediaOutput,
     if (!media.ok) return err(media.error);
 
     return this.deps.unitOfWork.run<Result<AttachMediaOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

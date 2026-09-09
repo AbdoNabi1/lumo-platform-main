@@ -8,6 +8,8 @@ import type { ProductRepository } from "../domain/product-repository";
 export interface SchedulePublishProductInput {
   readonly productId: string;
   readonly scheduledAt: Date;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface SchedulePublishProductOutput {
@@ -38,7 +40,7 @@ export class SchedulePublishProduct implements UseCase<
   ): Promise<Result<SchedulePublishProductOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<SchedulePublishProductOutput, DomainError>>(
       async (tx) => {
-        const product = await this.deps.products.findById(input.productId, tx);
+        const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
         if (product === null) {
           return err(new NotFoundError("Product not found"));
         }

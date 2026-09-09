@@ -8,6 +8,8 @@ import type { ProductRepository } from "../domain/product-repository";
 export interface DetachMediaInput {
   readonly productId: string;
   readonly assetId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface DetachMediaOutput {
@@ -31,7 +33,7 @@ export class DetachMedia implements UseCase<DetachMediaInput, DetachMediaOutput,
 
   async execute(input: DetachMediaInput): Promise<Result<DetachMediaOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DetachMediaOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

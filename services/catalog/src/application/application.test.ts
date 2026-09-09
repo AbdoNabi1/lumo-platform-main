@@ -66,6 +66,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
     const assigned = await new SetProductBrand(h).execute({
       productId: created.value.id,
       brandId: brand.value.id,
+      tenantId: "tenant-1",
     });
     expect(assigned.ok).toBe(true);
   });
@@ -82,6 +83,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
     const result = await new SetProductBrand(h).execute({
       productId: created.value.id,
       brandId: "missing-brand",
+      tenantId: "tenant-1",
     });
     expect(result.ok).toBe(false);
   });
@@ -100,6 +102,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       sku: "SKU-3-V2",
       priceAmountMinor: 1700,
       currency: "USD",
+      tenantId: "tenant-1",
     });
     expect(added.ok).toBe(true);
   });
@@ -117,6 +120,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
     const missing = await new AssignCategories(h).execute({
       productId: created.value.id,
       categoryIds: ["missing-category"],
+      tenantId: "tenant-1",
     });
     expect(missing.ok).toBe(false);
 
@@ -125,6 +129,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
     const assigned = await new AssignCategories(h).execute({
       productId: created.value.id,
       categoryIds: [category.value.id],
+      tenantId: "tenant-1",
     });
     expect(assigned.ok).toBe(true);
   });
@@ -158,12 +163,15 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
     });
     if (!created.ok) throw new Error("fixture failed");
 
-    const deleted = await new DeleteProduct(h).execute({ productId: created.value.id });
+    const deleted = await new DeleteProduct(h).execute({
+      productId: created.value.id,
+      tenantId: "tenant-1",
+    });
     expect(deleted.ok).toBe(true);
 
-    const found = await h.products.findById(created.value.id);
+    const found = await h.products.findById(created.value.id, "tenant-1");
     expect(found).toBeNull();
-    const listed = await new ListProducts(h).execute({});
+    const listed = await new ListProducts(h).execute({ tenantId: "tenant-1" });
     expect(listed.ok).toBe(true);
     if (listed.ok)
       expect(listed.value.items.some((p) => p.id.toString() === created.value.id)).toBe(false);
@@ -177,7 +185,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       slug: "wooden-train-set",
       variants: [{ sku: "SKU-6-V1", priceAmountMinor: 2500, currency: "USD" }],
     });
-    const result = await new ListProducts(h).execute({ query: "train" });
+    const result = await new ListProducts(h).execute({ query: "train", tenantId: "tenant-1" });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.items).toHaveLength(1);
   });
@@ -207,10 +215,12 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
     await new AddProductToCollection(h).execute({
       collectionId: collection.value.id,
       productId: p1.value.id,
+      tenantId: "tenant-1",
     });
     await new AddProductToCollection(h).execute({
       collectionId: collection.value.id,
       productId: p2.value.id,
+      tenantId: "tenant-1",
     });
 
     const reordered = await new ReorderCollectionProducts(h).execute({

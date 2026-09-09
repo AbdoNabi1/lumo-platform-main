@@ -9,6 +9,8 @@ export interface SetProductSeoInput {
   readonly productId: string;
   readonly title?: string;
   readonly description?: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface SetProductSeoOutput {
@@ -41,7 +43,7 @@ export class SetProductSeo implements UseCase<
     }
 
     return this.deps.unitOfWork.run<Result<SetProductSeoOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

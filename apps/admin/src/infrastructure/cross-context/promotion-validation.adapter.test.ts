@@ -84,7 +84,11 @@ describe("PromotionValidationAdapter (Checkout -> Promotions, C-3)", () => {
     const promotions = throwingPromotionsController();
     // Typed as the port, not the concrete class — exercised the same way `ValidatePromotion`
     // (the real caller) sees it, with all 4 positional args the interface declares.
-    const adapter: PromotionValidationPort = new PromotionValidationAdapter(products, promotions);
+    const adapter: PromotionValidationPort = new PromotionValidationAdapter(
+      products,
+      promotions,
+      "tenant-1",
+    );
 
     const result = await adapter.validate(
       [checkoutItem("product-1", 2, 1999, "USD")],
@@ -104,7 +108,11 @@ describe("PromotionValidationAdapter (Checkout -> Promotions, C-3)", () => {
     ]);
     // Typed as the port, not the concrete class — exercised the same way `ValidatePromotion`
     // (the real caller) sees it, with all 4 positional args the interface declares.
-    const adapter: PromotionValidationPort = new PromotionValidationAdapter(products, promotions);
+    const adapter: PromotionValidationPort = new PromotionValidationAdapter(
+      products,
+      promotions,
+      "tenant-1",
+    );
 
     const result = await adapter.validate(
       [checkoutItem("product-1", 2, 1999, "USD")],
@@ -123,7 +131,11 @@ describe("PromotionValidationAdapter (Checkout -> Promotions, C-3)", () => {
     ]);
     // Typed as the port, not the concrete class — exercised the same way `ValidatePromotion`
     // (the real caller) sees it, with all 4 positional args the interface declares.
-    const adapter: PromotionValidationPort = new PromotionValidationAdapter(products, promotions);
+    const adapter: PromotionValidationPort = new PromotionValidationAdapter(
+      products,
+      promotions,
+      "tenant-1",
+    );
 
     const result = await adapter.validate(
       [checkoutItem("product-1", 2, 1999, "USD")],
@@ -153,7 +165,11 @@ describe("PromotionValidationAdapter (Checkout -> Promotions, C-3)", () => {
     );
     // Typed as the port, not the concrete class — exercised the same way `ValidatePromotion`
     // (the real caller) sees it, with all 4 positional args the interface declares.
-    const adapter: PromotionValidationPort = new PromotionValidationAdapter(products, promotions);
+    const adapter: PromotionValidationPort = new PromotionValidationAdapter(
+      products,
+      promotions,
+      "tenant-1",
+    );
 
     const result = await adapter.validate(
       [checkoutItem("product-shoe", 2, 1000, "USD"), checkoutItem("product-hat", 3, 500, "USD")],
@@ -195,7 +211,11 @@ describe("PromotionValidationAdapter (Checkout -> Promotions, C-3)", () => {
     );
     // Typed as the port, not the concrete class — exercised the same way `ValidatePromotion`
     // (the real caller) sees it, with all 4 positional args the interface declares.
-    const adapter: PromotionValidationPort = new PromotionValidationAdapter(products, promotions);
+    const adapter: PromotionValidationPort = new PromotionValidationAdapter(
+      products,
+      promotions,
+      "tenant-1",
+    );
 
     await adapter.validate(
       [checkoutItem("product-1", 1, 1000, "USD")],
@@ -212,7 +232,11 @@ describe("PromotionValidationAdapter (Checkout -> Promotions, C-3)", () => {
     const promotions = throwingPromotionsController();
     // Typed as the port, not the concrete class — exercised the same way `ValidatePromotion`
     // (the real caller) sees it, with all 4 positional args the interface declares.
-    const adapter: PromotionValidationPort = new PromotionValidationAdapter(products, promotions);
+    const adapter: PromotionValidationPort = new PromotionValidationAdapter(
+      products,
+      promotions,
+      "tenant-1",
+    );
 
     const result = await adapter.validate(
       [checkoutItem("product-missing", 1, 1000, "USD")],

@@ -755,8 +755,16 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "products:read",
       summary: "List/search products (cursor-paginated)",
       schema: { querystring: listProductsQuery },
+      // ADR-0014: ListProductsInput now requires tenantId — sourced from the already-verified
+      // context.tenantId (packages/http's tenant-resolution chain), never from the query string.
       handle: async ({ query, context }) =>
-        mapPage(await admin.products.listProducts(context.principal, query), toProductListItemDto),
+        mapPage(
+          await admin.products.listProducts(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toProductListItemDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -766,7 +774,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get a product",
       schema: { params: productIdParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
-        const response = await admin.products.getProduct(context.principal, params);
+        // ADR-0014: GetProductInput now requires tenantId — same source as above.
+        const response = await admin.products.getProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) {
           return response;
         }
@@ -800,7 +812,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Update a product's name/slug",
       schema: { params: productIdParams, body: updateProductBody },
       handle: ({ params, body, context }) =>
-        admin.products.updateProduct(context.principal, { productId: params.productId, ...body }),
+        admin.products.updateProduct(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -810,7 +826,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Publish a product",
       schema: { params: productIdParams },
-      handle: ({ params, context }) => admin.products.publishProduct(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.publishProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -824,6 +844,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.products.schedulePublishProduct(context.principal, {
           productId: params.productId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -834,7 +855,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Unpublish a product",
       schema: { params: productIdParams },
-      handle: ({ params, context }) => admin.products.unpublishProduct(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.unpublishProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -844,7 +869,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Archive a product",
       schema: { params: productIdParams },
-      handle: ({ params, context }) => admin.products.archiveProduct(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.archiveProduct(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -854,7 +880,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Soft-delete a product",
       schema: { params: productIdParams },
-      handle: ({ params, context }) => admin.products.deleteProduct(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.deleteProduct(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -865,7 +892,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Add a variant to a product",
       schema: { params: productIdParams, body: addVariantBody },
       handle: ({ params, body, context }) =>
-        admin.products.addVariant(context.principal, { productId: params.productId, ...body }),
+        admin.products.addVariant(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -875,7 +906,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Remove a variant from a product",
       schema: { params: variantIdParams },
-      handle: ({ params, context }) => admin.products.removeVariant(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.removeVariant(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -886,7 +918,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Edit a variant's sku/price",
       schema: { params: variantIdParams, body: updateVariantBody },
       handle: ({ params, body, context }) =>
-        admin.products.updateVariant(context.principal, { ...params, ...body }),
+        admin.products.updateVariant(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -900,6 +936,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.products.setProductOptions(context.principal, {
           productId: params.productId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -911,7 +948,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Set a product's SEO overrides",
       schema: { params: productIdParams, body: setProductSeoBody },
       handle: ({ params, body, context }) =>
-        admin.products.setProductSeo(context.principal, { productId: params.productId, ...body }),
+        admin.products.setProductSeo(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -922,7 +963,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Assign or clear a product's brand",
       schema: { params: productIdParams, body: setProductBrandBody },
       handle: ({ params, body, context }) =>
-        admin.products.setProductBrand(context.principal, { productId: params.productId, ...body }),
+        admin.products.setProductBrand(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -936,6 +981,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.products.assignCategories(context.principal, {
           productId: params.productId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -947,7 +993,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Attach a media asset to a product",
       schema: { params: productIdParams, body: attachMediaBody },
       handle: ({ params, body, context }) =>
-        admin.products.attachMedia(context.principal, { productId: params.productId, ...body }),
+        admin.products.attachMedia(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "DELETE",
@@ -957,7 +1007,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Detach a media asset from a product",
       schema: { params: assetIdParams },
-      handle: ({ params, context }) => admin.products.detachMedia(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.detachMedia(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "PUT",
@@ -968,7 +1019,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Reorder a product's attached media",
       schema: { params: productIdParams, body: reorderMediaBody },
       handle: ({ params, body, context }) =>
-        admin.products.reorderMedia(context.principal, { productId: params.productId, ...body }),
+        admin.products.reorderMedia(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",

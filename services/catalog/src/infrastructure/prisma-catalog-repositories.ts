@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -30,7 +30,15 @@ export interface PrismaCatalogRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
+  /**
+   * Tenant scope (ADR-0008 §2), injected by the composition root. ADR-0014 (WP-10, T10.3):
+   * `PrismaProductRepository.findById`/`list`/`search` no longer read this field — they take
+   * `tenantId` per call instead. It remains required here because `save`/`findBySlug`/`findBySku`/
+   * `delete` (on `PrismaProductRepository`) and every method on `PrismaCategoryRepository`/
+   * `PrismaBrandRepository`/`PrismaCollectionRepository` have not been converted yet. Once every
+   * method across all four repositories takes `tenantId` per call, this field is removed and
+   * composition builds these repositories as tenant-agnostic singletons.
+   */
   readonly tenantId: string;
 }
 
@@ -85,12 +93,23 @@ export class PrismaProductRepository implements ProductRepository {
     await this.deps.outbox.write(product.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Product | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.product.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-      include: { variants: true },
-    });
+  /**
+   * ADR-0014: `tenantId` is now an explicit parameter (the caller's verified tenant), not
+   * `this.deps.tenantId`. When the caller already has an open `tx` (e.g. a write flow that already
+   * ran `runInTenantTransaction`), that transaction already has `app.tenant_id` set — reuse it
+   * directly rather than nesting a second transaction. Otherwise, open one via `runReadScoped`
+   * (ADR-0014 point 3) so the tenant scope applies even to this standalone read.
+   */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Product | null> {
+    const run = (client: TransactionClient) =>
+      client.product.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        include: { variants: true },
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null
       ? null
       : ProductMapper.toDomain(
@@ -137,11 +156,16 @@ export class PrismaProductRepository implements ProductRepository {
     await this.save(product, tx);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Product>> {
-    return this.paginate({}, page, tx);
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Product>> {
+    return this.paginate({}, page, tenantId, tx);
   }
 
-  async search(query: string, page: CursorPage, tx?: unknown): Promise<Paginated<Product>> {
+  async search(
+    query: string,
+    page: CursorPage,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<Product>> {
     return this.paginate(
       {
         OR: [
@@ -151,29 +175,36 @@ export class PrismaProductRepository implements ProductRepository {
         ],
       },
       page,
+      tenantId,
       tx,
     );
   }
 
+  /** ADR-0014: same `tx`-reuse-or-`runReadScoped` shape as `findById` above. */
   private async paginate(
     where: Record<string, unknown>,
     page: CursorPage,
+    tenantId: string,
     tx?: unknown,
   ): Promise<Paginated<Product>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.product.findMany({
-      where: {
-        ...where,
-        tenantId: this.deps.tenantId,
-        deletedAt: null,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      include: { variants: true },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.product.findMany({
+        where: {
+          ...where,
+          tenantId,
+          deletedAt: null,
+          ...(after ? { id: { gt: after } } : {}),
+        },
+        include: { variants: true },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     // Prisma row's `options: JsonValue` has no structural overlap with `ProductRow`'s
     // `readonly { name: string; values: readonly string[] }[]` (comparability fails).
     const products = rows.map((row) =>

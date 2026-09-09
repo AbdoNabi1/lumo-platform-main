@@ -8,6 +8,8 @@ import type { ProductRepository } from "../domain/product-repository";
 export interface ReorderMediaInput {
   readonly productId: string;
   readonly assetIds: readonly string[];
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface ReorderMediaOutput {
@@ -31,7 +33,7 @@ export class ReorderMedia implements UseCase<ReorderMediaInput, ReorderMediaOutp
 
   async execute(input: ReorderMediaInput): Promise<Result<ReorderMediaOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ReorderMediaOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

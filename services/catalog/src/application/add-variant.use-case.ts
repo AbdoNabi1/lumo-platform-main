@@ -15,6 +15,8 @@ export interface AddVariantInput {
   readonly priceAmountMinor: number;
   readonly currency: string;
   readonly selection?: Readonly<Record<string, string>>;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface AddVariantOutput {
@@ -50,7 +52,7 @@ export class AddVariant implements UseCase<AddVariantInput, AddVariantOutput, Do
     }
 
     return this.deps.unitOfWork.run<Result<AddVariantOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

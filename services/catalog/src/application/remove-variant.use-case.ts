@@ -8,6 +8,8 @@ import type { ProductRepository } from "../domain/product-repository";
 export interface RemoveVariantInput {
   readonly productId: string;
   readonly variantId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface RemoveVariantOutput {
@@ -35,7 +37,7 @@ export class RemoveVariant implements UseCase<
 
   async execute(input: RemoveVariantInput): Promise<Result<RemoveVariantOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<RemoveVariantOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }

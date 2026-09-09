@@ -644,7 +644,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       new InventoryValidationAdapter(inventory.inventory, inventory.warehouseRepository),
     promotionValidation:
       deps.promotionValidation ??
-      new PromotionValidationAdapter(catalog.products, promotions.promotions),
+      new PromotionValidationAdapter(catalog.products, promotions.promotions, deps.tenantId),
     orderCreation: deps.orderCreation ?? new OrderCreationAdapter(orders.orders),
   };
   const checkout = wireCheckout(checkoutDeps);
