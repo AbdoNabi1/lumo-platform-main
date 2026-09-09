@@ -14,8 +14,7 @@ import {
   PrismaUnitOfWork,
   type Database,
 } from "@platform/db";
-import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import type { EventSerializer } from "@platform/domain-events";
+import { JsonEventSerializer, type EventSerializer } from "@platform/domain-events";
 import { HealthRegistry } from "@platform/health";
 import { CryptoIdGenerator } from "@platform/id";
 import {
@@ -169,7 +168,12 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
 
   // JSON envelope serializer: byte-compatible with everything written so far; the Apicurio
   // Avro/Protobuf serializer replaces it behind the same contract in the schema-registry sprint.
-  const serializer: EventSerializer = new InMemoryEventSerializer();
+  // WP-17 (Morbeh F-14): this was `InMemoryEventSerializer` from `@platform/domain-events/testing`
+  // — a test-only double ("never import it from production code", per its own doc comment) —
+  // imported into the production composition root unconditionally, with no boot-refusal guard.
+  // `JsonEventSerializer` is byte-identical (same `contentType`, same JSON encode/decode) but is
+  // the package's actual production export, not a test double.
+  const serializer: EventSerializer = new JsonEventSerializer();
 
   if (config.AUTH_JWKS_URL === undefined || config.AUTH_ISSUER_URL === undefined) {
     throw new Error(
