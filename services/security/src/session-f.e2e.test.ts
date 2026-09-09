@@ -102,7 +102,7 @@ describe("session intelligence / console explorers / AI governance (end to end)"
         tokenBudget: 1000,
         callQuota: 5,
         allowedTools: ["search"],
-        allowedResources: ["morbeh:catalog:*:*"],
+        allowedResources: ["lumo:catalog:*:*"],
       },
     });
     expect(governed.status).toBe(200);
@@ -112,7 +112,7 @@ describe("session intelligence / console explorers / AI governance (end to end)"
       await app.security.checkAiAction({
         principalExternalId: "ai-agent-1",
         tool: "search",
-        resource: "morbeh:catalog:product:p1",
+        resource: "lumo:catalog:product:p1",
         tokens: 100,
         calls: 1,
       }),
@@ -129,7 +129,7 @@ describe("session intelligence / console explorers / AI governance (end to end)"
       body<{ allowed: boolean }>(
         await app.security.checkAiAction({
           principalExternalId: "ai-agent-1",
-          resource: "morbeh:finance:ledger:l1",
+          resource: "lumo:finance:ledger:l1",
         }),
       ).allowed,
     ).toBe(false);

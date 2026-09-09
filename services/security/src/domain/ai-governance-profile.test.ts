@@ -48,11 +48,11 @@ describe("AiGovernanceProfile (§20)", () => {
   });
 
   it("enforces sandboxing (tools) and isolation (resources)", () => {
-    const p = govern({ allowedTools: ["search"], allowedResources: ["morbeh:catalog:*:*"] });
+    const p = govern({ allowedTools: ["search"], allowedResources: ["lumo:catalog:*:*"] });
     expect(p.permitsTool("search")).toBe(true);
     expect(p.permitsTool("delete_all")).toBe(false);
-    expect(p.permitsResource("morbeh:catalog:product:p1")).toBe(true);
-    expect(p.permitsResource("morbeh:finance:ledger:l1")).toBe(false);
+    expect(p.permitsResource("lumo:catalog:product:p1")).toBe(true);
+    expect(p.permitsResource("lumo:finance:ledger:l1")).toBe(false);
   });
 
   it("denies all consumption once suspended", () => {

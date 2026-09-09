@@ -76,11 +76,11 @@ describe("ZeroTrustEvaluator", () => {
     const rule: PolicyRule = {
       id: "prod-finance",
       description: "review finance in prod",
-      when: { environments: ["production"], resource: "morbeh:finance:*:*" },
+      when: { environments: ["production"], resource: "lumo:finance:*:*" },
       effect: "review",
     };
-    const financeCtx = { ...base, resource: parse("morbeh:finance:ledger:l1") };
-    const catalogCtx = { ...base, resource: parse("morbeh:catalog:product:p1") };
+    const financeCtx = { ...base, resource: parse("lumo:finance:ledger:l1") };
+    const catalogCtx = { ...base, resource: parse("lumo:catalog:product:p1") };
     expect(evaluator.evaluate(financeCtx, version([rule])).effect).toBe("review");
     expect(evaluator.evaluate(catalogCtx, version([rule])).effect).toBe("allow");
   });

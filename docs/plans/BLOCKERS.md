@@ -1330,3 +1330,77 @@ every test fixture default) over in one atomic change, verify the full gate suit
 role/database. Do not rename Postgres/ClickHouse credentials piecemeal across the ~40 files that
 reference them — that guarantees a period where some files say `lumo` and others say `morbeh` and
 nothing connects.
+
+## T12.8 — `ResourceUrn` prefix rename reverted (production defect, found and fixed) + crypto salt of the same class
+
+**Expected:** `WP-12-brand-rename.md` treats `services/security/src/domain/value-objects/
+resource-urn.ts` as ordinary code text — every other rename in this pass changed prose/comments or
+purely-internal identifiers with no stored counterpart, per the same D1 rule T12.7 (both halves)
+already applies to `@platform/*` package names and the Debezium/database identifiers above.
+
+**Found:** the rename script changed the URN's literal wire prefix, not just prose — `parts[0] !==
+"lumo"` became `parts[0] !== "morbeh"` in `ResourceUrn.parse()`, and `toString()` emits
+`morbeh:${context}:${type}:${id}` instead of `lumo:...`. `packages/db/prisma/schema/
+security.prisma:275`'s `SecurityAiGovernance.allowedResources Json` column persists patterns like
+`"lumo:catalog:*:*"` today. The failure is silent: `AiGovernanceProfile.permitsResource()`
+(`services/security/src/domain/ai-governance-profile.ts:123-131`) parses each stored pattern with
+`ResourceUrn.parse`, drops any that fail to parse via `p.ok &&` inside `.some()`, and an empty
+`.some()` result is `false` — so every AI identity with a configured resource sandbox (a non-empty
+`allowedResources`) would be denied every resource, with no error and no log, the moment this
+shipped. Confirmed by reading the guard directly, not inferred from the diff.
+
+**Ruling made:** reverted the literal prefix to `lumo` in `resource-urn.ts` (code + the two doc-comment
+example strings, since those illustrate the actual wire format, not general brand prose) and in every
+test asserting against it: `ai-governance-profile.test.ts`, `zero-trust.test.ts`, and
+`session-f.e2e.test.ts` (renamed by the same script in the same pass, not called out individually but
+exercising the identical parse path — left renamed, this e2e test would have masked the bug it
+reproduces end-to-end). `policy-condition.ts`'s doc-comment URN example was updated to match. No data
+migration: nothing outside this system ever reads a resource URN, so renaming it bought no brand
+value and would have cost a migration inside a security domain for zero benefit — same reasoning as
+T12.7's `@platform/*`/Debezium/database rulings.
+
+**Found (re-scan, same class) — `NodeCrypto`'s scrypt salt.** `services/security/src/infrastructure/
+in-memory-auth-adapters.ts:30` (`NodeCrypto`, this file's doc comment: "the default provider" — despite
+the filename, not a test double) derived every AES-256-GCM/HMAC key via `scryptSync(ref, "morbeh-security",
+32)`. Any ciphertext, wrapped key, or signature produced before this rename (MFA `secretRef`s included —
+wired through `mfa.use-cases.ts`/`composition.ts`) would fail to decrypt or verify against the new salt,
+since scrypt's output changes completely with either input. Reverted to `"lumo-security"` for the same
+reason as the URN fix.
+
+**Reported, not changed — same class, lower confidence or self-consistent, needs a human call:**
+
+- Storefront/admin-web session, cart, and locale cookie name constants (`apps/storefront/src/lib/
+cart.ts:20` `GUEST_SESSION_COOKIE`, `customer-session.ts:21` `CUSTOMER_SESSION_COOKIE`,
+  `apps/admin-web/src/lib/auth/config.ts:37` `SESSION_COOKIE`, plus both apps' `LOCALE_COOKIE`) were
+  renamed from `lumo-...` to `morbeh-...`. A cookie name is compared against what's already sitting in
+  every active user's/admin's browser: on deploy, every signed-in customer/admin is silently signed out
+  and every guest's up-to-30-day cart becomes unreachable (self-healing on next visit, but the old cart's
+  contents are lost from that user's perspective). No normal user ever sees a cookie name, so the same
+  "no brand value, real cost" argument as the URN applies — but unlike the URN/salt cases this is a
+  one-time cutover glitch, not a permanent failure, so it may be judged acceptable. Left unchanged
+  pending a decision.
+- `AUTH_AUDIENCE`/`AUTH_CLIENT_ID`/`AUTH_CLIENT_SECRET` defaults (`morbeh-admin`/`morbeh-admin-web`/
+  `morbeh-admin-web-secret-change-me`, `apps/admin-web/src/lib/auth/config.ts:17-23`,
+  `apps/runtime/src/config.ts:57`) are self-consistent with the Hydra client the operator registration
+  script (`scripts/ops/register-oauth-client.mjs`, `scripts/dev/seed-auth-local.mjs`) creates under the
+  _same_ new name — not a mismatch as long as that script is re-run against any environment's existing
+  Hydra instance as part of deploying this rename. Flagging because that re-run is an operator step this
+  diff cannot itself guarantee happened.
+- `apps/runtime/src/seed-demo.ts:225-232` looks up an existing demo brand by the new slug
+  `morbeh-originals`; an environment already seeded under the old `lumo-originals` slug will get a
+  duplicate demo brand rather than reusing the old row. Low severity (demo/seed data only).
+- `KAFKA_CLIENT_ID`/`OTEL_SERVICE_NAME` defaults (`morbeh-runtime`/`morbeh-service`) are cosmetic labels
+  nothing validates against; only risk is an existing Grafana/Prometheus dashboard or alert filtering on
+  the old service name, which is an observability-config concern, not an application defect.
+- Not a defect: the gRPC proto package (`packages/grpc/protos/morbeh/orders/v1/orders.proto`, package
+  `morbeh.orders.v1`) has no separate deployed consumer pinning the old path — proto, loader call, and
+  test all moved together in this same diff. Not a defect: Keto's authorization namespace is named
+  `permissions` (`infrastructure/docker/keto/keto.yml`), never `lumo`/`morbeh`, so it was untouched by
+  this rename and has nothing to revert.
+
+**Gates:** `pnpm -r --workspace-concurrency=4 run typecheck` — clean, all workspaces. `pnpm -r
+--workspace-concurrency=4 --no-bail run test` — one failure, `apps/runtime/src/security/
+wire-security-provisioning.test.ts`, matching this file's already-documented concurrency-only flake
+exactly; re-run alone (`pnpm --filter @platform/runtime run test -- src/security/
+wire-security-provisioning.test.ts`) and all 34 files/224 tests passed. `pnpm arch` — 0 violations,
+3228 modules, 12143 dependencies cruised.
