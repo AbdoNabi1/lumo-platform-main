@@ -76,7 +76,12 @@ model UsageCounter {
   tenantId       String    @map("tenant_id")
   tenantRef      String    @map("tenant_ref")
   resource       String
-  amount         Float
+  /// WP-11 (F-07): was Float — binary floating point cannot hold an exact decimal fraction, and
+  /// this column is incremented repeatedly (`recordUsage`), so error compounds. Decimal(19,4)
+  /// per the WP-11 decision (19 total digits, 4 after the point); see migration
+  /// `20260909000000_wp11_float_to_decimal_money_columns` for the exact rounding rule applied to
+  /// existing rows.
+  amount         Decimal   @db.Decimal(19, 4)
   unit           String
   lastRecordedAt DateTime? @map("last_recorded_at")
   version        Int       @default(0)
@@ -92,7 +97,10 @@ model Credit {
   id        String   @id @db.Uuid
   tenantId  String   @map("tenant_id")
   tenantRef String   @map("tenant_ref")
-  amount    Float
+  /// WP-11 (F-07): was Float, same reasoning as UsageCounter.amount above — `consume`/`grant`
+  /// mutate this repeatedly over a credit's lifetime. Decimal(19,4); see migration
+  /// `20260909000000_wp11_float_to_decimal_money_columns` for the rounding rule.
+  amount    Decimal  @db.Decimal(19, 4)
   reason    String
   status    String // granted | consumed | expired
   version   Int      @default(0)

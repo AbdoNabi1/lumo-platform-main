@@ -2693,6 +2693,9 @@ importers:
       '@prisma/client':
         specifier: ^6.5.0
         version: 6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
+      decimal.js:
+        specifier: ^10.4.3
+        version: 10.6.0
     devDependencies:
       '@platform/eslint-config':
         specifier: workspace:*

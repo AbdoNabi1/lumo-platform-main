@@ -1,4 +1,5 @@
 import { UniqueEntityId } from "@platform/domain";
+import type { Decimal } from "decimal.js";
 import { Credit, type CreditStatus } from "../domain/credit";
 import { Invoice, type InvoiceLineItem, type InvoiceStatus } from "../domain/invoice";
 import {
@@ -73,7 +74,11 @@ export interface UsageCounterRow {
   readonly id: string;
   readonly tenantRef: string;
   readonly resource: string;
-  readonly amount: number;
+  // WP-11 (F-07): `Decimal.Value` (decimal.js), not `number` — Prisma returns a `Prisma.Decimal`
+  // instance for this column at runtime (also accepts the string this mapper's `toRow` now
+  // writes on the way back in). Casting straight to `number` here would silently re-introduce
+  // the float-precision loss `UsageCounter`'s internal `Decimal` accumulator exists to prevent.
+  readonly amount: Decimal.Value;
   readonly unit: string;
   readonly lastRecordedAt: string | null;
   readonly version: number;
@@ -82,7 +87,7 @@ export interface UsageCounterRow {
 export interface CreditRow {
   readonly id: string;
   readonly tenantRef: string;
-  readonly amount: number;
+  readonly amount: Decimal.Value; // WP-11 (F-07) — see UsageCounterRow.amount's comment above.
   readonly reason: string;
   readonly status: CreditStatus;
   readonly version: number;
@@ -243,7 +248,7 @@ export class UsageCounterMapper {
       tenantId,
       tenantRef: counter.tenantRef,
       resource: counter.resource,
-      amount: counter.amount,
+      amount: counter.amountDecimalString, // WP-11 (F-07): exact decimal string, never a `number`.
       unit: counter.unit,
       lastRecordedAt: counter.lastRecordedAt?.toISOString() ?? null,
       version: 1,
@@ -268,7 +273,7 @@ export class CreditMapper {
       id: credit.id.toString(),
       tenantId,
       tenantRef: credit.tenantRef,
-      amount: credit.amount,
+      amount: credit.amountDecimalString, // WP-11 (F-07): exact decimal string, never a `number`.
       reason: credit.reason,
       status: credit.status,
       version: 1,

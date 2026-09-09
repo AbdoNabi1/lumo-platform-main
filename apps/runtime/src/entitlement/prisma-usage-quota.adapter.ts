@@ -25,7 +25,11 @@ export class PrismaUsageQuota implements UsageQuotaPort {
     const row = await this.deps.prisma.usageCounter.findFirst({
       where: { resource: request.resource, tenantRef: request.tenant },
     });
-    const used = (row?.amount ?? 0) + (request.amount ?? 1);
+    // WP-11 (F-07): `amount` is `Decimal` now (was `Float`) — Prisma returns a `Prisma.Decimal`
+    // instance, not a `number`. This is a one-shot read for a quota display figure (never
+    // persisted back), so a single `Number(...)` conversion is exact enough; no accumulator
+    // needed the way `UsageCounter`'s own domain class needs one for repeated increments.
+    const used = Number(row?.amount ?? 0) + (request.amount ?? 1);
     return { resource: request.resource, state: "ok", used, limit: -1, ratio: 0 };
   }
 }

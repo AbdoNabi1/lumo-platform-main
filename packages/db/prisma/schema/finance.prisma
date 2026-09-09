@@ -130,7 +130,12 @@ model ExchangeRate {
   tenantId       String   @map("tenant_id")
   baseCurrency   String   @map("base_currency")
   quoteCurrency  String   @map("quote_currency")
-  rate           Float
+  /// WP-11 (F-07): was Float. A rate, not a currency amount — Decimal(18,8) per the WP-11
+  /// decision (rates get 8 fractional digits, amounts get 4). Immutable (this model's own doc
+  /// comment: "never updated"), so no repeated-increment risk; see migration
+  /// `20260909000000_wp11_float_to_decimal_money_columns` for the rounding rule applied to
+  /// existing rows.
+  rate           Decimal  @db.Decimal(18, 8)
   effectiveAt    DateTime @map("effective_at")
   createdAt      DateTime @default(now()) @map("created_at")
 

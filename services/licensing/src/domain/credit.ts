@@ -1,4 +1,5 @@
 import { AggregateRoot, BusinessRuleError, type UniqueEntityId } from "@platform/domain";
+import Decimal, { type Decimal as DecimalType } from "decimal.js";
 import { LicensingChanged } from "./events/licensing-changed.event";
 
 export type CreditStatus = "granted" | "consumed" | "expired";
@@ -6,11 +7,19 @@ export type CreditStatus = "granted" | "consumed" | "expired";
 interface CreditProps {
   readonly tenantRef: string;
   readonly reason: string;
-  amount: number;
+  amount: DecimalType;
   status: CreditStatus;
 }
 
-/** A billing credit (ADR-0018 Sprint-5.5 addendum §B) — grant/consume/expire, event-sourced and auditable (ADR-0009). */
+/**
+ * A billing credit (ADR-0018 Sprint-5.5 addendum §B) — grant/consume/expire, event-sourced and
+ * auditable (ADR-0009).
+ *
+ * WP-11 (F-07): `amount` is a `Decimal` (decimal.js) internally, same reasoning as
+ * `UsageCounter.amount` — `consume` mutates it over the credit's lifetime (partial consumption
+ * across multiple calls), and a plain `number -=` drifts under repeated fractional subtraction.
+ * The public `amount` getter still returns `number`, converted once from the exact accumulator.
+ */
 export class Credit extends AggregateRoot<CreditProps> {
   static grant(
     id: UniqueEntityId,
@@ -20,7 +29,10 @@ export class Credit extends AggregateRoot<CreditProps> {
     eventId: string,
     occurredAt: Date,
   ): Credit {
-    const credit = new Credit({ tenantRef, reason, amount, status: "granted" }, id);
+    const credit = new Credit(
+      { tenantRef, reason, amount: new Decimal(amount), status: "granted" },
+      id,
+    );
     credit.raise("granted", eventId, occurredAt);
     return credit;
   }
@@ -28,23 +40,23 @@ export class Credit extends AggregateRoot<CreditProps> {
   static reconstitute(
     id: UniqueEntityId,
     tenantRef: string,
-    amount: number,
+    amount: Decimal.Value,
     reason: string,
     status: CreditStatus,
     version: number,
   ): Credit {
-    return new Credit({ tenantRef, reason, amount, status }, id, version);
+    return new Credit({ tenantRef, reason, amount: new Decimal(amount), status }, id, version);
   }
 
   consume(consumeAmount: number, eventId: string, occurredAt: Date): void {
     if (this.props.status !== "granted") {
       throw new BusinessRuleError(`Cannot consume a credit in status ${this.props.status}`);
     }
-    if (consumeAmount > this.props.amount) {
+    if (new Decimal(consumeAmount).greaterThan(this.props.amount)) {
       throw new BusinessRuleError("Cannot consume more than the granted credit amount");
     }
-    this.props.amount -= consumeAmount;
-    this.props.status = this.props.amount === 0 ? "consumed" : "granted";
+    this.props.amount = this.props.amount.minus(consumeAmount);
+    this.props.status = this.props.amount.isZero() ? "consumed" : "granted";
     this.raise("consumed", eventId, occurredAt);
   }
 
@@ -70,7 +82,12 @@ export class Credit extends AggregateRoot<CreditProps> {
   }
 
   get amount(): number {
-    return this.props.amount;
+    return this.props.amount.toNumber();
+  }
+
+  /** The exact decimal string — the mapper's write path uses this, not `.amount`, so persistence never round-trips the accumulated value through a JS `number`. */
+  get amountDecimalString(): string {
+    return this.props.amount.toFixed(4);
   }
 
   get reason(): string {
