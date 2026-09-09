@@ -6,6 +6,7 @@ export {
   runInTransaction,
   runInTenantTransaction,
   runReadScoped,
+  runReadScopedBatched,
 } from "./transaction";
 export { createDatabaseHealthCheck } from "./health";
 export { type BackupPlan, resolveBackupPlan } from "./backup";

@@ -71,3 +71,40 @@ export function runReadScoped<T>(
 ): Promise<T> {
   return runInTenantTransaction(prisma, tenantId, fn);
 }
+
+/**
+ * ADR-0014 (2026-09-09 amendment — "try the cheaper implementation first" before deciding the
+ * `runReadScoped` fallback): the SAME tenant-scoping effect as `runReadScoped`, via Prisma's
+ * `$transaction([...])` ARRAY form instead of the interactive `async (tx) => {...}` form.
+ *
+ * Why this can be cheaper: the interactive form is a genuinely round-trip-serial protocol — the
+ * engine opens the transaction and then waits for the client's next instruction before sending
+ * anything else to Postgres, because it cannot know in advance whether `fn` will run one query or
+ * ten, or branch on the first query's result. `BEGIN`, `SET LOCAL`, the query, and `COMMIT` are
+ * therefore four round trips awaited in sequence. The array form gives the engine every statement
+ * up front, so it does not need to round-trip back to the JS event loop between them — it can
+ * pipeline `BEGIN` + both statements + `COMMIT` without waiting on Node.
+ *
+ * **Hard constraint the caller must respect: no application logic can run between the two
+ * statements.** `operation` must be a single, already-constructed Prisma operation (e.g.
+ * `prisma.product.findMany({...})`, called but NOT awaited — a lazy `PrismaPromise`) with nothing
+ * to branch on before it runs. A read call site that needs to inspect one query's result before
+ * deciding the next one is NOT a candidate for this form; keep `runReadScoped`'s interactive form
+ * for those, and confirm the call site is genuinely single-query before switching it to this one.
+ *
+ * Not yet wired into any repository — this exists to be benchmarked against `runReadScoped` before
+ * ADR-0014's fallback decision is made, per that amendment. See the ADR for the comparative numbers
+ * once measured; do not assume this is faster without reading them.
+ */
+export function runReadScopedBatched<T>(
+  prisma: PrismaClient,
+  tenantId: string,
+  operation: Prisma.PrismaPromise<T>,
+): Promise<T> {
+  return prisma
+    .$transaction([
+      prisma.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`,
+      operation,
+    ])
+    .then(([, result]) => result);
+}

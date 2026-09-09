@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runInTenantTransaction, runReadScoped } from "./transaction";
+import { runInTenantTransaction, runReadScoped, runReadScopedBatched } from "./transaction";
 
 /** Minimal fake standing in for `PrismaClient`/`Prisma.TransactionClient` — no live database. */
 function fakePrisma() {
@@ -85,5 +85,80 @@ describe("runReadScoped (ADR-0014 point 3)", () => {
 
     expect(calls[0]).toBe("SET:tenant-a");
     expect(result).toBe("rows");
+  });
+});
+
+/**
+ * Minimal fake for Prisma's ARRAY `$transaction([...])` form — structurally different from the
+ * interactive form's fake above: `$executeRaw` is called standalone (not on a `tx`) and returns a
+ * lazy op the fake `$transaction` resolves itself; `$transaction` receives an array, not a
+ * callback.
+ */
+function fakeBatchedPrisma() {
+  const setConfigCalls: unknown[] = [];
+  const prisma = {
+    $executeRaw: vi.fn((_strings: TemplateStringsArray, ...values: unknown[]) => {
+      setConfigCalls.push(values[0]);
+      return { __op: "set_config" };
+    }),
+    $transaction: vi.fn(async (ops: readonly unknown[]) => {
+      const resolved = await Promise.all(ops.map((op) => Promise.resolve(op)));
+      return resolved;
+    }),
+  };
+  return { prisma, setConfigCalls };
+}
+
+describe("runReadScopedBatched (ADR-0014 2026-09-09 amendment)", () => {
+  it("includes set_config('app.tenant_id', ...) as the first array element", async () => {
+    const { prisma, setConfigCalls } = fakeBatchedPrisma();
+
+    await runReadScopedBatched(prisma as never, "tenant-a", Promise.resolve("rows") as never);
+
+    expect(setConfigCalls).toEqual(["tenant-a"]);
+    const call = (prisma.$transaction as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call?.[0]).toHaveLength(2);
+  });
+
+  it("passes the tenantId as a bind parameter, not interpolated into SQL text", async () => {
+    const { prisma } = fakeBatchedPrisma();
+
+    await runReadScopedBatched(prisma as never, "tenant-b", Promise.resolve("x") as never);
+
+    const [strings, ...values] = (prisma.$executeRaw as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    expect(strings.join("")).not.toContain("tenant-b");
+    expect(values).toEqual(["tenant-b"]);
+  });
+
+  it("returns the operation's result (the second array element), not the set_config result", async () => {
+    const { prisma } = fakeBatchedPrisma();
+
+    const result = await runReadScopedBatched(
+      prisma as never,
+      "tenant-a",
+      Promise.resolve([{ id: "p1" }]) as never,
+    );
+
+    expect(result).toEqual([{ id: "p1" }]);
+  });
+
+  it("propagates a rejection from $transaction without swallowing it", async () => {
+    const { prisma } = fakeBatchedPrisma();
+    (prisma.$transaction as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
+
+    await expect(
+      runReadScopedBatched(prisma as never, "tenant-a", Promise.resolve("x") as never),
+    ).rejects.toThrow("boom");
+  });
+
+  it("makes exactly one $transaction call — a single client round trip, unlike the interactive form", async () => {
+    const { prisma } = fakeBatchedPrisma();
+
+    await runReadScopedBatched(prisma as never, "tenant-a", Promise.resolve("x") as never);
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 });

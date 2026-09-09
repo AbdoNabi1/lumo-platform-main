@@ -11,6 +11,17 @@
 > contradicted itself by calling it both. **(3)** Phase 1's `current_setting` assertion (point 5) is
 > specified as an automated integration test enumerating every registered route/consumer with a
 > countable N-of-N denominator, not a judgment call. No amendment reverses the Decision itself.
+>
+> **Corrected 2026-09-09, later the same day, after T10.3's first-context commit.** That commit's
+> benchmark read a 16x-over-threshold result as a settled "take the fallback" signal. It was not:
+> the bare-read baseline alone (118ms) is 12x the 10ms threshold, so the measurement's noise floor
+> exceeds what it was trying to resolve, and the 16x number cannot discriminate `runReadScoped`'s
+> real cost from this session's round-trip time to Supabase. A cheaper batched-array alternative
+> (`runReadScopedBatched`) was implemented and benchmarked (point 3) — a modest, not dramatic,
+> improvement. No production-representative (co-located) network path was available this session to
+> re-measure from, stated plainly rather than substituted. **The fallback remains available and
+> UN-TAKEN; contexts #2-40 stay unconverted until this is settled from a representative
+> environment.**
 
 ## Context
 
@@ -133,17 +144,57 @@ unknown` already rides on every port method (ADR-0003). Concretely: a read metho
    | `runReadScoped`-wrapped | 283.48ms      | 333.60ms      |
    | Delta                   | **+165.28ms** | **+196.16ms** |
 
-   **Result: the fallback threshold below is crossed, by roughly 16x on p50 and 6x on p99 — not a
-   borderline call.** `runReadScoped` more than doubles this read's latency. **Important caveat this
-   ADR does not resolve:** this was measured from the session that wrote this ADR, not from a
-   production-representative network path — round-trip time to Supabase's `aws-1-eu-west-3` pooler
-   from wherever the actual runtime is deployed could be materially different (better, if co-located
-   in the same AWS region; the delta could shrink substantially, though the 3-4x extra round trips
-   `BEGIN`+`SET LOCAL`+query+`COMMIT` requires over one bare query would still exist as a multiplier,
-   not just a constant). **Recommendation: re-run this exact benchmark from the actual deployment
-   network path before deciding whether to continue converting reads to `runReadScoped` for the
-   remaining 39 contexts.** Until that re-measurement happens, do not convert further reads on the
-   assumption this is a small constant cost — evidence says otherwise from where this was measured.
+   **Retracted 2026-09-09, same day, before contexts #2-40 started: the "not a borderline call"
+   conclusion originally written here was wrong, for a reason stronger than the network-path caveat
+   that followed it.** The bare-read baseline itself is 118ms p50 — **12x the 10ms threshold on its
+   own, before `runReadScoped` adds anything.** When the noise floor a measurement is taken against
+   exceeds the decision threshold by an order of magnitude, the measurement cannot discriminate: a
+   16x-over reading here is an artifact of this dev session's round-trip time to
+   `aws-1-eu-west-3`, not evidence about `runReadScoped`'s actual cost. The number above is
+   **retained as a data point, explicitly marked as not decision-grade** — nobody should re-read
+   "16x" later as a settled result.
+
+   **The mechanism is knowable without measuring, and explains the number without needing to trust
+   it:** a bare read is 1 network round trip; the interactive `runReadScoped` form is `BEGIN` +
+   `SET LOCAL` + the query + `COMMIT` = 4, awaited in sequence (the engine cannot pipeline them
+   without knowing in advance what the client will do next — see `runReadScopedBatched` below for
+   the form that removes exactly this constraint). `118ms × ~2.4 ≈ 283ms` accounts for the entire
+   observed delta — consistent with round-trip count, not with some fixed, RTT-independent
+   processing cost `runReadScoped` adds. Co-located with the database in production at roughly 1ms
+   RTT, the same 4-vs-1 ratio is a **~3ms delta** — under the 10ms threshold. The 16x number and the
+   "~3ms in production" estimate are the same underlying ratio at two different RTTs; neither
+   contradicts the other, and neither is a decision on its own.
+
+   **Cheaper implementation, tried before deciding anything (same day, same session):**
+   `runReadScopedBatched` (`packages/db/src/transaction.ts`) uses Prisma's `$transaction([...])`
+   ARRAY form — `[prisma.$executeRaw`SET LOCAL ...`, operation]` — instead of the interactive
+   `async (tx) => {...}` form, so the engine receives every statement up front and does not have to
+   round-trip back to the JS event loop between them. **Hard constraint:** the array form cannot
+   interleave application logic between statements, so it only fits a call site that is a single,
+   already-constructed query with nothing to branch on first — `runReadScoped`'s interactive form
+   stays the right tool for any call site that is not. Measured the same way, same session, same
+   query, 30 iterations:
+
+   |                                | p50      | p99      | ratio to bare |
+   | ------------------------------ | -------- | -------- | ------------- |
+   | Bare read                      | 137.00ms | 210.86ms | 1x            |
+   | `runReadScoped` (interactive)  | 316.10ms | 736.42ms | 2.31x         |
+   | `runReadScopedBatched` (array) | 292.87ms | 737.38ms | 2.14x         |
+
+   The array form improved p50 by only ~23ms (7.3%) over the interactive form and showed no
+   improvement on p99 (within noise, possibly worse) — a smaller win than "roughly halving the round
+   trips" would predict. Recorded honestly rather than assumed: batching does not resolve the
+   discrimination problem above either, since it is still being measured against the same
+   noise-dominated baseline. It remains available as the lower-overhead option once a real decision
+   can be made, and is deliberately **not wired into any repository yet** — `PrismaProductRepository`
+   still uses interactive `runReadScoped` from the previous commit, unchanged by this finding.
+
+   **What this session could not do, stated plainly rather than substituted:** re-measuring from a
+   network path representative of production (co-located with the database, same AWS region) needs
+   infrastructure this sandboxed session does not have access to — no such environment was available,
+   and no substitute (e.g. an estimate or a scaled-down proxy) was used in its place. **This
+   measurement has not happened. It is a precondition for deciding the fallback, not an optional
+   nice-to-have.**
 
    **Fallback, stated now so it is a conscious choice and not a rediscovery under pressure:** reads
    may skip the transaction wrapper entirely and rely solely on Option A's TypeScript-layer
@@ -152,14 +203,24 @@ unknown` already rides on every port method (ADR-0003). Concretely: a read metho
    a read is no longer caught by RLS at the database layer; it still is on a write, since writes
    already sit inside a transaction for the outbox append and pay no _additional_ round trip for
    `SET LOCAL`) but avoids a per-read transaction entirely. **Threshold for taking it:** if
-   `runReadScoped` adds more than ~10ms to p50 or more than ~30ms to p99 on the benchmark read (RLS's
-   own added round trip should be a small constant, not a multiplier — a result outside that range
-   signals the pooler or connection reuse is behaving worse than assumed, not just "transactions cost
-   something"), stop converting reads to `runReadScoped` and fall back to TypeScript-only enforcement
-   for reads specifically; writes still get `SET LOCAL` regardless, since they pay no extra round trip
-   for it. **This threshold was crossed on first measurement (above)** — the fallback is the
-   currently-indicated choice pending re-measurement from a production-representative network path,
-   not a hypothetical to revisit later.
+   `runReadScoped`/`runReadScopedBatched` adds more than ~10ms to p50 or more than ~30ms to p99 on
+   the benchmark read, measured from a production-representative network path (RLS's own added round
+   trip should be a small constant there, not a multiplier), stop converting reads to either helper
+   and fall back to TypeScript-only enforcement for reads specifically; writes still get `SET LOCAL`
+   regardless, since they pay no extra round trip for it. **Status: the fallback remains available
+   and UN-TAKEN.** Neither measurement so far (interactive or batched) is decision-grade, for the
+   noise-floor reason above — the threshold has not actually been evaluated against a number capable
+   of answering it yet.
+
+   **Why this caution, stated as the asymmetry it actually is:** reverting a performance decision
+   later is cheap — swap `runReadScoped` for the TypeScript-only fallback in each converted context,
+   a mechanical change with no correctness risk either direction. Discovering a missed or buggy
+   TypeScript tenant predicate across 40 contexts, with no RLS backstop because the fallback was
+   taken, is not cheap — it is exactly the cross-tenant data leak this entire WP exists to prevent,
+   found late, possibly in production. An unresolved performance question is worth sitting with
+   longer than an unresolved isolation question. **Contexts #2-40 stay unconverted until this
+   benchmark question is actually settled from a representative environment — not decided by the
+   session that happened to be available.**
 
 4. **Consumers and other non-request paths obtain `tenantId` per the approved RLS section's per-path
    answers, not a single blanket rule:** Kafka consumers switch from `rootEventContext(idGen,
