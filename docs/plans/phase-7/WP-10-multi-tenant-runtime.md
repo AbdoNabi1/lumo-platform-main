@@ -303,17 +303,34 @@ from grant counts alone.
 
 ## Tasks
 
-- [ ] **T10.1 — Read before touching anything.**
-      ADR-0008 (tenancy), ADR-0003 (transaction context threading), ADR-0004 (tenant-ready
-      envelope); `apps/runtime/src/composition.ts` in full; `packages/http`'s tenant-resolution
-      chain; `services/tenancy/src/`; two or three Prisma repositories across different contexts to
-      see how uniform the `tenantId` capture actually is (assume it is not perfectly uniform, and
-      find the exceptions early — they are what will overrun the estimate).
+- [x] **T10.1 — Read before touching anything.**
+      ADR-0008, ADR-0003, ADR-0004 read in full; `apps/runtime/src/composition.ts` read in full
+      (confirmed every `wireX`/`buildX` call site pins `TENANT_DEFAULT_ID`, including
+      `api.ts:370,373,380`'s HTTP/admin surface — `request.tenantId` is resolved correctly by
+      `packages/http` but never consumed downstream); `packages/http`'s tenant-resolution chain read
+      in full (already correct and fail-closed — `resolveTenant` + `server.ts:339-348`'s
+      `AuthorizationError` throw on an unresolved tenant); `services/tenancy/src/` sampled (`Tenant`
+      aggregate, `PrismaTenantRepository`/`PrismaWorkspaceRepository` — same constructor-injected
+      pattern as everywhere else); five Prisma repositories sampled across contexts (`orders`,
+      `catalog`, `finance`, `tenancy`, `security` — all constructor-inject `tenantId`;
+      `services/identity`'s access repositories are the one exception, taking `tenantId` per-call —
+      the exception T10.1 asked to find, and the shape ADR-0014 adopts as the target). Additionally,
+      per the approved RLS section: `lumo_app`'s full grant set audited (558 grants — clean DML only,
+      no DDL, no other role memberships, but `vault.secrets`/`_prisma_migrations`/`storage.*` grants
+      this runtime never uses, revoke before Phase 2 per ADR-0014); the two reconstructed RLS
+      migrations reviewed (content already recorded in `docs/plans/BLOCKERS.md`'s 2026-09-09 entry).
+      Findings recorded in [ADR-0014](../../architecture/adr/0014-per-request-tenant-scoping.md).
 
-- [ ] **T10.2 — Write the ADR first.** New ADR in `docs/architecture/`, registered in
-      `docs/DECISIONS.md`: the option chosen, why, the migration path, and how tenant isolation is
-      _verified_ rather than assumed. Do not start T10.3 until this is written — this is the one
-      task in Phase 7 where doing the code first will cost more than it saves.
+- [x] **T10.2 — Write the ADR first.**
+      [ADR-0014: Per-request tenant scoping for repository composition, with RLS as defense-in-depth](../../architecture/adr/0014-per-request-tenant-scoping.md),
+      registered as D-053 in `docs/DECISIONS.md`. Option A adopted, extending ADR-0003's `tx`
+      threading to also carry `tenantId` rather than a new mechanism; migration path and RLS rollout
+      both specified with exact file/site targets (`PrismaUnitOfWork.run`, a new `runReadScoped`
+      helper, `followOnEventContext` for consumers); tenant isolation verification specified as a
+      dependency-cruiser rule (once T10.3 lands) plus the approved RLS section's
+      `current_setting`-non-null assertion gate between Phase 1 and Phase 2. **T10.3 has NOT
+      started** — this ADR is submitted for review before any implementation begins, per this
+      task's own instruction.
 
 - [ ] **T10.3 — Implement it.**
       Mechanically, context by context. Keep the gates green between contexts rather than at the
