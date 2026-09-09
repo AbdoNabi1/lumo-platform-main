@@ -5,6 +5,13 @@
 - **Deciders:** Staff architecture (`WP-10`, per `docs/plans/phase-7/WP-10-multi-tenant-runtime.md` T10.2)
 - **Affected documents:** `docs/plans/phase-7/WP-10-multi-tenant-runtime.md`, `packages/db/prisma/MIGRATIONS.md`, `docs/architecture/23-platform-gap-register.md` (G-53, G-63, G-64), `docs/DECISIONS.md`
 
+> **Amended 2026-09-09, same day as acceptance, before T10.3 began.** Three amendments, inline at
+> their original decision points and summarized here: **(1)** the `runReadScoped` benchmark (point 3) is a gate on continuing the migration past context #1, not something deferred to "a slice"
+> later, with a stated fallback and numeric threshold. **(2)** the RLS-migration bookkeeping (point 6) is a hard gate on Phase 2 (the connection-role switch), not on T10.3's start — the original text
+> contradicted itself by calling it both. **(3)** Phase 1's `current_setting` assertion (point 5) is
+> specified as an automated integration test enumerating every registered route/consumer with a
+> countable N-of-N denominator, not a judgment call. No amendment reverses the Decision itself.
+
 ## Context
 
 ADR-0004 (2026-07-04) reserved `tenantId` on the integration-event envelope but explicitly deferred
@@ -108,6 +115,33 @@ unknown` already rides on every port method (ADR-0003). Concretely: a read metho
    either helper. `pnpm arch` should gain a dependency-cruiser rule forbidding direct `this.prisma.
 <model>` calls in a concrete repository outside these two helpers, once T10.3 lands, so this stays
    enforced rather than a convention someone can silently drift from.
+
+   **Amended 2026-09-09 (Amendment 1 — benchmark is a gate on context #2, not a later slice).**
+   `runReadScoped` turns every previously-bare read into `BEGIN` + `SET LOCAL` + query + `COMMIT` —
+   one to two extra network round trips per read, against a pooled Supabase connection where round-
+   trip time is not free. The benchmark T10.3 was going to run "once a slice exists" instead runs on
+   the FIRST converted context, before any second context is touched, on a realistic paginated list
+   read (a storefront product listing — `catalog.products` — not a single `findById`, which would
+   hide the round-trip cost inside noise). Recorded p50/p99, bare read vs. `runReadScoped`-wrapped,
+   same query, same data, live Supabase session pooler: **see T10.3's first-context report for the
+   actual numbers** — this ADR states the gate, not a number measured before any code existed to
+   measure.
+
+   **Fallback, stated now so it is a conscious choice and not a rediscovery under pressure:** reads
+   may skip the transaction wrapper entirely and rely solely on Option A's TypeScript-layer
+   `where: { tenantId }` predicate — the same isolation every repository already provides today,
+   independent of RLS. This is strictly weaker defense-in-depth (a bug in the TypeScript predicate on
+   a read is no longer caught by RLS at the database layer; it still is on a write, since writes
+   already sit inside a transaction for the outbox append and pay no _additional_ round trip for
+   `SET LOCAL`) but avoids a per-read transaction entirely. **Threshold for taking it:** if
+   `runReadScoped` adds more than ~10ms to p50 or more than ~30ms to p99 on the benchmark read (RLS's
+   own added round trip should be a small constant, not a multiplier — a result outside that range
+   signals the pooler or connection reuse is behaving worse than assumed, not just "transactions cost
+   something"), stop converting reads to `runReadScoped` and fall back to TypeScript-only enforcement
+   for reads specifically; writes still get `SET LOCAL` regardless, since they pay no extra round trip
+   for it. This threshold is a judgment call recorded here precisely so it does not have to be
+   re-litigated mid-migration.
+
 4. **Consumers and other non-request paths obtain `tenantId` per the approved RLS section's per-path
    answers, not a single blanket rule:** Kafka consumers switch from `rootEventContext(idGen,
 TENANT_DEFAULT_ID)` to `followOnEventContext({messageId, correlationId, tenantId:
@@ -127,13 +161,39 @@ envelope.tenantId})` (the function already exists for this — finding #5) and r
 true)` non-null assertion at every entry point) and Phase 2 (the role switch to the now-narrowed
    `lumo_app`, `DATABASE_URL` only, `DIRECT_URL` stays `postgres`) are otherwise unchanged from the
    approved section.
+
+   **Amended 2026-09-09 (Amendment 3 — Phase 1's assertion must be automated and countable, not a
+   judgment call).** "Verified via an assertion at every entry point" understates what has to exist
+   before Phase 2 is allowed to run: an **integration test suite that programmatically enumerates
+   every registered HTTP route and every registered Kafka consumer**, drives one request/message
+   through each, and asserts `current_setting('app.tenant_id', true)` is non-null inside the
+   transaction that entry point opens. The denominator is countable by construction — it comes from
+   the same registration lists `packages/http`'s router and `apps/runtime/src/worker.ts`'s
+   `supervisor.register(...)` calls already build, not a hand-maintained list that can silently go
+   stale as routes/consumers are added. The suite reports **N of N covered**; Phase 2 does not start
+   below N of N. Without this, "the assertion holds everywhere" is exactly the kind of claim that
+   feels true until the one route nobody thought to check ships 200s full of nothing — the precise
+   failure mode Amendment 3 exists to close before it can happen, not after.
+
 6. **The two untracked RLS migrations (G-63) are reconstructed and committed, then marked applied
-   via `prisma migrate resolve --applied <name>`, before T10.3 starts** — not deferred to the end of
-   this WP. `T10.3`'s repository changes and this migration bookkeeping are independent of each
-   other, but leaving migration history drifted while landing a 40-context change on top of it
-   compounds a problem this ADR would rather close early. `migrate resolve` writes to the live
-   migration-tracking table — this remains an operator action requiring explicit sign-off, not
-   something this ADR authorizes this session to execute.
+   via `prisma migrate resolve --applied <name>` before PHASE 2 (the connection-role switch) — not
+   before T10.3 starts.**
+
+   **Amended 2026-09-09 (Amendment 2 — resolves a self-contradiction in the original text, which
+   said both "before T10.3 starts" and "independent of T10.3's repository changes" in the same
+   point).** The repository-signature migration (points 1-3 above) touches TypeScript only and does
+   not depend on migration bookkeeping in any way — gating T10.3's start on it would block 40
+   contexts of mechanical, low-risk work behind an operator sign-off (`migrate resolve` writes to the
+   live migration-tracking table) that may not land on that timeline. Flipping `DATABASE_URL` to
+   `lumo_app` on a migration history that still disagrees with the live database is a different kind
+   of risk: `prisma migrate deploy` or `migrate status` behaving on stale assumptions during or after
+   a role switch is exactly the class of surprise Phase 2 should not be carrying. **Hard gate: Phase
+   2 does not start until the two migrations are committed and resolved. Strong preference, not a
+   gate: land it before or during T10.3 anyway, since nothing is lost by doing it early and the
+   operator sign-off it needs is independent of engineering time.** `migrate resolve` remains an
+   operator action requiring explicit sign-off, not something this ADR authorizes this session to
+   execute.
+
 7. **`TENANT_MODE=multi`'s boot refusal (T10.4) is replaced by a boot-time assertion that per-request
    resolution is wired**, not simply deleted: composition must fail to boot if any repository is
    still constructed with a `deps.tenantId` field (a lint/arch-level check, not a runtime one, once
