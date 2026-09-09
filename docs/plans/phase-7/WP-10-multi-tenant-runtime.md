@@ -63,6 +63,244 @@ state to get wrong, and the failure mode of Option B — a stale or mis-keyed ca
 tenant another's repositories — is exactly the failure this whole WP exists to prevent. Take Option B
 only if you find a concrete blocker in Option A, and record that blocker in the ADR.
 
+## RLS interaction — APPROVED 2026-09-09 (with amendments A/B/C); T10.2 still not started
+
+**This section's design is approved.** It was written by a read-only investigation session
+(2026-09-09) that did not touch runtime code and did not write to any database, then amended by the
+operator the same day (rollout ordering, non-request-path coverage, and naming the env-var split —
+see the sections below marked with each amendment letter). **Approval of this design is not
+approval to start implementation**: T10.2's ADR has not been written, T10.3 has not started, and no
+runtime code has changed as a result of this section. Everything below is additive to the Option
+A/B decision above, not a replacement for it — Option A's per-request scoping is still the primary
+isolation mechanism; RLS is defense-in-depth, and until Phase 2 below actually lands, it is not even
+that. See G-63 (`docs/architecture/23-platform-gap-register.md`) and `docs/plans/BLOCKERS.md`'s
+2026-09-09 entry for how this was found.
+
+### What's actually true today, verified read-only against the live database
+
+- **The live database already carries 130 `tenant_isolation` RLS policies with `FORCE ROW LEVEL
+SECURITY` across 128 business tables** (`tenant_id = current_setting('app.tenant_id', true)` on
+  both `USING` and `WITH CHECK`; `platform.outbox`/`platform.audit_events` get a nullable variant).
+  These were applied directly to Supabase on 2026-08-23 by two migrations that exist in the live
+  `_prisma_migrations` table but nowhere in this repo's git history (G-63).
+- **Both `DATABASE_URL` and `DIRECT_URL` in `.env` connect as `postgres.<project-ref>`, which
+  resolves to the underlying Postgres role `postgres`.** Queried directly:
+  `rolbypassrls = true`. **RLS therefore currently protects nothing on the application's own
+  connection path.** The 130 policies are real and enforced against every OTHER access surface —
+  the Supabase SQL editor, PostgREST via the `anon`/`authenticated` roles, any future direct-psql
+  session — but the runtime itself sails straight through them. Every bit of tenant isolation the
+  application provides today is exactly what `WP-10`'s own "Why this exists" section already says:
+  entirely absent above the database, and inside the database, entirely absent too, because the
+  connecting role opts out of the mechanism that would otherwise enforce it.
+- **Nothing in this codebase ever sets `app.tenant_id`.** Repo-wide search for
+  `app.tenant_id`/`current_setting`/`SET LOCAL`/`set_config` across `packages/`, `services/`,
+  `apps/` returns zero matches in source. `packages/db/src/client.ts`'s `createPrismaClient` builds
+  a plain `PrismaClient` with no `$extends`/`$use`; `packages/db/src/transaction.ts`'s
+  `runInTransaction` is a bare `$transaction(fn, options)` wrapper with no statement before `fn`
+  runs; `packages/db/prisma/seed.ts` constructs its own unconfigured `PrismaClient` too. So this
+  is not a case of an existing mechanism that merely needs a role swap — the session-variable-
+  setting mechanism does not exist at all yet, on top of the role bypassing RLS. **Answer to the
+  investigation's three-way question: (a) — the role bypasses RLS, and (independently) nothing
+  sets the variable either.** Not (c)'s "app cannot read its own rows" — because (a) is also true,
+  the app reads everything today regardless of tenant, which is the actual live exposure this
+  section exists to close, not a crash.
+- **A second role already exists in the database, unused: `lumo_app`.** `rolbypassrls = false`,
+  `rolcanlogin = true`, 558 grants (SELECT/INSERT/UPDATE/DELETE across every business schema, plus
+  read-only `SELECT` on `auth.*`). No comment/description is recorded on it. It was almost
+  certainly created alongside the two untracked RLS migrations as the intended
+  RLS-respecting application role, then never wired into `.env` — the same class of gap as the
+  migrations themselves (G-63): infrastructure work landed directly against the live database and
+  the corresponding application/config change was never made or never committed.
+- **Both connection strings use Supabase's Supavisor pooler in session mode (port `5432`), not
+  transaction mode (`6543`)** — a deliberate prior choice (`docs/operations/CLOUD_RUNBOOK.md` §1,
+  to avoid the transaction-mode pooler's prepared-statement collisions). Session mode holds one
+  dedicated backend connection per logical client connection for its lifetime, which is what makes
+  `SET LOCAL` reliable — but only within a single Prisma interactive transaction
+  (`prisma.$transaction(fn)`). Outside of that, Prisma's own client-side pool (sized via
+  `connection_limit` in `buildDatasourceUrl`) can and does multiplex separate logical queries
+  across different physical backend connections. A bare, non-transactional
+  `$executeRaw` `SET app.tenant_id` would not reliably apply to whatever physical connection
+  serves the very next query.
+
+### Proposed design (for review, not yet approved) — APPROVED 2026-09-09 with amendments A/B/C below
+
+**Amendment A changed the rollout to two ordered phases; doing the role switch before the wrapper
+is verified is the difference between a safe rollout and a silent, product-wide outage. Phase 2
+must not start until Phase 1's assertion holds everywhere.**
+
+**Phase 1 — land the `SET LOCAL` wrapper first, while the role is still `postgres`.**
+
+1. Set `app.tenant_id` via `SET LOCAL`/`set_config(..., true)`, as the first statement inside the
+   same Prisma interactive transaction a request's repository calls run in — not as a detached
+   `$executeRaw`. The transaction wrapper that already threads `tx` per ADR-0003, and Option A's
+   per-request `tenantId` threading above, become the same wrapper: whatever opens a request's root
+   transaction sets `app.tenant_id` from the same verified tenant the HTTP pipeline already
+   resolved — never from a caller-supplied field, matching this WP's own existing "do not make
+   `tenantId` a parameter the caller can pass freely" trap below.
+2. Because the connection is still `postgres` (`rolbypassrls = true`) during this phase, `SET LOCAL
+app.tenant_id` is a genuine no-op as far as query results go — RLS isn't evaluating it yet, so
+   nothing can break and nothing needs to be rolled back if a call site is missed. That is exactly
+   what makes this phase safe to land and verify incrementally, context by context, alongside T10.3.
+3. **Verify coverage before moving on**: add an assertion (test-suite and/or a runtime debug check)
+   that `current_setting('app.tenant_id', true)` is non-null inside every entry point's transaction
+   — every HTTP route, every Kafka consumer's per-message handler, every scheduled job that touches
+   tenant-scoped data. This assertion is the gate for Phase 2, not a nice-to-have: a call site that
+   fails it today will silently return nothing under Phase 2's role, not throw, so this is the only
+   point in the rollout where a gap is easy to see.
+4. Read-only call sites are the sharp edge here too, not just writes — a plain `findMany` outside
+   `$transaction` has no `app.tenant_id` set. Recommendation unchanged from the original proposal:
+   every per-request entry point, reads included, opens its own `app.tenant_id`-scoped transaction;
+   do not special-case which operations "need" it, and do not treat "it's just a read" as a reason
+   to skip the assertion.
+
+**Phase 2 — switch the connection role, conditional on Phase 1's assertion passing everywhere.**
+
+5. Only once step 3's assertion holds across every entry point (request paths, consumers, and the
+   non-request paths in the next section — see Amendment B), switch the runtime's request-serving
+   connection role from `postgres` to `lumo_app` (env-var mechanics in the next section — Amendment
+   C). Before relying on it, audit its 558 grants as part of T10.1's reading pass — it predates this
+   WP, was never reviewed against ADR-0008's tenant model, and its provenance is unrecorded; confirm
+   it has no unexpected privileged grants (sequence ownership, `platform.*` schema access beyond
+   what the runtime needs, any path to `SET ROLE` into something more privileged) before trusting it
+   as the isolation boundary.
+6. After the switch, a call site Phase 1 missed stops being invisible: `tenant_id =
+current_setting(...)` with a NULL setting matches nothing, so a FORCE-RLS `SELECT` returns an
+   empty result — 200, empty body, no error, indistinguishable in monitoring from "this tenant
+   genuinely has no data" (exactly the outage shape Amendment A calls out). A `WITH CHECK` failure
+   on a write is louder (Postgres raises a real policy-violation error), so writes fail faster than
+   reads do — reads are the ones Phase 1's assertion has to actually catch before Phase 2 runs.
+7. **Treat RLS as defense-in-depth, never a substitute for T10.3's application-level scoping and
+   T10.4's reject-on-unresolved-tenant guard**, in both phases. During Phase 1, RLS enforces nothing
+   at all (role bypasses it), so the TypeScript-layer guard is the only real protection. After
+   Phase 2, RLS adds a second layer, but nothing here reduces what T10.3/T10.4/T10.5 must still do.
+
+### Non-request paths (Amendment B) — no HTTP request, no HTTP-resolved tenant
+
+The proposal above only covers per-request entry points. Five paths in this codebase run with no
+request and no HTTP-resolved tenant; each is addressed on its own terms below rather than assumed
+to fit the request-path pattern.
+
+- **Kafka consumers** (`OrdersPaidConsumer`/`FinanceOrdersPaidConsumer`,
+  `PaymentsCapturedConsumer`/`RefundsIssuedConsumer`'s atomic wrappers). **Contrary to what might be
+  assumed, these do NOT currently read `tenantId` off the event envelope at all**, even though
+  `IntegrationEventEnvelope.tenantId` exists on the wire as an optional field
+  (`packages/domain-events/src/integration-event.ts:35`). Both consumer builders hardcode
+  `const tenantId = core.config.TENANT_DEFAULT_ID` at construction time
+  (`apps/runtime/src/consumers/orders-paid.consumers.ts:429`,
+  `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`) — the same boot-time-pinned,
+  single-tenant pattern this whole WP exists to remove from the request path, just not previously
+  called out for the consumer path specifically. **This means "read the envelope's tenantId" is not
+  something to layer on top of the existing consumers — it is a T10.3-scope change to make first**
+  (per-message, not per-builder), and only after that lands can a consumer's per-message handler
+  open a `SET LOCAL app.tenant_id`-scoped transaction from the tenant it just read. Where the
+  envelope's `tenantId` is genuinely absent (it's optional — platform-level events can omit it),
+  the consumer needs an explicit policy per event type, not a silent fallback to
+  `TENANT_DEFAULT_ID`, matching this WP's "never default a missing tenant" rule.
+- **The outbox relay** (`packages/messaging/src/outbox/outbox-relay.ts`, backed by
+  `PrismaOutboxStore.fetchPending` — `packages/db/src/messaging/prisma-outbox-store.ts:46-51`).
+  **Legitimately exempt, not a gap to close.** `fetchPending` queries
+  `where: { status: "pending" }` with no tenant filter, by design — a single relay process draining
+  every tenant's pending rows from one shared table in one pass. **The nullable RLS variant on
+  `platform.outbox`/`platform.audit_events` is NOT sufficient for this** — confirmed by reading the
+  policy, not assumed: `(tenant_id IS NULL) OR (tenant_id = current_setting(...))` adds visibility
+  into platform-level (null-tenant) rows _alongside_ whatever single tenant `app.tenant_id` happens
+  to be set to; it does not grant visibility into every tenant's rows at once. Under `lumo_app` with
+  any single tenant set (or unset), the relay would drain at most one tenant's backlog per pass,
+  silently — the exact "stops publishing with no error" failure this amendment named. The relay
+  must keep connecting via a role that bypasses RLS (or, if that becomes unacceptable later, would
+  need a dedicated policy exception scoped to a named relay role — a separate, larger design
+  question, not this WP's to resolve as a side effect). In production this table is meant to be
+  streamed by Debezium (CDC) rather than drained by this relay at all (see `WP-11`'s F-06/T11.5) —
+  worth noting as a reason this exemption may matter less over time, not a reason to skip stating it
+  now.
+- **Scheduler jobs.** As of this reading, exactly two jobs are registered
+  (`apps/runtime/src/scheduler.ts`): `outbox-prune` (prunes `platform.outbox` once CDC confirms a
+  flush past a row — cross-tenant by the same nature as the relay above) and `cdc-watchdog` (polls
+  Kafka Connect's REST API for connector health — touches no tenant data at all). **Correction: this
+  amendment's premise that "scheduled jobs were classified platform-global vs merchant-scoped in
+  WP-0" does not check out** — grepped `docs/plans/phase-7/WP-0-baseline-truth.md` for
+  "platform-global"/"merchant-scoped" and found no matches; those terms appear only in `WP-14`/
+  `WP-15`, in unrelated contexts (SaaS billing, platform-console RBAC), not scheduler jobs. Stating
+  this plainly rather than citing a classification that doesn't exist. Both current jobs are
+  legitimately exempt on the same reasoning as the relay (`outbox-prune`) or trivially (
+  `cdc-watchdog` touches no business data). `WP-10`'s own T10.7 already anticipates a
+  future _merchant-scoped_ job might be added ("a job that runs 'for the tenant' must now run per
+  tenant") — when that happens, that job (not either of these two) would need to loop tenants and
+  open one `app.tenant_id`-scoped transaction per tenant per tick; no such job exists in this
+  codebase today.
+- **`WP-11`'s finance-settlement backfill** (`apps/runtime/src/backfill-finance-settlement.ts`,
+  `apps/runtime/src/backfill/prisma-payment-settlement-source.ts`). **Not exempt — already
+  app-level tenant-scoped, but only for one tenant per run, and will need the same `SET LOCAL`
+  treatment as any other path once `lumo_app` is live.**
+  `PrismaPaymentSettlementSource` takes an explicit `tenantId` constructor argument and filters
+  every query by it (`prisma-payment-settlement-source.ts:40,52`) — this part is already correct
+  and does not rely on RLS today. But the runnable script hardcodes
+  `const tenantId = core.config.TENANT_DEFAULT_ID` (`backfill-finance-settlement.ts:26`) — one
+  tenant per invocation, not a loop over all tenants; a pre-existing scope gap, independent of RLS,
+  noted here but not fixed by this proposal. Once `DATABASE_URL` becomes `lumo_app`, this script
+  must open its own `SET LOCAL app.tenant_id = <the tenantId it already has>` before its queries —
+  otherwise its already-correct `where: { tenantId }` filter returns nothing anyway, the same silent
+  emptiness described above for any other unset-variable path.
+- **`packages/db/prisma/seed.ts`.** Read in full: it is currently a no-op stub ("Empty seed
+  infrastructure (Sprint 0.2). No business data is seeded" — it connects, logs, and disconnects,
+  zero `tenantId` references). **Trivially exempt today, but not by any tenant-aware design** — it
+  constructs a bare `new PrismaClient()` with no `datasourceUrl` override, so it inherits the
+  schema's own `url = env("DATABASE_URL")` directly; once `DATABASE_URL` becomes `lumo_app`, this
+  script's connection changes too (unlike `migrate`, which uses `directUrl`/`DIRECT_URL` — see
+  Amendment C below). Whatever script actually populated the live database's demo dataset (3 orders,
+  13 products, per `docs/operations/CLOUD_RUNBOOK.md` Task 8) is **not** this file — it was some
+  other, unidentified script or manual action. That script is out of scope for this investigation to
+  track down, but whoever implements T10.3 should find it before relying on `pnpm db:seed` as "the"
+  seeding path, and apply the same per-tenant `SET LOCAL` treatment as the backfill script above if
+  it's ever pointed at `lumo_app`.
+
+### Naming the environment-variable split (Amendment C)
+
+Confirmed against how `packages/db` actually reads these two variables, not assumed from their
+names:
+
+- **`DATABASE_URL` is what the runtime's `PrismaClient` actually queries through.**
+  `packages/config/src/server/config.ts:144` sets `DatabaseConfig.url` directly from
+  `e.DATABASE_URL` (validated in `env.ts:22`); `packages/db/src/client.ts`'s `createPrismaClient`
+  passes `datasourceUrl: buildDatasourceUrl(config)` — a full override of the schema's own `url`
+  field for every request-serving `PrismaClient` instance. `packages/db/prisma/seed.ts`'s separate,
+  raw `new PrismaClient()` has no override, so it falls through to the schema's own
+  `url = env("DATABASE_URL")` too — same variable, same effective role. **`DATABASE_URL` becomes
+  `lumo_app`.**
+- **`DIRECT_URL` is read only by the Prisma CLI itself** (`main.prisma`'s `directUrl =
+env("DIRECT_URL")`), for `migrate deploy`/`migrate dev`/`db pull`/`studio` — operations needing
+  real DDL rights (`CREATE`/`ALTER TABLE`, `CREATE POLICY`) that `lumo_app`'s 558 grants do not
+  include (confirmed: SELECT/INSERT/UPDATE/DELETE only, no DDL grants). It is never consulted by a
+  running `PrismaClient` at request time. **`DIRECT_URL` stays `postgres`.**
+- **One inconsistency worth flagging, not silently correcting**: `main.prisma`'s own inline comment
+  (dated "Phase A.43") claims `DATABASE_URL` points at the _transaction_ pooler (port `6543`) and
+  `directUrl` at the _session/direct_ connection (port `5432`) — but the live `.env` and
+  `docs/operations/CLOUD_RUNBOOK.md` §1 both show **both** variables currently pointing at the
+  _session_ pooler (port `5432`), deliberately, specifically to avoid the transaction-mode pooler's
+  prepared-statement collisions (`packages/db/src/client.ts` never sends `?pgbouncer=true`). The
+  comment describes a plan that was never carried out; the runbook wins per this session's own
+  reading order. Practical implication for this amendment: after the role split, `DATABASE_URL`
+  (now `lumo_app`) and `DIRECT_URL` (still `postgres`) should both keep pointing at the session
+  pooler, port `5432` — do not "fix" `DATABASE_URL` to the transaction pooler port while doing this,
+  or the prepared-statement issue CLOUD_RUNBOOK already worked around comes back.
+
+### Migration bookkeeping (unchanged from the original proposal, still flagged for approval)
+
+8. The two untracked RLS migrations should be reconstructed from the live introspection already
+   recorded in `docs/plans/BLOCKERS.md`'s 2026-09-09 entry, committed to this repo, and then marked
+   applied via `prisma migrate resolve --applied <name>` for each — not re-run through `migrate
+deploy`, since the DDL they contain already exists live and re-applying it would either error
+   (policy already exists) or risk a subtly different result if the reconstruction doesn't match
+   the original byte-for-byte. This should land before or alongside T10.2's ADR so migration history
+   stops drifting from deployed reality and any future `migrate diff` has an accurate baseline.
+   `migrate resolve` writes to the live migration-tracking table — still out of scope for a
+   read-only investigation, still flagged here for explicit operator approval, still not executed.
+
+**Open question this proposal does not resolve:** whether `lumo_app`'s existing 558 grants are
+actually correct for what `WP-10` needs, or whether they were sized for a narrower purpose and need
+widening/narrowing — that audit is T10.1 work, not something a read-only session should conclude
+from grant counts alone.
+
 ## Tasks
 
 - [ ] **T10.1 — Read before touching anything.**
