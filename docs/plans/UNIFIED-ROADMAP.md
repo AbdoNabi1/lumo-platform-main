@@ -1,0 +1,302 @@
+# Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
+
+> **Audience: the implementing agent, starting cold.** Read this file, then
+> [`phase-7/README.md`](phase-7/README.md) and [`README.md`](README.md) completely, in that order,
+> before opening any WP file. This document is now the single entry point for planning work in this
+> repository — it supersedes the "Phase 7 is the open work" pointer at the bottom of `README.md`'s
+> table without changing anything else in that file.
+>
+> **This document contains no task-level work itself.** It reconciles two independently written
+> plans that both target this repository — `phase-7/` (product-gap closure against the Lumo brief,
+> measured 2026-09-06) and a separate "Lumo → Morbeh" execution manual (SaaS business-model
+> transformation, dated 2026-09-08) — into one ordered set of work packages. Every task lives in a
+> WP file; this document is the map between them.
+
+## 1. Why two plans exist, and why neither is discarded
+
+Phase 7 answers: _"Does the product this platform is supposed to be actually work?"_ — event
+tracking, analytics storage, AI, growth engines, SEO/CMS, guest checkout, real multi-tenancy.
+
+Morbeh answers a different question: _"Is this a SaaS business, correctly named, financially
+sound, and able to charge its own merchants?"_ — rebrand, decimal money, registered finance
+consumers, merchant payment methods, platform-level billing, a platform control plane.
+
+They overlap in exactly one place — **multi-tenancy** — because both plans independently found the
+same fact (`apps/runtime/src/composition.ts` throws on `TENANT_MODE=multi`) and both call it their
+biggest single item. Where Phase 7's `WP-10` already has task-level design for this (including a
+resolved architecture fork — see §4), Morbeh's version stays at goal-level. **`WP-10` wins; Morbeh's
+tenancy goals are folded into it as additional acceptance checks, not a second implementation.**
+
+Everywhere else, the two plans are disjoint: Phase 7 never mentions rebrand, decimal money, finance
+consumer registration, merchant payment methods, SaaS billing, or a platform control plane. Morbeh
+never mentions tracking, ClickHouse, AI-as-a-copilot-feature (it mentions an AI plane, which is
+`WP-5` — see §4), growth engines, SEO/CMS, or guest checkout. Running both to completion, in the
+order this document sets out, produces the union of both — nothing from either source document is
+silently dropped, and nothing is built twice.
+
+## 2. Verified state — reconciling the two measurements
+
+Both plans independently measured the repository within 48 hours of each other. Where they differ,
+this is why, and which number to trust going forward.
+
+| Fact                           | Phase 7 (2026-09-06)                                                                                | Morbeh (2026-09-08)                                                                                                                                                                 | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Services                       | 40                                                                                                  | 40                                                                                                                                                                                  | Agree.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Prisma schema files            | 40                                                                                                  | 41                                                                                                                                                                                  | Off by one, immaterial — re-glob `packages/db/prisma/schema/*.prisma` at the start of any task that depends on the count.                                                                                                                                                                                                                                                                                                        |
+| Prisma models / tenant-scoped  | not stated                                                                                          | 132 / 130                                                                                                                                                                           | No conflict — take Morbeh's, re-verify with `grep -c "^model " packages/db/prisma/schema/*.prisma` before relying on it in `WP-10`.                                                                                                                                                                                                                                                                                              |
+| Typecheck / tests              | 79/79 packages, 0 errors; 3,124 tests pass, 77 packages                                             | "295,816 source lines," "554 test files" (different unit — files, not pass/fail)                                                                                                    | Not a real conflict — different metrics. Phase 7's numbers are the ones with a pass/fail verdict; use them as the gate baseline.                                                                                                                                                                                                                                                                                                 |
+| `turbo` on this host           | Confirmed broken (`STATUS_DLL_NOT_FOUND`, exit 127)                                                 | Not investigated — Morbeh's §04 "Full gate" assumes bare `pnpm lint`/`typecheck`/`build`/`test`/`test:coverage` work                                                                | **Phase 7 is right, and it's worse than either doc states**: `pnpm build` also shells to `turbo run build` (`package.json`) and will fail the same way, not just lint/typecheck/test/coverage. See §3.                                                                                                                                                                                                                           |
+| ClickHouse                     | 0 DDL files anywhere; never wired into `apps/runtime`                                               | F-21 audits _whether the ClickHouse read stores enforce tenant scoping_, as if the tables exist                                                                                     | **Morbeh's F-21 is currently unanswerable and not worth auditing today** — the read stores query tables that do not exist yet. `WP-3` builds ClickHouse from nothing, with `tenant_id` as the mandatory first sort-key column (`WP-3` §T3.3) baked into the schema before a single row is written. F-21 is closed _by construction_ once `WP-3` lands, not by a separate audit. Do not spend time auditing code that cannot run. |
+| Guest checkout                 | Cannot complete an order (G-52); `apps/e2e/tests/guest-purchase.spec.ts` is `test.fail()`-annotated | Not mentioned at all                                                                                                                                                                | Real gap in Morbeh's coverage. `WP-1` (unchanged) closes it. This document does not ask Morbeh to re-derive it — Phase 7's finding stands as-is.                                                                                                                                                                                                                                                                                 |
+| Float financial columns        | Not mentioned                                                                                       | F-07: `licensing.prisma:79,95`, `pricing.prisma:66`, `finance.prisma:133` are `Float`                                                                                               | **Verified independently in this session** (`grep -n Float` against all four cited lines — all four are exactly as Morbeh states). Real gap in Phase 7's coverage. `WP-11` closes it.                                                                                                                                                                                                                                            |
+| Finance consumers unregistered | Not mentioned                                                                                       | F-11: `PaymentsCapturedConsumer`/`RefundsIssuedConsumer` (`services/finance/src/interfaces/finance-consumers.ts:77,100`) never instantiated, confirmed by `composition.test.ts:318` | **Verified independently in this session** — the cited test literally asserts the string `"nothing instantiates them"` and the two class names exist at those exact lines. Real gap in Phase 7's coverage. `WP-11` closes it.                                                                                                                                                                                                    |
+
+### The repository-identity claim that is simply wrong
+
+`docs/plans/README.md` §"Rules of engagement" states: _"Do not run `git` commands. This working
+copy is not an initialised git repository."_ **This is false as of this session** — `.git/` exists,
+`git status`, `git log`, and branches (`main`, `feat/cloud-platform-runtime-2`, others) all work.
+This was evidently true when that file was first written and has not been true for some time
+(`docs/plans/phase-7/WP-0-baseline-truth.md` T0.4 already notes work is committed on
+`feat/cloud-platform-runtime-2`). **Use Morbeh's git discipline instead — it is the version written
+against a real repository:** branch per workstream, Conventional Commits (husky `commit-msg` hook
+enforces the format), one task per commit, never mix a rename with a behaviour change. `WP-0`'s T0.2
+should correct this line in `docs/plans/README.md` when it is next touched; until then, treat this
+section as the override.
+
+## 3. Environment — the gate commands every WP must actually use
+
+`turbo` does not run on this Windows host, in any form (`pnpm exec turbo --version` produces no
+output and exits 127 in this session — the same failure class `docs/plans/BLOCKERS.md` has recorded
+three times, each with a slightly different symptom, at lines 36, 87 and 300). Root `package.json`
+routes **five** scripts through it, not the three Phase 7's README calls out:
+
+```
+build      → turbo run build       ← also broken, not previously flagged
+lint       → turbo run lint
+typecheck  → turbo run typecheck
+test       → turbo run test
+test:coverage → turbo run test:coverage
+arch       → depcruise ...         ← does NOT use turbo; works
+```
+
+**Every WP in this roadmap (0 through 18) uses these forms, never the bare root scripts:**
+
+```bash
+# per-package, after touching that package
+pnpm --filter <name> run typecheck && pnpm --filter <name> run lint && pnpm --filter <name> run test
+
+# repo-wide, before declaring any WP done
+pnpm -r --workspace-concurrency=4 run typecheck
+pnpm -r --workspace-concurrency=4 --no-bail run test
+pnpm -r --workspace-concurrency=4 --no-bail run test:coverage   # if a WP's done-criteria need coverage
+pnpm arch
+```
+
+`--no-bail` is not optional on the two `test`/`test:coverage` lines: `pnpm -r` stops at the first
+failing package by default, so without it a gate run silently covers only however many packages
+ran before the first failure and reports that partial result as green — `WP-0` hit exactly this
+(the first run covered 27 of ~79 packages before stopping).
+
+`build` has no documented repo-wide workaround yet — if a WP's definition of done requires a
+production build, run `pnpm --filter <name> run build` per package touched and record in
+`docs/plans/BLOCKERS.md` if a repo-wide build is genuinely required and still blocked.
+
+Two known concurrency-only flakes — re-run either file alone
+(`pnpm --filter <name> run test`) before treating a failure in it as a regression:
+
+- `apps/runtime/src/security/wire-security-provisioning.test.ts` times out at 5s only under
+  `--workspace-concurrency=4`, passes in 789ms run alone.
+- `packages/http/src/server.test.ts` ("omits bearerAuth from the OpenAPI security requirement for
+  a public route") times out at 5s only under `--workspace-concurrency=4`, passes in 530ms
+  (all 28 tests in the file) run alone. Found during `WP-0`'s gate measurement, not previously
+  documented.
+
+## 4. The master work-package table
+
+Numbering continues Phase 7's own (`WP-0`…`WP-10` unchanged). Morbeh's contribution becomes
+`WP-11`…`WP-18`, filed alongside the existing WPs in `docs/plans/phase-7/`.
+
+| WP  | File                               | Source       | Depends on                            | Closes                                                        |
+| --- | ---------------------------------- | ------------ | ------------------------------------- | ------------------------------------------------------------- |
+| 0   | `WP-0-baseline-truth.md`           | Phase 7      | —                                     | doc drift                                                     |
+| 1   | `WP-1-guest-checkout.md`           | Phase 7      | —                                     | G-52                                                          |
+| 2   | `WP-2-storefront-events.md`        | Phase 7      | —                                     | G-43                                                          |
+| 3   | `WP-3-clickhouse-analytics.md`     | Phase 7      | 10 (moved — see §5); useful after 2   | G-44, Morbeh F-21 (by construction)                           |
+| 4   | `WP-4-attribution.md`              | Phase 7      | 3                                     | G-54                                                          |
+| 5   | `WP-5-ai-copilot.md`               | Phase 7      | 3, 10 (moved — see §5)                | G-45, Morbeh F-17 (phase 1 of it — see note below)            |
+| 6   | `WP-6-automation-engine.md`        | Phase 7      | —                                     | G-48, G-49                                                    |
+| 7   | `WP-7-growth-engines.md`           | Phase 7      | 2, 3                                  | G-46, G-47                                                    |
+| 8   | `WP-8-storefront-seo-cms.md`       | Phase 7      | —                                     | G-50, G-51                                                    |
+| 9   | `WP-9-marketing-integrations.md`   | Phase 7      | 6                                     | G-55                                                          |
+| 10  | `WP-10-multi-tenant-runtime.md`    | Phase 7      | —                                     | G-53, Morbeh F-01–F-05, F-13, F-22–F-24 (folded in — see §4a) |
+| 11  | `WP-11-financial-integrity.md`     | Morbeh (new) | —                                     | Morbeh F-06, F-07, F-11                                       |
+| 12  | `WP-12-brand-rename.md`            | Morbeh (new) | 0                                     | Morbeh F-20                                                   |
+| 13  | `WP-13-merchant-payments.md`       | Morbeh (new) | 1 (order/checkout shape)              | Morbeh F-19                                                   |
+| 14  | `WP-14-saas-billing.md`            | Morbeh (new) | 11, 13                                | Morbeh F-16                                                   |
+| 15  | `WP-15-platform-control-plane.md`  | Morbeh (new) | 10, 14                                | Morbeh F-08, F-18                                             |
+| 16  | `WP-16-governance-continuous.md`   | Morbeh (new) | none hard; attaches opportunistically | Morbeh F-09, F-14 (partly — see WP-17)                        |
+| 17  | `WP-17-enforceable-invariants.md`  | Morbeh (new) | 0                                     | Morbeh F-14 (the `/testing`-import rule)                      |
+| 18  | `WP-18-order-total-correctness.md` | Morbeh (new) | 1                                     | Morbeh F-12                                                   |
+
+### 4a. What "folded into WP-10" means, precisely
+
+Morbeh's audit workstream (its "W0": F-21 ClickHouse, F-22 storage keys, F-23 scheduler
+propagation, F-24 in-memory caller coverage) and its tenancy workstream (its "W4": F-01 through
+F-05, F-13) are **not** a separate WP in this roadmap. Here is where each one actually goes:
+
+- **F-21** (ClickHouse tenant scoping) — moot until `WP-3` exists; closed by construction per §2.
+  Re-open only if `WP-3`'s delivered schema does _not_ lead with `tenant_id`.
+- **F-22** (object-storage key scoping) — `WP-10`'s T10.7 ("cross-cutting sweep") already names
+  "object-storage prefixes" as one of the singletons to re-key by tenant. Treat Morbeh's F-22 as
+  the citation backing that line item; no separate audit task needed.
+- **F-23** (scheduler/job tenant propagation) — same T10.7 sweep names "the scheduler's jobs...
+  must now run per tenant" explicitly. Same fold.
+- **F-24** (in-memory caller coverage repo-wide) — this one is **not** already covered. Add it as
+  an explicit task inside `WP-10` (see that file's amendment note) rather than a standalone audit,
+  because the only findings that matter are the ones reachable from `apps/*` after `WP-10`'s
+  per-request repository scoping lands — auditing today's boot-time-pinned graph produces answers
+  that `WP-10` immediately invalidates.
+- **F-01–F-05, F-13** (repositories pinned at boot, optional `tenantId` on events/audit context,
+  storefront's constant tenant header, auth-cache key, Redis namespace enforcement, erasure into
+  ClickHouse) — these are exactly what `WP-10`'s Option A (per-request repository scoping) and
+  T10.7 (cross-cutting sweep) already do. `WP-10`'s existing task list, unmodified, closes all of
+  them. Do not open a parallel tenancy effort.
+
+**Practical instruction for whoever runs `WP-10`:** read `WP-10-multi-tenant-runtime.md` as
+written, and additionally read Morbeh's F-01 through F-05, F-13, F-22, F-23, F-24 as extra
+citations and acceptance detail for T10.1, T10.5 and T10.7 — they name concrete file:line evidence
+(`packages/auth/src/keto.ts:125` for the cache-key gap, `packages/redis/src/{cache,locks,
+idempotency,rate-limiter}.ts` for Redis namespace enforcement, `apps/storefront/src/lib/
+runtime-api.ts:109,148,177,202` for the constant tenant header) that sharpens what T10.5's
+adversarial test suite must cover. `docs/plans/phase-7/WP-10-multi-tenant-runtime.md` itself is not
+edited by this roadmap; carry these citations forward at dispatch time instead.
+
+### 4b. What "phase 1 of F-17" means for WP-5
+
+Morbeh's F-17/W9 ("no AI plane... orchestrator, permission layer, tool registry... a per-request AI
+ledger feeding cost and margin") and Phase 7's `WP-5` ("a read-only Copilot with tool calling,
+built into the existing `AiGovernanceProfile` guard rail") are the same gap, described at two
+different altitudes. `WP-5` is the task-level plan; it is explicitly phase 1 (read-only). Morbeh's
+fuller ambition — action execution (propose → confirm → execute) and the AI cost ledger feeding
+`WP-15`'s margin reporting — has no task-level design anywhere and is recorded here as **future
+work, not a WP**: do not create a new WP for it until `WP-5` has shipped and a phase-2 design
+exists (it would be `WP-19` when that day comes — `WP-18` is already spoken for, see §4c).
+`WP-5`'s own doc comment already calls this out ("Brief §37's write flow... is phase 2 and needs
+its own design round").
+
+### 4c. Two more items, for completeness
+
+- **F-12** (tax is a flat 10% stub, shipping is hardcoded, no product carries a weight) is not
+  folded into any existing WP — it is genuinely uncovered by Phase 7 and was missed in the first
+  draft of this roadmap. Independently verified in this session against
+  `apps/runtime/src/api.ts`'s boot guard and `services/shipping`'s `weightGrams` requirement.
+  **`WP-18` (new) closes it**, carrying Morbeh's D5 (ports and in-house rate tables first; no
+  external tax/shipping provider without separate approval) as its governing decision.
+- **F-15** (raw SQL surface is three benign sites — `health.ts:9`, `composition.ts:216`,
+  `scheduler.ts:216`) needs no WP. Morbeh's own verdict was `KEEP`; nothing in Phase 7 contradicts
+  it. Listed here only so it doesn't read as silently dropped.
+- Morbeh's D6 ("the audit freeze is amended to permit test code... a red suite at the end of W0 is
+  a pass") governed Morbeh's own standalone audit phase. That phase does not exist in this
+  roadmap — §4a folds its findings into `WP-3`/`WP-10` directly — so D6 does not carry forward as a
+  rule for any WP here. It is recorded in this paragraph only so nobody goes looking for it.
+
+## 5. Ordering and conflicts
+
+### Recommended sequence
+
+```
+WP-0                                          (always first, alone)
+  ├─ WP-12 (rename)                           (early: cost only grows; low logic risk)
+  ├─ WP-17 (arch rule for /testing imports)   (cheap, hardens the build for everything after)
+  └─ WP-11 (financial integrity)              (independent of tracking/tenancy; do any time after 0)
+
+WP-10 (tenancy)                               (before the chain below — see note)
+
+WP-1 ──────────────┐
+WP-2 → WP-3 → WP-5 │  (the Phase-7 critical chain, now sequenced after WP-10)
+                    │
+WP-4, WP-6, WP-7, WP-8, WP-9   (any order, per Phase 7's own conflict table)
+
+WP-18 (order total: tax/shipping/weight) → after WP-1 (shares the order-creation path)
+WP-13 (merchant payments)   → after WP-1 (needs the finalized order/checkout shape)
+WP-14 (SaaS billing)        → after WP-11 (decimal ledger) and WP-13 (shared orchestrator contract)
+WP-15 (platform control plane) → after WP-10 (tenancy) and WP-14 (billing/ledger to report on)
+WP-16 (governance)          → continuous; attach each item to whichever WP first makes it relevant
+```
+
+**`WP-10` moved ahead of the `WP-2 → WP-3 → WP-5` chain, not parallel to it, as of this revision.**
+The extended hot-file table below already shows why this was wrong as first written: `WP-3` and
+`WP-5` both edit `apps/runtime/src/composition.ts` (Phase 7's own conflict table), and `WP-10` is
+precisely the workstream that rewrites that file's repository-construction pattern wholesale (boot-
+time-pinned `wireX({ prisma, tenantId })` calls become per-request). Landing `WP-3`/`WP-5` first
+means writing their `composition.ts` wiring against a construction pattern `WP-10` immediately
+tears out — either that wiring gets rewritten a second time once `WP-10` lands, or `WP-10`'s "keep
+gates green between contexts" requirement (its own T10.3) has to thread through two other WPs'
+fresh changes to the same file mid-refactor. Sequencing `WP-10` first means `WP-2` (which does not
+touch `composition.ts`) can still start immediately, but `WP-3` and `WP-5` now wait for `WP-10` to
+land first.
+
+`WP-10` is the single largest item in the combined roadmap (Phase 7 calls it "the largest
+architectural change in Phase 7"; Morbeh independently called its own version "one atomic
+workstream, not eight tickets"). Both agree it should not be split, and both agree an ADR must be
+written and reviewed before implementation starts. Nothing about folding Morbeh's citations into it
+changes that requirement.
+
+### Extended hot-file conflict table
+
+Phase 7's own table (`phase-7/README.md` §3) lists which of its WPs collide on `composition.ts`,
+`apps/storefront/src/**`, `admin-routes.ts`, and the two message dictionaries. The Morbeh-derived
+WPs add to it:
+
+| Hot file                                 | Also claimed by                                                                                                                                                                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/runtime/src/composition.ts`        | + `WP-14` (dunning consumer wiring), `WP-15` (platform-admin composition), `WP-16` (DLQ replay wiring)                                                                                                                                |
+| `apps/admin/src/http/admin-routes.ts`    | + `WP-13` (merchant payment settings routes), `WP-14` (billing analytics routes), `WP-15` (platform-console routes)                                                                                                                   |
+| `apps/admin-web/src/messages/{en,ar}.ts` | + every Morbeh WP with a screen (`WP-13`, `WP-14`, `WP-15`) — and **`WP-12` touches every existing key's surrounding brand string**, which is exactly why it runs early, before more WPs add more strings that would need re-touching |
+| `apps/storefront/src/**`                 | + `WP-13` (payment method selection at checkout)                                                                                                                                                                                      |
+
+`WP-11`, `WP-17`, and `WP-18` touch neither list — they are the safest WPs to run in parallel with
+anything (though `WP-18` should still sequence after `WP-1` per the dependency above, to avoid two
+WPs reshaping the same order-creation path at once).
+
+## 6. Milestones (renumbered against this roadmap)
+
+| Milestone                 | WPs                                    | Meaning                                                                                                                                  |
+| ------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Safe Baseline             | 0, 11, 12, 17                          | Correctly named, build-enforced invariants active, ledger complete and decimal. Nothing shipped to customers yet, nothing quietly wrong. |
+| Sellable                  | 1, 2, 3, 5, 18                         | A guest can buy something at a correct total (real tax, real shipping); the data plane has a producer, a store, and a first AI surface.  |
+| Multi-Merchant Foundation | 10                                     | More than one merchant can exist with no cross-tenant leak, through any surface.                                                         |
+| Growth-Complete           | 4, 6, 7, 8, 9                          | Attribution, automation, recommendations/experiments, SEO/CMS, marketing/integrations all real.                                          |
+| Commercial GA             | 13, 14, 15                             | Merchants can get paid, Morbeh can charge merchants, and the platform is operated without a database console.                            |
+| Governed                  | 16 (continuous throughout, not a gate) | Every non-negotiable has a named CI check or a named gap ticket.                                                                         |
+
+## 7. Rules that apply across both source plans
+
+All non-negotiables in `docs/plans/README.md` §"Architecture you must respect" and
+`phase-7/README.md` §4 hold for every WP in this table, Morbeh-sourced ones included. In addition,
+carry these Morbeh operating rules forward, because they are not duplicated anywhere in Phase 7 and
+they are good rules:
+
+1. **Trace the caller before classifying anything as a defect.** Morbeh's own Rev 1 got a P0 wrong
+   this way (it inferred production exposure from an `deps.X ?? new InMemoryY()` pattern without
+   finding the real caller — `apps/runtime/src/api.ts:397` passes a real adapter). The pattern is a
+   composition seam, not evidence.
+2. **Every claim carries a `path:line`.** In commits, in reports, in code comments.
+3. **One workstream per branch** (`morbeh/w{n}-{slug}` or `phase7/wp{n}-{slug}`, either convention
+   is fine — pick one per WP and stay consistent within it), **one task per commit**, Conventional
+   Commits (husky enforces the format already).
+4. **Stop and report rather than working around.** If a WP's premise is false — already fixed,
+   file doesn't exist, needs a decision this document doesn't make — stop, cite what you found, and
+   append it to `docs/plans/BLOCKERS.md` in the shape that file already uses. Do not substitute a
+   different task or expand scope to "while I'm here."
+
+## 8. What this document deliberately does not do
+
+It does not rewrite any existing WP file (`WP-0` through `WP-10` are untouched — cross-references
+from Morbeh are recorded here, in §4a–§4c, precisely so those files stay the single-session,
+paste-and-go briefs they were designed as). It does not create a WP for Morbeh's D1–D2 (package
+naming stays `@platform/*`; design-system token values are unchanged) because those are negative
+decisions, not tasks — they are binding constraints on `WP-12`, not separate work. It does not
+create a WP for the AI plane's phase 2 (§4b) or for a data-driven attribution model (`WP-4`'s own
+"Known traps" already defers that) — both are explicitly future work with no task-level design yet.

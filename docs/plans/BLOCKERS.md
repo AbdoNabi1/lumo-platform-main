@@ -202,7 +202,7 @@ own scope, one context earlier than Reporting hits it.
 `IndexProviderPort.query(term, page): Promise<Paginated<SearchDocument>>` (or similar) wired to a
 real OpenSearch/pgvector backend (ADR-0020, still a deferred build milestone per
 `services/search/src/composition.ts`'s doc comments), plus a new `ExecuteSearchQuery` use case that
-calls it and *separately* calls `LogQuery` for the analytics side-effect. Once that port method
+calls it and _separately_ calls `LogQuery` for the analytics side-effect. Once that port method
 exists, `GET /search/indexes/:indexId/queries` can be added exactly as the original note describes.
 Until then, the POST route is left as pure analytics logging, unrenamed, so nothing implies it
 returns results it cannot produce.
@@ -258,7 +258,7 @@ and `/settings` once each to close these out.
 
 ## T4.20 — Reporting: `AnalyticsReport` read endpoints deliberately not built (pointer: G-8)
 
-**Expected:** T4.20's note says building read endpoints for report *definitions* is in scope
+**Expected:** T4.20's note says building read endpoints for report _definitions_ is in scope
 ("an operator should see what reports exist. Do that.") but explicitly warns off building an
 endpoint that executes/reads a report's results: "there is no populated read store and no CDC
 pipeline in this codebase. Do not build one, do not wire a fake, and do not let a screen imply
@@ -303,7 +303,7 @@ Re-tested both previously-documented Windows `turbo` failures at Phase 4's close
 exit criteria's `pnpm typecheck && pnpm lint && pnpm test && pnpm arch` line asks:
 
 - `pnpm typecheck` (root, `turbo run typecheck` under the hood) — `[ELIFECYCLE] Command failed with
-  exit code 3221225781` (Windows `STATUS_ACCESS_VIOLATION`), same as the Phase 0 finding above, no
+exit code 3221225781` (Windows `STATUS_ACCESS_VIOLATION`), same as the Phase 0 finding above, no
   per-package output.
 - `pnpm exec turbo run typecheck --concurrency=4` (the Phase 0 workaround) — now also fails:
   `node.exe: error while loading shared libraries: ?: cannot open shared object file` (exit 127),
@@ -658,7 +658,6 @@ read), which is a product decision, not a wiring gap. Once any of these land, th
 `provenance: "demo"` literal in `data/dashboard.ts` is the only place that needs to flip to a real
 fetch — the per-section/per-KPI plumbing this task built already renders either state correctly.
 
-
 ## T5.16 — Customer account and order history: DESIGN ONLY, no code written
 
 **This entry is a design decision, not an implementation record.** No route, no cookie, no guard,
@@ -673,7 +672,7 @@ The storefront (`apps/storefront`) has no login of any kind today. Confirmed by 
 `apps/storefront/src/app/cart/actions.ts` and `apps/storefront/src/lib/cart.ts`:
 `GUEST_SESSION_COOKIE` (`lumo-storefront-guest-session`) is minted by
 `currentOrNewSessionRef()` as a bare `crypto.randomUUID()`, HttpOnly, 30-day, with no principal,
-no credential, and no server-side identity check behind it — it is proof of *cart ownership*
+no credential, and no server-side identity check behind it — it is proof of _cart ownership_
 only (`resolveSessionRef`'s doc comment in `apps/admin/src/http/public-cart-routes.ts`: "never
 `customerRef`, never trusted from anywhere but this field"). Reusing or extending it for identity
 would let anyone forge access to another customer's orders/wishlist/loyalty balance by
@@ -693,8 +692,8 @@ domain — `services/orders/src/domain/order.ts:23`, `services/wishlist/src/doma
 wishlist-repository.ts:8`, `services/loyalty/src/domain/loyalty-account-repository.ts:8`,
 `services/reviews/src/domain/review.ts:17`) all already key their data off a bare `customerRef`
 string — this is Identity's `Customer.id`. So the shape of "what does a customer's own data scope
-look like" is already settled across four bounded contexts; what's missing is *how a request
-proves it is entitled to a given `customerRef`* at all.
+look like" is already settled across four bounded contexts; what's missing is _how a request
+proves it is entitled to a given `customerRef`_ at all.
 
 ### 1. Authentication flow — recommendation: reuse Security's use cases, do not build a second auth stack
 
@@ -725,10 +724,10 @@ Reasoning:
   permission checks, no impersonation/delegation).
 - `Principal` (`services/security/src/domain/principal.ts`) is already Security's "unified
   identity" concept, and its own doc comment states the shape this needs: "`human` principals are
-  a *reference* to an Identity-context user (`subjectRef`)... Security stores no human PII."
+  a _reference_ to an Identity-context user (`subjectRef`)... Security stores no human PII."
   `Session.principalRef` and `Authenticate`'s `principal.id.toString()` both key off `Principal`,
   not off `Customer` directly. So the missing link is a `Principal` (`kind: "human"`, `subjectRef:
-  customer.id.toString()`) created alongside each registered `Customer` — either at
+customer.id.toString()`) created alongside each registered `Customer` — either at
   `Customer.register()` time (Identity's registration use case additionally provisions a
   `Principal` via a port into Security, the same cross-context adapter pattern
   `OrderCreationPort`/`OrderCreationAdapter` already establishes for Checkout→Orders) or lazily on
@@ -763,7 +762,7 @@ Reasoning:
 - **What it carries:** the opaque Security `Session.id` (the same UUID `EstablishSession`/
   `Authenticate` already return as `SessionOutput.id`) — **never** the raw `customerRef`/`Customer`
   id, and never a self-contained JWT with embedded claims. Opacity is deliberate, not just
-  defense-in-depth: because the cookie is *only* a lookup key, `RevokeSession`/`RevokeAllSessions`
+  defense-in-depth: because the cookie is _only_ a lookup key, `RevokeSession`/`RevokeAllSessions`
   take effect immediately on the next request (the introspection call below will report
   `active: false`); a self-contained signed token would keep validating locally until its own
   expiry regardless of a revocation the server already recorded.
@@ -832,7 +831,7 @@ partial string into a search box; it is not a safe security-scoping mechanism fo
 endpoint — a substring match can both over-match (one customer's ref happens to be a substring of
 another's, or of an order number) and under-match, and "match the order number too" is actively
 wrong for this use case (a customer must never see another customer's order just because its
-*number* happens to contain their ref as a substring). **A future implementation must add a
+_number_ happens to contain their ref as a substring). **A future implementation must add a
 genuine exact-match `customerRef` filter** — either a new `customerRef?: string` field on
 `OrderListQuery` handled as `WHERE customerRef = $1` (not `ILIKE '%...%'`), or a dedicated
 `listByCustomer(customerRef, page)` repository method — before wiring this route to real data.
@@ -849,14 +848,14 @@ own — they reuse `CustomerGuard` and the session→principal→customer resolu
 - **T5.17 Wishlist:** `WishlistRepository.findByCustomerRef(customerRef)` already exists
   (`services/wishlist/src/domain/wishlist-repository.ts:8`) — unlike Orders, there is **no**
   backend list-query gap to fix first. Once `CustomerGuard` exists, `GET
-  /public/customers/me/wishlist` is a direct wire-up: guard → resolve `customerRef` → 
+/public/customers/me/wishlist` is a direct wire-up: guard → resolve `customerRef` →
   `findByCustomerRef` → DTO-map → return. Any wishlist-mutation routes (add/remove item) this task
   adds need the identical guard and the identical `customerRef` resolution, never a client-
   supplied one.
 - **T5.19 Loyalty balance:** identical situation —
   `LoyaltyAccountRepository.findByCustomerRef(customerRef)` already exists
   (`services/loyalty/src/domain/loyalty-account-repository.ts:8`). `GET
-  /public/customers/me/loyalty` is the same direct wire-up as Wishlist, no repository gap.
+/public/customers/me/loyalty` is the same direct wire-up as Wishlist, no repository gap.
 - **T5.18-write (review authoring, deferred by T5.18's own report):** `Review.customerRef`
   (`services/reviews/src/domain/review.ts:17`) is required at creation and is also the key
   `vote(customerRef, ...)` uses to prevent double-voting (`review.ts:125-126`). Writing a review
@@ -938,20 +937,20 @@ three-state rendering.
 ## T5.17 — Customer auth foundation + Wishlist: SHIPPED, with four downstream gaps found
 
 **Both parts landed and are verified.** This entry is not a "blocked" record — it is the list of
-gaps found *while* implementing, each of which was worked around honestly rather than papered over.
+gaps found _while_ implementing, each of which was worked around honestly rather than papered over.
 T5.16's design (above) was implemented essentially as written; the deviations are called out below.
 
 ### 1. Wishlist share tokens can be minted but never redeemed
 
 **Expected:** T5.17's brief says to check `wishlist-routes.ts`/`services/wishlist` for a
-share-token-*resolution* capability and, if one exists, wire it as a separate unauthenticated public
+share-token-_resolution_ capability and, if one exists, wire it as a separate unauthenticated public
 route (a share link is meant for someone without an account).
 
 **Found — no such capability exists.** `WishlistRepository`
 (`services/wishlist/src/domain/wishlist-repository.ts:5-10`) declares exactly `save` / `findById` /
 `findByCustomerRef` / `list` — there is no `findByShareToken`. No use case in
 `services/wishlist/src/application/wishlist.use-cases.ts` accepts a token as input either;
-`ShareWishlistItem` only *mints* one (idempotently replaying the item's existing token). The token is
+`ShareWishlistItem` only _mints_ one (idempotently replaying the item's existing token). The token is
 real and persisted on the `WishlistItem` value object (`value-objects/wishlist-item.ts:6`), but
 nothing anywhere can look one up.
 
@@ -984,9 +983,10 @@ cart" branch is unreachable and `MergeGuestCart` (which exists, and is already e
 
 **What shipped instead:** a new `AssignCartCustomer` use case
 (`services/cart/src/application/assign-cart-customer.use-case.ts`) + `CartController.assignCustomer`
-+ `POST /public/auth/claim-cart`, which promotes the guest cart in place. Re-login by the same
-customer short-circuits to a no-op (the domain method refuses *any* second assignment, which is right
-for the aggregate but wrong for a login flow); a cross-customer re-assignment is still refused.
+
+- `POST /public/auth/claim-cart`, which promotes the guest cart in place. Re-login by the same
+  customer short-circuits to a no-op (the domain method refuses _any_ second assignment, which is right
+  for the aggregate but wrong for a login flow); a cross-customer re-assignment is still refused.
 
 **Deviation from the design, deliberate:** `GUEST_SESSION_COOKIE` is **kept**, not cleared. Because
 `sessionRef` is the only key that resolves "my current cart" (`GetCurrentCart` →
@@ -1056,7 +1056,7 @@ and is the kind `InMemoryPasswordAuthProvider` registers against. `Authenticate`
 that is not in the versioned registry and nothing in the boot path registers one, so
 `CustomerAuthAdminController.ensurePasswordMethod()` registers it lazily, once per process — and only
 if absent, reading `registryExplorer()` first so it never overwrites a `displayName`/`enabled` an
-operator set through the admin console (a method an operator explicitly *disabled* stays disabled,
+operator set through the admin console (a method an operator explicitly _disabled_ stays disabled,
 and login then correctly fails).
 
 ## T6.3 — `turbo run test:coverage` not exercised; verified per-package instead (same pre-existing environment issue as Phase 0/2/4)
@@ -1150,7 +1150,7 @@ full bring-up sequence):
    already uses** (copied verbatim) — should be safe since it's the existing working pattern, but
    was never re-run itself, only read.
 3. **`guest-purchase.spec.ts`'s `test.fail()` annotation assumes the T2.3 gap (`docs/plans/
-   BLOCKERS.md`, "T2.3 — `POST /public/checkouts/:id/complete` throws for a genuine guest
+BLOCKERS.md`, "T2.3 — `POST /public/checkouts/:id/complete` throws for a genuine guest
    session") is still open.** That entry predates T5.16–19's customer-auth work; nothing in this
    session re-confirmed the gap still reproduces for a true (never-logged-in) guest session after
    those landed. If it turns out closed, remove `test.fail()` — the spec's assertions are already
@@ -1197,3 +1197,36 @@ not just `appEnv`, so it can tell "configured" from "not" — `wireSecurityProvi
 provider, confirm it starts) before merging — not something to trust from a code read alone, given
 `worker.ts` currently has zero guards to pattern-match against for this exact shape.
 
+## Environment note (WP-0 addendum, 2026-09-08) — `turbo` breakage is wider than previously recorded, and `pnpm -r` bails silently
+
+Re-confirmed the standing `turbo` failure once more this session: `pnpm exec turbo --version`
+produces no output and exits 127 — same failure class as the Phase 2 addendum and Phase 4 exit
+entries above, no new symptom there. Two things **are** new:
+
+1. **`pnpm build` is also broken, not just `lint`/`typecheck`/`test`/`test:coverage`.** Root
+   `package.json` routes all five through `turbo run <task>`; every prior entry in this file only
+   ever tested/mentioned three or four of them. There is no repo-wide turbo-free workaround for
+   `build` yet — use `pnpm --filter <name> run build` per package, and treat a genuine need for a
+   repo-wide production build on this host as still open.
+2. **`pnpm -r <task>` bails on the first package failure by default**, which silently understates
+   how much of the repository a gate run actually covered. Concretely: `pnpm -r
+--workspace-concurrency=4 run test` stopped after 27 of ~79 packages on
+   `packages/http/src/server.test.ts` timing out at 5000ms (see item 3) —
+   `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL`. Re-run with `pnpm -r --workspace-concurrency=4 --no-bail
+run test` to get a complete pass/fail picture instead of a partial one that looks like a full
+   run. `README.md`'s Scripts section and `docs/PROJECT_STATE.md`'s "Verified gates" section have
+   both been updated to say so.
+3. **A second, previously-undocumented concurrency-only timeout flake**:
+   `packages/http/src/server.test.ts` → `HTTP transport > public routes (Phase 9 hardening —
+storefront reads) > omits bearerAuth from the OpenAPI security requirement for a public route`.
+   Times out at 5000ms under `--workspace-concurrency=4`; passes in 530ms (all 28 tests in the
+   file) when re-run alone via `pnpm --filter @platform/http run test`. Same class of flake as the
+   already-documented `apps/runtime/src/security/wire-security-provisioning.test.ts` one, not the
+   same test. Re-run either file alone before treating a failure in it as a regression.
+
+Full-repo measurement this session (`--no-bail`, so complete): typecheck 79/79 packages, exit 0.
+Tests: 77 of 78 test-bearing packages pass; the one failure is item 3's already-known-flaky sibling,
+`wire-security-provisioning.test.ts`, timing out the same way it always has. `pnpm arch`: 0
+violations, 1855 modules, 7492 dependencies cruised. Recorded in full in `docs/PROJECT_STATE.md`'s
+"Verified gates" section — this entry exists so the turbo/bail/flake facts specifically don't get
+lost the way the pre-3.0A history in that file did.
