@@ -45,81 +45,120 @@ independently re-verified in this session before this WP was written:
 
 ## Tasks
 
-- [ ] **T11.1 — Register the finance consumers.**
-      Register `PaymentsCapturedConsumer` and `RefundsIssuedConsumer` with the `ConsumerSupervisor`
-      in `apps/runtime/src/worker.ts`, following the exact pattern
-      `buildOrdersPaidConsumerRuntimes` establishes at `worker.ts:63` (verified in this session:
-      the call site exists, imports `buildOrdersPaidConsumerRuntimes` from
-      `./consumers/orders-paid.consumers`, and registers it in a `for` loop over
-      `supervisor.register(...)`). Same consumer-group convention, same processed-event store, same
-      dead-letter store as that existing registration.
+- [x] **T11.1 — Register the finance consumers.**
+      Registered via a new `apps/runtime/src/consumers/finance-settlement.consumers.ts`
+      (`buildFinanceSettlementConsumerRuntimes`), wired into `worker.ts` in a `for` loop right
+      after `buildOrdersPaidConsumerRuntimes`'s, same consumer-group/processed-event/dead-letter
+      envelope (`buildProcessedConsumer`). One deviation from a literal read of this task, found by
+      tracing the actual code rather than assumed: `PaymentsCapturedConsumer`/`RefundsIssuedConsumer`
+      call `journals.append(journal)` with no `tx`, which `PrismaJournalRepository.append` rejects
+      outright (ADR-0003) — the exact non-atomic-append hazard `FinanceOrdersPaidConsumer` already
+      exists to fix for `OrdersPaidConsumer`. Registering the bare classes directly would have
+      thrown on every real payment/refund in production. Fixed the same way: two new atomic
+      wrapper classes (`FinancePaymentsCapturedConsumer`/`FinanceRefundsIssuedConsumer`) implement
+      `handleAtomic`, wrapping `journals` in a fresh `TxBoundJournalRepository` (exported from
+      `orders-paid.consumers.ts`) per call, and both get a `unitOfWork` — a ledger append is not
+      idempotent by itself. Both consumer classes exported from `@platform/finance`'s barrel
+      (they were not before). Tests: `finance-settlement.consumers.test.ts`.
 
-- [ ] **T11.2 — Update the boot guard's message, deliberately, as the record of the gap closing.**
-      `apps/runtime/src/api.ts` defines `assertProductionIntegrationPortsConfigured` (function at
-      `:203`), whose current message (verified at `:229`) reads
-      `"unregistered: PaymentsCapturedConsumer and RefundsIssuedConsumer ..."`.
-      `apps/runtime/src/composition.test.ts` (around `:315`) asserts on that exact text and will
-      fail once T11.1 lands — that failure is expected and correct. Update the guard's message and
-      the test's assertion together, in the same commit as T11.1, so the diff reads as "gap closed"
-      rather than "test broken."
+- [x] **T11.2 — Update the boot guard's message, deliberately, as the record of the gap closing.**
+      `assertProductionIntegrationPortsConfigured`'s doc comment and thrown message both updated to
+      state all three consumers (`OrdersPaidConsumer`, `PaymentsCapturedConsumer`,
+      `RefundsIssuedConsumer`) are registered; `composition.test.ts`'s assertions updated to match
+      (pin the new text, refuse the old "nothing instantiates them"/"registers exactly one
+      consumer" phrasings), landed in the same change as T11.1.
 
-- [ ] **T11.3 — Backfill.**
-      Write an idempotent, re-runnable backfill for fee/contra entries missed since payment capture
-      went live (i.e. for every already-captured payment and already-issued refund with no
-      corresponding finance entry). Idempotent means: running it twice produces the same ledger
-      state as running it once. A backfill that double-posts is worse than the gap it closes — test
-      that explicitly (run it twice in a test, assert entry counts are unchanged the second time).
+- [x] **T11.3 — Backfill.**
+      `apps/runtime/src/backfill/finance-settlement-backfill.ts` — a pure, injected-ports function
+      (`PaymentSettlementSource` read port + Finance's `JournalRepository` + a `unitOfWork`), so it
+      is unit-testable against seeded in-memory fixtures with no database
+      (`finance-settlement-backfill.test.ts`, 6 tests: posts missing fee/contra entries, idempotent
+      under a second run, skips an order whose fee already exists, posts only the missing refunds
+      when an order has some-but-not-all of its contra entries, touches nothing when there is
+      nothing to backfill). Idempotency strategy (stated once here, in full, in the file's own doc
+      comment too): per order, count existing fee/refund-memo journals via
+      `journals.findBySourceRef`, then post only the shortfall — refunds are matched by count after
+      sorting chronologically, since `Journal.sourceRef` carries no unique constraint and
+      pre-registration payments/refunds have no Kafka inbox marker to dedupe against.
+      `PrismaPaymentSettlementSource` (the real Prisma-backed adapter, reading `payments.
+    payment_intents`/`refunds` directly — that repository has no "list" method) and a runnable
+      `apps/runtime/src/backfill-finance-settlement.ts` script exist but are **NOT exercised
+      against a real database in this session** (no `DATABASE_URL_TEST` configured here) — said
+      explicitly in both files' own doc comments, per this task's instruction to say so rather than
+      claim it verified.
 
-- [ ] **T11.4 — Float to Decimal migration.**
-      Per the decision above: `Decimal(19,4)` for `licensing.prisma:79` (`UsageCounter.amount`),
-      `licensing.prisma:95` (`Credit.amount`), `pricing.prisma:66` (`PricingRule.value`);
-      `Decimal(18,8)` for `finance.prisma:133` (`ExchangeRate.rate`). Each of these lives in its own
-      schema file under `packages/db/prisma/schema/` with its own `@@schema(...)` annotation —
-      edit each file directly, keep its `@@schema` line, never edit a merged/generated copy.
-      Route the application layer for each field through `packages/domain/src/shared/
-  value-objects/money.ts`'s `Money` type so domain and persistence stop disagreeing.
-      Write one Prisma migration covering all four columns, with explicit, documented rounding for
-      existing rows (state the rounding rule — e.g. round-half-up to the column's declared
-      precision — in the migration file's own comment, not only in a commit message).
-      Test: a value round-trips through write and read unchanged; incrementing `UsageCounter.amount`
-      by a fractional value one thousand times produces an exact total (this is the worst case
-      named in the finding — drift compounds under repeated increment).
+- [x] **T11.4 — Float to Decimal migration.**
+      All four columns migrated exactly per the decision (`Decimal(19,4)`/`Decimal(18,8)`); see
+      migration `packages/db/prisma/schema/migrations/20260909000000_wp11_float_to_decimal_money_
+    columns/migration.sql` for the documented rounding rule (`ROUND(col::numeric, scale)`,
+      explicitly round-half-away-from-zero per Postgres's own documentation for that function, not
+      an implicit narrowing cast). **Deviation from this task's literal text, found by reading the
+      actual schema before touching it:** none of the four columns route through `packages/domain/
+    src/shared/value-objects/money.ts`'s `Money` — none of them HAVE a paired currency column
+      (`UsageCounter`/`Credit`/`PricingRule` have none at all; `ExchangeRate` has two currency
+      codes but they name a PAIR, not a single amount's denomination), and `UsageCounter.amount`
+      is not even a currency amount (it is paired with a `unit` column like `"gb"`/`"api_calls"`).
+      Money is currency+integer-minor-units by design; forcing any of these through it would either
+      be a type error or a silent misuse. Instead: `UsageCounter`/`Credit` (the two fields actually
+      mutated repeatedly over an aggregate's lifetime) got their own `decimal.js` `Decimal`
+      accumulator internally, added as a direct dependency of `@platform/licensing`; `PricingRule.
+    value`/`ExchangeRate.rate` (both write-once/immutable, no repeated-increment risk) just get a
+      correct one-time `Number(prismaDecimal)` conversion at their mapper boundary. This
+      deviation is a design note, not a defect, so it is recorded here rather than in
+      `docs/plans/BLOCKERS.md`. Tests: `usage-counter.test.ts`/`credit.test.ts` (1000-fractional-increment exact
+      total, mixed-sequence exactness, zero-remainder consumption, round-trip via the exact decimal
+      string), `mappers.test.ts` (licensing), `finance.mappers.test.ts`, `pricing-registry.mappers.
+    test.ts` (Prisma.Decimal-shaped round-trip for the other two).
 
-- [ ] **T11.5 — Prove the CDC path in staging, without removing the relay.**
-      In a staging environment with CDC as the publication path and the relay disabled: verify
-      every outbox row reaches Kafka exactly once, `confirmed_flush_lsn` advances
-      (`apps/runtime/src/scheduler.ts:216` already tracks it), and connector restart neither
-      duplicates nor drops. Explicitly test connector-down-and-recovering, slot-lag-growing, and
-      Kafka-unavailable. **If no staging environment is reachable from this session, do not
-      simulate one and do not claim this task done** — write the exact reproduction steps and the
-      staging access this task needs into `docs/plans/BLOCKERS.md`, leave the task unchecked, and
-      continue to T11.6. This is the one task in this WP that a local-only session may not be able
-      to close.
+- [ ] **T11.5 — Prove the CDC path in staging, without removing the relay.** **BLOCKED — no
+      staging cluster reachable from this session, per this task's own instruction.** Both
+      publication paths (`packages/messaging/src/outbox/outbox-relay.ts`, `infrastructure/docker/
+    debezium/outbox-connector.json`) and the existing CDC health signals
+      (`scheduler.ts`'s `outbox-prune` slot check, its `cdc-watchdog` job) were read in full. The
+      exact verification procedure (8 numbered steps: provision, disable the relay, baseline the
+      slot, happy path, connector-down-and-recovering, slot-lag-growing, Kafka-unavailable, record
+      evidence) and the staging access it needs are written into `docs/plans/BLOCKERS.md`'s T11.5
+      entry. Left unchecked, not simulated. F-06 stays open, narrowed to exactly this proof.
 
-- [ ] **T11.6 — Settlement invariant regression suite.**
-      These lock the money-path behaviour before `WP-10`'s tenancy refactor (which touches
-      repository construction broadly) has a chance to silently change it: - Duplicate webhook delivery → one settlement. - Duplicate captured event → one paid order, one paid event. - Concurrent settlement of the same order → one transition; the loser observes the terminal
-      state rather than erroring ambiguously. - Retry after partial failure → no double posting. - Refund after capture → one contra entry.
-      Wire all five into `pnpm --filter <name> run test` for the owning package(s) and confirm they
-      run under the repo-wide `pnpm -r --workspace-concurrency=4 run test` per
-      `../UNIFIED-ROADMAP.md` §3.
+- [x] **T11.6 — Settlement invariant regression suite.**
+      All five already have or now have a citable test: duplicate webhook delivery →
+      `services/payments/src/capture-crash-recovery.test.ts` ("Task 12 — duplicate webhook
+      delivery"); concurrent settlement / retry-after-partial-failure → the same file's "Task 11"/
+      "Task 9" describe blocks (pre-existing, re-confirmed rather than duplicated); duplicate
+      captured event → one paid order, one paid event → a new explicit test added to
+      `services/orders/src/interfaces/payment-captured.consumer.test.ts` asserting BOTH the order
+      status and the exact count of `orders.order.paid.v1` outbox entries after a redelivered
+      capture (the pre-existing test only asserted status); refund after capture → one contra entry
+      → a new end-to-end test in `finance-settlement.consumers.test.ts` chaining
+      `FinancePaymentsCapturedConsumer` then `FinanceRefundsIssuedConsumer` on the same order and
+      asserting exactly one fee entry and exactly one contra entry. All run under each package's
+      own `pnpm --filter <name> run test` and the repo-wide gate.
 
 ## Definition of done
 
-- [ ] A captured payment posts exactly one fee entry; a refund posts exactly one contra entry;
-      replaying either changes nothing.
-- [ ] The backfill is idempotent under repeat execution (proven by a test running it twice).
-- [ ] No financial column is a `Float`; existing rows are migrated with documented rounding; one
+- [x] A captured payment posts exactly one fee entry; a refund posts exactly one contra entry;
+      replaying either changes nothing. (At the system level — the Postgres inbox marker + atomic
+      transaction the consumer runtime wraps every handler in, per ADR-0005. The bare consumer
+      class alone is NOT self-idempotent — same as `FinanceOrdersPaidConsumer` before it — which is
+      exactly why both get a `unitOfWork`; `finance-settlement.consumers.test.ts`'s "replaying...
+      posts the fee entry twice at this layer" test pins that division of responsibility on
+      purpose, so it is not mistaken for a regression later.)
+- [x] The backfill is idempotent under repeat execution (proven by a test running it twice).
+- [x] No financial column is a `Float`; existing rows are migrated with documented rounding; one
       thousand fractional increments to a usage counter produce an exact total.
 - [ ] T11.5 either demonstrates exactly-once CDC delivery across a connector restart with written
       evidence, or is left unchecked with a `BLOCKERS.md` entry explaining what staging access it
-      needs — never silently skipped.
-- [ ] All five settlement-invariant scenarios pass.
-- [ ] `docs/architecture/23-platform-gap-register.md` and `docs/KNOWN_GAPS.md` gain an entry for
+      needs — never silently skipped. **Left unchecked, per its own instruction — see T11.5 above
+      and `docs/plans/BLOCKERS.md`.**
+- [x] All five settlement-invariant scenarios pass.
+- [x] `docs/architecture/23-platform-gap-register.md` and `docs/KNOWN_GAPS.md` gain an entry for
       each of F-06 (narrowed: CDC proven or not), F-07 (closed), F-11 (closed), cross-referenced to
       this file, in the same table shape `WP-0`'s T0.4 established.
-- [ ] Repo-wide gates green per `../UNIFIED-ROADMAP.md` §3, plus `pnpm arch` (schema files live
-      under `packages/db`, a `packages/*` path).
+- [x] Repo-wide gates green per `../UNIFIED-ROADMAP.md` §3, plus `pnpm arch` (schema files live
+      under `packages/db`, a `packages/*` path). `pnpm -r --workspace-concurrency=4 run typecheck`
+      — clean, all workspaces. `pnpm -r --workspace-concurrency=4 --no-bail run test` — every
+      package green, zero failures (not even either of the two documented concurrency-only flakes
+      this run). `pnpm arch` — 0 violations, 3233 modules, 12170 dependencies cruised.
 
 ## Known traps
 

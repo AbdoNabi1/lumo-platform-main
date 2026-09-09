@@ -1404,3 +1404,96 @@ wire-security-provisioning.test.ts`, matching this file's already-documented con
 exactly; re-run alone (`pnpm --filter @platform/runtime run test -- src/security/
 wire-security-provisioning.test.ts`) and all 34 files/224 tests passed. `pnpm arch` — 0 violations,
 3228 modules, 12143 dependencies cruised.
+
+## T11.5 — CDC exactly-once proof left unchecked: no staging environment reachable from this session
+
+**Expected:** `WP-11-financial-integrity.md`'s T11.5 asks to prove, in a staging environment with
+CDC as the publication path and the relay disabled, that every outbox row reaches Kafka exactly
+once, `confirmed_flush_lsn` advances, and connector restart neither duplicates nor drops —
+explicitly covering connector-down-and-recovering, slot-lag-growing, and Kafka-unavailable. The
+WP's own instruction: if no staging environment is reachable, do not simulate one and do not claim
+this done — write the reproduction steps and the access this needs into `BLOCKERS.md`, leave the
+task unchecked, continue to T11.6.
+
+**Found:** this session has no live cluster access — same limitation `WP-12`'s Tier 3 hit (no
+Docker host, no staging Kafka/Postgres/Kafka-Connect reachable from here). Both publication paths
+were read directly, not assumed:
+
+- `packages/messaging/src/outbox/outbox-relay.ts` — `OutboxRelay.drainOnce()` polls
+  `OutboxStore.fetchPending`, publishes the batch, then `markPublished`s it. Its own doc comment
+  states the production model plainly: "In production Debezium (CDC) streams the outbox table
+  directly, so this relay is not deployed." Gated by `OUTBOX_RELAY_ENABLED`
+  (`apps/runtime/src/outbox-relay-runtime.ts:32`) — `startOutboxRelay` returns `null` when it is
+  off, and single-flights across worker instances via `RedisDistributedLock` when it is on.
+- `infrastructure/docker/debezium/outbox-connector.json` — a `io.debezium.connector.postgresql.
+PostgresConnector` on `pgoutput`, publication `lumo_outbox`, slot `lumo_outbox`, `topic.prefix:
+"lumo"`, routing via `transforms.outbox` (Debezium's own outbox `EventRouter`, keyed by the
+  `topic` column) straight onto the routed Kafka topic — the SAME `platform.outbox` table the relay
+  above also drains.
+- `apps/runtime/src/scheduler.ts`'s `outbox-prune` job (~line 195-224) already gates on CDC health
+  before deleting anything: it queries `SELECT confirmed_flush_lsn FROM pg_replication_slots WHERE
+slot_name = 'lumo_outbox'` and skips pruning entirely (logging a warning) if the slot is missing
+  or has never confirmed a flush — this is the exact signal T11.5 asks to observe advancing.
+- `apps/runtime/src/scheduler.ts`'s `cdc-watchdog` job (`runCdcWatchdog`, ~line 83) separately polls
+  Kafka Connect's `GET /connectors/<name>/status` per connector in `KAFKA_CONNECT_CDC_CONNECTORS`,
+  records per-task state via `metrics.recordCdcTaskState`, and restarts a `FAILED` task up to a
+  capped rate (`maxRestarts` within `restartWindowMs`) before giving up and logging loudly. No-ops
+  entirely when `KAFKA_CONNECT_URL` is unset (true in every environment reachable from this
+  session).
+
+**Why blocked:** no Docker host, no staging Postgres/Kafka/Kafka-Connect cluster, and no
+`KAFKA_CONNECT_URL`/live replication slot reachable from this session — there is nothing to point
+either the watchdog or a manual verification pass at. Simulating this (e.g. asserting against a
+mocked Connect REST response) would prove the mock, not Debezium's actual exactly-once behavior
+under connector restart, slot lag, or a Kafka outage — exactly what the WP's own instruction says
+not to do.
+
+**Exact verification procedure for whoever has staging access — run in this order:**
+
+1. **Provision.** Apply `infrastructure/k8s/70-debezium.yaml` (or run
+   `infrastructure/docker/debezium/register-connector.sh` against a docker-compose stack) against a
+   staging Postgres with logical replication enabled (`wal_level = logical`) and a reachable Kafka
+   Connect. Confirm the connector reaches `RUNNING`/`RUNNING` (connector/task) via
+   `GET $KAFKA_CONNECT_URL/connectors/lumo-outbox/status`.
+2. **Disable the relay.** Set `OUTBOX_RELAY_ENABLED=false` (or leave it at its default-off) on every
+   worker instance for this test — T11.5 explicitly wants CDC as the ONLY publication path during
+   this proof, not both racing.
+3. **Baseline the slot.** `SELECT slot_name, confirmed_flush_lsn, active FROM pg_replication_slots
+WHERE slot_name = 'lumo_outbox';` — record the starting LSN.
+4. **Exactly-once, happy path.** Drive N real outbox-writing operations (e.g. N payment captures
+   through the real API, not a fabricated insert) end to end. For each: confirm exactly one message
+   lands on the routed Kafka topic (consume from the beginning of the topic partition, or check the
+   consuming context's own inbox/processed-event table shows exactly one processed row per
+   `messageId`) — not zero, not two. Re-check `confirmed_flush_lsn` advanced past the baseline.
+5. **Connector-down-and-recovering.** Stop the Kafka Connect worker (or `DELETE` the connector)
+   mid-stream, write M more outbox rows while it is down, then restart/re-`PUT` the SAME connector
+   config (same `name`, same `slot.name`/`publication.name` — never a new name, per this WP's own
+   "Known traps" and `WP-12`'s explicit warning against renaming it). Confirm all M rows are
+   delivered after recovery, each exactly once (no gap, no duplicate) — this is what proves the
+   replication slot correctly retained WAL across the outage rather than silently dropping it.
+6. **Slot-lag-growing.** Pause the connector (or block its network path) while continuing to write
+   outbox rows; watch `confirmed_flush_lsn` stop advancing while `pg_current_wal_lsn()` keeps
+   moving (growing lag) and confirm `cdc-watchdog`'s per-task state metric
+   (`recordCdcTaskState(connector, taskId, failed)`) reflects it, and that WAL is not being
+   truncated out from under the still-open slot (a replication slot pins WAL retention — confirm
+   disk usage grows rather than the slot silently losing data). Resume and confirm full catch-up
+   with no gap.
+7. **Kafka-unavailable.** Block the connector's path to the Kafka brokers (not Postgres) while
+   outbox rows keep being written. Confirm the connector's task transitions to `FAILED` (or retries
+   per `errors.max.retries`/`errors.retry.delay.max.ms` in `outbox-connector.json`) rather than
+   silently dropping records, that the watchdog's capped-restart logic
+   (`recordCdcWatchdogRestartSkipped` once `maxRestarts` is hit within `restartWindowMs`) does not
+   restart-loop forever, and that once Kafka is reachable again every row written during the outage
+   is still delivered exactly once.
+8. **Record the evidence** (LSNs before/after, message counts per step, screenshots or exported
+   metrics of `recordCdcTaskState`/`recordCdcWatchdogRestart*`) in this file or a linked report, and
+   only then check T11.5's box in `WP-11-financial-integrity.md`.
+
+**Access this task needs:** a staging (or disposable) Kubernetes/docker-compose environment with
+Postgres (logical replication enabled), Kafka, Kafka Connect + the Debezium Postgres connector
+plugin installed, and network-level control to simulate steps 5-7 (stop/restart the connector,
+block Kafka Connect ↔ Kafka traffic). None of this is reachable from this session.
+
+**Left unchecked** in `WP-11-financial-integrity.md`, per the WP's own instruction — T11.1, T11.2,
+T11.3, T11.4, and T11.6 are otherwise complete; F-06 (outbox publication model) stays open/narrowed
+to exactly this proof, not closed.
