@@ -1497,3 +1497,87 @@ block Kafka Connect ↔ Kafka traffic). None of this is reachable from this sess
 **Left unchecked** in `WP-11-financial-integrity.md`, per the WP's own instruction — T11.1, T11.2,
 T11.3, T11.4, and T11.6 are otherwise complete; F-06 (outbox publication model) stays open/narrowed
 to exactly this proof, not closed.
+
+## Infra stand-up session (2026-09-09) — Docker unavailable, cloud infra has untracked migrations, WP-11's migration not yet deployed anywhere
+
+**Expected:** per `MIGRATIONS.md` §1 (as it read before this session), this was to be "the first
+Docker-host session": start the local compose stack (`pnpm dev:up:infra`) and run
+`prisma migrate deploy` against a fresh Postgres 16, validating all local migrations including
+WP-11's new one, then run WP-11's backfill script against seeded data.
+
+**Found — Docker Desktop is not installed on this host at all**, not merely needing the
+interactive GUI start G-41's original note described: no `docker` CLI on PATH, no process, no
+install at any of the standard locations (`C:\Program Files\Docker\Docker\Docker Desktop.exe`,
+`%LOCALAPPDATA%\Docker\Docker Desktop.exe`, `C:\ProgramData\DockerDesktop`), no registry
+uninstall entry. Stopped here on the local-stack path per this WP's own governing rule ("stop and
+report rather than working around").
+
+**Found — the premise itself is stale.** `docs/operations/CLOUD_RUNBOOK.md` and
+`docs/PROJECT_STATE.md` both already record (since 2026-09-04/08, before this session) that the
+platform moved off local Docker onto managed cloud infrastructure — Supabase Postgres, Upstash
+Redis, Ory Network — and `.env` already carries live credentials for all three. `MIGRATIONS.md`
+§1's "must run against a fresh Postgres 16" framing was written for a Docker-host session that
+this platform no longer expects to have. Corrected in `MIGRATIONS.md` §1 directly (2026-09-09).
+
+**Read-only investigation against the live Supabase database** (explicit user direction: no writes
+this session — `prisma migrate status`, `pg_policies`/`pg_class` introspection, and `SELECT COUNT`
+only; connection role `postgres` confirmed `rolbypassrls=true` so counts are not an RLS artifact):
+
+1. **`prisma migrate status`**: the live database has 39 rows in `_prisma_migrations`. 37 of them
+   (`20260704000000_init` through `20260814000000_a21_sprint5x_column_and_index_reconciliation`)
+   were bulk-applied in an 11-minute window on 2026-08-23 (06:59:23–07:10:10) — one `migrate
+deploy` run, not incremental. **WP-11's own migration
+   (`20260909000000_wp11_float_to_decimal_money_columns`) is confirmed genuinely unapplied
+   anywhere** — this is the one real, current gap `MIGRATIONS.md` §1 was pointing at, just against
+   cloud Postgres instead of a fresh local one.
+2. **Two migrations exist in the live database that do not exist anywhere in this repo's git
+   history, on any branch**: `20260823000000_rls_tenant_isolation` (applied 07:11:18, same day as
+   the bulk run) and `20260823010000_rls_nullable_tenant_write_check` (applied 13:50:24, six and a
+   half hours later — a separate intervention). Someone applied real RLS DDL directly against the
+   live database without ever committing the migration files. Prisma's migration tracking stores a
+   checksum, not the SQL text, so the original files cannot be recovered — reconstructed instead
+   from live introspection (`pg_policies`, `pg_class.relrowsecurity`/`relforcerowsecurity`): **130
+   `tenant_isolation` policies across 128 business tables**, `ENABLE`+`FORCE ROW LEVEL SECURITY`,
+   `USING`/`WITH CHECK` both `tenant_id = current_setting('app.tenant_id', true)`; `platform.outbox`
+   and `platform.audit_events` get the nullable variant
+   (`(tenant_id IS NULL) OR (tenant_id = current_setting(...))`) matching the second migration's
+   name. **This means the RLS layer `MIGRATIONS.md` §3 lists as a future to-do is in fact already
+   live in production.** This is directly relevant to `WP-10` (multi-tenant runtime): whoever
+   designs that WP needs to design against this existing RLS layer as defense-in-depth alongside
+   the adapter-level scoping, not assume it doesn't exist yet.
+3. **Row counts, WP-11's four affected tables**: `licensing.usage_counters`, `licensing.credits`,
+   `pricing.pricing_rules`, `finance.exchange_rates` are all genuinely 0 rows (verified with a
+   role confirmed to bypass RLS, so this isn't an RLS false-negative). The WP-11 migration file's
+   own comment claimed this but for a stale reason ("schema has never run against a populated
+   database") — corrected in the migration file directly (2026-09-09): the schema HAS run against
+   a real, populated database (3 seeded orders, 13 seeded products per `catalog.products`/
+   `orders.orders` counts), these four specific tables just happen to hold nothing.
+4. **No payment has ever been captured on this database**: `payments.payment_intents`,
+   `payments.refunds`, and `finance.journals` are all 0 rows, despite `orders.orders` holding 3
+   rows including (per `CLOUD_RUNBOOK.md` Task 8) demo orders in placed/paid/refunded states — the
+   demo seed wrote order status directly rather than driving the real payment-capture flow. **This
+   means WP-11's backfill (`T11.3`) has no real historical work to do on this database; it is
+   forward-looking only, not yet exercised against genuine settlement data.** Consistent with
+   `WP-11-financial-integrity.md`'s own T11.3 note that the real Prisma-backed backfill adapter is
+   untested against a live database.
+
+**Not done, deliberately, this session:** `prisma migrate deploy` was NOT run against the live
+Supabase database. It is real, shared infrastructure already holding seeded demo data and an
+undocumented RLS history — deploying WP-11's pending migration there needs a backup first
+(`scripts/ops/backup-postgres.sh` exists for this) and explicit operator sign-off, made with this
+report in hand rather than before it. The two untracked RLS migration files also do not yet exist
+in this repo — reconstructing them from the introspection above and committing them (so the repo's
+migration history matches what is actually live) should happen before any further migration is
+deployed against this database, so `migrate deploy`'s own drift detection has an accurate baseline
+to compare against.
+
+**What this unblocks:** the "is the cloud database actually reachable and in what state" question
+that blocked T11.5 (CDC proof) and WP-12 Tier 3 (staging redeploy) is now answered for Postgres
+specifically — it is reachable, mostly in sync, and the exact gap is enumerated above. Kafka/Kafka
+Connect/staging cluster access (T11.5's actual blocker) remains unaddressed; nothing here changes
+that entry's status.
+
+**Next action needed (operator decision, not this session's to make):** approve `prisma migrate
+deploy` of WP-11's pending migration against the live Supabase database (after a backup), and
+decide whether/how to commit the two reconstructed RLS migration files back into this repo so the
+migration history stops drifting from what is actually deployed.

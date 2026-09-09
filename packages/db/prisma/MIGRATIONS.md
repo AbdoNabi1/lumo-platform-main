@@ -16,10 +16,30 @@ Prisma-7 `prisma.config.ts` migration (§4) will pin it explicitly via `migratio
 ## 1. Workflow
 
 - **Bootstrap:** the initial migration (`20260704000000_init`) was generated **offline** with
-  `prisma migrate diff --from-empty --to-schema-datamodel prisma/schema --script` (this
-  environment has no database host). It has **not run against a real database yet** — the first
-  Docker-host session must run `prisma migrate deploy` against a fresh Postgres 16 and fix any
-  drift before anything else builds on it.
+  `prisma migrate diff --from-empty --to-schema-datamodel prisma/schema --script` (that particular
+  environment had no database host). **This paragraph is now stale — corrected 2026-09-09.** The
+  platform since moved off local Docker onto managed cloud infrastructure (Supabase Postgres,
+  `docs/operations/CLOUD_RUNBOOK.md`), and `20260704000000_init` through
+  `20260814000000_a21_sprint5x_column_and_index_reconciliation` (37 migrations) were bulk-applied
+  there on 2026-08-23 (`prisma migrate status` against the live `.env`-configured `DATABASE_URL`
+  shows all 37 with a `finished_at` within an 11-minute window that day). Two more migrations exist
+  **in the live database's `_prisma_migrations` table but nowhere in this repo's git history, on
+  any branch**: `20260823000000_rls_tenant_isolation` and `20260823010000_rls_nullable_tenant_write_
+check` — applied 2026-08-23 07:11 and 13:50 respectively (six and a half hours apart, so two
+  separate manual interventions, not one script). Reconstructed from the live schema (Prisma stores
+  a checksum, not the SQL text, so the original files are not recoverable): every business table
+  gets `ENABLE`+`FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy
+  (`tenant_id = current_setting('app.tenant_id', true)` for both `USING` and `WITH CHECK`, 130
+  policies total across 128 tables), except `platform.outbox`/`platform.audit_events`, whose
+  `USING` clause is `(tenant_id IS NULL) OR (tenant_id = current_setting(...))` — matching the
+  second migration's "nullable" name and this file's own §3 RLS plan below. **This means the RLS
+  layer §3 describes as a to-do is in fact already live in production** — see
+  `docs/plans/BLOCKERS.md`'s 2026-09-09 entry for the full drift report and what committing
+  reconstructed migration files back into this repo needs before it's safe. As of this date, the
+  only migration in this repo's local files not yet applied to the live database is WP-11's own
+  `20260909000000_wp11_float_to_decimal_money_columns` — confirmed via read-only `prisma migrate
+status`, not yet deployed (see the same BLOCKERS.md entry for why `migrate deploy` was not run
+  against live infrastructure without explicit sign-off).
 - **Development:** `pnpm db:migrate` (`prisma migrate dev`) against local compose Postgres —
   never edit an applied migration; always add a new one.
 - **Production:** `prisma migrate deploy` in CD, before the new app version serves traffic.

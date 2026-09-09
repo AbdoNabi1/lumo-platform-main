@@ -29,10 +29,24 @@
 -- `docs/plans/BLOCKERS.md`'s WP-11 entry for why `Money` was not widened to wrap these fields —
 -- none of the four have a paired currency column, so they are not `Money`-shaped values).
 --
--- Expand-only, in place: no data is dropped, no table is renamed. Every existing row (this
--- schema has never run against a populated production database — see `MIGRATIONS.md` §1 — so in
--- practice there are no existing rows to round today) is rewritten through the same explicit
--- rounding rule a fresh row would get from the application layer going forward.
+-- Expand-only, in place: no data is dropped, no table is renamed. Every existing row is rewritten
+-- through the same explicit rounding rule a fresh row would get from the application layer going
+-- forward.
+--
+-- CORRECTED 2026-09-09: this comment originally claimed "this schema has never run against a
+-- populated production database... so in practice there are no existing rows to round today,"
+-- citing `MIGRATIONS.md` §1. That premise was stale — the schema HAS run against a real, live
+-- Supabase database since 2026-08-23 (37 of this repo's other migrations, plus two RLS migrations
+-- applied there directly and never committed to this repo — see `MIGRATIONS.md` §1's own
+-- 2026-09-09 correction and `docs/plans/BLOCKERS.md`), and that database holds real seeded data
+-- (3 orders, 13 products). The CONCLUSION is still correct, just not for the reason originally
+-- given: a direct read-only query against the four tables below on 2026-09-09
+-- (`licensing.usage_counters`, `licensing.credits`, `pricing.pricing_rules`,
+-- `finance.exchange_rates`), from a role confirmed to bypass RLS, found all four genuinely empty
+-- (0 rows) — no usage counter, credit, pricing rule, or exchange rate has ever been written on
+-- that database. So the rounding rule below has no historical rows to prove itself against yet;
+-- it is exercised only by `usage-counter.test.ts`/`credit.test.ts`'s 1000-fractional-increment
+-- tests and by whatever row this migration is next applied against.
 
 ALTER TABLE "licensing"."usage_counters"
   ALTER COLUMN "amount" TYPE numeric(19, 4) USING ROUND("amount"::numeric, 4);

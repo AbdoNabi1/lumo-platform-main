@@ -43,6 +43,26 @@ Measured directly, not copied from any prior document — this Windows host's `t
 why `README.md`'s Scripts section now calls out `--no-bail` explicitly — a repo-wide gate run
 without it understates how much of the repository was actually verified, silently.
 
+## Migration chain (2026-09-09, infra stand-up session)
+
+Local Docker stack could not be started — Docker Desktop is not installed on this host at all
+(confirmed: no CLI, no process, no install at any standard path, no registry entry), a stronger
+blocker than G-41's original "needs a GUI start" note. `docs/KNOWN_GAPS.md` G-41 already records
+the platform moved off local Docker to managed cloud infra (Supabase/Upstash/Ory) — this session
+validated the migration chain there instead, **read-only, no writes**, per explicit user direction:
+
+| Command                                                                  | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prisma migrate status` (from `packages/db`, live `.env` `DATABASE_URL`) | **Diverged history, not a clean pending-list.** 39 migrations recorded live vs. 39 files locally, but not the same 39: WP-11's `20260909000000_wp11_float_to_decimal_money_columns` is pending (confirmed genuinely unapplied); `20260823000000_rls_tenant_isolation` and `20260823010000_rls_nullable_tenant_write_check` are applied live but absent from this repo's git history entirely. See `docs/plans/BLOCKERS.md`'s 2026-09-09 entry for the full drift report (RLS policy reconstruction, row counts, payment-capture history). |
+
+`prisma migrate deploy` was **not** run against the live database this session — it holds real
+seeded demo data and undocumented migration history; deploying WP-11's pending migration there
+needs a backup (`scripts/ops/backup-postgres.sh`) and explicit operator sign-off first. WP-11's
+backfill script was consequently not run against it either — moot regardless, since
+`payments.payment_intents`/`refunds`/`finance.journals` are all confirmed 0 rows on that database
+(no payment has ever been captured through the real flow there), so the backfill has no historical
+work to do on this database yet.
+
 ## Completed sprints
 
 | Sprint | Scope                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Validation                                                                                        |
