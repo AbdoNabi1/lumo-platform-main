@@ -33,6 +33,11 @@ export type { ControllerResponse } from "./interfaces/presenter";
 // rather than going through `wireFinance`'s controller (consumers call the application layer only).
 export type { JournalRepository, LedgerEntryRepository } from "./domain/repositories";
 export { OrdersPaidConsumer, type FinanceConsumerDeps } from "./interfaces/finance-consumers";
+// WP-11 (F-11): same reasoning as OrdersPaidConsumer above — `PaymentsCapturedConsumer`/
+// `RefundsIssuedConsumer` had zero callers (composition.test.ts's own regression test asserted
+// exactly that) until the runtime worker registered them against `payments.payment_intent.
+// captured`/`.refunded`.
+export { PaymentsCapturedConsumer, RefundsIssuedConsumer } from "./interfaces/finance-consumers";
 export {
   PrismaJournalRepository,
   type PrismaJournalDeps,

@@ -304,20 +304,22 @@ describe("api entrypoint", () => {
     expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
       /financePort is different in kind/,
     );
-    // This sentence has now been wrong in BOTH directions, so it is pinned in both:
+    // This sentence has been wrong in multiple directions over time, so its CURRENT (correct)
+    // state is pinned directly rather than by another round of "must not say X":
     //  - Before 1b9c639 it claimed Finance "already receives" these postings via
     //    PaymentsCapturedConsumer/RefundsIssuedConsumer — false, neither was registered.
-    //  - Between Task 17b and this fix it claimed worker.ts "registers exactly one consumer" and
+    //  - Between Task 17b and that fix it claimed worker.ts "registers exactly one consumer" and
     //    "nothing for Finance" — false in the other direction, since Task 17b registered Finance's
     //    OrdersPaidConsumer over orders.order.paid (buildOrdersPaidConsumerRuntimes).
-    // The message must state the registered half and the still-unregistered half distinctly.
+    //  - WP-11 (F-11) registered the remaining two (buildFinanceSettlementConsumerRuntimes), so
+    //    the message now states all three are registered — the gap it used to describe is closed.
     expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /Finance's OrdersPaidConsumer IS registered with the Kafka consumer fleet/,
+      /OrdersPaidConsumer, PaymentsCapturedConsumer, and RefundsIssuedConsumer are ALL registered/,
     );
-    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /PaymentsCapturedConsumer and RefundsIssuedConsumer[\s\S]*nothing instantiates them/,
+    // ...and must NOT still claim either consumer is unregistered.
+    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).not.toThrow(
+      /nothing instantiates them/,
     );
-    // ...and must NOT still claim the worker registers only one consumer.
     expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).not.toThrow(
       /registers exactly one consumer/,
     );

@@ -38,8 +38,9 @@ function silentLogger(): Logger {
 
 function wire() {
   const idGenerator = sequentialIds();
+  const outboxStore = new InMemoryOutboxStore();
   const outbox = new OutboxWriter({
-    store: new InMemoryOutboxStore(),
+    store: outboxStore,
     translator: new OrderEventTranslator(),
     serializer: new InMemoryEventSerializer(),
     clock,
@@ -50,7 +51,7 @@ function wire() {
   const placeOrder = new PlaceOrder({ orders, unitOfWork, idGenerator, clock });
   const markOrderPaid = new MarkOrderPaid({ orders, unitOfWork, idGenerator, clock });
   const consumer = new PaymentCapturedConsumer({ markOrderPaid, logger: silentLogger() });
-  return { placeOrder, consumer, orders };
+  return { placeOrder, consumer, orders, outbox: outboxStore };
 }
 
 function capturedEvent(
@@ -142,6 +143,18 @@ describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
     await expect(consumer.handle(capturedEvent(orderId, "msg-2"))).resolves.toBeUndefined();
 
     expect((await orders.findById(orderId))?.status).toBe("paid");
+  });
+
+  it("WP-11 (T11.6): a duplicate captured event produces one paid order and exactly one orders.order.paid event — the guard in markPaid throws before the second call ever raises a second one", async () => {
+    const { placeOrder, consumer, orders, outbox } = wire();
+    const orderId = await placeAnOrder(placeOrder);
+
+    await consumer.handle(capturedEvent(orderId, "msg-1"));
+    await consumer.handle(capturedEvent(orderId, "msg-2")); // redelivery of the same fact
+
+    expect((await orders.findById(orderId))?.status).toBe("paid");
+    const paidEntries = outbox.snapshot().filter((entry) => entry.topic === "orders.order.paid.v1");
+    expect(paidEntries).toHaveLength(1);
   });
 
   it("throws NotFound for an unknown order (retryable cross-context race)", async () => {

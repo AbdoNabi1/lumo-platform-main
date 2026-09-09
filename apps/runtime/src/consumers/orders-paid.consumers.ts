@@ -76,9 +76,11 @@ export interface OrderPaidPayload {
  * Chart-of-accounts references Finance's `LedgerPoster` posts commerce events to. Duplicated
  * verbatim from `apps/admin/src/composition.ts`'s private `DEFAULT_FINANCE_POSTING_ACCOUNTS`
  * (the two apps do not import each other), so the ledger this worker writes uses the same accounts
- * the admin surface's Finance screens read.
+ * the admin surface's Finance screens read. Exported (WP-11) for `finance-settlement.consumers.ts`
+ * to reuse directly — that file lives in this same app, so duplicating it a second time would
+ * repeat the cross-app justification above for no reason.
  */
-const DEFAULT_FINANCE_POSTING_ACCOUNTS: PostingAccounts = {
+export const DEFAULT_FINANCE_POSTING_ACCOUNTS: PostingAccounts = {
   revenue: "4000-REVENUE",
   receivable: "1200-ACCOUNTS-RECEIVABLE",
   cogs: "5000-COGS",
@@ -118,9 +120,11 @@ export function pointsForPaidOrder(totalAmountMinor: number): number {
  * which a redelivered `orders.order.paid` posted a SECOND balanced journal entry for the same
  * order (fresh `idGenerator.generate()` id; `Journal.sourceRef` carries only an index, no unique
  * constraint, so the database would not have stopped it either). See
- * {@link FinanceOrdersPaidConsumer.handleAtomic}.
+ * {@link FinanceOrdersPaidConsumer.handleAtomic}. Exported (WP-11) — `finance-settlement.
+ * consumers.ts` needs the identical wrapper for `PaymentsCapturedConsumer`/`RefundsIssuedConsumer`,
+ * which have the exact same non-atomic-append problem `FinanceOrdersPaidConsumer` was built to fix.
  */
-class TxBoundJournalRepository implements JournalRepository {
+export class TxBoundJournalRepository implements JournalRepository {
   private readonly inner: JournalRepository;
   private readonly tx: TransactionClient;
 

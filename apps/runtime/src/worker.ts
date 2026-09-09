@@ -7,6 +7,7 @@ import {
   buildTrackingIngestRuntime,
   type RuntimeCore,
 } from "./composition";
+import { buildFinanceSettlementConsumerRuntimes } from "./consumers/finance-settlement.consumers";
 import { buildOrdersPaidConsumerRuntimes } from "./consumers/orders-paid.consumers";
 import { startHealthServer } from "./health-server";
 import { startOutboxRelay } from "./outbox-relay-runtime";
@@ -61,6 +62,14 @@ export async function startWorker(
   // ungated; a flag here would be a speculative switch whose "off" position is a silently broken
   // paid-order flow.
   for (const consumerRuntime of buildOrdersPaidConsumerRuntimes(runtime, runtime.metrics)) {
+    supervisor.register(consumerRuntime);
+  }
+
+  // WP-11 (F-11): `PaymentsCapturedConsumer`/`RefundsIssuedConsumer` (`services/finance`) had zero
+  // callers — every captured payment posted no fee entry and every issued refund posted no contra
+  // entry, silently. Registered unconditionally, same reasoning as `buildOrdersPaidConsumerRuntimes`
+  // just above: needs only Kafka + Prisma, always present wherever the worker runs at all.
+  for (const consumerRuntime of buildFinanceSettlementConsumerRuntimes(runtime, runtime.metrics)) {
     supervisor.register(consumerRuntime);
   }
 

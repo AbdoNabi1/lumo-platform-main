@@ -181,17 +181,17 @@ export function assertProductionObjectStorageConfigured(
  *     `paymentRef` to force the transition would put wrong-but-plausible entries in Finance's
  *     ledger. Pinned by an integration test over the real composition:
  *     `apps/admin/src/http/cart-checkout-pricing-security.e2e.test.ts`.
- *     Separately, the pair this port actually shadows is still unregistered —
- *     `PaymentsCapturedConsumer`/`RefundsIssuedConsumer`
- *     (`services/finance/src/interfaces/finance-consumers.ts`), which cover
- *     `payments.payment_intent.captured`/`.refunded`: nothing instantiates those two, so a
- *     captured payment's fee entry or an issued refund's contra entry still posts nowhere, neither
- *     synchronously (Payments' own `FinancePort` is a permanent no-op stub,
- *     `InMemoryFinanceAdapter`) nor asynchronously. That remains an open gap this guard does not
- *     close — wiring those two into `worker.ts` alongside the paid-order four is a separate,
- *     scoped follow-up. `financePort` stays unwired here regardless, and the paid-order wiring
- *     strengthens rather than weakens that: a synchronous adapter here would be a second,
- *     uncoordinated write path over the same ledger the consumer fleet now writes.
+ *     The pair this port actually shadows (`PaymentsCapturedConsumer`/`RefundsIssuedConsumer`,
+ *     `services/finance/src/interfaces/finance-consumers.ts`, covering
+ *     `payments.payment_intent.captured`/`.refunded`) is now registered too (WP-11, F-11 closed):
+ *     `worker.ts` builds them through `buildFinanceSettlementConsumerRuntimes`
+ *     (`apps/runtime/src/consumers/finance-settlement.consumers.ts`), wrapped for the atomic path
+ *     exactly like `OrdersPaidConsumer` above (a ledger append is not idempotent by itself). A
+ *     captured payment now posts its fee entry and an issued refund now posts its contra entry,
+ *     asynchronously, the same way the paid-order revenue entry does. `financePort` stays unwired
+ *     here regardless — Payments' own `FinancePort` remains a permanent no-op stub
+ *     (`InMemoryFinanceAdapter`), by design: a synchronous adapter here would be a second,
+ *     uncoordinated write path over the same ledger the consumer fleet writes to asynchronously.
  * This remains a single combined guard (not per-port ones) so a caller sees every still-stubbed
  * port in one error rather than discovering them one boot-failure at a time — same reasoning as
  * when this guard covered 12 ports, just narrower now.
@@ -221,19 +221,15 @@ export function assertProductionIntegrationPortsConfigured(
         "source of package weight/dimensions per product — services/shipping's shipment-creation " +
         "flow requires weightGrams per package and nothing in Catalog, Orders, or Fulfillment " +
         "computes or stores one. financePort is different in kind from the other three: it is not " +
-        "a missing capability but a deliberate guard against a redundant write path, part of " +
-        "which is now real. Finance's OrdersPaidConsumer IS registered with the Kafka consumer " +
-        "fleet as of Task 17b (worker.ts, via buildOrdersPaidConsumerRuntimes in " +
-        "apps/runtime/src/consumers/orders-paid.consumers.ts), so a paid order posts its ledger " +
-        "entry asynchronously. The two consumers this port actually shadows are still " +
-        "unregistered: PaymentsCapturedConsumer and RefundsIssuedConsumer " +
-        "(services/finance/src/interfaces/finance-consumers.ts), covering " +
-        "payments.payment_intent.captured/.refunded — nothing instantiates them, so a captured " +
-        "payment's fee entry or an issued refund's contra entry posts nowhere, sync or async. " +
-        "That is an open gap this guard does not cover, not something financePort fixes — wiring " +
-        "those two consumers into worker.ts is a separate, scoped follow-up. financePort stays " +
-        "unwired here regardless, since a synchronous adapter would be a second, uncoordinated " +
-        "write path over the same ledger the consumer fleet now writes. " +
+        "a missing capability but a deliberate guard against a redundant write path, and that path " +
+        "is now fully async and real (WP-11, F-11 closed). Finance's OrdersPaidConsumer, " +
+        "PaymentsCapturedConsumer, and RefundsIssuedConsumer are ALL registered with the Kafka " +
+        "consumer fleet (worker.ts, via buildOrdersPaidConsumerRuntimes and " +
+        "buildFinanceSettlementConsumerRuntimes in apps/runtime/src/consumers/), so a paid order " +
+        "posts its ledger revenue entry, a captured payment posts its fee entry, and an issued " +
+        "refund posts its contra entry, all asynchronously. financePort stays unwired here " +
+        "regardless, since a synchronous adapter would be a second, uncoordinated write path over " +
+        "the same ledger the consumer fleet now writes. " +
         "Whichever of these remain listed above " +
         "must never back real money, shipping cost, or tax calculation outside " +
         "APP_ENV=local. Wire the real adapter once the underlying capability exists " +
