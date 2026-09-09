@@ -22,6 +22,17 @@
 > re-measure from, stated plainly rather than substituted. **The fallback remains available and
 > UN-TAKEN; contexts #2-40 stay unconverted until this is settled from a representative
 > environment.**
+>
+> **Settled without a third benchmark, 2026-09-09, later still.** The mechanism reduces to a
+> formula (point 3): `delta ≈ 3 × RTT`, so the ADR's 10ms p50 threshold is really a threshold on
+> round-trip time to Supabase (≤3ms keep RLS, ≥4ms fallback justified — table in point 3). Checked
+> from configuration rather than measuring again: the runtime's deployment region is **not decided
+> or recorded anywhere in this repository** (`deploy.yml` applies to whatever cluster a secret
+> points to; the k8s manifests are region-agnostic; no infra-as-code provisions a cluster anywhere;
+> the only recorded region decision, Redis at `eu-west-1`, is about Redis, not the runtime compute).
+> Recorded as **G-65**. The fallback stays UN-TAKEN — it is not being used to route around a missing
+> deployment decision — and contexts #2-40 stay unconverted until a region is decided and its RTT to
+> Supabase is measured.
 
 ## Context
 
@@ -189,12 +200,70 @@ unknown` already rides on every port method (ADR-0003). Concretely: a read metho
    can be made, and is deliberately **not wired into any repository yet** — `PrismaProductRepository`
    still uses interactive `runReadScoped` from the previous commit, unchanged by this finding.
 
+   **Amended again 2026-09-09, later the same day: the decision does not need another benchmark —
+   it needs one number, from configuration, and that number turns out not to exist yet.**
+
+   **The formula, stated once so nobody re-derives it under time pressure:**
+
+   ```
+   delta ≈ 3 × RTT
+   ```
+
+   `runReadScoped` costs 4 round trips (`BEGIN`, `SET LOCAL`, the query, `COMMIT`) against a bare
+   read's 1 — 3 EXTRA round trips, and Postgres's own server-side work for each (`BEGIN`/`COMMIT`
+   are near-free; `set_config` is a single in-memory GUC write) is negligible next to network
+   latency. The two live measurements above are consistent with this: session 1 (118ms bare, 283ms
+   wrapped) implies RTT ≈ (283-118)/3 ≈ 55ms; session 2 (137ms bare, 316ms wrapped) implies RTT ≈
+   (316-137)/3 ≈ 60ms — both point to roughly the same ~55-60ms round trip, which is a plausible
+   dev-machine-to-`aws-1-eu-west-3` figure, not a production one. **Given the formula, the ADR's
+   10ms p50 threshold resolves to a threshold on RTT itself:**
+
+   | Measured RTT (e.g. a single `SELECT 1` from the deployment environment) | Implied delta | Decision                             |
+   | ----------------------------------------------------------------------- | ------------- | ------------------------------------ |
+   | ≤ 3ms                                                                   | ≤ 9ms         | **Keep RLS on reads — no fallback.** |
+   | ≥ 4ms                                                                   | ≥ 12ms        | **Fallback justified.**              |
+
+   No full benchmark is required once this number is known — a single `SELECT 1` timed from the
+   actual runtime deployment environment gives RTT directly, and the table above gives the answer.
+
    **What this session could not do, stated plainly rather than substituted:** re-measuring from a
    network path representative of production (co-located with the database, same AWS region) needs
    infrastructure this sandboxed session does not have access to — no such environment was available,
-   and no substitute (e.g. an estimate or a scaled-down proxy) was used in its place. **This
-   measurement has not happened. It is a precondition for deciding the fallback, not an optional
-   nice-to-have.**
+   and no substitute (e.g. an estimate or a scaled-down proxy) was used in its place.
+
+   **Checked from configuration instead, per this amendment's own instruction — and this is the
+   actual finding, not a formality on the way to one:** the runtime's deployment region is not
+   decided or recorded anywhere in this repository.
+   - `.github/workflows/deploy.yml` decodes a `KUBECONFIG_B64` secret and runs `kubectl apply` —
+     the cluster it targets, and therefore its region, is opaque to the repo; nothing here pins it.
+   - `infrastructure/k8s/*.yaml` (kustomize manifests) are cloud- and region-agnostic workload
+     definitions — `topologySpreadConstraints` reference generic zone/hostname topology keys, not
+     an actual region. No Terraform, Pulumi, or other infra-as-code exists anywhere in this repo to
+     provision a cluster in a specific place; the manifests assume a cluster already exists
+     somewhere, reached however ops configures `kubectl` out-of-band.
+   - `docs/operations/DEPLOYMENT_GUIDE.md` describes the pipeline (`validate → security → build →
+sign → kubectl apply`) generically, with `ghcr.io/<org>/...` still a literal placeholder — a
+     template, not a configured target.
+   - The only region decision actually on record anywhere is Upstash Redis's, and it is about
+     Redis, not the runtime: `docs/operations/CLOUD_RUNBOOK.md:42-43` (sourced from
+     `docs/superpowers/plans/2026-09-04-run-platform-on-supabase-and-production-readiness.md:162`)
+     places Redis in `eu-west-1`, deliberately, as "closest to Supabase's `eu-west-3`." That is a
+     real co-location decision — but it says nothing about where the compute that would actually
+     run `runReadScoped` (the `api`/`worker`/`scheduler` processes) lands. A cluster in, say,
+     `us-east-1` would have low Redis-Supabase latency and high runtime-Supabase latency
+     simultaneously — the Redis decision does not transfer.
+   - `.env.example:72` sets `S3_REGION=us-east-1` — a third, inconsistent region for object storage,
+     unexplained and un-reconciled with the other two. Noted for completeness; not the blocking
+     finding, but evidence the region question has never been asked holistically.
+
+   **This is recorded as G-65** (`docs/architecture/23-platform-gap-register.md`,
+   `docs/KNOWN_GAPS.md`): the RLS-on-reads decision is blocked on a deployment-topology decision
+   nobody has made, and — because the formula above is RTT-driven, not specific to this one query —
+   the same undecided region blocks reasoning about latency for every other latency-sensitive path
+   in the runtime, not just this one. **The fallback is NOT taken to route around the missing
+   decision.** Once a region is decided (or an existing cluster's region is confirmed) and its RTT
+   to Supabase is measured (one `SELECT 1`), the table above settles this without re-running the
+   benchmark.
 
    **Fallback, stated now so it is a conscious choice and not a rediscovery under pressure:** reads
    may skip the transaction wrapper entirely and rely solely on Option A's TypeScript-layer
@@ -202,15 +271,15 @@ unknown` already rides on every port method (ADR-0003). Concretely: a read metho
    independent of RLS. This is strictly weaker defense-in-depth (a bug in the TypeScript predicate on
    a read is no longer caught by RLS at the database layer; it still is on a write, since writes
    already sit inside a transaction for the outbox append and pay no _additional_ round trip for
-   `SET LOCAL`) but avoids a per-read transaction entirely. **Threshold for taking it:** if
-   `runReadScoped`/`runReadScopedBatched` adds more than ~10ms to p50 or more than ~30ms to p99 on
-   the benchmark read, measured from a production-representative network path (RLS's own added round
-   trip should be a small constant there, not a multiplier), stop converting reads to either helper
-   and fall back to TypeScript-only enforcement for reads specifically; writes still get `SET LOCAL`
-   regardless, since they pay no extra round trip for it. **Status: the fallback remains available
-   and UN-TAKEN.** Neither measurement so far (interactive or batched) is decision-grade, for the
-   noise-floor reason above — the threshold has not actually been evaluated against a number capable
-   of answering it yet.
+   `SET LOCAL`) but avoids a per-read transaction entirely. **Threshold for taking it, now resolved
+   to the RTT table above:** deployment-environment RTT to Supabase ≥ 4ms (delta ≥ 12ms, over the
+   ADR's 10ms p50 threshold) justifies the fallback for reads specifically; RTT ≤ 3ms (delta ≤ 9ms)
+   keeps `runReadScoped`/`runReadScopedBatched` and no fallback is needed. Writes get `SET LOCAL`
+   regardless of this decision either way, since they pay no extra round trip for it — they are
+   already inside a transaction for the outbox append. **Status: the fallback remains available and
+   UN-TAKEN.** The number the table needs (deployment-environment RTT to Supabase) has not been
+   measured, because the deployment environment itself has not been decided (G-65) — there is
+   nothing yet to measure RTT from.
 
    **Why this caution, stated as the asymmetry it actually is:** reverting a performance decision
    later is cheap — swap `runReadScoped` for the TypeScript-only fallback in each converted context,
