@@ -1,4 +1,4 @@
-# Lumo Platform — v1.0.0-rc.1 (Release Candidate)
+# Morbeh Platform — v1.0.0-rc.1 (Release Candidate)
 
 > First production-grade release candidate. Marks the platform as **operationally ready**: the full
 > commerce + experience + SaaS + security surface (P2.0) plus five hardening passes (H-1…H-5). This
@@ -57,7 +57,7 @@ See [BREAKING_CHANGES](BREAKING_CHANGES.md), [MIGRATION_NOTES](MIGRATION_NOTES.m
 ## Verify this release
 
 ```bash
-cosign verify ghcr.io/<org>/lumo-platform/runtime@sha256:<digest> \
-  --certificate-identity-regexp "https://github.com/<org>/lumo-platform/.github/workflows/.+" \
+cosign verify ghcr.io/<org>/morbeh-platform/runtime@sha256:<digest> \
+  --certificate-identity-regexp "https://github.com/<org>/morbeh-platform/.github/workflows/.+" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

@@ -1,6 +1,6 @@
-# Lumo Design System
+# Morbeh Design System
 
-> **Status: canonical.** Lumo is the platform's single design system. There is no second
+> **Status: canonical.** Morbeh is the platform's single design system. There is no second
 > system, no legacy system, and no per-app design language. Every visual decision in this
 > repository resolves here.
 >
@@ -14,20 +14,20 @@
 | Tokens (CSS — runtime source of truth) | `packages/design/src/styles.css`               | What the browser renders from                           |
 | Tokens (TS mirror)                     | `packages/design/src/{primitives,semantic}.ts` | Programmatic consumers, tests, `services/theme` seeding |
 | Accessibility guard                    | `packages/design/src/contrast.test.ts`         | Asserts the palette's WCAG AA guarantees on every run   |
-| Components                             | `packages/ui/src/components/ui/*`              | The only sanctioned way to build a Lumo surface         |
-| Reference implementation               | `apps/admin-web`                               | The Lumo Dashboard                                      |
+| Components                             | `packages/ui/src/components/ui/*`              | The only sanctioned way to build a Morbeh surface       |
+| Reference implementation               | `apps/admin-web`                               | The Morbeh Dashboard                                    |
 
 ---
 
 ## 1. Brand principles
 
-Lumo is **premium, modern, enterprise, minimal, confident, clean, data-oriented**. It is a
+Morbeh is **premium, modern, enterprise, minimal, confident, clean, data-oriented**. It is a
 commerce operating system, not a template.
 
-Five rules that make a screen look like Lumo:
+Five rules that make a screen look like Morbeh:
 
 1. **Neutral first, purple as punctuation.** The interface is overwhelmingly cool neutral.
-   Lumo Purple marks the primary action, the active location, the focused element, and the
+   Morbeh Purple marks the primary action, the active location, the focused element, and the
    leading data series — nothing else.
 2. **Borders separate, shadows lift.** Hairline borders are the primary separation
    mechanism. Shadows are reserved for surfaces that genuinely float above the page.
@@ -64,7 +64,7 @@ Two naming details worth knowing:
   under `.dark`.
 - Motion durations live as plain custom properties (`--duration-fast`) and are consumed as
   `duration-(--duration-fast)`, because Tailwind v4 has no `--duration-*` theme namespace.
-  Easings do have one (`--ease-*`), so `ease-out` resolves to the Lumo curve.
+  Easings do have one (`--ease-*`), so `ease-out` resolves to the Morbeh curve.
 
 ---
 
@@ -109,7 +109,7 @@ separately.
 
 ## 4. Colour
 
-### 4.1 Lumo Primary
+### 4.1 Morbeh Primary
 
 Canonical brand colour: **`#635BFF`** (hue 243°), scale step `500`.
 

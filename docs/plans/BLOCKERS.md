@@ -670,7 +670,7 @@ bottom before assuming any of this exists in the codebase.**
 
 The storefront (`apps/storefront`) has no login of any kind today. Confirmed by reading
 `apps/storefront/src/app/cart/actions.ts` and `apps/storefront/src/lib/cart.ts`:
-`GUEST_SESSION_COOKIE` (`lumo-storefront-guest-session`) is minted by
+`GUEST_SESSION_COOKIE` (`morbeh-storefront-guest-session`) is minted by
 `currentOrNewSessionRef()` as a bare `crypto.randomUUID()`, HttpOnly, 30-day, with no principal,
 no credential, and no server-side identity check behind it — it is proof of _cart ownership_
 only (`resolveSessionRef`'s doc comment in `apps/admin/src/http/public-cart-routes.ts`: "never
@@ -751,9 +751,9 @@ customer.id.toString()`) created alongside each registered `Customer` — either
 
 ### 2. Session mechanism
 
-- **Cookie name:** a new `CUSTOMER_SESSION_COOKIE = "lumo-storefront-customer-session"` —
-  distinct from `GUEST_SESSION_COOKIE` (`lumo-storefront-guest-session`, cart ownership only) and
-  `CHECKOUT_SESSION_COOKIE` (`lumo_checkout_session`, single-sitting checkout flow). Same
+- **Cookie name:** a new `CUSTOMER_SESSION_COOKIE = "morbeh-storefront-customer-session"` —
+  distinct from `GUEST_SESSION_COOKIE` (`morbeh-storefront-guest-session`, cart ownership only) and
+  `CHECKOUT_SESSION_COOKIE` (`morbeh_checkout_session`, single-sitting checkout flow). Same
   `HttpOnly`/`Secure`-in-prod/`SameSite: "lax"` shape as `GUEST_SESSION_COOKIE_OPTIONS`
   (`apps/storefront/src/lib/cart.ts`) for consistency, but a shorter `maxAge` — recommend a
   sliding ~30–120 minute TTL refreshed on activity (mirroring `Session.refresh`'s rotate-and-extend
@@ -1230,3 +1230,103 @@ Tests: 77 of 78 test-bearing packages pass; the one failure is item 3's already-
 violations, 1855 modules, 7492 dependencies cruised. Recorded in full in `docs/PROJECT_STATE.md`'s
 "Verified gates" section — this entry exists so the turbo/bail/flake facts specifically don't get
 lost the way the pre-3.0A history in that file did.
+
+## T12 — `docs/archive/**` treated as excluded from the rename, same as root `PHASE_A*.md`
+
+**Expected:** `WP-12-brand-rename.md`'s Definition of Done excludes "archived phase reports
+(`PHASE_A*.md` at repo root...) — these are historical records, not live docs, leave them" — naming
+only the root-level files by that exact pattern.
+
+**Found:** `docs/archive/reports/` (112 files), `docs/archive/phase-a28-stash-review/`, and
+`docs/archive/sprint-a0-lockfile-repair/` hold the same genre of record — closed incident/audit
+reports, several of them literally titled `PHASE_A##_*_REPORT.md`, just filed under `docs/archive/`
+instead of the repo root.
+
+**Ruling made:** treated `docs/archive/**` as covered by the same exclusion intent, not renamed.
+Rewriting a closed historical report to retroactively say "Morbeh" where the platform was actually
+still called Lumo at the time misrepresents that history, which is exactly what the DoD's own
+reasoning ("historical records, not live docs") argues against — it just didn't anticipate this
+second archive location. Flagging this ruling explicitly rather than silently generalizing the rule.
+
+## T12.7 (1/2) — Debezium outbox connector name (`lumo-outbox`) deliberately NOT renamed
+
+**Expected:** `WP-12-brand-rename.md` T12.7 names this as one of exactly two mandatory deferrals —
+do not rename the Debezium connector name, and file a ticket instead of doing it inline.
+
+**Found:** the identifier `lumo-outbox` (connector name) / `lumo_outbox` (publication + replication
+slot name, byte-identical string, per Debezium convention) / `"topic.prefix": "lumo"` appears as one
+single, load-bearing identity across every layer of the CDC pipeline:
+
+- `infrastructure/docker/debezium/outbox-connector.json` — the connector's own `name`, and its
+  `database.dbname`/`topic.prefix`/`publication.name`/`slot.name` fields.
+- `infrastructure/docker/debezium/register-connector.sh` — registers via
+  `PUT .../connectors/lumo-outbox/config`.
+- `infrastructure/docker/postgres/init/01-roles-and-cdc.sql` — comments referencing the
+  `lumo_outbox` publication (created by a migration, not this script).
+- `infrastructure/k8s/70-debezium.yaml` — the k8s equivalent Job, same connector name/topic-prefix/
+  publication/slot literals embedded in its curl payload.
+- `apps/runtime/src/scheduler.ts:217` — the outbox-prune job's own
+  `SELECT confirmed_flush_lsn FROM pg_replication_slots WHERE slot_name = 'lumo_outbox'` gate.
+- `apps/runtime/src/config.ts` / `.env.example` — `KAFKA_CONNECT_CDC_CONNECTORS` default/value
+  `lumo-outbox`, which the scheduler's CDC watchdog polls by exact name.
+- Every `services/*/prisma-*.integration.test.ts` file and `apps/runtime/src/scheduler.test.ts` that
+  exercises the outbox-prune/watchdog path against this same literal.
+
+**Why blocked:** renaming any single one of these without renaming all of them in the same breath
+(including re-registering the connector against Kafka Connect, which is a live operation, not a
+file edit) would desynchronize the pipeline — the scheduler would poll/gate on a slot name that no
+longer matches what Debezium actually created, exactly the "re-emit or skip events" risk T12.7
+itself names. `WP-11` (financial integrity) is the workstream currently proving this exact CDC path
+in staging; renaming it out from under that proof is a change that needs a human's explicit sign-off
+on timing, not a judgment call made mid-rename.
+
+**Suggested fix:** once `WP-11`'s staging CDC proof is complete and stable, rename in one atomic
+change: register a **new** connector named `morbeh-outbox` (new publication `morbeh_outbox`, new
+slot `morbeh_outbox`, new `topic.prefix: "morbeh"`) alongside the old one, cut the scheduler/watchdog
+config over, confirm no gap in consumption, THEN deregister/drop the old connector, publication, and
+replication slot. Never rename a live Debezium connector's identity in place — Kafka Connect treats
+a `PUT` to a _new_ name as a new connector with no offset history, and dropping/recreating the
+Postgres replication slot loses whatever WAL the old slot was retaining. Update, in the same change:
+`outbox-connector.json`, `register-connector.sh`, `70-debezium.yaml`, `01-roles-and-cdc.sql`'s
+comment, `scheduler.ts:217`, `config.ts`'s `KAFKA_CONNECT_CDC_CONNECTORS` default, `.env.example`,
+and every test fixture referencing `lumo-outbox`/`lumo_outbox` — all at once, so nothing is left
+half-migrated.
+
+## T12.7 (2/2) — Postgres and ClickHouse database name/user/connection strings deliberately NOT renamed
+
+**Expected:** `WP-12-brand-rename.md` T12.7's second mandatory deferral: do not touch the database
+name, user, or connection strings, and file a ticket instead of doing it inline.
+
+**Found:** the literal `lumo` (as Postgres/ClickHouse database name AND role/user AND password) and
+the connection-string shape `postgresql://lumo:lumo@<host>:5432/lumo` recur across:
+
+- `.env.example` — `DATABASE_URL`/`DIRECT_URL` (Postgres) and `CLICKHOUSE_USER`/
+  `CLICKHOUSE_PASSWORD`/`CLICKHOUSE_DATABASE`.
+- `infrastructure/docker/docker-compose.yml` — `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`,
+  `CLICKHOUSE_DB`/`CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`, and the `pg_isready -U lumo -d lumo`
+  healthcheck.
+- `infrastructure/docker/postgres/init/01-roles-and-cdc.sql` — the `lumo_app` least-privilege
+  application role (`CREATE ROLE lumo_app LOGIN PASSWORD 'lumo_app'`).
+- `infrastructure/k8s/secret.example.yaml` — example `DATABASE_URL` values ending `/lumo`.
+- Every `apps/runtime/src/*.test.ts` regression/composition test and every
+  `services/*/prisma-*.integration.test.ts` file, which all default `DATABASE_URL` to
+  `postgresql://lumo:lumo@localhost:5432/lumo` (or `..._test`) as their fixture.
+- `.github/workflows/db-integration.yml` and `docs/investigations/H-09-no-integration-tests-in-ci.md`
+  — CI's own Postgres service container credentials.
+
+**Why blocked:** exactly what T12.7 says — renaming a database name, role, or password is a data
+migration (or, for CI/local dev, a coordinated re-provisioning of every service container and every
+test fixture in lockstep), not a text rename. Doing it as a side effect of a branding pass risks a
+silent mismatch between what a file says to connect to and what actually exists, which is a much
+worse failure mode (a boot-time or CI-time connection failure with a misleading error) than leaving
+the old name in place a while longer.
+
+**Suggested fix:** roll the actual Postgres role/database and ClickHouse user/database rename as its
+own, deliberately-scoped migration task: provision the new `morbeh`-named role/database/user
+alongside the old ones, migrate data (`ALTER DATABASE ... RENAME TO` for Postgres is fast and
+in-place if nothing is actively connected during the switch; ClickHouse similarly supports renaming
+a database), cut every config file (`.env.example`, `docker-compose.yml`, k8s secrets, CI workflow,
+every test fixture default) over in one atomic change, verify the full gate suite, then drop the old
+role/database. Do not rename Postgres/ClickHouse credentials piecemeal across the ~40 files that
+reference them — that guarantees a period where some files say `lumo` and others say `morbeh` and
+nothing connects.

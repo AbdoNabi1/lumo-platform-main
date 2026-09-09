@@ -209,7 +209,7 @@ None. No event payload, name, or schema changed.
 
 ## 18. Environmental Limitations
 
-Docker Desktop and WSL2 are unavailable in this sandbox (consistent with every prior session — `[[lumo-integration-verification-sprint]]`, `[[lumo-dashboard-orders-phase1-1-verification]]`). All proof in this report is **PROVEN BY TESTS / PROVEN IN-MEMORY** — real `wireAdmin()`/`wireCheckout()`/`wireReturns()` composition, real use cases and domain aggregates, driven through the actual `RouteDefinition.handle()` boundary. **PROVEN LIVE:** nothing. A real Postgres-backed path and a genuine Fastify HTTP round-trip were not exercised, matching this repo's own established testing convention (same caveat as every prior H-01/Phase 17.x report).
+Docker Desktop and WSL2 are unavailable in this sandbox (consistent with every prior session — `[[morbeh-integration-verification-sprint]]`, `[[morbeh-dashboard-orders-phase1-1-verification]]`). All proof in this report is **PROVEN BY TESTS / PROVEN IN-MEMORY** — real `wireAdmin()`/`wireCheckout()`/`wireReturns()` composition, real use cases and domain aggregates, driven through the actual `RouteDefinition.handle()` boundary. **PROVEN LIVE:** nothing. A real Postgres-backed path and a genuine Fastify HTTP round-trip were not exercised, matching this repo's own established testing convention (same caveat as every prior H-01/Phase 17.x report).
 
 ---
 

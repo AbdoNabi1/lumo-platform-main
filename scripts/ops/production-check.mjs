@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Phase A.34 (Task 20) — production configuration validation. Run this against the environment
-// you're about to deploy (e.g. `kubectl -n lumo-runtime exec` env dump, a rendered .env.production,
+// you're about to deploy (e.g. `kubectl -n morbeh-runtime exec` env dump, a rendered .env.production,
 // or CI secrets exported as real env vars) BEFORE applying it — never against real production
 // itself, and never with real secrets pasted into a terminal that gets logged.
 //
@@ -77,9 +77,9 @@ function checkClientSecret() {
     );
     return;
   }
-  if (value === "lumo-admin-web-secret-change-me") {
+  if (value === "morbeh-admin-web-secret-change-me") {
     fail(
-      'AUTH_CLIENT_SECRET is still the dev placeholder ("lumo-admin-web-secret-change-me") — A.33 P0 #3.',
+      'AUTH_CLIENT_SECRET is still the dev placeholder ("morbeh-admin-web-secret-change-me") — A.33 P0 #3.',
     );
   }
 }

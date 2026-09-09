@@ -30,7 +30,7 @@ export interface CreateThemeDeps extends ThemeDeps {
   readonly presets: DesignPresetProvider;
 }
 
-/** Creates a theme in `draft` status, seeded from a Lumo Design System token preset. */
+/** Creates a theme in `draft` status, seeded from a Morbeh Design System token preset. */
 export class CreateTheme implements UseCase<CreateThemeInput, ThemeStatusOutput, DomainError> {
   private readonly deps: CreateThemeDeps;
 

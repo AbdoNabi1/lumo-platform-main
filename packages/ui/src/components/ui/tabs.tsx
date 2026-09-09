@@ -6,7 +6,7 @@ import { cn } from "../../lib/cn";
 import { focusRing } from "../../lib/focus";
 
 /**
- * Lumo Tabs — Radix underneath, so roving-tabindex keyboard navigation, `aria-selected`,
+ * Morbeh Tabs — Radix underneath, so roving-tabindex keyboard navigation, `aria-selected`,
  * and panel association come for free. The visual language is an underline rather than a
  * pill: it reads as navigation between views of the same data, not as a control.
  */

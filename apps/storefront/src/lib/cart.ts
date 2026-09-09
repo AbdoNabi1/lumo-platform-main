@@ -12,12 +12,12 @@ import {
  * Cart identity is now session-derived, not a `?cartId=` link or a `cartId`-holding cookie: the
  * guest session cookie (`GUEST_SESSION_COOKIE`, written by `app/cart/actions.ts`) is the only
  * client-held reference, and the Runtime API resolves "the current cart" from it via
- * `GET /public/carts/current`. This supersedes the old `CART_COOKIE` (`lumo-storefront-cart-id`)
+ * `GET /public/carts/current`. This supersedes the old `CART_COOKIE` (`morbeh-storefront-cart-id`)
  * design from Productization Phase 3, which stored a bare cart id with no ownership check at all
  * — anyone holding that cookie's value (or guessing a `?cartId=`) could read any cart. See the
  * Phase 17.1 report for the removed surface.
  */
-export const GUEST_SESSION_COOKIE = "lumo-storefront-guest-session";
+export const GUEST_SESSION_COOKIE = "morbeh-storefront-guest-session";
 
 /**
  * Shared cookie properties for the guest session (Task 1). `httpOnly` so client JS can never read
@@ -43,7 +43,7 @@ export const GUEST_SESSION_COOKIE_OPTIONS = {
  * reasoning as `GUEST_SESSION_COOKIE_OPTIONS` — no `maxAge`: a checkout is a short, single-sitting
  * flow, not something that should still be resumable a browser restart later.
  */
-export const CHECKOUT_SESSION_COOKIE = "lumo_checkout_session";
+export const CHECKOUT_SESSION_COOKIE = "morbeh_checkout_session";
 
 export const CHECKOUT_SESSION_COOKIE_OPTIONS = {
   path: "/",

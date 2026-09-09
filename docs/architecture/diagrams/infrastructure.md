@@ -54,7 +54,7 @@ flowchart LR
 
 ## Notes
 
-- **Metrics**: runtime processes expose a native `/metrics` (scraped by the `lumo-runtime` job);
+- **Metrics**: runtime processes expose a native `/metrics` (scraped by the `morbeh-runtime` job);
   OTel-instrumented security telemetry flows via the Collector's Prometheus exporter.
 - **Alerting**: recording rules compute the SLIs, alerting rules fire against them, Alertmanager
   routes `page`/`ticket` (see [monitoring config](../../../infrastructure/docker/prometheus)).

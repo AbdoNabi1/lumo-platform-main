@@ -7,7 +7,8 @@ function zBool(defaultValue: boolean) {
     .optional()
     .transform((value): boolean => {
       if (typeof value === "boolean") return value;
-      if (typeof value === "string") return ["true", "1", "yes", "on"].includes(value.toLowerCase());
+      if (typeof value === "string")
+        return ["true", "1", "yes", "on"].includes(value.toLowerCase());
       return defaultValue;
     });
 }
@@ -26,7 +27,7 @@ export const serverEnvSchema = z.object({
 
   // Redis
   REDIS_URL: z.string().min(1),
-  REDIS_KEY_PREFIX: z.string().default("lumo:"),
+  REDIS_KEY_PREFIX: z.string().default("morbeh:"),
 
   // ClickHouse
   CLICKHOUSE_URL: z.string().url(),
@@ -45,7 +46,7 @@ export const serverEnvSchema = z.object({
   S3_BUCKET_BACKUPS: z.string().default("backups"),
 
   // Observability (OpenTelemetry)
-  OTEL_SERVICE_NAME: z.string().default("lumo-service"),
+  OTEL_SERVICE_NAME: z.string().default("morbeh-service"),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
   OTEL_TRACES_ENABLED: zBool(false),
   OTEL_METRICS_ENABLED: zBool(false),

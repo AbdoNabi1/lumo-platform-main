@@ -122,7 +122,7 @@ async function buildServer(overrides: TestOverrides = {}): Promise<FastifyInstan
     idempotencyKeys: fakeIdempotencyStore(),
     responseCache: fakeCache(),
     health: new HealthRegistry(),
-    api: { title: "Lumo Admin API", description: "test" },
+    api: { title: "Morbeh Admin API", description: "test" },
     ...(overrides.metrics === undefined ? {} : { metrics: overrides.metrics }),
     ...(overrides.exposeDocs === undefined ? {} : { exposeDocs: overrides.exposeDocs }),
     ...(overrides.readinessDetail === undefined
@@ -506,7 +506,7 @@ describe("HTTP transport", () => {
     expect(operation.requestBody.content["application/json"].schema.required).toEqual(
       expect.arrayContaining(["name", "quantity"]),
     );
-    expect(spec.info.title).toBe("Lumo Admin API");
+    expect(spec.info.title).toBe("Morbeh Admin API");
     await withDocs.close();
   });
 

@@ -1,6 +1,6 @@
-/** English (LTR) copy for the Lumo admin surface. This module also defines the shape every other locale must satisfy. */
+/** English (LTR) copy for the Morbeh admin surface. This module also defines the shape every other locale must satisfy. */
 export const en = {
-  brand: "Lumo",
+  brand: "Morbeh",
   nav: {
     primary: "Main",
     dashboard: "Dashboard",
@@ -1557,7 +1557,8 @@ export const en = {
       credentialId: "Credential ID",
       submit: "Revoke",
       submitting: "Revoking…",
-      confirm: "Revoke this credential? It will be invalidated immediately and cannot be undone from here.",
+      confirm:
+        "Revoke this credential? It will be invalidated immediately and cannot be undone from here.",
       success: "Credential revoked.",
     },
   },
@@ -1646,7 +1647,8 @@ export const en = {
     },
     assignRole: {
       title: "Assign role",
-      subtitle: "Assign a role to a principal. Supports delegated administration and a temporary (TTL) grant.",
+      subtitle:
+        "Assign a role to a principal. Supports delegated administration and a temporary (TTL) grant.",
       principalExternalId: "Principal external ID",
       roleKey: "Role key",
       grantedBy: "Granted by",
@@ -1696,7 +1698,8 @@ export const en = {
     },
     simulatePolicy: {
       title: "Simulate policy (preview)",
-      subtitle: "Previews the decision a policy's active version would produce for a hypothetical context. Read-only.",
+      subtitle:
+        "Previews the decision a policy's active version would produce for a hypothetical context. Read-only.",
       policyKey: "Policy key",
       risk: "Risk (0-1, optional)",
       trust: "Trust (0-1, optional)",
@@ -1728,7 +1731,8 @@ export const en = {
     },
     checkAccess: {
       title: "Check access (preview)",
-      subtitle: "Unified authorization check across RBAC, ReBAC, and ABAC. A preview tool — not a mutation.",
+      subtitle:
+        "Unified authorization check across RBAC, ReBAC, and ABAC. A preview tool — not a mutation.",
       principalExternalId: "Principal external ID",
       permission: "Permission",
       namespace: "Namespace (optional)",
@@ -1828,7 +1832,8 @@ export const en = {
       refreshFingerprint: "Refresh fingerprint",
       ttlSeconds: "TTL (seconds)",
       confirmDelegationIdLabel: "Type the delegation ID again to confirm",
-      confirmDelegationIdHint: "The button stays disabled until this matches the delegation ID above exactly.",
+      confirmDelegationIdHint:
+        "The button stays disabled until this matches the delegation ID above exactly.",
       confirm:
         'Start an impersonation session for delegation "{delegator}" → "{delegate}"? The delegate will be able to act as the delegator immediately. Continue?',
       unspecified: "(not specified)",
@@ -1842,7 +1847,8 @@ export const en = {
     },
     configureTenantSecurity: {
       title: "Configure tenant security",
-      subtitle: "Configure (or reconfigure) a tenant's security profile — idempotent create-or-patch.",
+      subtitle:
+        "Configure (or reconfigure) a tenant's security profile — idempotent create-or-patch.",
       tenantRef: "Tenant ref",
       isolationTier: "Isolation tier (optional)",
       residencyRegion: "Residency region (optional)",
@@ -1965,7 +1971,7 @@ export const en = {
       submitting: "Revoking…",
       success: "Every active session for this principal was revoked.",
       confirm:
-        "This will revoke every active session for principal \"{principal}\" — they will be signed out on every device immediately. This cannot be undone. Continue?",
+        'This will revoke every active session for principal "{principal}" — they will be signed out on every device immediately. This cannot be undone. Continue?',
     },
     registerAuthMethod: {
       title: "Register auth method",
@@ -2153,7 +2159,8 @@ export const en = {
     },
     openIncident: {
       title: "Open incident",
-      subtitle: "Open a new security incident. Reference is optional — one is generated when left blank.",
+      subtitle:
+        "Open a new security incident. Reference is optional — one is generated when left blank.",
       titleLabel: "Title",
       severity: "Severity",
       severityUnspecified: "Choose a severity",
@@ -2186,12 +2193,14 @@ export const en = {
         note: "Note",
         submit: "Close",
         submitting: "Closing…",
-        confirm: "Close this incident? This is a terminal state — there is no way to reopen it from this screen.",
+        confirm:
+          "Close this incident? This is a terminal state — there is no way to reopen it from this screen.",
       },
     },
     addEvidence: {
       title: "Add evidence",
-      subtitle: "Attach an evidence reference (e.g. an audit record id) to an incident by its reference.",
+      subtitle:
+        "Attach an evidence reference (e.g. an audit record id) to an incident by its reference.",
       reference: "Incident reference",
       kind: "Kind",
       ref: "Reference",
@@ -2378,7 +2387,8 @@ export const en = {
   },
   financePage: {
     title: "Finance",
-    subtitle: "Trial balance, income statement, and balance sheet for a chosen period and currency.",
+    subtitle:
+      "Trial balance, income statement, and balance sheet for a chosen period and currency.",
     readModelsLink: "Read models",
     periodStartLabel: "Start date",
     periodEndLabel: "End date",
@@ -2431,7 +2441,8 @@ export const en = {
   },
   featureRegistryPage: {
     title: "Feature registry",
-    subtitle: "The feature catalog, commercial bundles, the capability graph, and the registry's own validation report.",
+    subtitle:
+      "The feature catalog, commercial bundles, the capability graph, and the registry's own validation report.",
     searchLabel: "Feature key",
     searchPlaceholder: "e.g. checkout.express",
     searchApply: "Resolve",
@@ -2465,7 +2476,13 @@ export const en = {
     featuresEmpty: "No features are registered yet.",
     featuresUnauthorized: "Sign in to view the feature catalog.",
     featuresError: "Couldn't load the feature catalog. Try refreshing the page.",
-    bundlesColumns: { key: "Key", name: "Name", status: "Status", features: "Features", groups: "Groups" },
+    bundlesColumns: {
+      key: "Key",
+      name: "Name",
+      status: "Status",
+      features: "Features",
+      groups: "Groups",
+    },
     bundlesEmpty: "No bundles are defined yet.",
     bundlesUnauthorized: "Sign in to view bundles.",
     bundlesError: "Couldn't load bundles. Try refreshing the page.",
@@ -2605,7 +2622,7 @@ export const en = {
     removeEvent: "Remove event",
     eventValue: "Event",
     defaults: "Defaults (JSON)",
-    defaultsHint: "A JSON object, e.g. {\"variant\": \"primary\"}. Leave blank for no defaults.",
+    defaultsHint: 'A JSON object, e.g. {"variant": "primary"}. Leave blank for no defaults.',
     defaultsInvalid: "Defaults must be a valid JSON object.",
     submit: "Create component",
     submitting: "Creating…",
@@ -2633,7 +2650,7 @@ export const en = {
   },
   notFound: {
     title: "Not built yet",
-    body: "The navigation lists the full Lumo operator surface, but only the Dashboard is implemented so far. This destination has no screen behind it yet.",
+    body: "The navigation lists the full Morbeh operator surface, but only the Dashboard is implemented so far. This destination has no screen behind it yet.",
     backToDashboard: "Back to the dashboard",
   },
   forbidden: {
@@ -2649,7 +2666,7 @@ export const en = {
   },
   footer: {
     navLabel: "Legal and support",
-    copyright: "© {year} Lumo. All rights reserved.",
+    copyright: "© {year} Morbeh. All rights reserved.",
     privacy: "Privacy policy",
     terms: "Terms of service",
     support: "Support",
@@ -2905,7 +2922,8 @@ export const en = {
    */
   notificationsPage: {
     title: "Notifications",
-    subtitle: "Delivery notifications sent to customers and staff — from the Notifications context.",
+    subtitle:
+      "Delivery notifications sent to customers and staff — from the Notifications context.",
     columns: {
       recipient: "Recipient",
       template: "Template",

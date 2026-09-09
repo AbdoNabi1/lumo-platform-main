@@ -15,9 +15,9 @@
 | File                                              | Lines | What is there                                                    |
 | ------------------------------------------------- | ----- | ---------------------------------------------------------------- |
 | `infrastructure/docker/web.Dockerfile`            | 1–48  | The **only** Dockerfile on `main`; builds the Next.js storefront |
-| `infrastructure/k8s/20-deployment-api.yaml`       | 68    | `image: lumo-runtime:local`                                      |
-| `infrastructure/k8s/21-deployment-worker.yaml`    | 68    | `image: lumo-runtime:local`                                      |
-| `infrastructure/k8s/22-deployment-scheduler.yaml` | 47    | `image: lumo-runtime:local`                                      |
+| `infrastructure/k8s/20-deployment-api.yaml`       | 68    | `image: morbeh-runtime:local`                                    |
+| `infrastructure/k8s/21-deployment-worker.yaml`    | 68    | `image: morbeh-runtime:local`                                    |
+| `infrastructure/k8s/22-deployment-scheduler.yaml` | 47    | `image: morbeh-runtime:local`                                    |
 | `apps/runtime/package.json`                       | 12–22 | Scripts block — **no `build` script**                            |
 | `.github/workflows/release.yml`                   | 47    | `cosign sign … ghcr.io/${{ github.repository }}/runtime@…`       |
 
@@ -30,7 +30,7 @@
 A recursive filesystem search for `*ockerfile*` across the repository, excluding `node_modules`, returns exactly one path:
 
 ```
-C:\Users\abdoh\Claude code\Git\lumo-platform\infrastructure\docker\web.Dockerfile
+C:\Users\abdoh\Claude code\Git\morbeh-platform\infrastructure\docker\web.Dockerfile
 ```
 
 Its final stage is unambiguously the storefront:
@@ -46,7 +46,7 @@ All three runtime Deployments reference an image nothing produces:
 
 ```yaml
 # infrastructure/k8s/20-deployment-api.yaml:68
-image: lumo-runtime:local # production: a registry-pushed, immutable tag or digest
+image: morbeh-runtime:local # production: a registry-pushed, immutable tag or digest
 ```
 
 And `apps/runtime/package.json` has no build step at all:

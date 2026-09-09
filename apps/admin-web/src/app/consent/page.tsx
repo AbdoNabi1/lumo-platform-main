@@ -5,7 +5,7 @@ import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 
 /**
  * The Hydra consent provider (Phase A.32) — `infrastructure/docker/hydra/hydra.yml`'s
- * `urls.consent`. Auto-accepts: `lumo-admin-web` is a first-party, wholly-owned client (the only
+ * `urls.consent`. Auto-accepts: `morbeh-admin-web` is a first-party, wholly-owned client (the only
  * OAuth2 client registered — `scripts/dev/seed-auth-local.mjs`), not a third-party app a human
  * needs to review a scope grant for, so there is no consent SCREEN, only a consent DECISION. The
  * `kind`/`roles` claims `/login` attached to the login request's `context` ride through into the

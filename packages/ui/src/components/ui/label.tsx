@@ -4,7 +4,7 @@ import * as React from "react";
 import * as LabelPrimitive from "@radix-ui/react-label";
 import { cn } from "../../lib/cn";
 
-/** Lumo Label — 500 weight, per the typography contract for form labels. */
+/** Morbeh Label — 500 weight, per the typography contract for form labels. */
 export const Label = React.forwardRef<
   React.ComponentRef<typeof LabelPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof LabelPrimitive.Root>

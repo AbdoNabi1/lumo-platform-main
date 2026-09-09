@@ -11,7 +11,7 @@ import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i1
  *
  * The admin navigation lists the full operator surface, but only the Dashboard route is
  * built so far. Rather than dropping an operator onto Next's unstyled default, an
- * unbuilt destination lands here — inside the Lumo chrome, with the navigation still
+ * unbuilt destination lands here — inside the Morbeh chrome, with the navigation still
  * available and the situation stated plainly.
  */
 export default async function NotFound() {

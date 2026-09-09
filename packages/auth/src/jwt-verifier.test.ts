@@ -15,8 +15,8 @@ async function setup() {
   const { publicKey, privateKey } = await generateKeyPair("RS256");
   const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), alg: "RS256" }] });
   const verifier = new JwtVerifier({
-    issuer: "https://auth.lumo.local",
-    audience: "lumo-admin",
+    issuer: "https://auth.morbeh.local",
+    audience: "morbeh-admin",
     getKey: jwks,
     logger: silent,
   });
@@ -28,8 +28,8 @@ async function setup() {
       new SignJWT({ kind: "staff", roles: ["admin"], tenant_id: "t-1", ...claims })
         .setProtectedHeader({ alg: "RS256" })
         .setSubject("staff-1")
-        .setIssuer("https://auth.lumo.local")
-        .setAudience("lumo-admin")
+        .setIssuer("https://auth.morbeh.local")
+        .setAudience("morbeh-admin")
         .setIssuedAt()
         .setExpirationTime("5m"),
     ).sign(privateKey);
@@ -67,8 +67,8 @@ describe("JwtVerifier", () => {
     const forged = await new SignJWT({})
       .setProtectedHeader({ alg: "RS256" })
       .setSubject("staff-1")
-      .setIssuer("https://auth.lumo.local")
-      .setAudience("lumo-admin")
+      .setIssuer("https://auth.morbeh.local")
+      .setAudience("morbeh-admin")
       .setExpirationTime("5m")
       .sign(other.privateKey);
     expect(await verifier.verify(forged)).toBeNull();

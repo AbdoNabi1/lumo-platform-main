@@ -1,7 +1,7 @@
 # 02 — Rule Engine specification
 
 > **Status: CONTRACT (Phase 1 — Platform) — 2026-06-28.** A centralized, declarative business rule
-> engine used across the platform. No application code. UI: Lumo Design System ([`../ui/`](../ui/README.md)); a
+> engine used across the platform. No application code. UI: Morbeh Design System ([`../ui/`](../ui/README.md)); a
 > rule authoring/simulation surface is **net-new and requires approval**.
 
 ## 1. Business goals

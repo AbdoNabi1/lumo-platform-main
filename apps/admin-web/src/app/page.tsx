@@ -17,10 +17,10 @@ import { formatDateRange } from "@/lib/format";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 
 /**
- * The Lumo Dashboard.
+ * The Morbeh Dashboard.
  *
  * A server component: it resolves the locale and the dashboard payload, then renders the
- * whole page from Lumo Design System primitives. No figure on this page is written into a
+ * whole page from Morbeh Design System primitives. No figure on this page is written into a
  * component — every number arrives through `DashboardData`, except Recent Orders, which
  * resolves the real `GET /orders` endpoint in its own Suspense boundary (`RecentOrdersSection`).
  *

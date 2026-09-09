@@ -12,12 +12,12 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: lumo-storefront-config
-  namespace: lumo-runtime
+  name: morbeh-storefront-config
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
 data:
   NODE_ENV: "production"
   PORT: "3000"
-  RUNTIME_API_URL: "http://runtime-api.lumo-runtime.svc.cluster.local:3080"
+  RUNTIME_API_URL: "http://runtime-api.morbeh-runtime.svc.cluster.local:3080"
   TENANT_DEFAULT_ID: "tenant-local"

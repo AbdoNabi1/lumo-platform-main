@@ -175,12 +175,12 @@ async function main(): Promise<void> {
 
     // ---- Identity: one demo customer ----
     const customer = unwrap<{ customerId: string }>(
-      await identity.customers.register({ email: "demo@lumo.local", name: "Demo Customer" }),
+      await identity.customers.register({ email: "demo@morbeh.local", name: "Demo Customer" }),
       "register customer",
     );
     logger.info("seed: registered customer", {
       customerId: customer.customerId,
-      email: "demo@lumo.local",
+      email: "demo@morbeh.local",
     });
 
     // ---- Pricing: one active price list, one published price per product ----

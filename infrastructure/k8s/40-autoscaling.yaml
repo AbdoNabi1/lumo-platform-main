@@ -4,9 +4,9 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: runtime-api
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: runtime-api
 spec:
   scaleTargetRef:
@@ -30,9 +30,9 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: runtime-worker
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: runtime-worker
 spec:
   scaleTargetRef:
@@ -58,9 +58,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: runtime-api
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: runtime-api
 spec:
   minAvailable: 1
@@ -72,9 +72,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: runtime-worker
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: runtime-worker
 spec:
   minAvailable: 1
@@ -88,9 +88,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: runtime-scheduler
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: runtime-scheduler
 spec:
   maxUnavailable: 1
@@ -104,9 +104,9 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: collector
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: collector
 spec:
   scaleTargetRef:
@@ -130,9 +130,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: collector
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: collector
 spec:
   minAvailable: 1
@@ -146,9 +146,9 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: storefront
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: storefront
 spec:
   scaleTargetRef:
@@ -172,9 +172,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: storefront
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: storefront
 spec:
   minAvailable: 1
@@ -188,9 +188,9 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: admin-web
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: admin-web
 spec:
   scaleTargetRef:
@@ -214,9 +214,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: admin-web
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: admin-web
 spec:
   minAvailable: 1
@@ -232,9 +232,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: hydra
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: hydra
 spec:
   minAvailable: 1
@@ -246,9 +246,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: kratos
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: kratos
 spec:
   minAvailable: 1
@@ -260,9 +260,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: keto
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: keto
 spec:
   minAvailable: 1

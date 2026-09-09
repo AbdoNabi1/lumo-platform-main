@@ -42,7 +42,7 @@
 
 ## Observability
 
-- [x] Metrics scraped (`lumo-runtime` job) — process, HTTP, messaging, dependency
+- [x] Metrics scraped (`morbeh-runtime` job) — process, HTTP, messaging, dependency
 - [x] Grafana dashboards provisioned (Overview / Messaging / Security)
 - [x] Prometheus recording + alerting rules loaded; Alertmanager routing configured
 - [x] SLOs, SLIs, error-budget burn alerts defined ([SLO_SLI](SLO_SLI.md))

@@ -26,7 +26,7 @@ import {
 /**
  * Guest Checkout Server Actions (Phase 2 — Public checkout). Every action is a Next.js Server
  * Action, exactly like `app/cart/actions.ts`: it runs on the server, so it is the only place the
- * guest session cookie is ever read, and the only place `lumo_checkout_session` is ever written.
+ * guest session cookie is ever read, and the only place `morbeh_checkout_session` is ever written.
  * A Client Component calls these directly; it never sees or supplies a `sessionRef`.
  *
  * **Never mints a guest session here** (unlike `addToCart` in `app/cart/actions.ts`): a checkout

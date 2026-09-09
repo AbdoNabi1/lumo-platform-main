@@ -6,7 +6,7 @@ import { cn } from "../../lib/cn";
 import { focusRingInset } from "../../lib/focus";
 
 /**
- * Lumo Dropdown. Radix supplies the menu semantics the design system requires: typeahead,
+ * Morbeh Dropdown. Radix supplies the menu semantics the design system requires: typeahead,
  * arrow-key roving focus, `aria-expanded` on the trigger, and focus returning to it on
  * close. Positioning is logical-property aware, so `align="start"` follows the reading
  * direction in both LTR and RTL.

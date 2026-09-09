@@ -10,8 +10,8 @@ import "./globals.css";
 import { DEFAULT_LOCALE, directionFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 
 export const metadata: Metadata = {
-  title: "Lumo — Dashboard",
-  description: "Lumo commerce admin, built on the Lumo Design System.",
+  title: "Morbeh — Dashboard",
+  description: "Morbeh commerce admin, built on the Morbeh Design System.",
 };
 
 export const viewport: Viewport = {

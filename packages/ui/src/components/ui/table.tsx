@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * Lumo Table.
+ * Morbeh Table.
  *
  * `Table` wraps itself in a horizontally scrollable region so wide tables never push the
  * page sideways on small screens — the responsive contract for tables. The scroll

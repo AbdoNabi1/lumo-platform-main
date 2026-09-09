@@ -27,7 +27,7 @@
 // Usage: node scripts/dev/mint-local-token.mjs
 //   HYDRA_ADMIN_URL       (default http://localhost:4445)
 //   HYDRA_PUBLIC_URL      (default http://localhost:4444)
-//   AUTH_AUDIENCE         (default lumo-admin, matches apps/runtime/src/config.ts default)
+//   AUTH_AUDIENCE         (default morbeh-admin, matches apps/runtime/src/config.ts default)
 //   ORY_API_KEY           (optional — required admin-auth on Ory Network, unused self-hosted;
 //                          its presence is also what triggers the DEV_CLI_CLIENT_SECRET
 //                          requirement below)
@@ -35,13 +35,13 @@
 
 const HYDRA_ADMIN_URL = process.env.HYDRA_ADMIN_URL ?? "http://localhost:4445";
 const HYDRA_PUBLIC_URL = process.env.HYDRA_PUBLIC_URL ?? "http://localhost:4444";
-const AUDIENCE = process.env.AUTH_AUDIENCE ?? "lumo-admin";
+const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
 const ORY_API_KEY = process.env.ORY_API_KEY;
-const CLIENT_ID = "lumo-dev-cli";
+const CLIENT_ID = "morbeh-dev-cli";
 const IS_ORY_NETWORK = ORY_API_KEY !== undefined && ORY_API_KEY !== "";
 const CLIENT_SECRET = IS_ORY_NETWORK
   ? requiredForOryNetwork("DEV_CLI_CLIENT_SECRET")
-  : (process.env.DEV_CLI_CLIENT_SECRET ?? "lumo-dev-cli-secret-change-me");
+  : (process.env.DEV_CLI_CLIENT_SECRET ?? "morbeh-dev-cli-secret-change-me");
 
 function requiredForOryNetwork(name) {
   const v = process.env[name];
@@ -67,7 +67,7 @@ function clientBody() {
     grant_types: ["client_credentials"],
     token_endpoint_auth_method: "client_secret_post",
     audience: [AUDIENCE],
-    scope: "lumo.admin",
+    scope: "morbeh.admin",
     access_token_strategy: "jwt",
   };
 }
@@ -104,7 +104,7 @@ async function mintToken() {
     client_id: CLIENT_ID,
     client_secret: CLIENT_SECRET,
     audience: AUDIENCE,
-    scope: "lumo.admin",
+    scope: "morbeh.admin",
   });
   const response = await fetch(`${HYDRA_PUBLIC_URL}/oauth2/token`, {
     method: "POST",

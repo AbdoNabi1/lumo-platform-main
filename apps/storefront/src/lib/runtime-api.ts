@@ -81,7 +81,7 @@ export interface CartSummary {
 /**
  * Fetches a cursor-paginated PUBLIC list route from the Runtime API for the storefront's server
  * components (Phase 9 hardening). Previously this module authenticated as an admin principal —
- * minting a Hydra `client_credentials` token with `audience: "lumo-admin"` via a hardcoded dev
+ * minting a Hydra `client_credentials` token with `audience: "morbeh-admin"` via a hardcoded dev
  * secret with no environment gate — to call the same admin-guarded routes `apps/admin` itself uses.
  * The storefront is a customer-facing surface; it has no business holding admin credentials, and a
  * hardcoded fallback secret with no gate was a real finding, not a hypothetical one. The Runtime
@@ -656,11 +656,10 @@ export function createProductReview(
   input: CreateProductReviewInput,
   idempotencyKey: string,
 ): Promise<{ readonly status: number; readonly body: ProductReviewWriteResult | null }> {
-  return postItem<ProductReviewWriteResult>(
-    "/api/v1/public/reviews",
-    input,
-    { "x-customer-session": sessionId, "Idempotency-Key": idempotencyKey },
-  );
+  return postItem<ProductReviewWriteResult>("/api/v1/public/reviews", input, {
+    "x-customer-session": sessionId,
+    "Idempotency-Key": idempotencyKey,
+  });
 }
 
 export interface CheckoutAddressInput {

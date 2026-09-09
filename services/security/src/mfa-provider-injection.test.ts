@@ -84,7 +84,7 @@ describe("MFA provider injection (C2-4)", () => {
   });
 
   it("surfaces the provider's provisioningUri on the enrollment response, once, at enroll time", async () => {
-    const injected = new FakeTotpProvider("999999", "otpauth://totp/Lumo:admin-1?secret=ABC");
+    const injected = new FakeTotpProvider("999999", "otpauth://totp/Morbeh:admin-1?secret=ABC");
     const app = wireSecurity({
       serializer: new InMemoryEventSerializer(),
       idGenerator: sequentialIds(),
@@ -106,7 +106,7 @@ describe("MFA provider injection (C2-4)", () => {
     });
 
     expect(body<{ provisioningUri?: string }>(enrolled).provisioningUri).toBe(
-      "otpauth://totp/Lumo:admin-1?secret=ABC",
+      "otpauth://totp/Morbeh:admin-1?secret=ABC",
     );
   });
 

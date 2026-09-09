@@ -7,9 +7,9 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: runtime-api
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: runtime-api
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
@@ -34,10 +34,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - api.lumo.example.com
+        - api.morbeh.example.com
       secretName: runtime-api-tls
   rules:
-    - host: api.lumo.example.com
+    - host: api.morbeh.example.com
       http:
         paths:
           - path: /api
@@ -56,9 +56,9 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: collector
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: collector
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
@@ -76,10 +76,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - collect.lumo.example.com
+        - collect.morbeh.example.com
       secretName: collector-tls
   rules:
-    - host: collect.lumo.example.com
+    - host: collect.morbeh.example.com
       http:
         paths:
           - path: /collect
@@ -101,9 +101,9 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: storefront
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: storefront
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
@@ -123,10 +123,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - www.lumo.example.com
+        - www.morbeh.example.com
       secretName: storefront-tls
   rules:
-    - host: www.lumo.example.com
+    - host: www.morbeh.example.com
       http:
         paths:
           - path: /
@@ -146,9 +146,9 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: admin-web
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: admin-web
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
@@ -166,10 +166,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - admin.lumo.example.com
+        - admin.morbeh.example.com
       secretName: admin-web-tls
   rules:
-    - host: admin.lumo.example.com
+    - host: admin.morbeh.example.com
       http:
         paths:
           - path: /

@@ -4,7 +4,7 @@ import { cn } from "../../lib/cn";
 import { focusRing } from "../../lib/focus";
 
 /**
- * Lumo Card.
+ * Morbeh Card.
  *
  * The default is a soft, spacious surface: 20px radius, a hairline border, and the
  * restrained brand-tinted `shadow-card` that makes every card read as gently floating

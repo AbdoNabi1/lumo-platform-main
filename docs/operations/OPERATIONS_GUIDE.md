@@ -1,6 +1,6 @@
 # Operations Guide
 
-> Day-2 operations for the Lumo runtime: scaling, common procedures, and the error-budget policy.
+> Day-2 operations for the Morbeh runtime: scaling, common procedures, and the error-budget policy.
 > For incident-time procedures see [RUNBOOKS](RUNBOOKS.md) and [INCIDENT_RESPONSE](INCIDENT_RESPONSE.md).
 
 ## Topology recap
@@ -18,7 +18,7 @@ exposed through the Ingress (which routes `/api` alone).
 
 - Automatic: HPAs (`40-autoscaling.yaml`) scale on CPU. Worker `maxReplicas` is capped at the topic
   partition count — more readers than partitions is wasted capacity.
-- Manual burst: `kubectl -n lumo-runtime scale deploy/runtime-api --replicas=N` (HPA resumes control).
+- Manual burst: `kubectl -n morbeh-runtime scale deploy/runtime-api --replicas=N` (HPA resumes control).
 - Vertical: adjust `resources.requests/limits` in the deployment; requests drive HPA math.
 
 ## Common procedures
@@ -43,7 +43,7 @@ up on pod restart; roll the deployment after updating the Secret.
 
 ### Reading telemetry
 
-- Metrics: Grafana _Lumo_ folder (Overview / Messaging / Security).
+- Metrics: Grafana _Morbeh_ folder (Overview / Messaging / Security).
 - Traces: Tempo (Grafana Explore); logs: Loki. Trace↔log↔metric correlation is provisioned.
 
 ## Known non-durable state

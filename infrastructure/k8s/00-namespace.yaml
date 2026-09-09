@@ -1,13 +1,13 @@
-# P2 — Kubernetes deployment for the Lumo runtime processes (api / worker / scheduler).
-# Manifests only: they package the SAME image and endpoints from P1 (lumo-runtime:local,
+# P2 — Kubernetes deployment for the Morbeh runtime processes (api / worker / scheduler).
+# Manifests only: they package the SAME image and endpoints from P1 (morbeh-runtime:local,
 # /healthz /readyz /metrics on port 3080) and consume ONLY the existing runtime env contract.
 # No application, Dockerfile, port, or behavior changes.
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: lumo-runtime
+  name: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     # Enforce the restricted Pod Security Standard — the pods below are already compliant
     # (non-root, drop ALL caps, no privilege escalation, seccomp RuntimeDefault, read-only rootfs).
     pod-security.kubernetes.io/enforce: restricted
@@ -20,8 +20,8 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: lumo-runtime
-  namespace: lumo-runtime
+  name: morbeh-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
 automountServiceAccountToken: false

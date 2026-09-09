@@ -89,7 +89,7 @@ function StatePanel({
   );
 }
 
-/** `<Suspense>` fallback for {@link RecentOrdersSection} — the existing Lumo skeleton treatment. */
+/** `<Suspense>` fallback for {@link RecentOrdersSection} — the existing Morbeh skeleton treatment. */
 export function RecentOrdersSkeleton({
   t,
   className,

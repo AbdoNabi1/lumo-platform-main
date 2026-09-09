@@ -7,7 +7,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-all
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
@@ -16,7 +16,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-dns-egress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector: {}
   policyTypes: [Egress]
@@ -35,7 +35,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-infra-egress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector: {}
   policyTypes: [Egress]
@@ -76,7 +76,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-api-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:
@@ -96,7 +96,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-metrics-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector: {}
   policyTypes: [Ingress]
@@ -116,7 +116,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-collector-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:
@@ -148,7 +148,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-debezium-connect-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:
@@ -167,7 +167,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-storefront-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:
@@ -195,7 +195,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-storefront-egress-to-api
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:
@@ -214,7 +214,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-storefront-to-api-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:
@@ -234,7 +234,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-admin-web-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:
@@ -256,7 +256,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-admin-web-egress-to-api
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:
@@ -275,7 +275,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-admin-web-to-api-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:
@@ -296,7 +296,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-identity-public-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchExpressions:
@@ -323,7 +323,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-admin-web-to-identity-admin-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchExpressions:
@@ -352,7 +352,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-keto-ingress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   podSelector:
     matchLabels:

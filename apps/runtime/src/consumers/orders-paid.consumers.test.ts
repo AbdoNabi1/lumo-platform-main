@@ -29,8 +29,8 @@ const WORKER_ENV = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
   KAFKA_BROKERS: "localhost:19092",
-  AUTH_ISSUER_URL: "https://auth.lumo.local",
-  AUTH_JWKS_URL: "https://auth.lumo.local/.well-known/jwks.json",
+  AUTH_ISSUER_URL: "https://auth.morbeh.local",
+  AUTH_JWKS_URL: "https://auth.morbeh.local/.well-known/jwks.json",
   APP_ENV: "local",
 } as NodeJS.ProcessEnv;
 

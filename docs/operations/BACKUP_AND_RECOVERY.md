@@ -51,7 +51,7 @@ scripts/ops/restore-postgres.sh --base s3://backups/pg/base/<date> \
                                 --wal  s3://backups/pg/wal \
                                 --target-time "2026-07-19T12:00:00Z"
 # Then re-point the runtime and confirm readiness.
-kubectl -n lumo-runtime rollout restart deploy/runtime-api deploy/runtime-worker
+kubectl -n morbeh-runtime rollout restart deploy/runtime-api deploy/runtime-worker
 ```
 
 After restore, replay any events produced after the restore point from Redpanda; the **inbox**
@@ -84,7 +84,7 @@ scripts/ops/rotate-keys.sh --rewrap-deks --new-kek-version <v>
 # 3. App/Ingress TLS + JWT signing keys: publish the new key, keep the old in the JWKS during the
 #    overlap window, then retire the old key after tokens/sessions expire.
 # 4. Roll the runtime so new secret material is picked up:
-kubectl -n lumo-runtime rollout restart deploy/runtime-api
+kubectl -n morbeh-runtime rollout restart deploy/runtime-api
 ```
 
 Rotation cadence: KEK quarterly (or on suspected compromise), TLS per cert lifetime, app secrets on

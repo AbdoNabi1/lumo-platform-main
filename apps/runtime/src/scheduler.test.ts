@@ -348,7 +348,7 @@ describe("cdc-watchdog job (Phase A.23, Task 3/4)", () => {
       if (url.endsWith("/connectors/lumo-outbox/status")) {
         return statusResponse([{ id: 0, state: "FAILED" }]);
       }
-      if (url.endsWith("/connectors/lumo-other/status")) {
+      if (url.endsWith("/connectors/morbeh-other/status")) {
         return statusResponse([{ id: 0, state: "RUNNING" }]);
       }
       if (url.includes("/lumo-outbox/tasks/0/restart") && init?.method === "POST") {
@@ -372,7 +372,7 @@ describe("cdc-watchdog job (Phase A.23, Task 3/4)", () => {
     expect(metrics.recordCdcWatchdogRestart).toHaveBeenCalledTimes(1);
     expect(metrics.recordCdcWatchdogRestart).toHaveBeenCalledWith("lumo-outbox", "0");
     expect(fetchImpl).not.toHaveBeenCalledWith(
-      expect.stringContaining("/lumo-other/tasks"),
+      expect.stringContaining("/morbeh-other/tasks"),
       expect.anything(),
     );
   });

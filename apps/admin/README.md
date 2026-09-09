@@ -8,8 +8,8 @@ application surface. It changes **no** business behaviour: every method delegate
 context controller, which keeps its own domain logic, persistence, and outbox.
 
 > This package is **backend only** — it contains no React and renders nothing. The admin's visual
-> surface is `apps/admin-web`, built on the Lumo Design System
-> ([`docs/ui/LUMO_DESIGN_SYSTEM.md`](../../docs/ui/LUMO_DESIGN_SYSTEM.md)). Screen behaviour is
+> surface is `apps/admin-web`, built on the Morbeh Design System
+> ([`docs/ui/MORBEH_DESIGN_SYSTEM.md`](../../docs/ui/MORBEH_DESIGN_SYSTEM.md)). Screen behaviour is
 > specified in [`docs/admin/01-ADMIN_DASHBOARD_SPEC.md`](../../docs/admin/01-ADMIN_DASHBOARD_SPEC.md).
 
 ## Screen → context mapping (Phase-1 scope)

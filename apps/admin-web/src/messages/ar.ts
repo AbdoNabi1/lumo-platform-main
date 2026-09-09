@@ -5,7 +5,7 @@ import type { Dictionary } from "./en";
  * a compile error rather than a string that silently falls back to English.
  */
 export const ar: Dictionary = {
-  brand: "لومو",
+  brand: "موربيه",
   nav: {
     primary: "الرئيسية",
     dashboard: "لوحة التحكم",
@@ -129,7 +129,8 @@ export const ar: Dictionary = {
     marketplace: "المتاجر الوسيطة",
     retailStore: "المتجر الفعلي",
     other: "أخرى",
-    demoExplanation: "بيانات تجريبية — لا يحمل أي سجل طلب أو إيراد في هذا النظام بُعد قناة بيع بعد.",
+    demoExplanation:
+      "بيانات تجريبية — لا يحمل أي سجل طلب أو إيراد في هذا النظام بُعد قناة بيع بعد.",
   },
   data: {
     demoBadge: "التقارير غير متاحة",
@@ -871,7 +872,8 @@ export const ar: Dictionary = {
     empty: "لا توجد تعريفات بعد.",
     error: "تعذّر تحميل كتالوج المقاييس. حاول تحديث الصفحة.",
     unauthorized: "سجّل الدخول لعرض كتالوج المقاييس.",
-    queryNote: "هذا كتالوج التعريفات فقط. تنفيذ استعلام يتطلب مخزن قراءة مُهيَّأ، وهو غير متصل في هذه البيئة.",
+    queryNote:
+      "هذا كتالوج التعريفات فقط. تنفيذ استعلام يتطلب مخزن قراءة مُهيَّأ، وهو غير متصل في هذه البيئة.",
   },
   marketingPage: {
     title: "التسويق",
@@ -1663,7 +1665,8 @@ export const ar: Dictionary = {
     },
     evaluateAccess: {
       title: "تقييم الوصول (معاينة)",
-      subtitle: "تقييم الوصول القائم على الثقة الصفرية — نقطة التفويض الوحيدة في المنصة. أداة معاينة.",
+      subtitle:
+        "تقييم الوصول القائم على الثقة الصفرية — نقطة التفويض الوحيدة في المنصة. أداة معاينة.",
       principalExternalId: "المعرّف الخارجي للفاعل",
       permission: "الصلاحية",
       sessionId: "معرّف الجلسة (اختياري)",
@@ -1696,7 +1699,8 @@ export const ar: Dictionary = {
       description: "الوصف (اختياري)",
       expression: "التعبير (JSON)",
       expressionPlaceholder: '{"leaf":{"attribute":"risk","operator":"lt","value":0.5}}',
-      expressionHint: "تعبير PolicyExpression كـ JSON خام — {leaf}/{allOf}/{anyOf}/{not}/{fragment}.",
+      expressionHint:
+        "تعبير PolicyExpression كـ JSON خام — {leaf}/{allOf}/{anyOf}/{not}/{fragment}.",
       expressionInvalid: "أدخل JSON صالحًا.",
       submit: "تسجيل",
       submitting: "جارٍ التسجيل…",
@@ -1879,7 +1883,7 @@ export const ar: Dictionary = {
       submitting: "جارٍ الإلغاء…",
       success: "تم إلغاء كل جلسة نشِطة لهذا الكيان.",
       confirm:
-        "سيؤدي هذا إلى إلغاء كل جلسة نشِطة للكيان \"{principal}\" — سيتم تسجيل خروجه من كل جهاز فورًا. لا يمكن التراجع عن هذا. متابعة؟",
+        'سيؤدي هذا إلى إلغاء كل جلسة نشِطة للكيان "{principal}" — سيتم تسجيل خروجه من كل جهاز فورًا. لا يمكن التراجع عن هذا. متابعة؟',
     },
     registerAuthMethod: {
       title: "تسجيل طريقة مصادقة",
@@ -1894,7 +1898,8 @@ export const ar: Dictionary = {
     },
     authenticate: {
       title: "مصادقة (تجربة)",
-      subtitle: "يحاكي تدفّق المصادقة لاختبار هذه اللوحة — المصادقة الفعلية تحدث خارج تطبيق الإدارة.",
+      subtitle:
+        "يحاكي تدفّق المصادقة لاختبار هذه اللوحة — المصادقة الفعلية تحدث خارج تطبيق الإدارة.",
       method: "الطريقة",
       identifier: "المعرّف",
       credential: "بيانات الاعتماد (اختياري)",
@@ -2200,7 +2205,8 @@ export const ar: Dictionary = {
         "يفرض تشغيل التدوير الجماعي المدفوع بالمُجدوِل الآن — يُدوِّر كل بيانات اعتماد حان موعد تدويرها.",
       submit: "تدوير بيانات الاعتماد المستحقة",
       submitting: "جارٍ التدوير…",
-      confirm: "تدوير كل بيانات اعتماد حان موعد تدويرها؟ سيُنفَّذ هذا فورًا لكل بيانات اعتماد مؤهلة.",
+      confirm:
+        "تدوير كل بيانات اعتماد حان موعد تدويرها؟ سيُنفَّذ هذا فورًا لكل بيانات اعتماد مؤهلة.",
       success: "تم تدوير بيانات الاعتماد المستحقة.",
     },
     emergencyRevoke: {
@@ -2266,7 +2272,8 @@ export const ar: Dictionary = {
       externalId: "المعرّف الخارجي للكيان",
       submit: "تعليق",
       submitting: "جارٍ التعليق…",
-      confirm: "تعليق هوية الذكاء الاصطناعي هذه؟ سيُمنع فورًا من تنفيذ أي إجراءات ذكاء اصطناعي أخرى.",
+      confirm:
+        "تعليق هوية الذكاء الاصطناعي هذه؟ سيُمنع فورًا من تنفيذ أي إجراءات ذكاء اصطناعي أخرى.",
       success: "تم تعليق هوية الذكاء الاصطناعي.",
     },
     check: {
@@ -2376,7 +2383,13 @@ export const ar: Dictionary = {
     featuresEmpty: "لا توجد ميزات مسجَّلة بعد.",
     featuresUnauthorized: "سجّل الدخول لعرض كتالوج الميزات.",
     featuresError: "تعذّر تحميل كتالوج الميزات. حاول تحديث الصفحة.",
-    bundlesColumns: { key: "المفتاح", name: "الاسم", status: "الحالة", features: "الميزات", groups: "المجموعات" },
+    bundlesColumns: {
+      key: "المفتاح",
+      name: "الاسم",
+      status: "الحالة",
+      features: "الميزات",
+      groups: "المجموعات",
+    },
     bundlesEmpty: "لا توجد حزم معرَّفة بعد.",
     bundlesUnauthorized: "سجّل الدخول لعرض الحزم.",
     bundlesError: "تعذّر تحميل الحزم. حاول تحديث الصفحة.",
@@ -2534,7 +2547,7 @@ export const ar: Dictionary = {
   },
   notFound: {
     title: "لم تُبنَ بعد",
-    body: "تعرض القائمة كامل واجهة التشغيل في لومو، لكن لوحة التحكم وحدها هي المنفَّذة حتى الآن. لا توجد شاشة خلف هذه الوجهة بعد.",
+    body: "تعرض القائمة كامل واجهة التشغيل في موربيه، لكن لوحة التحكم وحدها هي المنفَّذة حتى الآن. لا توجد شاشة خلف هذه الوجهة بعد.",
     backToDashboard: "العودة إلى لوحة التحكم",
   },
   forbidden: {
@@ -2550,7 +2563,7 @@ export const ar: Dictionary = {
   },
   footer: {
     navLabel: "الشؤون القانونية والدعم",
-    copyright: "© {year} لومو. جميع الحقوق محفوظة.",
+    copyright: "© {year} موربيه. جميع الحقوق محفوظة.",
     privacy: "سياسة الخصوصية",
     terms: "شروط الخدمة",
     support: "الدعم",
@@ -2756,7 +2769,8 @@ export const ar: Dictionary = {
   },
   promotionEvaluate: {
     title: "تقييم",
-    subtitle: "قيّم كل عرض ترويجي نشِط مقابل لقطة سلة تكتبها — محاكاة، وليست تغييراً على هذا العرض الترويجي.",
+    subtitle:
+      "قيّم كل عرض ترويجي نشِط مقابل لقطة سلة تكتبها — محاكاة، وليست تغييراً على هذا العرض الترويجي.",
     customerRef: "مرجع العميل",
     subtotalAmountMinor: "المجموع الفرعي بالوحدات الصغرى",
     segmentRefs: "مراجع الشرائح (اختياري، مفصولة بفواصل)",

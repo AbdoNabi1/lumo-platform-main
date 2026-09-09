@@ -24,10 +24,10 @@ const schema = z
     DATABASE_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(30_000),
     REDIS_URL: z.string().min(1),
-    REDIS_KEY_PREFIX: z.string().default("lumo:"),
+    REDIS_KEY_PREFIX: z.string().default("morbeh:"),
 
     KAFKA_BROKERS: z.string().min(1).default("localhost:19092"),
-    KAFKA_CLIENT_ID: z.string().default("lumo-runtime"),
+    KAFKA_CLIENT_ID: z.string().default("morbeh-runtime"),
 
     // ── Phase A.23: CDC (Debezium/Kafka Connect) watchdog ──
     /**
@@ -54,7 +54,7 @@ const schema = z
 
     AUTH_ISSUER_URL: z.string().url().optional(),
     AUTH_JWKS_URL: z.string().url().optional(),
-    AUTH_AUDIENCE: z.string().default("lumo-admin"),
+    AUTH_AUDIENCE: z.string().default("morbeh-admin"),
     KETO_READ_URL: z.string().url().optional(),
     /** Ory Keto write-API base (relation-tuple sync); required outside `local` (H-2, superRefine). */
     KETO_WRITE_URL: z.string().url().optional(),
@@ -217,7 +217,7 @@ const schema = z
 
     // ── OpenTelemetry (P2.0.1 runtime activation of the existing @platform/observability SDK) ──
     /** Base OTel service name; each entrypoint suffixes its role (`-api`/`-worker`/`-scheduler`). */
-    OTEL_SERVICE_NAME: z.string().default("lumo-runtime"),
+    OTEL_SERVICE_NAME: z.string().default("morbeh-runtime"),
     /** OTLP collector endpoint; when set, traces/metrics export there (else the SDK's own default). */
     OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
     /** Enable trace export. Off by default so local/tests never attempt to reach a collector. */

@@ -12,9 +12,9 @@ const { middleware } = await import("./middleware");
 function requestFor(path: string, sessionCookie?: string): NextRequest {
   const headers = new Headers();
   if (sessionCookie !== undefined) {
-    headers.set("cookie", `lumo_admin_session=${sessionCookie}`);
+    headers.set("cookie", `morbeh_admin_session=${sessionCookie}`);
   }
-  return new NextRequest(new URL(path, "https://admin.lumo.example.com"), { headers });
+  return new NextRequest(new URL(path, "https://admin.morbeh.example.com"), { headers });
 }
 
 afterEach(() => {
@@ -42,8 +42,8 @@ describe("middleware", () => {
     expect(location.searchParams.get("code_challenge")).not.toBeNull();
     expect(location.searchParams.get("nonce")).not.toBeNull();
 
-    const pkceCookie = response.cookies.get("lumo_oauth_pkce_verifier")?.value;
-    const nonceCookie = response.cookies.get("lumo_oauth_nonce")?.value;
+    const pkceCookie = response.cookies.get("morbeh_oauth_pkce_verifier")?.value;
+    const nonceCookie = response.cookies.get("morbeh_oauth_nonce")?.value;
     expect(pkceCookie).toBeTruthy();
     expect(nonceCookie).toBeTruthy();
     // The nonce sent to Hydra must be exactly the value stashed for the callback to check

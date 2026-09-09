@@ -31,11 +31,11 @@ const validEnv = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
   KAFKA_BROKERS: "localhost:19092",
-  AUTH_ISSUER_URL: "https://auth.lumo.local",
-  AUTH_JWKS_URL: "https://auth.lumo.local/.well-known/jwks.json",
-  KETO_WRITE_URL: "https://keto.lumo.local:4467",
-  KRATOS_PUBLIC_URL: "https://kratos.lumo.local:4433",
-  KRATOS_ADMIN_URL: "https://kratos.lumo.local:4434",
+  AUTH_ISSUER_URL: "https://auth.morbeh.local",
+  AUTH_JWKS_URL: "https://auth.morbeh.local/.well-known/jwks.json",
+  KETO_WRITE_URL: "https://keto.morbeh.local:4467",
+  KRATOS_PUBLIC_URL: "https://kratos.morbeh.local:4433",
+  KRATOS_ADMIN_URL: "https://kratos.morbeh.local:4434",
 } as NodeJS.ProcessEnv;
 
 describe("H-03 regression: startApi() starts runtime telemetry", () => {

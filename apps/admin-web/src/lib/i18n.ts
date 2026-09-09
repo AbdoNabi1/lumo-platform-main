@@ -1,14 +1,14 @@
 import { ar } from "@/messages/ar";
 import { en, type Dictionary } from "@/messages/en";
 
-/** The locales the Lumo admin surface is validated in — one LTR, one RTL. */
+/** The locales the Morbeh admin surface is validated in — one LTR, one RTL. */
 export const LOCALES = ["en", "ar"] as const;
 export type Locale = (typeof LOCALES)[number];
 
 export const DEFAULT_LOCALE: Locale = "en";
 
 /** Cookie the locale is persisted in. Read in the root layout, written by a server action. */
-export const LOCALE_COOKIE = "lumo-locale";
+export const LOCALE_COOKIE = "morbeh-locale";
 
 const DICTIONARIES: Readonly<Record<Locale, Dictionary>> = { en, ar };
 

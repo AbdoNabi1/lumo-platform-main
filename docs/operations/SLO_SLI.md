@@ -1,6 +1,6 @@
 # SLOs, SLIs & Error Budgets
 
-> H-5 Production Readiness. These are the contractual reliability targets for the Lumo runtime.
+> H-5 Production Readiness. These are the contractual reliability targets for the Morbeh runtime.
 > Every SLI is computed from a metric the runtime **actually exposes** (`apps/runtime/src/metrics.ts`)
 > and encoded as a Prometheus recording rule in
 > [`slo.recording.rules.yml`](../../infrastructure/docker/prometheus/rules/slo.recording.rules.yml).
@@ -45,6 +45,6 @@ Burn rate = `observed_error_ratio / (1 - SLO)`. A burn rate of 1 spends the budg
 
 ## Reviewing the budget
 
-- **Grafana** → _Lumo / Platform Overview (SLO)_ shows availability, burn, and latency live.
+- **Grafana** → _Morbeh / Platform Overview (SLO)_ shows availability, burn, and latency live.
 - When the monthly budget is exhausted, the release train pauses for reliability work (policy, not
   tooling — see [OPERATIONS_GUIDE](OPERATIONS_GUIDE.md#error-budget-policy)).

@@ -61,7 +61,7 @@ own no-push rule — it is the single next action). G-0 status: closed-locally /
   > 100-char body lines; honest hook, honest fix). lint-staged's prettier reformatted ~220
   > previously-committed files during the hook run; the reformat is included in the baseline.
 - Tag: `sprint-3.0C-baseline` (continues the existing `sprint-0.x` convention).
-- Backup: `%USERPROFILE%\lumo-backups\lumo-platform-3.0C-baseline.bundle` — `git bundle verify`
+- Backup: `%USERPROFILE%\morbeh-backups\morbeh-platform-3.0C-baseline.bundle` — `git bundle verify`
   = okay (all refs + tags).
 - Post-reformat gates re-verified: lint/typecheck/test 120/120 ✅ · arch 0 violations ✅.
 - Working tree: CLEAN (0 paths). G-0: closed-locally; the GitHub push remains the operator's

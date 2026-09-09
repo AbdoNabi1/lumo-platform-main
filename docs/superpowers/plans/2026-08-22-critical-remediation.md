@@ -1,4 +1,4 @@
-# Lumo Platform — Critical Remediation Implementation Plan
+# Morbeh Platform — Critical Remediation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
@@ -1279,7 +1279,7 @@ git commit -m "fix(security): register the Keto sync fleet and seed the enterpri
 
 # PHASE 1 — Real multi-tenancy with RLS (`C-7`, `H-8`)
 
-**Product decision on record:** Lumo ships as **one deployment serving many merchant organizations (SaaS)**. Today `apps/runtime/src/composition.ts:125` refuses to boot with `TENANT_MODE=multi`, because every repository is pinned to one `tenantId` at construction. This phase makes tenancy per-request and puts PostgreSQL Row-Level Security underneath it as the enforcing floor — closing the `MIGRATIONS.md §3` contract that 37 migrations left unimplemented (0 tables have RLS today).
+**Product decision on record:** Morbeh ships as **one deployment serving many merchant organizations (SaaS)**. Today `apps/runtime/src/composition.ts:125` refuses to boot with `TENANT_MODE=multi`, because every repository is pinned to one `tenantId` at construction. This phase makes tenancy per-request and puts PostgreSQL Row-Level Security underneath it as the enforcing floor — closing the `MIGRATIONS.md §3` contract that 37 migrations left unimplemented (0 tables have RLS today).
 
 **Approach, and why:** we do **not** rewrite 57 repositories to thread `tenantId` through every method. Instead:
 

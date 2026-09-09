@@ -5,7 +5,7 @@ import type { Dictionary } from "./en";
  * a compile error rather than a string that silently falls back to English.
  */
 export const ar: Dictionary = {
-  brand: "لومو",
+  brand: "موربيه",
   nav: {
     home: "الرئيسية",
     openMenu: "فتح القائمة",
@@ -192,7 +192,7 @@ export const ar: Dictionary = {
     errorBody: "تعذّر الوصول إلى خدمة الحسابات. حاول مرة أخرى.",
     signIn: {
       title: "تسجيل الدخول",
-      subtitle: "سجّل الدخول إلى حسابك في لومو.",
+      subtitle: "سجّل الدخول إلى حسابك في موربيه.",
       emailLabel: "البريد الإلكتروني",
       passwordLabel: "كلمة المرور",
       submit: "تسجيل الدخول",
@@ -202,7 +202,7 @@ export const ar: Dictionary = {
     },
     register: {
       title: "إنشاء حساب",
-      subtitle: "أنشئ حساباً في لومو لحفظ قائمة أمنياتك وتتبّع طلباتك.",
+      subtitle: "أنشئ حساباً في موربيه لحفظ قائمة أمنياتك وتتبّع طلباتك.",
       nameLabel: "الاسم",
       emailLabel: "البريد الإلكتروني",
       passwordLabel: "كلمة المرور",

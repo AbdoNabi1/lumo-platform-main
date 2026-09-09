@@ -2,7 +2,7 @@ import { colors, typography } from "@platform/design";
 import { ThemeVariables } from "../domain/value-objects/theme-variables";
 
 /**
- * The theme presets built from the Lumo `@platform/design` tokens (read-only) — never duplicates
+ * The theme presets built from the Morbeh `@platform/design` tokens (read-only) — never duplicates
  * the design system, only maps its shape into `ThemeVariables`.
  */
 const PRESETS: Readonly<Record<string, () => ThemeVariables>> = {

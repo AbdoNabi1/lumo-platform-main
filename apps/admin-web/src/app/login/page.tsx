@@ -171,7 +171,9 @@ function renderKratosLoginForm(flow: KratosLoginFlow) {
         <CardContent className="pt-8">
           <div className="mb-6 flex items-center gap-2.5">
             <BrandMark />
-            <span className="text-foreground text-xl font-semibold tracking-tight">Lumo Admin</span>
+            <span className="text-foreground text-xl font-semibold tracking-tight">
+              Morbeh Admin
+            </span>
           </div>
           <p className="text-muted-foreground -mt-4 mb-6 text-sm">Sign in to continue.</p>
 

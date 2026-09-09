@@ -3,7 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../lib/cn";
 
 /**
- * Lumo Badge.
+ * Morbeh Badge.
  *
  * Status variants carry the platform's semantic meaning and must stay consistent
  * everywhere they appear — admin, storefront, orders, payments, inventory, checkout,

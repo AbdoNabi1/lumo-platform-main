@@ -1,7 +1,7 @@
 # Infrastructure validation report
 
 > **Scope:** pre–Sprint 0.3 full infrastructure validation (read-only; no source code modified).
-> Executed against the monorepo at `lumo-platform/`.
+> Executed against the monorepo at `morbeh-platform/`.
 
 ## Validation date
 
@@ -18,27 +18,27 @@ A full PASS requires re-running steps 1–8 on a host with Docker (see Recommend
 
 ## 1–2. Docker status & container health
 
-| Item | Result |
-|---|---|
-| `docker` CLI | **Not found** (`'docker' is not recognized`) |
-| `docker compose` | Not available |
-| `docker-compose` (legacy) | Not available |
-| Docker Desktop install | Not present (`C:\Program Files\Docker\...` absent) |
-| Docker engine pipe `\\.\pipe\docker_engine` | Absent |
-| podman (alternative) | Not available |
-| `docker compose up -d` | **Could not run** (no Docker runtime) |
+| Item                                                     | Result                                                 |
+| -------------------------------------------------------- | ------------------------------------------------------ |
+| `docker` CLI                                             | **Not found** (`'docker' is not recognized`)           |
+| `docker compose`                                         | Not available                                          |
+| `docker-compose` (legacy)                                | Not available                                          |
+| Docker Desktop install                                   | Not present (`C:\Program Files\Docker\...` absent)     |
+| Docker engine pipe `\\.\pipe\docker_engine`              | Absent                                                 |
+| podman (alternative)                                     | Not available                                          |
+| `docker compose up -d`                                   | **Could not run** (no Docker runtime)                  |
 | PostgreSQL / Redis / ClickHouse / MinIO container health | **NOT EXECUTED** — no runtime to start or inspect them |
 
-The compose definition itself exists and is complete (`infrastructure/docker/docker-compose.yml`: `postgres:16`, `redis:7`, `clickhouse:24.8`, `minio` + `createbuckets`, with named volumes, healthchecks, and the `lumo` network), but it could not be parsed/started by Docker here.
+The compose definition itself exists and is complete (`infrastructure/docker/docker-compose.yml`: `postgres:16`, `redis:7`, `clickhouse:24.8`, `minio` + `createbuckets`, with named volumes, healthchecks, and the `morbeh` network), but it could not be parsed/started by Docker here.
 
 ## 3–6. Live connection checks
 
-| Step | Target | Result |
-|---|---|---|
-| 3 | Prisma → PostgreSQL connection | **NOT EXECUTED** (no DB running). Static checks done instead — see below. |
-| 4 | Redis connection (PING) | **NOT EXECUTED** (no Redis running) |
-| 5 | ClickHouse connection (ping) | **NOT EXECUTED** (no ClickHouse running) |
-| 6 | MinIO buckets (`media`/`exports`/`backups`) | **NOT EXECUTED** (no MinIO running) |
+| Step | Target                                      | Result                                                                    |
+| ---- | ------------------------------------------- | ------------------------------------------------------------------------- |
+| 3    | Prisma → PostgreSQL connection              | **NOT EXECUTED** (no DB running). Static checks done instead — see below. |
+| 4    | Redis connection (PING)                     | **NOT EXECUTED** (no Redis running)                                       |
+| 5    | ClickHouse connection (ping)                | **NOT EXECUTED** (no ClickHouse running)                                  |
+| 6    | MinIO buckets (`media`/`exports`/`backups`) | **NOT EXECUTED** (no MinIO running)                                       |
 
 **Static substitutes that WERE executed (no live services required):**
 
@@ -50,13 +50,13 @@ The compose definition itself exists and is complete (`infrastructure/docker/doc
 
 The infrastructure health system (`@platform/health` + per-package probes) is implemented but is a **library**, not a running HTTP endpoint — and no service is currently running to expose or exercise it. The following checks exist and are wired to register into `HealthRegistry`, but were **NOT EXECUTED** (they require live services):
 
-| Check | Probe | Status |
-|---|---|---|
-| `database` | `SELECT 1` via Prisma | NOT EXECUTED (no PostgreSQL) |
-| `redis` | `PING` → `PONG` | NOT EXECUTED (no Redis) |
-| `clickhouse` | client `ping()` | NOT EXECUTED (no ClickHouse) |
-| `storage` | `HeadBucket` per configured bucket | NOT EXECUTED (no MinIO) |
-| `configuration` | required-endpoints assertion | NOT EXECUTED (not run standalone) |
+| Check           | Probe                              | Status                            |
+| --------------- | ---------------------------------- | --------------------------------- |
+| `database`      | `SELECT 1` via Prisma              | NOT EXECUTED (no PostgreSQL)      |
+| `redis`         | `PING` → `PONG`                    | NOT EXECUTED (no Redis)           |
+| `clickhouse`    | client `ping()`                    | NOT EXECUTED (no ClickHouse)      |
+| `storage`       | `HeadBucket` per configured bucket | NOT EXECUTED (no MinIO)           |
+| `configuration` | required-endpoints assertion       | NOT EXECUTED (not run standalone) |
 
 **Complete health status: UNAVAILABLE** in this environment (no running infrastructure to report on).
 
@@ -64,24 +64,24 @@ The infrastructure health system (`@platform/health` + per-package probes) is im
 
 All commands run via `pnpm` (turbo) at the repo root. Exit codes captured.
 
-| Command | Result | Detail |
-|---|---|---|
-| `pnpm lint` | **PASS** (exit 0) | 15/15 tasks; ESLint 9 flat config across all packages |
-| `pnpm typecheck` | **PASS** (exit 0) | 15/15 tasks; `tsc --noEmit`, strict mode |
-| `pnpm build` | **PASS** (exit 0) | storefront `next build` compiled; 4 static routes generated |
-| `pnpm test` | **PASS** (exit 0) | 15/15 tasks; **15 unit tests pass** — secrets (5), health (3), redis (2), config (5) |
+| Command          | Result            | Detail                                                                               |
+| ---------------- | ----------------- | ------------------------------------------------------------------------------------ |
+| `pnpm lint`      | **PASS** (exit 0) | 15/15 tasks; ESLint 9 flat config across all packages                                |
+| `pnpm typecheck` | **PASS** (exit 0) | 15/15 tasks; `tsc --noEmit`, strict mode                                             |
+| `pnpm build`     | **PASS** (exit 0) | storefront `next build` compiled; 4 static routes generated                          |
+| `pnpm test`      | **PASS** (exit 0) | 15/15 tasks; **15 unit tests pass** — secrets (5), health (3), redis (2), config (5) |
 
 ## Environment information
 
-| Item | Value |
-|---|---|
-| OS | Microsoft Windows 11 Pro (10.0.26200) |
-| Node.js | v24.15.0 (engines require `>=22`; `.nvmrc`/CI pin **22** — see Risks) |
-| Package manager | pnpm 11.9.0 (Corepack) |
-| Repo root | `…/Claude code/Git/lumo-platform` |
-| Prisma | 6.19.3 — schema valid, client generated |
-| Workspace projects | 18 (10 with build/typecheck/lint; 4 with unit tests) |
-| Docker | **Not installed** |
+| Item               | Value                                                                 |
+| ------------------ | --------------------------------------------------------------------- |
+| OS                 | Microsoft Windows 11 Pro (10.0.26200)                                 |
+| Node.js            | v24.15.0 (engines require `>=22`; `.nvmrc`/CI pin **22** — see Risks) |
+| Package manager    | pnpm 11.9.0 (Corepack)                                                |
+| Repo root          | `…/Claude code/Git/morbeh-platform`                                   |
+| Prisma             | 6.19.3 — schema valid, client generated                               |
+| Workspace projects | 18 (10 with build/typecheck/lint; 4 with unit tests)                  |
+| Docker             | **Not installed**                                                     |
 
 ## Risks found
 
@@ -102,12 +102,12 @@ All commands run via `pnpm` (turbo) at the repo root. Exit codes captured.
 
 ## Final result
 
-| Dimension | Verdict |
-|---|---|
-| Lint | ✅ PASS |
-| Typecheck | ✅ PASS |
-| Build | ✅ PASS |
-| Tests | ✅ PASS (15/15) |
-| Prisma schema/client | ✅ VALID / GENERATED |
-| Live infrastructure (Docker, connections, buckets, health) | ⛔ BLOCKED — Docker not available (not run) |
-| **Overall** | **PARTIAL PASS** — code/build/test validated; **live infrastructure validation must be completed on a Docker-capable host before Sprint 0.3.** |
+| Dimension                                                  | Verdict                                                                                                                                        |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lint                                                       | ✅ PASS                                                                                                                                        |
+| Typecheck                                                  | ✅ PASS                                                                                                                                        |
+| Build                                                      | ✅ PASS                                                                                                                                        |
+| Tests                                                      | ✅ PASS (15/15)                                                                                                                                |
+| Prisma schema/client                                       | ✅ VALID / GENERATED                                                                                                                           |
+| Live infrastructure (Docker, connections, buckets, health) | ⛔ BLOCKED — Docker not available (not run)                                                                                                    |
+| **Overall**                                                | **PARTIAL PASS** — code/build/test validated; **live infrastructure validation must be completed on a Docker-capable host before Sprint 0.3.** |

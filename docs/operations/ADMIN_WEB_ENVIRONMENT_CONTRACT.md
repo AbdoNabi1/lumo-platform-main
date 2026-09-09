@@ -15,50 +15,50 @@ domain** requirement intact (see Cookies, below).
 
 | Placeholder        | Used for            | Example in this repo's manifests                         |
 | ------------------ | ------------------- | -------------------------------------------------------- |
-| `ADMIN_WEB_ORIGIN` | admin-web itself    | `https://admin.lumo.example.com`                         |
-| `AUTH_ORIGIN`      | Hydra's public API  | `https://auth.lumo.example.com`                          |
-| `IDENTITY_ORIGIN`  | Kratos's public API | `https://identity.lumo.example.com`                      |
+| `ADMIN_WEB_ORIGIN` | admin-web itself    | `https://admin.morbeh.example.com`                       |
+| `AUTH_ORIGIN`      | Hydra's public API  | `https://auth.morbeh.example.com`                        |
+| `IDENTITY_ORIGIN`  | Kratos's public API | `https://identity.morbeh.example.com`                    |
 | `API_ORIGIN`       | Runtime Admin API   | in-cluster only — never public for admin-web's own calls |
 
 `AUTH_ORIGIN`/`IDENTITY_ORIGIN` and `ADMIN_WEB_ORIGIN` **must** share a registrable parent domain
-(e.g. all three under `.lumo.example.com`) — this is what lets Kratos's session cookie and
-admin-web's own cookies both carry `Domain=.lumo.example.com` and reach each other across the
+(e.g. all three under `.morbeh.example.com`) — this is what lets Kratos's session cookie and
+admin-web's own cookies both carry `Domain=.morbeh.example.com` and reach each other across the
 split (A.33 P0 #6). If your real domains can't share a parent, the login bridge in
 `login/page.tsx`/`middleware.ts` needs a different mechanism — that redesign is out of this
 phase's scope; treat it as an open item until decided.
 
 ## Auth (admin-web)
 
-| Var                  | Required outside local/dev         | Value                                                                                                                          |
-| -------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `AUTH_ISSUER_URL`    | yes                                | `https://AUTH_ORIGIN/` — must equal Hydra's `URLS_SELF_ISSUER` exactly                                                         |
-| `AUTH_JWKS_URL`      | yes                                | in-cluster: `http://hydra.lumo-runtime.svc.cluster.local:4444/.well-known/jwks.json`                                           |
-| `AUTH_AUDIENCE`      | no (safe default `lumo-admin`)     | must match the Hydra client's registered `audience`                                                                            |
-| `AUTH_CLIENT_ID`     | no (safe default `lumo-admin-web`) | must match the Hydra client's `client_id`                                                                                      |
-| `AUTH_CLIENT_SECRET` | **yes, no fallback ever**          | from the secret manager; register via `scripts/ops/register-oauth-client.mjs`                                                  |
-| `HYDRA_PUBLIC_URL`   | yes                                | `https://AUTH_ORIGIN` — the browser is redirected here                                                                         |
-| `HYDRA_ADMIN_URL`    | yes                                | in-cluster only: `http://hydra.lumo-runtime.svc.cluster.local:4445` — **never public**                                         |
-| `KRATOS_PUBLIC_URL`  | yes                                | `https://IDENTITY_ORIGIN` — the browser is redirected here too                                                                 |
-| `COOKIE_DOMAIN`      | no (host-only cookie if unset)     | `.lumo.example.com` — required if Hydra/Kratos are on a sibling subdomain                                                      |
-| `COOKIE_SAME_SITE`   | no (default `lax`)                 | `lax`\|`strict`\|`none` — `none` requires an explicit CSRF review (see report)                                                 |
-| Logout URI           | —                                  | `https://ADMIN_WEB_ORIGIN/logout` (best-effort Kratos logout; Hydra's own remembered-login session is a documented limitation) |
-| Redirect URI         | —                                  | `https://ADMIN_WEB_ORIGIN/auth/callback` — must exactly match the Hydra client's `redirect_uris`                               |
+| Var                  | Required outside local/dev           | Value                                                                                                                          |
+| -------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `AUTH_ISSUER_URL`    | yes                                  | `https://AUTH_ORIGIN/` — must equal Hydra's `URLS_SELF_ISSUER` exactly                                                         |
+| `AUTH_JWKS_URL`      | yes                                  | in-cluster: `http://hydra.morbeh-runtime.svc.cluster.local:4444/.well-known/jwks.json`                                         |
+| `AUTH_AUDIENCE`      | no (safe default `morbeh-admin`)     | must match the Hydra client's registered `audience`                                                                            |
+| `AUTH_CLIENT_ID`     | no (safe default `morbeh-admin-web`) | must match the Hydra client's `client_id`                                                                                      |
+| `AUTH_CLIENT_SECRET` | **yes, no fallback ever**            | from the secret manager; register via `scripts/ops/register-oauth-client.mjs`                                                  |
+| `HYDRA_PUBLIC_URL`   | yes                                  | `https://AUTH_ORIGIN` — the browser is redirected here                                                                         |
+| `HYDRA_ADMIN_URL`    | yes                                  | in-cluster only: `http://hydra.morbeh-runtime.svc.cluster.local:4445` — **never public**                                       |
+| `KRATOS_PUBLIC_URL`  | yes                                  | `https://IDENTITY_ORIGIN` — the browser is redirected here too                                                                 |
+| `COOKIE_DOMAIN`      | no (host-only cookie if unset)       | `.morbeh.example.com` — required if Hydra/Kratos are on a sibling subdomain                                                    |
+| `COOKIE_SAME_SITE`   | no (default `lax`)                   | `lax`\|`strict`\|`none` — `none` requires an explicit CSRF review (see report)                                                 |
+| Logout URI           | —                                    | `https://ADMIN_WEB_ORIGIN/logout` (best-effort Kratos logout; Hydra's own remembered-login session is a documented limitation) |
+| Redirect URI         | —                                    | `https://ADMIN_WEB_ORIGIN/auth/callback` — must exactly match the Hydra client's `redirect_uris`                               |
 
 ## API
 
 | Var                 | Required outside local/dev | Value                                                                                                                                            |
 | ------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `RUNTIME_API_URL`   | yes                        | in-cluster: `http://runtime-api.lumo-runtime.svc.cluster.local:3080`                                                                             |
+| `RUNTIME_API_URL`   | yes                        | in-cluster: `http://runtime-api.morbeh-runtime.svc.cluster.local:3080`                                                                           |
 | `TENANT_DEFAULT_ID` | yes                        | `tenant-local` (single-tenant mode, ADR-0008) or the real tenant id                                                                              |
 | Timeout             | —                          | 8s, hardcoded in `apps/admin-web/src/lib/fetch-with-timeout.ts` — not env-configurable (no evidence a different value is needed per environment) |
 
 ## Database (auth plane persistence)
 
-| Service | DSN source                            | Notes                                                                                        |
-| ------- | ------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Hydra   | `lumo-hydra-secrets.DSN` (k8s Secret) | dedicated `hydra` role/database (`infrastructure/docker/postgres/init/01-roles-and-cdc.sql`) |
-| Kratos  | `lumo-kratos-secrets.DSN`             | dedicated `kratos` role/database                                                             |
-| Keto    | `lumo-keto-secrets.DSN`               | dedicated `keto` role/database                                                               |
+| Service | DSN source                              | Notes                                                                                        |
+| ------- | --------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Hydra   | `morbeh-hydra-secrets.DSN` (k8s Secret) | dedicated `hydra` role/database (`infrastructure/docker/postgres/init/01-roles-and-cdc.sql`) |
+| Kratos  | `morbeh-kratos-secrets.DSN`             | dedicated `kratos` role/database                                                             |
+| Keto    | `morbeh-keto-secrets.DSN`               | dedicated `keto` role/database                                                               |
 
 All three must use `sslmode=require` (or stricter) against the production Postgres cluster. Never
 `dsn: memory` outside local dev.

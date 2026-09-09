@@ -4,7 +4,7 @@ import { loadConfig, resolveEnvironment } from "./config";
 const baseEnv: NodeJS.ProcessEnv = {
   NODE_ENV: "development",
   APP_ENV: "development",
-  DATABASE_URL: "postgresql://user:pass@localhost:5432/lumo",
+  DATABASE_URL: "postgresql://user:pass@localhost:5432/morbeh",
   REDIS_URL: "redis://localhost:6379",
   CLICKHOUSE_URL: "http://localhost:8123",
   S3_ENDPOINT: "http://localhost:9000",

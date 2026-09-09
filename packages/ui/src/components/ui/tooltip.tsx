@@ -5,7 +5,7 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { cn } from "../../lib/cn";
 
 /**
- * Lumo Tooltip. A tooltip may only *supplement* a label, never supply it — anything a
+ * Morbeh Tooltip. A tooltip may only *supplement* a label, never supply it — anything a
  * user must read to operate a control belongs in the accessible name.
  */
 const TooltipProvider = TooltipPrimitive.Provider;

@@ -178,9 +178,9 @@ export function resolveUserAgent(headers: HeaderLookup): ResolvedUserAgent {
 /** First-party cookie names the collector reads and writes. Configuration, not scattered literals. */
 export const COLLECTOR_COOKIES = {
   /** Our first-party visitor id — stable across sessions. */
-  visitorId: "lumo_vid",
+  visitorId: "morbeh_vid",
   /** Our first-party session id — rolls with the session window. */
-  sessionId: "lumo_sid",
+  sessionId: "morbeh_sid",
   /** Meta's browser id cookie, set by the Meta pixel when present. */
   fbp: "_fbp",
   /** Meta's click cookie; derivable from `fbclid` when the pixel has not set it. */

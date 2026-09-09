@@ -1,16 +1,16 @@
 /**
- * Lumo Design System — primitive scales.
+ * Morbeh Design System — primitive scales.
  *
  * These are the raw, context-free values. Nothing in the product may reference them
  * directly: components consume the *semantic* tokens in `./semantic.ts` (exposed as CSS
  * custom properties by `./styles.css`). Primitives exist so the semantic layer — and only
  * the semantic layer — has somewhere to point.
  *
- * Canonical reference: docs/ui/LUMO_DESIGN_SYSTEM.md
+ * Canonical reference: docs/ui/MORBEH_DESIGN_SYSTEM.md
  */
 
 /**
- * Lumo Primary — the brand ramp around `#635BFF` (hue 243°).
+ * Morbeh Primary — the brand ramp around `#635BFF` (hue 243°).
  * `500` is the canonical brand colour; `600`/`700` are the interactive states
  * (both clear WCAG AA against white foreground), `300`/`400` are the dark-mode
  * text/link tints.
@@ -29,7 +29,7 @@ export const primary = {
   950: "#1b1849",
 } as const;
 
-/** Lumo Neutral — a cool (slate) ramp. The UI is overwhelmingly built from these. */
+/** Morbeh Neutral — a cool (slate) ramp. The UI is overwhelmingly built from these. */
 export const neutral = {
   0: "#ffffff",
   50: "#f8fafc",
@@ -99,7 +99,7 @@ export const radius = {
 } as const;
 
 /**
- * Elevation. Borders are the primary separation mechanism in Lumo; shadows are secondary
+ * Elevation. Borders are the primary separation mechanism in Morbeh; shadows are secondary
  * and deliberately restrained. `lg`/`xl` are reserved for floating surfaces (dropdown,
  * dialog, drawer, toast). `card` is the soft, brand-tinted shadow that makes a resting
  * card read as gently floating above the canvas — used as the *default* card shadow.

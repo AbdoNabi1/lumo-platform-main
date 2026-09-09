@@ -15,7 +15,7 @@ Single **Turborepo** monorepo, pnpm workspaces. Top level separates by deploymen
 ├── packages/        SHARED — reusable libraries (never deployed alone)
 ├── infrastructure/  IaC, k8s, ci-cd, argocd, observability, database (partition automation)
 ├── tooling/         generators (new-feature/new-service), codemods, shared lint/ts config
-└── docs/            architecture/ (this contract), ui/ (Lumo Design System contract), adr/
+└── docs/            architecture/ (this contract), ui/ (Morbeh Design System contract), adr/
 ```
 
 This is the same physical layout established for the project; the admin app's UI is governed by

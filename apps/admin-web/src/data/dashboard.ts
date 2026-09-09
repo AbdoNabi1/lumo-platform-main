@@ -241,7 +241,7 @@ function demoSalesFor(period: DashboardPeriod): readonly SalesPoint[] {
 const DEMO_TOP_PRODUCTS: readonly TopProduct[] = [
   {
     id: "prd_chair_pro",
-    name: "Lumo Chair Pro",
+    name: "Morbeh Chair Pro",
     unitsSold: 254,
     revenue: usd(2_540_000),
     views: 3_820,
@@ -250,7 +250,7 @@ const DEMO_TOP_PRODUCTS: readonly TopProduct[] = [
   },
   {
     id: "prd_desk_lamp",
-    name: "Lumo Desk Lamp",
+    name: "Morbeh Desk Lamp",
     unitsSold: 198,
     revenue: usd(1_584_000),
     views: 2_940,
@@ -259,7 +259,7 @@ const DEMO_TOP_PRODUCTS: readonly TopProduct[] = [
   },
   {
     id: "prd_shelf",
-    name: "Lumo Shelf",
+    name: "Morbeh Shelf",
     unitsSold: 176,
     revenue: usd(1_408_000),
     views: 2_110,
@@ -268,7 +268,7 @@ const DEMO_TOP_PRODUCTS: readonly TopProduct[] = [
   },
   {
     id: "prd_sofa",
-    name: "Lumo Sofa 2-Seater",
+    name: "Morbeh Sofa 2-Seater",
     unitsSold: 142,
     revenue: usd(2_130_000),
     views: 1_890,
@@ -277,7 +277,7 @@ const DEMO_TOP_PRODUCTS: readonly TopProduct[] = [
   },
   {
     id: "prd_coffee_table",
-    name: "Lumo Coffee Table",
+    name: "Morbeh Coffee Table",
     unitsSold: 118,
     revenue: usd(944_000),
     views: 1_450,

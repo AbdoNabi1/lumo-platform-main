@@ -19,10 +19,10 @@ function required(name) {
 
 const ORY = required("ORY_SDK_URL").replace(/\/$/, "");
 const KEY = required("ORY_API_KEY");
-const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "lumo-admin-web";
+const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "morbeh-admin-web";
 const CLIENT_SECRET = required("AUTH_CLIENT_SECRET");
-const AUDIENCE = process.env.AUTH_AUDIENCE ?? "lumo-admin";
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "admin@lumo.local";
+const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "admin@morbeh.local";
 const ADMIN_PASSWORD = required("ADMIN_DEV_PASSWORD");
 const ORIGIN = process.env.ADMIN_WEB_ORIGIN ?? "http://localhost:3100";
 const SCHEMA_ID = process.env.ORY_IDENTITY_SCHEMA_ID ?? "preset://email";
@@ -115,10 +115,10 @@ function clientBody() {
     redirect_uris: [`${ORIGIN}/auth/callback`],
     // Must cover every scope the middleware asks for, or Ory rejects the authorization request
     // with `invalid_scope` and admin-web redirect-loops on /login?error=invalid_scope.
-    // `openid lumo.admin` is what apps/admin-web/src/middleware.ts requests; `lumo.admin` also
+    // `openid morbeh.admin` is what apps/admin-web/src/middleware.ts requests; `morbeh.admin` also
     // matches scripts/dev/mint-local-token.mjs's own client. `offline_access` backs the
     // refresh_token grant below.
-    scope: "openid offline_access lumo.admin",
+    scope: "openid offline_access morbeh.admin",
     audience: [AUDIENCE],
     token_endpoint_auth_method: "client_secret_post",
     // Ory Network's default is an OPAQUE access token (`ory_at_...`, 2 segments). The runtime's

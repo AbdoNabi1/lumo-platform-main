@@ -18,7 +18,7 @@ import { getCustomerProfile, type CustomerProfile } from "./runtime-api";
  * a lookup key, so the server re-resolves (and can refuse) it every single time. A self-contained
  * JWT would keep validating locally until its own expiry no matter what the server had recorded.
  */
-export const CUSTOMER_SESSION_COOKIE = "lumo-storefront-customer-session";
+export const CUSTOMER_SESSION_COOKIE = "morbeh-storefront-customer-session";
 
 /**
  * Same `httpOnly`/`secure`-in-prod/`sameSite: "lax"` shape as `GUEST_SESSION_COOKIE_OPTIONS`, and

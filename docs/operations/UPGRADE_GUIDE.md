@@ -14,19 +14,19 @@
 
 ```bash
 # 0. Verify + pin the target (see DEPLOYMENT_GUIDE for cosign verification).
-DIGEST=ghcr.io/<org>/lumo-platform/runtime@sha256:<digest>
+DIGEST=ghcr.io/<org>/morbeh-platform/runtime@sha256:<digest>
 
 # 1. EXPAND: apply additive (backward-compatible) migrations FIRST.
 #    (new nullable columns, new tables, new topics) — safe for the running old version.
 #    Uses the existing @platform/db script (prisma migrate deploy) run as a one-shot Job.
-kubectl -n lumo-runtime create job migrate-expand-$(date +%s) --image=$DIGEST -- \
+kubectl -n morbeh-runtime create job migrate-expand-$(date +%s) --image=$DIGEST -- \
   pnpm --filter @platform/db db:migrate:deploy   # expand-only migrations
 
 # 2. ROLL the app (api → worker → scheduler); zero-downtime via maxUnavailable:0 + PDB.
-cd infrastructure/k8s && kustomize edit set image lumo-runtime=$DIGEST && kubectl apply -k .
-kubectl -n lumo-runtime rollout status deploy/runtime-api
-kubectl -n lumo-runtime rollout status deploy/runtime-worker
-kubectl -n lumo-runtime rollout status deploy/runtime-scheduler
+cd infrastructure/k8s && kustomize edit set image morbeh-runtime=$DIGEST && kubectl apply -k .
+kubectl -n morbeh-runtime rollout status deploy/runtime-api
+kubectl -n morbeh-runtime rollout status deploy/runtime-worker
+kubectl -n morbeh-runtime rollout status deploy/runtime-scheduler
 
 # 3. Smoke: /readyz on each process + one write path (outbox → CDC → consumer round-trip).
 

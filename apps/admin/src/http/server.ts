@@ -86,7 +86,7 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     ...(deps.readinessDetail === undefined ? {} : { readinessDetail: deps.readinessDetail }),
     health: deps.health ?? new HealthRegistry(),
     api: {
-      title: "Lumo Admin API",
+      title: "Morbeh Admin API",
       description: "Backoffice API over the Phase-1 admin facade (v1).",
     },
   };

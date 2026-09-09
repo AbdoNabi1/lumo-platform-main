@@ -1,10 +1,10 @@
 # Aggregates the runtime manifests for `kubectl apply -k infrastructure/k8s` (and dry-run/build).
-# `secret.example.yaml` is intentionally NOT listed — the real `lumo-runtime-secrets` Secret (and
-# the Phase A.34 lumo-{hydra,kratos,keto,admin-web}-secrets) is provisioned out-of-band by the
+# `secret.example.yaml` is intentionally NOT listed — the real `morbeh-runtime-secrets` Secret (and
+# the Phase A.34 morbeh-{hydra,kratos,keto,admin-web}-secrets) is provisioned out-of-band by the
 # secret manager; no placeholder secret is ever applied.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: lumo-runtime
+namespace: morbeh-runtime
 resources:
   - 00-namespace.yaml
   - 10-config.yaml

@@ -1,5 +1,5 @@
 /*
- * Lumo Design System — token stylesheet (Tailwind v4, CSS-first).
+ * Morbeh Design System — token stylesheet (Tailwind v4, CSS-first).
  *
  * This file is the runtime source of truth. `./primitives.ts` + `./semantic.ts` mirror the
  * same values for programmatic (TS) consumers such as `services/theme`; the two must stay
@@ -14,7 +14,7 @@
  *   2. semantic tokens roles (--background, --card, --primary …). What components use.
  *   3. @theme inline   exposes the semantic layer to Tailwind utilities.
  *
- * Docs: docs/ui/LUMO_DESIGN_SYSTEM.md
+ * Docs: docs/ui/MORBEH_DESIGN_SYSTEM.md
  */
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -22,7 +22,7 @@
 :root {
   /* ---------------------------------------------------------------- 1. Primitives */
 
-  /* Lumo Primary — brand ramp around #635BFF (hue 243°) */
+  /* Morbeh Primary — brand ramp around #635BFF (hue 243°) */
   --lumo-primary-50: #f2f1ff;
   --lumo-primary-100: #e7e5ff;
   --lumo-primary-200: #d1cdff;
@@ -35,7 +35,7 @@
   --lumo-primary-900: #2e297d;
   --lumo-primary-950: #1b1849;
 
-  /* Lumo Neutral — cool/slate ramp */
+  /* Morbeh Neutral — cool/slate ramp */
   --lumo-neutral-0: #ffffff;
   --lumo-neutral-50: #f8fafc;
   --lumo-neutral-100: #f1f5f9;

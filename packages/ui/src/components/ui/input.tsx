@@ -3,7 +3,7 @@ import { cn } from "../../lib/cn";
 import { focusRing } from "../../lib/focus";
 
 /**
- * Lumo Input. 16px radius, 36px tall, `--input` border (held at ≥3:1 against its surface),
+ * Morbeh Input. 16px radius, 36px tall, `--input` border (held at ≥3:1 against its surface),
  * and the shared focus ring (resolves to the brand purple). Always pair with a
  * `<Label htmlFor>` — a placeholder is not a label.
  */

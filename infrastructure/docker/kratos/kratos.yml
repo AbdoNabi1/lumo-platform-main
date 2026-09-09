@@ -19,7 +19,7 @@ dsn: memory
 # session.cookie.domain is unset (host-only cookie) for local dev — that's what lets Kratos's
 # cookie (set at :4433) reach admin-web at :3100 via RFC 6265 port-blindness (see login/page.tsx's
 # doc comment). Production, where Kratos and admin-web are genuinely different hosts, MUST set
-# SESSION_COOKIE_DOMAIN to the shared registrable parent domain (e.g. ".lumo.example.com") so the
+# SESSION_COOKIE_DOMAIN to the shared registrable parent domain (e.g. ".morbeh.example.com") so the
 # browser sends this cookie to both — this only works if admin-web's own cookies (COOKIE_DOMAIN,
 # apps/admin-web/src/lib/auth/config.ts) are scoped to the SAME parent domain. If Kratos ever ends
 # up on a domain that shares no parent with admin-web, this login bridge needs a different

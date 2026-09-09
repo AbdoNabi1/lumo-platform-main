@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────────────────
-# Lumo platform — local/production-parity infrastructure stack (Sprint 2.2.5).
+# Morbeh platform — local/production-parity infrastructure stack (Sprint 2.2.5).
 # Run from the repo root:
 #   docker compose -f infrastructure/docker/docker-compose.yml up -d
 # Operations guide: infrastructure/docker/README.md
@@ -13,7 +13,7 @@
 # it needs; operator UIs never join the messaging plane unless they operate it.
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
-name: lumo
+name: morbeh
 
 networks:
   data:
@@ -263,7 +263,7 @@ services:
     environment:
       KAFKA_BROKERS: redpanda:9092
       CONNECT_ENABLED: "true"
-      CONNECT_CLUSTERS_NAME: lumo-connect
+      CONNECT_CLUSTERS_NAME: morbeh-connect
       CONNECT_CLUSTERS_URL: http://debezium:8083
     ports:
       - "8085:8080"
@@ -288,7 +288,7 @@ services:
         condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: redpanda:9092
-      GROUP_ID: lumo-connect
+      GROUP_ID: morbeh-connect
       CONFIG_STORAGE_TOPIC: _connect.configs
       OFFSET_STORAGE_TOPIC: _connect.offsets
       STATUS_STORAGE_TOPIC: _connect.status

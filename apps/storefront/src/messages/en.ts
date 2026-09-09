@@ -1,6 +1,6 @@
-/** English (LTR) copy for the Lumo storefront. This module also defines the shape every other locale must satisfy. */
+/** English (LTR) copy for the Morbeh storefront. This module also defines the shape every other locale must satisfy. */
 export const en = {
-  brand: "Lumo",
+  brand: "Morbeh",
   nav: {
     home: "Home",
     openMenu: "Open navigation",
@@ -188,7 +188,7 @@ export const en = {
     errorBody: "Couldn't reach the account service. Try again.",
     signIn: {
       title: "Sign in",
-      subtitle: "Sign in to your Lumo account.",
+      subtitle: "Sign in to your Morbeh account.",
       emailLabel: "Email",
       passwordLabel: "Password",
       submit: "Sign in",
@@ -198,7 +198,7 @@ export const en = {
     },
     register: {
       title: "Create an account",
-      subtitle: "Create a Lumo account to save your wishlist and track your orders.",
+      subtitle: "Create a Morbeh account to save your wishlist and track your orders.",
       nameLabel: "Name",
       emailLabel: "Email",
       passwordLabel: "Password",
@@ -262,7 +262,8 @@ export const en = {
     errorTitle: "Loyalty balance unavailable",
     errorBody: "Couldn't reach the loyalty service. Try again.",
     noAccountTitle: "No loyalty account yet",
-    noAccountBody: "You don't have a loyalty account yet. It's opened automatically after your first purchase.",
+    noAccountBody:
+      "You don't have a loyalty account yet. It's opened automatically after your first purchase.",
     backToShop: "Back to shop",
   },
   common: {

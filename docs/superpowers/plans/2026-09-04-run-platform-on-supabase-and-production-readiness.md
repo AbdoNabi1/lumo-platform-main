@@ -1,4 +1,4 @@
-# Run the Lumo Platform on Supabase + Production Readiness — Implementation Plan
+# Run the Morbeh Platform on Supabase + Production Readiness — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -188,8 +188,8 @@ KRATOS_PUBLIC_URL=https://<slug>.projects.oryapis.com
 KRATOS_ADMIN_URL=https://<slug>.projects.oryapis.com
 KETO_READ_URL=https://<slug>.projects.oryapis.com
 KETO_WRITE_URL=https://<slug>.projects.oryapis.com
-AUTH_AUDIENCE=lumo-admin
-AUTH_CLIENT_ID=lumo-admin-web
+AUTH_AUDIENCE=morbeh-admin
+AUTH_CLIENT_ID=morbeh-admin-web
 AUTH_CLIENT_SECRET=<generate a strong random string; you will register it in Task 5>
 ```
 
@@ -230,8 +230,8 @@ const url = process.env.REDIS_URL;
 if (!url) throw new Error("REDIS_URL not set");
 const r = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 2 });
 await r.connect();
-await r.set("lumo:probe", "ok", "EX", 30);
-console.log("GET lumo:probe ->", await r.get("lumo:probe"));
+await r.set("morbeh:probe", "ok", "EX", 30);
+console.log("GET morbeh:probe ->", await r.get("morbeh:probe"));
 console.log("PING ->", await r.ping());
 await r.quit();
 ```
@@ -242,7 +242,7 @@ Run from `packages/redis`:
 node redis-probe.mjs
 ```
 
-Expected: `GET lumo:probe -> ok` then `PING -> PONG`.
+Expected: `GET morbeh:probe -> ok` then `PING -> PONG`.
 If it hangs or throws `ENOTFOUND`/`WRONGPASS`, the `REDIS_URL` is wrong — fix it before continuing. Delete `redis-probe.mjs` when it passes.
 
 - [ ] **Step 3: Boot the runtime and confirm `/readyz` is now 200**
@@ -743,10 +743,10 @@ Create `scripts/ops/seed-ory-network.mjs`:
 
 const ORY = required("ORY_SDK_URL");
 const KEY = required("ORY_API_KEY");
-const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "lumo-admin-web";
+const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "morbeh-admin-web";
 const CLIENT_SECRET = required("AUTH_CLIENT_SECRET");
-const AUDIENCE = process.env.AUTH_AUDIENCE ?? "lumo-admin";
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "admin@lumo.local";
+const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "admin@morbeh.local";
 const ADMIN_PASSWORD = required("ADMIN_DEV_PASSWORD");
 const REDIRECT_URI =
   process.env.ADMIN_WEB_ORIGIN !== undefined
@@ -1187,7 +1187,7 @@ From `apps/storefront`: `node node_modules/next/dist/bin/next dev`
 
 - [ ] **Step 4: Log in through the real OAuth flow**
 
-Open admin-web in a browser. You should be redirected to Ory, log in with `admin@lumo.local` and the password from Task 5, pass through the consent screen, and land back on the dashboard.
+Open admin-web in a browser. You should be redirected to Ory, log in with `admin@morbeh.local` and the password from Task 5, pass through the consent screen, and land back on the dashboard.
 
 If the redirect loops, the login/consent UI URLs in the Ory project (Task 4 Step 5) do not match the port admin-web is actually running on.
 
@@ -1659,7 +1659,7 @@ Grafana Cloud, Honeycomb, or the self-hosted stack in `infrastructure/docker/ote
 - [ ] **Step 2: Configure**
 
 ```
-OTEL_SERVICE_NAME=lumo-runtime
+OTEL_SERVICE_NAME=morbeh-runtime
 OTEL_EXPORTER_OTLP_ENDPOINT=<collector OTLP endpoint>
 OTEL_TRACES_ENABLED=true
 OTEL_METRICS_ENABLED=true

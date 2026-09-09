@@ -5,7 +5,7 @@ import type { MfaMethodKind } from "../domain/value-objects/auth-method";
 import { base32Decode, base32Encode, totp } from "./totp";
 
 const KEY_REF = "security.mfa.totp";
-const ISSUER = "Lumo";
+const ISSUER = "Morbeh";
 const STEP_TOLERANCE = 1; // ± one 30s period, absorbing clock drift between client and server.
 
 /**
@@ -44,7 +44,10 @@ export class TotpMfaProvider implements MfaProviderPort {
     return { challengeRef: await this.crypto.randomToken(16) };
   }
 
-  async verify(input: { readonly secretRef: string | null; readonly code: string }): Promise<boolean> {
+  async verify(input: {
+    readonly secretRef: string | null;
+    readonly code: string;
+  }): Promise<boolean> {
     if (input.secretRef === null) return false;
     let base32Secret: string;
     try {

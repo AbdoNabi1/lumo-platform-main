@@ -1,4 +1,4 @@
-# Lumo Platform — Phase A Production Cutover Plan
+# Morbeh Platform — Phase A Production Cutover Plan
 
 **Status:** Validation only. No code was changed to produce this document. This plan is sequencing guidance, not an implementation authorization — implementation begins only after `IMPLEMENTATION_DEPENDENCY_GRAPH.md`'s internal-consistency check (§6 of that document) is reviewed and accepted.
 **Inputs:** `ARCHITECTURE_REMEDIATION_PLAN.md`, `ARCHITECTURE_EXECUTION_MATRIX.md`, `IMPLEMENTATION_DEPENDENCY_GRAPH.md`.

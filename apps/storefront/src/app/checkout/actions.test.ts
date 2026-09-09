@@ -107,7 +107,7 @@ describe("startCheckout — session cookie handling", () => {
   });
 
   it("starts a checkout session, loads items, and stores the checkout-session cookie on success", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     getCurrentCart.mockResolvedValue(cartResponse());
     startCheckoutApi.mockResolvedValue({ status: 201, body: session() });
     loadCheckoutItems.mockResolvedValue({ status: 200, body: session() });
@@ -118,14 +118,14 @@ describe("startCheckout — session cookie handling", () => {
     expect(startCheckoutApi).toHaveBeenCalledWith("session-a", "cart-1", "USD");
     expect(loadCheckoutItems).toHaveBeenCalledWith("checkout-1", "session-a", "cart-1");
     expect(cookieSet).toHaveBeenCalledWith(
-      "lumo_checkout_session",
+      "morbeh_checkout_session",
       "checkout-1",
       expect.objectContaining({ httpOnly: true }),
     );
   });
 
   it("a failure reading the current cart never calls startCheckout", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     getCurrentCart.mockResolvedValue({ status: 500, body: null });
 
     const result = await actions.startCheckout("cart-1");
@@ -143,7 +143,7 @@ describe("status → reason mapping (shared by every mutating action)", () => {
     [500, "network"],
     [0, "network"],
   ] as const)("status %i maps to reason %s", async (status, reason) => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     setCheckoutShippingAddress.mockResolvedValue({ status, body: null });
 
     const result = await actions.setShippingAddress("checkout-1", address);
@@ -152,7 +152,7 @@ describe("status → reason mapping (shared by every mutating action)", () => {
   });
 
   it("a 2xx response maps to ok with the checkoutSessionId echoed back, and revalidates /checkout", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     setCheckoutShippingAddress.mockResolvedValue({ status: 200, body: session() });
 
     const result = await actions.setShippingAddress("checkout-1", address);
@@ -182,7 +182,7 @@ describe("every mutating action requires an existing guest session — none mint
 
 describe("requestShippingQuote — carries quotes on success", () => {
   it("returns the quoted methods on success", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     const quotes: readonly ShippingQuoteSummary[] = [
       { method: "standard", rateAmountMinor: 500 },
       { method: "express", rateAmountMinor: 1500 },
@@ -197,29 +197,25 @@ describe("requestShippingQuote — carries quotes on success", () => {
 
 describe("completeCheckout", () => {
   it("generates a fresh idempotency key server-side and never clears the checkout-session cookie itself", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
-    cookieStore.set("lumo_checkout_session", "checkout-1");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh_checkout_session", "checkout-1");
     completeCheckoutApi.mockResolvedValue({ status: 200, body: session({ orderRef: "order-1" }) });
 
     const result = await actions.completeCheckout("checkout-1");
 
     expect(result).toEqual({ ok: true, checkoutSessionId: "checkout-1" });
-    expect(completeCheckoutApi).toHaveBeenCalledWith(
-      "checkout-1",
-      "session-a",
-      expect.any(String),
-    );
+    expect(completeCheckoutApi).toHaveBeenCalledWith("checkout-1", "session-a", expect.any(String));
     expect(cookieDelete).not.toHaveBeenCalled();
-    expect(cookieStore.get("lumo_checkout_session")).toBe("checkout-1");
+    expect(cookieStore.get("morbeh_checkout_session")).toBe("checkout-1");
   });
 });
 
 describe("clearCheckoutSession", () => {
   it("deletes the checkout-session cookie", async () => {
-    cookieStore.set("lumo_checkout_session", "checkout-1");
+    cookieStore.set("morbeh_checkout_session", "checkout-1");
 
     await actions.clearCheckoutSession();
 
-    expect(cookieDelete).toHaveBeenCalledWith("lumo_checkout_session");
+    expect(cookieDelete).toHaveBeenCalledWith("morbeh_checkout_session");
   });
 });

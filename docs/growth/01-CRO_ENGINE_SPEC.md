@@ -17,18 +17,18 @@
 
 Every feature in this document MUST satisfy:
 
-| Concern         | Requirement                                                                                                                                               |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tracking        | Emit standardized events per [arch 16](../architecture/16-tracking-specification.md); always emit `experiment_exposed` when a variant/module is seen      |
-| Analytics       | Outcomes queryable in ClickHouse joined to variant/module ([arch 10](../architecture/10-analytics-and-feed-engine.md))                                    |
-| Audit logs      | Every config change → `audit.entry.recorded` ([arch 20](../architecture/20-events-catalog.md), WORM)                                                      |
-| Permissions     | RBAC+ReBAC gated ([arch 07](../architecture/07-auth-and-authorization.md)); experiment edit vs. view separated                                            |
-| Feature flags   | Every module/experiment is behind a flag with an instant kill switch ([arch 12](../architecture/12-feature-flags-and-configuration.md))                   |
-| Dark mode       | Operator surfaces use Lumo Design System tokens ([`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md))                                            |
-| Responsive      | Operator surfaces follow [`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md) §11; storefront modules are responsive across desktop/tablet/mobile |
-| Localization    | All copy is i18n-keyed; offers/timers respect locale + currency + timezone                                                                                |
-| Accessibility   | WCAG 2.2 AA; modules keyboard-operable, announce dynamic changes, respect reduced-motion                                                                  |
-| Version history | Every experiment/module config is versioned with rollback                                                                                                 |
+| Concern         | Requirement                                                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tracking        | Emit standardized events per [arch 16](../architecture/16-tracking-specification.md); always emit `experiment_exposed` when a variant/module is seen          |
+| Analytics       | Outcomes queryable in ClickHouse joined to variant/module ([arch 10](../architecture/10-analytics-and-feed-engine.md))                                        |
+| Audit logs      | Every config change → `audit.entry.recorded` ([arch 20](../architecture/20-events-catalog.md), WORM)                                                          |
+| Permissions     | RBAC+ReBAC gated ([arch 07](../architecture/07-auth-and-authorization.md)); experiment edit vs. view separated                                                |
+| Feature flags   | Every module/experiment is behind a flag with an instant kill switch ([arch 12](../architecture/12-feature-flags-and-configuration.md))                       |
+| Dark mode       | Operator surfaces use Morbeh Design System tokens ([`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md))                                          |
+| Responsive      | Operator surfaces follow [`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md) §11; storefront modules are responsive across desktop/tablet/mobile |
+| Localization    | All copy is i18n-keyed; offers/timers respect locale + currency + timezone                                                                                    |
+| Accessibility   | WCAG 2.2 AA; modules keyboard-operable, announce dynamic changes, respect reduced-motion                                                                      |
+| Version history | Every experiment/module config is versioned with rollback                                                                                                     |
 
 ## 2. Capability split
 

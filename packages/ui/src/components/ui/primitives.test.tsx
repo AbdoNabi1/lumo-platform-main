@@ -8,7 +8,7 @@ import { Label } from "./label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./table";
 
 /**
- * Behavioural guarantees of the Lumo primitives — the parts a redesign could silently
+ * Behavioural guarantees of the Morbeh primitives — the parts a redesign could silently
  * break: correct element semantics, the accessible state a control exposes, and the fact
  * that every primitive still resolves its colour through design tokens rather than a
  * literal.
@@ -119,7 +119,7 @@ describe("Table", () => {
         </TableHeader>
         <TableBody>
           <TableRow>
-            <TableCell>Lumo Chair Pro</TableCell>
+            <TableCell>Morbeh Chair Pro</TableCell>
           </TableRow>
         </TableBody>
       </Table>,

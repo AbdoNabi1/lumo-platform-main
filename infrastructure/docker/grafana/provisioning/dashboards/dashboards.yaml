@@ -3,9 +3,9 @@
 apiVersion: 1
 
 providers:
-  - name: lumo
+  - name: morbeh
     orgId: 1
-    folder: Lumo
+    folder: Morbeh
     type: file
     disableDeletion: true
     updateIntervalSeconds: 30

@@ -5,12 +5,12 @@
 # bounds and that timeouts/retries behave under a slow, lossy link rather than a clean cut.
 #
 #   chaos/scripts/network-degradation.sh [container] [delay_ms] [loss_pct] [duration]
-#   defaults: lumo-postgres-1 200ms 5% 60s
+#   defaults: morbeh-postgres-1 200ms 5% 60s
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source chaos/scripts/lib.sh
 
-TARGET="${1:-lumo-postgres-1}"
+TARGET="${1:-morbeh-postgres-1}"
 DELAY="${2:-200}"
 LOSS="${3:-5}"
 DURATION="${4:-60s}"

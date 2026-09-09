@@ -106,7 +106,7 @@ live. Verified **both directions**, not just the allow path: a `client_credentia
 principal with no grants gets `403 {"code":"FORBIDDEN","message":"Missing permission
 \"products:read\""}` on `GET /api/v1/products`; the same call with a temporary grant added for that
 principal gets `200` with real data. The temporary grant and its throwaway client were removed
-immediately after verifying — only `admin@lumo.local`'s identity holds standing permissions.
+immediately after verifying — only `admin@morbeh.local`'s identity holds standing permissions.
 
 ---
 
@@ -122,8 +122,8 @@ original plan (Task 6) did not anticipate it.
 
 **Fix:** `access_token_strategy: "jwt"` is a per-OAuth2-client field Hydra has supported since it
 introduced token strategies — not a project-level (workspace-key-gated) setting. Set on
-`lumo-admin-web` (the real client) via `scripts/ops/seed-ory-network.mjs`'s `clientBody`, and on
-`lumo-dev-cli` (the dev token-minting client) via `scripts/dev/mint-local-token.mjs`'s own
+`morbeh-admin-web` (the real client) via `scripts/ops/seed-ory-network.mjs`'s `clientBody`, and on
+`morbeh-dev-cli` (the dev token-minting client) via `scripts/dev/mint-local-token.mjs`'s own
 `clientBody` — two different scripts, each owning its own client, each setting the field on every
 run (create **or** update — see §3.4 for why "every run" mattered here specifically). No-op against
 self-hosted Hydra (already JWT by default). Verified end-to-end (Check 2 above).
@@ -226,7 +226,7 @@ scope here.
 ### 3.4 — A dev token-minting script provisioned a hardcoded secret onto the live Ory Network project (found in final review, fixed)
 
 `scripts/dev/mint-local-token.mjs` has always had a hardcoded fallback client secret
-(`"lumo-dev-cli-secret-change-me"`) — harmless before this session's work, because the script only
+(`"morbeh-dev-cli-secret-change-me"`) — harmless before this session's work, because the script only
 ever talked to an ephemeral, unauthenticated, `dsn=memory` self-hosted Hydra on `localhost:4445`
 (gone on restart, nothing to leak). Fixing §3.1 above made this script work against Ory Network
 too (added `ORY_API_KEY` admin auth, `access_token_strategy: "jwt"`), and it was then actually run
@@ -235,7 +235,7 @@ client with a well-known secret onto a real, internet-reachable IdP, with the pr
 committed in this very document. Caught in the final whole-branch review, not before.
 
 **Impact, as measured:** anyone with read access to this repo could mint a valid
-`lumo.admin`-scoped JWT for this Ory Network project from anywhere, no other credential needed —
+`morbeh.admin`-scoped JWT for this Ory Network project from anywhere, no other credential needed —
 Hydra's token endpoint is public. Current blast radius is bounded (the runtime isn't publicly
 deployed — Task 17 is deferred — and authorization is currently permissive under `APP_ENV=local`
 regardless of who holds a valid token), but this is a **hard pre-deploy blocker**, not an
@@ -243,8 +243,8 @@ acceptable steady state.
 
 **Fixed:**
 
-1. The live `lumo-dev-cli` client was deleted from the Ory Network project immediately
-   (`DELETE /admin/clients/lumo-dev-cli` → `204`, verified gone → `404`).
+1. The live `morbeh-dev-cli` client was deleted from the Ory Network project immediately
+   (`DELETE /admin/clients/morbeh-dev-cli` → `204`, verified gone → `404`).
 2. `mint-local-token.mjs` now refuses to run against Ory Network (detected via `ORY_API_KEY` being
    set) unless `DEV_CLI_CLIENT_SECRET` is set explicitly — the hardcoded default is only used
    against self-hosted Hydra, where it remains harmless. Re-verified end-to-end: refuses without
@@ -284,9 +284,9 @@ order:
    exactly the loop above.
 
 **Verified 2026-09-04:** `GET /self-service/login/browser` now `303`s to
-`http://localhost:3100/login?flow=…`, and that page renders Lumo's own branded sign-in form.
+`http://localhost:3100/login?flow=…`, and that page renders Morbeh's own branded sign-in form.
 **Completing a login was not verified** — entering a password is outside what the agent does; run it
-by hand with the seeded `admin@lumo.local` identity to close Task 9.
+by hand with the seeded `admin@morbeh.local` identity to close Task 9.
 
 ---
 

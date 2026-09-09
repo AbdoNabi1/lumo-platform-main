@@ -3,9 +3,9 @@ import { contrastRatio } from "./contrast";
 import { colors, type SemanticColors } from "./semantic";
 
 /**
- * The Lumo palette's accessibility guarantees, asserted rather than claimed.
+ * The Morbeh palette's accessibility guarantees, asserted rather than claimed.
  *
- * Every pair below is one a real Lumo surface puts on screen. If a token value changes and
+ * Every pair below is one a real Morbeh surface puts on screen. If a token value changes and
  * a pair drops under its WCAG 2.1 AA threshold, this fails — which is the point: the
  * palette is not free to drift.
  */
@@ -132,7 +132,7 @@ const nonTextPairs: readonly Pair[] = [
 describe.each([
   ["light", colors.light],
   ["dark", colors.dark],
-] as const)("Lumo %s theme", (_theme, tokens) => {
+] as const)("Morbeh %s theme", (_theme, tokens) => {
   it.each(textPairs)("$name clears WCAG AA for text", ({ fg, bg, min }) => {
     expect(contrastRatio(fg(tokens), bg(tokens))).toBeGreaterThanOrEqual(min);
   });

@@ -44,14 +44,14 @@ describe("buildDatasourceUrl (Phase A.13, Task 1/2)", () => {
   it("leaves the rest of the connection URL (credentials, host, port, database, other params) untouched", () => {
     const url = new URL(
       buildDatasourceUrl(
-        config({ url: "postgresql://lumo:secret@db-host:5432/lumo?schema=payments" }),
+        config({ url: "postgresql://morbeh:secret@db-host:5432/morbeh?schema=payments" }),
       ),
     );
-    expect(url.username).toBe("lumo");
+    expect(url.username).toBe("morbeh");
     expect(url.password).toBe("secret");
     expect(url.hostname).toBe("db-host");
     expect(url.port).toBe("5432");
-    expect(url.pathname).toBe("/lumo");
+    expect(url.pathname).toBe("/morbeh");
     expect(url.searchParams.get("schema")).toBe("payments");
   });
 

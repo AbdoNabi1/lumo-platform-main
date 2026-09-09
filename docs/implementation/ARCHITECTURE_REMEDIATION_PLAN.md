@@ -1,8 +1,8 @@
-# Lumo Platform — Architecture Remediation Plan
+# Morbeh Platform — Architecture Remediation Plan
 
 **Status:** Draft, pending approval. No code has been changed to produce this document.
-**Source of truth:** `Lumo Platform Architecture Audit` (published artifact, dated 2026-07-26; scope: Catalog → Pricing → Promotions → Inventory → Checkout → Purchase Saga → Payments → Orders → Finance → Fulfillment → Shipping → Returns → Notifications).
-**This document's method:** every one of the audit's 55 findings was re-opened and independently re-verified against the current repository (`C:\Users\abdoh\Claude code\Git\lumo-platform`) via 8 separate read-only code investigations, plus a dedicated pass reading the actual ADRs and governance docs the audit cites. Nothing below is taken on the audit's word alone.
+**Source of truth:** `Morbeh Platform Architecture Audit` (published artifact, dated 2026-07-26; scope: Catalog → Pricing → Promotions → Inventory → Checkout → Purchase Saga → Payments → Orders → Finance → Fulfillment → Shipping → Returns → Notifications).
+**This document's method:** every one of the audit's 55 findings was re-opened and independently re-verified against the current repository (`C:\Users\abdoh\Claude code\Git\morbeh-platform`) via 8 separate read-only code investigations, plus a dedicated pass reading the actual ADRs and governance docs the audit cites. Nothing below is taken on the audit's word alone.
 **Verification date:** 2026-07-26 (same day as the audit — minimal drift window, but verification was still performed line-by-line, not assumed).
 
 ---

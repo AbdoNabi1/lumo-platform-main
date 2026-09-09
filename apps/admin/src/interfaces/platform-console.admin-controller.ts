@@ -8,7 +8,7 @@ export interface PlatformConsoleAdminControllerDeps {
   readonly guard: AdminGuard;
 }
 
-/** Wires the Platform Console admin screen (Sprint 5.6, ADR-0018 addendum-2 §J) — Lumo-internal, read-model only. */
+/** Wires the Platform Console admin screen (Sprint 5.6, ADR-0018 addendum-2 §J) — Morbeh-internal, read-model only. */
 export class PlatformConsoleAdminController {
   private readonly platformConsole: PlatformConsoleController;
   private readonly guard: AdminGuard;

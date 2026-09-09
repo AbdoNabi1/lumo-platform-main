@@ -8,7 +8,7 @@
  * runtime-api.ts` already reads for the same runtime process — not new configuration surface.
  *
  * Phase A.32: `admin-web` now has a real per-request session (the Hydra-issued JWT in the
- * `lumo_admin_session` cookie — see `lib/auth/session.ts` and `middleware.ts`), so the logged-in
+ * `morbeh_admin_session` cookie — see `lib/auth/session.ts` and `middleware.ts`), so the logged-in
  * staff member's own token is forwarded when present. `ADMIN_API_TOKEN` remains the fallback
  * server-to-server credential for contexts with no session (e.g. build-time rendering) — its
  * absence or rejection by the API is a normal, expected outcome here (`"unauthorized"`), not an
@@ -50,7 +50,11 @@ export type MutationResult<T> =
   | { readonly outcome: "forbidden" }
   | { readonly outcome: "not_found" }
   | { readonly outcome: "conflict"; readonly message: string }
-  | { readonly outcome: "invalid"; readonly message: string; readonly fields: readonly FieldIssue[] }
+  | {
+      readonly outcome: "invalid";
+      readonly message: string;
+      readonly fields: readonly FieldIssue[];
+    }
   | { readonly outcome: "error"; readonly message: string };
 
 /**

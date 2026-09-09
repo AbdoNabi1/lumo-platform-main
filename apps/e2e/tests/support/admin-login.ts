@@ -15,7 +15,7 @@ import { expect, type Page } from "@playwright/test";
  *       app never sees the password
  *     → on success, Kratos/Hydra redirect through `/auth/callback`
  *       (`apps/admin-web/src/app/auth/callback/route.ts`), which exchanges the code for the real
- *       JWT, sets the `lumo_admin_session` cookie, and redirects back to the original page.
+ *       JWT, sets the `morbeh_admin_session` cookie, and redirects back to the original page.
  *
  * The identity itself must already exist in Kratos with the given credentials — run
  * `apps/e2e/scripts/seed-e2e-identities.mjs` first (see `playwright.config.ts`'s doc

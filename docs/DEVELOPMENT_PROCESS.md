@@ -1,6 +1,6 @@
 # DEVELOPMENT_PROCESS — how every feature/sprint is built
 
-> The mandatory, repeatable workflow for Lumo. Applies to every sprint and every AI session.
+> The mandatory, repeatable workflow for Morbeh. Applies to every sprint and every AI session.
 > Companion: [MASTER_PROMPT.md](MASTER_PROMPT.md) (paste into the session) and
 > [AI_CONTEXT.md](AI_CONTEXT.md) (project memory).
 

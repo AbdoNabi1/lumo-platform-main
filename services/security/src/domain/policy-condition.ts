@@ -14,7 +14,7 @@ export interface PolicyCondition {
   readonly requireDeviceTrust?: boolean;
   /** Restrict to these environments (e.g. `["production"]`). */
   readonly environments?: readonly string[];
-  /** Restrict to resources matching this URN pattern (e.g. `lumo:finance:*:*`). */
+  /** Restrict to resources matching this URN pattern (e.g. `morbeh:finance:*:*`). */
   readonly resource?: string;
 }
 

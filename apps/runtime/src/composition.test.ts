@@ -27,11 +27,11 @@ const validEnv = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
   KAFKA_BROKERS: "localhost:19092",
-  AUTH_ISSUER_URL: "https://auth.lumo.local",
-  AUTH_JWKS_URL: "https://auth.lumo.local/.well-known/jwks.json",
-  KETO_WRITE_URL: "https://keto.lumo.local:4467",
-  KRATOS_PUBLIC_URL: "https://kratos.lumo.local:4433",
-  KRATOS_ADMIN_URL: "https://kratos.lumo.local:4434",
+  AUTH_ISSUER_URL: "https://auth.morbeh.local",
+  AUTH_JWKS_URL: "https://auth.morbeh.local/.well-known/jwks.json",
+  KETO_WRITE_URL: "https://keto.morbeh.local:4467",
+  KRATOS_PUBLIC_URL: "https://kratos.morbeh.local:4433",
+  KRATOS_ADMIN_URL: "https://kratos.morbeh.local:4434",
 } as NodeJS.ProcessEnv;
 
 describe("runtime configuration (the ONLY process.env reader)", () => {
@@ -191,7 +191,7 @@ describe("api entrypoint", () => {
     const prodConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
-      KETO_READ_URL: "https://keto.lumo.local",
+      KETO_READ_URL: "https://keto.morbeh.local",
     });
     // The remaining 4 guards (no Stripe/Licensing/S3/tax-shipping adapters wired) still reject —
     // this proves specifically that MFA is no longer among the reasons, not that boot succeeds.
@@ -206,7 +206,7 @@ describe("api entrypoint", () => {
     const prodConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
-      KETO_READ_URL: "https://keto.lumo.local",
+      KETO_READ_URL: "https://keto.morbeh.local",
     });
     await expect(startApi(prodConfig, core)).rejects.toThrow(/4 production guards failed/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/PaymentProvider/);

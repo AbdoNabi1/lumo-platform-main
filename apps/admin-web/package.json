@@ -2,7 +2,7 @@
   "name": "admin-web",
   "version": "0.0.0",
   "private": true,
-  "description": "Lumo admin — the React surface for the admin experience, built entirely from the Lumo Design System.",
+  "description": "Morbeh admin — the React surface for the admin experience, built entirely from the Morbeh Design System.",
   "type": "module",
   "scripts": {
     "dev": "next dev --port 3100",

@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CustomerProfile } from "./runtime-api";
 
-const getCustomerProfile =
-  vi.fn<() => Promise<{ status: number; body: CustomerProfile | null }>>();
+const getCustomerProfile = vi.fn<() => Promise<{ status: number; body: CustomerProfile | null }>>();
 
 vi.mock("./runtime-api", () => ({
   getCustomerProfile: () => getCustomerProfile(),
@@ -30,7 +29,7 @@ describe("CUSTOMER_SESSION_COOKIE", () => {
   it("is a THIRD cookie, distinct from the guest-cart and checkout cookies", () => {
     // T5.16 §2: reusing the cart-ownership token for identity would let a guessed/replayed cart
     // token read another customer's orders, wishlist and loyalty balance.
-    expect(CUSTOMER_SESSION_COOKIE).toBe("lumo-storefront-customer-session");
+    expect(CUSTOMER_SESSION_COOKIE).toBe("morbeh-storefront-customer-session");
     expect(CUSTOMER_SESSION_COOKIE).not.toBe(GUEST_SESSION_COOKIE);
     expect(CUSTOMER_SESSION_COOKIE).not.toBe(CHECKOUT_SESSION_COOKIE);
   });

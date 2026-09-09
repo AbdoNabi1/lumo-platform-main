@@ -28,20 +28,20 @@ const AUTH_JWKS_URL = requireProdEnv(
   "AUTH_JWKS_URL",
   "http://localhost:4444/.well-known/jwks.json",
 );
-const AUTH_AUDIENCE = optionalEnv("AUTH_AUDIENCE", "lumo-admin");
-const AUTH_CLIENT_ID = optionalEnv("AUTH_CLIENT_ID", "lumo-admin-web");
+const AUTH_AUDIENCE = optionalEnv("AUTH_AUDIENCE", "morbeh-admin");
+const AUTH_CLIENT_ID = optionalEnv("AUTH_CLIENT_ID", "morbeh-admin-web");
 const COOKIE_DOMAIN = process.env["COOKIE_DOMAIN"];
 const COOKIE_SAME_SITE = optionalEnv("COOKIE_SAME_SITE", "lax") as "lax" | "strict" | "none";
 
-const SESSION_COOKIE = "lumo_admin_session";
-const OAUTH_STATE_COOKIE = "lumo_oauth_state";
-const RETURN_TO_COOKIE = "lumo_return_to";
+const SESSION_COOKIE = "morbeh_admin_session";
+const OAUTH_STATE_COOKIE = "morbeh_oauth_state";
+const RETURN_TO_COOKIE = "morbeh_return_to";
 /** L-03 (audit) — see lib/auth/config.ts's OAUTH_PKCE_VERIFIER_COOKIE (same value, redefined
  * locally here for the same Edge-safe-by-inspection reason as the three constants above). */
-const PKCE_VERIFIER_COOKIE = "lumo_oauth_pkce_verifier";
+const PKCE_VERIFIER_COOKIE = "morbeh_oauth_pkce_verifier";
 /** G0-1 (launch-readiness review) — see lib/auth/config.ts's OAUTH_NONCE_COOKIE (same value,
  * redefined locally here for the same Edge-safe-by-inspection reason as the constants above). */
-const NONCE_COOKIE = "lumo_oauth_nonce";
+const NONCE_COOKIE = "morbeh_oauth_nonce";
 
 // Hydra's own login/consent callbacks, the token-exchange callback, and the dependency-free health
 // probe must never be gated — gating them would create a redirect loop back into themselves (or,
@@ -204,7 +204,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   authorizeUrl.searchParams.set("response_type", "code");
   authorizeUrl.searchParams.set("client_id", AUTH_CLIENT_ID);
   authorizeUrl.searchParams.set("redirect_uri", new URL("/auth/callback", origin).toString());
-  authorizeUrl.searchParams.set("scope", "openid lumo.admin");
+  authorizeUrl.searchParams.set("scope", "openid morbeh.admin");
   authorizeUrl.searchParams.set("audience", AUTH_AUDIENCE);
   authorizeUrl.searchParams.set("state", state);
   authorizeUrl.searchParams.set("code_challenge", codeChallenge);

@@ -27,7 +27,7 @@ import type { RiskEngineSignals } from "../domain/risk-engine";
  */
 export class NodeCrypto implements CryptoPort {
   private key(ref: string): Buffer {
-    return scryptSync(ref, "lumo-security", 32);
+    return scryptSync(ref, "morbeh-security", 32);
   }
 
   async hash(value: string): Promise<string> {

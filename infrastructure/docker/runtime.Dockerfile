@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Production image for the Lumo runtime processes (api / worker / scheduler). ONE image for all
+# Production image for the Morbeh runtime processes (api / worker / scheduler). ONE image for all
 # three — they share an identical build and differ only in the entrypoint file, which the compose
 # `command` selects (Rule of Three: three near-identical Dockerfiles would be duplication). The app
 # executes TypeScript via `tsx` (there is no compile step in the current architecture), so the

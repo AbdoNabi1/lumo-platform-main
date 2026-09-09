@@ -28,7 +28,7 @@ test.describe("guest purchase", () => {
     const context = await browser.newContext({ baseURL: adminBaseURL });
     const page = await context.newPage();
     await page.goto("/products/new");
-    await loginToAdminWeb(page, "e2e-operator@lumo.local", requireEnv("E2E_PASSWORD"));
+    await loginToAdminWeb(page, "e2e-operator@morbeh.local", requireEnv("E2E_PASSWORD"));
 
     const token = await sessionTokenFrom(context);
     await createAndPublishProduct(context.request, token, {

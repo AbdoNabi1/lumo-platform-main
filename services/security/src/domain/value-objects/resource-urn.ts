@@ -12,7 +12,7 @@ const SEGMENT = /^(?:\*|[A-Za-z0-9][A-Za-z0-9_.-]*)$/;
 
 /**
  * The **resource model** — every platform resource addressable by policy as
- * `lumo:<context>:<type>:<id>` (e.g. `lumo:orders:order:ord_123`, `lumo:catalog:product:*`). Any
+ * `morbeh:<context>:<type>:<id>` (e.g. `morbeh:orders:order:ord_123`, `morbeh:catalog:product:*`). Any
  * segment may be `*` (wildcard). Policies target resources by URN pattern; a concrete resource
  * `matches` a pattern when each pattern segment is `*` or equal (ADR-0023, sprint Part 2/3).
  */
@@ -40,10 +40,10 @@ export class ResourceUrn extends ValueObject<ResourceUrnProps> {
 
   static parse(urn: string): Result<ResourceUrn, ValidationError> {
     const parts = urn.split(":");
-    if (parts.length !== 4 || parts[0] !== "lumo") {
+    if (parts.length !== 4 || parts[0] !== "morbeh") {
       return err(
         new ValidationError("resource urn is malformed", [
-          { field: "urn", message: "expected lumo:<context>:<type>:<id>" },
+          { field: "urn", message: "expected morbeh:<context>:<type>:<id>" },
         ]),
       );
     }
@@ -61,7 +61,7 @@ export class ResourceUrn extends ValueObject<ResourceUrnProps> {
   }
 
   override toString(): string {
-    return `lumo:${this.props.context}:${this.props.type}:${this.props.id}`;
+    return `morbeh:${this.props.context}:${this.props.type}:${this.props.id}`;
   }
 
   /** True when THIS concrete resource is matched by `pattern` (pattern segments may be `*`). */

@@ -10,7 +10,7 @@
 >
 > **Design system note:** **net-new surface, requires approval** ([`../ui/`](../ui/README.md)); could
 > surface in the Dashboard. Critically, the assistant **proposes only — it never auto-applies UI or
-> theme changes**; any UI-affecting recommendation goes through the the Lumo Design System contract process.
+> theme changes**; any UI-affecting recommendation goes through the the Morbeh Design System contract process.
 
 ## 1. Cross-cutting compliance baseline
 
@@ -87,7 +87,7 @@ calibrates future estimates.
 ## 7. Human-in-the-loop guardrails
 
 - The assistant **recommends**; humans decide. No autonomous changes to UI, theme, pricing, or config.
-- UI-affecting recommendations require the Lumo Design System contract ([`../ui/`](../ui/README.md)); experiment launches require the experiment permission; all actions are audited.
+- UI-affecting recommendations require the Morbeh Design System contract ([`../ui/`](../ui/README.md)); experiment launches require the experiment permission; all actions are audited.
 
 ## 8. Frozen-UI surface mapping
 

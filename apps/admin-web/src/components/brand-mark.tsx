@@ -1,7 +1,7 @@
 import { cn } from "@platform/ui";
 
 /**
- * The Lumo mark — an eight-point light burst. Drawn rather than imported so it inherits
+ * The Morbeh mark — an eight-point light burst. Drawn rather than imported so it inherits
  * `currentColor` and needs no asset pipeline; the brand colour comes from the token layer.
  */
 export function BrandMark({ className }: { className?: string }) {

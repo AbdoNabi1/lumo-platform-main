@@ -12,10 +12,10 @@ export const TENANT_ID = process.env["TENANT_DEFAULT_ID"] ?? "tenant-local";
  */
 export async function sessionTokenFrom(context: BrowserContext): Promise<string> {
   const cookies = await context.cookies();
-  const session = cookies.find((c) => c.name === "lumo_admin_session");
+  const session = cookies.find((c) => c.name === "morbeh_admin_session");
   if (session === undefined) {
     throw new Error(
-      "no lumo_admin_session cookie found — call loginToAdminWeb() before sessionTokenFrom()",
+      "no morbeh_admin_session cookie found — call loginToAdminWeb() before sessionTokenFrom()",
     );
   }
   return session.value;

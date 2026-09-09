@@ -77,15 +77,15 @@ Everything below is a genuine Phase 17.1 change. (`git status` on this checkout 
 
 `GUEST_SESSION_COOKIE_OPTIONS` (`apps/storefront/src/lib/cart.ts`):
 
-| Property   | Value                                 | Why                                                                                                                      |
-| ---------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Name       | `lumo-storefront-guest-session`       | New — the old `CART_COOKIE` (`lumo-storefront-cart-id`) stored a bare cart id with no ownership semantics and is removed |
-| `httpOnly` | `true`                                | Client JS can never read or forge it — verified live: `document.cookie` returned `""` after a real add-to-cart           |
-| `secure`   | `true` in production, `false` locally | A plain-HTTP local dev server can't set a cookie the browser will accept back if `Secure` is forced on                   |
-| `sameSite` | `"lax"`                               | Matches the existing `LOCALE_COOKIE` convention; blocks cross-site POSTs, doesn't break normal top-level navigation      |
-| `path`     | `"/"`                                 | Whole app                                                                                                                |
-| `maxAge`   | 30 days                               | Bounded lifetime, not a session-only cookie — an abandoned cart survives a browser restart                               |
-| Value      | `crypto.randomUUID()`                 | Opaque, unguessable, generated server-side only                                                                          |
+| Property   | Value                                 | Why                                                                                                                        |
+| ---------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Name       | `morbeh-storefront-guest-session`     | New — the old `CART_COOKIE` (`morbeh-storefront-cart-id`) stored a bare cart id with no ownership semantics and is removed |
+| `httpOnly` | `true`                                | Client JS can never read or forge it — verified live: `document.cookie` returned `""` after a real add-to-cart             |
+| `secure`   | `true` in production, `false` locally | A plain-HTTP local dev server can't set a cookie the browser will accept back if `Secure` is forced on                     |
+| `sameSite` | `"lax"`                               | Matches the existing `LOCALE_COOKIE` convention; blocks cross-site POSTs, doesn't break normal top-level navigation        |
+| `path`     | `"/"`                                 | Whole app                                                                                                                  |
+| `maxAge`   | 30 days                               | Bounded lifetime, not a session-only cookie — an abandoned cart survives a browser restart                                 |
+| Value      | `crypto.randomUUID()`                 | Opaque, unguessable, generated server-side only                                                                            |
 
 No customer identity, no PII, no encoded claims — just the opaque id.
 
@@ -174,7 +174,7 @@ Seeded one real product + published price via the admin API, then, through actua
 - `/cart` (no `?cartId=`) shows the item, correct subtotal
 - Quantity increase/decrease recalculates the line total and subtotal correctly
 - Remove → collapses to the empty state; re-add via Product Detail page → Clear cart → empty state
-- **Cookie**: confirmed via the RSC debug payload that a real `crypto.randomUUID()` was minted server-side under the name `lumo-storefront-guest-session`; `document.cookie` from the page returned `""` — HttpOnly confirmed live, not just asserted
+- **Cookie**: confirmed via the RSC debug payload that a real `crypto.randomUUID()` was minted server-side under the name `morbeh-storefront-guest-session`; `document.cookie` from the page returned `""` — HttpOnly confirmed live, not just asserted
 - **Cross-session isolation, against the live server** (not just the vitest harness): a forged `sessionRef` got 404 on read/add/clear against the real cart id; the real owner's cart was confirmed untouched afterward
 - **i18n/RTL**: switched to Arabic through the real UI — `dir="rtl"`, every mutation control's `aria-label` correctly translated (`إنقاص الكمية`/`زيادة الكمية`/`إزالة`/`إفراغ السلة`)
 - **Theme**: toggled to Dark — `class="dark"` applied

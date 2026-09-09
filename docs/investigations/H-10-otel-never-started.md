@@ -92,7 +92,7 @@ The design is otherwise careful, which makes the omission easy to miss:
 
 - Both flags default to `false`, so _"local/tests never attempt to reach a collector"_.
 - `createTelemetry` returns a no-op when both are disabled, so the function is genuinely side-effect-free off the production path.
-- The service name is suffixed per role (`lumo-runtime-api` / `-worker` / `-scheduler`), which is exactly what a multi-process deployment needs.
+- The service name is suffixed per role (`morbeh-runtime-api` / `-worker` / `-scheduler`), which is exactly what a multi-process deployment needs.
 
 Because the defaults are `false` and the function no-ops when disabled, the missing call site produces no error, no warning, and no test failure. It is invisible except by grepping for callers.
 

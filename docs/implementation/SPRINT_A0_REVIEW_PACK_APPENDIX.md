@@ -2131,12 +2131,12 @@ services/payments lint$ eslint .
 services/shipping lint$ eslint .
 services/security lint$ eslint .
 services/shipping lint: Done
-services/payments lint: C:\Users\abdoh\Claude code\Git\lumo-platform\services\payments\src\composition.ts
+services/payments lint: C:\Users\abdoh\Claude code\Git\morbeh-platform\services\payments\src\composition.ts
 services/payments lint:   140:37  error  `import()` type annotations are forbidden  @typescript-eslint/consistent-type-imports
 services/payments lint: ✖ 1 problem (1 error, 0 warnings)
 services/inventory lint: Done
 services/payments lint: Failed
-C:\Users\abdoh\Claude code\Git\lumo-platform\services\payments:
+C:\Users\abdoh\Claude code\Git\morbeh-platform\services\payments:
 [ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] @platform/payments@0.0.0 lint: `eslint .`
 Exit status 1
 EXIT CODE: 1
@@ -2150,7 +2150,7 @@ apps/runtime/src/purchase/purchase-saga-routes.test.ts
 
 ✖ 1 problem (1 error, 0 warnings)
 
-C:\Users\abdoh\Claude code\Git\lumo-platform\apps\runtime:
+C:\Users\abdoh\Claude code\Git\morbeh-platform\apps\runtime:
 [ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] @platform/runtime@0.0.0 lint: `eslint .`
 Exit status 1
 EXIT CODE: 1

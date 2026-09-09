@@ -35,11 +35,11 @@ const validEnv = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
   KAFKA_BROKERS: "localhost:19092",
-  AUTH_ISSUER_URL: "https://auth.lumo.local",
-  AUTH_JWKS_URL: "https://auth.lumo.local/.well-known/jwks.json",
-  KETO_WRITE_URL: "https://keto.lumo.local:4467",
-  KRATOS_PUBLIC_URL: "https://kratos.lumo.local:4433",
-  KRATOS_ADMIN_URL: "https://kratos.lumo.local:4434",
+  AUTH_ISSUER_URL: "https://auth.morbeh.local",
+  AUTH_JWKS_URL: "https://auth.morbeh.local/.well-known/jwks.json",
+  KETO_WRITE_URL: "https://keto.morbeh.local:4467",
+  KRATOS_PUBLIC_URL: "https://kratos.morbeh.local:4433",
+  KRATOS_ADMIN_URL: "https://kratos.morbeh.local:4434",
 } as NodeJS.ProcessEnv;
 
 describe("V-1 regression: the actual startApi() production path, not the isolated helper", () => {
@@ -53,7 +53,7 @@ describe("V-1 regression: the actual startApi() production path, not the isolate
     const prodConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
-      KETO_READ_URL: "https://keto.lumo.local",
+      KETO_READ_URL: "https://keto.morbeh.local",
     });
 
     await expect(startApi(prodConfig, core)).rejects.toThrow();
@@ -66,7 +66,7 @@ describe("V-1 regression: the actual startApi() production path, not the isolate
     const baseConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
-      KETO_READ_URL: "https://keto.lumo.local",
+      KETO_READ_URL: "https://keto.morbeh.local",
     });
 
     // startApi reads config.APP_ENV exactly twice before createAdminHttpApi: once in the MFA

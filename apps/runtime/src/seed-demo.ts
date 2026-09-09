@@ -178,9 +178,9 @@ interface CustomerSeed {
 }
 
 const CUSTOMER_SEEDS: readonly CustomerSeed[] = [
-  { email: "amelia@lumo.local", name: "Amelia Ortiz" },
-  { email: "noah@lumo.local", name: "Noah Whitfield" },
-  { email: "sofia@lumo.local", name: "Sofia Andersen" },
+  { email: "amelia@morbeh.local", name: "Amelia Ortiz" },
+  { email: "noah@morbeh.local", name: "Noah Whitfield" },
+  { email: "sofia@morbeh.local", name: "Sofia Andersen" },
 ];
 
 async function main(): Promise<void> {
@@ -222,18 +222,21 @@ async function main(): Promise<void> {
       await catalog.brands.list({ first: 100 }),
       "list brands",
     );
-    const existingBrand = existingBrands.items.find((b) => b.slug.value === "lumo-originals");
+    const existingBrand = existingBrands.items.find((b) => b.slug.value === "morbeh-originals");
     let brandId: string;
     if (existingBrand !== undefined) {
       brandId = existingBrand.id.toString();
-      logger.info("seed-demo: brand already exists, reusing", { brandId, slug: "lumo-originals" });
+      logger.info("seed-demo: brand already exists, reusing", {
+        brandId,
+        slug: "morbeh-originals",
+      });
     } else {
       const brand = unwrap<{ id: string }>(
-        await catalog.brands.create({ name: "Lumo Originals", slug: "lumo-originals" }),
+        await catalog.brands.create({ name: "Morbeh Originals", slug: "morbeh-originals" }),
         "create brand",
       );
       brandId = brand.id;
-      logger.info("seed-demo: created brand", { brandId, name: "Lumo Originals" });
+      logger.info("seed-demo: created brand", { brandId, name: "Morbeh Originals" });
     }
 
     // ---- Catalog: 3 categories (same list + match-by-slug approach as the brand above) ----
@@ -795,13 +798,13 @@ async function main(): Promise<void> {
         blockType: "hero",
         format: "html" as const,
         content:
-          "<section><h1>Welcome to Lumo Toys</h1><p>Playful gear for curious kids.</p></section>",
+          "<section><h1>Welcome to Morbeh Toys</h1><p>Playful gear for curious kids.</p></section>",
       },
       {
         name: "about-us",
         blockType: "page",
         format: "markdown" as const,
-        content: "# About Lumo\n\nWe build toys that make screen-free play irresistible.",
+        content: "# About Morbeh\n\nWe build toys that make screen-free play irresistible.",
       },
     ];
     for (const seed of contentSeeds) {

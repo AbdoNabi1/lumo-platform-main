@@ -31,7 +31,7 @@ fabricated. The repository baseline (3.0C) means this machine instability now ri
 New facts only (full evidence chain: 3.0B report + retry #2, 3.1 report):
 
 1. **Longest observed engine uptime yet:** during the Prisma root-cause diagnosis the operator''s
-   interactive start kept the engine alive **43+ minutes with `lumo-postgres-1` healthy** —
+   interactive start kept the engine alive **43+ minutes with `morbeh-postgres-1` healthy** —
    interactive starts DO work and stability improved vs the pull-crash. It then died again
    between two commands (P1001 → pipe gone), still without surviving a full session.
 2. **A guaranteed Step-5 failure was found and fixed AHEAD of the boot:** `migrate deploy` would

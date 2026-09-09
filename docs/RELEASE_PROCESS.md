@@ -1,4 +1,4 @@
-# RELEASE_PROCESS — how Lumo ships (Sprint 3.0A)
+# RELEASE_PROCESS — how Morbeh ships (Sprint 3.0A)
 
 > Honest status: **CI exists and is green** (.github/workflows/ci.yml: lint/typecheck/build/test/
 > arch + non-blocking audit); everything after CI is DESIGNED here and in doc 15 §2, and becomes

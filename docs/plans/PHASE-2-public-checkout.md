@@ -151,20 +151,20 @@ and should read like it.
 
 Expose exactly these 12. They are the guest-completable path.
 
-| Method | Public path                                          | Delegates to                             |
-| ------ | ---------------------------------------------------- | ---------------------------------------- |
-| POST   | `/public/checkouts`                                  | `start`                                  |
-| GET    | `/public/checkouts/:checkoutSessionId`               | `get` (new, from T2.1)                   |
-| POST   | `/public/checkouts/:checkoutSessionId/items`         | `loadItems`                              |
-| POST   | `/public/checkouts/:checkoutSessionId/billing-address`  | `setBillingAddress`                   |
-| POST   | `/public/checkouts/:checkoutSessionId/shipping-address` | `setShippingAddress`                  |
-| POST   | `/public/checkouts/:checkoutSessionId/shipping-quote` | `requestShippingQuote`                  |
-| POST   | `/public/checkouts/:checkoutSessionId/shipping-selection` | `selectShipping`                    |
-| POST   | `/public/checkouts/:checkoutSessionId/tax`           | `requestTaxCalculation`                  |
-| POST   | `/public/checkouts/:checkoutSessionId/payment-selection` | `selectPayment`                      |
-| POST   | `/public/checkouts/:checkoutSessionId/recalculate`   | `recalculateTotals`                      |
-| POST   | `/public/checkouts/:checkoutSessionId/complete`      | `complete`                               |
-| GET    | `/public/checkouts/:checkoutSessionId/payment-intent-request` | `generatePaymentIntentRequest`  |
+| Method | Public path                                                   | Delegates to                   |
+| ------ | ------------------------------------------------------------- | ------------------------------ |
+| POST   | `/public/checkouts`                                           | `start`                        |
+| GET    | `/public/checkouts/:checkoutSessionId`                        | `get` (new, from T2.1)         |
+| POST   | `/public/checkouts/:checkoutSessionId/items`                  | `loadItems`                    |
+| POST   | `/public/checkouts/:checkoutSessionId/billing-address`        | `setBillingAddress`            |
+| POST   | `/public/checkouts/:checkoutSessionId/shipping-address`       | `setShippingAddress`           |
+| POST   | `/public/checkouts/:checkoutSessionId/shipping-quote`         | `requestShippingQuote`         |
+| POST   | `/public/checkouts/:checkoutSessionId/shipping-selection`     | `selectShipping`               |
+| POST   | `/public/checkouts/:checkoutSessionId/tax`                    | `requestTaxCalculation`        |
+| POST   | `/public/checkouts/:checkoutSessionId/payment-selection`      | `selectPayment`                |
+| POST   | `/public/checkouts/:checkoutSessionId/recalculate`            | `recalculateTotals`            |
+| POST   | `/public/checkouts/:checkoutSessionId/complete`               | `complete`                     |
+| GET    | `/public/checkouts/:checkoutSessionId/payment-intent-request` | `generatePaymentIntentRequest` |
 
 **Deliberately NOT public** — leave these on the admin surface only: `validate`, `promotion`,
 `lock`, `expire`, `fail`, `order-draft`. `lock`/`expire`/`fail` are operator/saga actions;
@@ -188,7 +188,7 @@ async function requireOwnedSession(
   admin: WiredAdmin,
   checkoutSessionId: string,
   sessionRef: string,
-): Promise<CheckoutSession | AdminResponse>
+): Promise<CheckoutSession | AdminResponse>;
 ```
 
 Every route except `POST /public/checkouts` calls it first and returns the 404 response
@@ -200,7 +200,7 @@ querystring with a warning.
 
 ### Bodies
 
-Reuse the existing zod schemas' *shapes* from `checkout-routes.ts`, with `sessionRef` added to
+Reuse the existing zod schemas' _shapes_ from `checkout-routes.ts`, with `sessionRef` added to
 every POST body (mirroring `public-cart-routes.ts`, where `sessionRef` is a body field on writes
 and a header on reads):
 
@@ -232,8 +232,17 @@ export interface PublicCheckoutSessionDto {
   readonly id: string;
   readonly status: string;
   readonly currency: string;
-  readonly items: readonly { readonly productId: string; readonly quantity: number; readonly unitPriceAmountMinor: number }[];
-  readonly totals: { readonly subtotalMinor: number; readonly shippingMinor: number; readonly taxMinor: number; readonly grandTotalMinor: number } | null;
+  readonly items: readonly {
+    readonly productId: string;
+    readonly quantity: number;
+    readonly unitPriceAmountMinor: number;
+  }[];
+  readonly totals: {
+    readonly subtotalMinor: number;
+    readonly shippingMinor: number;
+    readonly taxMinor: number;
+    readonly grandTotalMinor: number;
+  } | null;
   readonly shippingAddress: PublicAddressDto | null;
   readonly billingAddress: PublicAddressDto | null;
   readonly selectedShippingMethod: string | null;
@@ -296,10 +305,14 @@ pnpm arch
    ```ts
    export type CheckoutActionResult =
      | { readonly ok: true; readonly checkoutSessionId: string }
-     | { readonly ok: false; readonly reason: "ownership" | "validation" | "unavailable" | "network" };
+     | {
+         readonly ok: false;
+         readonly reason: "ownership" | "validation" | "unavailable" | "network";
+       };
    ```
 
    Map 404 → `ownership`, 422 → `validation`, 409 → `unavailable`, 0/5xx → `network`.
+
 4. Actions to export: `startCheckout(cartId)`, `setShippingAddress(...)`,
    `setBillingAddress(...)`, `requestShippingQuote(id)`, `selectShipping(id, method)`,
    `requestTax(id)`, `selectPayment(id, ref, provider)`, `recalculate(id)`,
@@ -309,7 +322,7 @@ pnpm arch
    `checkout-routes.ts:50` first: the body field is threaded into the use case but **nothing dedupes
    on it** — the header is the real replay protection.
 6. Store the active `checkoutSessionId` in its own HttpOnly cookie
-   (`lumo_checkout_session`, `sameSite: "lax"`, `path: "/"`, `httpOnly: true`, `secure` outside
+   (`morbeh_checkout_session`, `sameSite: "lax"`, `path: "/"`, `httpOnly: true`, `secure` outside
    local) set by `startCheckout` and cleared by `completeCheckout`. Define its name and options
    beside `GUEST_SESSION_COOKIE` in `apps/storefront/src/lib/cart.ts` so both live in one place.
 
@@ -391,7 +404,7 @@ has no token. Render only what the public checkout session DTO already returns; 
 enough to be useful, record the gap in `docs/plans/BLOCKERS.md` and ship the minimal confirmation
 (order reference + total + a link back to the shop) rather than reaching for an admin route.
 
-Clear the `lumo_checkout_session` cookie once the confirmation has rendered.
+Clear the `morbeh_checkout_session` cookie once the confirmation has rendered.
 
 **Verify:**
 
