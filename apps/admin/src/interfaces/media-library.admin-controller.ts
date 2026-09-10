@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { MediaLibraryController } from "@platform/media";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -64,7 +63,10 @@ export class MediaLibraryAdminController {
     return this.mediaLibrary.getDownloadUrl(input);
   }
 
-  async listFolders(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listFolders(
+    principal: Principal,
+    input: Parameters<MediaLibraryController["listFolders"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "media_library:read");
     if (denied) return denied;
     return this.mediaLibrary.listFolders(input);
@@ -79,7 +81,10 @@ export class MediaLibraryAdminController {
     return this.mediaLibrary.getFolder(input);
   }
 
-  async listMediaAssets(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listMediaAssets(
+    principal: Principal,
+    input: Parameters<MediaLibraryController["listMediaAssets"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "media_library:read");
     if (denied) return denied;
     return this.mediaLibrary.listMediaAssets(input);

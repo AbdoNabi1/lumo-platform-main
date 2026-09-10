@@ -1,8 +1,10 @@
-import type { CursorPage } from "@platform/types";
 import type { GetFolder } from "../application/get-folder.use-case";
 import type { GetMediaAsset } from "../application/get-media-asset.use-case";
-import type { ListFolders } from "../application/list-folders.use-case";
-import type { ListMediaAssets } from "../application/list-media-assets.use-case";
+import type { ListFolders, ListFoldersInput } from "../application/list-folders.use-case";
+import type {
+  ListMediaAssets,
+  ListMediaAssetsInput,
+} from "../application/list-media-assets.use-case";
 import type {
   ArchiveFolder,
   ArchiveMediaAsset,
@@ -57,7 +59,7 @@ export class MediaLibraryController {
     return present(await this.deps.getDownloadUrl.execute(input), 200);
   }
 
-  async listFolders(input: CursorPage): Promise<ControllerResponse> {
+  async listFolders(input: ListFoldersInput): Promise<ControllerResponse> {
     return present(await this.deps.listFolders.execute(input), 200);
   }
 
@@ -65,7 +67,7 @@ export class MediaLibraryController {
     return present(await this.deps.getFolder.execute(input), 200);
   }
 
-  async listMediaAssets(input: CursorPage): Promise<ControllerResponse> {
+  async listMediaAssets(input: ListMediaAssetsInput): Promise<ControllerResponse> {
     return present(await this.deps.listMediaAssets.execute(input), 200);
   }
 

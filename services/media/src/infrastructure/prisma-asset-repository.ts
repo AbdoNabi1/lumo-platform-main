@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { Asset } from "../domain/asset";
@@ -45,11 +45,14 @@ export class PrismaAssetRepository implements AssetRepository {
     await this.deps.outbox.write(asset.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Asset | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.asset.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Asset | null> {
+    const run = (client: TransactionClient) =>
+      client.asset.findFirst({ where: { id, tenantId, deletedAt: null } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : AssetMapper.toDomain(row);
   }
 

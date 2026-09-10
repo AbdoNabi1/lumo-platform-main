@@ -38,11 +38,11 @@ export class InMemoryFolderRepository implements FolderRepository {
     await this.outbox.write(folder.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Folder | null> {
+  async findById(id: string, _tenantId: string): Promise<Folder | null> {
     return this.store.get(id) ?? null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<Folder>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Folder>> {
     return paginate([...this.store.values()], page);
   }
 }
@@ -62,11 +62,11 @@ export class InMemoryMediaAssetRepository implements MediaAssetRepository {
     await this.outbox.write(asset.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<MediaAsset | null> {
+  async findById(id: string, _tenantId: string): Promise<MediaAsset | null> {
     return this.store.get(id) ?? null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<MediaAsset>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<MediaAsset>> {
     return paginate([...this.store.values()], page);
   }
 }

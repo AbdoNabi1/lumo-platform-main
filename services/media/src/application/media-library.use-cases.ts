@@ -55,6 +55,7 @@ export class CreateFolder implements UseCase<CreateFolderInput, FolderIdOutput, 
 
 export interface FolderIdInput {
   readonly folderId: string;
+  readonly tenantId: string;
 }
 
 /** Archives a folder. */
@@ -67,7 +68,7 @@ export class ArchiveFolder implements UseCase<FolderIdInput, FolderIdOutput, Dom
 
   async execute(input: FolderIdInput): Promise<Result<FolderIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<FolderIdOutput, DomainError>>(async (tx) => {
-      const folder = await this.deps.folders.findById(input.folderId, tx);
+      const folder = await this.deps.folders.findById(input.folderId, input.tenantId, tx);
       if (folder === null) return err(new NotFoundError("Folder not found"));
 
       try {
@@ -140,6 +141,7 @@ export class RegisterMediaAsset implements UseCase<
 
 export interface MediaAssetIdInput {
   readonly mediaAssetId: string;
+  readonly tenantId: string;
 }
 
 /** Archives a media asset. */
@@ -156,7 +158,7 @@ export class ArchiveMediaAsset implements UseCase<
 
   async execute(input: MediaAssetIdInput): Promise<Result<MediaAssetIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<MediaAssetIdOutput, DomainError>>(async (tx) => {
-      const asset = await this.deps.mediaAssets.findById(input.mediaAssetId, tx);
+      const asset = await this.deps.mediaAssets.findById(input.mediaAssetId, input.tenantId, tx);
       if (asset === null) return err(new NotFoundError("Media asset not found"));
 
       try {
@@ -195,7 +197,7 @@ export class GetDownloadUrl implements UseCase<
   }
 
   async execute(input: GetDownloadUrlInput): Promise<Result<DownloadUrlOutput, DomainError>> {
-    const asset = await this.deps.mediaAssets.findById(input.mediaAssetId);
+    const asset = await this.deps.mediaAssets.findById(input.mediaAssetId, input.tenantId);
     if (asset === null) return err(new NotFoundError("Media asset not found"));
     const url = await this.deps.objectStorage.getDownloadUrl(asset.storageKey);
     return ok({ url });

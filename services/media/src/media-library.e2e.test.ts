@@ -33,7 +33,10 @@ describe("media library (end to end)", () => {
     expect(asset.status).toBe(201);
     const mediaAssetId = (asset.body as { mediaAssetId: string }).mediaAssetId;
 
-    const url = await app.mediaLibrary.getDownloadUrl({ mediaAssetId });
+    const url = await app.mediaLibrary.getDownloadUrl({
+      mediaAssetId,
+      tenantId: "tenant-local",
+    });
     expect(url.status).toBe(200);
     expect((url.body as { url: string }).url).toContain("media/hero.png");
 
@@ -44,7 +47,10 @@ describe("media library (end to end)", () => {
 
   it("returns 404 for an unknown media asset", async () => {
     const app = wire();
-    const response = await app.mediaLibrary.archiveMediaAsset({ mediaAssetId: "missing" });
+    const response = await app.mediaLibrary.archiveMediaAsset({
+      mediaAssetId: "missing",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(404);
   });
 });

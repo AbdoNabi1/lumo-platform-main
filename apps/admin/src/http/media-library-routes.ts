@@ -78,7 +78,11 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       idempotent: true,
       summary: "Archive a folder",
       schema: { params: folderIdParams },
-      handle: ({ params, context }) => admin.mediaLibrary.archiveFolder(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.mediaLibrary.archiveFolder(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -99,7 +103,10 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Archive a media asset",
       schema: { params: mediaAssetIdParams },
       handle: ({ params, context }) =>
-        admin.mediaLibrary.archiveMediaAsset(context.principal, params),
+        admin.mediaLibrary.archiveMediaAsset(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -108,7 +115,11 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       permission: "media_library:get_download_url",
       summary: "Issue a download URL for a media asset",
       schema: { params: mediaAssetIdParams },
-      handle: ({ params, context }) => admin.mediaLibrary.getDownloadUrl(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.mediaLibrary.getDownloadUrl(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -118,7 +129,13 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "List folders (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.mediaLibrary.listFolders(context.principal, query), toFolderDto),
+        mapPage(
+          await admin.mediaLibrary.listFolders(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toFolderDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -128,7 +145,10 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Get one folder by id",
       schema: { params: folderIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.mediaLibrary.getFolder(context.principal, params);
+        const response = await admin.mediaLibrary.getFolder(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toFolderDto(response.body as Folder) };
       },
@@ -141,7 +161,13 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "List media assets (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.mediaLibrary.listMediaAssets(context.principal, query), toMediaAssetDto),
+        mapPage(
+          await admin.mediaLibrary.listMediaAssets(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toMediaAssetDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -151,7 +177,10 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Get one media asset by id",
       schema: { params: mediaAssetIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.mediaLibrary.getMediaAsset(context.principal, params);
+        const response = await admin.mediaLibrary.getMediaAsset(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toMediaAssetDto(response.body as MediaAsset) };
       },

@@ -48,7 +48,7 @@ describe("Media Library read use-cases (Phase 4 T4.14)", () => {
       await create.execute({ name: `Folder ${i}` });
     }
 
-    const listed = await new ListFolders(h).execute({ first: 10 });
+    const listed = await new ListFolders(h).execute({ first: 10, tenantId: "tenant-1" });
     expect(listed.ok).toBe(true);
     if (!listed.ok) return;
     expect(listed.value.items).toHaveLength(2);
@@ -57,12 +57,15 @@ describe("Media Library read use-cases (Phase 4 T4.14)", () => {
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetFolder(h).execute({ folderId: created.value.folderId });
+    const found = await new GetFolder(h).execute({
+      folderId: created.value.folderId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.name).toBe("Product images");
 
-    const missing = await new GetFolder(h).execute({ folderId: "nope" });
+    const missing = await new GetFolder(h).execute({ folderId: "nope", tenantId: "tenant-1" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");
@@ -77,19 +80,23 @@ describe("Media Library read use-cases (Phase 4 T4.14)", () => {
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const listed = await new ListMediaAssets(h).execute({ first: 10 });
+    const listed = await new ListMediaAssets(h).execute({ first: 10, tenantId: "tenant-1" });
     expect(listed.ok).toBe(true);
     if (!listed.ok) return;
     expect(listed.value.items).toHaveLength(1);
 
     const found = await new GetMediaAsset(h).execute({
       mediaAssetId: created.value.mediaAssetId,
+      tenantId: "tenant-1",
     });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.name).toBe("hero.png");
 
-    const missing = await new GetMediaAsset(h).execute({ mediaAssetId: "nope" });
+    const missing = await new GetMediaAsset(h).execute({
+      mediaAssetId: "nope",
+      tenantId: "tenant-1",
+    });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

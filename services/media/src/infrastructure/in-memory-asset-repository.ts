@@ -23,7 +23,7 @@ export class InMemoryAssetRepository implements AssetRepository {
     await this.outbox.write(asset.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Asset | null> {
+  async findById(id: string, _tenantId: string): Promise<Asset | null> {
     return this.store.get(id) ?? null;
   }
 }

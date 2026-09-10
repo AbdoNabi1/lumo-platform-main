@@ -18,7 +18,7 @@ export class GetFolder implements UseCase<FolderIdInput, Folder, DomainError> {
   }
 
   async execute(input: FolderIdInput): Promise<Result<Folder, DomainError>> {
-    const folder = await this.deps.folders.findById(input.folderId);
+    const folder = await this.deps.folders.findById(input.folderId, input.tenantId);
     return folder === null ? err(new NotFoundError("Folder not found")) : ok(folder);
   }
 }

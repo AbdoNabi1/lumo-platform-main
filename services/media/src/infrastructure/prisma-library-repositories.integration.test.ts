@@ -50,10 +50,15 @@ describe.runIf(Boolean(databaseUrl))("Prisma Media Library repositories (integra
     const { prisma, folders, saveFolder } = wire(tenantId);
     for (let i = 0; i < 3; i += 1) {
       await saveFolder(
-        Folder.create(UniqueEntityId.from(ids.generate()), `folder-${i}`, ids.generate(), clock.now()),
+        Folder.create(
+          UniqueEntityId.from(ids.generate()),
+          `folder-${i}`,
+          ids.generate(),
+          clock.now(),
+        ),
       );
     }
-    const page = await folders.list({ first: 2 });
+    const page = await folders.list({ first: 2 }, tenantId);
     expect(page.items).toHaveLength(2);
     expect(page.pageInfo.hasNextPage).toBe(true);
     await prisma.$disconnect();
@@ -71,7 +76,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Media Library repositories (integra
         clock.now(),
       ),
     );
-    const page = await mediaAssets.list({ first: 10 });
+    const page = await mediaAssets.list({ first: 10 }, tenantId);
     expect(page.items).toHaveLength(1);
     await prisma.$disconnect();
   });
