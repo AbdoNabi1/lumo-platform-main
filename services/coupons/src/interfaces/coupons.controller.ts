@@ -1,10 +1,10 @@
-import type { CursorPage } from "@platform/types";
 import type {
   AdvanceCoupon,
   AdvanceCouponInput,
   CreateCoupon,
   CreateCouponInput,
   ListCoupons,
+  ListCouponsInput,
   RedeemCoupon,
   RedeemCouponInput,
 } from "../application/coupon.use-cases";
@@ -37,7 +37,7 @@ export class CouponsController {
     return present(await this.deps.redeemCoupon.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListCouponsInput): Promise<ControllerResponse> {
     return present(await this.deps.listCoupons.execute(input), 200);
   }
 }

@@ -122,6 +122,7 @@ describe("admin wiring (end to end)", () => {
       code: "WELCOME10",
       promotionRef: "promotion-1",
       multiUse: true,
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const couponId = (created.body as { couponId: string }).couponId;
@@ -130,11 +131,16 @@ describe("admin wiring (end to end)", () => {
       code: "WELCOME10",
       customerRef: "customer-1",
       idempotencyKey: "idem-1",
+      tenantId: "tenant-1",
     });
     expect(redeemed.status).toBe(200);
     expect((redeemed.body as { duplicate: boolean }).duplicate).toBe(false);
 
-    const disabled = await admin.coupons.advance(staff, { couponId, toStatus: "disabled" });
+    const disabled = await admin.coupons.advance(staff, {
+      couponId,
+      toStatus: "disabled",
+      tenantId: "tenant-1",
+    });
     expect(disabled.status).toBe(200);
     expect((disabled.body as { status: string }).status).toBe("disabled");
   });

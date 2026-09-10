@@ -62,7 +62,8 @@ export function couponsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a coupon",
       schema: { body: createCouponBody },
-      handle: ({ body, context }) => admin.coupons.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.coupons.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -73,7 +74,11 @@ export function couponsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Advance a coupon's status (disable/reactivate/expire)",
       schema: { params: couponIdParams, body: advanceCouponBody },
       handle: ({ params, body, context }) =>
-        admin.coupons.advance(context.principal, { couponId: params.couponId, ...body }),
+        admin.coupons.advance(context.principal, {
+          couponId: params.couponId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -83,7 +88,10 @@ export function couponsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List coupons, most recently created first (cursor-paginated)",
       schema: { querystring: listCouponsQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.coupons.list(context.principal, query), toCouponListItemDto),
+        mapPage(
+          await admin.coupons.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toCouponListItemDto,
+        ),
     }),
     defineRoute({
       method: "POST",
@@ -93,7 +101,8 @@ export function couponsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Redeem a coupon by code (idempotent by idempotencyKey)",
       schema: { body: redeemCouponBody },
-      handle: ({ body, context }) => admin.coupons.redeem(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.coupons.redeem(context.principal, { ...body, tenantId: context.tenantId }),
     }),
   ] as readonly RouteDefinition[];
 }

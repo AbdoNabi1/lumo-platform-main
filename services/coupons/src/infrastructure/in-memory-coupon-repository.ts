@@ -25,24 +25,28 @@ export class InMemoryCouponRepository implements CouponRepository {
     await this.outbox.write(coupon.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Coupon | null> {
+  async findById(id: string, _tenantId: string): Promise<Coupon | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByCode(code: string): Promise<Coupon | null> {
+  async findByCode(code: string, _tenantId: string): Promise<Coupon | null> {
     for (const coupon of this.store.values()) {
       if (coupon.code.value === code) return coupon;
     }
     return null;
   }
 
-  async hasRedemption(couponId: string, idempotencyKey: string): Promise<boolean> {
+  async hasRedemption(
+    couponId: string,
+    idempotencyKey: string,
+    _tenantId: string,
+  ): Promise<boolean> {
     const coupon = this.store.get(couponId);
     if (coupon === undefined) return false;
     return coupon.redemptions.some((r) => r.idempotencyKey === idempotencyKey);
   }
 
-  async list(page: CursorPage): Promise<Paginated<Coupon>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Coupon>> {
     const limit = normalizePageSize(page.first);
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString() < b.id.toString() ? 1 : -1,

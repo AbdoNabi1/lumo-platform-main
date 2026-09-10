@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { CouponsController } from "@platform/coupons";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -46,7 +45,10 @@ export class CouponsAdminController {
     return this.coupons.redeem(input);
   }
 
-  async list(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async list(
+    principal: Principal,
+    input: Parameters<CouponsController["list"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "coupons:read");
     if (denied) return denied;
     return this.coupons.list(input);

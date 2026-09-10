@@ -26,6 +26,7 @@ function createInput(overrides: Partial<Record<string, unknown>> = {}) {
     promotionRef: "promo-1",
     multiUse: true,
     usageLimit: 1,
+    tenantId: "tenant-local",
     ...overrides,
   };
 }
@@ -40,6 +41,7 @@ describe("coupons (end to end)", () => {
       code: "SAVE10",
       customerRef: "customer-1",
       idempotencyKey: "idem-1",
+      tenantId: "tenant-local",
     });
     expect(redeemed.status).toBe(200);
     expect((redeemed.body as { duplicate: boolean }).duplicate).toBe(false);
@@ -56,6 +58,7 @@ describe("coupons (end to end)", () => {
       code: "SAVE10",
       customerRef: "customer-1",
       idempotencyKey: "idem-shared",
+      tenantId: "tenant-local",
     });
     expect((first.body as { duplicate: boolean }).duplicate).toBe(false);
 
@@ -63,6 +66,7 @@ describe("coupons (end to end)", () => {
       code: "SAVE10",
       customerRef: "customer-1",
       idempotencyKey: "idem-shared",
+      tenantId: "tenant-local",
     });
     expect((replay.body as { duplicate: boolean }).duplicate).toBe(true);
   });
@@ -77,6 +81,7 @@ describe("coupons (end to end)", () => {
       code: "SAVE10",
       customerRef: "customer-1",
       idempotencyKey: "idem-1",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(409);
   });

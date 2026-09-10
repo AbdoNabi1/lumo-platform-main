@@ -18,6 +18,7 @@ export interface CreateCouponInput {
   readonly customerRef?: string;
   readonly expiresAt?: Date;
   readonly campaignRef?: string;
+  readonly tenantId: string;
 }
 
 export interface CouponStatusOutput {
@@ -27,6 +28,7 @@ export interface CouponStatusOutput {
 
 export interface CouponIdInput {
   readonly couponId: string;
+  readonly tenantId: string;
 }
 
 export interface AdvanceCouponInput extends CouponIdInput {
@@ -55,7 +57,7 @@ export class CreateCoupon implements UseCase<CreateCouponInput, CouponStatusOutp
     if (!promotionRef.ok) return err(promotionRef.error);
 
     return this.deps.unitOfWork.run<Result<CouponStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.coupons.findByCode(code.value.value, tx);
+      const existing = await this.deps.coupons.findByCode(code.value.value, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Coupon code "${code.value.value}" already exists`));
       }
@@ -86,7 +88,7 @@ export class AdvanceCoupon implements UseCase<AdvanceCouponInput, CouponStatusOu
 
   async execute(input: AdvanceCouponInput): Promise<Result<CouponStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<CouponStatusOutput, DomainError>>(async (tx) => {
-      const coupon = await this.deps.coupons.findById(input.couponId, tx);
+      const coupon = await this.deps.coupons.findById(input.couponId, input.tenantId, tx);
       if (coupon === null) return err(new NotFoundError("Coupon not found"));
 
       try {
@@ -107,6 +109,7 @@ export interface RedeemCouponInput {
   readonly customerRef: string;
   readonly idempotencyKey: string;
   readonly orderRef?: string;
+  readonly tenantId: string;
 }
 
 export interface RedeemCouponOutput extends CouponStatusOutput {
@@ -131,12 +134,17 @@ export class RedeemCoupon implements UseCase<RedeemCouponInput, RedeemCouponOutp
     if (!idempotencyKey.ok) return err(idempotencyKey.error);
 
     return this.deps.unitOfWork.run<Result<RedeemCouponOutput, DomainError>>(async (tx) => {
-      const coupon = await this.deps.coupons.findByCode(input.code.trim().toUpperCase(), tx);
+      const coupon = await this.deps.coupons.findByCode(
+        input.code.trim().toUpperCase(),
+        input.tenantId,
+        tx,
+      );
       if (coupon === null) return err(new NotFoundError("Coupon not found"));
 
       const alreadyRedeemed = await this.deps.coupons.hasRedemption(
         coupon.id.toString(),
         input.idempotencyKey,
+        input.tenantId,
         tx,
       );
       if (alreadyRedeemed) {
@@ -177,19 +185,23 @@ export class RedeemCoupon implements UseCase<RedeemCouponInput, RedeemCouponOutp
   }
 }
 
+export interface ListCouponsInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListCouponsDeps {
   readonly coupons: CouponRepository;
 }
 
 /** Cursor-paginated coupon listing, most recently created first (Phase A.30 admin Discounts screen). */
-export class ListCoupons implements UseCase<CursorPage, Paginated<Coupon>, DomainError> {
+export class ListCoupons implements UseCase<ListCouponsInput, Paginated<Coupon>, DomainError> {
   private readonly deps: ListCouponsDeps;
 
   constructor(deps: ListCouponsDeps) {
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<Coupon>, DomainError>> {
-    return ok(await this.deps.coupons.list(input));
+  async execute(input: ListCouponsInput): Promise<Result<Paginated<Coupon>, DomainError>> {
+    return ok(await this.deps.coupons.list(input, input.tenantId));
   }
 }
