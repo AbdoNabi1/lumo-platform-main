@@ -88,7 +88,7 @@ export class RegisterFeature implements UseCase<RegisterFeatureProps, FeatureOut
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: RegisterFeatureProps): Promise<Result<FeatureOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<FeatureOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.features.findByKey(input.key.trim(), tx);
+      const existing = await this.deps.features.findByKey(input.key.trim(), input.tenantId, tx);
       if (existing !== null) return ok(presentFeature(existing));
       let feature: FeatureDefinition;
       try {
@@ -111,10 +111,11 @@ export class RegisterFeature implements UseCase<RegisterFeatureProps, FeatureOut
 async function withFeature(
   deps: FeatureRegistryDeps,
   key: string,
+  tenantId: string,
   apply: (f: FeatureDefinition) => void,
 ): Promise<Result<FeatureOutput, DomainError>> {
   return deps.unitOfWork.run<Result<FeatureOutput, DomainError>>(async (tx) => {
-    const feature = await deps.features.findByKey(key.trim(), tx);
+    const feature = await deps.features.findByKey(key.trim(), tenantId, tx);
     if (feature === null) return err(new NotFoundError("Feature not found"));
     try {
       apply(feature);
@@ -133,6 +134,7 @@ export interface EditFeatureDraftInput {
   readonly category?: string;
   readonly visibility?: FeatureVisibility;
   readonly description?: string;
+  readonly tenantId: string;
 }
 
 /** Edits the feature's metadata (name) and/or its open draft spec (category/visibility/description). */
@@ -143,7 +145,7 @@ export class EditFeatureDraft implements UseCase<
 > {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: EditFeatureDraftInput): Promise<Result<FeatureOutput, DomainError>> {
-    return withFeature(this.deps, input.key, (f) => {
+    return withFeature(this.deps, input.key, input.tenantId, (f) => {
       const eventId = this.deps.idGenerator.generate();
       const now = this.deps.clock.now();
       if (input.name !== undefined) f.rename(input.name, eventId, now);
@@ -169,6 +171,7 @@ export class EditFeatureDraft implements UseCase<
 export interface DeclareDependenciesInput {
   readonly key: string;
   readonly dependencies: readonly FeatureDependency[];
+  readonly tenantId: string;
 }
 
 /** Declares the feature's dependencies on other features (open draft). */
@@ -179,7 +182,7 @@ export class DeclareDependencies implements UseCase<
 > {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: DeclareDependenciesInput): Promise<Result<FeatureOutput, DomainError>> {
-    return withFeature(this.deps, input.key, (f) =>
+    return withFeature(this.deps, input.key, input.tenantId, (f) =>
       f.setDependencies(
         input.dependencies,
         this.deps.idGenerator.generate(),
@@ -192,13 +195,14 @@ export class DeclareDependencies implements UseCase<
 export interface SetRequirementsInput {
   readonly key: string;
   readonly requirements: Partial<FeatureRequirements>;
+  readonly tenantId: string;
 }
 
 /** Sets the entitlement requirements (plans/permissions/capabilities) on the open draft. */
 export class SetRequirements implements UseCase<SetRequirementsInput, FeatureOutput, DomainError> {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: SetRequirementsInput): Promise<Result<FeatureOutput, DomainError>> {
-    return withFeature(this.deps, input.key, (f) =>
+    return withFeature(this.deps, input.key, input.tenantId, (f) =>
       f.setRequirements(
         input.requirements,
         this.deps.idGenerator.generate(),
@@ -211,13 +215,14 @@ export class SetRequirements implements UseCase<SetRequirementsInput, FeatureOut
 export interface FeatureActionInput {
   readonly key: string;
   readonly to: "publish" | "revise" | "deprecate" | "remove";
+  readonly tenantId: string;
 }
 
 /** Runs a lifecycle action on a feature (publish draft / open a revision / deprecate / soft-remove). */
 export class AdvanceFeature implements UseCase<FeatureActionInput, FeatureOutput, DomainError> {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: FeatureActionInput): Promise<Result<FeatureOutput, DomainError>> {
-    return withFeature(this.deps, input.key, (f) => {
+    return withFeature(this.deps, input.key, input.tenantId, (f) => {
       const eventId = this.deps.idGenerator.generate();
       const now = this.deps.clock.now();
       if (input.to === "publish") f.publish(eventId, now);
@@ -231,13 +236,14 @@ export class AdvanceFeature implements UseCase<FeatureActionInput, FeatureOutput
 export interface ReplaceFeatureInput {
   readonly key: string;
   readonly replacementKey: string;
+  readonly tenantId: string;
 }
 
 /** Deprecates a feature and points it at a replacement (migration path). */
 export class ReplaceFeature implements UseCase<ReplaceFeatureInput, FeatureOutput, DomainError> {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: ReplaceFeatureInput): Promise<Result<FeatureOutput, DomainError>> {
-    return withFeature(this.deps, input.key, (f) =>
+    return withFeature(this.deps, input.key, input.tenantId, (f) =>
       f.replaceWith(input.replacementKey, this.deps.idGenerator.generate(), this.deps.clock.now()),
     );
   }
@@ -245,6 +251,7 @@ export class ReplaceFeature implements UseCase<ReplaceFeatureInput, FeatureOutpu
 
 export interface ResolveFeatureInput {
   readonly key: string;
+  readonly tenantId: string;
 }
 
 export interface ResolvedFeature extends FeatureOutput {
@@ -259,7 +266,7 @@ export interface ResolvedFeature extends FeatureOutput {
 export class ResolveFeature implements UseCase<ResolveFeatureInput, ResolvedFeature, DomainError> {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: ResolveFeatureInput): Promise<Result<ResolvedFeature, DomainError>> {
-    const feature = await this.deps.features.findByKey(input.key.trim());
+    const feature = await this.deps.features.findByKey(input.key.trim(), input.tenantId);
     if (feature === null) return err(new NotFoundError("Feature not found"));
     const base = presentFeature(feature);
     const available =
@@ -272,6 +279,7 @@ export class ResolveFeature implements UseCase<ResolveFeatureInput, ResolvedFeat
 export interface ListFeaturesInput {
   readonly lifecycle?: string;
   readonly category?: string;
+  readonly tenantId: string;
 }
 
 /** Discovery — the feature catalog (read model), optionally filtered. */
@@ -287,7 +295,7 @@ export class ListFeatures implements UseCase<
     const filter: { lifecycle?: string; category?: string } = {};
     if (input.lifecycle !== undefined) filter.lifecycle = input.lifecycle;
     if (input.category !== undefined) filter.category = input.category;
-    const features = await this.deps.features.list(filter);
+    const features = await this.deps.features.list(input.tenantId, filter);
     return ok({ features: features.map(presentFeature) });
   }
 }
@@ -295,13 +303,14 @@ export class ListFeatures implements UseCase<
 export interface SetGroupsInput {
   readonly key: string;
   readonly groups: readonly string[];
+  readonly tenantId: string;
 }
 
 /** Assigns the feature's open draft to logical groups (P1.1.1 §1). */
 export class SetFeatureGroups implements UseCase<SetGroupsInput, FeatureOutput, DomainError> {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: SetGroupsInput): Promise<Result<FeatureOutput, DomainError>> {
-    return withFeature(this.deps, input.key, (f) =>
+    return withFeature(this.deps, input.key, input.tenantId, (f) =>
       f.setGroups(input.groups, this.deps.idGenerator.generate(), this.deps.clock.now()),
     );
   }
@@ -310,6 +319,7 @@ export class SetFeatureGroups implements UseCase<SetGroupsInput, FeatureOutput, 
 export interface SetCompatibilityInput {
   readonly key: string;
   readonly compatibility: Partial<FeatureCompatibility>;
+  readonly tenantId: string;
 }
 
 /** Sets the feature's compatibility matrix on the open draft (P1.1.1 §9). */
@@ -320,7 +330,7 @@ export class SetFeatureCompatibility implements UseCase<
 > {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: SetCompatibilityInput): Promise<Result<FeatureOutput, DomainError>> {
-    return withFeature(this.deps, input.key, (f) =>
+    return withFeature(this.deps, input.key, input.tenantId, (f) =>
       f.setCompatibility(
         input.compatibility,
         this.deps.idGenerator.generate(),
@@ -333,6 +343,7 @@ export class SetFeatureCompatibility implements UseCase<
 export interface SetAiMetadataInput {
   readonly key: string;
   readonly ai: Partial<FeatureAiMetadata>;
+  readonly tenantId: string;
 }
 
 /** Sets the feature's AI-facing metadata on the open draft (P1.1.1 §10). */
@@ -343,7 +354,7 @@ export class SetFeatureAiMetadata implements UseCase<
 > {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: SetAiMetadataInput): Promise<Result<FeatureOutput, DomainError>> {
-    return withFeature(this.deps, input.key, (f) =>
+    return withFeature(this.deps, input.key, input.tenantId, (f) =>
       f.setAiMetadata(input.ai, this.deps.idGenerator.generate(), this.deps.clock.now()),
     );
   }
@@ -356,13 +367,14 @@ export interface SetMetadataInput {
   readonly cost?: Partial<FeatureCostProfile>;
   readonly documentation?: Partial<FeatureDocumentation>;
   readonly analytics?: Partial<FeatureAnalyticsMetadata>;
+  readonly tenantId: string;
 }
 
 /** Sets the P1.1.2 metadata (lifecycle policy / constraints / cost / documentation / analytics) on the draft. */
 export class SetFeatureMetadata implements UseCase<SetMetadataInput, FeatureOutput, DomainError> {
   constructor(private readonly deps: FeatureRegistryDeps) {}
   async execute(input: SetMetadataInput): Promise<Result<FeatureOutput, DomainError>> {
-    return withFeature(this.deps, input.key, (f) =>
+    return withFeature(this.deps, input.key, input.tenantId, (f) =>
       f.setMetadata(
         {
           ...(input.lifecyclePolicy !== undefined
@@ -399,6 +411,7 @@ export interface CapabilityGraphOutput {
 export interface AnalyzeCapabilityGraphInput {
   /** Optional focus feature for reverse-lookup + impact analysis. */
   readonly key?: string;
+  readonly tenantId: string;
 }
 
 /**
@@ -415,7 +428,7 @@ export class AnalyzeCapabilityGraph implements UseCase<
   async execute(
     input: AnalyzeCapabilityGraphInput,
   ): Promise<Result<CapabilityGraphOutput, DomainError>> {
-    const features = await this.deps.features.list();
+    const features = await this.deps.features.list(input.tenantId);
     const graph = CapabilityGraph.fromFeatures(
       features.map((f) => {
         const s = f.effectiveSpec();
@@ -476,7 +489,7 @@ export class CreateBundle implements UseCase<CreateBundleProps, BundleOutput, Do
   constructor(private readonly deps: FeatureBundleDeps) {}
   async execute(input: CreateBundleProps): Promise<Result<BundleOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<BundleOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.bundles.findByKey(input.key.trim(), tx);
+      const existing = await this.deps.bundles.findByKey(input.key.trim(), input.tenantId, tx);
       if (existing !== null) return ok(presentBundle(existing));
       let bundle: FeatureBundle;
       try {
@@ -499,10 +512,11 @@ export class CreateBundle implements UseCase<CreateBundleProps, BundleOutput, Do
 async function withBundle(
   deps: FeatureBundleDeps,
   key: string,
+  tenantId: string,
   apply: (b: FeatureBundle) => void,
 ): Promise<Result<BundleOutput, DomainError>> {
   return deps.unitOfWork.run<Result<BundleOutput, DomainError>>(async (tx) => {
-    const bundle = await deps.bundles.findByKey(key.trim(), tx);
+    const bundle = await deps.bundles.findByKey(key.trim(), tenantId, tx);
     if (bundle === null) return err(new NotFoundError("Bundle not found"));
     try {
       apply(bundle);
@@ -522,13 +536,14 @@ export interface UpdateBundleInput {
   readonly featureKeys?: readonly string[];
   readonly groups?: readonly string[];
   readonly archive?: boolean;
+  readonly tenantId: string;
 }
 
 /** Updates a bundle's features/metadata or archives it (P1.1.1 §2). */
 export class UpdateBundle implements UseCase<UpdateBundleInput, BundleOutput, DomainError> {
   constructor(private readonly deps: FeatureBundleDeps) {}
   async execute(input: UpdateBundleInput): Promise<Result<BundleOutput, DomainError>> {
-    return withBundle(this.deps, input.key, (b) => {
+    return withBundle(this.deps, input.key, input.tenantId, (b) => {
       const eventId = this.deps.idGenerator.generate();
       const now = this.deps.clock.now();
       if (input.archive === true) {
@@ -557,7 +572,7 @@ export class UpdateBundle implements UseCase<UpdateBundleInput, BundleOutput, Do
 }
 
 export interface ListBundlesInput {
-  readonly _?: never;
+  readonly tenantId: string;
 }
 
 /** Discovery — the bundle catalog (read model). */
@@ -567,8 +582,10 @@ export class ListBundles implements UseCase<
   DomainError
 > {
   constructor(private readonly deps: FeatureBundleDeps) {}
-  async execute(): Promise<Result<{ readonly bundles: readonly BundleOutput[] }, DomainError>> {
-    const bundles = await this.deps.bundles.list();
+  async execute(
+    input: ListBundlesInput,
+  ): Promise<Result<{ readonly bundles: readonly BundleOutput[] }, DomainError>> {
+    const bundles = await this.deps.bundles.list(input.tenantId);
     return ok({ bundles: bundles.map(presentBundle) });
   }
 }
@@ -581,7 +598,7 @@ export interface ValidateRegistryDeps {
 }
 
 export interface ValidateRegistryInput {
-  readonly _?: never;
+  readonly tenantId: string;
 }
 
 /** Deterministic whole-registry validation (P1.1.2 §7) — duplicates/cycles/compatibility/deps/constraints/docs. */
@@ -592,10 +609,12 @@ export class ValidateRegistry implements UseCase<
 > {
   private readonly validator = new FeatureRegistryValidator();
   constructor(private readonly deps: ValidateRegistryDeps) {}
-  async execute(): Promise<Result<RegistryValidationReport, DomainError>> {
+  async execute(
+    input: ValidateRegistryInput,
+  ): Promise<Result<RegistryValidationReport, DomainError>> {
     const [features, bundles] = await Promise.all([
-      this.deps.features.list(),
-      this.deps.bundles.list(),
+      this.deps.features.list(input.tenantId),
+      this.deps.bundles.list(input.tenantId),
     ]);
     return ok(this.validator.validate(features, bundles));
   }

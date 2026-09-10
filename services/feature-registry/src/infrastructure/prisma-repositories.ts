@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { FeatureBundle } from "../domain/feature-bundle";
@@ -46,27 +46,34 @@ export class PrismaFeatureDefinitionRepository implements FeatureDefinitionRepos
     await this.deps.outbox.write(feature.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findByKey(key: string, tx?: unknown): Promise<FeatureDefinition | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.featureDefinition.findFirst({
-      where: { tenantId: this.deps.tenantId, key },
-    });
+  async findByKey(key: string, tenantId: string, tx?: unknown): Promise<FeatureDefinition | null> {
+    const run = (client: TransactionClient) =>
+      client.featureDefinition.findFirst({ where: { tenantId, key } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : FeatureDefinitionMapper.toDomain(row);
   }
 
   async list(
+    tenantId: string,
     filter?: { readonly lifecycle?: string; readonly category?: string },
     tx?: unknown,
   ): Promise<readonly FeatureDefinition[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.featureDefinition.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(filter?.lifecycle !== undefined ? { lifecycle: filter.lifecycle } : {}),
-        ...(filter?.category !== undefined ? { category: filter.category } : {}),
-      },
-      orderBy: { key: "asc" },
-    });
+    const run = (client: TransactionClient) =>
+      client.featureDefinition.findMany({
+        where: {
+          tenantId,
+          ...(filter?.lifecycle !== undefined ? { lifecycle: filter.lifecycle } : {}),
+          ...(filter?.category !== undefined ? { category: filter.category } : {}),
+        },
+        orderBy: { key: "asc" },
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return rows.map((row) => FeatureDefinitionMapper.toDomain(row));
   }
 }
@@ -95,20 +102,23 @@ export class PrismaFeatureBundleRepository implements FeatureBundleRepository {
     await this.deps.outbox.write(bundle.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findByKey(key: string, tx?: unknown): Promise<FeatureBundle | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.featureBundle.findFirst({
-      where: { tenantId: this.deps.tenantId, key },
-    });
+  async findByKey(key: string, tenantId: string, tx?: unknown): Promise<FeatureBundle | null> {
+    const run = (client: TransactionClient) =>
+      client.featureBundle.findFirst({ where: { tenantId, key } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : FeatureBundleMapper.toDomain(row);
   }
 
-  async list(tx?: unknown): Promise<readonly FeatureBundle[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.featureBundle.findMany({
-      where: { tenantId: this.deps.tenantId },
-      orderBy: { key: "asc" },
-    });
+  async list(tenantId: string, tx?: unknown): Promise<readonly FeatureBundle[]> {
+    const run = (client: TransactionClient) =>
+      client.featureBundle.findMany({ where: { tenantId }, orderBy: { key: "asc" } });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return rows.map((row) => FeatureBundleMapper.toDomain(row));
   }
 }

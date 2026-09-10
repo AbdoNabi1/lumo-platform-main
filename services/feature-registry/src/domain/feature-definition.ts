@@ -37,6 +37,7 @@ export interface RegisterFeatureProps {
   readonly description?: string;
   readonly dependencies?: readonly FeatureDependency[];
   readonly requirements?: Partial<FeatureRequirements>;
+  readonly tenantId: string;
 }
 
 interface FeatureDefinitionProps {

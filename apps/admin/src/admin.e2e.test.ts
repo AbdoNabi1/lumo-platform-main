@@ -615,35 +615,40 @@ describe("admin wiring (end to end)", () => {
       key: "commerce.new_checkout",
       name: "New Checkout Flow",
       category: "commerce",
+      tenantId: "tenant-1",
     });
     expect(registered.status).toBe(201);
 
     const requirementsSet = await admin.featureRegistry.setRequirements(staff, {
       key: "commerce.new_checkout",
       requirements: { requiredPlans: ["pro"] },
+      tenantId: "tenant-1",
     });
     expect(requirementsSet.status).toBe(200);
 
     const groupsSet = await admin.featureRegistry.setGroups(staff, {
       key: "commerce.new_checkout",
       groups: ["commerce"],
+      tenantId: "tenant-1",
     });
     expect(groupsSet.status).toBe(200);
 
     const published = await admin.featureRegistry.advance(staff, {
       key: "commerce.new_checkout",
       to: "publish",
+      tenantId: "tenant-1",
     });
     expect(published.status).toBe(200);
     expect((published.body as { lifecycle: string }).lifecycle).toBe("active");
 
     const resolved = await admin.featureRegistry.resolve(staff, {
       key: "commerce.new_checkout",
+      tenantId: "tenant-1",
     });
     expect(resolved.status).toBe(200);
     expect((resolved.body as { available: boolean }).available).toBe(true);
 
-    const listed = await admin.featureRegistry.list(staff, {});
+    const listed = await admin.featureRegistry.list(staff, { tenantId: "tenant-1" });
     expect(listed.status).toBe(200);
     expect(
       (listed.body as { features: readonly { key: string }[] }).features.some(
@@ -651,7 +656,7 @@ describe("admin wiring (end to end)", () => {
       ),
     ).toBe(true);
 
-    const graph = await admin.featureRegistry.analyzeGraph(staff, {});
+    const graph = await admin.featureRegistry.analyzeGraph(staff, { tenantId: "tenant-1" });
     expect(graph.status).toBe(200);
     expect((graph.body as { acyclic: boolean }).acyclic).toBe(true);
 
@@ -659,19 +664,21 @@ describe("admin wiring (end to end)", () => {
       key: "commerce.pro_pack",
       name: "Pro Pack",
       featureKeys: ["commerce.new_checkout"],
+      tenantId: "tenant-1",
     });
     expect(bundle.status).toBe(201);
 
     const bundleUpdated = await admin.featureRegistry.updateBundle(staff, {
       key: "commerce.pro_pack",
       groups: ["commerce"],
+      tenantId: "tenant-1",
     });
     expect(bundleUpdated.status).toBe(200);
 
-    const bundlesListed = await admin.featureRegistry.listBundles(staff);
+    const bundlesListed = await admin.featureRegistry.listBundles(staff, { tenantId: "tenant-1" });
     expect(bundlesListed.status).toBe(200);
 
-    const validated = await admin.featureRegistry.validate(staff);
+    const validated = await admin.featureRegistry.validate(staff, { tenantId: "tenant-1" });
     expect(validated.status).toBe(200);
   });
 

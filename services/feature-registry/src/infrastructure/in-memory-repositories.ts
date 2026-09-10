@@ -18,14 +18,14 @@ export class InMemoryFeatureDefinitionRepository implements FeatureDefinitionRep
     await this.deps.outbox.write(feature.pullDomainEvents(), this.deps.context, tx);
   }
 
-  async findByKey(key: string): Promise<FeatureDefinition | null> {
+  async findByKey(key: string, _tenantId: string): Promise<FeatureDefinition | null> {
     return this.store.get(key) ?? null;
   }
 
-  async list(filter?: {
-    readonly lifecycle?: string;
-    readonly category?: string;
-  }): Promise<readonly FeatureDefinition[]> {
+  async list(
+    _tenantId: string,
+    filter?: { readonly lifecycle?: string; readonly category?: string },
+  ): Promise<readonly FeatureDefinition[]> {
     let all = [...this.store.values()];
     if (filter?.lifecycle !== undefined) all = all.filter((f) => f.lifecycle === filter.lifecycle);
     if (filter?.category !== undefined)
@@ -44,11 +44,11 @@ export class InMemoryFeatureBundleRepository implements FeatureBundleRepository 
     await this.deps.outbox.write(bundle.pullDomainEvents(), this.deps.context, tx);
   }
 
-  async findByKey(key: string): Promise<FeatureBundle | null> {
+  async findByKey(key: string, _tenantId: string): Promise<FeatureBundle | null> {
     return this.store.get(key) ?? null;
   }
 
-  async list(): Promise<readonly FeatureBundle[]> {
+  async list(_tenantId: string): Promise<readonly FeatureBundle[]> {
     return [...this.store.values()];
   }
 }
