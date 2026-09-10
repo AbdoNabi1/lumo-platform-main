@@ -113,7 +113,8 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create or update a page's SEO profile",
       schema: { body: setSeoProfileBody },
-      handle: ({ body, context }) => admin.seo.setSeoProfile(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.seo.setSeoProfile(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -123,7 +124,8 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a redirect rule",
       schema: { body: createRedirectBody },
-      handle: ({ body, context }) => admin.seo.createRedirect(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.seo.createRedirect(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -133,7 +135,8 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a sitemap",
       schema: { body: createSitemapBody },
-      handle: ({ body, context }) => admin.seo.createSitemap(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.seo.createSitemap(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -144,7 +147,11 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Regenerate a sitemap's URL list",
       schema: { params: sitemapIdParams, body: regenerateSitemapBody },
       handle: ({ params, body, context }) =>
-        admin.seo.regenerateSitemap(context.principal, { sitemapId: params.sitemapId, ...body }),
+        admin.seo.regenerateSitemap(context.principal, {
+          sitemapId: params.sitemapId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -154,7 +161,8 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create or update a robots policy",
       schema: { body: setRobotsPolicyBody },
-      handle: ({ body, context }) => admin.seo.setRobotsPolicy(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.seo.setRobotsPolicy(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -164,7 +172,13 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List SEO profiles (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.seo.listSeoProfiles(context.principal, query), toSeoProfileDto),
+        mapPage(
+          await admin.seo.listSeoProfiles(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toSeoProfileDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -174,7 +188,10 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one SEO profile by id",
       schema: { params: profileIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.seo.getSeoProfile(context.principal, params);
+        const response = await admin.seo.getSeoProfile(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toSeoProfileDto(response.body as SeoProfile) };
       },
@@ -187,7 +204,13 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List redirects (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.seo.listRedirects(context.principal, query), toRedirectDto),
+        mapPage(
+          await admin.seo.listRedirects(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toRedirectDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -197,7 +220,10 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one redirect by id",
       schema: { params: redirectIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.seo.getRedirect(context.principal, params);
+        const response = await admin.seo.getRedirect(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toRedirectDto(response.body as Redirect) };
       },
@@ -210,7 +236,13 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List sitemaps (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.seo.listSitemaps(context.principal, query), toSitemapDto),
+        mapPage(
+          await admin.seo.listSitemaps(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toSitemapDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -220,7 +252,10 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one sitemap by id",
       schema: { params: sitemapIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.seo.getSitemap(context.principal, params);
+        const response = await admin.seo.getSitemap(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toSitemapDto(response.body as Sitemap) };
       },
@@ -233,7 +268,13 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List robots policies (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.seo.listRobotsPolicies(context.principal, query), toRobotsPolicyDto),
+        mapPage(
+          await admin.seo.listRobotsPolicies(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toRobotsPolicyDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -243,7 +284,10 @@ export function seoRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one robots policy by id",
       schema: { params: policyIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.seo.getRobotsPolicy(context.principal, params);
+        const response = await admin.seo.getRobotsPolicy(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toRobotsPolicyDto(response.body as RobotsPolicy) };
       },

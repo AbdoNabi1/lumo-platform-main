@@ -5,7 +5,7 @@ import type { SitemapRepository } from "../domain/repositories";
 import type { Sitemap } from "../domain/sitemap";
 import type { RegenerateSitemapInput } from "./seo.use-cases";
 
-export type SitemapIdInput = Pick<RegenerateSitemapInput, "sitemapId">;
+export type SitemapIdInput = Pick<RegenerateSitemapInput, "sitemapId" | "tenantId">;
 
 export interface GetSitemapDeps {
   readonly sitemaps: SitemapRepository;
@@ -20,7 +20,7 @@ export class GetSitemap implements UseCase<SitemapIdInput, Sitemap, DomainError>
   }
 
   async execute(input: SitemapIdInput): Promise<Result<Sitemap, DomainError>> {
-    const sitemap = await this.deps.sitemaps.findById(input.sitemapId);
+    const sitemap = await this.deps.sitemaps.findById(input.sitemapId, input.tenantId);
     return sitemap === null ? err(new NotFoundError("Sitemap not found")) : ok(sitemap);
   }
 }

@@ -1,12 +1,17 @@
-import type { CursorPage } from "@platform/types";
 import type { GetRedirect, RedirectIdInput } from "../application/get-redirect.use-case";
 import type { GetRobotsPolicy, PolicyIdInput } from "../application/get-robots-policy.use-case";
 import type { GetSeoProfile, ProfileIdInput } from "../application/get-seo-profile.use-case";
 import type { GetSitemap, SitemapIdInput } from "../application/get-sitemap.use-case";
-import type { ListRedirects } from "../application/list-redirects.use-case";
-import type { ListRobotsPolicies } from "../application/list-robots-policies.use-case";
-import type { ListSeoProfiles } from "../application/list-seo-profiles.use-case";
-import type { ListSitemaps } from "../application/list-sitemaps.use-case";
+import type { ListRedirects, ListRedirectsInput } from "../application/list-redirects.use-case";
+import type {
+  ListRobotsPolicies,
+  ListRobotsPoliciesInput,
+} from "../application/list-robots-policies.use-case";
+import type {
+  ListSeoProfiles,
+  ListSeoProfilesInput,
+} from "../application/list-seo-profiles.use-case";
+import type { ListSitemaps, ListSitemapsInput } from "../application/list-sitemaps.use-case";
 import type {
   CreateRedirect,
   CreateRedirectInput,
@@ -65,7 +70,7 @@ export class SeoController {
     return present(await this.deps.setRobotsPolicy.execute(input), 200);
   }
 
-  async listSeoProfiles(input: CursorPage): Promise<ControllerResponse> {
+  async listSeoProfiles(input: ListSeoProfilesInput): Promise<ControllerResponse> {
     return present(await this.deps.listSeoProfiles.execute(input), 200);
   }
 
@@ -73,7 +78,7 @@ export class SeoController {
     return present(await this.deps.getSeoProfile.execute(input), 200);
   }
 
-  async listRedirects(input: CursorPage): Promise<ControllerResponse> {
+  async listRedirects(input: ListRedirectsInput): Promise<ControllerResponse> {
     return present(await this.deps.listRedirects.execute(input), 200);
   }
 
@@ -81,7 +86,7 @@ export class SeoController {
     return present(await this.deps.getRedirect.execute(input), 200);
   }
 
-  async listSitemaps(input: CursorPage): Promise<ControllerResponse> {
+  async listSitemaps(input: ListSitemapsInput): Promise<ControllerResponse> {
     return present(await this.deps.listSitemaps.execute(input), 200);
   }
 
@@ -89,7 +94,7 @@ export class SeoController {
     return present(await this.deps.getSitemap.execute(input), 200);
   }
 
-  async listRobotsPolicies(input: CursorPage): Promise<ControllerResponse> {
+  async listRobotsPolicies(input: ListRobotsPoliciesInput): Promise<ControllerResponse> {
     return present(await this.deps.listRobotsPolicies.execute(input), 200);
   }
 

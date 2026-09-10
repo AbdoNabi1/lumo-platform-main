@@ -45,18 +45,18 @@ export class InMemorySeoProfileRepository implements SeoProfileRepository {
     await this.outbox.write(profile.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<SeoProfile | null> {
+  async findById(id: string, _tenantId: string): Promise<SeoProfile | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByPageRef(pageRef: string): Promise<SeoProfile | null> {
+  async findByPageRef(pageRef: string, _tenantId: string): Promise<SeoProfile | null> {
     for (const profile of this.store.values()) {
       if (profile.pageRef === pageRef) return profile;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<SeoProfile>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<SeoProfile>> {
     return paginate([...this.store.values()], page);
   }
 }
@@ -76,18 +76,18 @@ export class InMemoryRedirectRepository implements RedirectRepository {
     await this.outbox.write(redirect.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Redirect | null> {
+  async findById(id: string, _tenantId: string): Promise<Redirect | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByFromPath(fromPath: string): Promise<Redirect | null> {
+  async findByFromPath(fromPath: string, _tenantId: string): Promise<Redirect | null> {
     for (const redirect of this.store.values()) {
       if (redirect.fromPath === fromPath) return redirect;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<Redirect>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Redirect>> {
     return paginate([...this.store.values()], page);
   }
 }
@@ -107,18 +107,18 @@ export class InMemorySitemapRepository implements SitemapRepository {
     await this.outbox.write(sitemap.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Sitemap | null> {
+  async findById(id: string, _tenantId: string): Promise<Sitemap | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<Sitemap | null> {
+  async findByName(name: string, _tenantId: string): Promise<Sitemap | null> {
     for (const sitemap of this.store.values()) {
       if (sitemap.name === name) return sitemap;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<Sitemap>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Sitemap>> {
     return paginate([...this.store.values()], page);
   }
 }
@@ -138,18 +138,18 @@ export class InMemoryRobotsPolicyRepository implements RobotsPolicyRepository {
     await this.outbox.write(policy.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<RobotsPolicy | null> {
+  async findById(id: string, _tenantId: string): Promise<RobotsPolicy | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByUserAgent(userAgent: string): Promise<RobotsPolicy | null> {
+  async findByUserAgent(userAgent: string, _tenantId: string): Promise<RobotsPolicy | null> {
     for (const policy of this.store.values()) {
       if (policy.userAgent === userAgent) return policy;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<RobotsPolicy>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<RobotsPolicy>> {
     return paginate([...this.store.values()], page);
   }
 }

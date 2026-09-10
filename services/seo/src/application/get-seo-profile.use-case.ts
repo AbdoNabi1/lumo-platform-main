@@ -6,6 +6,7 @@ import type { SeoProfile } from "../domain/seo-profile";
 
 export interface ProfileIdInput {
   readonly profileId: string;
+  readonly tenantId: string;
 }
 
 export interface GetSeoProfileDeps {
@@ -21,7 +22,7 @@ export class GetSeoProfile implements UseCase<ProfileIdInput, SeoProfile, Domain
   }
 
   async execute(input: ProfileIdInput): Promise<Result<SeoProfile, DomainError>> {
-    const profile = await this.deps.profiles.findById(input.profileId);
+    const profile = await this.deps.profiles.findById(input.profileId, input.tenantId);
     return profile === null ? err(new NotFoundError("SEO profile not found")) : ok(profile);
   }
 }

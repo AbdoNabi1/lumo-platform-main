@@ -74,7 +74,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma SEO repositories (integration)", ()
         ),
       );
     }
-    const page = await profiles.list({ first: 10 });
+    const page = await profiles.list({ first: 10 }, tenantId);
     expect(page.items).toHaveLength(2);
     await prisma.$disconnect();
   });
@@ -92,7 +92,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma SEO repositories (integration)", ()
         clock.now(),
       ),
     );
-    const page = await redirects.list({ first: 10 });
+    const page = await redirects.list({ first: 10 }, tenantId);
     expect(page.items).toHaveLength(1);
     await prisma.$disconnect();
   });
@@ -103,7 +103,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma SEO repositories (integration)", ()
     await saveSitemap(
       Sitemap.create(UniqueEntityId.from(ids.generate()), "main", ids.generate(), clock.now()),
     );
-    const page = await sitemaps.list({ first: 10 });
+    const page = await sitemaps.list({ first: 10 }, tenantId);
     expect(page.items).toHaveLength(1);
     await prisma.$disconnect();
   });
@@ -114,7 +114,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma SEO repositories (integration)", ()
     await savePolicy(
       RobotsPolicy.create(UniqueEntityId.from(ids.generate()), "*", ids.generate(), clock.now()),
     );
-    const page = await robotsPolicies.list({ first: 10 });
+    const page = await robotsPolicies.list({ first: 10 }, tenantId);
     expect(page.items).toHaveLength(1);
     await prisma.$disconnect();
   });

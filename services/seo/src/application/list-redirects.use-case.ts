@@ -5,19 +5,27 @@ import type { DomainError } from "@platform/utils";
 import type { Redirect } from "../domain/redirect";
 import type { RedirectRepository } from "../domain/repositories";
 
+export interface ListRedirectsInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListRedirectsDeps {
   readonly redirects: RedirectRepository;
 }
 
 /** Cursor-paginated redirect listing. */
-export class ListRedirects implements UseCase<CursorPage, Paginated<Redirect>, DomainError> {
+export class ListRedirects implements UseCase<
+  ListRedirectsInput,
+  Paginated<Redirect>,
+  DomainError
+> {
   private readonly deps: ListRedirectsDeps;
 
   constructor(deps: ListRedirectsDeps) {
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<Redirect>, DomainError>> {
-    return ok(await this.deps.redirects.list(input));
+  async execute(input: ListRedirectsInput): Promise<Result<Paginated<Redirect>, DomainError>> {
+    return ok(await this.deps.redirects.list(input, input.tenantId));
   }
 }

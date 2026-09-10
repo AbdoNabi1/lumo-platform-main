@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { SeoController } from "@platform/seo";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -64,7 +63,10 @@ export class SeoAdminController {
     return this.seo.setRobotsPolicy(input);
   }
 
-  async listSeoProfiles(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listSeoProfiles(
+    principal: Principal,
+    input: Parameters<SeoController["listSeoProfiles"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "seo:read");
     if (denied) return denied;
     return this.seo.listSeoProfiles(input);
@@ -79,7 +81,10 @@ export class SeoAdminController {
     return this.seo.getSeoProfile(input);
   }
 
-  async listRedirects(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listRedirects(
+    principal: Principal,
+    input: Parameters<SeoController["listRedirects"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "seo:read");
     if (denied) return denied;
     return this.seo.listRedirects(input);
@@ -94,7 +99,10 @@ export class SeoAdminController {
     return this.seo.getRedirect(input);
   }
 
-  async listSitemaps(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listSitemaps(
+    principal: Principal,
+    input: Parameters<SeoController["listSitemaps"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "seo:read");
     if (denied) return denied;
     return this.seo.listSitemaps(input);
@@ -109,7 +117,10 @@ export class SeoAdminController {
     return this.seo.getSitemap(input);
   }
 
-  async listRobotsPolicies(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listRobotsPolicies(
+    principal: Principal,
+    input: Parameters<SeoController["listRobotsPolicies"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "seo:read");
     if (denied) return denied;
     return this.seo.listRobotsPolicies(input);
