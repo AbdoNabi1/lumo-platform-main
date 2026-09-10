@@ -26,6 +26,7 @@ function createInput() {
     slots: ["content"],
     events: ["onClick"],
     responsive: true,
+    tenantId: "tenant-local",
   };
 }
 
@@ -40,6 +41,7 @@ describe("components (end to end)", () => {
     const published = await app.components.advance({
       componentDefinitionId,
       toStatus: "published",
+      tenantId: "tenant-local",
     });
     expect(published.status).toBe(200);
 
@@ -59,6 +61,7 @@ describe("components (end to end)", () => {
     const response = await app.components.advance({
       componentDefinitionId: "missing",
       toStatus: "published",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(404);
   });

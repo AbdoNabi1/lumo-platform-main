@@ -1,4 +1,3 @@
-import type { CursorPage } from "@platform/types";
 import type {
   AdvanceComponentDefinition,
   AdvanceComponentDefinitionInput,
@@ -7,7 +6,10 @@ import type {
   CreateComponentDefinitionInput,
 } from "../application/components.use-cases";
 import type { GetComponentDefinition } from "../application/get-component-definition.use-case";
-import type { ListComponentDefinitions } from "../application/list-component-definitions.use-case";
+import type {
+  ListComponentDefinitions,
+  ListComponentDefinitionsInput,
+} from "../application/list-component-definitions.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface ComponentsControllerDeps {
@@ -33,7 +35,7 @@ export class ComponentsController {
     return present(await this.deps.advanceComponentDefinition.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListComponentDefinitionsInput): Promise<ControllerResponse> {
     return present(await this.deps.listComponentDefinitions.execute(input), 200);
   }
 

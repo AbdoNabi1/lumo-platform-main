@@ -19,6 +19,7 @@ export interface CreateComponentDefinitionInput {
   readonly responsive: boolean;
   readonly permission?: string;
   readonly featureFlagKey?: string;
+  readonly tenantId: string;
 }
 
 export interface ComponentStatusOutput {
@@ -52,7 +53,7 @@ export class CreateComponentDefinition implements UseCase<
     if (!key.ok) return err(key.error);
 
     return this.deps.unitOfWork.run<Result<ComponentStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.definitions.findByKey(input.key, tx);
+      const existing = await this.deps.definitions.findByKey(input.key, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Component "${input.key}" already exists`));
       }
@@ -78,6 +79,7 @@ export class CreateComponentDefinition implements UseCase<
 
 export interface ComponentDefinitionIdInput {
   readonly componentDefinitionId: string;
+  readonly tenantId: string;
 }
 
 export interface AdvanceComponentDefinitionInput extends ComponentDefinitionIdInput {
@@ -100,7 +102,11 @@ export class AdvanceComponentDefinition implements UseCase<
     input: AdvanceComponentDefinitionInput,
   ): Promise<Result<ComponentStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ComponentStatusOutput, DomainError>>(async (tx) => {
-      const definition = await this.deps.definitions.findById(input.componentDefinitionId, tx);
+      const definition = await this.deps.definitions.findById(
+        input.componentDefinitionId,
+        input.tenantId,
+        tx,
+      );
       if (definition === null) return err(new NotFoundError("Component definition not found"));
 
       try {

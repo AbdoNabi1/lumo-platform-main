@@ -10,9 +10,11 @@ export interface GetComponentDefinitionDeps {
 }
 
 /** Fetches a single component definition by id. */
-export class GetComponentDefinition
-  implements UseCase<ComponentDefinitionIdInput, ComponentDefinition, DomainError>
-{
+export class GetComponentDefinition implements UseCase<
+  ComponentDefinitionIdInput,
+  ComponentDefinition,
+  DomainError
+> {
   private readonly deps: GetComponentDefinitionDeps;
 
   constructor(deps: GetComponentDefinitionDeps) {
@@ -22,7 +24,10 @@ export class GetComponentDefinition
   async execute(
     input: ComponentDefinitionIdInput,
   ): Promise<Result<ComponentDefinition, DomainError>> {
-    const definition = await this.deps.definitions.findById(input.componentDefinitionId);
+    const definition = await this.deps.definitions.findById(
+      input.componentDefinitionId,
+      input.tenantId,
+    );
     return definition === null
       ? err(new NotFoundError("Component definition not found"))
       : ok(definition);

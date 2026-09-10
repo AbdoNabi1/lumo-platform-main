@@ -25,11 +25,11 @@ export class InMemoryComponentDefinitionRepository implements ComponentDefinitio
     await this.outbox.write(definition.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<ComponentDefinition | null> {
+  async findById(id: string, _tenantId: string): Promise<ComponentDefinition | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByKey(key: string): Promise<ComponentDefinition | null> {
+  async findByKey(key: string, _tenantId: string): Promise<ComponentDefinition | null> {
     for (const definition of this.store.values()) {
       if (definition.key === key) return definition;
     }
@@ -37,7 +37,7 @@ export class InMemoryComponentDefinitionRepository implements ComponentDefinitio
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<ComponentDefinition>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<ComponentDefinition>> {
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );
