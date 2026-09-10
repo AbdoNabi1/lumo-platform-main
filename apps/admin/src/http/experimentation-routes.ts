@@ -102,7 +102,8 @@ export function experimentationRoutes(admin: WiredAdmin): readonly RouteDefiniti
       idempotent: true,
       summary: "Create an experiment (variant allocations must sum to 100)",
       schema: { body: createExperimentBody },
-      handle: ({ body, context }) => admin.experimentation.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.experimentation.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -116,6 +117,7 @@ export function experimentationRoutes(admin: WiredAdmin): readonly RouteDefiniti
         admin.experimentation.advance(context.principal, {
           experimentId: params.experimentId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -129,6 +131,7 @@ export function experimentationRoutes(admin: WiredAdmin): readonly RouteDefiniti
         admin.experimentation.recordResult(context.principal, {
           experimentId: params.experimentId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -143,6 +146,7 @@ export function experimentationRoutes(admin: WiredAdmin): readonly RouteDefiniti
         admin.experimentation.declareWinner(context.principal, {
           experimentId: params.experimentId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -153,7 +157,13 @@ export function experimentationRoutes(admin: WiredAdmin): readonly RouteDefiniti
       summary: "List experiments (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.experimentation.list(context.principal, query), toExperimentDto),
+        mapPage(
+          await admin.experimentation.list(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toExperimentDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -163,7 +173,10 @@ export function experimentationRoutes(admin: WiredAdmin): readonly RouteDefiniti
       summary: "Get one experiment by id",
       schema: { params: experimentIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.experimentation.get(context.principal, params);
+        const response = await admin.experimentation.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toExperimentDto(response.body as Experiment) };
       },

@@ -21,6 +21,7 @@ export interface CreateExperimentInput {
   readonly audiencePercentage?: number;
   readonly audienceSegmentRefs?: readonly string[];
   readonly featureFlagRef?: string;
+  readonly tenantId: string;
 }
 
 export interface ExperimentStatusOutput {
@@ -63,7 +64,7 @@ export class CreateExperiment implements UseCase<
     if (!allocationCheck.ok) return err(allocationCheck.error);
 
     return this.deps.unitOfWork.run<Result<ExperimentStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.experiments.findByName(input.name, tx);
+      const existing = await this.deps.experiments.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Experiment "${input.name}" already exists`));
       }
@@ -87,6 +88,7 @@ export class CreateExperiment implements UseCase<
 
 export interface ExperimentIdInput {
   readonly experimentId: string;
+  readonly tenantId: string;
 }
 
 export interface AdvanceExperimentInput extends ExperimentIdInput {
@@ -109,7 +111,11 @@ export class AdvanceExperiment implements UseCase<
     input: AdvanceExperimentInput,
   ): Promise<Result<ExperimentStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ExperimentStatusOutput, DomainError>>(async (tx) => {
-      const experiment = await this.deps.experiments.findById(input.experimentId, tx);
+      const experiment = await this.deps.experiments.findById(
+        input.experimentId,
+        input.tenantId,
+        tx,
+      );
       if (experiment === null) return err(new NotFoundError("Experiment not found"));
 
       try {
@@ -149,7 +155,11 @@ export class RecordExperimentResult implements UseCase<
 
   async execute(input: RecordResultInput): Promise<Result<ExperimentStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ExperimentStatusOutput, DomainError>>(async (tx) => {
-      const experiment = await this.deps.experiments.findById(input.experimentId, tx);
+      const experiment = await this.deps.experiments.findById(
+        input.experimentId,
+        input.tenantId,
+        tx,
+      );
       if (experiment === null) return err(new NotFoundError("Experiment not found"));
 
       try {
@@ -189,7 +199,11 @@ export class DeclareWinner implements UseCase<
 
   async execute(input: DeclareWinnerInput): Promise<Result<ExperimentStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ExperimentStatusOutput, DomainError>>(async (tx) => {
-      const experiment = await this.deps.experiments.findById(input.experimentId, tx);
+      const experiment = await this.deps.experiments.findById(
+        input.experimentId,
+        input.tenantId,
+        tx,
+      );
       if (experiment === null) return err(new NotFoundError("Experiment not found"));
 
       try {

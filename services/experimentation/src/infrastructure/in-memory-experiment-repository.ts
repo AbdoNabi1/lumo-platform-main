@@ -25,11 +25,11 @@ export class InMemoryExperimentRepository implements ExperimentRepository {
     await this.outbox.write(experiment.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Experiment | null> {
+  async findById(id: string, _tenantId: string): Promise<Experiment | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<Experiment | null> {
+  async findByName(name: string, _tenantId: string): Promise<Experiment | null> {
     for (const experiment of this.store.values()) {
       if (experiment.name === name) return experiment;
     }
@@ -37,7 +37,7 @@ export class InMemoryExperimentRepository implements ExperimentRepository {
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<Experiment>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Experiment>> {
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );

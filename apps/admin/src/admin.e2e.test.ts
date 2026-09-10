@@ -155,6 +155,7 @@ describe("admin wiring (end to end)", () => {
         { key: "variant-a", allocationPercentage: 50, isControl: false },
       ],
       goalMetricRef: "conversion-rate",
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const experimentId = (created.body as { experimentId: string }).experimentId;
@@ -162,6 +163,7 @@ describe("admin wiring (end to end)", () => {
     const started = await admin.experimentation.advance(staff, {
       experimentId,
       toStatus: "running",
+      tenantId: "tenant-1",
     });
     expect(started.status).toBe(200);
 
@@ -170,18 +172,21 @@ describe("admin wiring (end to end)", () => {
       variantKey: "variant-a",
       metricValue: 0.12,
       sampleSize: 1000,
+      tenantId: "tenant-1",
     });
     expect(recorded.status).toBe(200);
 
     const completed = await admin.experimentation.advance(staff, {
       experimentId,
       toStatus: "completed",
+      tenantId: "tenant-1",
     });
     expect(completed.status).toBe(200);
 
     const winner = await admin.experimentation.declareWinner(staff, {
       experimentId,
       variantKey: "variant-a",
+      tenantId: "tenant-1",
     });
     expect(winner.status).toBe(200);
     expect((winner.body as { status: string }).status).toBe("completed");

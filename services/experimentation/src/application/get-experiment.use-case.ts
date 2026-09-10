@@ -18,7 +18,7 @@ export class GetExperiment implements UseCase<ExperimentIdInput, Experiment, Dom
   }
 
   async execute(input: ExperimentIdInput): Promise<Result<Experiment, DomainError>> {
-    const experiment = await this.deps.experiments.findById(input.experimentId);
+    const experiment = await this.deps.experiments.findById(input.experimentId, input.tenantId);
     return experiment === null ? err(new NotFoundError("Experiment not found")) : ok(experiment);
   }
 }
