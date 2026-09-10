@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -60,29 +60,39 @@ export class PrismaThemeRepository implements ThemeRepository {
     await this.deps.outbox.write(theme.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Theme | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.theme.findFirst({ where: { id, tenantId: this.deps.tenantId } });
-    if (row === null) return null;
-    return ThemeMapper.toDomain(this.toMapperRow(row));
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Theme | null> {
+    const run = (client: TransactionClient) => client.theme.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : ThemeMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findByName(name: string, tx?: unknown): Promise<Theme | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.theme.findFirst({ where: { name, tenantId: this.deps.tenantId } });
-    if (row === null) return null;
-    return ThemeMapper.toDomain(this.toMapperRow(row));
+  async findByName(name: string, tenantId: string, tx?: unknown): Promise<Theme | null> {
+    const run = (client: TransactionClient) =>
+      client.theme.findFirst({ where: { name, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : ThemeMapper.toDomain(this.toMapperRow(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Theme>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Theme>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.theme.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.theme.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       rows.map((row) => ThemeMapper.toDomain(this.toMapperRow(row))),
       limit,

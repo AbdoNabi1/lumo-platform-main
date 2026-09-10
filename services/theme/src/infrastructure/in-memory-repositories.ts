@@ -25,11 +25,11 @@ export class InMemoryThemeRepository implements ThemeRepository {
     await this.outbox.write(theme.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Theme | null> {
+  async findById(id: string, _tenantId: string): Promise<Theme | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<Theme | null> {
+  async findByName(name: string, _tenantId: string): Promise<Theme | null> {
     for (const theme of this.store.values()) {
       if (theme.name === name) return theme;
     }
@@ -37,7 +37,7 @@ export class InMemoryThemeRepository implements ThemeRepository {
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<Theme>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Theme>> {
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );

@@ -1,6 +1,5 @@
-import type { CursorPage } from "@platform/types";
 import type { GetTheme } from "../application/get-theme.use-case";
-import type { ListThemes } from "../application/list-themes.use-case";
+import type { ListThemes, ListThemesInput } from "../application/list-themes.use-case";
 import type {
   AdvanceTheme,
   AdvanceThemeInput,
@@ -40,7 +39,7 @@ export class ThemeController {
     return present(await this.deps.updateThemeVariables.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListThemesInput): Promise<ControllerResponse> {
     return present(await this.deps.listThemes.execute(input), 200);
   }
 

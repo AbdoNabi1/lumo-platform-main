@@ -18,7 +18,7 @@ export class GetTheme implements UseCase<ThemeIdInput, Theme, DomainError> {
   }
 
   async execute(input: ThemeIdInput): Promise<Result<Theme, DomainError>> {
-    const theme = await this.deps.themes.findById(input.themeId);
+    const theme = await this.deps.themes.findById(input.themeId, input.tenantId);
     return theme === null ? err(new NotFoundError("Theme not found")) : ok(theme);
   }
 }

@@ -19,6 +19,7 @@ export interface ThemeDeps {
 export interface CreateThemeInput {
   readonly name: string;
   readonly presetKey: string;
+  readonly tenantId: string;
 }
 
 export interface ThemeStatusOutput {
@@ -43,7 +44,7 @@ export class CreateTheme implements UseCase<CreateThemeInput, ThemeStatusOutput,
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<ThemeStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.themes.findByName(input.name, tx);
+      const existing = await this.deps.themes.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Theme "${input.name}" already exists`));
       }
@@ -58,6 +59,7 @@ export class CreateTheme implements UseCase<CreateThemeInput, ThemeStatusOutput,
 
 export interface ThemeIdInput {
   readonly themeId: string;
+  readonly tenantId: string;
 }
 
 export interface AdvanceThemeInput extends ThemeIdInput {
@@ -74,7 +76,7 @@ export class AdvanceTheme implements UseCase<AdvanceThemeInput, ThemeStatusOutpu
 
   async execute(input: AdvanceThemeInput): Promise<Result<ThemeStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ThemeStatusOutput, DomainError>>(async (tx) => {
-      const theme = await this.deps.themes.findById(input.themeId, tx);
+      const theme = await this.deps.themes.findById(input.themeId, input.tenantId, tx);
       if (theme === null) return err(new NotFoundError("Theme not found"));
 
       try {
@@ -110,7 +112,7 @@ export class UpdateThemeVariables implements UseCase<
 
   async execute(input: UpdateThemeVariablesInput): Promise<Result<ThemeStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ThemeStatusOutput, DomainError>>(async (tx) => {
-      const theme = await this.deps.themes.findById(input.themeId, tx);
+      const theme = await this.deps.themes.findById(input.themeId, input.tenantId, tx);
       if (theme === null) return err(new NotFoundError("Theme not found"));
 
       try {
