@@ -88,7 +88,13 @@ async function createReview(
   rating = 5,
   bodyText = "Great product!",
 ): Promise<string> {
-  const created = await reviews.reviews.create({ productRef, customerRef, rating, bodyText });
+  const created = await reviews.reviews.create({
+    productRef,
+    customerRef,
+    rating,
+    bodyText,
+    tenantId: "tenant-local",
+  });
   if (created.status < 200 || created.status >= 300) {
     throw new Error(`createReview failed (${created.status}): ${JSON.stringify(created.body)}`);
   }
@@ -96,7 +102,11 @@ async function createReview(
 }
 
 async function publish(reviews: WiredReviews, reviewId: string): Promise<void> {
-  const advanced = await reviews.reviews.advance({ reviewId, toStatus: "published" });
+  const advanced = await reviews.reviews.advance({
+    reviewId,
+    toStatus: "published",
+    tenantId: "tenant-local",
+  });
   if (advanced.status < 200 || advanced.status >= 300) {
     throw new Error(`publish failed (${advanced.status}): ${JSON.stringify(advanced.body)}`);
   }
@@ -150,12 +160,24 @@ describe("public reviews routes — GET /public/reviews/by-product/:productRef (
     const { call } = routesFor(admin);
 
     const rejectedId = await createReview(reviews, "product-2", "customer-1");
-    await reviews.reviews.advance({ reviewId: rejectedId, toStatus: "rejected" });
+    await reviews.reviews.advance({
+      reviewId: rejectedId,
+      toStatus: "rejected",
+      tenantId: "tenant-local",
+    });
 
     const flaggedThenRemovedId = await createReview(reviews, "product-2", "customer-2");
     await publish(reviews, flaggedThenRemovedId);
-    await reviews.reviews.advance({ reviewId: flaggedThenRemovedId, toStatus: "flagged" });
-    await reviews.reviews.advance({ reviewId: flaggedThenRemovedId, toStatus: "removed" });
+    await reviews.reviews.advance({
+      reviewId: flaggedThenRemovedId,
+      toStatus: "flagged",
+      tenantId: "tenant-local",
+    });
+    await reviews.reviews.advance({
+      reviewId: flaggedThenRemovedId,
+      toStatus: "removed",
+      tenantId: "tenant-local",
+    });
 
     const stillPublishedId = await createReview(reviews, "product-2", "customer-3");
     await publish(reviews, stillPublishedId);
@@ -291,7 +313,10 @@ describe("POST /public/reviews", () => {
     expect(dto.reviewId).toBeTruthy();
     expect(dto.status).toBe("pending");
 
-    const stored = await h.reviews.reviews.get({ reviewId: dto.reviewId });
+    const stored = await h.reviews.reviews.get({
+      reviewId: dto.reviewId,
+      tenantId: "tenant-local",
+    });
     expect(stored.status).toBe(200);
     expect((stored.body as { customerRef: string }).customerRef).toBe(customerRef);
   });
@@ -316,7 +341,10 @@ describe("POST /public/reviews", () => {
 
     expect(response.status).toBe(201);
     const dto = response.body as PublicReviewWriteResultDto;
-    const stored = await h.reviews.reviews.get({ reviewId: dto.reviewId });
+    const stored = await h.reviews.reviews.get({
+      reviewId: dto.reviewId,
+      tenantId: "tenant-local",
+    });
     expect((stored.body as { customerRef: string }).customerRef).toBe(a.customerRef);
     expect((stored.body as { customerRef: string }).customerRef).not.toBe(b.customerRef);
   });
@@ -354,7 +382,10 @@ describe("POST /public/reviews", () => {
     });
 
     const dto = response.body as PublicReviewWriteResultDto;
-    const stored = await h.reviews.reviews.get({ reviewId: dto.reviewId });
+    const stored = await h.reviews.reviews.get({
+      reviewId: dto.reviewId,
+      tenantId: "tenant-local",
+    });
     // InMemoryOrdersPort's default `hasPurchased` — no purchase on record for this fixture.
     expect((stored.body as { verifiedPurchase: boolean }).verifiedPurchase).toBe(false);
   });
@@ -377,7 +408,7 @@ describe("POST /public/reviews/:reviewId/vote", () => {
     });
 
     expect(response.status).toBe(200);
-    const stored = await h.reviews.reviews.get({ reviewId });
+    const stored = await h.reviews.reviews.get({ reviewId, tenantId: "tenant-local" });
     expect((stored.body as { helpfulCount: number }).helpfulCount).toBe(1);
   });
 
@@ -415,7 +446,7 @@ describe("POST /public/reviews/:reviewId/report", () => {
     });
 
     expect(response.status).toBe(200);
-    const stored = await h.reviews.reviews.get({ reviewId });
+    const stored = await h.reviews.reviews.get({ reviewId, tenantId: "tenant-local" });
     expect((stored.body as { reportCount: number }).reportCount).toBe(1);
   });
 

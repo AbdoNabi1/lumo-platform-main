@@ -384,6 +384,7 @@ describe("admin wiring (end to end)", () => {
       customerRef: "customer-1",
       rating: 5,
       bodyText: "Great toy, sturdy build.",
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const reviewId = (created.body as { reviewId: string }).reviewId;
@@ -392,24 +393,28 @@ describe("admin wiring (end to end)", () => {
       reviewId,
       customerRef: "customer-2",
       helpful: true,
+      tenantId: "tenant-1",
     });
     expect(voted.status).toBe(200);
 
     const reported = await admin.reviews.report(staff, {
       reviewId,
       reporterRef: "customer-3",
+      tenantId: "tenant-1",
     });
     expect(reported.status).toBe(200);
 
     const responded = await admin.reviews.respond(staff, {
       reviewId,
       responseText: "Thanks for the feedback!",
+      tenantId: "tenant-1",
     });
     expect(responded.status).toBe(200);
 
     const published = await admin.reviews.advance(staff, {
       reviewId,
       toStatus: "published",
+      tenantId: "tenant-1",
     });
     expect(published.status).toBe(200);
 
@@ -418,6 +423,7 @@ describe("admin wiring (end to end)", () => {
       actionId: "action-1",
       action: "flag",
       moderatorRef: "moderator-1",
+      tenantId: "tenant-1",
     });
     expect(moderated.status).toBe(200);
     expect((moderated.body as { duplicate: boolean }).duplicate).toBe(false);

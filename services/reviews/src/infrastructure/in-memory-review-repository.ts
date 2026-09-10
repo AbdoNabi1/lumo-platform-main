@@ -25,25 +25,38 @@ export class InMemoryReviewRepository implements ReviewRepository {
     await this.outbox.write(review.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Review | null> {
+  /** ADR-0014: `tenantId` accepted for signature parity; this fake has no tenant partitioning. */
+  async findById(id: string, _tenantId: string): Promise<Review | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByCustomerAndProduct(customerRef: string, productRef: string): Promise<Review | null> {
+  async findByCustomerAndProduct(
+    customerRef: string,
+    productRef: string,
+    _tenantId: string,
+  ): Promise<Review | null> {
     for (const review of this.store.values()) {
       if (review.customerRef === customerRef && review.productRef === productRef) return review;
     }
     return null;
   }
 
-  async list(page: CursorPage, filter?: ReviewListFilter): Promise<Paginated<Review>> {
+  async list(
+    page: CursorPage,
+    _tenantId: string,
+    filter?: ReviewListFilter,
+  ): Promise<Paginated<Review>> {
     const rows = [...this.store.values()].filter(
       (review) => filter?.status === undefined || review.status.value === filter.status,
     );
     return this.paginate(rows, page);
   }
 
-  async findByProductRef(productRef: string, page: CursorPage): Promise<Paginated<Review>> {
+  async findByProductRef(
+    productRef: string,
+    page: CursorPage,
+    _tenantId: string,
+  ): Promise<Paginated<Review>> {
     const rows = [...this.store.values()].filter((review) => review.productRef === productRef);
     return this.paginate(rows, page);
   }

@@ -21,7 +21,13 @@ function wire(orders = new InMemoryOrdersPort()) {
 }
 
 function createInput() {
-  return { productRef: "product-1", customerRef: "customer-1", rating: 5, bodyText: "Great!" };
+  return {
+    productRef: "product-1",
+    customerRef: "customer-1",
+    rating: 5,
+    bodyText: "Great!",
+    tenantId: "tenant-local",
+  };
 }
 
 describe("reviews (end to end)", () => {
@@ -34,13 +40,26 @@ describe("reviews (end to end)", () => {
     expect(created.status).toBe(201);
     const id = (created.body as { reviewId: string }).reviewId;
 
-    const published = await app.reviews.advance({ reviewId: id, toStatus: "published" });
+    const published = await app.reviews.advance({
+      reviewId: id,
+      toStatus: "published",
+      tenantId: "tenant-local",
+    });
     expect(published.status).toBe(200);
 
-    await app.reviews.vote({ reviewId: id, customerRef: "voter-1", helpful: true });
-    await app.reviews.report({ reviewId: id, reporterRef: "r-1" });
-    await app.reviews.report({ reviewId: id, reporterRef: "r-2" });
-    const third = await app.reviews.report({ reviewId: id, reporterRef: "r-3" });
+    await app.reviews.vote({
+      reviewId: id,
+      customerRef: "voter-1",
+      helpful: true,
+      tenantId: "tenant-local",
+    });
+    await app.reviews.report({ reviewId: id, reporterRef: "r-1", tenantId: "tenant-local" });
+    await app.reviews.report({ reviewId: id, reporterRef: "r-2", tenantId: "tenant-local" });
+    const third = await app.reviews.report({
+      reviewId: id,
+      reporterRef: "r-3",
+      tenantId: "tenant-local",
+    });
     expect((third.body as { status: string }).status).toBe("flagged");
 
     expect(await app.drainOutbox()).toBeGreaterThan(0);
@@ -59,6 +78,7 @@ describe("reviews (end to end)", () => {
       actionId: "action-1",
       action: "reject",
       moderatorRef: "moderator-1",
+      tenantId: "tenant-local",
     });
     expect((first.body as { duplicate: boolean }).duplicate).toBe(false);
 
@@ -67,6 +87,7 @@ describe("reviews (end to end)", () => {
       actionId: "action-1",
       action: "reject",
       moderatorRef: "moderator-1",
+      tenantId: "tenant-local",
     });
     expect((replay.body as { duplicate: boolean }).duplicate).toBe(true);
   });
@@ -80,7 +101,11 @@ describe("reviews (end to end)", () => {
 
   it("returns 404 for an unknown review", async () => {
     const app = wire();
-    const response = await app.reviews.advance({ reviewId: "missing", toStatus: "published" });
+    const response = await app.reviews.advance({
+      reviewId: "missing",
+      toStatus: "published",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(404);
   });
 

@@ -6,6 +6,8 @@ import type { ReviewRepository } from "../domain/review-repository";
 
 export interface GetReviewInput {
   readonly reviewId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface GetReviewDeps {
@@ -21,7 +23,7 @@ export class GetReview implements UseCase<GetReviewInput, Review, DomainError> {
   }
 
   async execute(input: GetReviewInput): Promise<Result<Review, DomainError>> {
-    const review = await this.deps.reviews.findById(input.reviewId);
+    const review = await this.deps.reviews.findById(input.reviewId, input.tenantId);
     return review === null ? err(new NotFoundError("Review not found")) : ok(review);
   }
 }
