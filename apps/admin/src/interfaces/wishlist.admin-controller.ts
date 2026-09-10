@@ -1,5 +1,4 @@
 import type { Principal } from "@platform/contracts";
-import type { CursorPage } from "@platform/types";
 import type { WishlistController } from "@platform/wishlist";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
@@ -73,7 +72,10 @@ export class WishlistAdminController {
     return this.wishlist.moveItemToCart(input);
   }
 
-  async list(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async list(
+    principal: Principal,
+    input: Parameters<WishlistController["list"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "wishlist:read");
     if (denied) return denied;
     return this.wishlist.list(input);

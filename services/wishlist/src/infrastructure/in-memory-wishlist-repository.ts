@@ -25,11 +25,12 @@ export class InMemoryWishlistRepository implements WishlistRepository {
     await this.outbox.write(wishlist.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Wishlist | null> {
+  /** ADR-0014: `tenantId` accepted for signature parity; this fake has no tenant partitioning. */
+  async findById(id: string, _tenantId: string): Promise<Wishlist | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByCustomerRef(customerRef: string): Promise<Wishlist | null> {
+  async findByCustomerRef(customerRef: string, _tenantId: string): Promise<Wishlist | null> {
     for (const wishlist of this.store.values()) {
       if (wishlist.customerRef === customerRef) return wishlist;
     }
@@ -37,7 +38,7 @@ export class InMemoryWishlistRepository implements WishlistRepository {
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<Wishlist>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Wishlist>> {
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );

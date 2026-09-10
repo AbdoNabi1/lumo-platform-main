@@ -1137,35 +1137,56 @@ describe("admin wiring (end to end)", () => {
   it("drives the Wishlist screen through create, add-item, share-item, move-to-cart, remove-item, and advance", async () => {
     const admin = wire();
 
-    const created = await admin.wishlist.create(staff, { customerRef: "customer-1" });
+    const created = await admin.wishlist.create(staff, {
+      customerRef: "customer-1",
+      tenantId: "tenant-1",
+    });
     expect(created.status).toBe(201);
     const wishlistId = (created.body as { wishlistId: string }).wishlistId;
 
-    const added = await admin.wishlist.addItem(staff, { wishlistId, productRef: "product-1" });
+    const added = await admin.wishlist.addItem(staff, {
+      wishlistId,
+      productRef: "product-1",
+      tenantId: "tenant-1",
+    });
     expect(added.status).toBe(200);
     expect((added.body as { itemCount: number }).itemCount).toBe(1);
 
-    const shared = await admin.wishlist.shareItem(staff, { wishlistId, productRef: "product-1" });
+    const shared = await admin.wishlist.shareItem(staff, {
+      wishlistId,
+      productRef: "product-1",
+      tenantId: "tenant-1",
+    });
     expect(shared.status).toBe(200);
     expect((shared.body as { shareToken: string }).shareToken).toBeTruthy();
 
     const moved = await admin.wishlist.moveItemToCart(staff, {
       wishlistId,
       productRef: "product-1",
+      tenantId: "tenant-1",
     });
     expect(moved.status).toBe(200);
     expect((moved.body as { itemCount: number }).itemCount).toBe(0);
 
-    const readded = await admin.wishlist.addItem(staff, { wishlistId, productRef: "product-2" });
+    const readded = await admin.wishlist.addItem(staff, {
+      wishlistId,
+      productRef: "product-2",
+      tenantId: "tenant-1",
+    });
     expect(readded.status).toBe(200);
     const removed = await admin.wishlist.removeItem(staff, {
       wishlistId,
       productRef: "product-2",
+      tenantId: "tenant-1",
     });
     expect(removed.status).toBe(200);
     expect((removed.body as { itemCount: number }).itemCount).toBe(0);
 
-    const archived = await admin.wishlist.advance(staff, { wishlistId, toStatus: "archived" });
+    const archived = await admin.wishlist.advance(staff, {
+      wishlistId,
+      toStatus: "archived",
+      tenantId: "tenant-1",
+    });
     expect(archived.status).toBe(200);
     expect((archived.body as { status: string }).status).toBe("archived");
   });

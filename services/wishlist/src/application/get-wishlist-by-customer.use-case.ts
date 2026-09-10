@@ -6,6 +6,8 @@ import type { WishlistRepository } from "../domain/wishlist-repository";
 
 export interface GetWishlistByCustomerInput {
   readonly customerRef: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface GetWishlistByCustomerDeps {
@@ -13,9 +15,11 @@ export interface GetWishlistByCustomerDeps {
 }
 
 /** Fetches the one wishlist a customer owns (`@@unique([tenantId, customerRef])` — at most one). */
-export class GetWishlistByCustomer
-  implements UseCase<GetWishlistByCustomerInput, Wishlist, DomainError>
-{
+export class GetWishlistByCustomer implements UseCase<
+  GetWishlistByCustomerInput,
+  Wishlist,
+  DomainError
+> {
   private readonly deps: GetWishlistByCustomerDeps;
 
   constructor(deps: GetWishlistByCustomerDeps) {
@@ -23,7 +27,7 @@ export class GetWishlistByCustomer
   }
 
   async execute(input: GetWishlistByCustomerInput): Promise<Result<Wishlist, DomainError>> {
-    const wishlist = await this.deps.wishlists.findByCustomerRef(input.customerRef);
+    const wishlist = await this.deps.wishlists.findByCustomerRef(input.customerRef, input.tenantId);
     return wishlist === null ? err(new NotFoundError("Wishlist not found")) : ok(wishlist);
   }
 }

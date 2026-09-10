@@ -10,6 +10,8 @@ import type { CartPort } from "./ports";
 
 export interface CreateWishlistInput {
   readonly customerRef: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface WishlistStatusOutput {
@@ -20,6 +22,8 @@ export interface WishlistStatusOutput {
 
 export interface WishlistIdInput {
   readonly wishlistId: string;
+  /** ADR-0014: the caller's verified tenant. Shared by every input extending this one. */
+  readonly tenantId: string;
 }
 
 export interface WishlistItemInput extends WishlistIdInput {
@@ -58,7 +62,11 @@ export class CreateWishlist implements UseCase<
     if (!customerRef.ok) return err(customerRef.error);
 
     return this.deps.unitOfWork.run<Result<WishlistStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.wishlists.findByCustomerRef(input.customerRef, tx);
+      const existing = await this.deps.wishlists.findByCustomerRef(
+        input.customerRef,
+        input.tenantId,
+        tx,
+      );
       if (existing !== null) {
         return err(new ConflictError(`Customer "${input.customerRef}" already has a wishlist`));
       }
@@ -86,7 +94,7 @@ export class AdvanceWishlist implements UseCase<
     input: WishlistIdInput & { readonly toStatus: "active" | "archived" },
   ): Promise<Result<WishlistStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<WishlistStatusOutput, DomainError>>(async (tx) => {
-      const wishlist = await this.deps.wishlists.findById(input.wishlistId, tx);
+      const wishlist = await this.deps.wishlists.findById(input.wishlistId, input.tenantId, tx);
       if (wishlist === null) return err(new NotFoundError("Wishlist not found"));
 
       try {
@@ -120,7 +128,7 @@ export class AddWishlistItem implements UseCase<
 
   async execute(input: WishlistItemInput): Promise<Result<WishlistStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<WishlistStatusOutput, DomainError>>(async (tx) => {
-      const wishlist = await this.deps.wishlists.findById(input.wishlistId, tx);
+      const wishlist = await this.deps.wishlists.findById(input.wishlistId, input.tenantId, tx);
       if (wishlist === null) return err(new NotFoundError("Wishlist not found"));
 
       try {
@@ -150,7 +158,7 @@ export class RemoveWishlistItem implements UseCase<
 
   async execute(input: WishlistItemInput): Promise<Result<WishlistStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<WishlistStatusOutput, DomainError>>(async (tx) => {
-      const wishlist = await this.deps.wishlists.findById(input.wishlistId, tx);
+      const wishlist = await this.deps.wishlists.findById(input.wishlistId, input.tenantId, tx);
       if (wishlist === null) return err(new NotFoundError("Wishlist not found"));
 
       try {
@@ -188,7 +196,7 @@ export class ShareWishlistItem implements UseCase<
 
   async execute(input: WishlistItemInput): Promise<Result<ShareWishlistItemOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ShareWishlistItemOutput, DomainError>>(async (tx) => {
-      const wishlist = await this.deps.wishlists.findById(input.wishlistId, tx);
+      const wishlist = await this.deps.wishlists.findById(input.wishlistId, input.tenantId, tx);
       if (wishlist === null) return err(new NotFoundError("Wishlist not found"));
 
       let shareToken: string;
@@ -228,7 +236,7 @@ export class MoveWishlistItemToCart implements UseCase<
 
   async execute(input: WishlistItemInput): Promise<Result<WishlistStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<WishlistStatusOutput, DomainError>>(async (tx) => {
-      const wishlist = await this.deps.wishlists.findById(input.wishlistId, tx);
+      const wishlist = await this.deps.wishlists.findById(input.wishlistId, input.tenantId, tx);
       if (wishlist === null) return err(new NotFoundError("Wishlist not found"));
 
       try {

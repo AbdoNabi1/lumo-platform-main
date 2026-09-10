@@ -18,7 +18,7 @@ export class GetWishlist implements UseCase<WishlistIdInput, Wishlist, DomainErr
   }
 
   async execute(input: WishlistIdInput): Promise<Result<Wishlist, DomainError>> {
-    const wishlist = await this.deps.wishlists.findById(input.wishlistId);
+    const wishlist = await this.deps.wishlists.findById(input.wishlistId, input.tenantId);
     return wishlist === null ? err(new NotFoundError("Wishlist not found")) : ok(wishlist);
   }
 }
