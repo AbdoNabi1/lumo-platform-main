@@ -37,10 +37,10 @@ describe("Recommendations read use-cases (Phase 4 T4.18)", () => {
     const h = harness();
     const create = new CreateModel(h);
     for (let i = 0; i < 3; i += 1) {
-      await create.execute({ name: `model-${i}`, strategy: "related" });
+      await create.execute({ name: `model-${i}`, strategy: "related", tenantId: "tenant-1" });
     }
 
-    const page = await new ListModels(h).execute({ first: 2 });
+    const page = await new ListModels(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -49,6 +49,7 @@ describe("Recommendations read use-cases (Phase 4 T4.18)", () => {
     const rest = await new ListModels(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -61,16 +62,20 @@ describe("Recommendations read use-cases (Phase 4 T4.18)", () => {
     const created = await new CreateModel(h).execute({
       name: "related-products",
       strategy: "related",
+      tenantId: "tenant-1",
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetModel(h).execute({ modelId: created.value.modelId });
+    const found = await new GetModel(h).execute({
+      modelId: created.value.modelId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.name).toBe("related-products");
 
-    const missing = await new GetModel(h).execute({ modelId: "nope" });
+    const missing = await new GetModel(h).execute({ modelId: "nope", tenantId: "tenant-1" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

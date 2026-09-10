@@ -233,6 +233,7 @@ describe("admin wiring (end to end)", () => {
     const created = await admin.recommendations.create(staff, {
       name: "Frequently bought together",
       strategy: "frequently_bought_together",
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const modelId = (created.body as { modelId: string }).modelId;
@@ -240,12 +241,14 @@ describe("admin wiring (end to end)", () => {
     const training = await admin.recommendations.advance(staff, {
       modelId,
       toStatus: "training",
+      tenantId: "tenant-1",
     });
     expect(training.status).toBe(200);
 
     const activated = await admin.recommendations.advance(staff, {
       modelId,
       toStatus: "active",
+      tenantId: "tenant-1",
     });
     expect(activated.status).toBe(200);
 
@@ -253,6 +256,7 @@ describe("admin wiring (end to end)", () => {
       modelId,
       interactionId: "interaction-1",
       anchorRef: "product-1",
+      tenantId: "tenant-1",
     });
     expect(generated.status).toBe(200);
     expect((generated.body as { setCount: number }).setCount).toBe(1);
@@ -260,6 +264,7 @@ describe("admin wiring (end to end)", () => {
     const regenerated = await admin.recommendations.regenerate(staff, {
       modelId,
       anchorRef: "product-1",
+      tenantId: "tenant-1",
     });
     expect(regenerated.status).toBe(200);
   });

@@ -24,11 +24,16 @@ async function newActiveModelId(app: ReturnType<typeof wire>): Promise<string> {
   const created = await app.recommendations.create({
     name: "related-products",
     strategy: "related",
+    tenantId: "tenant-local",
   });
   expect(created.status).toBe(201);
   const id = (created.body as { modelId: string }).modelId;
-  await app.recommendations.advance({ modelId: id, toStatus: "training" });
-  await app.recommendations.advance({ modelId: id, toStatus: "active" });
+  await app.recommendations.advance({
+    modelId: id,
+    toStatus: "training",
+    tenantId: "tenant-local",
+  });
+  await app.recommendations.advance({ modelId: id, toStatus: "active", tenantId: "tenant-local" });
   return id;
 }
 
@@ -43,6 +48,7 @@ describe("recommendations (end to end)", () => {
       modelId: id,
       interactionId: "interaction-1",
       anchorRef: "product-1",
+      tenantId: "tenant-local",
     });
     expect(generated.status).toBe(200);
     expect((generated.body as { setCount: number }).setCount).toBe(1);
@@ -59,11 +65,13 @@ describe("recommendations (end to end)", () => {
       modelId: id,
       interactionId: "interaction-shared",
       anchorRef: "product-1",
+      tenantId: "tenant-local",
     });
     const replay = await app.recommendations.generate({
       modelId: id,
       interactionId: "interaction-shared",
       anchorRef: "product-1",
+      tenantId: "tenant-local",
     });
     expect(replay.status).toBe(200);
     expect((replay.body as { setCount: number }).setCount).toBe(1);
@@ -78,28 +86,39 @@ describe("recommendations (end to end)", () => {
       modelId: id,
       interactionId: "interaction-1",
       anchorRef: "product-1",
+      tenantId: "tenant-local",
     });
     search.seedRelated("product-1", ["product-4"]);
     const regenerated = await app.recommendations.regenerate({
       modelId: id,
       anchorRef: "product-1",
+      tenantId: "tenant-local",
     });
     expect((regenerated.body as { setCount: number }).setCount).toBe(1);
   });
 
   it("rejects creating a duplicate model name (409)", async () => {
     const app = wire();
-    await app.recommendations.create({ name: "related-products", strategy: "related" });
+    await app.recommendations.create({
+      name: "related-products",
+      strategy: "related",
+      tenantId: "tenant-local",
+    });
     const response = await app.recommendations.create({
       name: "related-products",
       strategy: "related",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(409);
   });
 
   it("rejects an invalid strategy (422)", async () => {
     const app = wire();
-    const response = await app.recommendations.create({ name: "x", strategy: "invalid" });
+    const response = await app.recommendations.create({
+      name: "x",
+      strategy: "invalid",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(422);
   });
 });

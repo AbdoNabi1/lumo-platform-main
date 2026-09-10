@@ -25,11 +25,11 @@ export class InMemoryRecommendationModelRepository implements RecommendationMode
     await this.outbox.write(model.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<RecommendationModel | null> {
+  async findById(id: string, _tenantId: string): Promise<RecommendationModel | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<RecommendationModel | null> {
+  async findByName(name: string, _tenantId: string): Promise<RecommendationModel | null> {
     for (const model of this.store.values()) {
       if (model.name === name) return model;
     }
@@ -37,7 +37,7 @@ export class InMemoryRecommendationModelRepository implements RecommendationMode
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<RecommendationModel>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<RecommendationModel>> {
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );

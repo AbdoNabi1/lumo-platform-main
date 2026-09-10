@@ -1,6 +1,5 @@
-import type { CursorPage } from "@platform/types";
 import type { GetModel } from "../application/get-model.use-case";
-import type { ListModels } from "../application/list-models.use-case";
+import type { ListModels, ListModelsInput } from "../application/list-models.use-case";
 import type {
   AdvanceModel,
   AdvanceModelInput,
@@ -47,7 +46,7 @@ export class RecommendationsController {
     return present(await this.deps.regenerateSet.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListModelsInput): Promise<ControllerResponse> {
     return present(await this.deps.listModels.execute(input), 200);
   }
 
