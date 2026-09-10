@@ -26,6 +26,7 @@ function createInput() {
     triggerType: "event" as const,
     eventType: "customer.created",
     actions: [{ actionType: "send_email", params: { template: "welcome" } }],
+    tenantId: "tenant-local",
   };
 }
 
@@ -37,9 +38,13 @@ describe("automation (end to end)", () => {
     expect(created.status).toBe(201);
     const workflowId = (created.body as { workflowId: string }).workflowId;
 
-    await app.automation.advance({ workflowId, toStatus: "active" });
+    await app.automation.advance({ workflowId, toStatus: "active", tenantId: "tenant-local" });
 
-    const triggered = await app.automation.trigger({ workflowId, triggerId: "trigger-1" });
+    const triggered = await app.automation.trigger({
+      workflowId,
+      triggerId: "trigger-1",
+      tenantId: "tenant-local",
+    });
     expect(triggered.status).toBe(200);
     expect((triggered.body as { duplicate: boolean }).duplicate).toBe(false);
     expect(dispatcher.dispatchedCalls).toHaveLength(1);
@@ -54,10 +59,18 @@ describe("automation (end to end)", () => {
     const app = wire();
     const created = await app.automation.create(createInput());
     const workflowId = (created.body as { workflowId: string }).workflowId;
-    await app.automation.advance({ workflowId, toStatus: "active" });
+    await app.automation.advance({ workflowId, toStatus: "active", tenantId: "tenant-local" });
 
-    await app.automation.trigger({ workflowId, triggerId: "trigger-shared" });
-    const replay = await app.automation.trigger({ workflowId, triggerId: "trigger-shared" });
+    await app.automation.trigger({
+      workflowId,
+      triggerId: "trigger-shared",
+      tenantId: "tenant-local",
+    });
+    const replay = await app.automation.trigger({
+      workflowId,
+      triggerId: "trigger-shared",
+      tenantId: "tenant-local",
+    });
     expect((replay.body as { duplicate: boolean }).duplicate).toBe(true);
   });
 
@@ -70,7 +83,11 @@ describe("automation (end to end)", () => {
 
   it("returns 404 for an unknown workflow", async () => {
     const app = wire();
-    const response = await app.automation.advance({ workflowId: "missing", toStatus: "active" });
+    const response = await app.automation.advance({
+      workflowId: "missing",
+      toStatus: "active",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(404);
   });
 });

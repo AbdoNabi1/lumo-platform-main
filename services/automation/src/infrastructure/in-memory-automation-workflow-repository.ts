@@ -25,18 +25,18 @@ export class InMemoryAutomationWorkflowRepository implements AutomationWorkflowR
     await this.outbox.write(workflow.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<AutomationWorkflow | null> {
+  async findById(id: string, _tenantId: string): Promise<AutomationWorkflow | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<AutomationWorkflow | null> {
+  async findByName(name: string, _tenantId: string): Promise<AutomationWorkflow | null> {
     for (const workflow of this.store.values()) {
       if (workflow.name === name) return workflow;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<AutomationWorkflow>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<AutomationWorkflow>> {
     const limit = normalizePageSize(page.first);
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString() < b.id.toString() ? 1 : -1,

@@ -38,6 +38,7 @@ export interface CreateWorkflowInput {
   readonly eventType?: string;
   readonly cronExpression?: string;
   readonly actions: readonly { actionType: string; params?: Readonly<Record<string, unknown>> }[];
+  readonly tenantId: string;
 }
 
 export interface WorkflowStatusOutput {
@@ -69,7 +70,7 @@ export class CreateWorkflow implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<WorkflowStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.workflows.findByName(input.name, tx);
+      const existing = await this.deps.workflows.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Workflow "${input.name}" already exists`));
       }
@@ -92,6 +93,7 @@ export class CreateWorkflow implements UseCase<
 
 export interface WorkflowIdInput {
   readonly workflowId: string;
+  readonly tenantId: string;
 }
 
 export interface AdvanceWorkflowInput extends WorkflowIdInput {
@@ -112,7 +114,7 @@ export class AdvanceWorkflow implements UseCase<
 
   async execute(input: AdvanceWorkflowInput): Promise<Result<WorkflowStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<WorkflowStatusOutput, DomainError>>(async (tx) => {
-      const workflow = await this.deps.workflows.findById(input.workflowId, tx);
+      const workflow = await this.deps.workflows.findById(input.workflowId, input.tenantId, tx);
       if (workflow === null) return err(new NotFoundError("Workflow not found"));
 
       try {
@@ -200,7 +202,7 @@ export class TriggerWorkflow implements UseCase<
   }
 
   async execute(input: TriggerWorkflowInput): Promise<Result<TriggerWorkflowOutput, DomainError>> {
-    const started = await this.startOrResume(input.workflowId, input.triggerId);
+    const started = await this.startOrResume(input.workflowId, input.triggerId, input.tenantId);
     if (!started.ok) return err(started.error);
     const { executionId, actions, proceedToPort, isNew } = started.value;
 
@@ -220,19 +222,20 @@ export class TriggerWorkflow implements UseCase<
       dispatchError = error instanceof Error ? error.message : "dispatch failed";
     }
 
-    return this.settle(input.workflowId, executionId, dispatchError, isNew);
+    return this.settle(input.workflowId, executionId, dispatchError, isNew, input.tenantId);
   }
 
   private async startOrResume(
     workflowId: string,
     triggerId: string,
+    tenantId: string,
   ): Promise<Result<StartOrResumeOutcome, DomainError>> {
     let attempt = 0;
     return withConcurrencyRetry(TriggerWorkflow.MAX_CONCURRENCY_RETRIES, () => {
       attempt += 1;
       const isFirstAttempt = attempt === 1;
       return this.deps.unitOfWork.run<Result<StartOrResumeOutcome, DomainError>>(async (tx) => {
-        const workflow = await this.deps.workflows.findById(workflowId, tx);
+        const workflow = await this.deps.workflows.findById(workflowId, tenantId, tx);
         if (workflow === null) return err(new NotFoundError("Workflow not found"));
 
         const existing = workflow.executions.find((e) => e.triggerId === triggerId);
@@ -286,10 +289,11 @@ export class TriggerWorkflow implements UseCase<
     executionId: string,
     dispatchError: string | undefined,
     isNew: boolean,
+    tenantId: string,
   ): Promise<Result<TriggerWorkflowOutput, DomainError>> {
     return withConcurrencyRetry(TriggerWorkflow.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<TriggerWorkflowOutput, DomainError>>(async (tx) => {
-        const workflow = await this.deps.workflows.findById(workflowId, tx);
+        const workflow = await this.deps.workflows.findById(workflowId, tenantId, tx);
         if (workflow === null) return err(new NotFoundError("Workflow not found"));
 
         const execution = workflow.executions.find((e) => e.id.toString() === executionId);
@@ -349,7 +353,7 @@ export class RetryExecution implements UseCase<
 
   async execute(input: RetryExecutionInput): Promise<Result<WorkflowStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<WorkflowStatusOutput, DomainError>>(async (tx) => {
-      const workflow = await this.deps.workflows.findById(input.workflowId, tx);
+      const workflow = await this.deps.workflows.findById(input.workflowId, input.tenantId, tx);
       if (workflow === null) return err(new NotFoundError("Workflow not found"));
 
       try {
@@ -369,13 +373,17 @@ export class RetryExecution implements UseCase<
   }
 }
 
+export interface ListWorkflowsInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListWorkflowsDeps {
   readonly workflows: AutomationWorkflowRepository;
 }
 
 /** Cursor-paginated workflow listing, most recently created first (Phase A.30 admin Automations screen). */
 export class ListWorkflows implements UseCase<
-  CursorPage,
+  ListWorkflowsInput,
   Paginated<AutomationWorkflow>,
   DomainError
 > {
@@ -385,7 +393,9 @@ export class ListWorkflows implements UseCase<
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<AutomationWorkflow>, DomainError>> {
-    return ok(await this.deps.workflows.list(input));
+  async execute(
+    input: ListWorkflowsInput,
+  ): Promise<Result<Paginated<AutomationWorkflow>, DomainError>> {
+    return ok(await this.deps.workflows.list(input, input.tenantId));
   }
 }

@@ -282,6 +282,7 @@ describe("admin wiring (end to end)", () => {
       triggerType: "event",
       eventType: "customer.created",
       actions: [{ actionType: "send_email", params: { template: "welcome" } }],
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const workflowId = (created.body as { workflowId: string }).workflowId;
@@ -289,12 +290,14 @@ describe("admin wiring (end to end)", () => {
     const activated = await admin.automation.advance(staff, {
       workflowId,
       toStatus: "active",
+      tenantId: "tenant-1",
     });
     expect(activated.status).toBe(200);
 
     const triggered = await admin.automation.trigger(staff, {
       workflowId,
       triggerId: "trigger-1",
+      tenantId: "tenant-1",
     });
     expect(triggered.status).toBe(200);
     expect((triggered.body as { duplicate: boolean }).duplicate).toBe(false);
@@ -302,6 +305,7 @@ describe("admin wiring (end to end)", () => {
     const replayed = await admin.automation.trigger(staff, {
       workflowId,
       triggerId: "trigger-1",
+      tenantId: "tenant-1",
     });
     expect(replayed.status).toBe(200);
     expect((replayed.body as { duplicate: boolean }).duplicate).toBe(true);
