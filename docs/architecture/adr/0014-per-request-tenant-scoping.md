@@ -33,6 +33,14 @@
 > Recorded as **G-65**. The fallback stays UN-TAKEN — it is not being used to route around a missing
 > deployment decision — and contexts #2-40 stay unconverted until a region is decided and its RTT to
 > Supabase is measured.
+>
+> **Amended 2026-09-10 (Amendment 4).** The line above was itself wrong in the same shape Amendment
+> 2 already corrected once: G-65 blocks PHASE 2 (the connection-role switch, where RLS starts
+> enforcing and an unwrapped read would matter), not T10.3's start. The `tenantId`-threading
+> migration is identical work regardless of which way G-65 resolves, `runReadScoped` is inert while
+> still on `postgres`, and converting with it now is the reversible direction. **T10.3 proceeds for
+> contexts #2-40, per context #1's exact shape including `runReadScoped`. G-65 remains open and
+> remains a hard gate on Phase 2 only.**
 
 ## Context
 
@@ -287,9 +295,36 @@ sign → kubectl apply`) generically, with `ghcr.io/<org>/...` still a literal p
    TypeScript tenant predicate across 40 contexts, with no RLS backstop because the fallback was
    taken, is not cheap — it is exactly the cross-tenant data leak this entire WP exists to prevent,
    found late, possibly in production. An unresolved performance question is worth sitting with
-   longer than an unresolved isolation question. **Contexts #2-40 stay unconverted until this
-   benchmark question is actually settled from a representative environment — not decided by the
-   session that happened to be available.**
+   longer than an unresolved isolation question.
+
+   **Amended 2026-09-10 (Amendment 4 — G-65/the RLS-on-reads decision gates PHASE 2, not T10.3 —
+   the same move Amendment 2 already made for migration bookkeeping, for the same kind of reason).**
+   The original text here said contexts #2-40 "stay unconverted" pending G-65. That conflated two
+   independent things, the same way the pre-Amendment-2 text conflated migration bookkeeping with
+   T10.3's start:
+   - **The 40-context cost is the `tenantId`-threading migration** (repository ports, use-case
+     inputs, composition, callers) — identical work, identical shape, regardless of which way the
+     RLS-on-reads question resolves. Nothing about G-65 changes what that migration looks like.
+   - **`runReadScoped` is one line inside each converted read method**, behind the exact
+     `tx`-reuse-or-wrap conditional context #1 established
+     (`services/catalog/src/infrastructure/prisma-catalog-repositories.ts`'s `findById`/`paginate`
+     — reuse the caller's `tx` if one exists, else wrap via `runReadScoped`). Converting **with**
+     the wrapper now is the reversible direction: if the fallback is later taken, removing it is a
+     mechanical, uniform, single-pattern deletion across contexts already converted. Converting
+     **without** it and later needing it means touching all 40 contexts a second time — the exact
+     "no context touched twice" waste `WP-10`'s own instructions warn against.
+   - **Phase 2 (the `lumo_app` connection-role switch) is where the RTT question actually bites** —
+     that is the moment RLS starts enforcing and an unwrapped read would start returning empty. T10.3
+     never reaches that moment; it stays on `postgres` (RLS-bypassing) throughout, per the two-phase
+     rollout above. `runReadScoped` is inert (a harmless extra round trip, no isolation effect) until
+     Phase 2 flips the role — identical reasoning to why Phase 1's own `SET LOCAL` wrapper was safe
+     to land while still on `postgres`.
+
+   **Hard gate: Phase 2 does not start until G-65 (deployment region) is decided and the RTT
+   threshold table is evaluated against a real number. T10.3 (contexts #2-40) is NOT gated on it and
+   proceeds now**, converting every context with `runReadScoped` in place per context #1's shape —
+   not the TypeScript-only fallback shape — so no context needs a second pass regardless of how G-65
+   resolves.
 
 4. **Consumers and other non-request paths obtain `tenantId` per the approved RLS section's per-path
    answers, not a single blanket rule:** Kafka consumers switch from `rootEventContext(idGen,
