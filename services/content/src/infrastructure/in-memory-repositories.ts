@@ -25,18 +25,18 @@ export class InMemoryContentBlockRepository implements ContentBlockRepository {
     await this.outbox.write(block.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<ContentBlock | null> {
+  async findById(id: string, _tenantId: string): Promise<ContentBlock | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<ContentBlock | null> {
+  async findByName(name: string, _tenantId: string): Promise<ContentBlock | null> {
     for (const block of this.store.values()) {
       if (block.name === name) return block;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<ContentBlock>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<ContentBlock>> {
     const limit = normalizePageSize(page.first);
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString() < b.id.toString() ? 1 : -1,

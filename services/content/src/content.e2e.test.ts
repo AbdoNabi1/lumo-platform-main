@@ -26,11 +26,16 @@ describe("content (end to end)", () => {
       blockType: "hero",
       format: "html",
       content: "<h1>Welcome</h1>",
+      tenantId: "tenant-local",
     });
     expect(created.status).toBe(201);
     const contentBlockId = (created.body as { contentBlockId: string }).contentBlockId;
 
-    const published = await app.content.advance({ contentBlockId, toStatus: "published" });
+    const published = await app.content.advance({
+      contentBlockId,
+      toStatus: "published",
+      tenantId: "tenant-local",
+    });
     expect(published.status).toBe(200);
 
     expect(await app.drainOutbox()).toBeGreaterThan(0);
@@ -39,12 +44,19 @@ describe("content (end to end)", () => {
 
   it("rejects creating a duplicate name (409)", async () => {
     const app = wire();
-    await app.content.create({ name: "Hero", blockType: "hero", format: "html", content: "<p/>" });
+    await app.content.create({
+      name: "Hero",
+      blockType: "hero",
+      format: "html",
+      content: "<p/>",
+      tenantId: "tenant-local",
+    });
     const response = await app.content.create({
       name: "Hero",
       blockType: "hero",
       format: "html",
       content: "<p/>",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(409);
   });
@@ -54,6 +66,7 @@ describe("content (end to end)", () => {
     const response = await app.content.advance({
       contentBlockId: "missing",
       toStatus: "published",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(404);
   });

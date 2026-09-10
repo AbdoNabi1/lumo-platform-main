@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { ContentController } from "@platform/content";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -46,7 +45,10 @@ export class ContentAdminController {
     return this.content.updateBody(input);
   }
 
-  async list(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async list(
+    principal: Principal,
+    input: Parameters<ContentController["list"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "content:read");
     if (denied) return denied;
     return this.content.list(input);

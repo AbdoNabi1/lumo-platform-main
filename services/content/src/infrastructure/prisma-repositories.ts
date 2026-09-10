@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -53,36 +53,40 @@ export class PrismaContentBlockRepository implements ContentBlockRepository {
     await this.deps.outbox.write(block.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<ContentBlock | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.contentBlock.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return ContentBlockMapper.toDomain(this.toMapperRow(row));
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<ContentBlock | null> {
+    const run = (client: TransactionClient) =>
+      client.contentBlock.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : ContentBlockMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findByName(name: string, tx?: unknown): Promise<ContentBlock | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.contentBlock.findFirst({
-      where: { name, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return ContentBlockMapper.toDomain(this.toMapperRow(row));
+  async findByName(name: string, tenantId: string, tx?: unknown): Promise<ContentBlock | null> {
+    const run = (client: TransactionClient) =>
+      client.contentBlock.findFirst({ where: { name, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : ContentBlockMapper.toDomain(this.toMapperRow(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<ContentBlock>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<ContentBlock>> {
     const limit = normalizePageSize(page.first);
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
-    const rows = await client.contentBlock.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after !== undefined ? { id: { lt: after } } : {}),
-      },
-      orderBy: { id: "desc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.contentBlock.findMany({
+        where: { tenantId, ...(after !== undefined ? { id: { lt: after } } : {}) },
+        orderBy: { id: "desc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     const blocks = rows.map((row) => ContentBlockMapper.toDomain(this.toMapperRow(row)));
     return buildPaginatedPage(blocks, limit, (block) => block.id.toString());
   }

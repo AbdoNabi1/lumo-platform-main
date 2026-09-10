@@ -15,6 +15,7 @@ export interface CreateContentBlockInput {
   readonly format: BlockBodyFormat;
   readonly content: string;
   readonly locale?: string;
+  readonly tenantId: string;
 }
 
 export interface ContentStatusOutput {
@@ -46,7 +47,7 @@ export class CreateContentBlock implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<ContentStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.blocks.findByName(input.name, tx);
+      const existing = await this.deps.blocks.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Content block "${input.name}" already exists`));
       }
@@ -66,6 +67,7 @@ export class CreateContentBlock implements UseCase<
 
 export interface ContentBlockIdInput {
   readonly contentBlockId: string;
+  readonly tenantId: string;
 }
 
 export interface AdvanceContentBlockInput extends ContentBlockIdInput {
@@ -89,7 +91,7 @@ export class AdvanceContentBlock implements UseCase<
     input: AdvanceContentBlockInput,
   ): Promise<Result<ContentStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ContentStatusOutput, DomainError>>(async (tx) => {
-      const block = await this.deps.blocks.findById(input.contentBlockId, tx);
+      const block = await this.deps.blocks.findById(input.contentBlockId, input.tenantId, tx);
       if (block === null) return err(new NotFoundError("Content block not found"));
 
       try {
@@ -132,7 +134,7 @@ export class UpdateContentBody implements UseCase<
 
   async execute(input: UpdateContentBodyInput): Promise<Result<ContentStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ContentStatusOutput, DomainError>>(async (tx) => {
-      const block = await this.deps.blocks.findById(input.contentBlockId, tx);
+      const block = await this.deps.blocks.findById(input.contentBlockId, input.tenantId, tx);
       if (block === null) return err(new NotFoundError("Content block not found"));
 
       try {
@@ -148,13 +150,17 @@ export class UpdateContentBody implements UseCase<
   }
 }
 
+export interface ListContentBlocksInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListContentBlocksDeps {
   readonly blocks: ContentBlockRepository;
 }
 
 /** Cursor-paginated content block listing, most recently created first (Phase A.30 admin Content screen). */
 export class ListContentBlocks implements UseCase<
-  CursorPage,
+  ListContentBlocksInput,
   Paginated<ContentBlock>,
   DomainError
 > {
@@ -164,7 +170,9 @@ export class ListContentBlocks implements UseCase<
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<ContentBlock>, DomainError>> {
-    return ok(await this.deps.blocks.list(input));
+  async execute(
+    input: ListContentBlocksInput,
+  ): Promise<Result<Paginated<ContentBlock>, DomainError>> {
+    return ok(await this.deps.blocks.list(input, input.tenantId));
   }
 }
