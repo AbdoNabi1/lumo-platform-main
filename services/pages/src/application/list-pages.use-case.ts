@@ -5,19 +5,23 @@ import type { DomainError } from "@platform/utils";
 import type { Page } from "../domain/page";
 import type { PageRepository } from "../domain/repositories";
 
+export interface ListPagesInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListPagesDeps {
   readonly pages: PageRepository;
 }
 
 /** Cursor-paginated page listing. */
-export class ListPages implements UseCase<CursorPage, Paginated<Page>, DomainError> {
+export class ListPages implements UseCase<ListPagesInput, Paginated<Page>, DomainError> {
   private readonly deps: ListPagesDeps;
 
   constructor(deps: ListPagesDeps) {
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<Page>, DomainError>> {
-    return ok(await this.deps.pages.list(input));
+  async execute(input: ListPagesInput): Promise<Result<Paginated<Page>, DomainError>> {
+    return ok(await this.deps.pages.list(input, input.tenantId));
   }
 }

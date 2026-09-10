@@ -5,19 +5,27 @@ import type { DomainError } from "@platform/utils";
 import type { TemplateRepository } from "../domain/repositories";
 import type { Template } from "../domain/template";
 
+export interface ListTemplatesInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListTemplatesDeps {
   readonly templates: TemplateRepository;
 }
 
 /** Cursor-paginated template listing. */
-export class ListTemplates implements UseCase<CursorPage, Paginated<Template>, DomainError> {
+export class ListTemplates implements UseCase<
+  ListTemplatesInput,
+  Paginated<Template>,
+  DomainError
+> {
   private readonly deps: ListTemplatesDeps;
 
   constructor(deps: ListTemplatesDeps) {
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<Template>, DomainError>> {
-    return ok(await this.deps.templates.list(input));
+  async execute(input: ListTemplatesInput): Promise<Result<Paginated<Template>, DomainError>> {
+    return ok(await this.deps.templates.list(input, input.tenantId));
   }
 }

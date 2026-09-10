@@ -18,7 +18,7 @@ export class GetPage implements UseCase<PageIdInput, Page, DomainError> {
   }
 
   async execute(input: PageIdInput): Promise<Result<Page, DomainError>> {
-    const page = await this.deps.pages.findById(input.pageId);
+    const page = await this.deps.pages.findById(input.pageId, input.tenantId);
     return page === null ? err(new NotFoundError("Page not found")) : ok(page);
   }
 }

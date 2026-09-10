@@ -18,7 +18,7 @@ export class GetTemplate implements UseCase<TemplateIdInput, Template, DomainErr
   }
 
   async execute(input: TemplateIdInput): Promise<Result<Template, DomainError>> {
-    const template = await this.deps.templates.findById(input.templateId);
+    const template = await this.deps.templates.findById(input.templateId, input.tenantId);
     return template === null ? err(new NotFoundError("Template not found")) : ok(template);
   }
 }

@@ -43,10 +43,10 @@ describe("Pages read use-cases (Phase 4 T4.6)", () => {
     const h = harness();
     const create = new CreatePage(h);
     for (let i = 0; i < 3; i += 1) {
-      await create.execute({ name: `Page ${i}`, routePath: `/page-${i}` });
+      await create.execute({ name: `Page ${i}`, routePath: `/page-${i}`, tenantId: "tenant-1" });
     }
 
-    const page = await new ListPages(h).execute({ first: 2 });
+    const page = await new ListPages(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -55,6 +55,7 @@ describe("Pages read use-cases (Phase 4 T4.6)", () => {
     const rest = await new ListPages(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -64,16 +65,23 @@ describe("Pages read use-cases (Phase 4 T4.6)", () => {
 
   it("GetPage returns the page, or NotFoundError when absent", async () => {
     const h = harness();
-    const created = await new CreatePage(h).execute({ name: "Home", routePath: "/" });
+    const created = await new CreatePage(h).execute({
+      name: "Home",
+      routePath: "/",
+      tenantId: "tenant-1",
+    });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetPage(h).execute({ pageId: created.value.pageId });
+    const found = await new GetPage(h).execute({
+      pageId: created.value.pageId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.id.toString()).toBe(created.value.pageId);
 
-    const missing = await new GetPage(h).execute({ pageId: "nope" });
+    const missing = await new GetPage(h).execute({ pageId: "nope", tenantId: "tenant-1" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");
@@ -83,10 +91,14 @@ describe("Pages read use-cases (Phase 4 T4.6)", () => {
     const h = harness();
     const create = new CreateTemplate(h);
     for (let i = 0; i < 2; i += 1) {
-      await create.execute({ name: `Template ${i}`, experienceRef: `experience-${i}` });
+      await create.execute({
+        name: `Template ${i}`,
+        experienceRef: `experience-${i}`,
+        tenantId: "tenant-1",
+      });
     }
 
-    const page = await new ListTemplates(h).execute({ first: 10 });
+    const page = await new ListTemplates(h).execute({ first: 10, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -94,16 +106,23 @@ describe("Pages read use-cases (Phase 4 T4.6)", () => {
     const created = await new CreateTemplate(h).execute({
       name: "Product page",
       experienceRef: "experience-product",
+      tenantId: "tenant-1",
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetTemplate(h).execute({ templateId: created.value.templateId });
+    const found = await new GetTemplate(h).execute({
+      templateId: created.value.templateId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.name).toBe("Product page");
 
-    const missing = await new GetTemplate(h).execute({ templateId: "nope" });
+    const missing = await new GetTemplate(h).execute({
+      templateId: "nope",
+      tenantId: "tenant-1",
+    });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

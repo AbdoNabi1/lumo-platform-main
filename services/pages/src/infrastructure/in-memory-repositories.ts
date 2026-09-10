@@ -38,18 +38,18 @@ export class InMemoryPageRepository implements PageRepository {
     await this.outbox.write(page.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Page | null> {
+  async findById(id: string, _tenantId: string): Promise<Page | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByRoutePath(routePath: string): Promise<Page | null> {
+  async findByRoutePath(routePath: string, _tenantId: string): Promise<Page | null> {
     for (const page of this.store.values()) {
       if (page.routePath.value === routePath) return page;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<Page>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Page>> {
     return paginate([...this.store.values()], page);
   }
 }
@@ -69,18 +69,18 @@ export class InMemoryTemplateRepository implements TemplateRepository {
     await this.outbox.write(template.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Template | null> {
+  async findById(id: string, _tenantId: string): Promise<Template | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<Template | null> {
+  async findByName(name: string, _tenantId: string): Promise<Template | null> {
     for (const template of this.store.values()) {
       if (template.name === name) return template;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<Template>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Template>> {
     return paginate([...this.store.values()], page);
   }
 }

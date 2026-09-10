@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -45,32 +45,43 @@ export class PrismaPageRepository implements PageRepository {
     await this.deps.outbox.write(page.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Page | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.page.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Page | null> {
+    const run = (client: TransactionClient) => client.page.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : PageMapper.toDomain(row);
   }
 
-  async findByRoutePath(routePath: string, tx?: unknown): Promise<Page | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.page.findFirst({ where: { routePath, tenantId: this.deps.tenantId } });
+  async findByRoutePath(routePath: string, tenantId: string, tx?: unknown): Promise<Page | null> {
+    const run = (client: TransactionClient) =>
+      client.page.findFirst({ where: { routePath, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : PageMapper.toDomain(row);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Page>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Page>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.page.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
-    return buildPaginatedPage(rows.map((row) => PageMapper.toDomain(row)), limit, (p) =>
-      p.id.toString(),
+    const run = (client: TransactionClient) =>
+      client.page.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return buildPaginatedPage(
+      rows.map((row) => PageMapper.toDomain(row)),
+      limit,
+      (p) => p.id.toString(),
     );
   }
 
@@ -114,32 +125,44 @@ export class PrismaTemplateRepository implements TemplateRepository {
     await this.deps.outbox.write(template.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Template | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.template.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Template | null> {
+    const run = (client: TransactionClient) =>
+      client.template.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : TemplateMapper.toDomain(row);
   }
 
-  async findByName(name: string, tx?: unknown): Promise<Template | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.template.findFirst({ where: { name, tenantId: this.deps.tenantId } });
+  async findByName(name: string, tenantId: string, tx?: unknown): Promise<Template | null> {
+    const run = (client: TransactionClient) =>
+      client.template.findFirst({ where: { name, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : TemplateMapper.toDomain(row);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Template>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Template>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.template.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
-    return buildPaginatedPage(rows.map((row) => TemplateMapper.toDomain(row)), limit, (t) =>
-      t.id.toString(),
+    const run = (client: TransactionClient) =>
+      client.template.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return buildPaginatedPage(
+      rows.map((row) => TemplateMapper.toDomain(row)),
+      limit,
+      (t) => t.id.toString(),
     );
   }
 
