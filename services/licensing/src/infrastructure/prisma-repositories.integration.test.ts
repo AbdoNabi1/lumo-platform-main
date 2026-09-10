@@ -75,7 +75,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
 
     await unitOfWork.run((tx) => credits.save(credit, tx));
-    const loaded = await credits.findById(credit.id.toString());
+    const loaded = await credits.findById(credit.id.toString(), tenantId);
 
     expect(loaded).not.toBeNull();
     expect(loaded?.amount).toBe(1000);
@@ -88,12 +88,12 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
     await unitOfWork.run((tx) => credits.save(credit, tx));
 
-    const loaded = await credits.findById(credit.id.toString());
+    const loaded = await credits.findById(credit.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     loaded.consume(400, ids.generate(), clock.now());
     await unitOfWork.run((tx) => credits.save(loaded, tx));
 
-    const reloaded = await credits.findById(credit.id.toString());
+    const reloaded = await credits.findById(credit.id.toString(), tenantId);
     expect(reloaded?.amount).toBe(600);
     expect(reloaded?.status).toBe("granted");
     expect(reloaded?.version).toBe(2);
@@ -137,7 +137,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
       }),
     ).rejects.toThrow("simulated downstream failure");
 
-    const loaded = await credits.findById(credit.id.toString());
+    const loaded = await credits.findById(credit.id.toString(), tenantId);
     expect(loaded).toBeNull(); // the aborted transaction left nothing behind
     await prisma.$disconnect();
   });
@@ -149,8 +149,8 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
     await unitOfWork.run((tx) => credits.save(credit, tx));
 
-    const copyA = await credits.findById(credit.id.toString());
-    const copyB = await credits.findById(credit.id.toString());
+    const copyA = await credits.findById(credit.id.toString(), tenantId);
+    const copyB = await credits.findById(credit.id.toString(), tenantId);
     if (copyA === null || copyB === null) throw new Error("setup failed");
     copyA.consume(100, ids.generate(), clock.now());
     copyB.consume(200, ids.generate(), clock.now());
@@ -160,7 +160,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
       ConcurrencyError,
     );
 
-    const final = await credits.findById(credit.id.toString());
+    const final = await credits.findById(credit.id.toString(), tenantId);
     expect(final?.amount).toBe(900); // only A's consume applied
     await prisma.$disconnect();
   });
@@ -170,8 +170,8 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
     await unitOfWork.run((tx) => credits.save(credit, tx));
 
-    const copyA = await credits.findById(credit.id.toString());
-    const copyB = await credits.findById(credit.id.toString());
+    const copyA = await credits.findById(credit.id.toString(), tenantId);
+    const copyB = await credits.findById(credit.id.toString(), tenantId);
     if (copyA === null || copyB === null) throw new Error("setup failed");
     copyA.consume(50, ids.generate(), clock.now());
     copyB.consume(75, ids.generate(), clock.now());

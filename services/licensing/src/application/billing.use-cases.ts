@@ -78,6 +78,7 @@ export class CreateInvoice implements UseCase<CreateInvoiceInput, IdOutput, Doma
 
 export interface InvoiceIdInput {
   readonly invoiceId: string;
+  readonly tenantId: string;
 }
 
 /** Issues a draft invoice. */
@@ -90,7 +91,7 @@ export class IssueInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainErr
 
   async execute(input: InvoiceIdInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const invoice = await this.deps.invoices.findById(input.invoiceId, tx);
+      const invoice = await this.deps.invoices.findById(input.invoiceId, input.tenantId, tx);
       if (invoice === null) return err(new NotFoundError("Invoice not found"));
       try {
         invoice.issue(this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -193,7 +194,7 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
   }
 
   async execute(input: InvoiceIdInput): Promise<Result<IdOutput, DomainError>> {
-    const precheck = await this.precheck(input.invoiceId);
+    const precheck = await this.precheck(input.invoiceId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     if (precheck.value.alreadyPaid) return ok({ id: input.invoiceId });
     const { tenantRef, total, currency, version } = precheck.value;
@@ -203,11 +204,11 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
     try {
       collected = await this.deps.payments.collect(tenantRef, total, currency, idempotencyKey);
     } catch (error) {
-      await this.settleFailure(input.invoiceId);
+      await this.settleFailure(input.invoiceId, input.tenantId);
       throw error;
     }
 
-    const settled = await this.settleSuccess(input.invoiceId, collected.reference);
+    const settled = await this.settleSuccess(input.invoiceId, collected.reference, input.tenantId);
     if (!settled.ok) return settled;
 
     // Phase A.16 (Task 9 sweep finding): only the racer whose settleSuccess() performed the ACTUAL
@@ -234,9 +235,12 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
     return ok({ id: input.invoiceId });
   }
 
-  private async precheck(invoiceId: string): Promise<Result<CollectPrecheck, DomainError>> {
+  private async precheck(
+    invoiceId: string,
+    tenantId: string,
+  ): Promise<Result<CollectPrecheck, DomainError>> {
     return this.deps.unitOfWork.run<Result<CollectPrecheck, DomainError>>(async (tx) => {
-      const invoice = await this.deps.invoices.findById(invoiceId, tx);
+      const invoice = await this.deps.invoices.findById(invoiceId, tenantId, tx);
       if (invoice === null) return err(new NotFoundError("Invoice not found"));
 
       const context = {
@@ -260,11 +264,12 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
   private async settleSuccess(
     invoiceId: string,
     paymentReference: string,
+    tenantId: string,
   ): Promise<Result<IdOutput & { alreadyPaid: boolean }, DomainError>> {
     return withConcurrencyRetry(CollectInvoice.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<IdOutput & { alreadyPaid: boolean }, DomainError>>(
         async (tx) => {
-          const invoice = await this.deps.invoices.findById(invoiceId, tx);
+          const invoice = await this.deps.invoices.findById(invoiceId, tenantId, tx);
           if (invoice === null) return err(new NotFoundError("Invoice not found"));
 
           // `alreadyPaid` distinguishes "this call performed the write" from "a racer already did" —
@@ -289,9 +294,9 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
     );
   }
 
-  private async settleFailure(invoiceId: string): Promise<void> {
+  private async settleFailure(invoiceId: string, tenantId: string): Promise<void> {
     await this.deps.unitOfWork.run(async (tx) => {
-      const invoice = await this.deps.invoices.findById(invoiceId, tx);
+      const invoice = await this.deps.invoices.findById(invoiceId, tenantId, tx);
       if (invoice !== null && invoice.status === "issued") {
         invoice.markFailed(this.deps.idGenerator.generate(), this.deps.clock.now());
         await this.deps.invoices.save(invoice, tx);
@@ -333,6 +338,7 @@ export class GrantCredit implements UseCase<GrantCreditInput, IdOutput, DomainEr
 
 export interface CreditIdInput {
   readonly creditId: string;
+  readonly tenantId: string;
 }
 
 export interface ConsumeCreditInput extends CreditIdInput {
@@ -349,7 +355,7 @@ export class ConsumeCredit implements UseCase<ConsumeCreditInput, IdOutput, Doma
 
   async execute(input: ConsumeCreditInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const credit = await this.deps.credits.findById(input.creditId, tx);
+      const credit = await this.deps.credits.findById(input.creditId, input.tenantId, tx);
       if (credit === null) return err(new NotFoundError("Credit not found"));
       try {
         credit.consume(input.amount, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -373,7 +379,7 @@ export class ExpireCredit implements UseCase<CreditIdInput, IdOutput, DomainErro
 
   async execute(input: CreditIdInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const credit = await this.deps.credits.findById(input.creditId, tx);
+      const credit = await this.deps.credits.findById(input.creditId, input.tenantId, tx);
       if (credit === null) return err(new NotFoundError("Credit not found"));
       try {
         credit.expire(this.deps.idGenerator.generate(), this.deps.clock.now());

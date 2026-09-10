@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { Prisma } from "@prisma/client";
@@ -79,17 +79,24 @@ export class PrismaPlanRepository implements PlanRepository {
     await this.deps.outbox.write(plan.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Plan | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.plan.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Plan | null> {
+    const run = (client: TransactionClient) => client.plan.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     // Prisma row's `versions: JsonValue` has no structural overlap with `PlanRow`'s
     // `readonly PlanVersionRow[]` (comparability fails).
     return row === null ? null : PlanMapper.toDomain(row as unknown as PlanRow);
   }
 
-  async findByKey(key: string, tx?: unknown): Promise<Plan | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.plan.findFirst({ where: { key, tenantId: this.deps.tenantId } });
+  async findByKey(key: string, tenantId: string, tx?: unknown): Promise<Plan | null> {
+    const run = (client: TransactionClient) => client.plan.findFirst({ where: { key, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     // Prisma row's `versions: JsonValue` has no structural overlap with `PlanRow`'s
     // `readonly PlanVersionRow[]` (comparability fails).
     return row === null ? null : PlanMapper.toDomain(row as unknown as PlanRow);
@@ -134,19 +141,28 @@ export class PrismaSubscriptionRepository implements SubscriptionRepository {
     await this.deps.outbox.write(subscription.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Subscription | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.subscription.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Subscription | null> {
+    const run = (client: TransactionClient) =>
+      client.subscription.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : SubscriptionMapper.toDomain(row as SubscriptionRow);
   }
 
-  async findByTenantRef(tenantRef: string, tx?: unknown): Promise<Subscription | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.subscription.findFirst({
-      where: { tenantRef, tenantId: this.deps.tenantId },
-    });
+  async findByTenantRef(
+    tenantRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Subscription | null> {
+    const run = (client: TransactionClient) =>
+      client.subscription.findFirst({ where: { tenantRef, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : SubscriptionMapper.toDomain(row as SubscriptionRow);
   }
 }
@@ -181,11 +197,18 @@ export class PrismaMerchantFeatureOverrideRepository implements MerchantFeatureO
     await this.deps.outbox.write(override.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<MerchantFeatureOverride | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.merchantFeatureOverride.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(
+    id: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<MerchantFeatureOverride | null> {
+    const run = (client: TransactionClient) =>
+      client.merchantFeatureOverride.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null
       ? null
       : MerchantFeatureOverrideMapper.toDomain(row as MerchantFeatureOverrideRow);
@@ -194,12 +217,15 @@ export class PrismaMerchantFeatureOverrideRepository implements MerchantFeatureO
   async findByTenantRefAndFeatureKey(
     tenantRef: string,
     featureKey: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<MerchantFeatureOverride | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.merchantFeatureOverride.findFirst({
-      where: { tenantRef, featureKey, tenantId: this.deps.tenantId },
-    });
+    const run = (client: TransactionClient) =>
+      client.merchantFeatureOverride.findFirst({ where: { tenantRef, featureKey, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null
       ? null
       : MerchantFeatureOverrideMapper.toDomain(row as MerchantFeatureOverrideRow);
@@ -235,22 +261,31 @@ export class PrismaMerchantCapabilitiesRepository implements MerchantCapabilitie
     await this.deps.outbox.write(capabilities.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<MerchantCapabilities | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.merchantCapabilities.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<MerchantCapabilities | null> {
+    const run = (client: TransactionClient) =>
+      client.merchantCapabilities.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     if (row === null) return null;
     // Prisma row's `grants`/`auditHistory: JsonValue` have no structural overlap with
     // `MerchantCapabilitiesRow`'s typed array fields (comparability fails).
     return MerchantCapabilitiesMapper.toDomain(row as unknown as MerchantCapabilitiesRow);
   }
 
-  async findByTenantRef(tenantRef: string, tx?: unknown): Promise<MerchantCapabilities | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.merchantCapabilities.findFirst({
-      where: { tenantRef, tenantId: this.deps.tenantId },
-    });
+  async findByTenantRef(
+    tenantRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<MerchantCapabilities | null> {
+    const run = (client: TransactionClient) =>
+      client.merchantCapabilities.findFirst({ where: { tenantRef, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     if (row === null) return null;
     // Prisma row's `grants`/`auditHistory: JsonValue` have no structural overlap with
     // `MerchantCapabilitiesRow`'s typed array fields (comparability fails).
@@ -288,23 +323,29 @@ export class PrismaUsageCounterRepository implements UsageCounterRepository {
     await this.deps.outbox.write(counter.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<UsageCounter | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.usageCounter.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<UsageCounter | null> {
+    const run = (client: TransactionClient) =>
+      client.usageCounter.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : UsageCounterMapper.toDomain(row as UsageCounterRow);
   }
 
   async findByTenantRefAndResource(
     tenantRef: string,
     resource: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<UsageCounter | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.usageCounter.findFirst({
-      where: { tenantRef, resource, tenantId: this.deps.tenantId },
-    });
+    const run = (client: TransactionClient) =>
+      client.usageCounter.findFirst({ where: { tenantRef, resource, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : UsageCounterMapper.toDomain(row as UsageCounterRow);
   }
 }
@@ -333,9 +374,13 @@ export class PrismaCreditRepository implements CreditRepository {
     await this.deps.outbox.write(credit.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Credit | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.credit.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Credit | null> {
+    const run = (client: TransactionClient) => client.credit.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : CreditMapper.toDomain(row as CreditRow);
   }
 }
@@ -372,9 +417,14 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
     await this.deps.outbox.write(invoice.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Invoice | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.invoice.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Invoice | null> {
+    const run = (client: TransactionClient) =>
+      client.invoice.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     // Prisma row's `lineItems: JsonValue` has no structural overlap with `InvoiceRow`'s
     // `readonly InvoiceLineItem[]` (comparability fails).
     return row === null ? null : InvoiceMapper.toDomain(row as unknown as InvoiceRow);

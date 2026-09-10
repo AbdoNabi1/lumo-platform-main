@@ -43,6 +43,7 @@ export interface CreatePlanInput {
   readonly key: string;
   readonly name: string;
   readonly tier: PlanTier;
+  readonly tenantId: string;
 }
 
 /** Creates a plan product — one per `key`. */
@@ -55,7 +56,7 @@ export class CreatePlan implements UseCase<CreatePlanInput, IdOutput, DomainErro
 
   async execute(input: CreatePlanInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.plans.findByKey(input.key, tx);
+      const existing = await this.deps.plans.findByKey(input.key, input.tenantId, tx);
       if (existing !== null) return err(new ConflictError(`Plan "${input.key}" already exists`));
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const plan = Plan.create(
@@ -75,6 +76,7 @@ export class CreatePlan implements UseCase<CreatePlanInput, IdOutput, DomainErro
 export interface CreatePlanDraftInput {
   readonly planId: string;
   readonly spec: PlanSpec;
+  readonly tenantId: string;
 }
 
 export interface PlanVersionIdOutput {
@@ -95,7 +97,7 @@ export class CreatePlanDraft implements UseCase<
 
   async execute(input: CreatePlanDraftInput): Promise<Result<PlanVersionIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PlanVersionIdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, tx);
+      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       const draft = plan.createDraft(
         input.spec,
@@ -111,6 +113,7 @@ export class CreatePlanDraft implements UseCase<
 export interface PlanVersionActionInput {
   readonly planId: string;
   readonly planVersionId: string;
+  readonly tenantId: string;
 }
 
 export interface SchedulePlanVersionInput extends PlanVersionActionInput {
@@ -131,7 +134,7 @@ export class SchedulePlanVersion implements UseCase<
 
   async execute(input: SchedulePlanVersionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, tx);
+      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       try {
         plan.schedule(
@@ -160,7 +163,7 @@ export class PublishPlanVersion implements UseCase<PlanVersionActionInput, IdOut
 
   async execute(input: PlanVersionActionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, tx);
+      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       try {
         plan.publish(input.planVersionId, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -184,7 +187,7 @@ export class RollbackPlan implements UseCase<PlanVersionActionInput, IdOutput, D
 
   async execute(input: PlanVersionActionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, tx);
+      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       try {
         plan.rollback(input.planVersionId, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -212,7 +215,7 @@ export class ClonePlanVersion implements UseCase<
 
   async execute(input: PlanVersionActionInput): Promise<Result<PlanVersionIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PlanVersionIdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, tx);
+      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       const clone = plan.clone(
         input.planVersionId,
@@ -235,7 +238,7 @@ export class ArchivePlanVersion implements UseCase<PlanVersionActionInput, IdOut
 
   async execute(input: PlanVersionActionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, tx);
+      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       try {
         plan.archive(input.planVersionId, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -253,6 +256,7 @@ export interface ComparePlanVersionsInput {
   readonly planId: string;
   readonly planVersionAId: string;
   readonly planVersionBId: string;
+  readonly tenantId: string;
 }
 
 export interface ComparePlanVersionsOutput {
@@ -274,7 +278,7 @@ export class ComparePlanVersions implements UseCase<
   async execute(
     input: ComparePlanVersionsInput,
   ): Promise<Result<ComparePlanVersionsOutput, DomainError>> {
-    const plan = await this.deps.plans.findById(input.planId);
+    const plan = await this.deps.plans.findById(input.planId, input.tenantId);
     if (plan === null) return err(new NotFoundError("Plan not found"));
     try {
       const diff = plan.compare(input.planVersionAId, input.planVersionBId);
@@ -289,6 +293,7 @@ export class ComparePlanVersions implements UseCase<
 export interface CreateSubscriptionInput {
   readonly tenantRef: string;
   readonly planVersionRef: string;
+  readonly tenantId: string;
 }
 
 /** Starts a trial subscription — one per `tenantRef`. */
@@ -301,7 +306,11 @@ export class CreateSubscription implements UseCase<CreateSubscriptionInput, IdOu
 
   async execute(input: CreateSubscriptionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.subscriptions.findByTenantRef(input.tenantRef, tx);
+      const existing = await this.deps.subscriptions.findByTenantRef(
+        input.tenantRef,
+        input.tenantId,
+        tx,
+      );
       if (existing !== null) {
         return err(new ConflictError(`Tenant "${input.tenantRef}" already has a subscription`));
       }
@@ -321,6 +330,7 @@ export class CreateSubscription implements UseCase<CreateSubscriptionInput, IdOu
 
 export interface SubscriptionIdInput {
   readonly subscriptionId: string;
+  readonly tenantId: string;
 }
 
 export interface RepinSubscriptionInput extends SubscriptionIdInput {
@@ -337,7 +347,11 @@ export class RepinSubscription implements UseCase<RepinSubscriptionInput, IdOutp
 
   async execute(input: RepinSubscriptionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const subscription = await this.deps.subscriptions.findById(input.subscriptionId, tx);
+      const subscription = await this.deps.subscriptions.findById(
+        input.subscriptionId,
+        input.tenantId,
+        tx,
+      );
       if (subscription === null) return err(new NotFoundError("Subscription not found"));
       subscription.repin(
         input.newPlanVersionRef,
@@ -360,7 +374,11 @@ export class ActivateSubscription implements UseCase<SubscriptionIdInput, IdOutp
 
   async execute(input: SubscriptionIdInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const subscription = await this.deps.subscriptions.findById(input.subscriptionId, tx);
+      const subscription = await this.deps.subscriptions.findById(
+        input.subscriptionId,
+        input.tenantId,
+        tx,
+      );
       if (subscription === null) return err(new NotFoundError("Subscription not found"));
       try {
         subscription.activate(this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -388,7 +406,11 @@ export class PauseSubscription implements UseCase<PauseSubscriptionInput, IdOutp
 
   async execute(input: PauseSubscriptionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const subscription = await this.deps.subscriptions.findById(input.subscriptionId, tx);
+      const subscription = await this.deps.subscriptions.findById(
+        input.subscriptionId,
+        input.tenantId,
+        tx,
+      );
       if (subscription === null) return err(new NotFoundError("Subscription not found"));
       subscription.pause(input.resumeDate, this.deps.idGenerator.generate(), this.deps.clock.now());
       await this.deps.subscriptions.save(subscription, tx);
@@ -407,7 +429,11 @@ export class ResumeSubscription implements UseCase<SubscriptionIdInput, IdOutput
 
   async execute(input: SubscriptionIdInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const subscription = await this.deps.subscriptions.findById(input.subscriptionId, tx);
+      const subscription = await this.deps.subscriptions.findById(
+        input.subscriptionId,
+        input.tenantId,
+        tx,
+      );
       if (subscription === null) return err(new NotFoundError("Subscription not found"));
       subscription.resume(this.deps.idGenerator.generate(), this.deps.clock.now());
       await this.deps.subscriptions.save(subscription, tx);
@@ -430,7 +456,11 @@ export class CancelSubscription implements UseCase<CancelSubscriptionInput, IdOu
 
   async execute(input: CancelSubscriptionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const subscription = await this.deps.subscriptions.findById(input.subscriptionId, tx);
+      const subscription = await this.deps.subscriptions.findById(
+        input.subscriptionId,
+        input.tenantId,
+        tx,
+      );
       if (subscription === null) return err(new NotFoundError("Subscription not found"));
       try {
         subscription.cancel(input.reason, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -462,7 +492,10 @@ export class PreviewRenewal implements UseCase<
   }
 
   async execute(input: SubscriptionIdInput): Promise<Result<PreviewRenewalOutput, DomainError>> {
-    const subscription = await this.deps.subscriptions.findById(input.subscriptionId);
+    const subscription = await this.deps.subscriptions.findById(
+      input.subscriptionId,
+      input.tenantId,
+    );
     if (subscription === null) return err(new NotFoundError("Subscription not found"));
     return ok(subscription.previewRenewal());
   }
@@ -474,6 +507,7 @@ export interface SetMerchantFeatureOverrideInput {
   readonly state: MerchantOverrideState;
   readonly expiresAt?: Date;
   readonly notes?: string;
+  readonly tenantId: string;
 }
 
 /** Creates or updates the legacy merchant feature override (Sprint 5.5, kept for compatibility). */
@@ -493,6 +527,7 @@ export class SetMerchantFeatureOverride implements UseCase<
       const existing = await this.deps.merchantFeatureOverrides.findByTenantRefAndFeatureKey(
         input.tenantRef,
         input.featureKey,
+        input.tenantId,
         tx,
       );
       if (existing !== null) {
@@ -531,6 +566,7 @@ export interface GrantMerchantCapabilityInput {
   readonly expiresAt?: Date;
   readonly reason?: string;
   readonly notes?: string;
+  readonly tenantId: string;
 }
 
 /** Grants (or updates) a merchant capability — the go-forward operational layer (Sprint 5.6). */
@@ -547,7 +583,11 @@ export class GrantMerchantCapability implements UseCase<
 
   async execute(input: GrantMerchantCapabilityInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      let capabilities = await this.deps.merchantCapabilities.findByTenantRef(input.tenantRef, tx);
+      let capabilities = await this.deps.merchantCapabilities.findByTenantRef(
+        input.tenantRef,
+        input.tenantId,
+        tx,
+      );
       if (capabilities === null) {
         capabilities = MerchantCapabilities.create(
           UniqueEntityId.from(this.deps.idGenerator.generate()),
@@ -575,6 +615,7 @@ export class GrantMerchantCapability implements UseCase<
 export interface RevokeMerchantCapabilityInput {
   readonly tenantRef: string;
   readonly featureKey: string;
+  readonly tenantId: string;
 }
 
 /** Revokes a merchant capability grant. */
@@ -593,6 +634,7 @@ export class RevokeMerchantCapability implements UseCase<
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
       const capabilities = await this.deps.merchantCapabilities.findByTenantRef(
         input.tenantRef,
+        input.tenantId,
         tx,
       );
       if (capabilities === null) return err(new NotFoundError("Merchant capabilities not found"));
@@ -614,6 +656,7 @@ export interface RecordUsageInput {
   readonly amount: number;
   readonly unit: string;
   readonly occurredAt: Date;
+  readonly tenantId: string;
 }
 
 export interface RecordUsageOutput extends IdOutput {
@@ -634,6 +677,7 @@ export class RecordUsage implements UseCase<RecordUsageInput, RecordUsageOutput,
       let counter = await this.deps.usageCounters.findByTenantRefAndResource(
         input.tenantRef,
         input.resource,
+        input.tenantId,
         tx,
       );
       if (counter === null) {
@@ -664,6 +708,7 @@ export class RecordUsage implements UseCase<RecordUsageInput, RecordUsageOutput,
 export interface GetUsageCounterInput {
   readonly tenantRef: string;
   readonly resource: string;
+  readonly tenantId: string;
 }
 
 export interface GetUsageCounterOutput {
@@ -687,6 +732,7 @@ export class GetUsageCounter implements UseCase<
     const counter = await this.deps.usageCounters.findByTenantRefAndResource(
       input.tenantRef,
       input.resource,
+      input.tenantId,
     );
     if (counter === null) return ok({ amount: 0, unit: "" });
     return ok({ amount: counter.amount, unit: counter.unit });

@@ -36,11 +36,11 @@ export class InMemoryPlanRepository implements PlanRepository {
     await this.outbox.write(plan.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Plan | null> {
+  async findById(id: string, _tenantId: string): Promise<Plan | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByKey(key: string): Promise<Plan | null> {
+  async findByKey(key: string, _tenantId: string): Promise<Plan | null> {
     for (const plan of this.store.values()) {
       if (plan.key === key) return plan;
     }
@@ -63,11 +63,11 @@ export class InMemorySubscriptionRepository implements SubscriptionRepository {
     await this.outbox.write(subscription.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Subscription | null> {
+  async findById(id: string, _tenantId: string): Promise<Subscription | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByTenantRef(tenantRef: string): Promise<Subscription | null> {
+  async findByTenantRef(tenantRef: string, _tenantId: string): Promise<Subscription | null> {
     for (const subscription of this.store.values()) {
       if (subscription.tenantRef === tenantRef) return subscription;
     }
@@ -90,13 +90,14 @@ export class InMemoryMerchantFeatureOverrideRepository implements MerchantFeatur
     await this.outbox.write(override.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<MerchantFeatureOverride | null> {
+  async findById(id: string, _tenantId: string): Promise<MerchantFeatureOverride | null> {
     return this.store.get(id) ?? null;
   }
 
   async findByTenantRefAndFeatureKey(
     tenantRef: string,
     featureKey: string,
+    _tenantId: string,
   ): Promise<MerchantFeatureOverride | null> {
     for (const override of this.store.values()) {
       if (override.tenantRef === tenantRef && override.featureKey === featureKey) return override;
@@ -120,11 +121,14 @@ export class InMemoryMerchantCapabilitiesRepository implements MerchantCapabilit
     await this.outbox.write(capabilities.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<MerchantCapabilities | null> {
+  async findById(id: string, _tenantId: string): Promise<MerchantCapabilities | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByTenantRef(tenantRef: string): Promise<MerchantCapabilities | null> {
+  async findByTenantRef(
+    tenantRef: string,
+    _tenantId: string,
+  ): Promise<MerchantCapabilities | null> {
     for (const capabilities of this.store.values()) {
       if (capabilities.tenantRef === tenantRef) return capabilities;
     }
@@ -147,13 +151,14 @@ export class InMemoryUsageCounterRepository implements UsageCounterRepository {
     await this.outbox.write(counter.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<UsageCounter | null> {
+  async findById(id: string, _tenantId: string): Promise<UsageCounter | null> {
     return this.store.get(id) ?? null;
   }
 
   async findByTenantRefAndResource(
     tenantRef: string,
     resource: string,
+    _tenantId: string,
   ): Promise<UsageCounter | null> {
     for (const counter of this.store.values()) {
       if (counter.tenantRef === tenantRef && counter.resource === resource) return counter;
@@ -177,7 +182,7 @@ export class InMemoryCreditRepository implements CreditRepository {
     await this.outbox.write(credit.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Credit | null> {
+  async findById(id: string, _tenantId: string): Promise<Credit | null> {
     return this.store.get(id) ?? null;
   }
 }
@@ -197,7 +202,7 @@ export class InMemoryInvoiceRepository implements InvoiceRepository {
     await this.outbox.write(invoice.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Invoice | null> {
+  async findById(id: string, _tenantId: string): Promise<Invoice | null> {
     return this.store.get(id) ?? null;
   }
 }

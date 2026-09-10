@@ -107,7 +107,7 @@ describe("Task 3 — exploit proof: PSP collect()/Finance postSettlement() run w
     };
     const useCase = new CollectInvoice(buildDeps(invoices, uow, payments, financeLedger));
 
-    const result = await useCase.execute({ invoiceId: "inv-1" });
+    const result = await useCase.execute({ invoiceId: "inv-1", tenantId: "tenant-local" });
 
     expect(result.ok).toBe(true);
     // Fixed behavior: neither external call happens while a transaction is open.
@@ -129,7 +129,7 @@ describe("Task 3 — exploit proof: PSP collect()/Finance postSettlement() run w
     const financeLedger: FinanceLedgerPort = { postSettlement: async () => {} };
     const useCase = new CollectInvoice(buildDeps(invoices, uow, payments, financeLedger));
 
-    await useCase.execute({ invoiceId: "inv-2" });
+    await useCase.execute({ invoiceId: "inv-2", tenantId: "tenant-local" });
 
     expect(sizeDuringPspCall).toBe(1);
   });
@@ -148,7 +148,7 @@ describe("Task 3 — PSP failure recovery on collect", () => {
     const financeLedger: FinanceLedgerPort = { postSettlement: async () => {} };
     const useCase = new CollectInvoice(buildDeps(invoices, uow, payments, financeLedger));
 
-    await expect(useCase.execute({ invoiceId: "inv-3" })).rejects.toThrow(
+    await expect(useCase.execute({ invoiceId: "inv-3", tenantId: "tenant-local" })).rejects.toThrow(
       /simulated PSP collect failure/,
     );
 
@@ -168,7 +168,7 @@ describe("Task 3 — PSP failure recovery on collect", () => {
     };
     const useCase = new CollectInvoice(buildDeps(invoices, uow, payments, financeLedger));
 
-    const result = await useCase.execute({ invoiceId: "inv-4" });
+    const result = await useCase.execute({ invoiceId: "inv-4", tenantId: "tenant-local" });
 
     // Pre-fix, this call chain threw an unrelated BusinessRuleError ("paid" has no outgoing
     // transitions) and the markPaid write was rolled back with the whole transaction. Post-fix, the
@@ -195,8 +195,8 @@ describe("Task 3/11 — idempotency and concurrency", () => {
     const financeLedger: FinanceLedgerPort = { postSettlement: async () => {} };
     const useCase = new CollectInvoice(buildDeps(invoices, uow, payments, financeLedger));
 
-    const first = await useCase.execute({ invoiceId: "inv-5" });
-    const second = await useCase.execute({ invoiceId: "inv-5" });
+    const first = await useCase.execute({ invoiceId: "inv-5", tenantId: "tenant-local" });
+    const second = await useCase.execute({ invoiceId: "inv-5", tenantId: "tenant-local" });
 
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
@@ -227,8 +227,8 @@ describe("Task 3/11 — idempotency and concurrency", () => {
       const useCaseB = new CollectInvoice(buildDeps(invoices, uow, payments, financeLedger));
 
       const [a, b] = await Promise.all([
-        useCaseA.execute({ invoiceId: "inv-concurrent" }),
-        useCaseB.execute({ invoiceId: "inv-concurrent" }),
+        useCaseA.execute({ invoiceId: "inv-concurrent", tenantId: "tenant-local" }),
+        useCaseB.execute({ invoiceId: "inv-concurrent", tenantId: "tenant-local" }),
       ]);
 
       expect(a.ok).toBe(true);

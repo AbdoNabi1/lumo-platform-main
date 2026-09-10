@@ -27,7 +27,7 @@ async function createIssuedInvoice(app: ReturnType<typeof wireLicensing>): Promi
     lineItems: [{ description: "Growth plan", amount: 2900 }],
   });
   const invoiceId = (invoice.body as { id: string }).id;
-  await app.licensing.issueInvoice({ invoiceId });
+  await app.licensing.issueInvoice({ invoiceId, tenantId: "tenant-local" });
   return invoiceId;
 }
 
@@ -74,7 +74,7 @@ describe("Licensing billing adapter injection (M2-3)", () => {
     });
     const invoiceId = await createIssuedInvoice(app);
 
-    const collected = await app.licensing.collectInvoice({ invoiceId });
+    const collected = await app.licensing.collectInvoice({ invoiceId, tenantId: "tenant-local" });
 
     expect(collected.status).toBe(200);
     expect(payments.calls).toEqual([{ tenantRef: "tenant-1", amount: 2900, currency: "USD" }]);
@@ -93,7 +93,9 @@ describe("Licensing billing adapter injection (M2-3)", () => {
     });
     const invoiceId = await createIssuedInvoice(app);
 
-    await expect(app.licensing.collectInvoice({ invoiceId })).rejects.toThrow("card declined");
+    await expect(
+      app.licensing.collectInvoice({ invoiceId, tenantId: "tenant-local" }),
+    ).rejects.toThrow("card declined");
   });
 
   it("falls back to the always-succeeds in-memory stubs only when nothing is injected — unchanged prior behavior", async () => {
@@ -104,7 +106,7 @@ describe("Licensing billing adapter injection (M2-3)", () => {
     });
     const invoiceId = await createIssuedInvoice(app);
 
-    const collected = await app.licensing.collectInvoice({ invoiceId });
+    const collected = await app.licensing.collectInvoice({ invoiceId, tenantId: "tenant-local" });
     expect(collected.status).toBe(200);
   });
 });

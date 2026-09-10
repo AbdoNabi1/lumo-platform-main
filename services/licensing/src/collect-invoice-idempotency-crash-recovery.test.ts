@@ -154,8 +154,8 @@ describe("Task 1 Scenario 1 — identical request repeated sequentially", () => 
     const provider = new RecordingCollectProvider();
     const useCase = buildUseCase(invoices, provider);
 
-    const first = await useCase.execute({ invoiceId: "inv-seq" });
-    const second = await useCase.execute({ invoiceId: "inv-seq" });
+    const first = await useCase.execute({ invoiceId: "inv-seq", tenantId: "tenant-local" });
+    const second = await useCase.execute({ invoiceId: "inv-seq", tenantId: "tenant-local" });
 
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
@@ -175,8 +175,8 @@ describe("Task 1 Scenario 2 — identical request concurrently", () => {
       const useCaseB = buildUseCase(invoices, provider);
 
       const [a, b] = await Promise.all([
-        useCaseA.execute({ invoiceId: "inv-conc" }),
-        useCaseB.execute({ invoiceId: "inv-conc" }),
+        useCaseA.execute({ invoiceId: "inv-conc", tenantId: "tenant-local" }),
+        useCaseB.execute({ invoiceId: "inv-conc", tenantId: "tenant-local" }),
       ]);
 
       expect(a.ok).toBe(true);
@@ -202,8 +202,8 @@ describe("Task 9 sweep finding — Finance is posted exactly once under concurre
       const useCaseB = buildUseCase(invoices, provider, finance);
 
       const [a, b] = await Promise.all([
-        useCaseA.execute({ invoiceId: "inv-finance-race" }),
-        useCaseB.execute({ invoiceId: "inv-finance-race" }),
+        useCaseA.execute({ invoiceId: "inv-finance-race", tenantId: "tenant-local" }),
+        useCaseB.execute({ invoiceId: "inv-finance-race", tenantId: "tenant-local" }),
       ]);
 
       expect(a.ok).toBe(true);
@@ -227,7 +227,7 @@ describe("Task 1 Scenario 3 — first attempt succeeds", () => {
     const finance = new RecordingFinanceLedger();
     const useCase = buildUseCase(invoices, provider, finance);
 
-    const result = await useCase.execute({ invoiceId: "inv-happy" });
+    const result = await useCase.execute({ invoiceId: "inv-happy", tenantId: "tenant-local" });
 
     expect(result.ok).toBe(true);
     expect(provider.realEffects).toBe(1);
@@ -257,9 +257,9 @@ describe("Task 1 Scenario 4 / Task 3 — crash after PSP success, before settle(
 
     // First attempt: the PSP call succeeds for real, then the process "crashes" exactly as
     // settleSuccess() tries to commit — the durable write never happens.
-    await expect(crashingUseCase.execute({ invoiceId: "inv-crash" })).rejects.toThrow(
-      /simulated process crash/,
-    );
+    await expect(
+      crashingUseCase.execute({ invoiceId: "inv-crash", tenantId: "tenant-local" }),
+    ).rejects.toThrow(/simulated process crash/);
 
     const afterCrash = await invoices.findById("inv-crash");
     expect(afterCrash?.status).toBe("issued"); // unchanged — the crash pre-empted the commit
@@ -267,7 +267,10 @@ describe("Task 1 Scenario 4 / Task 3 — crash after PSP success, before settle(
 
     // Retry: a fresh process (fresh use-case instance, working repository) re-attempts the SAME invoice.
     const retryUseCase = buildUseCase(invoices, provider);
-    const retried = await retryUseCase.execute({ invoiceId: "inv-crash" });
+    const retried = await retryUseCase.execute({
+      invoiceId: "inv-crash",
+      tenantId: "tenant-local",
+    });
 
     expect(retried.ok).toBe(true);
     expect(provider.calls.length).toBeGreaterThanOrEqual(2); // the PSP WAS called again on retry...
@@ -286,9 +289,9 @@ describe("Task 1 Scenario 5 — retry after a genuine PSP failure (not a crash)"
     const failingProvider = new RecordingCollectProvider(true);
     const failingUseCase = buildUseCase(invoices, failingProvider);
 
-    await expect(failingUseCase.execute({ invoiceId: "inv-retry" })).rejects.toThrow(
-      /simulated PSP collect failure/,
-    );
+    await expect(
+      failingUseCase.execute({ invoiceId: "inv-retry", tenantId: "tenant-local" }),
+    ).rejects.toThrow(/simulated PSP collect failure/);
     const afterFailure = await invoices.findById("inv-retry");
     expect(afterFailure?.status).toBe("failed");
     const failedKey = failingProvider.calls[0]?.idempotencyKey;
@@ -303,7 +306,10 @@ describe("Task 1 Scenario 5 — retry after a genuine PSP failure (not a crash)"
 
     const workingProvider = new RecordingCollectProvider();
     const retryUseCase = buildUseCase(invoices, workingProvider);
-    const retried = await retryUseCase.execute({ invoiceId: "inv-retry" });
+    const retried = await retryUseCase.execute({
+      invoiceId: "inv-retry",
+      tenantId: "tenant-local",
+    });
 
     expect(retried.ok).toBe(true);
     const newKey = workingProvider.calls[0]?.idempotencyKey;
@@ -334,7 +340,7 @@ describe("Task 1 Scenario 6 — conflicting collection request", () => {
 
     const provider = new RecordingCollectProvider();
     const useCase = buildUseCase(invoices, provider);
-    const result = await useCase.execute({ invoiceId: "inv-conflict" });
+    const result = await useCase.execute({ invoiceId: "inv-conflict", tenantId: "tenant-local" });
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("BUSINESS_RULE");

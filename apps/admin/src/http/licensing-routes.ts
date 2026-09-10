@@ -69,7 +69,8 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a plan",
       schema: { body: createPlanBody },
-      handle: ({ body, context }) => admin.licensing.createPlan(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.licensing.createPlan(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -80,7 +81,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Create a plan draft version",
       schema: { params: planIdParams, body: createPlanDraftBody },
       handle: ({ params, body, context }) =>
-        admin.licensing.createPlanDraft(context.principal, { ...params, ...body }),
+        admin.licensing.createPlanDraft(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -91,7 +96,10 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Publish a plan version",
       schema: { params: planVersionParams },
       handle: ({ params, context }) =>
-        admin.licensing.publishPlanVersion(context.principal, params),
+        admin.licensing.publishPlanVersion(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -101,7 +109,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Roll back the published plan version pointer",
       schema: { params: planVersionParams },
-      handle: ({ params, context }) => admin.licensing.rollbackPlan(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.licensing.rollbackPlan(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -111,7 +123,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Start a subscription",
       schema: { body: createSubscriptionBody },
-      handle: ({ body, context }) => admin.licensing.createSubscription(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.licensing.createSubscription(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -122,7 +138,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Re-pin a subscription to a different plan version",
       schema: { params: subscriptionIdParams, body: repinSubscriptionBody },
       handle: ({ params, body, context }) =>
-        admin.licensing.repinSubscription(context.principal, { ...params, ...body }),
+        admin.licensing.repinSubscription(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -133,7 +153,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Cancel a subscription",
       schema: { params: subscriptionIdParams, body: cancelSubscriptionBody },
       handle: ({ params, body, context }) =>
-        admin.licensing.cancelSubscription(context.principal, { ...params, ...body }),
+        admin.licensing.cancelSubscription(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -144,7 +168,10 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Set the legacy merchant feature override",
       schema: { body: setMerchantFeatureOverrideBody },
       handle: ({ body, context }) =>
-        admin.licensing.setMerchantFeatureOverride(context.principal, body),
+        admin.licensing.setMerchantFeatureOverride(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -155,7 +182,10 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Grant a merchant capability",
       schema: { body: grantMerchantCapabilityBody },
       handle: ({ body, context }) =>
-        admin.licensing.grantMerchantCapability(context.principal, body),
+        admin.licensing.grantMerchantCapability(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -165,7 +195,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Read a tenant's current usage for one resource",
       schema: { querystring: usageCounterQuery },
-      handle: ({ query, context }) => admin.licensing.getUsageCounter(context.principal, query),
+      handle: ({ query, context }) =>
+        admin.licensing.getUsageCounter(context.principal, {
+          ...query,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -185,7 +219,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Collect an issued invoice through Payments and post to Finance",
       schema: { params: invoiceIdParams },
-      handle: ({ params, context }) => admin.licensing.collectInvoice(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.licensing.collectInvoice(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
