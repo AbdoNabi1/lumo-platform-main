@@ -79,7 +79,8 @@ export function loyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Open a loyalty account for a customer",
       schema: { body: openAccountBody },
-      handle: ({ body, context }) => admin.loyalty.open(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.loyalty.open(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -90,7 +91,11 @@ export function loyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Advance an account's status (suspend/reactivate/close)",
       schema: { params: accountIdParams, body: advanceAccountBody },
       handle: ({ params, body, context }) =>
-        admin.loyalty.advance(context.principal, { accountId: params.accountId, ...body }),
+        admin.loyalty.advance(context.principal, {
+          accountId: params.accountId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -101,7 +106,11 @@ export function loyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Earn points (idempotent by idempotencyKey)",
       schema: { params: accountIdParams, body: ledgerBody },
       handle: ({ params, body, context }) =>
-        admin.loyalty.earn(context.principal, { accountId: params.accountId, ...body }),
+        admin.loyalty.earn(context.principal, {
+          accountId: params.accountId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -112,7 +121,11 @@ export function loyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Spend points (idempotent by idempotencyKey)",
       schema: { params: accountIdParams, body: ledgerBody },
       handle: ({ params, body, context }) =>
-        admin.loyalty.spend(context.principal, { accountId: params.accountId, ...body }),
+        admin.loyalty.spend(context.principal, {
+          accountId: params.accountId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -123,7 +136,11 @@ export function loyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Record a cashback earning (idempotent by idempotencyKey)",
       schema: { params: accountIdParams, body: ledgerBody },
       handle: ({ params, body, context }) =>
-        admin.loyalty.cashback(context.principal, { accountId: params.accountId, ...body }),
+        admin.loyalty.cashback(context.principal, {
+          accountId: params.accountId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -134,7 +151,11 @@ export function loyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Redeem a catalog reward for points (idempotent by idempotencyKey)",
       schema: { params: accountIdParams, body: redeemRewardBody },
       handle: ({ params, body, context }) =>
-        admin.loyalty.redeem(context.principal, { accountId: params.accountId, ...body }),
+        admin.loyalty.redeem(context.principal, {
+          accountId: params.accountId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -145,7 +166,11 @@ export function loyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Complete a referral bonus (idempotent by idempotencyKey)",
       schema: { params: accountIdParams, body: completeReferralBody },
       handle: ({ params, body, context }) =>
-        admin.loyalty.referral(context.principal, { accountId: params.accountId, ...body }),
+        admin.loyalty.referral(context.principal, {
+          accountId: params.accountId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -155,7 +180,10 @@ export function loyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List loyalty accounts (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.loyalty.list(context.principal, query), toLoyaltyAccountDto),
+        mapPage(
+          await admin.loyalty.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toLoyaltyAccountDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -165,7 +193,10 @@ export function loyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one loyalty account by id — the points balance is the whole point",
       schema: { params: accountIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.loyalty.get(context.principal, params);
+        const response = await admin.loyalty.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toLoyaltyAccountDto(response.body as LoyaltyAccount) };
       },

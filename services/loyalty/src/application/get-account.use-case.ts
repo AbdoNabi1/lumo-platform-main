@@ -18,7 +18,7 @@ export class GetAccount implements UseCase<AccountIdInput, LoyaltyAccount, Domai
   }
 
   async execute(input: AccountIdInput): Promise<Result<LoyaltyAccount, DomainError>> {
-    const account = await this.deps.accounts.findById(input.accountId);
+    const account = await this.deps.accounts.findById(input.accountId, input.tenantId);
     return account === null ? err(new NotFoundError("Loyalty account not found")) : ok(account);
   }
 }

@@ -432,7 +432,10 @@ describe("admin wiring (end to end)", () => {
   it("drives the Loyalty screen through open, earn, spend, cashback, redeem, referral, and advance", async () => {
     const admin = wire();
 
-    const opened = await admin.loyalty.open(staff, { customerRef: "customer-1" });
+    const opened = await admin.loyalty.open(staff, {
+      customerRef: "customer-1",
+      tenantId: "tenant-1",
+    });
     expect(opened.status).toBe(201);
     const accountId = (opened.body as { accountId: string }).accountId;
 
@@ -441,6 +444,7 @@ describe("admin wiring (end to end)", () => {
       idempotencyKey: "earn-1",
       points: 1000,
       ref: "order-1",
+      tenantId: "tenant-1",
     });
     expect(earned.status).toBe(200);
     expect((earned.body as { balance: number }).balance).toBe(1000);
@@ -450,6 +454,7 @@ describe("admin wiring (end to end)", () => {
       idempotencyKey: "spend-1",
       points: 200,
       ref: "redemption-1",
+      tenantId: "tenant-1",
     });
     expect(spent.status).toBe(200);
     expect((spent.body as { balance: number }).balance).toBe(800);
@@ -459,6 +464,7 @@ describe("admin wiring (end to end)", () => {
       idempotencyKey: "cashback-1",
       points: 50,
       ref: "order-2",
+      tenantId: "tenant-1",
     });
     expect(cashback.status).toBe(200);
 
@@ -468,6 +474,7 @@ describe("admin wiring (end to end)", () => {
       rewardRef: "reward-1",
       rewardName: "$10 off",
       costPoints: 500,
+      tenantId: "tenant-1",
     });
     expect(redeemed.status).toBe(200);
 
@@ -476,12 +483,14 @@ describe("admin wiring (end to end)", () => {
       idempotencyKey: "referral-1",
       bonusPoints: 100,
       referredCustomerRef: "customer-2",
+      tenantId: "tenant-1",
     });
     expect(referral.status).toBe(200);
 
     const suspended = await admin.loyalty.advance(staff, {
       accountId,
       toStatus: "suspended",
+      tenantId: "tenant-1",
     });
     expect(suspended.status).toBe(200);
     expect((suspended.body as { status: string }).status).toBe("suspended");

@@ -39,10 +39,10 @@ describe("Loyalty read use-cases (Phase 4 T4.4)", () => {
     const h = harness();
     const open = new OpenAccount(h);
     for (let i = 0; i < 3; i += 1) {
-      await open.execute({ customerRef: `customer-${i}` });
+      await open.execute({ customerRef: `customer-${i}`, tenantId: "tenant-1" });
     }
 
-    const page = await new ListAccounts(h).execute({ first: 2 });
+    const page = await new ListAccounts(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -51,6 +51,7 @@ describe("Loyalty read use-cases (Phase 4 T4.4)", () => {
     const rest = await new ListAccounts(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -60,17 +61,23 @@ describe("Loyalty read use-cases (Phase 4 T4.4)", () => {
 
   it("GetAccount returns the account (with its balance), or NotFoundError when absent", async () => {
     const h = harness();
-    const opened = await new OpenAccount(h).execute({ customerRef: "customer-1" });
+    const opened = await new OpenAccount(h).execute({
+      customerRef: "customer-1",
+      tenantId: "tenant-1",
+    });
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
 
-    const found = await new GetAccount(h).execute({ accountId: opened.value.accountId });
+    const found = await new GetAccount(h).execute({
+      accountId: opened.value.accountId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.id.toString()).toBe(opened.value.accountId);
     expect(found.value.points.balance).toBe(0);
 
-    const missing = await new GetAccount(h).execute({ accountId: "nope" });
+    const missing = await new GetAccount(h).execute({ accountId: "nope", tenantId: "tenant-1" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");
@@ -78,17 +85,26 @@ describe("Loyalty read use-cases (Phase 4 T4.4)", () => {
 
   it("GetAccountByCustomer returns the customer's own account, or NotFoundError when they have none (T5.19)", async () => {
     const h = harness();
-    const opened = await new OpenAccount(h).execute({ customerRef: "customer-1" });
+    const opened = await new OpenAccount(h).execute({
+      customerRef: "customer-1",
+      tenantId: "tenant-1",
+    });
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
 
-    const found = await new GetAccountByCustomer(h).execute({ customerRef: "customer-1" });
+    const found = await new GetAccountByCustomer(h).execute({
+      customerRef: "customer-1",
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.id.toString()).toBe(opened.value.accountId);
     expect(found.value.customerRef).toBe("customer-1");
 
-    const missing = await new GetAccountByCustomer(h).execute({ customerRef: "customer-none" });
+    const missing = await new GetAccountByCustomer(h).execute({
+      customerRef: "customer-none",
+      tenantId: "tenant-1",
+    });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

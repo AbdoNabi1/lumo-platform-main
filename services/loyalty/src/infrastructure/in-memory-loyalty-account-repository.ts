@@ -25,11 +25,11 @@ export class InMemoryLoyaltyAccountRepository implements LoyaltyAccountRepositor
     await this.outbox.write(account.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<LoyaltyAccount | null> {
+  async findById(id: string, _tenantId: string): Promise<LoyaltyAccount | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByCustomerRef(customerRef: string): Promise<LoyaltyAccount | null> {
+  async findByCustomerRef(customerRef: string, _tenantId: string): Promise<LoyaltyAccount | null> {
     for (const account of this.store.values()) {
       if (account.customerRef === customerRef) return account;
     }
@@ -37,7 +37,7 @@ export class InMemoryLoyaltyAccountRepository implements LoyaltyAccountRepositor
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<LoyaltyAccount>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<LoyaltyAccount>> {
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );

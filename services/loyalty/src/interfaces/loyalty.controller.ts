@@ -1,10 +1,9 @@
-import type { CursorPage } from "@platform/types";
 import type { GetAccount } from "../application/get-account.use-case";
 import type {
   GetAccountByCustomer,
   GetAccountByCustomerInput,
 } from "../application/get-account-by-customer.use-case";
-import type { ListAccounts } from "../application/list-accounts.use-case";
+import type { ListAccounts, ListAccountsInput } from "../application/list-accounts.use-case";
 import type {
   AccountIdInput,
   AdvanceAccount,
@@ -71,7 +70,7 @@ export class LoyaltyController {
     return present(await this.deps.completeReferral.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListAccountsInput): Promise<ControllerResponse> {
     return present(await this.deps.listAccounts.execute(input), 200);
   }
 

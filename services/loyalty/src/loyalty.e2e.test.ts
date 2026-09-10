@@ -19,7 +19,7 @@ function wire() {
 }
 
 async function newAccountId(app: ReturnType<typeof wire>): Promise<string> {
-  const opened = await app.loyalty.open({ customerRef: "customer-1" });
+  const opened = await app.loyalty.open({ customerRef: "customer-1", tenantId: "tenant-local" });
   expect(opened.status).toBe(201);
   return (opened.body as { accountId: string }).accountId;
 }
@@ -34,6 +34,7 @@ describe("loyalty (end to end)", () => {
       idempotencyKey: "idem-1",
       points: 600,
       ref: "order-1",
+      tenantId: "tenant-local",
     });
     expect(earned.status).toBe(200);
     expect((earned.body as { tierName: string }).tierName).toBe("silver");
@@ -44,6 +45,7 @@ describe("loyalty (end to end)", () => {
       rewardRef: "reward-1",
       rewardName: "Free shipping",
       costPoints: 100,
+      tenantId: "tenant-local",
     });
     expect(redeemed.status).toBe(200);
     expect((redeemed.body as { balance: number }).balance).toBe(500);
@@ -62,12 +64,14 @@ describe("loyalty (end to end)", () => {
       idempotencyKey: "idem-shared",
       points: 50,
       ref: "order-1",
+      tenantId: "tenant-local",
     });
     const replay = await app.loyalty.earn({
       accountId: id,
       idempotencyKey: "idem-shared",
       points: 50,
       ref: "order-1",
+      tenantId: "tenant-local",
     });
     expect((replay.body as { balance: number }).balance).toBe(50);
   });
@@ -75,7 +79,10 @@ describe("loyalty (end to end)", () => {
   it("rejects opening a second account for the same customer (409)", async () => {
     const app = wire();
     await newAccountId(app);
-    const response = await app.loyalty.open({ customerRef: "customer-1" });
+    const response = await app.loyalty.open({
+      customerRef: "customer-1",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(409);
   });
 
@@ -87,6 +94,7 @@ describe("loyalty (end to end)", () => {
       idempotencyKey: "idem-1",
       points: 10,
       ref: "reward-1",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(409);
   });
@@ -98,6 +106,7 @@ describe("loyalty (end to end)", () => {
       idempotencyKey: "idem-1",
       points: 10,
       ref: "order-1",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(404);
   });

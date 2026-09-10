@@ -81,12 +81,13 @@ export function publicLoyaltyRoutes(admin: WiredAdmin): readonly RouteDefinition
       schema: {},
       handle: async ({ context }): Promise<PageResponse> => {
         const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
-        if (!guarded.ok) return guarded.response as PageResponse;
+        if (!guarded.ok) return guarded.response;
 
         const response = await admin.publicReads.loyalty.getByCustomer({
           customerRef: guarded.session.customerRef,
+          tenantId: context.tenantId,
         });
-        if (response.status < 200 || response.status >= 300) return response as PageResponse;
+        if (response.status < 200 || response.status >= 300) return response;
         return { status: 200, body: toPublicLoyaltyAccountDto(response.body as LoyaltyAccount) };
       },
     }),

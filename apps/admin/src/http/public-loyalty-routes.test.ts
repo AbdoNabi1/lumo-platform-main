@@ -100,7 +100,12 @@ beforeEach(() => {
 });
 
 function loyaltyMe(options: { sessionId?: string } = {}) {
-  return callRoute(publicLoyaltyRoutes(h.admin) as never, "GET", "/public/loyalty/accounts/me", options);
+  return callRoute(
+    publicLoyaltyRoutes(h.admin) as never,
+    "GET",
+    "/public/loyalty/accounts/me",
+    options,
+  );
 }
 
 /** Registers + signs in a customer through the real auth routes, returning a real session id. */
@@ -135,12 +140,14 @@ describe("GET /public/loyalty/accounts/me", () => {
 
   it("returns the caller's own balance, tier, and transactions once an account exists", async () => {
     const { sessionId, customerRef } = await signIn("a@example.com");
-    const opened = (await h.loyalty.loyalty.open({ customerRef })).body as { accountId: string };
+    const opened = (await h.loyalty.loyalty.open({ customerRef, tenantId: "tenant-local" }))
+      .body as { accountId: string };
     await h.loyalty.loyalty.earn({
       accountId: opened.accountId,
       idempotencyKey: "earn-1",
       points: 150,
       ref: "order-1",
+      tenantId: "tenant-local",
     });
 
     const response = await loyaltyMe({ sessionId });
@@ -157,7 +164,7 @@ describe("GET /public/loyalty/accounts/me", () => {
 
   it("never puts the customerRef on the wire", async () => {
     const { sessionId, customerRef } = await signIn("a@example.com");
-    await h.loyalty.loyalty.open({ customerRef });
+    await h.loyalty.loyalty.open({ customerRef, tenantId: "tenant-local" });
 
     const response = await loyaltyMe({ sessionId });
 
@@ -174,7 +181,7 @@ describe("GET /public/loyalty/accounts/me", () => {
 
   it("returns a flat DTO — no LoyaltyAccount aggregate internals reach the wire", async () => {
     const { sessionId, customerRef } = await signIn("a@example.com");
-    await h.loyalty.loyalty.open({ customerRef });
+    await h.loyalty.loyalty.open({ customerRef, tenantId: "tenant-local" });
 
     const serialized = JSON.stringify((await loyaltyMe({ sessionId })).body);
     for (const leak of ["props", "_id", "_domainEvents", "_version"]) {
@@ -185,7 +192,9 @@ describe("GET /public/loyalty/accounts/me", () => {
   it("keeps two customers' balances completely separate", async () => {
     const a = await signIn("a@example.com");
     const b = await signIn("b@example.com");
-    const openedA = (await h.loyalty.loyalty.open({ customerRef: a.customerRef })).body as {
+    const openedA = (
+      await h.loyalty.loyalty.open({ customerRef: a.customerRef, tenantId: "tenant-local" })
+    ).body as {
       accountId: string;
     };
     await h.loyalty.loyalty.earn({
@@ -193,6 +202,7 @@ describe("GET /public/loyalty/accounts/me", () => {
       idempotencyKey: "earn-a",
       points: 300,
       ref: "order-a",
+      tenantId: "tenant-local",
     });
     // B never opens an account at all.
 
@@ -206,8 +216,10 @@ describe("GET /public/loyalty/accounts/me", () => {
 
   it("stops reaching the balance the moment the session is revoked", async () => {
     const { sessionId, customerRef } = await signIn("a@example.com");
-    await h.loyalty.loyalty.open({ customerRef });
-    await callRoute(publicAuthRoutes(h.admin) as never, "POST", "/public/auth/logout", { sessionId });
+    await h.loyalty.loyalty.open({ customerRef, tenantId: "tenant-local" });
+    await callRoute(publicAuthRoutes(h.admin) as never, "POST", "/public/auth/logout", {
+      sessionId,
+    });
 
     expect((await loyaltyMe({ sessionId })).status).toBe(401);
   });
