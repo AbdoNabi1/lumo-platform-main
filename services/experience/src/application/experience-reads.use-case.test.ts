@@ -37,10 +37,14 @@ describe("Experience read use-cases (Phase 4 T4.10)", () => {
     const h = harness();
     const create = new CreateExperience(h);
     for (let i = 0; i < 3; i += 1) {
-      await create.execute({ name: `Page ${i}`, experienceType: "storefront" });
+      await create.execute({
+        name: `Page ${i}`,
+        experienceType: "storefront",
+        tenantId: "tenant-1",
+      });
     }
 
-    const page = await new ListExperiences(h).execute({ first: 2 });
+    const page = await new ListExperiences(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -49,6 +53,7 @@ describe("Experience read use-cases (Phase 4 T4.10)", () => {
     const rest = await new ListExperiences(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -61,18 +66,23 @@ describe("Experience read use-cases (Phase 4 T4.10)", () => {
     const created = await new CreateExperience(h).execute({
       name: "Homepage",
       experienceType: "storefront",
+      tenantId: "tenant-1",
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
     const found = await new GetExperience(h).execute({
       experienceId: created.value.experienceId,
+      tenantId: "tenant-1",
     });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.name).toBe("Homepage");
 
-    const missing = await new GetExperience(h).execute({ experienceId: "nope" });
+    const missing = await new GetExperience(h).execute({
+      experienceId: "nope",
+      tenantId: "tenant-1",
+    });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

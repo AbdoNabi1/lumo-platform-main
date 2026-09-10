@@ -25,11 +25,11 @@ export class InMemoryExperienceRepository implements ExperienceRepository {
     await this.outbox.write(experience.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Experience | null> {
+  async findById(id: string, _tenantId: string): Promise<Experience | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<Experience | null> {
+  async findByName(name: string, _tenantId: string): Promise<Experience | null> {
     for (const experience of this.store.values()) {
       if (experience.name === name) return experience;
     }
@@ -37,7 +37,7 @@ export class InMemoryExperienceRepository implements ExperienceRepository {
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<Experience>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Experience>> {
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );

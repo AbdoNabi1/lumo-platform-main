@@ -19,6 +19,7 @@ export interface ExperienceDeps {
 export interface CreateExperienceInput {
   readonly name: string;
   readonly experienceType: string;
+  readonly tenantId: string;
 }
 
 export interface ExperienceStatusOutput {
@@ -45,7 +46,7 @@ export class CreateExperience implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<ExperienceStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.experiences.findByName(input.name, tx);
+      const existing = await this.deps.experiences.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Experience "${input.name}" already exists`));
       }
@@ -59,6 +60,7 @@ export class CreateExperience implements UseCase<
 
 export interface ExperienceIdInput {
   readonly experienceId: string;
+  readonly tenantId: string;
 }
 
 export interface AdvanceExperienceInput extends ExperienceIdInput {
@@ -81,7 +83,11 @@ export class AdvanceExperience implements UseCase<
     input: AdvanceExperienceInput,
   ): Promise<Result<ExperienceStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ExperienceStatusOutput, DomainError>>(async (tx) => {
-      const experience = await this.deps.experiences.findById(input.experienceId, tx);
+      const experience = await this.deps.experiences.findById(
+        input.experienceId,
+        input.tenantId,
+        tx,
+      );
       if (experience === null) return err(new NotFoundError("Experience not found"));
 
       try {
@@ -119,7 +125,11 @@ export class UpdateCanvas implements UseCase<
 
   async execute(input: UpdateCanvasInput): Promise<Result<ExperienceStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ExperienceStatusOutput, DomainError>>(async (tx) => {
-      const experience = await this.deps.experiences.findById(input.experienceId, tx);
+      const experience = await this.deps.experiences.findById(
+        input.experienceId,
+        input.tenantId,
+        tx,
+      );
       if (experience === null) return err(new NotFoundError("Experience not found"));
 
       try {

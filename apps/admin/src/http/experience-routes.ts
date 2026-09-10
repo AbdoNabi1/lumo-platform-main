@@ -57,7 +57,8 @@ export function experienceRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Create an experience layout",
       schema: { body: createExperienceBody },
-      handle: ({ body, context }) => admin.experience.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.experience.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -68,7 +69,11 @@ export function experienceRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "Advance an experience's status",
       schema: { params: experienceIdParams, body: advanceExperienceBody },
       handle: ({ params, body, context }) =>
-        admin.experience.advance(context.principal, { experienceId: params.experienceId, ...body }),
+        admin.experience.advance(context.principal, {
+          experienceId: params.experienceId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "PUT",
@@ -82,6 +87,7 @@ export function experienceRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
         admin.experience.updateCanvas(context.principal, {
           experienceId: params.experienceId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -92,7 +98,13 @@ export function experienceRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "List experiences (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.experience.list(context.principal, query), toExperienceDto),
+        mapPage(
+          await admin.experience.list(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toExperienceDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -102,7 +114,10 @@ export function experienceRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "Get one experience by id",
       schema: { params: experienceIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.experience.get(context.principal, params);
+        const response = await admin.experience.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toExperienceDto(response.body as Experience) };
       },

@@ -1,4 +1,3 @@
-import type { CursorPage } from "@platform/types";
 import type {
   AdvanceExperience,
   AdvanceExperienceInput,
@@ -9,7 +8,10 @@ import type {
   UpdateCanvasInput,
 } from "../application/experience.use-cases";
 import type { GetExperience } from "../application/get-experience.use-case";
-import type { ListExperiences } from "../application/list-experiences.use-case";
+import type {
+  ListExperiences,
+  ListExperiencesInput,
+} from "../application/list-experiences.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface ExperienceControllerDeps {
@@ -40,7 +42,7 @@ export class ExperienceController {
     return present(await this.deps.updateCanvas.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListExperiencesInput): Promise<ControllerResponse> {
     return present(await this.deps.listExperiences.execute(input), 200);
   }
 
