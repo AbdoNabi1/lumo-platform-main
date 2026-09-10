@@ -12,6 +12,7 @@ import type { IndexProviderPort } from "./ports";
 
 export interface CreateIndexInput {
   readonly name: string;
+  readonly tenantId: string;
 }
 
 export interface IndexStatusOutput {
@@ -22,6 +23,7 @@ export interface IndexStatusOutput {
 
 export interface IndexIdInput {
   readonly indexId: string;
+  readonly tenantId: string;
 }
 
 export interface SearchDeps {
@@ -77,7 +79,7 @@ export class CreateIndex implements UseCase<CreateIndexInput, IndexStatusOutput,
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<IndexStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.indexes.findByName(input.name, tx);
+      const existing = await this.deps.indexes.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Search index "${input.name}" already exists`));
       }
@@ -103,7 +105,7 @@ export class AdvanceIndex implements UseCase<AdvanceIndexInput, IndexStatusOutpu
 
   async execute(input: AdvanceIndexInput): Promise<Result<IndexStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IndexStatusOutput, DomainError>>(async (tx) => {
-      const index = await this.deps.indexes.findById(input.indexId, tx);
+      const index = await this.deps.indexes.findById(input.indexId, input.tenantId, tx);
       if (index === null) return err(new NotFoundError("Search index not found"));
 
       try {
@@ -172,7 +174,7 @@ export class UpsertDocument implements UseCase<
   }
 
   async execute(input: UpsertDocumentInput): Promise<Result<IndexStatusOutput, DomainError>> {
-    const precheck = await this.precheck(input.indexId);
+    const precheck = await this.precheck(input.indexId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
 
     const document = SearchDocument.create(
@@ -183,12 +185,12 @@ export class UpsertDocument implements UseCase<
     );
     await this.deps.provider.upsert(document);
 
-    return this.settle(input.indexId, input.productRef);
+    return this.settle(input.indexId, input.productRef, input.tenantId);
   }
 
-  private async precheck(indexId: string): Promise<Result<void, DomainError>> {
+  private async precheck(indexId: string, tenantId: string): Promise<Result<void, DomainError>> {
     return this.deps.unitOfWork.run<Result<void, DomainError>>(async (tx) => {
-      const index = await this.deps.indexes.findById(indexId, tx);
+      const index = await this.deps.indexes.findById(indexId, tenantId, tx);
       if (index === null) return err(new NotFoundError("Search index not found"));
       return ok(undefined);
     });
@@ -197,10 +199,11 @@ export class UpsertDocument implements UseCase<
   private async settle(
     indexId: string,
     productRef: string,
+    tenantId: string,
   ): Promise<Result<IndexStatusOutput, DomainError>> {
     return withConcurrencyRetry(UpsertDocument.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<IndexStatusOutput, DomainError>>(async (tx) => {
-        const index = await this.deps.indexes.findById(indexId, tx);
+        const index = await this.deps.indexes.findById(indexId, tenantId, tx);
         if (index === null) return err(new NotFoundError("Search index not found"));
 
         try {
@@ -253,17 +256,17 @@ export class DeleteDocument implements UseCase<
   }
 
   async execute(input: DeleteDocumentInput): Promise<Result<IndexStatusOutput, DomainError>> {
-    const precheck = await this.precheck(input.indexId);
+    const precheck = await this.precheck(input.indexId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
 
     await this.deps.provider.delete(input.productRef);
 
-    return this.settle(input.indexId, input.productRef);
+    return this.settle(input.indexId, input.productRef, input.tenantId);
   }
 
-  private async precheck(indexId: string): Promise<Result<void, DomainError>> {
+  private async precheck(indexId: string, tenantId: string): Promise<Result<void, DomainError>> {
     return this.deps.unitOfWork.run<Result<void, DomainError>>(async (tx) => {
-      const index = await this.deps.indexes.findById(indexId, tx);
+      const index = await this.deps.indexes.findById(indexId, tenantId, tx);
       if (index === null) return err(new NotFoundError("Search index not found"));
       return ok(undefined);
     });
@@ -272,10 +275,11 @@ export class DeleteDocument implements UseCase<
   private async settle(
     indexId: string,
     productRef: string,
+    tenantId: string,
   ): Promise<Result<IndexStatusOutput, DomainError>> {
     return withConcurrencyRetry(DeleteDocument.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<IndexStatusOutput, DomainError>>(async (tx) => {
-        const index = await this.deps.indexes.findById(indexId, tx);
+        const index = await this.deps.indexes.findById(indexId, tenantId, tx);
         if (index === null) return err(new NotFoundError("Search index not found"));
 
         try {
@@ -311,7 +315,7 @@ export class AddSynonym implements UseCase<SynonymInput, IndexStatusOutput, Doma
 
   async execute(input: SynonymInput): Promise<Result<IndexStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IndexStatusOutput, DomainError>>(async (tx) => {
-      const index = await this.deps.indexes.findById(input.indexId, tx);
+      const index = await this.deps.indexes.findById(input.indexId, input.tenantId, tx);
       if (index === null) return err(new NotFoundError("Search index not found"));
 
       index.addSynonym(
@@ -336,7 +340,7 @@ export class RemoveSynonym implements UseCase<SynonymInput, IndexStatusOutput, D
 
   async execute(input: SynonymInput): Promise<Result<IndexStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IndexStatusOutput, DomainError>>(async (tx) => {
-      const index = await this.deps.indexes.findById(input.indexId, tx);
+      const index = await this.deps.indexes.findById(input.indexId, input.tenantId, tx);
       if (index === null) return err(new NotFoundError("Search index not found"));
 
       index.removeSynonym(input.term, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -360,7 +364,7 @@ export class AddSuggestion implements UseCase<SuggestionInput, IndexStatusOutput
 
   async execute(input: SuggestionInput): Promise<Result<IndexStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IndexStatusOutput, DomainError>>(async (tx) => {
-      const index = await this.deps.indexes.findById(input.indexId, tx);
+      const index = await this.deps.indexes.findById(input.indexId, input.tenantId, tx);
       if (index === null) return err(new NotFoundError("Search index not found"));
 
       index.addSuggestion(input.term, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -384,7 +388,7 @@ export class LogQuery implements UseCase<LogQueryInput, IndexStatusOutput, Domai
 
   async execute(input: LogQueryInput): Promise<Result<IndexStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IndexStatusOutput, DomainError>>(async (tx) => {
-      const index = await this.deps.indexes.findById(input.indexId, tx);
+      const index = await this.deps.indexes.findById(input.indexId, input.tenantId, tx);
       if (index === null) return err(new NotFoundError("Search index not found"));
 
       index.logQuery(input.term, this.deps.idGenerator.generate(), this.deps.clock.now());

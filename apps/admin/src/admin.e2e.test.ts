@@ -544,7 +544,7 @@ describe("admin wiring (end to end)", () => {
   it("drives the Search screen through create, upsert/delete document, synonyms, suggestion, log-query, and advance", async () => {
     const admin = wire();
 
-    const created = await admin.search.create(staff, { name: "products" });
+    const created = await admin.search.create(staff, { name: "products", tenantId: "tenant-1" });
     expect(created.status).toBe(201);
     const indexId = (created.body as { indexId: string }).indexId;
 
@@ -553,6 +553,7 @@ describe("admin wiring (end to end)", () => {
       productRef: "product-1",
       title: "Toy Wagon",
       categoryRefs: ["toys"],
+      tenantId: "tenant-1",
     });
     expect(upserted.status).toBe(200);
     expect((upserted.body as { documentCount: number }).documentCount).toBe(1);
@@ -561,23 +562,44 @@ describe("admin wiring (end to end)", () => {
       indexId,
       term: "wagon",
       synonyms: ["cart"],
+      tenantId: "tenant-1",
     });
     expect(synonymAdded.status).toBe(200);
 
-    const synonymRemoved = await admin.search.removeSynonym(staff, { indexId, term: "wagon" });
+    const synonymRemoved = await admin.search.removeSynonym(staff, {
+      indexId,
+      term: "wagon",
+      tenantId: "tenant-1",
+    });
     expect(synonymRemoved.status).toBe(200);
 
-    const suggested = await admin.search.addSuggestion(staff, { indexId, term: "wagon" });
+    const suggested = await admin.search.addSuggestion(staff, {
+      indexId,
+      term: "wagon",
+      tenantId: "tenant-1",
+    });
     expect(suggested.status).toBe(200);
 
-    const logged = await admin.search.logQuery(staff, { indexId, term: "wagon" });
+    const logged = await admin.search.logQuery(staff, {
+      indexId,
+      term: "wagon",
+      tenantId: "tenant-1",
+    });
     expect(logged.status).toBe(200);
 
-    const deleted = await admin.search.deleteDocument(staff, { indexId, productRef: "product-1" });
+    const deleted = await admin.search.deleteDocument(staff, {
+      indexId,
+      productRef: "product-1",
+      tenantId: "tenant-1",
+    });
     expect(deleted.status).toBe(200);
     expect((deleted.body as { documentCount: number }).documentCount).toBe(0);
 
-    const disabled = await admin.search.advance(staff, { indexId, toStatus: "disabled" });
+    const disabled = await admin.search.advance(staff, {
+      indexId,
+      toStatus: "disabled",
+      tenantId: "tenant-1",
+    });
     expect(disabled.status).toBe(200);
     expect((disabled.body as { status: string }).status).toBe("disabled");
   });

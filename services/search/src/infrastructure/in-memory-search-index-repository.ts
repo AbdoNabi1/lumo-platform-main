@@ -25,11 +25,11 @@ export class InMemorySearchIndexRepository implements SearchIndexRepository {
     await this.outbox.write(index.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<SearchIndex | null> {
+  async findById(id: string, _tenantId: string): Promise<SearchIndex | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<SearchIndex | null> {
+  async findByName(name: string, _tenantId: string): Promise<SearchIndex | null> {
     for (const index of this.store.values()) {
       if (index.name === name) return index;
     }
@@ -37,7 +37,7 @@ export class InMemorySearchIndexRepository implements SearchIndexRepository {
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<SearchIndex>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<SearchIndex>> {
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );

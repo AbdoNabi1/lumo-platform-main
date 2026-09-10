@@ -21,7 +21,7 @@ function wire(provider = new InMemoryIndexProvider()) {
 }
 
 async function newIndexId(app: ReturnType<typeof wire>): Promise<string> {
-  const created = await app.search.create({ name: "products" });
+  const created = await app.search.create({ name: "products", tenantId: "tenant-local" });
   expect(created.status).toBe(201);
   return (created.body as { indexId: string }).indexId;
 }
@@ -37,13 +37,19 @@ describe("search (end to end)", () => {
       productRef: "product-1",
       title: "Running shoes",
       categoryRefs: ["footwear"],
+      tenantId: "tenant-local",
     });
     expect(upserted.status).toBe(200);
     expect((upserted.body as { documentCount: number }).documentCount).toBe(1);
     expect(provider.indexedDocuments).toHaveLength(1);
 
-    await app.search.addSynonym({ indexId: id, term: "shoe", synonyms: ["sneaker"] });
-    await app.search.logQuery({ indexId: id, term: "running shoes" });
+    await app.search.addSynonym({
+      indexId: id,
+      term: "shoe",
+      synonyms: ["sneaker"],
+      tenantId: "tenant-local",
+    });
+    await app.search.logQuery({ indexId: id, term: "running shoes", tenantId: "tenant-local" });
 
     expect(await app.drainOutbox()).toBeGreaterThan(0);
     expect(app.deliveredEventTypes).toContain("search.document.upserted");
@@ -60,8 +66,13 @@ describe("search (end to end)", () => {
       productRef: "product-1",
       title: "Running shoes",
       categoryRefs: [],
+      tenantId: "tenant-local",
     });
-    const deleted = await app.search.deleteDocument({ indexId: id, productRef: "product-1" });
+    const deleted = await app.search.deleteDocument({
+      indexId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
     expect((deleted.body as { documentCount: number }).documentCount).toBe(0);
     expect(provider.indexedDocuments).toHaveLength(0);
   });
@@ -69,19 +80,23 @@ describe("search (end to end)", () => {
   it("rejects creating a duplicate index name (409)", async () => {
     const app = wire();
     await newIndexId(app);
-    const response = await app.search.create({ name: "products" });
+    const response = await app.search.create({ name: "products", tenantId: "tenant-local" });
     expect(response.status).toBe(409);
   });
 
   it("returns 404 for an unknown index", async () => {
     const app = wire();
-    const response = await app.search.advance({ indexId: "missing", toStatus: "disabled" });
+    const response = await app.search.advance({
+      indexId: "missing",
+      toStatus: "disabled",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(404);
   });
 
   it("rejects an empty index name (422)", async () => {
     const app = wire();
-    const response = await app.search.create({ name: "" });
+    const response = await app.search.create({ name: "", tenantId: "tenant-local" });
     expect(response.status).toBe(422);
   });
 });

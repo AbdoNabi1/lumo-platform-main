@@ -18,7 +18,7 @@ export class GetIndex implements UseCase<IndexIdInput, SearchIndex, DomainError>
   }
 
   async execute(input: IndexIdInput): Promise<Result<SearchIndex, DomainError>> {
-    const index = await this.deps.indexes.findById(input.indexId);
+    const index = await this.deps.indexes.findById(input.indexId, input.tenantId);
     return index === null ? err(new NotFoundError("Search index not found")) : ok(index);
   }
 }
