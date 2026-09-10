@@ -1,4 +1,3 @@
-import type { CursorPage } from "@platform/types";
 import type {
   AddFeatureRule,
   AddFeatureRuleInput,
@@ -13,7 +12,10 @@ import type {
   SetRolloutPercentageInput,
 } from "../application/feature-flag.use-cases";
 import type { GetFeatureFlag } from "../application/get-feature-flag.use-case";
-import type { ListFeatureFlags } from "../application/list-feature-flags.use-case";
+import type {
+  ListFeatureFlags,
+  ListFeatureFlagsInput,
+} from "../application/list-feature-flags.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface FeatureFlagsControllerDeps {
@@ -54,7 +56,7 @@ export class FeatureFlagsController {
     return present(await this.deps.setEnvironmentOverride.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListFeatureFlagsInput): Promise<ControllerResponse> {
     return present(await this.deps.listFeatureFlags.execute(input), 200);
   }
 

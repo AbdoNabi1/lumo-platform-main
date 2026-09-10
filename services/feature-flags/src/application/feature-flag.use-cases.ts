@@ -14,6 +14,8 @@ export interface CreateFeatureFlagInput {
   readonly key: string;
   readonly name: string;
   readonly description?: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface FlagStatusOutput {
@@ -24,6 +26,8 @@ export interface FlagStatusOutput {
 
 export interface FlagIdInput {
   readonly flagId: string;
+  /** ADR-0014: the caller's verified tenant. Shared by every input extending this one. */
+  readonly tenantId: string;
 }
 
 export interface FeatureFlagDeps {
@@ -58,7 +62,7 @@ export class CreateFeatureFlag implements UseCase<
     if (!key.ok) return err(key.error);
 
     return this.deps.unitOfWork.run<Result<FlagStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.flags.findByKey(input.key, tx);
+      const existing = await this.deps.flags.findByKey(input.key, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Feature flag "${input.key}" already exists`));
       }
@@ -85,7 +89,7 @@ export class AdvanceFlag implements UseCase<AdvanceFlagInput, FlagStatusOutput, 
 
   async execute(input: AdvanceFlagInput): Promise<Result<FlagStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<FlagStatusOutput, DomainError>>(async (tx) => {
-      const flag = await this.deps.flags.findById(input.flagId, tx);
+      const flag = await this.deps.flags.findById(input.flagId, input.tenantId, tx);
       if (flag === null) return err(new NotFoundError("Feature flag not found"));
 
       try {
@@ -125,7 +129,7 @@ export class SetRolloutPercentage implements UseCase<
 
   async execute(input: SetRolloutPercentageInput): Promise<Result<FlagStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<FlagStatusOutput, DomainError>>(async (tx) => {
-      const flag = await this.deps.flags.findById(input.flagId, tx);
+      const flag = await this.deps.flags.findById(input.flagId, input.tenantId, tx);
       if (flag === null) return err(new NotFoundError("Feature flag not found"));
 
       try {
@@ -164,7 +168,7 @@ export class AddFeatureRule implements UseCase<AddFeatureRuleInput, FlagStatusOu
 
   async execute(input: AddFeatureRuleInput): Promise<Result<FlagStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<FlagStatusOutput, DomainError>>(async (tx) => {
-      const flag = await this.deps.flags.findById(input.flagId, tx);
+      const flag = await this.deps.flags.findById(input.flagId, input.tenantId, tx);
       if (flag === null) return err(new NotFoundError("Feature flag not found"));
 
       const rule = FeatureRule.create(input.type, input.values, input.enabled, input.attribute);
@@ -198,7 +202,7 @@ export class SetEnvironmentOverride implements UseCase<
     input: SetEnvironmentOverrideInput,
   ): Promise<Result<FlagStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<FlagStatusOutput, DomainError>>(async (tx) => {
-      const flag = await this.deps.flags.findById(input.flagId, tx);
+      const flag = await this.deps.flags.findById(input.flagId, input.tenantId, tx);
       if (flag === null) return err(new NotFoundError("Feature flag not found"));
 
       const environment = FeatureEnvironment.create(

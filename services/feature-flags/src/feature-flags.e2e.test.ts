@@ -24,6 +24,7 @@ describe("feature-flags (end to end)", () => {
     const created = await app.featureFlags.create({
       key: "new-checkout",
       name: "New checkout flow",
+      tenantId: "tenant-local",
     });
     expect(created.status).toBe(201);
     const flagId = (created.body as { flagId: string }).flagId;
@@ -32,6 +33,7 @@ describe("feature-flags (end to end)", () => {
       flagId,
       percentage: 100,
       changedBy: "admin-1",
+      tenantId: "tenant-local",
     });
     expect(rolled.status).toBe(200);
 
@@ -44,10 +46,24 @@ describe("feature-flags (end to end)", () => {
 
   it("a kill switch disables the flag via the contract too", async () => {
     const app = wire();
-    const created = await app.featureFlags.create({ key: "risky-feature", name: "Risky" });
+    const created = await app.featureFlags.create({
+      key: "risky-feature",
+      name: "Risky",
+      tenantId: "tenant-local",
+    });
     const flagId = (created.body as { flagId: string }).flagId;
-    await app.featureFlags.setRollout({ flagId, percentage: 100, changedBy: "admin-1" });
-    await app.featureFlags.advance({ flagId, toStatus: "killed", changedBy: "admin-1" });
+    await app.featureFlags.setRollout({
+      flagId,
+      percentage: 100,
+      changedBy: "admin-1",
+      tenantId: "tenant-local",
+    });
+    await app.featureFlags.advance({
+      flagId,
+      toStatus: "killed",
+      changedBy: "admin-1",
+      tenantId: "tenant-local",
+    });
 
     const enabled = await app.evaluator.isEnabled("risky-feature", { subjectId: "customer-1" });
     expect(enabled).toBe(false);
@@ -61,8 +77,16 @@ describe("feature-flags (end to end)", () => {
 
   it("rejects creating a duplicate flag key (409)", async () => {
     const app = wire();
-    await app.featureFlags.create({ key: "new-checkout", name: "New checkout flow" });
-    const response = await app.featureFlags.create({ key: "new-checkout", name: "Duplicate" });
+    await app.featureFlags.create({
+      key: "new-checkout",
+      name: "New checkout flow",
+      tenantId: "tenant-local",
+    });
+    const response = await app.featureFlags.create({
+      key: "new-checkout",
+      name: "Duplicate",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(409);
   });
 
@@ -71,12 +95,14 @@ describe("feature-flags (end to end)", () => {
     const created = await app.featureFlags.create({
       key: "new-checkout",
       name: "New checkout flow",
+      tenantId: "tenant-local",
     });
     const flagId = (created.body as { flagId: string }).flagId;
     const response = await app.featureFlags.setRollout({
       flagId,
       percentage: 150,
       changedBy: "admin-1",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(409);
   });

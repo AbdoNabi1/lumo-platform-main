@@ -110,7 +110,8 @@ export function featureFlagsRoutes(admin: WiredAdmin): readonly RouteDefinition[
       idempotent: true,
       summary: "Create a feature flag (active, 0% rollout)",
       schema: { body: createFlagBody },
-      handle: ({ body, context }) => admin.featureFlags.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.featureFlags.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -121,7 +122,11 @@ export function featureFlagsRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Advance a flag's status (kill/revive/archive)",
       schema: { params: flagIdParams, body: advanceFlagBody },
       handle: ({ params, body, context }) =>
-        admin.featureFlags.advance(context.principal, { flagId: params.flagId, ...body }),
+        admin.featureFlags.advance(context.principal, {
+          flagId: params.flagId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -132,7 +137,11 @@ export function featureFlagsRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Set a flag's rollout percentage",
       schema: { params: flagIdParams, body: setRolloutBody },
       handle: ({ params, body, context }) =>
-        admin.featureFlags.setRollout(context.principal, { flagId: params.flagId, ...body }),
+        admin.featureFlags.setRollout(context.principal, {
+          flagId: params.flagId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -142,7 +151,11 @@ export function featureFlagsRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Add a targeting rule to a flag",
       schema: { params: flagIdParams, body: addRuleBody },
       handle: ({ params, body, context }) =>
-        admin.featureFlags.addRule(context.principal, { flagId: params.flagId, ...body }),
+        admin.featureFlags.addRule(context.principal, {
+          flagId: params.flagId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -156,6 +169,7 @@ export function featureFlagsRoutes(admin: WiredAdmin): readonly RouteDefinition[
         admin.featureFlags.setEnvironmentOverride(context.principal, {
           flagId: params.flagId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -166,7 +180,13 @@ export function featureFlagsRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "List feature flags (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.featureFlags.list(context.principal, query), toFeatureFlagDto),
+        mapPage(
+          await admin.featureFlags.list(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toFeatureFlagDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -176,7 +196,10 @@ export function featureFlagsRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Get one feature flag by id",
       schema: { params: flagIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.featureFlags.get(context.principal, params);
+        const response = await admin.featureFlags.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toFeatureFlagDto(response.body as FeatureFlag) };
       },

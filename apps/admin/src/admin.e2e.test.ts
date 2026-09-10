@@ -297,6 +297,7 @@ describe("admin wiring (end to end)", () => {
     const created = await admin.featureFlags.create(staff, {
       key: "new-checkout-flow",
       name: "New checkout flow",
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const flagId = (created.body as { flagId: string }).flagId;
@@ -305,6 +306,7 @@ describe("admin wiring (end to end)", () => {
       flagId,
       percentage: 25,
       changedBy: "staff-1",
+      tenantId: "tenant-1",
     });
     expect(rolledOut.status).toBe(200);
     expect((rolledOut.body as { rolloutPercentage: number }).rolloutPercentage).toBe(25);
@@ -315,6 +317,7 @@ describe("admin wiring (end to end)", () => {
       values: ["tenant-1"],
       enabled: true,
       changedBy: "staff-1",
+      tenantId: "tenant-1",
     });
     expect(ruled.status).toBe(200);
 
@@ -323,6 +326,7 @@ describe("admin wiring (end to end)", () => {
       environment: "staging",
       enabled: true,
       changedBy: "staff-1",
+      tenantId: "tenant-1",
     });
     expect(overridden.status).toBe(200);
 
@@ -330,6 +334,7 @@ describe("admin wiring (end to end)", () => {
       flagId,
       toStatus: "killed",
       changedBy: "staff-1",
+      tenantId: "tenant-1",
     });
     expect(killed.status).toBe(200);
     expect((killed.body as { status: string }).status).toBe("killed");

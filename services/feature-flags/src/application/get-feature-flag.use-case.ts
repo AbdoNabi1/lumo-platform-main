@@ -18,7 +18,7 @@ export class GetFeatureFlag implements UseCase<FlagIdInput, FeatureFlag, DomainE
   }
 
   async execute(input: FlagIdInput): Promise<Result<FeatureFlag, DomainError>> {
-    const flag = await this.deps.flags.findById(input.flagId);
+    const flag = await this.deps.flags.findById(input.flagId, input.tenantId);
     return flag === null ? err(new NotFoundError("Feature flag not found")) : ok(flag);
   }
 }

@@ -25,11 +25,12 @@ export class InMemoryFeatureFlagRepository implements FeatureFlagRepository {
     await this.outbox.write(flag.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<FeatureFlag | null> {
+  /** ADR-0014: `tenantId` accepted for signature parity; this fake has no tenant partitioning. */
+  async findById(id: string, _tenantId: string): Promise<FeatureFlag | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByKey(key: string): Promise<FeatureFlag | null> {
+  async findByKey(key: string, _tenantId: string): Promise<FeatureFlag | null> {
     for (const flag of this.store.values()) {
       if (flag.key === key) return flag;
     }
@@ -37,7 +38,7 @@ export class InMemoryFeatureFlagRepository implements FeatureFlagRepository {
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<FeatureFlag>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<FeatureFlag>> {
     const all = [...this.store.values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );

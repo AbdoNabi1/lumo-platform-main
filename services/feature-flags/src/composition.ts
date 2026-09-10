@@ -102,7 +102,7 @@ export function wireFeatureFlags(deps: FeatureFlagsWiringDeps): WiredFeatureFlag
 
     return {
       featureFlags: buildController(flags, unitOfWork, deps),
-      evaluator: new AggregateFeatureFlags({ flags }),
+      evaluator: new AggregateFeatureFlags({ flags, tenantId }),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -139,7 +139,9 @@ export function wireFeatureFlags(deps: FeatureFlagsWiringDeps): WiredFeatureFlag
 
   return {
     featureFlags: controller,
-    evaluator: new AggregateFeatureFlags({ flags }),
+    // ADR-0014: the in-memory path has no real tenant concept (InMemoryFeatureFlagRepository
+    // ignores tenantId entirely) — a fixed placeholder is harmless here, unlike the Prisma path.
+    evaluator: new AggregateFeatureFlags({ flags, tenantId: "tenant-local" }),
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };
