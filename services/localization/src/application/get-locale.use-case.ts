@@ -6,6 +6,7 @@ import type { LocaleRepository } from "../domain/repositories";
 
 export interface LocaleIdInput {
   readonly localeId: string;
+  readonly tenantId: string;
 }
 
 export interface GetLocaleDeps {
@@ -21,7 +22,7 @@ export class GetLocale implements UseCase<LocaleIdInput, Locale, DomainError> {
   }
 
   async execute(input: LocaleIdInput): Promise<Result<Locale, DomainError>> {
-    const locale = await this.deps.locales.findById(input.localeId);
+    const locale = await this.deps.locales.findById(input.localeId, input.tenantId);
     return locale === null ? err(new NotFoundError("Locale not found")) : ok(locale);
   }
 }

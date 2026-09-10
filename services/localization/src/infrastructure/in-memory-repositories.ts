@@ -38,18 +38,18 @@ export class InMemoryLocaleRepository implements LocaleRepository {
     await this.outbox.write(locale.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Locale | null> {
+  async findById(id: string, _tenantId: string): Promise<Locale | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByCode(code: string): Promise<Locale | null> {
+  async findByCode(code: string, _tenantId: string): Promise<Locale | null> {
     for (const locale of this.store.values()) {
       if (locale.code.value === code) return locale;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<Locale>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Locale>> {
     return paginate([...this.store.values()], page);
   }
 }
@@ -69,13 +69,14 @@ export class InMemoryTranslationSetRepository implements TranslationSetRepositor
     await this.outbox.write(set.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<TranslationSet | null> {
+  async findById(id: string, _tenantId: string): Promise<TranslationSet | null> {
     return this.store.get(id) ?? null;
   }
 
   async findByLocaleAndNamespace(
     localeRef: string,
     namespace: string,
+    _tenantId: string,
   ): Promise<TranslationSet | null> {
     for (const set of this.store.values()) {
       if (set.localeRef === localeRef && set.namespace === namespace) return set;
@@ -83,7 +84,7 @@ export class InMemoryTranslationSetRepository implements TranslationSetRepositor
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<TranslationSet>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<TranslationSet>> {
     return paginate([...this.store.values()], page);
   }
 }

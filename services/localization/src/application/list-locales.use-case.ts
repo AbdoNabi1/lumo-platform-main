@@ -5,19 +5,23 @@ import type { DomainError } from "@platform/utils";
 import type { Locale } from "../domain/locale";
 import type { LocaleRepository } from "../domain/repositories";
 
+export interface ListLocalesInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListLocalesDeps {
   readonly locales: LocaleRepository;
 }
 
 /** Cursor-paginated locale listing. */
-export class ListLocales implements UseCase<CursorPage, Paginated<Locale>, DomainError> {
+export class ListLocales implements UseCase<ListLocalesInput, Paginated<Locale>, DomainError> {
   private readonly deps: ListLocalesDeps;
 
   constructor(deps: ListLocalesDeps) {
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<Locale>, DomainError>> {
-    return ok(await this.deps.locales.list(input));
+  async execute(input: ListLocalesInput): Promise<Result<Paginated<Locale>, DomainError>> {
+    return ok(await this.deps.locales.list(input, input.tenantId));
   }
 }

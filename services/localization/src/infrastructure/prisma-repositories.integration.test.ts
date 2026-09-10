@@ -35,7 +35,12 @@ describe.runIf(Boolean(databaseUrl))("Prisma Localization repositories (integrat
     });
     const context = rootEventContext(ids, tenantId);
     const locales = new PrismaLocaleRepository({ prisma, tenantId, outbox, context });
-    const translationSets = new PrismaTranslationSetRepository({ prisma, tenantId, outbox, context });
+    const translationSets = new PrismaTranslationSetRepository({
+      prisma,
+      tenantId,
+      outbox,
+      context,
+    });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
@@ -58,7 +63,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Localization repositories (integrat
     for (const code of ["en", "fr", "de"]) {
       await saveLocale(newLocale(code));
     }
-    const page = await locales.list({ first: 2 });
+    const page = await locales.list({ first: 2 }, tenantId);
     expect(page.items).toHaveLength(2);
     expect(page.pageInfo.hasNextPage).toBe(true);
     await prisma.$disconnect();
@@ -68,7 +73,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Localization repositories (integrat
     const tenantId = `tenant-itest-translation-sets-${crypto.randomUUID()}`;
     const { prisma, translationSets, saveSet } = wire(tenantId);
     await saveSet(TranslationSet.create(UniqueEntityId.from(ids.generate()), "en", "common"));
-    const page = await translationSets.list({ first: 10 });
+    const page = await translationSets.list({ first: 10 }, tenantId);
     expect(page.items).toHaveLength(1);
     await prisma.$disconnect();
   });

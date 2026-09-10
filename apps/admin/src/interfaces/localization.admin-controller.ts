@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { LocalizationController } from "@platform/localization";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -55,7 +54,10 @@ export class LocalizationAdminController {
     return this.localization.publishTranslation(input);
   }
 
-  async listLocales(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listLocales(
+    principal: Principal,
+    input: Parameters<LocalizationController["listLocales"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "localization:read");
     if (denied) return denied;
     return this.localization.listLocales(input);
@@ -70,7 +72,10 @@ export class LocalizationAdminController {
     return this.localization.getLocale(input);
   }
 
-  async listTranslationSets(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listTranslationSets(
+    principal: Principal,
+    input: Parameters<LocalizationController["listTranslationSets"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "localization:read");
     if (denied) return denied;
     return this.localization.listTranslationSets(input);

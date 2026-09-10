@@ -22,6 +22,7 @@ export interface CreateLocaleInput {
   readonly name: string;
   readonly isDefault: boolean;
   readonly fallbackLocaleRef?: string;
+  readonly tenantId: string;
 }
 
 export interface LocaleOutput {
@@ -44,7 +45,7 @@ export class CreateLocale implements UseCase<CreateLocaleInput, LocaleOutput, Do
     if (!code.ok) return err(code.error);
 
     return this.deps.unitOfWork.run<Result<LocaleOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.locales.findByCode(input.code, tx);
+      const existing = await this.deps.locales.findByCode(input.code, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Locale "${input.code}" already exists`));
       }
@@ -65,6 +66,7 @@ export class CreateLocale implements UseCase<CreateLocaleInput, LocaleOutput, Do
 export interface CreateTranslationSetInput {
   readonly localeRef: string;
   readonly namespace: string;
+  readonly tenantId: string;
 }
 
 export interface TranslationSetOutput {
@@ -91,6 +93,7 @@ export class CreateTranslationSet implements UseCase<
       const existing = await this.deps.translationSets.findByLocaleAndNamespace(
         input.localeRef,
         input.namespace,
+        input.tenantId,
         tx,
       );
       if (existing !== null) {
@@ -108,6 +111,7 @@ export interface SetTranslationInput {
   readonly translationSetId: string;
   readonly key: string;
   readonly value: string;
+  readonly tenantId: string;
 }
 
 /** Upserts (and resets to draft) a translation value. */
@@ -124,7 +128,11 @@ export class SetTranslation implements UseCase<
 
   async execute(input: SetTranslationInput): Promise<Result<TranslationSetOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<TranslationSetOutput, DomainError>>(async (tx) => {
-      const set = await this.deps.translationSets.findById(input.translationSetId, tx);
+      const set = await this.deps.translationSets.findById(
+        input.translationSetId,
+        input.tenantId,
+        tx,
+      );
       if (set === null) return err(new NotFoundError("Translation set not found"));
 
       set.setTranslation(
@@ -142,6 +150,7 @@ export class SetTranslation implements UseCase<
 export interface TranslationKeyInput {
   readonly translationSetId: string;
   readonly key: string;
+  readonly tenantId: string;
 }
 
 /** Publishes a draft translation. */
@@ -158,7 +167,11 @@ export class PublishTranslation implements UseCase<
 
   async execute(input: TranslationKeyInput): Promise<Result<TranslationSetOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<TranslationSetOutput, DomainError>>(async (tx) => {
-      const set = await this.deps.translationSets.findById(input.translationSetId, tx);
+      const set = await this.deps.translationSets.findById(
+        input.translationSetId,
+        input.tenantId,
+        tx,
+      );
       if (set === null) return err(new NotFoundError("Translation set not found"));
 
       set.publishTranslation(input.key, this.deps.idGenerator.generate(), this.deps.clock.now());

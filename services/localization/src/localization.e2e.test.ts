@@ -25,6 +25,7 @@ describe("localization (end to end)", () => {
       code: "en-US",
       name: "English (US)",
       isDefault: true,
+      tenantId: "tenant-local",
     });
     expect(locale.status).toBe(201);
     const localeId = (locale.body as { localeId: string }).localeId;
@@ -32,14 +33,21 @@ describe("localization (end to end)", () => {
     const set = await app.localization.createTranslationSet({
       localeRef: localeId,
       namespace: "storefront",
+      tenantId: "tenant-local",
     });
     expect(set.status).toBe(201);
     const translationSetId = (set.body as { translationSetId: string }).translationSetId;
 
-    await app.localization.setTranslation({ translationSetId, key: "welcome", value: "Welcome!" });
+    await app.localization.setTranslation({
+      translationSetId,
+      key: "welcome",
+      value: "Welcome!",
+      tenantId: "tenant-local",
+    });
     const published = await app.localization.publishTranslation({
       translationSetId,
       key: "welcome",
+      tenantId: "tenant-local",
     });
     expect(published.status).toBe(200);
 
@@ -49,11 +57,17 @@ describe("localization (end to end)", () => {
 
   it("rejects creating a duplicate locale code (409)", async () => {
     const app = wire();
-    await app.localization.createLocale({ code: "en-US", name: "English (US)", isDefault: true });
+    await app.localization.createLocale({
+      code: "en-US",
+      name: "English (US)",
+      isDefault: true,
+      tenantId: "tenant-local",
+    });
     const response = await app.localization.createLocale({
       code: "en-US",
       name: "English",
       isDefault: false,
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(409);
   });
