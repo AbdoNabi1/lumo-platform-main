@@ -1,5 +1,77 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
+## Status — 2026-09-17 (WP-10 T10.3 write-path sweep)
+
+**What this session did.** Closed the WRITE-side half of the G-64 defect class (a repository's
+write methods reading `tenantId` pinned at composition time instead of per-call, the same shape
+ADR-0014 point 3's read-path conversion already fixed for finders) across 21 contexts: finished
+in-progress work on **identity** and **catalog** (including catalog's remaining unconverted reads —
+`findBySlug`/`findBySku` and all of Category/Brand/Collection), then converted, in commit order,
+**feature-flags, wishlist, reviews, loyalty, coupons, recommendations, experimentation, media,
+search, seo, theme, components, content, experience, pages, automation, localization, licensing,
+feature-registry** — 19 contexts, one commit each, gates green after every commit. Every repository
+fixed this session, across all 21 contexts (identity's `CustomerRepository` included), used
+**Option B** (`tenantId` as an explicit `save(entity, tenantId, tx?)` parameter) — no aggregate
+examined carries `tenantId` as a domain field. ADR-0014 finding #3's **Option A** precedent
+(`PrismaUserRepository.save`, a separate repository already in the identity context) predates this
+session and needed no change. Licensing and feature-registry were checked specifically for
+platform-global (cross-tenant) write methods per WP-10's own caveat for those two contexts — **zero
+found** in either; both have real `tenantId` columns on every table.
+
+**Explicitly NOT touched this session** (per this session's own scope boundary, unchanged from
+before): `cart`, `checkout`, `customer-360`, `finance`, `fulfillment`, `inventory`, `notifications`,
+`orders`, `payments`, `pricing`, `promotions`, `reporting`, `returns`, `security`, `shipping` — 15
+contexts whose write methods still read a composition-time-pinned `tenantId` and remain G-64-
+affected — and `tenancy`, parked separately (below).
+
+**Task A — tenancy's conversion parked, not abandoned.** `packages/db/prisma/schema/tenancy.prisma`
+and the tenancy context's repository/domain files were uncommitted WIP unrelated to this session's
+identity-context work; moved intact to a new branch, `morbeh/wp10-tenancy-wip`
+(commit `cd78169`), pending the platform-path ADR decision ADR-0014 Amendment 5 (below) proposes —
+`Tenant`'s own `tenantId` semantics need resolving as part of that decision, not before it.
+
+**Discovered gaps:**
+
+- **G-64 (composition-time-pinned `tenantId`)** — write-side closed for the 21 contexts above;
+  **still open** for the 15 not-touched contexts' write paths, and **still open** on the consumer
+  side entirely (`apps/runtime/src/consumers/orders-paid.consumers.ts`,
+  `finance-settlement.consumers.ts` still hardcode `TENANT_DEFAULT_ID` at builder construction —
+  out of scope for this session per the runbook, which asked only for call sites to compile against
+  an explicit-but-still-construction-time-sourced tenantId dep, not a full consumer-side fix).
+- **New, not yet gap-registered:** six of the 19 contexts (**experience, pages, automation,
+  localization, licensing, feature-registry**) had in-memory repositories whose read methods already
+  accepted a `tenantId` parameter (from a prior session's read-path conversion) but silently
+  **ignored** it — a cross-tenant leak strictly worse than G-64's composition-time-pinning, since it
+  was invisible even after per-call `tenantId` threading. Found and fixed while adding this session's
+  required per-context isolation test (the exact test that would have caught it). Needs a gap-
+  register entry and a sweep of the 15 not-yet-converted contexts' in-memory repositories for the
+  same pattern, since this session only checked the 19 it converted.
+- **G-63** (untracked live RLS migrations) and **G-65** (undecided deployment region) — unchanged by
+  this session; both remain exactly as ADR-0014 describes them, still pending an operator decision.
+
+**Task C — ADR-0014 Amendment 5, proposed, not adopted.** A new "PROPOSED — REQUIRES APPROVAL"
+amendment to `docs/architecture/adr/0014-per-request-tenant-scoping.md` (docs only, no tenancy/
+security code changed) names a platform-operator exception category for legitimate cross-tenant
+calls (tenant lifecycle management, a support break-glass read, a cross-tenant migration script):
+a third database role distinct from both `postgres` and `lumo_app`; `BYPASSRLS` narrowed to exactly
+the grants platform-operator tools need; no RLS escape hatch via a settable session variable; every
+call gated by a distinct `platform:operator:*` permission and audited via the existing `Delegation`
+aggregate (`services/security/src/domain/delegation.ts`); tenancy's admin write routes proposed to
+move off the ordinary per-tenant-pinned router onto this path; and the `Tenant.tenantId` semantics
+finding (its own doc comment asserts `tenant.id` **is** the platform `tenantId`, but the Prisma row
+carries a separate, externally-supplied `tenantId` column — confirmed not self-referential in the
+integration test).
+
+**Pending operator decisions:**
+
+1. ADR-0014 Amendment 5 sign-off (new DB role + grants, `Delegation`-based audit wiring, tenancy
+   admin route relocation) — nothing in Amendment 5 is implemented; it is a proposal only.
+2. The platform-path ADR decision Task A's parked branch is waiting on, which also resolves the
+   `Tenant.tenantId` finding above.
+3. G-63's reconstructed-migration commit + `prisma migrate resolve --applied` sign-off (unchanged
+   from ADR-0014 Amendment 2 — still not done).
+4. G-65's deployment-region decision (unchanged — still not done).
+
 > **Audience: the implementing agent, starting cold.** Read this file, then
 > [`phase-7/README.md`](phase-7/README.md) and [`README.md`](README.md) completely, in that order,
 > before opening any WP file. This document is now the single entry point for planning work in this
