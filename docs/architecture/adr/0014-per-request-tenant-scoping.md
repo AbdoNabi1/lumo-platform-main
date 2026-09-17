@@ -41,6 +41,22 @@
 > still on `postgres`, and converting with it now is the reversible direction. **T10.3 proceeds for
 > contexts #2-40, per context #1's exact shape including `runReadScoped`. G-65 remains open and
 > remains a hard gate on Phase 2 only.**
+>
+> **PROPOSED — REQUIRES APPROVAL, 2026-09-17 (Amendment 5).** T10.3's context-by-context sweep
+> (contexts #2-40, now complete) closed the WRITE-side half of G-64 in every in-scope context and,
+> along the way, surfaced three findings this Amendment records and proposes to resolve: **(1)** no
+> context ever needed a genuinely platform-global (cross-tenant) write method — the `licensing`/
+> `feature-registry` contexts were checked specifically per this WP's own caveat and both came back
+> zero — so Option A's per-request scoping needed no exception category to convert #2-40. **(2)**
+> `services/tenancy`'s own `Tenant` aggregate has a `tenantId`-semantics inconsistency worth fixing
+> before Phase 2, detailed in point 8 below. **(3)** those two findings together motivate naming a
+> **platform-operator exception category** now, ahead of any concrete caller needing it, rather than
+> improvising one under pressure the first time an operator tool (tenant suspension, a support
+> break-glass read, a cross-tenant migration script) needs to bypass per-request scoping legitimately.
+> This amendment is **docs-only — no code in this repository implements it yet** — and requires
+> explicit operator sign-off before any of it is built, for the same reason Amendment 2's
+> `migrate resolve` step does: it touches live database roles and grants. See point 8 for the full
+> proposal.
 
 ## Context
 
@@ -384,6 +400,112 @@ true)` non-null assertion at every entry point) and Phase 2 (the role switch to 
    #1 is complete) and a request/message with no resolvable tenant must be rejected at the
    transport/consumer boundary, never reach `runReadScoped`/`PrismaUnitOfWork.run` with an empty
    tenant.
+
+8. **PROPOSED — REQUIRES APPROVAL, 2026-09-17 (Amendment 5) — a named platform-operator exception
+   category, for the rare, legitimate case of a call that must read or write across tenants (tenant
+   lifecycle management, a support break-glass read, a cross-tenant migration script), instead of
+   improvising one the first time such a caller shows up.** This is a proposal, not a decision this
+   ADR adopts yet — every sub-point below needs explicit operator sign-off before implementation,
+   the same class of gate Amendment 2 already put on `migrate resolve` (live database roles and
+   grants, not TypeScript).
+
+   **8a. A distinct privileged database role — never `lumo_app`, never `postgres`.** Point 5 above
+   already establishes two roles: `postgres` (`rolbypassrls = true`, used today, superuser-shaped)
+   and `lumo_app` (`rolbypassrls = false`, 558 grants, the future request-serving role after Phase
+   2's narrowing). Neither is the right handle for platform-operator work: `postgres` is far wider
+   than any operator tool needs, and reusing `lumo_app` would mean either giving the request-serving
+   role cross-tenant reach (defeating the entire point of Phase 2) or forking its connection string
+   per-caller with no way to distinguish an operator action from an ordinary request in an audit log.
+   **Proposed: a third role, e.g. `lumo_platform_operator`, with its own credentials, its own
+   `DATABASE_URL`-equivalent env var, used by nothing except the specific, narrow set of
+   platform-operator code paths named in 8d.**
+
+   **8b. `BYPASSRLS` on that role, but grants narrowed to exactly what platform-operator tools need
+   — not a second copy of `lumo_app`'s 558 grants, and not `postgres`'s superuser reach.** The
+   attribute itself (`BYPASSRLS`) is appropriate here — a platform-operator action is, by
+   definition, the one legitimate case of "not scoped to one tenant" — but finding #7's own
+   discipline (`lumo_app`'s grant audit: revoke `vault.secrets`, `_prisma_migrations`,
+   `storage.buckets`/`storage.objects` because this runtime's code never touches them) applies with
+   more force here, not less: this role should hold DML on exactly the tables the concrete
+   operator use-cases in 8d touch (starting with `tenancy.*`, per point 8f below), and nothing
+   else, audited the same way before it is ever granted, not audited-later the way finding #7 had
+   to catch `lumo_app` after the fact.
+
+   **8c. No RLS escape hatch via a settable session variable.** A tempting shortcut is to keep one
+   connection pool and let application code flip an in-band signal — e.g. `SET LOCAL
+app.tenant_id = NULL` or a second GUC like `app.platform_operator = true` — to widen a policy's
+   effective scope for "just this transaction." Rejected, for the same reason point 3's alternatives
+   already rejected setting `app.tenant_id` outside a transaction wrapper: anything settable from
+   the request-serving connection pool is one bug (a missing `if`, a copy-pasted branch, an
+   injectable parameter) away from silently granting cross-tenant access from an ordinary request —
+   the exact failure this whole ADR exists to close, reintroduced through a side door. **The
+   privileged role from 8a is the only escape hatch; it is a distinct connection with distinct
+   credentials, never a flag inside the shared connection's session state.**
+
+   **8d. Every call gated by a distinct platform permission, and audited via the existing
+   `Delegation` aggregate (`services/security/src/domain/delegation.ts`) — not a new audit
+   mechanism.** `Delegation` (the domain class; `SecurityDelegation` is only its Prisma model name,
+   `packages/db/prisma/schema/security.prisma:203-222`) already models "one principal may act
+   [...] within a scope, optionally narrowed to specific permissions, and time-boxed," is
+   WORM-audited per ADR-0023, and already defaults its `scope` to `SecurityScope.platform()`
+   (`delegation.ts:22-27,54`) when none is given — i.e., it already has a platform-scoped shape,
+   just never a target-tenant-scoped one, because it was built for principal-to-principal
+   impersonation (`delegatorRef`/`delegateRef`), not "the platform, acting on tenant X." Proposed
+   fit, not a new aggregate: grant a `Delegation` with `delegatorRef` naming the platform system
+   account, `delegateRef` naming the human/service operator, `scope = SecurityScope.platform()`,
+   and `permissions` naming the **one narrow platform permission that specific tool requires** (a
+   new `platform:operator:*` family, e.g. `platform:operator:tenant-lifecycle`, mirroring the
+   existing `"tenancy:create"`/`"warehouse:register"` string-permission convention rather than one
+   blanket `platform:operator` permission covering every tool). Every privileged call: (i) checks
+   the caller holds an active, unexpired `Delegation` grant for that exact permission — the same
+   `AdminGuard.ensure` shape every other admin route already uses, extended with this one extra
+   check — then (ii) opens its own transaction on the role from 8a, then (iii) records the action
+   through the SAME `recordAudit(...)` helper `GrantDelegation`/`RevokeDelegation`/
+   `StartImpersonation` already call
+   (`services/security/src/application/delegation.use-cases.ts:75-80,103-107,164-169`), so
+   platform-operator actions land in the one audit trail this codebase already has, not a second one.
+
+   **8e. Tenancy's admin routes need to move, or at minimum be re-gated, once 8a-8d exist.**
+   `apps/admin/src/http/tenancy-routes.ts` is currently spread into the same single route array as
+   ordinary per-tenant business routes (`apps/admin/src/http/admin-routes.ts:1755`, alongside
+   `cartRoutes`/`checkoutRoutes`/`promotionsRoutes`/etc.), served by the one Fastify instance whose
+   `singleTenantGuardedResolver` (`apps/admin/src/http/server.ts:50-55`) guards every route against
+   "the single tenant every Prisma repository was pinned to at composition time" — the ordinary
+   per-request path this entire ADR scopes. But creating, activating, suspending, or rebranding a
+   _tenant_ is inherently a platform-operator operation, not a per-tenant business operation — it
+   does not make sense to route it through a resolver whose entire job is confirming the request
+   matches the one tenant already pinned, because tenant-management requests are, by definition,
+   not about "the" tenant. Proposed: once 8a-8d land, tenancy's create/activate/suspend/rebrand
+   routes (not `tenancy:read`, which is a legitimate per-tenant self-service read) move to a
+   separate router mounted on the privileged role, gated by the `platform:operator:*` permission
+   family from 8d instead of the ordinary `"tenancy:create"`/`"tenancy:update"` strings they use
+   today, and go through the `Delegation`-backed audit path in 8d instead of the ordinary
+   `AdminGuard` path. Until this lands, tenancy write routes stay exactly as they are — this is a
+   proposal, not a directive to move them as part of this WP.
+
+   **8f. Finding: `Tenant.tenantId` — the aggregate that defines what a tenant IS has a `tenantId`
+   scoping value that is neither self-referential nor domain-modeled, and this needs resolving as
+   part of adopting 8a-8e, not left as-is.** `Tenant`'s own doc comment asserts `` `tenant.id` **is**
+the platform `tenantId` primitive `` (`services/tenancy/src/domain/tenant.ts:25-26`) — i.e., a
+   `Tenant` row's identity and its scoping key are meant to be the same value. But the Prisma row
+   carries a **separate** `tenantId` column (`packages/db/prisma/schema/tenancy.prisma:4-19`,
+   `@@unique([tenantId, slug])`), populated by `TenantMapper.toRow(tenant, tenantId)` as an
+   **externally supplied second argument**, distinct from `tenant.id.toString()`
+   (`services/tenancy/src/infrastructure/mappers.ts:44-56`) — the identical constructor-pinned-
+   `deps.tenantId` shape point 1 above requires eliminating from every OTHER aggregate is still
+   present here, on the one aggregate that defines what a tenant is. Confirmed not self-referential
+   in practice: the integration test constructs it as an independent random value (e.g.
+   `` `tenant-itest-tenants-${crypto.randomUUID()}` ``,
+   `services/tenancy/src/infrastructure/prisma-repositories.integration.test.ts:50-51`), unrelated
+   to any `Tenant` row's own `id`. The doc comment and the schema/repository code disagree about
+   what this value is. Under this Amendment, the resolution is direct: a `Tenant` row's scoping
+   `tenantId` should BE the platform-operator's own scope (i.e., every `Tenant` row this platform
+   operates is scoped to the single platform-operator "tenant" from 8a-8d, not to the tenant the
+   row describes — a `Tenant` record is platform-operator data, not tenant-self data), making the
+   `tenancy` context's `save()`/finder methods candidates for reading their `tenantId` from the
+   privileged connection's fixed scope rather than a per-request value, once 8a-8e land. Until then,
+   `services/tenancy` stays parked (per Task A of this session) and this finding is recorded, not
+   acted on.
 
 ## Consequences
 
