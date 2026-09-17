@@ -23,6 +23,8 @@ import { EntitlementMiddleware } from "./entitlement-middleware";
 export interface EntitlementWiringDeps {
   readonly featureRegistry: FeatureRegistryReader;
   readonly licensing: LicensingDecider;
+  /** The platform tenant (ADR-0014) this guard's Feature Registry reads are scoped to. */
+  readonly tenantId: string;
   /** Optional runtime-policy port (subscription state → policy). */
   readonly policy?: PolicyPort;
   /** Optional usage-quota port (reads Licensing's UsageCounter). */
@@ -54,6 +56,7 @@ export function wireEntitlement(deps: EntitlementWiringDeps): WiredEntitlement {
   const port = new LicensingEntitlementPort({
     featureRegistry: deps.featureRegistry,
     licensing: deps.licensing,
+    tenantId: deps.tenantId,
   });
   const guard = new EntitlementGuard(port, {
     cache,

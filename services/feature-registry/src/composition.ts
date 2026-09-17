@@ -52,9 +52,12 @@ export interface FeatureRegistryWiringDeps {
   readonly serializer: EventSerializer;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
-  /** Production persistence (Phase 6 / G-39). Present ⇒ Prisma slice; absent ⇒ in-memory. */
+  /**
+   * Production persistence (Phase 6 / G-39). Present ⇒ Prisma slice; absent ⇒ in-memory. ADR-0014
+   * (WP-10, T10.5): the repositories built here are tenant-agnostic singletons — no `tenantId` at
+   * composition time any more.
+   */
   readonly prisma?: Database;
-  readonly tenantId?: string;
 }
 
 export interface WiredFeatureRegistry {
@@ -105,11 +108,6 @@ function buildController(
 /** Composition root for the Feature Registry context. Prisma slice when `prisma` is present; else in-memory. */
 export function wireFeatureRegistry(deps: FeatureRegistryWiringDeps): WiredFeatureRegistry {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined)
-      throw new Error(
-        "wireFeatureRegistry: tenantId is required when prisma is provided (ADR-0008).",
-      );
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new FeatureRegistryEventTranslator(),
@@ -117,8 +115,8 @@ export function wireFeatureRegistry(deps: FeatureRegistryWiringDeps): WiredFeatu
       clock: deps.clock,
       producer: "feature-registry",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const repoDeps = { prisma: deps.prisma, outbox, context, tenantId };
+    const context = rootEventContext(deps.idGenerator);
+    const repoDeps = { prisma: deps.prisma, outbox, context };
     const features = new PrismaFeatureDefinitionRepository(repoDeps);
     const bundles = new PrismaFeatureBundleRepository(repoDeps);
     return {

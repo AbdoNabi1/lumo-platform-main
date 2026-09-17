@@ -102,7 +102,7 @@ export class RegisterFeature implements UseCase<RegisterFeatureProps, FeatureOut
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.features.save(feature, tx);
+      await this.deps.features.save(feature, input.tenantId, tx);
       return ok(presentFeature(feature));
     });
   }
@@ -123,7 +123,7 @@ async function withFeature(
       if (isDomainError(error)) return err(error);
       throw error;
     }
-    await deps.features.save(feature, tx);
+    await deps.features.save(feature, tenantId, tx);
     return ok(presentFeature(feature));
   });
 }
@@ -503,7 +503,7 @@ export class CreateBundle implements UseCase<CreateBundleProps, BundleOutput, Do
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.bundles.save(bundle, tx);
+      await this.deps.bundles.save(bundle, input.tenantId, tx);
       return ok(presentBundle(bundle));
     });
   }
@@ -524,7 +524,7 @@ async function withBundle(
       if (isDomainError(error)) return err(error);
       throw error;
     }
-    await deps.bundles.save(bundle, tx);
+    await deps.bundles.save(bundle, tenantId, tx);
     return ok(presentBundle(bundle));
   });
 }

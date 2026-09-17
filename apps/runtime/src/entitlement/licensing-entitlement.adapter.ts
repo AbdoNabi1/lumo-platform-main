@@ -11,9 +11,13 @@ interface ControllerResponse {
   readonly body: unknown;
 }
 
-/** Structural view of the Feature Registry controller (frozen public port) — reused, never re-implemented. */
+/**
+ * Structural view of the Feature Registry controller (frozen public port) — reused, never
+ * re-implemented. ADR-0014 (WP-10, T10.5): `resolve` takes the platform `tenantId` explicitly,
+ * matching `ResolveFeatureInput` on the real, already-tenant-scoped `FeatureRegistryController`.
+ */
 export interface FeatureRegistryReader {
-  resolve(input: { readonly key: string }): Promise<ControllerResponse>;
+  resolve(input: { readonly key: string; readonly tenantId: string }): Promise<ControllerResponse>;
 }
 
 /** Structural view of the Licensing controller (the frozen PDP) — reused, never re-implemented. */
@@ -50,11 +54,16 @@ export class LicensingEntitlementPort implements EntitlementPort {
     private readonly deps: {
       readonly featureRegistry: FeatureRegistryReader;
       readonly licensing: LicensingDecider;
+      /** The platform tenant (ADR-0014) this port's Feature Registry reads are scoped to. */
+      readonly tenantId: string;
     },
   ) {}
 
   async check(request: EntitlementRequest): Promise<EntitlementDecision> {
-    const resolved = await this.deps.featureRegistry.resolve({ key: request.featureKey });
+    const resolved = await this.deps.featureRegistry.resolve({
+      key: request.featureKey,
+      tenantId: this.deps.tenantId,
+    });
     if (resolved.status === 404)
       return {
         featureKey: request.featureKey,

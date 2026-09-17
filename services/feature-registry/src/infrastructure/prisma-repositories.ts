@@ -10,8 +10,6 @@ export interface PrismaFeatureRegistryRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 function requireTx(tx: unknown): TransactionClient {
@@ -26,16 +24,16 @@ function requireTx(tx: unknown): TransactionClient {
 export class PrismaFeatureDefinitionRepository implements FeatureDefinitionRepository {
   constructor(private readonly deps: PrismaFeatureRegistryRepositoryDeps) {}
 
-  async save(feature: FeatureDefinition, tx?: unknown): Promise<void> {
+  async save(feature: FeatureDefinition, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = feature.id.toString();
     if (feature.version === 0)
       await client.featureDefinition.create({
-        data: FeatureDefinitionMapper.toRow(feature, this.deps.tenantId),
+        data: FeatureDefinitionMapper.toRow(feature, tenantId),
       });
     else {
       const updated = await client.featureDefinition.updateMany({
-        where: { id, tenantId: this.deps.tenantId, version: feature.version },
+        where: { id, tenantId, version: feature.version },
         data: { ...FeatureDefinitionMapper.toUpdate(feature), version: { increment: 1 } },
       });
       if (updated.count === 0)
@@ -82,16 +80,16 @@ export class PrismaFeatureDefinitionRepository implements FeatureDefinitionRepos
 export class PrismaFeatureBundleRepository implements FeatureBundleRepository {
   constructor(private readonly deps: PrismaFeatureRegistryRepositoryDeps) {}
 
-  async save(bundle: FeatureBundle, tx?: unknown): Promise<void> {
+  async save(bundle: FeatureBundle, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = bundle.id.toString();
     if (bundle.version === 0)
       await client.featureBundle.create({
-        data: FeatureBundleMapper.toRow(bundle, this.deps.tenantId),
+        data: FeatureBundleMapper.toRow(bundle, tenantId),
       });
     else {
       const updated = await client.featureBundle.updateMany({
-        where: { id, tenantId: this.deps.tenantId, version: bundle.version },
+        where: { id, tenantId, version: bundle.version },
         data: { ...FeatureBundleMapper.toUpdate(bundle), version: { increment: 1 } },
       });
       if (updated.count === 0)

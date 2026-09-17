@@ -62,12 +62,18 @@ async function setup() {
     key: "ai.copy",
     name: "AI Copy",
     category: "ai",
+    tenantId: "tenant-local",
   });
   await featureRegistry.featureRegistry.setRequirements({
     key: "ai.copy",
     requirements: { requiredPlans: ["starter"] },
+    tenantId: "tenant-local",
   });
-  await featureRegistry.featureRegistry.advance({ key: "ai.copy", to: "publish" });
+  await featureRegistry.featureRegistry.advance({
+    key: "ai.copy",
+    to: "publish",
+    tenantId: "tenant-local",
+  });
 
   const licensing: LicensingDecider = {
     async checkEntitlement({ tenantRef }) {
@@ -83,7 +89,11 @@ async function setup() {
 describe("P1.3 — Licensing/FeatureRegistry entitlement adapter (real PDP delegation)", () => {
   it("allows an entitled, published feature and denies an unregistered one (fail-closed)", async () => {
     const { licensing, featureRegistry } = await setup();
-    const port = new LicensingEntitlementPort({ featureRegistry, licensing });
+    const port = new LicensingEntitlementPort({
+      featureRegistry,
+      licensing,
+      tenantId: "tenant-local",
+    });
 
     const allowed = await port.check({ tenant: "t1", featureKey: "ai.copy" });
     expect(allowed.allowed).toBe(true);
@@ -104,6 +114,7 @@ describe("P1.3 — Licensing/FeatureRegistry entitlement adapter (real PDP deleg
       featureRegistry,
       quota: new InMemoryUsageQuota(),
       clock,
+      tenantId: "tenant-local",
     });
     expect(await wired.middleware.can({ tenant: "t1", featureKey: "ai.copy" })).toBe(true);
     const gated = await wired.middleware.api({ tenant: "t1", featureKey: "ai.copy" }, run);
@@ -127,6 +138,7 @@ describe("P1.3 — Admin requires BOTH RBAC and entitlement (§17)", () => {
         }),
       },
       clock,
+      tenantId: "tenant-local",
     }).middleware;
     expect((await guard.admin({ tenant: "t1", featureKey: "f" }, false, run)).ok).toBe(false); // RBAC deny
     expect((await guard.admin({ tenant: "t1", featureKey: "f" }, true, run)).ok).toBe(true); // both pass
@@ -148,6 +160,7 @@ describe("P1.3 — Admin requires BOTH RBAC and entitlement (§17)", () => {
           }),
         },
         clock,
+        tenantId: "tenant-local",
       }).guard,
     );
     expect((await denyGuard.admin({ tenant: "t1", featureKey: "f" }, true, run)).ok).toBe(false); // RBAC ok, entitlement deny
@@ -190,6 +203,7 @@ describe("P1.3 — Canonical event emission (§6)", () => {
       telemetry: emitter,
       quota: new InMemoryUsageQuota().setLimit("t1", "R", { limit: 1 }).setUsed("t1", "R", 1),
       clock,
+      tenantId: "tenant-local",
     }).guard;
     void port;
 
