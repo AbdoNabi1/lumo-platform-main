@@ -34,7 +34,6 @@ describe.runIf(Boolean(databaseUrl))("PrismaRecommendationModelRepository (integ
     const context = rootEventContext(ids, tenantId);
     const repository = new PrismaRecommendationModelRepository({
       prisma,
-      tenantId,
       outbox,
       context,
     });
@@ -42,7 +41,8 @@ describe.runIf(Boolean(databaseUrl))("PrismaRecommendationModelRepository (integ
     return {
       prisma,
       repository,
-      save: (model: RecommendationModel) => unitOfWork.run((tx) => repository.save(model, tx)),
+      save: (model: RecommendationModel) =>
+        unitOfWork.run((tx) => repository.save(model, tenantId, tx)),
     };
   }
 
@@ -76,6 +76,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaRecommendationModelRepository (integ
 
     const otherPage = await otherRepository.list({ first: 10 }, other);
     expect(otherPage.items).toHaveLength(1);
+
+    // T10.5: a SINGLE repository instance, asked for a different tenant, must not blend the two —
+    // `repository` was wired against `tenantId` but is otherwise a stateless singleton (ADR-0014).
+    const crossTenantPage = await repository.list({ first: 10 }, other);
+    expect(crossTenantPage.items).toHaveLength(1);
+
     await prisma.$disconnect();
   });
 });

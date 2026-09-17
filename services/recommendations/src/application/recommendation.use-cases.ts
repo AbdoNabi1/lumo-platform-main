@@ -60,7 +60,7 @@ export class CreateModel implements UseCase<CreateModelInput, ModelStatusOutput,
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const model = RecommendationModel.create(id, input.name, strategy.value);
-      await this.deps.models.save(model, tx);
+      await this.deps.models.save(model, input.tenantId, tx);
       return ok(toOutput(model));
     });
   }
@@ -90,7 +90,7 @@ export class AdvanceModel implements UseCase<AdvanceModelInput, ModelStatusOutpu
         throw error;
       }
 
-      await this.deps.models.save(model, tx);
+      await this.deps.models.save(model, input.tenantId, tx);
       return ok(toOutput(model));
     });
   }
@@ -146,7 +146,7 @@ export class GenerateRecommendationSet implements UseCase<
         throw error;
       }
 
-      await this.deps.models.save(model, tx);
+      await this.deps.models.save(model, input.tenantId, tx);
       await this.deps.processedInteractions.markProcessed(input.interactionId);
       return ok(toOutput(model));
     });
@@ -196,7 +196,7 @@ export class RegenerateRecommendationSet implements UseCase<
         throw error;
       }
 
-      await this.deps.models.save(model, tx);
+      await this.deps.models.save(model, input.tenantId, tx);
       return ok(toOutput(model));
     });
   }

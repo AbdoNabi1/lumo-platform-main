@@ -15,8 +15,6 @@ export interface PrismaRecommendationModelRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `RecommendationModelRepository` on the `recommendations` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -27,9 +25,8 @@ export class PrismaRecommendationModelRepository implements RecommendationModelR
     this.deps = deps;
   }
 
-  async save(model: RecommendationModel, tx?: unknown): Promise<void> {
+  async save(model: RecommendationModel, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const modelId = model.id.toString();
     const row = RecommendationModelMapper.toRow(model, tenantId);
 
