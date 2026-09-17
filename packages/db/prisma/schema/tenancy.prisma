@@ -1,5 +1,31 @@
 // `tenancy` schema — Tenant, Workspace (services/tenancy). Upstream of everything; owns tenant
 // identity + white-label workspace configuration (ADR-0008 Sprint 5.5/5.6 addenda).
+//
+// WP-10 T10.3 (2026-09-10) investigation note on `tenantId` vs `id`/`tenantRef`, recorded here
+// because it was undocumented and blocked a mechanical ADR-0014 conversion of this context:
+//
+// `Tenant.id` is the merchant account's own business identity (what every other context's
+// `tenantRef`/`tenantId` fields point back to — e.g. `Workspace.tenantRef`, licensing's
+// `Subscription.tenantRef`). `Tenant.tenantId` (this row's ADR-0008 RLS-scope column, same name
+// as every other table in the platform for uniform RLS policy application) is a SEPARATE value,
+// written purely from the composition root's `deps.tenantId` at `save()` time
+// (`PrismaTenantRepository.save`) — the `Tenant` domain factory (`Tenant.create`) never receives
+// or derives it. No seed path in this repo (`apps/runtime/src/seed.ts`, `seed-demo.ts`) creates a
+// `Tenant`/`Workspace` row at all, so there is no live-code evidence of what value production
+// actually writes there beyond `TENANT_DEFAULT_ID`'s config default (`"tenant-local"`,
+// `apps/runtime/src/config.ts:75`). Live-row introspection was not available to confirm this
+// further (no DB access in this session).
+//
+// This matters because `apps/admin/src/http/tenancy-routes.ts` — the only place this service is
+// mounted — is NOT merchant-scoped the way every other converted admin surface is: `POST /tenants`
+// (provision a new tenant), `GET /tenants` (list every tenant), `GET/POST /tenants/:tenantId/*`
+// (act on an arbitrary tenant by id) are platform-operator, cross-tenant operations by design —
+// the exact "Merchant 360 / platform control plane" surface `docs/plans/phase-7/
+// WP-15-platform-control-plane.md` plans to move into its own `apps/platform-admin` app with its
+// own RBAC. Only `GET /workspaces/current` is genuinely per-request-tenant-scoped as built. See
+// `docs/architecture/adr/0014-per-request-tenant-scoping.md` for the ADR-0014 per-call `tenantId`
+// scoping model this note is qualifying — most of this context's use cases do not fit it as
+// written, pending an ADR amendment (not resolved by this note).
 
 model Tenant {
   id              String   @id @db.Uuid

@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -49,27 +49,38 @@ export class PrismaTenantRepository implements TenantRepository {
     await this.deps.outbox.write(tenant.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Tenant | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.tenant.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Tenant | null> {
+    const run = (client: TransactionClient) => client.tenant.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : TenantMapper.toDomain(row as TenantRow);
   }
 
-  async findBySlug(slug: string, tx?: unknown): Promise<Tenant | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.tenant.findFirst({ where: { slug, tenantId: this.deps.tenantId } });
+  async findBySlug(slug: string, tenantId: string, tx?: unknown): Promise<Tenant | null> {
+    const run = (client: TransactionClient) =>
+      client.tenant.findFirst({ where: { slug, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : TenantMapper.toDomain(row as TenantRow);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Tenant>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Tenant>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.tenant.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.tenant.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       rows.map((row) => TenantMapper.toDomain(row as TenantRow)),
       limit,
@@ -115,48 +126,63 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
     await this.deps.outbox.write(workspace.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Workspace | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.workspace.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Workspace | null> {
+    const run = (client: TransactionClient) =>
+      client.workspace.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : WorkspaceMapper.toDomain(row as WorkspaceRow);
   }
 
   async findByTenantRefAndName(
     tenantRef: string,
     name: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<Workspace | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.workspace.findFirst({
-      where: { tenantRef, name, tenantId: this.deps.tenantId },
-    });
+    const run = (client: TransactionClient) =>
+      client.workspace.findFirst({ where: { tenantRef, name, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : WorkspaceMapper.toDomain(row as WorkspaceRow);
   }
 
   /** Prefers an active `"production"` workspace; falls back to the most-recently-updated active workspace of any env. */
-  async findCurrent(tx?: unknown): Promise<Workspace | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const production = await client.workspace.findFirst({
-      where: { tenantId: this.deps.tenantId, status: "active", env: "production" },
-    });
-    if (production !== null) return WorkspaceMapper.toDomain(production as WorkspaceRow);
-
-    const fallback = await client.workspace.findFirst({
-      where: { tenantId: this.deps.tenantId, status: "active" },
-      orderBy: { updatedAt: "desc" },
-    });
-    return fallback === null ? null : WorkspaceMapper.toDomain(fallback as WorkspaceRow);
+  async findCurrent(tenantId: string, tx?: unknown): Promise<Workspace | null> {
+    const run = async (client: TransactionClient) => {
+      const production = await client.workspace.findFirst({
+        where: { tenantId, status: "active", env: "production" },
+      });
+      if (production !== null) return production;
+      return client.workspace.findFirst({
+        where: { tenantId, status: "active" },
+        orderBy: { updatedAt: "desc" },
+      });
+    };
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : WorkspaceMapper.toDomain(row as WorkspaceRow);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Workspace>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Workspace>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.workspace.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.workspace.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       rows.map((row) => WorkspaceMapper.toDomain(row as WorkspaceRow)),
       limit,

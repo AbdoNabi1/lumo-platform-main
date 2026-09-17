@@ -38,18 +38,18 @@ export class InMemoryTenantRepository implements TenantRepository {
     await this.outbox.write(tenant.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Tenant | null> {
+  async findById(id: string, _tenantId: string): Promise<Tenant | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findBySlug(slug: string): Promise<Tenant | null> {
+  async findBySlug(slug: string, _tenantId: string): Promise<Tenant | null> {
     for (const tenant of this.store.values()) {
       if (tenant.slug.value === slug) return tenant;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<Tenant>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Tenant>> {
     return paginate([...this.store.values()], page);
   }
 }
@@ -69,11 +69,15 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
     await this.outbox.write(workspace.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Workspace | null> {
+  async findById(id: string, _tenantId: string): Promise<Workspace | null> {
     return this.store.get(id) ?? null;
   }
 
-  async findByTenantRefAndName(tenantRef: string, name: string): Promise<Workspace | null> {
+  async findByTenantRefAndName(
+    tenantRef: string,
+    name: string,
+    _tenantId: string,
+  ): Promise<Workspace | null> {
     for (const workspace of this.store.values()) {
       if (workspace.tenantRef === tenantRef && workspace.name === name) return workspace;
     }
@@ -81,7 +85,7 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
   }
 
   /** Prefers an active `"production"` workspace; falls back to the first active workspace found (insertion order). */
-  async findCurrent(): Promise<Workspace | null> {
+  async findCurrent(_tenantId: string): Promise<Workspace | null> {
     let fallback: Workspace | null = null;
     for (const workspace of this.store.values()) {
       if (workspace.status !== "active") continue;
@@ -91,7 +95,7 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
     return fallback;
   }
 
-  async list(page: CursorPage): Promise<Paginated<Workspace>> {
+  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Workspace>> {
     return paginate([...this.store.values()], page);
   }
 }
