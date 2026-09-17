@@ -25,6 +25,7 @@ describe("media (end to end)", () => {
     const response = await app.assets.register({
       storageKey: "uploads/a.png",
       contentType: "image/png",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(201);
 
@@ -37,6 +38,7 @@ describe("media (end to end)", () => {
     const response = await app.assets.register({
       storageKey: "uploads/a.png",
       contentType: "not-a-mime",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(422);
   });

@@ -12,6 +12,8 @@ import { StorageKey } from "../domain/value-objects/storage-key";
 export interface RegisterAssetInput {
   readonly storageKey: string;
   readonly contentType: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface RegisterAssetOutput {
@@ -52,7 +54,7 @@ export class RegisterAsset implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.assets.save(asset, tx);
+      await this.deps.assets.save(asset, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

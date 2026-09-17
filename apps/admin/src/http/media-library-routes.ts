@@ -68,7 +68,11 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       idempotent: true,
       summary: "Create an organizational folder",
       schema: { body: createFolderBody },
-      handle: ({ body, context }) => admin.mediaLibrary.createFolder(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.mediaLibrary.createFolder(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -92,7 +96,11 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       idempotent: true,
       summary: "Register a media asset (verifies object existence first)",
       schema: { body: registerMediaAssetBody },
-      handle: ({ body, context }) => admin.mediaLibrary.registerMediaAsset(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.mediaLibrary.registerMediaAsset(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",

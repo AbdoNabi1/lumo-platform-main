@@ -12,7 +12,6 @@ export interface PrismaLibraryRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 export class PrismaFolderRepository implements FolderRepository {
@@ -22,9 +21,8 @@ export class PrismaFolderRepository implements FolderRepository {
     this.deps = deps;
   }
 
-  async save(folder: Folder, tx?: unknown): Promise<void> {
+  async save(folder: Folder, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = folder.id.toString();
     const row = FolderMapper.toRow(folder, tenantId);
 
@@ -88,9 +86,8 @@ export class PrismaMediaAssetRepository implements MediaAssetRepository {
     this.deps = deps;
   }
 
-  async save(asset: MediaAsset, tx?: unknown): Promise<void> {
+  async save(asset: MediaAsset, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = asset.id.toString();
     const row = MediaAssetMapper.toRow(asset, tenantId);
 

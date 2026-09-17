@@ -33,15 +33,15 @@ describe.runIf(Boolean(databaseUrl))("Prisma Media Library repositories (integra
       producer: "media",
     });
     const context = rootEventContext(ids, tenantId);
-    const folders = new PrismaFolderRepository({ prisma, tenantId, outbox, context });
-    const mediaAssets = new PrismaMediaAssetRepository({ prisma, tenantId, outbox, context });
+    const folders = new PrismaFolderRepository({ prisma, outbox, context });
+    const mediaAssets = new PrismaMediaAssetRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       folders,
       mediaAssets,
-      saveFolder: (f: Folder) => unitOfWork.run((tx) => folders.save(f, tx)),
-      saveAsset: (a: MediaAsset) => unitOfWork.run((tx) => mediaAssets.save(a, tx)),
+      saveFolder: (f: Folder) => unitOfWork.run((tx) => folders.save(f, tenantId, tx)),
+      saveAsset: (a: MediaAsset) => unitOfWork.run((tx) => mediaAssets.save(a, tenantId, tx)),
     };
   }
 
@@ -78,6 +78,35 @@ describe.runIf(Boolean(databaseUrl))("Prisma Media Library repositories (integra
     );
     const page = await mediaAssets.list({ first: 10 }, tenantId);
     expect(page.items).toHaveLength(1);
+    await prisma.$disconnect();
+  });
+
+  it("does not let tenant A read tenant B's folder through a SINGLE shared repository instance (ADR-0014, WP-10 T10.5)", async () => {
+    const tenantA = `tenant-itest-folders-a-${crypto.randomUUID()}`;
+    const tenantB = `tenant-itest-folders-b-${crypto.randomUUID()}`;
+    const prisma = createTestPrismaClient(databaseUrl);
+    const outbox = new OutboxWriter({
+      store: new PrismaOutboxStore(prisma),
+      translator: new MediaLibraryEventTranslator(),
+      serializer: new InMemoryEventSerializer(),
+      clock,
+      producer: "media",
+    });
+    const context = rootEventContext(ids, tenantA);
+    const folders = new PrismaFolderRepository({ prisma, outbox, context });
+    const unitOfWork = new PrismaUnitOfWork(prisma);
+
+    const folder = Folder.create(
+      UniqueEntityId.from(ids.generate()),
+      "tenant-a-folder",
+      ids.generate(),
+      clock.now(),
+    );
+    await unitOfWork.run((tx) => folders.save(folder, tenantA, tx));
+
+    expect(await folders.findById(folder.id.toString(), tenantA)).not.toBeNull();
+    expect(await folders.findById(folder.id.toString(), tenantB)).toBeNull();
+
     await prisma.$disconnect();
   });
 });

@@ -20,6 +20,8 @@ export interface MediaLibraryDeps {
 export interface CreateFolderInput {
   readonly name: string;
   readonly parentFolderRef?: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface FolderIdOutput {
@@ -47,7 +49,7 @@ export class CreateFolder implements UseCase<CreateFolderInput, FolderIdOutput, 
         this.deps.clock.now(),
         input.parentFolderRef,
       );
-      await this.deps.folders.save(folder, tx);
+      await this.deps.folders.save(folder, input.tenantId, tx);
       return ok({ folderId: id.toString() });
     });
   }
@@ -78,7 +80,7 @@ export class ArchiveFolder implements UseCase<FolderIdInput, FolderIdOutput, Dom
         throw error;
       }
 
-      await this.deps.folders.save(folder, tx);
+      await this.deps.folders.save(folder, input.tenantId, tx);
       return ok({ folderId: folder.id.toString() });
     });
   }
@@ -88,6 +90,8 @@ export interface RegisterMediaAssetInput {
   readonly name: string;
   readonly storageKey: string;
   readonly folderRef?: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface MediaAssetIdOutput {
@@ -133,7 +137,7 @@ export class RegisterMediaAsset implements UseCase<
         this.deps.clock.now(),
         input.folderRef,
       );
-      await this.deps.mediaAssets.save(asset, tx);
+      await this.deps.mediaAssets.save(asset, input.tenantId, tx);
       return ok({ mediaAssetId: id.toString() });
     });
   }
@@ -168,7 +172,7 @@ export class ArchiveMediaAsset implements UseCase<
         throw error;
       }
 
-      await this.deps.mediaAssets.save(asset, tx);
+      await this.deps.mediaAssets.save(asset, input.tenantId, tx);
       return ok({ mediaAssetId: asset.id.toString() });
     });
   }

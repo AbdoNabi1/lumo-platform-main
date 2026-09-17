@@ -23,8 +23,16 @@ export interface InMemoryLibraryRepositoriesDeps {
   readonly context: EventContext;
 }
 
+/**
+ * ADR-0014 (WP-10, T10.3): both repositories below key their store by `(tenantId, id)` — neither
+ * `Folder` nor `MediaAsset` carries `tenantId` of its own, so the store must key on it explicitly
+ * or a cross-tenant leak here would be invisible to every isolation test.
+ */
 export class InMemoryFolderRepository implements FolderRepository {
-  private readonly store = new Map<string, Folder>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly folder: Folder }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -33,22 +41,29 @@ export class InMemoryFolderRepository implements FolderRepository {
     this.context = deps.context;
   }
 
-  async save(folder: Folder, tx?: unknown): Promise<void> {
-    this.store.set(folder.id.toString(), folder);
+  async save(folder: Folder, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(folder.id.toString(), { tenantId, folder });
     await this.outbox.write(folder.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<Folder | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Folder | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.folder : null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Folder>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Folder>> {
+    return paginate(
+      [...this.store.values()].filter((e) => e.tenantId === tenantId).map((e) => e.folder),
+      page,
+    );
   }
 }
 
 export class InMemoryMediaAssetRepository implements MediaAssetRepository {
-  private readonly store = new Map<string, MediaAsset>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly asset: MediaAsset }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -57,16 +72,20 @@ export class InMemoryMediaAssetRepository implements MediaAssetRepository {
     this.context = deps.context;
   }
 
-  async save(asset: MediaAsset, tx?: unknown): Promise<void> {
-    this.store.set(asset.id.toString(), asset);
+  async save(asset: MediaAsset, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(asset.id.toString(), { tenantId, asset });
     await this.outbox.write(asset.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<MediaAsset | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<MediaAsset | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.asset : null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<MediaAsset>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<MediaAsset>> {
+    return paginate(
+      [...this.store.values()].filter((e) => e.tenantId === tenantId).map((e) => e.asset),
+      page,
+    );
   }
 }

@@ -9,8 +9,6 @@ export interface PrismaAssetRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -24,9 +22,8 @@ export class PrismaAssetRepository implements AssetRepository {
     this.deps = deps;
   }
 
-  async save(asset: Asset, tx?: unknown): Promise<void> {
+  async save(asset: Asset, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
 
     if (asset.version === 0) {
       await client.asset.create({ data: AssetMapper.toRow(asset, tenantId) });

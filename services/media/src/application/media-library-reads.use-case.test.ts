@@ -45,7 +45,7 @@ describe("Media Library read use-cases (Phase 4 T4.14)", () => {
     const h = harness();
     const create = new CreateFolder(h);
     for (let i = 0; i < 2; i += 1) {
-      await create.execute({ name: `Folder ${i}` });
+      await create.execute({ name: `Folder ${i}`, tenantId: "tenant-1" });
     }
 
     const listed = await new ListFolders(h).execute({ first: 10, tenantId: "tenant-1" });
@@ -53,7 +53,7 @@ describe("Media Library read use-cases (Phase 4 T4.14)", () => {
     if (!listed.ok) return;
     expect(listed.value.items).toHaveLength(2);
 
-    const created = await create.execute({ name: "Product images" });
+    const created = await create.execute({ name: "Product images", tenantId: "tenant-1" });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
@@ -76,6 +76,7 @@ describe("Media Library read use-cases (Phase 4 T4.14)", () => {
     const created = await new RegisterMediaAsset(h).execute({
       name: "hero.png",
       storageKey: "media/hero.png",
+      tenantId: "tenant-1",
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;

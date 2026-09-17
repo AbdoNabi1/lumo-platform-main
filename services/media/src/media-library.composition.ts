@@ -47,14 +47,13 @@ export interface MediaLibraryWiringDeps {
   readonly objectStorage?: ObjectStoragePort;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaFolderRepository` +
-   * `PrismaMediaAssetRepository` + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wirePages`); absent ⇒ in-memory, unchanged. `wireMedia` (the
-   * Phase-1 Asset slice) is a separate, unrelated composition function never called by
+   * `PrismaMediaAssetRepository` + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. `wireMedia`
+   * (the Phase-1 Asset slice) is a separate, unrelated composition function never called by
    * `apps/admin` — out of scope here, same "not part of the production graph" exclusion.
+   * ADR-0014 (WP-10, T10.3): both repositories built here are tenant-agnostic singletons — no
+   * `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Media Library table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredMediaLibrary {
@@ -103,10 +102,6 @@ function buildController(
  */
 export function wireMediaLibrary(deps: MediaLibraryWiringDeps): WiredMediaLibrary {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireMediaLibrary: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new MediaLibraryEventTranslator(),
@@ -114,8 +109,11 @@ export function wireMediaLibrary(deps: MediaLibraryWiringDeps): WiredMediaLibrar
       clock: deps.clock,
       producer: "media",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const libraryDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see
+    // MediaLibraryWiringDeps' doc comment) — both repositories built below take tenantId per call
+    // instead.
+    const context = rootEventContext(deps.idGenerator);
+    const libraryDeps = { prisma: deps.prisma, outbox, context };
     const repos: MediaLibraryRepos = {
       folders: new PrismaFolderRepository(libraryDeps),
       mediaAssets: new PrismaMediaAssetRepository(libraryDeps),

@@ -21,7 +21,10 @@ function wire() {
 describe("media library (end to end)", () => {
   it("runs the full lifecycle: create folder -> register asset -> download url, publishing canonical events", async () => {
     const app = wire();
-    const folder = await app.mediaLibrary.createFolder({ name: "Product images" });
+    const folder = await app.mediaLibrary.createFolder({
+      name: "Product images",
+      tenantId: "tenant-local",
+    });
     expect(folder.status).toBe(201);
     const folderId = (folder.body as { folderId: string }).folderId;
 
@@ -29,6 +32,7 @@ describe("media library (end to end)", () => {
       name: "hero.png",
       storageKey: "media/hero.png",
       folderRef: folderId,
+      tenantId: "tenant-local",
     });
     expect(asset.status).toBe(201);
     const mediaAssetId = (asset.body as { mediaAssetId: string }).mediaAssetId;

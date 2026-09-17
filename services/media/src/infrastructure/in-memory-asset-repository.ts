@@ -7,9 +7,14 @@ export interface InMemoryAssetRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `AssetRepository`. Persists the aggregate and writes its events to the outbox on save. */
+/**
+ * In-memory `AssetRepository`. Persists the aggregate and writes its events to the outbox on save.
+ * ADR-0014 (WP-10, T10.3): keyed by `(tenantId, assetId)` — `Asset` carries no `tenantId` of its
+ * own, so the store must key on it explicitly or a cross-tenant leak here would be invisible to
+ * every isolation test.
+ */
 export class InMemoryAssetRepository implements AssetRepository {
-  private readonly store = new Map<string, Asset>();
+  private readonly store = new Map<string, { readonly tenantId: string; readonly asset: Asset }>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -18,12 +23,13 @@ export class InMemoryAssetRepository implements AssetRepository {
     this.context = deps.context;
   }
 
-  async save(asset: Asset, tx?: unknown): Promise<void> {
-    this.store.set(asset.id.toString(), asset);
+  async save(asset: Asset, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(asset.id.toString(), { tenantId, asset });
     await this.outbox.write(asset.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<Asset | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Asset | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.asset : null;
   }
 }
