@@ -51,7 +51,7 @@ export class CreateTheme implements UseCase<CreateThemeInput, ThemeStatusOutput,
       const variables = await this.deps.presets.getPreset(input.presetKey);
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const theme = Theme.create(id, input.name, variables);
-      await this.deps.themes.save(theme, tx);
+      await this.deps.themes.save(theme, input.tenantId, tx);
       return ok({ themeId: id.toString(), status: theme.status });
     });
   }
@@ -86,7 +86,7 @@ export class AdvanceTheme implements UseCase<AdvanceThemeInput, ThemeStatusOutpu
         throw error;
       }
 
-      await this.deps.themes.save(theme, tx);
+      await this.deps.themes.save(theme, input.tenantId, tx);
       return ok({ themeId: theme.id.toString(), status: theme.status });
     });
   }
@@ -122,7 +122,7 @@ export class UpdateThemeVariables implements UseCase<
         throw error;
       }
 
-      await this.deps.themes.save(theme, tx);
+      await this.deps.themes.save(theme, input.tenantId, tx);
       return ok({ themeId: theme.id.toString(), status: theme.status });
     });
   }

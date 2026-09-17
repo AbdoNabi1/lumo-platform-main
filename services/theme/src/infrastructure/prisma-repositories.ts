@@ -11,7 +11,6 @@ export interface PrismaThemeRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 /** Production `ThemeRepository` on the `theme` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -22,9 +21,8 @@ export class PrismaThemeRepository implements ThemeRepository {
     this.deps = deps;
   }
 
-  async save(theme: Theme, tx?: unknown): Promise<void> {
+  async save(theme: Theme, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = theme.id.toString();
     const row = ThemeMapper.toRow(theme, tenantId);
 
