@@ -41,7 +41,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma SEO repositories (integration)", ()
       producer: "seo",
     });
     const context = rootEventContext(ids, tenantId);
-    const seoDeps = { prisma, tenantId, outbox, context };
+    const seoDeps = { prisma, outbox, context };
     const profiles = new PrismaSeoProfileRepository(seoDeps);
     const redirects = new PrismaRedirectRepository(seoDeps);
     const sitemaps = new PrismaSitemapRepository(seoDeps);
@@ -53,10 +53,10 @@ describe.runIf(Boolean(databaseUrl))("Prisma SEO repositories (integration)", ()
       redirects,
       sitemaps,
       robotsPolicies,
-      saveProfile: (p: SeoProfile) => unitOfWork.run((tx) => profiles.save(p, tx)),
-      saveRedirect: (r: Redirect) => unitOfWork.run((tx) => redirects.save(r, tx)),
-      saveSitemap: (s: Sitemap) => unitOfWork.run((tx) => sitemaps.save(s, tx)),
-      savePolicy: (p: RobotsPolicy) => unitOfWork.run((tx) => robotsPolicies.save(p, tx)),
+      saveProfile: (p: SeoProfile) => unitOfWork.run((tx) => profiles.save(p, tenantId, tx)),
+      saveRedirect: (r: Redirect) => unitOfWork.run((tx) => redirects.save(r, tenantId, tx)),
+      saveSitemap: (s: Sitemap) => unitOfWork.run((tx) => sitemaps.save(s, tenantId, tx)),
+      savePolicy: (p: RobotsPolicy) => unitOfWork.run((tx) => robotsPolicies.save(p, tenantId, tx)),
     };
   }
 
@@ -116,6 +116,26 @@ describe.runIf(Boolean(databaseUrl))("Prisma SEO repositories (integration)", ()
     );
     const page = await robotsPolicies.list({ first: 10 }, tenantId);
     expect(page.items).toHaveLength(1);
+    await prisma.$disconnect();
+  });
+
+  it("does not let tenant A read tenant B's SEO profile through a SINGLE shared repository instance (ADR-0014, WP-10 T10.5)", async () => {
+    const tenantA = `tenant-itest-seo-a-${crypto.randomUUID()}`;
+    const tenantB = `tenant-itest-seo-b-${crypto.randomUUID()}`;
+    const { prisma, profiles, saveProfile } = wire(tenantA);
+
+    const profile = SeoProfile.create(
+      UniqueEntityId.from(ids.generate()),
+      "tenant-a-page",
+      SeoMetadata.create({}),
+      ids.generate(),
+      clock.now(),
+    );
+    await saveProfile(profile);
+
+    expect(await profiles.findById(profile.id.toString(), tenantA)).not.toBeNull();
+    expect(await profiles.findById(profile.id.toString(), tenantB)).toBeNull();
+
     await prisma.$disconnect();
   });
 });

@@ -61,7 +61,7 @@ export class SetSeoProfile implements UseCase<SetSeoProfileInput, SeoIdOutput, D
       const existing = await this.deps.profiles.findByPageRef(input.pageRef, input.tenantId, tx);
       if (existing !== null) {
         existing.update(metadata, this.deps.idGenerator.generate(), this.deps.clock.now());
-        await this.deps.profiles.save(existing, tx);
+        await this.deps.profiles.save(existing, input.tenantId, tx);
         return ok({ id: existing.id.toString() });
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
@@ -72,7 +72,7 @@ export class SetSeoProfile implements UseCase<SetSeoProfileInput, SeoIdOutput, D
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.profiles.save(profile, tx);
+      await this.deps.profiles.save(profile, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -108,7 +108,7 @@ export class CreateRedirect implements UseCase<CreateRedirectInput, SeoIdOutput,
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.redirects.save(redirect, tx);
+      await this.deps.redirects.save(redirect, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -140,7 +140,7 @@ export class CreateSitemap implements UseCase<CreateSitemapInput, SeoIdOutput, D
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.sitemaps.save(sitemap, tx);
+      await this.deps.sitemaps.save(sitemap, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -169,7 +169,7 @@ export class RegenerateSitemap implements UseCase<
       const sitemap = await this.deps.sitemaps.findById(input.sitemapId, input.tenantId, tx);
       if (sitemap === null) return err(new NotFoundError("Sitemap not found"));
       sitemap.regenerate(input.urls, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.sitemaps.save(sitemap, tx);
+      await this.deps.sitemaps.save(sitemap, input.tenantId, tx);
       return ok({ id: sitemap.id.toString() });
     });
   }
@@ -198,7 +198,7 @@ export class SetRobotsPolicy implements UseCase<SetRobotsPolicyInput, SeoIdOutpu
       );
       if (existing !== null) {
         existing.setRules(input.rules, this.deps.idGenerator.generate(), this.deps.clock.now());
-        await this.deps.robotsPolicies.save(existing, tx);
+        await this.deps.robotsPolicies.save(existing, input.tenantId, tx);
         return ok({ id: existing.id.toString() });
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
@@ -209,7 +209,7 @@ export class SetRobotsPolicy implements UseCase<SetRobotsPolicyInput, SeoIdOutpu
         this.deps.clock.now(),
       );
       policy.setRules(input.rules, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.robotsPolicies.save(policy, tx);
+      await this.deps.robotsPolicies.save(policy, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

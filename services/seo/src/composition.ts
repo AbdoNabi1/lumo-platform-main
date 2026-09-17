@@ -55,12 +55,11 @@ export interface SeoWiringDeps {
   /**
    * Production persistence (G-39/C-01). Present ⇒ all 4 Prisma repositories
    * (`PrismaSeoProfileRepository`/`PrismaRedirectRepository`/`PrismaSitemapRepository`/
-   * `PrismaRobotsPolicyRepository`) + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wireCatalog`); absent ⇒ in-memory, unchanged.
+   * `PrismaRobotsPolicyRepository`) + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged.
+   * ADR-0014 (WP-10, T10.3): every repository built here is a tenant-agnostic singleton — no
+   * `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every SEO table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredSeo {
@@ -112,10 +111,6 @@ function buildController(
  */
 export function wireSeo(deps: SeoWiringDeps): WiredSeo {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireSeo: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new SeoEventTranslator(),
@@ -123,8 +118,10 @@ export function wireSeo(deps: SeoWiringDeps): WiredSeo {
       clock: deps.clock,
       producer: "seo",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const seoDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see SeoWiringDeps' doc
+    // comment) — every repository built below takes tenantId per call instead.
+    const context = rootEventContext(deps.idGenerator);
+    const seoDeps = { prisma: deps.prisma, outbox, context };
     const repos: SeoRepos = {
       profiles: new PrismaSeoProfileRepository(seoDeps),
       redirects: new PrismaRedirectRepository(seoDeps),

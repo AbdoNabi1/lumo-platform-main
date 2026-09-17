@@ -30,8 +30,16 @@ export interface InMemorySeoRepositoriesDeps {
   readonly context: EventContext;
 }
 
+/**
+ * ADR-0014 (WP-10, T10.3): every repository below keys its store by `(tenantId, id)` — none of
+ * `SeoProfile`/`Redirect`/`Sitemap`/`RobotsPolicy` carries `tenantId` of its own, so the store
+ * must key on it explicitly or a cross-tenant leak here would be invisible to every isolation test.
+ */
 export class InMemorySeoProfileRepository implements SeoProfileRepository {
-  private readonly store = new Map<string, SeoProfile>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly profile: SeoProfile }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -40,29 +48,36 @@ export class InMemorySeoProfileRepository implements SeoProfileRepository {
     this.context = deps.context;
   }
 
-  async save(profile: SeoProfile, tx?: unknown): Promise<void> {
-    this.store.set(profile.id.toString(), profile);
+  async save(profile: SeoProfile, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(profile.id.toString(), { tenantId, profile });
     await this.outbox.write(profile.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<SeoProfile | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<SeoProfile | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.profile : null;
   }
 
-  async findByPageRef(pageRef: string, _tenantId: string): Promise<SeoProfile | null> {
-    for (const profile of this.store.values()) {
-      if (profile.pageRef === pageRef) return profile;
+  async findByPageRef(pageRef: string, tenantId: string): Promise<SeoProfile | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.profile.pageRef === pageRef) return entry.profile;
     }
     return null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<SeoProfile>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<SeoProfile>> {
+    return paginate(
+      [...this.store.values()].filter((e) => e.tenantId === tenantId).map((e) => e.profile),
+      page,
+    );
   }
 }
 
 export class InMemoryRedirectRepository implements RedirectRepository {
-  private readonly store = new Map<string, Redirect>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly redirect: Redirect }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -71,29 +86,38 @@ export class InMemoryRedirectRepository implements RedirectRepository {
     this.context = deps.context;
   }
 
-  async save(redirect: Redirect, tx?: unknown): Promise<void> {
-    this.store.set(redirect.id.toString(), redirect);
+  async save(redirect: Redirect, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(redirect.id.toString(), { tenantId, redirect });
     await this.outbox.write(redirect.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<Redirect | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Redirect | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.redirect : null;
   }
 
-  async findByFromPath(fromPath: string, _tenantId: string): Promise<Redirect | null> {
-    for (const redirect of this.store.values()) {
-      if (redirect.fromPath === fromPath) return redirect;
+  async findByFromPath(fromPath: string, tenantId: string): Promise<Redirect | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.redirect.fromPath === fromPath) {
+        return entry.redirect;
+      }
     }
     return null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Redirect>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Redirect>> {
+    return paginate(
+      [...this.store.values()].filter((e) => e.tenantId === tenantId).map((e) => e.redirect),
+      page,
+    );
   }
 }
 
 export class InMemorySitemapRepository implements SitemapRepository {
-  private readonly store = new Map<string, Sitemap>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly sitemap: Sitemap }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -102,29 +126,36 @@ export class InMemorySitemapRepository implements SitemapRepository {
     this.context = deps.context;
   }
 
-  async save(sitemap: Sitemap, tx?: unknown): Promise<void> {
-    this.store.set(sitemap.id.toString(), sitemap);
+  async save(sitemap: Sitemap, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(sitemap.id.toString(), { tenantId, sitemap });
     await this.outbox.write(sitemap.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<Sitemap | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Sitemap | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.sitemap : null;
   }
 
-  async findByName(name: string, _tenantId: string): Promise<Sitemap | null> {
-    for (const sitemap of this.store.values()) {
-      if (sitemap.name === name) return sitemap;
+  async findByName(name: string, tenantId: string): Promise<Sitemap | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.sitemap.name === name) return entry.sitemap;
     }
     return null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Sitemap>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Sitemap>> {
+    return paginate(
+      [...this.store.values()].filter((e) => e.tenantId === tenantId).map((e) => e.sitemap),
+      page,
+    );
   }
 }
 
 export class InMemoryRobotsPolicyRepository implements RobotsPolicyRepository {
-  private readonly store = new Map<string, RobotsPolicy>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly policy: RobotsPolicy }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -133,23 +164,27 @@ export class InMemoryRobotsPolicyRepository implements RobotsPolicyRepository {
     this.context = deps.context;
   }
 
-  async save(policy: RobotsPolicy, tx?: unknown): Promise<void> {
-    this.store.set(policy.id.toString(), policy);
+  async save(policy: RobotsPolicy, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(policy.id.toString(), { tenantId, policy });
     await this.outbox.write(policy.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<RobotsPolicy | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<RobotsPolicy | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.policy : null;
   }
 
-  async findByUserAgent(userAgent: string, _tenantId: string): Promise<RobotsPolicy | null> {
-    for (const policy of this.store.values()) {
-      if (policy.userAgent === userAgent) return policy;
+  async findByUserAgent(userAgent: string, tenantId: string): Promise<RobotsPolicy | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.policy.userAgent === userAgent) return entry.policy;
     }
     return null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<RobotsPolicy>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<RobotsPolicy>> {
+    return paginate(
+      [...this.store.values()].filter((e) => e.tenantId === tenantId).map((e) => e.policy),
+      page,
+    );
   }
 }

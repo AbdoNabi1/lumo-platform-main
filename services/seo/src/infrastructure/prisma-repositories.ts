@@ -28,7 +28,6 @@ export interface PrismaSeoRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 export class PrismaSeoProfileRepository implements SeoProfileRepository {
@@ -38,9 +37,8 @@ export class PrismaSeoProfileRepository implements SeoProfileRepository {
     this.deps = deps;
   }
 
-  async save(profile: SeoProfile, tx?: unknown): Promise<void> {
+  async save(profile: SeoProfile, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = profile.id.toString();
     const row = SeoProfileMapper.toRow(profile, tenantId);
     if (profile.version === 0) {
@@ -117,9 +115,8 @@ export class PrismaRedirectRepository implements RedirectRepository {
     this.deps = deps;
   }
 
-  async save(redirect: Redirect, tx?: unknown): Promise<void> {
+  async save(redirect: Redirect, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = redirect.id.toString();
     const row = RedirectMapper.toRow(redirect, tenantId);
     if (redirect.version === 0) {
@@ -194,9 +191,8 @@ export class PrismaSitemapRepository implements SitemapRepository {
     this.deps = deps;
   }
 
-  async save(sitemap: Sitemap, tx?: unknown): Promise<void> {
+  async save(sitemap: Sitemap, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = sitemap.id.toString();
     const row = SitemapMapper.toRow(sitemap, tenantId);
     if (sitemap.version === 0) {
@@ -272,9 +268,8 @@ export class PrismaRobotsPolicyRepository implements RobotsPolicyRepository {
     this.deps = deps;
   }
 
-  async save(policy: RobotsPolicy, tx?: unknown): Promise<void> {
+  async save(policy: RobotsPolicy, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = policy.id.toString();
     const row = RobotsPolicyMapper.toRow(policy, tenantId);
     if (policy.version === 0) {
