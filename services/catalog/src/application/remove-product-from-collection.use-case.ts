@@ -8,6 +8,8 @@ import type { CollectionRepository } from "../domain/collection-repository";
 export interface RemoveProductFromCollectionInput {
   readonly collectionId: string;
   readonly productId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface RemoveProductFromCollectionOutput {
@@ -38,7 +40,11 @@ export class RemoveProductFromCollection implements UseCase<
   ): Promise<Result<RemoveProductFromCollectionOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<RemoveProductFromCollectionOutput, DomainError>>(
       async (tx) => {
-        const collection = await this.deps.collections.findById(input.collectionId, tx);
+        const collection = await this.deps.collections.findById(
+          input.collectionId,
+          input.tenantId,
+          tx,
+        );
         if (collection === null) {
           return err(new NotFoundError("Collection not found"));
         }
@@ -52,7 +58,7 @@ export class RemoveProductFromCollection implements UseCase<
           if (isDomainError(error)) return err(error);
           throw error;
         }
-        await this.deps.collections.save(collection, tx);
+        await this.deps.collections.save(collection, input.tenantId, tx);
         return ok({ collectionId: collection.id.toString() });
       },
     );

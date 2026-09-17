@@ -15,7 +15,7 @@ describe("GetProductBySlug", () => {
       search: async () => ({ items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
     };
     const useCase = new GetProductBySlug({ products });
-    const result = await useCase.execute({ slug: "wooden-blocks" });
+    const result = await useCase.execute({ slug: "wooden-blocks", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -34,7 +34,7 @@ describe("GetProductBySlug", () => {
       search: async () => ({ items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
     };
     const useCase = new GetProductBySlug({ products });
-    const result = await useCase.execute({ slug: "no-such-slug" });
+    const result = await useCase.execute({ slug: "no-such-slug", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {

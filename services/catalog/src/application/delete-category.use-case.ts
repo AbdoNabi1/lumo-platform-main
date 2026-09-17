@@ -7,6 +7,8 @@ import type { CategoryRepository } from "../domain/category-repository";
 
 export interface DeleteCategoryInput {
   readonly categoryId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface DeleteCategoryOutput {
@@ -34,11 +36,15 @@ export class DeleteCategory implements UseCase<
 
   async execute(input: DeleteCategoryInput): Promise<Result<DeleteCategoryOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DeleteCategoryOutput, DomainError>>(async (tx) => {
-      const category = await this.deps.categories.findById(input.categoryId, tx);
+      const category = await this.deps.categories.findById(input.categoryId, input.tenantId, tx);
       if (category === null) {
         return err(new NotFoundError("Category not found"));
       }
-      const hasChildren = await this.deps.categories.hasChildren(input.categoryId, tx);
+      const hasChildren = await this.deps.categories.hasChildren(
+        input.categoryId,
+        input.tenantId,
+        tx,
+      );
       if (hasChildren) {
         return err(new BusinessRuleError("Cannot delete a category with live children"));
       }
@@ -48,7 +54,7 @@ export class DeleteCategory implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.categories.delete(category, tx);
+      await this.deps.categories.delete(category, input.tenantId, tx);
       return ok({ categoryId: category.id.toString() });
     });
   }

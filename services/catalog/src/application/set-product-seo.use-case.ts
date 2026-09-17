@@ -48,7 +48,7 @@ export class SetProductSeo implements UseCase<
         return err(new NotFoundError("Product not found"));
       }
       product.setSeo(seo);
-      await this.deps.products.save(product, tx);
+      await this.deps.products.save(product, input.tenantId, tx);
       return ok({ productId: product.id.toString() });
     });
   }

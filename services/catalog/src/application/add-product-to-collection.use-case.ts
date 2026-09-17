@@ -42,7 +42,11 @@ export class AddProductToCollection implements UseCase<
   ): Promise<Result<AddProductToCollectionOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<AddProductToCollectionOutput, DomainError>>(
       async (tx) => {
-        const collection = await this.deps.collections.findById(input.collectionId, tx);
+        const collection = await this.deps.collections.findById(
+          input.collectionId,
+          input.tenantId,
+          tx,
+        );
         if (collection === null) {
           return err(new NotFoundError("Collection not found"));
         }
@@ -60,7 +64,7 @@ export class AddProductToCollection implements UseCase<
           if (isDomainError(error)) return err(error);
           throw error;
         }
-        await this.deps.collections.save(collection, tx);
+        await this.deps.collections.save(collection, input.tenantId, tx);
         return ok({ collectionId: collection.id.toString() });
       },
     );

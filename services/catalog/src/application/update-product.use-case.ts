@@ -53,7 +53,7 @@ export class UpdateProduct implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.products.save(product, tx);
+      await this.deps.products.save(product, input.tenantId, tx);
       return ok({ id: product.id.toString() });
     });
   }

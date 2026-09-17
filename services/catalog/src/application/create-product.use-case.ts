@@ -23,6 +23,8 @@ export interface CreateProductInput {
   readonly slug: string;
   readonly variants: readonly VariantInput[];
   readonly mediaAssetIds?: readonly string[];
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface CreateProductOutput {
@@ -91,7 +93,7 @@ export class CreateProduct implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.products.save(product, tx);
+      await this.deps.products.save(product, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

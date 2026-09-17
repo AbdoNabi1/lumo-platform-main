@@ -252,8 +252,11 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       public: true,
       summary: "Public: get one product by slug",
       schema: { params: slugParams },
-      handle: async ({ params }) => {
-        const response = await admin.publicReads.products.getBySlug(params);
+      handle: async ({ params, context }) => {
+        const response = await admin.publicReads.products.getBySlug({
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toProductDto(response.body as Product) };
       },
@@ -266,8 +269,11 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       public: true,
       summary: "Public: list categories (cursor pagination)",
       schema: { querystring: pageQuery },
-      handle: async ({ query }) =>
-        mapPage(await admin.publicReads.categories.list(query), toCategoryDto),
+      handle: async ({ query, context }) =>
+        mapPage(
+          await admin.publicReads.categories.list({ ...query, tenantId: context.tenantId }),
+          toCategoryDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -277,8 +283,11 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       public: true,
       summary: "Public: list collections (cursor pagination)",
       schema: { querystring: pageQuery },
-      handle: async ({ query }) =>
-        mapPage(await admin.publicReads.collections.list(query), toCollectionDto),
+      handle: async ({ query, context }) =>
+        mapPage(
+          await admin.publicReads.collections.list({ ...query, tenantId: context.tenantId }),
+          toCollectionDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -288,8 +297,11 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       public: true,
       summary: "Public: get one collection by slug",
       schema: { params: slugParams },
-      handle: async ({ params }) => {
-        const response = await admin.publicReads.collections.getBySlug(params);
+      handle: async ({ params, context }) => {
+        const response = await admin.publicReads.collections.getBySlug({
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toCollectionDto(response.body as Collection) };
       },

@@ -26,20 +26,14 @@ function jsonOrDbNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.DbN
   return value === null ? Prisma.DbNull : (value as Prisma.InputJsonValue);
 }
 
+/**
+ * ADR-0014 (WP-10, T10.3): no `tenantId` field — every repository built from these deps is a
+ * tenant-agnostic singleton; every method takes `tenantId` per call instead.
+ */
 export interface PrismaCatalogRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /**
-   * Tenant scope (ADR-0008 §2), injected by the composition root. ADR-0014 (WP-10, T10.3):
-   * `PrismaProductRepository.findById`/`list`/`search` no longer read this field — they take
-   * `tenantId` per call instead. It remains required here because `save`/`findBySlug`/`findBySku`/
-   * `delete` (on `PrismaProductRepository`) and every method on `PrismaCategoryRepository`/
-   * `PrismaBrandRepository`/`PrismaCollectionRepository` have not been converted yet. Once every
-   * method across all four repositories takes `tenantId` per call, this field is removed and
-   * composition builds these repositories as tenant-agnostic singletons.
-   */
-  readonly tenantId: string;
 }
 
 function requireTx(tx: unknown, repo: string): TransactionClient {
@@ -47,6 +41,18 @@ function requireTx(tx: unknown, repo: string): TransactionClient {
     throw new Error(`${repo}.save requires the unit of work's transaction client (ADR-0003).`);
   }
   return tx as TransactionClient;
+}
+
+/** Reuses the caller's `tx` if given (its transaction already carries `app.tenant_id`, ADR-0014 point 2); otherwise opens one via `runReadScoped` (ADR-0014 point 3). */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
 }
 
 /**
@@ -61,9 +67,8 @@ export class PrismaProductRepository implements ProductRepository {
     this.deps = deps;
   }
 
-  async save(product: Product, tx?: unknown): Promise<void> {
+  async save(product: Product, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaProductRepository");
-    const tenantId = this.deps.tenantId;
 
     const productRow = ProductMapper.toProductRow(product, tenantId);
     const productData = { ...productRow, seo: jsonOrDbNull(productRow.seo) };
@@ -93,23 +98,13 @@ export class PrismaProductRepository implements ProductRepository {
     await this.deps.outbox.write(product.pullDomainEvents(), this.deps.context, client);
   }
 
-  /**
-   * ADR-0014: `tenantId` is now an explicit parameter (the caller's verified tenant), not
-   * `this.deps.tenantId`. When the caller already has an open `tx` (e.g. a write flow that already
-   * ran `runInTenantTransaction`), that transaction already has `app.tenant_id` set — reuse it
-   * directly rather than nesting a second transaction. Otherwise, open one via `runReadScoped`
-   * (ADR-0014 point 3) so the tenant scope applies even to this standalone read.
-   */
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Product | null> {
-    const run = (client: TransactionClient) =>
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
       client.product.findFirst({
         where: { id, tenantId, deletedAt: null },
         include: { variants: true },
-      });
-    const row =
-      tx !== undefined && tx !== null
-        ? await run(tx as TransactionClient)
-        : await runReadScoped(this.deps.prisma, tenantId, run);
+      }),
+    );
     return row === null
       ? null
       : ProductMapper.toDomain(
@@ -120,40 +115,32 @@ export class PrismaProductRepository implements ProductRepository {
         );
   }
 
-  async findBySlug(slug: string, tx?: unknown): Promise<Product | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.product.findFirst({
-      where: { slug, tenantId: this.deps.tenantId, deletedAt: null },
-      include: { variants: true },
-    });
+  async findBySlug(slug: string, tenantId: string, tx?: unknown): Promise<Product | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.product.findFirst({
+        where: { slug, tenantId, deletedAt: null },
+        include: { variants: true },
+      }),
+    );
     return row === null
       ? null
-      : ProductMapper.toDomain(
-          // Prisma row's `options: JsonValue` has no structural overlap with `ProductRow`'s
-          // `readonly { name: string; values: readonly string[] }[]` (comparability fails).
-          row as unknown as ProductRow,
-          row.variants as VariantRow[],
-        );
+      : ProductMapper.toDomain(row as unknown as ProductRow, row.variants as VariantRow[]);
   }
 
-  async findBySku(sku: string, tx?: unknown): Promise<Product | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.product.findFirst({
-      where: { sku, tenantId: this.deps.tenantId, deletedAt: null },
-      include: { variants: true },
-    });
+  async findBySku(sku: string, tenantId: string, tx?: unknown): Promise<Product | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.product.findFirst({
+        where: { sku, tenantId, deletedAt: null },
+        include: { variants: true },
+      }),
+    );
     return row === null
       ? null
-      : ProductMapper.toDomain(
-          // Prisma row's `options: JsonValue` has no structural overlap with `ProductRow`'s
-          // `readonly { name: string; values: readonly string[] }[]` (comparability fails).
-          row as unknown as ProductRow,
-          row.variants as VariantRow[],
-        );
+      : ProductMapper.toDomain(row as unknown as ProductRow, row.variants as VariantRow[]);
   }
 
-  async delete(product: Product, tx?: unknown): Promise<void> {
-    await this.save(product, tx);
+  async delete(product: Product, tenantId: string, tx?: unknown): Promise<void> {
+    await this.save(product, tenantId, tx);
   }
 
   async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Product>> {
@@ -180,7 +167,6 @@ export class PrismaProductRepository implements ProductRepository {
     );
   }
 
-  /** ADR-0014: same `tx`-reuse-or-`runReadScoped` shape as `findById` above. */
   private async paginate(
     where: Record<string, unknown>,
     page: CursorPage,
@@ -189,7 +175,7 @@ export class PrismaProductRepository implements ProductRepository {
   ): Promise<Paginated<Product>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const run = (client: TransactionClient) =>
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
       client.product.findMany({
         where: {
           ...where,
@@ -200,11 +186,8 @@ export class PrismaProductRepository implements ProductRepository {
         include: { variants: true },
         orderBy: { id: "asc" },
         take: limit + 1,
-      });
-    const rows =
-      tx !== undefined && tx !== null
-        ? await run(tx as TransactionClient)
-        : await runReadScoped(this.deps.prisma, tenantId, run);
+      }),
+    );
     // Prisma row's `options: JsonValue` has no structural overlap with `ProductRow`'s
     // `readonly { name: string; values: readonly string[] }[]` (comparability fails).
     const products = rows.map((row) =>
@@ -222,9 +205,8 @@ export class PrismaCategoryRepository implements CategoryRepository {
     this.deps = deps;
   }
 
-  async save(category: Category, tx?: unknown): Promise<void> {
+  async save(category: Category, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaCategoryRepository");
-    const tenantId = this.deps.tenantId;
 
     if (category.version === 0) {
       await client.category.create({ data: CategoryMapper.toRow(category, tenantId) });
@@ -243,39 +225,38 @@ export class PrismaCategoryRepository implements CategoryRepository {
     await this.deps.outbox.write(category.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Category | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.category.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Category | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.category.findFirst({ where: { id, tenantId, deletedAt: null } }),
+    );
     return row === null ? null : CategoryMapper.toDomain(row);
   }
 
-  async findBySlug(slug: string, tx?: unknown): Promise<Category | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.category.findFirst({
-      where: { slug, tenantId: this.deps.tenantId, deletedAt: null },
-    });
+  async findBySlug(slug: string, tenantId: string, tx?: unknown): Promise<Category | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.category.findFirst({ where: { slug, tenantId, deletedAt: null } }),
+    );
     return row === null ? null : CategoryMapper.toDomain(row);
   }
 
-  async delete(category: Category, tx?: unknown): Promise<void> {
-    await this.save(category, tx);
+  async delete(category: Category, tenantId: string, tx?: unknown): Promise<void> {
+    await this.save(category, tenantId, tx);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Category>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Category>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.category.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        deletedAt: null,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.category.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          ...(after ? { id: { gt: after } } : {}),
+        },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => CategoryMapper.toDomain(row)),
       limit,
@@ -283,12 +264,13 @@ export class PrismaCategoryRepository implements CategoryRepository {
     );
   }
 
-  async hasChildren(id: string, tx?: unknown): Promise<boolean> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const child = await client.category.findFirst({
-      where: { parentId: id, tenantId: this.deps.tenantId, deletedAt: null },
-      select: { id: true },
-    });
+  async hasChildren(id: string, tenantId: string, tx?: unknown): Promise<boolean> {
+    const child = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.category.findFirst({
+        where: { parentId: id, tenantId, deletedAt: null },
+        select: { id: true },
+      }),
+    );
     return child !== null;
   }
 }
@@ -301,9 +283,8 @@ export class PrismaBrandRepository implements BrandRepository {
     this.deps = deps;
   }
 
-  async save(brand: Brand, tx?: unknown): Promise<void> {
+  async save(brand: Brand, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaBrandRepository");
-    const tenantId = this.deps.tenantId;
 
     if (brand.version === 0) {
       await client.brand.create({ data: BrandMapper.toRow(brand, tenantId) });
@@ -322,39 +303,38 @@ export class PrismaBrandRepository implements BrandRepository {
     await this.deps.outbox.write(brand.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Brand | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.brand.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Brand | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.brand.findFirst({ where: { id, tenantId, deletedAt: null } }),
+    );
     return row === null ? null : BrandMapper.toDomain(row);
   }
 
-  async findBySlug(slug: string, tx?: unknown): Promise<Brand | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.brand.findFirst({
-      where: { slug, tenantId: this.deps.tenantId, deletedAt: null },
-    });
+  async findBySlug(slug: string, tenantId: string, tx?: unknown): Promise<Brand | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.brand.findFirst({ where: { slug, tenantId, deletedAt: null } }),
+    );
     return row === null ? null : BrandMapper.toDomain(row);
   }
 
-  async delete(brand: Brand, tx?: unknown): Promise<void> {
-    await this.save(brand, tx);
+  async delete(brand: Brand, tenantId: string, tx?: unknown): Promise<void> {
+    await this.save(brand, tenantId, tx);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Brand>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Brand>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.brand.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        deletedAt: null,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.brand.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          ...(after ? { id: { gt: after } } : {}),
+        },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => BrandMapper.toDomain(row)),
       limit,
@@ -371,9 +351,8 @@ export class PrismaCollectionRepository implements CollectionRepository {
     this.deps = deps;
   }
 
-  async save(collection: Collection, tx?: unknown): Promise<void> {
+  async save(collection: Collection, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaCollectionRepository");
-    const tenantId = this.deps.tenantId;
     const row = CollectionMapper.toRow(collection, tenantId);
 
     if (collection.version === 0) {
@@ -400,33 +379,40 @@ export class PrismaCollectionRepository implements CollectionRepository {
     await this.deps.outbox.write(collection.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Collection | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.collection.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-      include: { items: true },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Collection | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.collection.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        include: { items: true },
+      }),
+    );
     return row === null ? null : CollectionMapper.toDomain(row, row.items);
   }
 
-  async findBySlug(slug: string, tx?: unknown): Promise<Collection | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.collection.findFirst({
-      where: { slug, tenantId: this.deps.tenantId, deletedAt: null },
-      include: { items: true },
-    });
+  async findBySlug(slug: string, tenantId: string, tx?: unknown): Promise<Collection | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.collection.findFirst({
+        where: { slug, tenantId, deletedAt: null },
+        include: { items: true },
+      }),
+    );
     return row === null ? null : CollectionMapper.toDomain(row, row.items);
   }
 
-  async delete(collection: Collection, tx?: unknown): Promise<void> {
-    await this.save(collection, tx);
+  async delete(collection: Collection, tenantId: string, tx?: unknown): Promise<void> {
+    await this.save(collection, tenantId, tx);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Collection>> {
-    return this.paginate({}, page, tx);
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Collection>> {
+    return this.paginate({}, page, tenantId, tx);
   }
 
-  async search(query: string, page: CursorPage, tx?: unknown): Promise<Paginated<Collection>> {
+  async search(
+    query: string,
+    page: CursorPage,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<Collection>> {
     return this.paginate(
       {
         OR: [
@@ -435,6 +421,7 @@ export class PrismaCollectionRepository implements CollectionRepository {
         ],
       },
       page,
+      tenantId,
       tx,
     );
   }
@@ -442,22 +429,24 @@ export class PrismaCollectionRepository implements CollectionRepository {
   private async paginate(
     where: Record<string, unknown>,
     page: CursorPage,
+    tenantId: string,
     tx?: unknown,
   ): Promise<Paginated<Collection>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.collection.findMany({
-      where: {
-        ...where,
-        tenantId: this.deps.tenantId,
-        deletedAt: null,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      include: { items: true },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.collection.findMany({
+        where: {
+          ...where,
+          tenantId,
+          deletedAt: null,
+          ...(after ? { id: { gt: after } } : {}),
+        },
+        include: { items: true },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => CollectionMapper.toDomain(row, row.items)),
       limit,

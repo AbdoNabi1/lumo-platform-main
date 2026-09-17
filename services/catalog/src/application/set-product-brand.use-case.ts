@@ -49,13 +49,13 @@ export class SetProductBrand implements UseCase<
         return err(new NotFoundError("Product not found"));
       }
       if (ref !== null) {
-        const brand = await this.deps.brands.findById(ref.brandId, tx);
+        const brand = await this.deps.brands.findById(ref.brandId, input.tenantId, tx);
         if (brand === null) {
           return err(new NotFoundError(`Brand not found: ${ref.brandId}`));
         }
       }
       product.setBrand(ref);
-      await this.deps.products.save(product, tx);
+      await this.deps.products.save(product, input.tenantId, tx);
       return ok({ productId: product.id.toString() });
     });
   }

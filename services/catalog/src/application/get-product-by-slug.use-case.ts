@@ -6,6 +6,8 @@ import type { ProductRepository } from "../domain/product-repository";
 
 export interface GetProductBySlugInput {
   readonly slug: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface GetProductBySlugDeps {
@@ -21,7 +23,7 @@ export class GetProductBySlug implements UseCase<GetProductBySlugInput, Product,
   }
 
   async execute(input: GetProductBySlugInput): Promise<Result<Product, DomainError>> {
-    const product = await this.deps.products.findBySlug(input.slug);
+    const product = await this.deps.products.findBySlug(input.slug, input.tenantId);
     return product === null ? err(new NotFoundError("Product not found")) : ok(product);
   }
 }

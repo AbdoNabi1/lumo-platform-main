@@ -46,7 +46,7 @@ export class DeleteProduct implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.products.delete(product, tx);
+      await this.deps.products.delete(product, input.tenantId, tx);
       return ok({ productId: product.id.toString() });
     });
   }

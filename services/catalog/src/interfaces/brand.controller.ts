@@ -1,8 +1,7 @@
 import type { CreateBrand, CreateBrandInput } from "../application/create-brand.use-case";
 import type { DeleteBrand, DeleteBrandInput } from "../application/delete-brand.use-case";
-import type { ListBrands } from "../application/list-brands.use-case";
+import type { ListBrands, ListBrandsInput } from "../application/list-brands.use-case";
 import type { UpdateBrand, UpdateBrandInput } from "../application/update-brand.use-case";
-import type { CursorPage } from "@platform/types";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface BrandControllerDeps {
@@ -32,7 +31,7 @@ export class BrandController {
     return present(await this.deps.deleteBrand.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListBrandsInput): Promise<ControllerResponse> {
     return present(await this.deps.listBrands.execute(input), 200);
   }
 }

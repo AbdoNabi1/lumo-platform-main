@@ -79,12 +79,12 @@ export interface CatalogWiringDeps {
   /**
    * Production persistence (G-39/C-01). Present ⇒ all 4 Prisma repositories
    * (`PrismaProductRepository`/`PrismaCategoryRepository`/`PrismaBrandRepository`/
-   * `PrismaCollectionRepository`) + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wireCheckout`); absent ⇒ in-memory, unchanged.
+   * `PrismaCollectionRepository`) + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged.
+   * ADR-0014 (WP-10, T10.3): every repository built here is a tenant-agnostic singleton — no
+   * `tenantId` at composition time any more (a caller's `deps` object may still carry one for an
+   * unrelated wireX call sharing the same literal — an unused excess field, not consumed here).
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Catalog table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredCatalog {
@@ -243,10 +243,6 @@ const CATALOG_EVENT_TYPES = [
  */
 export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireCatalog: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new CatalogEventTranslator(),
@@ -254,8 +250,10 @@ export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
       clock: deps.clock,
       producer: "catalog",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const prismaDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see CatalogWiringDeps'
+    // doc comment) — every repository built below takes tenantId per call instead.
+    const context = rootEventContext(deps.idGenerator);
+    const prismaDeps = { prisma: deps.prisma, outbox, context };
     const repos: CatalogRepos = {
       products: new PrismaProductRepository(prismaDeps),
       categories: new PrismaCategoryRepository(prismaDeps),

@@ -9,9 +9,12 @@ export interface InMemoryBrandRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `BrandRepository` (Commerce Sprint 1). */
+/**
+ * In-memory `BrandRepository` (Commerce Sprint 1). ADR-0014 (WP-10, T10.3): keyed by
+ * `(tenantId, brandId)` — see `InMemoryProductRepository`'s doc comment for why.
+ */
 export class InMemoryBrandRepository implements BrandRepository {
-  private readonly store = new Map<string, Brand>();
+  private readonly store = new Map<string, { readonly tenantId: string; readonly brand: Brand }>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,30 +23,35 @@ export class InMemoryBrandRepository implements BrandRepository {
     this.context = deps.context;
   }
 
-  async save(brand: Brand, tx?: unknown): Promise<void> {
-    this.store.set(brand.id.toString(), brand);
+  async save(brand: Brand, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(brand.id.toString(), { tenantId, brand });
     await this.outbox.write(brand.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Brand | null> {
-    const brand = this.store.get(id);
-    return brand !== undefined && !brand.deleted ? brand : null;
+  async findById(id: string, tenantId: string): Promise<Brand | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId && !entry.brand.deleted
+      ? entry.brand
+      : null;
   }
 
-  async findBySlug(slug: string): Promise<Brand | null> {
-    for (const brand of this.store.values()) {
-      if (!brand.deleted && brand.slug.value === slug) return brand;
+  async findBySlug(slug: string, tenantId: string): Promise<Brand | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && !entry.brand.deleted && entry.brand.slug.value === slug) {
+        return entry.brand;
+      }
     }
     return null;
   }
 
-  async delete(brand: Brand, tx?: unknown): Promise<void> {
-    await this.save(brand, tx);
+  async delete(brand: Brand, tenantId: string, tx?: unknown): Promise<void> {
+    await this.save(brand, tenantId, tx);
   }
 
-  async list(page: CursorPage): Promise<Paginated<Brand>> {
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Brand>> {
     const sorted = [...this.store.values()]
-      .filter((b) => !b.deleted)
+      .filter((entry) => entry.tenantId === tenantId && !entry.brand.deleted)
+      .map((entry) => entry.brand)
       .sort((a, b) => a.id.toString().localeCompare(b.id.toString()));
     const after = page.after !== undefined ? decodeCursor(page.after) : null;
     const filtered = after === null ? sorted : sorted.filter((b) => b.id.toString() > after);

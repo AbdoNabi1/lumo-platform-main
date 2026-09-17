@@ -64,7 +64,7 @@ export class UpdateVariant implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.products.save(product, tx);
+      await this.deps.products.save(product, input.tenantId, tx);
       return ok({ productId: product.id.toString(), variantId: input.variantId });
     });
   }

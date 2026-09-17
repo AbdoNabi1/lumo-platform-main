@@ -1,8 +1,7 @@
 import type { CreateCategory, CreateCategoryInput } from "../application/create-category.use-case";
 import type { DeleteCategory, DeleteCategoryInput } from "../application/delete-category.use-case";
-import type { ListCategories } from "../application/list-categories.use-case";
+import type { ListCategories, ListCategoriesInput } from "../application/list-categories.use-case";
 import type { MoveCategory, MoveCategoryInput } from "../application/move-category.use-case";
-import type { CursorPage } from "@platform/types";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface CategoryControllerDeps {
@@ -32,7 +31,7 @@ export class CategoryController {
     return present(await this.deps.deleteCategory.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListCategoriesInput): Promise<ControllerResponse> {
     return present(await this.deps.listCategories.execute(input), 200);
   }
 }

@@ -55,11 +55,16 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       name: "Wagon",
       slug: "wagon",
       variants: [{ sku: "SKU-1-V1", priceAmountMinor: 1999, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const brand = await new CreateBrand(h).execute({ name: "Acme", slug: "acme" });
+    const brand = await new CreateBrand(h).execute({
+      name: "Acme",
+      slug: "acme",
+      tenantId: "tenant-1",
+    });
     expect(brand.ok).toBe(true);
     if (!brand.ok) return;
 
@@ -78,6 +83,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       name: "Blocks",
       slug: "blocks",
       variants: [{ sku: "SKU-2-V1", priceAmountMinor: 999, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     if (!created.ok) throw new Error("fixture failed");
     const result = await new SetProductBrand(h).execute({
@@ -95,6 +101,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       name: "Puzzle",
       slug: "puzzle",
       variants: [{ sku: "SKU-3-V1", priceAmountMinor: 1500, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     if (!created.ok) throw new Error("fixture failed");
     const added = await new AddVariant(h).execute({
@@ -114,6 +121,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       name: "Ball",
       slug: "ball",
       variants: [{ sku: "SKU-4-V1", priceAmountMinor: 500, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     if (!created.ok) throw new Error("fixture failed");
 
@@ -124,7 +132,11 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
     });
     expect(missing.ok).toBe(false);
 
-    const category = await new CreateCategory(h).execute({ name: "Outdoor", slug: "outdoor" });
+    const category = await new CreateCategory(h).execute({
+      name: "Outdoor",
+      slug: "outdoor",
+      tenantId: "tenant-1",
+    });
     if (!category.ok) throw new Error("fixture failed");
     const assigned = await new AssignCategories(h).execute({
       productId: created.value.id,
@@ -136,12 +148,17 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
 
   it("MoveCategory walks the real ancestor chain and rejects a transitive cycle", async () => {
     const h = harness();
-    const root = await new CreateCategory(h).execute({ name: "Root", slug: "root" });
+    const root = await new CreateCategory(h).execute({
+      name: "Root",
+      slug: "root",
+      tenantId: "tenant-1",
+    });
     if (!root.ok) throw new Error("fixture failed");
     const child = await new CreateCategory(h).execute({
       name: "Child",
       slug: "child",
       parentId: root.value.id,
+      tenantId: "tenant-1",
     });
     if (!child.ok) throw new Error("fixture failed");
 
@@ -149,6 +166,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
     const result = await new MoveCategory(h).execute({
       categoryId: root.value.id,
       newParentId: child.value.id,
+      tenantId: "tenant-1",
     });
     expect(result.ok).toBe(false);
   });
@@ -160,6 +178,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       name: "Kite",
       slug: "kite",
       variants: [{ sku: "SKU-5-V1", priceAmountMinor: 800, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     if (!created.ok) throw new Error("fixture failed");
 
@@ -184,6 +203,7 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       name: "Wooden Train Set",
       slug: "wooden-train-set",
       variants: [{ sku: "SKU-6-V1", priceAmountMinor: 2500, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     const result = await new ListProducts(h).execute({ query: "train", tenantId: "tenant-1" });
     expect(result.ok).toBe(true);
@@ -197,18 +217,21 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       name: "Doll",
       slug: "doll",
       variants: [{ sku: "SKU-7-V1", priceAmountMinor: 1200, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     const p2 = await new CreateProduct(h).execute({
       sku: "SKU-8",
       name: "Car",
       slug: "car",
       variants: [{ sku: "SKU-8-V1", priceAmountMinor: 1300, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     if (!p1.ok || !p2.ok) throw new Error("fixture failed");
 
     const collection = await new CreateCollection(h).execute({
       name: "New Arrivals",
       slug: "new-arrivals",
+      tenantId: "tenant-1",
     });
     if (!collection.ok) throw new Error("fixture failed");
 
@@ -226,10 +249,11 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
     const reordered = await new ReorderCollectionProducts(h).execute({
       collectionId: collection.value.id,
       productIds: [p2.value.id, p1.value.id],
+      tenantId: "tenant-1",
     });
     expect(reordered.ok).toBe(true);
 
-    const stored = await h.collections.findById(collection.value.id);
+    const stored = await h.collections.findById(collection.value.id, "tenant-1");
     expect(stored?.productIds).toEqual([p2.value.id, p1.value.id]);
   });
 });

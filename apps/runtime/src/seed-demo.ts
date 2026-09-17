@@ -219,7 +219,7 @@ async function main(): Promise<void> {
       readonly slug: ValueLike;
     }
     const existingBrands = unwrap<{ items: readonly BrandRecord[] }>(
-      await catalog.brands.list({ first: 100 }),
+      await catalog.brands.list({ first: 100, tenantId: TENANT_ID }),
       "list brands",
     );
     const existingBrand = existingBrands.items.find((b) => b.slug.value === "morbeh-originals");
@@ -232,7 +232,11 @@ async function main(): Promise<void> {
       });
     } else {
       const brand = unwrap<{ id: string }>(
-        await catalog.brands.create({ name: "Morbeh Originals", slug: "morbeh-originals" }),
+        await catalog.brands.create({
+          name: "Morbeh Originals",
+          slug: "morbeh-originals",
+          tenantId: TENANT_ID,
+        }),
         "create brand",
       );
       brandId = brand.id;
@@ -245,7 +249,7 @@ async function main(): Promise<void> {
       readonly slug: ValueLike;
     }
     const existingCategories = unwrap<{ items: readonly CategoryRecord[] }>(
-      await catalog.categories.list({ first: 100 }),
+      await catalog.categories.list({ first: 100, tenantId: TENANT_ID }),
       "list categories",
     );
     const categoriesBySlug = new Map<string, { id: string }>();
@@ -260,7 +264,7 @@ async function main(): Promise<void> {
         continue;
       }
       const category = unwrap<{ id: string }>(
-        await catalog.categories.create({ name: seed.name, slug: seed.slug }),
+        await catalog.categories.create({ name: seed.name, slug: seed.slug, tenantId: TENANT_ID }),
         `create category "${seed.slug}"`,
       );
       categoriesBySlug.set(seed.slug, category);
@@ -278,7 +282,7 @@ async function main(): Promise<void> {
     const products: Array<{ id: string; name: string; priceAmountMinor: number }> = [];
     for (const seed of PRODUCT_SEEDS) {
       const existing = unwrapOrNull<ProductRecord>(
-        await catalog.products.getBySlug({ slug: seed.slug }),
+        await catalog.products.getBySlug({ slug: seed.slug, tenantId: TENANT_ID }),
         `look up product "${seed.slug}"`,
       );
       if (existing !== null) {
@@ -301,6 +305,7 @@ async function main(): Promise<void> {
           variants: [
             { sku: seed.variantSku, priceAmountMinor: seed.priceAmountMinor, currency: CURRENCY },
           ],
+          tenantId: TENANT_ID,
         }),
         `create product "${seed.sku}"`,
       );

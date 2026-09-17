@@ -83,11 +83,16 @@ describe("public catalog routes — DTO boundary", () => {
         name: "Wooden Building Blocks",
         slug: "wooden-building-blocks",
         variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+        tenantId: "tenant-local",
       }),
       "create product",
     );
     const collection = unwrap<{ id: string }>(
-      await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+      await catalog.collections.create({
+        name: "Featured Toys",
+        slug: "featured-toys",
+        tenantId: "tenant-local",
+      }),
       "create collection",
     );
     unwrap(
@@ -99,7 +104,7 @@ describe("public catalog routes — DTO boundary", () => {
       "add product to collection",
     );
     unwrap(
-      await catalog.collections.publish({ collectionId: collection.id }),
+      await catalog.collections.publish({ collectionId: collection.id, tenantId: "tenant-local" }),
       "publish collection",
     );
 
@@ -124,7 +129,11 @@ describe("public catalog routes — DTO boundary", () => {
   it("never puts aggregate internals on the wire (props / _id / _domainEvents / _version / deleted)", async () => {
     const catalog = catalogFixture();
     unwrap(
-      await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+      await catalog.collections.create({
+        name: "Featured Toys",
+        slug: "featured-toys",
+        tenantId: "tenant-local",
+      }),
       "create collection",
     );
 
@@ -143,6 +152,7 @@ describe("public catalog routes — DTO boundary", () => {
         name: "Wooden Building Blocks",
         slug: "wooden-building-blocks",
         variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+        tenantId: "tenant-local",
       }),
       "create product",
     );
@@ -173,12 +183,14 @@ describe("public catalog routes — DTO boundary", () => {
       name: "Wooden Building Blocks",
       slug: "wooden-building-blocks",
       variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+      tenantId: "tenant-local",
     });
     await catalog.products.create({
       sku: "MC-001",
       name: "Metal Car",
       slug: "metal-car",
       variants: [{ sku: "MC-001-STD", priceAmountMinor: 1999, currency: "USD" }],
+      tenantId: "tenant-local",
     });
 
     const route = publicCatalogRoutes(stubAdmin(catalog)).find(
@@ -240,6 +252,7 @@ describe("public catalog routes — DTO boundary", () => {
           name: "Wooden Building Blocks",
           slug: "wooden-building-blocks",
           variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+          tenantId: "tenant-local",
         }),
         "create product",
       );
@@ -253,6 +266,7 @@ describe("public catalog routes — DTO boundary", () => {
           name: "Metal Car",
           slug: "metal-car",
           variants: [{ sku: "MC-001-STD", priceAmountMinor: 1999, currency: "USD" }],
+          tenantId: "tenant-local",
         }),
         "create product",
       );
@@ -261,7 +275,11 @@ describe("public catalog routes — DTO boundary", () => {
         "publish product",
       );
       const collection = unwrap<{ id: string }>(
-        await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+        await catalog.collections.create({
+          name: "Featured Toys",
+          slug: "featured-toys",
+          tenantId: "tenant-local",
+        }),
         "create collection",
       );
       // Added in reverse — the curated order (second, then first) must be preserved on the wire.
@@ -282,7 +300,10 @@ describe("public catalog routes — DTO boundary", () => {
         "add first product",
       );
       unwrap(
-        await catalog.collections.publish({ collectionId: collection.id }),
+        await catalog.collections.publish({
+          collectionId: collection.id,
+          tenantId: "tenant-local",
+        }),
         "publish collection",
       );
 
@@ -309,7 +330,11 @@ describe("public catalog routes — DTO boundary", () => {
     it("404s for an unpublished (draft) collection — never leaks its membership", async () => {
       const catalog = catalogFixture();
       unwrap(
-        await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+        await catalog.collections.create({
+          name: "Featured Toys",
+          slug: "featured-toys",
+          tenantId: "tenant-local",
+        }),
         "create collection",
       );
       // Left as draft — never published.
@@ -329,6 +354,7 @@ describe("public catalog routes — DTO boundary", () => {
           name: "Wooden Building Blocks",
           slug: "wooden-building-blocks",
           variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+          tenantId: "tenant-local",
         }),
         "create product",
       );
@@ -342,12 +368,17 @@ describe("public catalog routes — DTO boundary", () => {
           name: "Metal Car",
           slug: "metal-car",
           variants: [{ sku: "MC-001-STD", priceAmountMinor: 1999, currency: "USD" }],
+          tenantId: "tenant-local",
         }),
         "create draft product",
       );
       // Left as draft — never published.
       const collection = unwrap<{ id: string }>(
-        await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+        await catalog.collections.create({
+          name: "Featured Toys",
+          slug: "featured-toys",
+          tenantId: "tenant-local",
+        }),
         "create collection",
       );
       unwrap(
@@ -367,7 +398,10 @@ describe("public catalog routes — DTO boundary", () => {
         "add draft product",
       );
       unwrap(
-        await catalog.collections.publish({ collectionId: collection.id }),
+        await catalog.collections.publish({
+          collectionId: collection.id,
+          tenantId: "tenant-local",
+        }),
         "publish collection",
       );
 

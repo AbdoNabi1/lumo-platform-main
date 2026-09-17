@@ -99,13 +99,13 @@ async function main(): Promise<void> {
 
     // ---- Catalog: brand + category ----
     const brand = unwrap<{ id: string }>(
-      await catalog.brands.create({ name: "Acme Toys", slug: "acme-toys" }),
+      await catalog.brands.create({ name: "Acme Toys", slug: "acme-toys", tenantId: TENANT_ID }),
       "create brand",
     );
     logger.info("seed: created brand", { brandId: brand.id, name: "Acme Toys" });
 
     const category = unwrap<{ id: string }>(
-      await catalog.categories.create({ name: "Toys", slug: "toys" }),
+      await catalog.categories.create({ name: "Toys", slug: "toys", tenantId: TENANT_ID }),
       "create category",
     );
     logger.info("seed: created category", { categoryId: category.id, name: "Toys" });
@@ -121,6 +121,7 @@ async function main(): Promise<void> {
           variants: [
             { sku: seed.variantSku, priceAmountMinor: seed.priceAmountMinor, currency: CURRENCY },
           ],
+          tenantId: TENANT_ID,
         }),
         `create product "${seed.sku}"`,
       );
@@ -156,7 +157,11 @@ async function main(): Promise<void> {
 
     // ---- Catalog: one collection containing every seeded product ----
     const collection = unwrap<{ id: string }>(
-      await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+      await catalog.collections.create({
+        name: "Featured Toys",
+        slug: "featured-toys",
+        tenantId: TENANT_ID,
+      }),
       "create collection",
     );
     for (const product of products) {
@@ -170,7 +175,7 @@ async function main(): Promise<void> {
       );
     }
     unwrap(
-      await catalog.collections.publish({ collectionId: collection.id }),
+      await catalog.collections.publish({ collectionId: collection.id, tenantId: TENANT_ID }),
       "publish collection",
     );
     logger.info("seed: created + published collection", {

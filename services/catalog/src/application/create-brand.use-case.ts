@@ -11,6 +11,8 @@ import { Slug } from "../domain/value-objects/slug";
 export interface CreateBrandInput {
   readonly name: string;
   readonly slug: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface CreateBrandOutput {
@@ -39,7 +41,7 @@ export class CreateBrand implements UseCase<CreateBrandInput, CreateBrandOutput,
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<CreateBrandOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.brands.findBySlug(slug.value.value, tx);
+      const existing = await this.deps.brands.findBySlug(slug.value.value, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError("A brand with this slug already exists"));
       }
@@ -51,7 +53,7 @@ export class CreateBrand implements UseCase<CreateBrandInput, CreateBrandOutput,
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.brands.save(brand, tx);
+      await this.deps.brands.save(brand, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

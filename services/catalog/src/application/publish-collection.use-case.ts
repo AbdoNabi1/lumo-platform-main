@@ -7,6 +7,8 @@ import type { CollectionRepository } from "../domain/collection-repository";
 
 export interface PublishCollectionInput {
   readonly collectionId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface PublishCollectionOutput {
@@ -36,7 +38,11 @@ export class PublishCollection implements UseCase<
     input: PublishCollectionInput,
   ): Promise<Result<PublishCollectionOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PublishCollectionOutput, DomainError>>(async (tx) => {
-      const collection = await this.deps.collections.findById(input.collectionId, tx);
+      const collection = await this.deps.collections.findById(
+        input.collectionId,
+        input.tenantId,
+        tx,
+      );
       if (collection === null) {
         return err(new NotFoundError("Collection not found"));
       }
@@ -46,7 +52,7 @@ export class PublishCollection implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.collections.save(collection, tx);
+      await this.deps.collections.save(collection, input.tenantId, tx);
       return ok({ collectionId: collection.id.toString() });
     });
   }

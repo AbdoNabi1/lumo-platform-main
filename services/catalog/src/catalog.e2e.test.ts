@@ -27,6 +27,7 @@ describe("catalog (end to end)", () => {
       name: "Toy Wagon",
       slug: "toy-wagon",
       variants: [{ sku: "P-1-RED", priceAmountMinor: 1999, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const { id } = created.body as { id: string };
@@ -49,6 +50,7 @@ describe("catalog (end to end)", () => {
       name: "Bad",
       slug: "Bad Slug",
       variants: [{ sku: "P-2-A", priceAmountMinor: 100, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     expect(response.status).toBe(422);
   });
@@ -61,7 +63,11 @@ describe("catalog (end to end)", () => {
 
   it("creates a category", async () => {
     const app = wire();
-    const response = await app.categories.create({ name: "Outdoor", slug: "outdoor" });
+    const response = await app.categories.create({
+      name: "Outdoor",
+      slug: "outdoor",
+      tenantId: "tenant-1",
+    });
     expect(response.status).toBe(201);
   });
 
@@ -75,12 +81,17 @@ describe("catalog (end to end)", () => {
       name: "Kite",
       slug: "kite",
       variants: [{ sku: "P-10-A", priceAmountMinor: 800, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     expect(productA.status).toBe(201);
     const { id: productId } = productA.body as { id: string };
 
-    const from = await app.collections.create({ name: "Summer", slug: "summer" });
-    const to = await app.collections.create({ name: "Sale", slug: "sale" });
+    const from = await app.collections.create({
+      name: "Summer",
+      slug: "summer",
+      tenantId: "tenant-1",
+    });
+    const to = await app.collections.create({ name: "Sale", slug: "sale", tenantId: "tenant-1" });
     expect(from.status).toBe(201);
     expect(to.status).toBe(201);
     const { id: fromId } = from.body as { id: string };
@@ -97,13 +108,14 @@ describe("catalog (end to end)", () => {
       fromCollectionId: fromId,
       toCollectionId: toId,
       productId,
+      tenantId: "tenant-1",
     });
     expect(moved.status).toBe(200);
 
-    const published = await app.collections.publish({ collectionId: toId });
+    const published = await app.collections.publish({ collectionId: toId, tenantId: "tenant-1" });
     expect(published.status).toBe(200);
 
-    const deleted = await app.collections.delete({ collectionId: fromId });
+    const deleted = await app.collections.delete({ collectionId: fromId, tenantId: "tenant-1" });
     expect(deleted.status).toBe(200);
   });
 
@@ -115,6 +127,7 @@ describe("catalog (end to end)", () => {
       name: "Ball",
       slug: "ball",
       variants: [{ sku: "P-11-A", priceAmountMinor: 500, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     const { id: productId } = product.body as { id: string };
     const deletedProduct = await app.products.delete({ productId, tenantId: "tenant-1" });
@@ -122,16 +135,24 @@ describe("catalog (end to end)", () => {
     const missing = await app.products.get({ productId, tenantId: "tenant-1" });
     expect(missing.status).toBe(404);
 
-    const parent = await app.categories.create({ name: "Outdoor", slug: "outdoor-2" });
+    const parent = await app.categories.create({
+      name: "Outdoor",
+      slug: "outdoor-2",
+      tenantId: "tenant-1",
+    });
     const { id: parentId } = parent.body as { id: string };
     const child = await app.categories.create({
       name: "Sports",
       slug: "sports",
       parentId,
+      tenantId: "tenant-1",
     });
     expect(child.status).toBe(201);
 
-    const rejectedDelete = await app.categories.delete({ categoryId: parentId });
+    const rejectedDelete = await app.categories.delete({
+      categoryId: parentId,
+      tenantId: "tenant-1",
+    });
     expect(rejectedDelete.status).toBe(409);
   });
 });

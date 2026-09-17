@@ -746,7 +746,9 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a product",
       schema: { body: createProductBody },
-      handle: ({ body, context }) => admin.products.createProduct(context.principal, body),
+      // ADR-0014: CreateProductInput now requires tenantId — same source as every other product route.
+      handle: ({ body, context }) =>
+        admin.products.createProduct(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -1032,8 +1034,15 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "categories:read",
       summary: "List categories (cursor-paginated)",
       schema: { querystring: listCategoriesQuery },
+      // ADR-0014: ListCategoriesInput now requires tenantId — same source as every product route.
       handle: async ({ query, context }) =>
-        mapPage(await admin.products.listCategories(context.principal, query), toCategoryDto),
+        mapPage(
+          await admin.products.listCategories(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toCategoryDto,
+        ),
     }),
     defineRoute({
       method: "POST",
@@ -1043,7 +1052,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a category",
       schema: { body: createCategoryBody },
-      handle: ({ body, context }) => admin.products.createCategory(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.products.createCategory(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1054,7 +1064,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Reparent a category",
       schema: { params: categoryIdParams, body: moveCategoryBody },
       handle: ({ params, body, context }) =>
-        admin.products.moveCategory(context.principal, { categoryId: params.categoryId, ...body }),
+        admin.products.moveCategory(context.principal, {
+          categoryId: params.categoryId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1064,7 +1078,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Soft-delete a category (rejected if it has live children)",
       schema: { params: categoryIdParams },
-      handle: ({ params, context }) => admin.products.deleteCategory(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.deleteCategory(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -1073,8 +1091,15 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "brands:read",
       summary: "List brands (cursor-paginated)",
       schema: { querystring: listCategoriesQuery },
+      // ADR-0014: ListBrandsInput now requires tenantId — same source as every product route.
       handle: async ({ query, context }) =>
-        mapPage(await admin.products.listBrands(context.principal, query), toBrandDto),
+        mapPage(
+          await admin.products.listBrands(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toBrandDto,
+        ),
     }),
     defineRoute({
       method: "POST",
@@ -1084,7 +1109,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a brand",
       schema: { body: createBrandBody },
-      handle: ({ body, context }) => admin.products.createBrand(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.products.createBrand(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1095,7 +1121,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Rename a brand",
       schema: { params: brandIdParams, body: updateBrandBody },
       handle: ({ params, body, context }) =>
-        admin.products.updateBrand(context.principal, { id: params.brandId, ...body }),
+        admin.products.updateBrand(context.principal, {
+          id: params.brandId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1106,7 +1136,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Soft-delete a brand",
       schema: { params: brandIdParams },
       handle: ({ params, context }) =>
-        admin.products.deleteBrand(context.principal, { brandId: params.brandId }),
+        admin.products.deleteBrand(context.principal, {
+          brandId: params.brandId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",

@@ -65,7 +65,7 @@ export class AddVariant implements UseCase<AddVariantInput, AddVariantOutput, Do
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.products.save(product, tx);
+      await this.deps.products.save(product, input.tenantId, tx);
       return ok({ productId: product.id.toString(), variantId: variantId.toString() });
     });
   }

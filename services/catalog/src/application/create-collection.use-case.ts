@@ -11,6 +11,8 @@ import { Slug } from "../domain/value-objects/slug";
 export interface CreateCollectionInput {
   readonly name: string;
   readonly slug: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface CreateCollectionOutput {
@@ -45,7 +47,7 @@ export class CreateCollection implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<CreateCollectionOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.collections.findBySlug(slug.value.value, tx);
+      const existing = await this.deps.collections.findBySlug(slug.value.value, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError("A collection with this slug already exists"));
       }
@@ -57,7 +59,7 @@ export class CreateCollection implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.collections.save(collection, tx);
+      await this.deps.collections.save(collection, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

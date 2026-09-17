@@ -14,7 +14,7 @@ describe("ListBrands", () => {
       list: async () => page,
     };
     const useCase = new ListBrands({ brands });
-    const result = await useCase.execute({});
+    const result = await useCase.execute({ tenantId: "tenant-1" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {

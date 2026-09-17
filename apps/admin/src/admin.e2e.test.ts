@@ -31,6 +31,7 @@ describe("admin wiring (end to end)", () => {
       name: "Toy Wagon",
       slug: "toy-wagon",
       variants: [{ sku: "P-1-RED", priceAmountMinor: 1999, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const productId = (created.body as { id: string }).id;
@@ -38,7 +39,13 @@ describe("admin wiring (end to end)", () => {
       (await admin.products.publishProduct(staff, { productId, tenantId: "tenant-1" })).status,
     ).toBe(200);
     expect(
-      (await admin.products.createCategory(staff, { name: "Wagons", slug: "wagons" })).status,
+      (
+        await admin.products.createCategory(staff, {
+          name: "Wagons",
+          slug: "wagons",
+          tenantId: "tenant-1",
+        })
+      ).status,
     ).toBe(201);
 
     // Inventory screen → Inventory
@@ -1308,7 +1315,11 @@ describe("admin wiring (end to end)", () => {
       auditTrail,
     });
 
-    await admin.products.createCategory(staff, { name: "Wagons", slug: "wagons" });
+    await admin.products.createCategory(staff, {
+      name: "Wagons",
+      slug: "wagons",
+      tenantId: "tenant-1",
+    });
     await admin.orders.refundOrder(staff, { orderId: "o-1" });
 
     expect(auditTrail.snapshot()).toEqual([

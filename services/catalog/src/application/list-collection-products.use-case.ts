@@ -59,7 +59,7 @@ export class ListCollectionProducts implements UseCase<
     input: ListCollectionProductsInput,
   ): Promise<Result<Paginated<Product>, DomainError>> {
     const { slug, tenantId, ...page } = input;
-    const collection = await this.deps.collections.findBySlug(slug);
+    const collection = await this.deps.collections.findBySlug(slug, tenantId);
     if (collection === null || collection.status !== "published") {
       return err(new NotFoundError("Collection not found"));
     }

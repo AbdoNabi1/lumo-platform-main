@@ -9,9 +9,15 @@ export interface InMemoryCollectionRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `CollectionRepository` (Sprint 7.0). */
+/**
+ * In-memory `CollectionRepository` (Sprint 7.0). ADR-0014 (WP-10, T10.3): keyed by
+ * `(tenantId, collectionId)` — see `InMemoryProductRepository`'s doc comment for why.
+ */
 export class InMemoryCollectionRepository implements CollectionRepository {
-  private readonly store = new Map<string, Collection>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly collection: Collection }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,41 +26,55 @@ export class InMemoryCollectionRepository implements CollectionRepository {
     this.context = deps.context;
   }
 
-  async save(collection: Collection, tx?: unknown): Promise<void> {
-    this.store.set(collection.id.toString(), collection);
+  async save(collection: Collection, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(collection.id.toString(), { tenantId, collection });
     await this.outbox.write(collection.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string): Promise<Collection | null> {
-    const collection = this.store.get(id);
-    return collection !== undefined && !collection.deleted ? collection : null;
+  async findById(id: string, tenantId: string): Promise<Collection | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId && !entry.collection.deleted
+      ? entry.collection
+      : null;
   }
 
-  async findBySlug(slug: string): Promise<Collection | null> {
-    for (const collection of this.store.values()) {
-      if (!collection.deleted && collection.slug.value === slug) return collection;
+  async findBySlug(slug: string, tenantId: string): Promise<Collection | null> {
+    for (const entry of this.store.values()) {
+      if (
+        entry.tenantId === tenantId &&
+        !entry.collection.deleted &&
+        entry.collection.slug.value === slug
+      ) {
+        return entry.collection;
+      }
     }
     return null;
   }
 
-  async delete(collection: Collection, tx?: unknown): Promise<void> {
-    await this.save(collection, tx);
+  async delete(collection: Collection, tenantId: string, tx?: unknown): Promise<void> {
+    await this.save(collection, tenantId, tx);
   }
 
-  async list(page: CursorPage): Promise<Paginated<Collection>> {
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Collection>> {
     return this.paginate(
-      [...this.store.values()].filter((c) => !c.deleted),
+      [...this.store.values()]
+        .filter((entry) => entry.tenantId === tenantId && !entry.collection.deleted)
+        .map((entry) => entry.collection),
       page,
     );
   }
 
-  async search(query: string, page: CursorPage): Promise<Paginated<Collection>> {
+  async search(query: string, page: CursorPage, tenantId: string): Promise<Paginated<Collection>> {
     const needle = query.toLowerCase();
-    const rows = [...this.store.values()].filter(
-      (c) =>
-        !c.deleted &&
-        (c.name.toLowerCase().includes(needle) || c.slug.value.toLowerCase().includes(needle)),
-    );
+    const rows = [...this.store.values()]
+      .filter(
+        (entry) =>
+          entry.tenantId === tenantId &&
+          !entry.collection.deleted &&
+          (entry.collection.name.toLowerCase().includes(needle) ||
+            entry.collection.slug.value.toLowerCase().includes(needle)),
+      )
+      .map((entry) => entry.collection);
     return this.paginate(rows, page);
   }
 
