@@ -91,13 +91,12 @@ export function wireFeatureFlags(deps: FeatureFlagsWiringDeps): WiredFeatureFlag
       clock: deps.clock,
       producer: "feature_flags",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const flags = new PrismaFeatureFlagRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time for repository construction any
+    // more — PrismaFeatureFlagRepository takes tenantId per call. `tenantId` itself is still
+    // needed below for AggregateFeatureFlags (the kernel FeatureFlags port has no tenant concept
+    // to thread it through per-call — see AggregateFeatureFlagsDeps' own doc comment).
+    const context = rootEventContext(deps.idGenerator);
+    const flags = new PrismaFeatureFlagRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {

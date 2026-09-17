@@ -31,12 +31,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaFeatureFlagRepository (integration)"
       producer: "feature_flags",
     });
     const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaFeatureFlagRepository({ prisma, tenantId, outbox, context });
+    const repository = new PrismaFeatureFlagRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       repository,
-      save: (flag: FeatureFlag) => unitOfWork.run((tx) => repository.save(flag, tx)),
+      save: (flag: FeatureFlag) => unitOfWork.run((tx) => repository.save(flag, tenantId, tx)),
     };
   }
 
@@ -64,6 +64,13 @@ describe.runIf(Boolean(databaseUrl))("PrismaFeatureFlagRepository (integration)"
 
     const otherPage = await otherRepository.list({ first: 10 }, other);
     expect(otherPage.items).toHaveLength(1);
+
+    // T10.5: a SINGLE repository instance, asked for a different tenant, must not blend the two —
+    // `repository` was wired against `tenantId` but is otherwise a stateless singleton (ADR-0014).
+    const crossTenantPage = await repository.list({ first: 10 }, other);
+    expect(crossTenantPage.items).toHaveLength(1);
+    expect(crossTenantPage.items.map((f) => f.key)).toEqual(["flag-x"]);
+
     await prisma.$disconnect();
   });
 });

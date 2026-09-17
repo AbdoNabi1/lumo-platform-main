@@ -9,9 +9,17 @@ export interface InMemoryFeatureFlagRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `FeatureFlagRepository`. Persists the aggregate and writes events to the outbox on save. */
+/**
+ * In-memory `FeatureFlagRepository`. Persists the aggregate and writes events to the outbox on
+ * save. ADR-0014 (WP-10, T10.3): keyed by `(tenantId, flagId)` — `FeatureFlag` carries no
+ * `tenantId` of its own, so the store must key on it explicitly or a cross-tenant leak here would
+ * be invisible to every isolation test.
+ */
 export class InMemoryFeatureFlagRepository implements FeatureFlagRepository {
-  private readonly store = new Map<string, FeatureFlag>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly flag: FeatureFlag }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,28 +28,29 @@ export class InMemoryFeatureFlagRepository implements FeatureFlagRepository {
     this.context = deps.context;
   }
 
-  async save(flag: FeatureFlag, tx?: unknown): Promise<void> {
-    this.store.set(flag.id.toString(), flag);
+  async save(flag: FeatureFlag, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(flag.id.toString(), { tenantId, flag });
     await this.outbox.write(flag.pullDomainEvents(), this.context, tx);
   }
 
-  /** ADR-0014: `tenantId` accepted for signature parity; this fake has no tenant partitioning. */
-  async findById(id: string, _tenantId: string): Promise<FeatureFlag | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<FeatureFlag | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.flag : null;
   }
 
-  async findByKey(key: string, _tenantId: string): Promise<FeatureFlag | null> {
-    for (const flag of this.store.values()) {
-      if (flag.key === key) return flag;
+  async findByKey(key: string, tenantId: string): Promise<FeatureFlag | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.flag.key === key) return entry.flag;
     }
     return null;
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<FeatureFlag>> {
-    const all = [...this.store.values()].sort((a, b) =>
-      a.id.toString().localeCompare(b.id.toString()),
-    );
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<FeatureFlag>> {
+    const all = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => entry.flag)
+      .sort((a, b) => a.id.toString().localeCompare(b.id.toString()));
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const start = after === undefined ? 0 : all.findIndex((x) => x.id.toString() > after);
     const limit = normalizePageSize(page.first);

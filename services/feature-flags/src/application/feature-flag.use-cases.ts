@@ -68,7 +68,7 @@ export class CreateFeatureFlag implements UseCase<
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const flag = FeatureFlag.create(id, input.key, input.name, input.description);
-      await this.deps.flags.save(flag, tx);
+      await this.deps.flags.save(flag, input.tenantId, tx);
       return ok(toOutput(flag));
     });
   }
@@ -104,7 +104,7 @@ export class AdvanceFlag implements UseCase<AdvanceFlagInput, FlagStatusOutput, 
         throw error;
       }
 
-      await this.deps.flags.save(flag, tx);
+      await this.deps.flags.save(flag, input.tenantId, tx);
       return ok(toOutput(flag));
     });
   }
@@ -144,7 +144,7 @@ export class SetRolloutPercentage implements UseCase<
         throw error;
       }
 
-      await this.deps.flags.save(flag, tx);
+      await this.deps.flags.save(flag, input.tenantId, tx);
       return ok(toOutput(flag));
     });
   }
@@ -173,7 +173,7 @@ export class AddFeatureRule implements UseCase<AddFeatureRuleInput, FlagStatusOu
 
       const rule = FeatureRule.create(input.type, input.values, input.enabled, input.attribute);
       flag.addRule(rule, input.changedBy, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.flags.save(flag, tx);
+      await this.deps.flags.save(flag, input.tenantId, tx);
       return ok(toOutput(flag));
     });
   }
@@ -216,7 +216,7 @@ export class SetEnvironmentOverride implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.flags.save(flag, tx);
+      await this.deps.flags.save(flag, input.tenantId, tx);
       return ok(toOutput(flag));
     });
   }
