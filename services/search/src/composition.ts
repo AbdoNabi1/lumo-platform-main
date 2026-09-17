@@ -43,12 +43,10 @@ export interface SearchWiringDeps {
   readonly provider?: IndexProviderPort;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaSearchIndexRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wireReviews`); absent ⇒ in-memory, unchanged.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository
+   * built here is a tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Search table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredSearch {
@@ -87,10 +85,6 @@ function buildController(
  */
 export function wireSearch(deps: SearchWiringDeps): WiredSearch {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireSearch: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new SearchEventTranslator(),
@@ -98,10 +92,11 @@ export function wireSearch(deps: SearchWiringDeps): WiredSearch {
       clock: deps.clock,
       producer: "search",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see SearchWiringDeps' doc
+    // comment) — the repository built below takes tenantId per call instead.
+    const context = rootEventContext(deps.idGenerator);
     const indexes = new PrismaSearchIndexRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });

@@ -85,7 +85,7 @@ export class CreateIndex implements UseCase<CreateIndexInput, IndexStatusOutput,
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const index = SearchIndex.create(id, input.name);
-      await this.deps.indexes.save(index, tx);
+      await this.deps.indexes.save(index, input.tenantId, tx);
       return ok(toOutput(index));
     });
   }
@@ -115,7 +115,7 @@ export class AdvanceIndex implements UseCase<AdvanceIndexInput, IndexStatusOutpu
         throw error;
       }
 
-      await this.deps.indexes.save(index, tx);
+      await this.deps.indexes.save(index, input.tenantId, tx);
       return ok(toOutput(index));
     });
   }
@@ -217,7 +217,7 @@ export class UpsertDocument implements UseCase<
           throw error;
         }
 
-        await this.deps.indexes.save(index, tx);
+        await this.deps.indexes.save(index, tenantId, tx);
         return ok(toOutput(index));
       }),
     );
@@ -293,7 +293,7 @@ export class DeleteDocument implements UseCase<
           throw error;
         }
 
-        await this.deps.indexes.save(index, tx);
+        await this.deps.indexes.save(index, tenantId, tx);
         return ok(toOutput(index));
       }),
     );
@@ -324,7 +324,7 @@ export class AddSynonym implements UseCase<SynonymInput, IndexStatusOutput, Doma
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.indexes.save(index, tx);
+      await this.deps.indexes.save(index, input.tenantId, tx);
       return ok(toOutput(index));
     });
   }
@@ -344,7 +344,7 @@ export class RemoveSynonym implements UseCase<SynonymInput, IndexStatusOutput, D
       if (index === null) return err(new NotFoundError("Search index not found"));
 
       index.removeSynonym(input.term, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.indexes.save(index, tx);
+      await this.deps.indexes.save(index, input.tenantId, tx);
       return ok(toOutput(index));
     });
   }
@@ -368,7 +368,7 @@ export class AddSuggestion implements UseCase<SuggestionInput, IndexStatusOutput
       if (index === null) return err(new NotFoundError("Search index not found"));
 
       index.addSuggestion(input.term, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.indexes.save(index, tx);
+      await this.deps.indexes.save(index, input.tenantId, tx);
       return ok(toOutput(index));
     });
   }
@@ -392,7 +392,7 @@ export class LogQuery implements UseCase<LogQueryInput, IndexStatusOutput, Domai
       if (index === null) return err(new NotFoundError("Search index not found"));
 
       index.logQuery(input.term, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.indexes.save(index, tx);
+      await this.deps.indexes.save(index, input.tenantId, tx);
       return ok(toOutput(index));
     });
   }

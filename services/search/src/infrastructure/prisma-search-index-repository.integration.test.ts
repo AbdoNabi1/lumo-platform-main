@@ -31,12 +31,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaSearchIndexRepository (integration)"
       producer: "search",
     });
     const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaSearchIndexRepository({ prisma, outbox, context, tenantId });
+    const repository = new PrismaSearchIndexRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       repository,
-      save: (index: SearchIndex) => unitOfWork.run((tx) => repository.save(index, tx)),
+      save: (index: SearchIndex) => unitOfWork.run((tx) => repository.save(index, tenantId, tx)),
     };
   }
 
@@ -64,6 +64,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaSearchIndexRepository (integration)"
 
     const otherPage = await otherRepository.list({ first: 10 }, other);
     expect(otherPage.items).toHaveLength(1);
+
+    // T10.5: a SINGLE repository instance, asked for a different tenant, must not blend the two —
+    // `repository` was wired against `tenantId` but is otherwise a stateless singleton (ADR-0014).
+    const crossTenantPage = await repository.list({ first: 10 }, other);
+    expect(crossTenantPage.items).toHaveLength(1);
+
     await prisma.$disconnect();
   });
 });

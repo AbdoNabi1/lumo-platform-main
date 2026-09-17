@@ -12,8 +12,6 @@ export interface PrismaSearchIndexRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `SearchIndexRepository` on the `search` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -24,9 +22,8 @@ export class PrismaSearchIndexRepository implements SearchIndexRepository {
     this.deps = deps;
   }
 
-  async save(index: SearchIndex, tx?: unknown): Promise<void> {
+  async save(index: SearchIndex, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const indexId = index.id.toString();
     const row = SearchIndexMapper.toRow(index, tenantId);
 
