@@ -9,9 +9,17 @@ export interface InMemoryReviewRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `ReviewRepository`. Persists the aggregate and writes events to the outbox on save. */
+/**
+ * In-memory `ReviewRepository`. Persists the aggregate and writes events to the outbox on save.
+ * ADR-0014 (WP-10, T10.3): keyed by `(tenantId, reviewId)` — `Review` carries no `tenantId` of its
+ * own, so the store must key on it explicitly or a cross-tenant leak here would be invisible to
+ * every isolation test.
+ */
 export class InMemoryReviewRepository implements ReviewRepository {
-  private readonly store = new Map<string, Review>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly review: Review }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,44 +28,53 @@ export class InMemoryReviewRepository implements ReviewRepository {
     this.context = deps.context;
   }
 
-  async save(review: Review, tx?: unknown): Promise<void> {
-    this.store.set(review.id.toString(), review);
+  async save(review: Review, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(review.id.toString(), { tenantId, review });
     await this.outbox.write(review.pullDomainEvents(), this.context, tx);
   }
 
-  /** ADR-0014: `tenantId` accepted for signature parity; this fake has no tenant partitioning. */
-  async findById(id: string, _tenantId: string): Promise<Review | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Review | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.review : null;
   }
 
   async findByCustomerAndProduct(
     customerRef: string,
     productRef: string,
-    _tenantId: string,
+    tenantId: string,
   ): Promise<Review | null> {
-    for (const review of this.store.values()) {
-      if (review.customerRef === customerRef && review.productRef === productRef) return review;
+    for (const entry of this.store.values()) {
+      if (
+        entry.tenantId === tenantId &&
+        entry.review.customerRef === customerRef &&
+        entry.review.productRef === productRef
+      ) {
+        return entry.review;
+      }
     }
     return null;
   }
 
   async list(
     page: CursorPage,
-    _tenantId: string,
+    tenantId: string,
     filter?: ReviewListFilter,
   ): Promise<Paginated<Review>> {
-    const rows = [...this.store.values()].filter(
-      (review) => filter?.status === undefined || review.status.value === filter.status,
-    );
+    const rows = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => entry.review)
+      .filter((review) => filter?.status === undefined || review.status.value === filter.status);
     return this.paginate(rows, page);
   }
 
   async findByProductRef(
     productRef: string,
     page: CursorPage,
-    _tenantId: string,
+    tenantId: string,
   ): Promise<Paginated<Review>> {
-    const rows = [...this.store.values()].filter((review) => review.productRef === productRef);
+    const rows = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId && entry.review.productRef === productRef)
+      .map((entry) => entry.review);
     return this.paginate(rows, page);
   }
 

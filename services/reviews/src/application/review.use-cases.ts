@@ -82,7 +82,7 @@ export class CreateReview implements UseCase<CreateReviewInput, ReviewStatusOutp
         ReviewMedia.create(input.assetRefs ?? []),
         verifiedPurchase,
       );
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: id.toString(), status: review.status.value });
     });
   }
@@ -112,7 +112,7 @@ export class AdvanceReview implements UseCase<AdvanceReviewInput, ReviewStatusOu
         throw error;
       }
 
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: review.id.toString(), status: review.status.value });
     });
   }
@@ -142,7 +142,7 @@ export class VoteReview implements UseCase<VoteReviewInput, ReviewStatusOutput, 
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: review.id.toString(), status: review.status.value });
     });
   }
@@ -166,7 +166,7 @@ export class ReportReview implements UseCase<ReportReviewInput, ReviewStatusOutp
       if (review === null) return err(new NotFoundError("Review not found"));
 
       review.report(input.reporterRef, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: review.id.toString(), status: review.status.value });
     });
   }
@@ -197,7 +197,7 @@ export class RespondToReview implements UseCase<
       if (review === null) return err(new NotFoundError("Review not found"));
 
       review.respond(input.responseText, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: review.id.toString(), status: review.status.value });
     });
   }
@@ -254,7 +254,7 @@ export class ModerateReview implements UseCase<
         throw error;
       }
 
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       await this.deps.processedModerations.markProcessed(input.actionId);
       return ok({ reviewId: review.id.toString(), status: review.status.value, duplicate: false });
     });

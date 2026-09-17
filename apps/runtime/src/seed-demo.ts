@@ -747,7 +747,11 @@ async function main(): Promise<void> {
     ];
     for (const seed of reviewSeeds) {
       const forProduct = unwrap<{ items: readonly ReviewRecord[] }>(
-        await reviews.listByProduct({ productRef: seed.product.id, first: 100 }),
+        await reviews.listByProduct({
+          productRef: seed.product.id,
+          first: 100,
+          tenantId: TENANT_ID,
+        }),
         `look up reviews for product "${seed.product.id}"`,
       );
       const existing = forProduct.items.find((r) => r.customerRef === seed.customer.customerId);
@@ -760,7 +764,7 @@ async function main(): Promise<void> {
           });
         } else {
           unwrap(
-            await reviews.advance({ reviewId, toStatus: "published" }),
+            await reviews.advance({ reviewId, toStatus: "published", tenantId: TENANT_ID }),
             `publish review "${reviewId}"`,
           );
           logger.info("seed-demo: review already existed but was not published, published now", {
@@ -778,11 +782,16 @@ async function main(): Promise<void> {
           customerRef: seed.customer.customerId,
           rating: seed.rating,
           bodyText: seed.bodyText,
+          tenantId: TENANT_ID,
         }),
         `create review for product "${seed.product.id}"`,
       );
       unwrap(
-        await reviews.advance({ reviewId: review.reviewId, toStatus: "published" }),
+        await reviews.advance({
+          reviewId: review.reviewId,
+          toStatus: "published",
+          tenantId: TENANT_ID,
+        }),
         `publish review "${review.reviewId}"`,
       );
       logger.info("seed-demo: created + published review", {
