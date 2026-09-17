@@ -23,8 +23,16 @@ export interface InMemoryLocalizationRepositoriesDeps {
   readonly context: EventContext;
 }
 
+/**
+ * In-memory `LocaleRepository`. ADR-0014 (WP-10, T10.5): keyed by `(tenantId, localeId)` —
+ * `Locale` carries no `tenantId` of its own, so the store must key on it explicitly or a
+ * cross-tenant leak here would be invisible to every isolation test.
+ */
 export class InMemoryLocaleRepository implements LocaleRepository {
-  private readonly store = new Map<string, Locale>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly locale: Locale }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -33,29 +41,40 @@ export class InMemoryLocaleRepository implements LocaleRepository {
     this.context = deps.context;
   }
 
-  async save(locale: Locale, tx?: unknown): Promise<void> {
-    this.store.set(locale.id.toString(), locale);
+  async save(locale: Locale, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(locale.id.toString(), { tenantId, locale });
     await this.outbox.write(locale.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<Locale | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Locale | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.locale : null;
   }
 
-  async findByCode(code: string, _tenantId: string): Promise<Locale | null> {
-    for (const locale of this.store.values()) {
-      if (locale.code.value === code) return locale;
+  async findByCode(code: string, tenantId: string): Promise<Locale | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.locale.code.value === code) return entry.locale;
     }
     return null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Locale>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Locale>> {
+    const rows = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => entry.locale);
+    return paginate(rows, page);
   }
 }
 
+/**
+ * In-memory `TranslationSetRepository`. ADR-0014 (WP-10, T10.5): keyed by `(tenantId, setId)` for
+ * the same reason as {@link InMemoryLocaleRepository}.
+ */
 export class InMemoryTranslationSetRepository implements TranslationSetRepository {
-  private readonly store = new Map<string, TranslationSet>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly set: TranslationSet }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -64,27 +83,37 @@ export class InMemoryTranslationSetRepository implements TranslationSetRepositor
     this.context = deps.context;
   }
 
-  async save(set: TranslationSet, tx?: unknown): Promise<void> {
-    this.store.set(set.id.toString(), set);
+  async save(set: TranslationSet, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(set.id.toString(), { tenantId, set });
     await this.outbox.write(set.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<TranslationSet | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<TranslationSet | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.set : null;
   }
 
   async findByLocaleAndNamespace(
     localeRef: string,
     namespace: string,
-    _tenantId: string,
+    tenantId: string,
   ): Promise<TranslationSet | null> {
-    for (const set of this.store.values()) {
-      if (set.localeRef === localeRef && set.namespace === namespace) return set;
+    for (const entry of this.store.values()) {
+      if (
+        entry.tenantId === tenantId &&
+        entry.set.localeRef === localeRef &&
+        entry.set.namespace === namespace
+      ) {
+        return entry.set;
+      }
     }
     return null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<TranslationSet>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<TranslationSet>> {
+    const rows = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => entry.set);
+    return paginate(rows, page);
   }
 }

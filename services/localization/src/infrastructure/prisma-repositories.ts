@@ -12,7 +12,6 @@ export interface PrismaLocalizationRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 export class PrismaLocaleRepository implements LocaleRepository {
@@ -22,9 +21,8 @@ export class PrismaLocaleRepository implements LocaleRepository {
     this.deps = deps;
   }
 
-  async save(locale: Locale, tx?: unknown): Promise<void> {
+  async save(locale: Locale, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = locale.id.toString();
     const row = LocaleMapper.toRow(locale, tenantId);
 
@@ -102,9 +100,8 @@ export class PrismaTranslationSetRepository implements TranslationSetRepository 
     this.deps = deps;
   }
 
-  async save(set: TranslationSet, tx?: unknown): Promise<void> {
+  async save(set: TranslationSet, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = set.id.toString();
     const row = TranslationSetMapper.toRow(set, tenantId);
 

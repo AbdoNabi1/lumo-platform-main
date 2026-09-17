@@ -5,12 +5,12 @@ import type { TranslationSet } from "./translation-set";
 /**
  * Persistence port for {@link Locale}.
  *
- * ADR-0014 (WP-10, T10.3): `findById`/`findByCode`/`list` take `tenantId` as an explicit per-call
- * parameter, matching `services/catalog`'s first-converted-context shape. `save` is not yet
- * converted.
+ * ADR-0014 (WP-10, T10.5): every method takes `tenantId` as an explicit per-call parameter.
+ * `Locale` carries no `tenantId` of its own, so `save` takes it as an explicit parameter
+ * (Option B) rather than reading it off the aggregate.
  */
 export interface LocaleRepository {
-  save(locale: Locale, tx?: unknown): Promise<void>;
+  save(locale: Locale, tenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tenantId: string, tx?: unknown): Promise<Locale | null>;
   findByCode(code: string, tenantId: string, tx?: unknown): Promise<Locale | null>;
   list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Locale>>;
@@ -18,7 +18,7 @@ export interface LocaleRepository {
 
 /** Persistence port for {@link TranslationSet}. Same ADR-0014 shape as {@link LocaleRepository}. */
 export interface TranslationSetRepository {
-  save(set: TranslationSet, tx?: unknown): Promise<void>;
+  save(set: TranslationSet, tenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tenantId: string, tx?: unknown): Promise<TranslationSet | null>;
   findByLocaleAndNamespace(
     localeRef: string,

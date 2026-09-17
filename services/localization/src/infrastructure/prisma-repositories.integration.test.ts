@@ -34,10 +34,9 @@ describe.runIf(Boolean(databaseUrl))("Prisma Localization repositories (integrat
       producer: "localization",
     });
     const context = rootEventContext(ids, tenantId);
-    const locales = new PrismaLocaleRepository({ prisma, tenantId, outbox, context });
+    const locales = new PrismaLocaleRepository({ prisma, outbox, context });
     const translationSets = new PrismaTranslationSetRepository({
       prisma,
-      tenantId,
       outbox,
       context,
     });
@@ -46,8 +45,8 @@ describe.runIf(Boolean(databaseUrl))("Prisma Localization repositories (integrat
       prisma,
       locales,
       translationSets,
-      saveLocale: (l: Locale) => unitOfWork.run((tx) => locales.save(l, tx)),
-      saveSet: (s: TranslationSet) => unitOfWork.run((tx) => translationSets.save(s, tx)),
+      saveLocale: (l: Locale) => unitOfWork.run((tx) => locales.save(l, tenantId, tx)),
+      saveSet: (s: TranslationSet) => unitOfWork.run((tx) => translationSets.save(s, tenantId, tx)),
     };
   }
 

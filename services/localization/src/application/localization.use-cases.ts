@@ -57,7 +57,7 @@ export class CreateLocale implements UseCase<CreateLocaleInput, LocaleOutput, Do
         input.isDefault,
         input.fallbackLocaleRef,
       );
-      await this.deps.locales.save(locale, tx);
+      await this.deps.locales.save(locale, input.tenantId, tx);
       return ok({ localeId: id.toString(), status: locale.status });
     });
   }
@@ -101,7 +101,7 @@ export class CreateTranslationSet implements UseCase<
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const set = TranslationSet.create(id, input.localeRef, input.namespace);
-      await this.deps.translationSets.save(set, tx);
+      await this.deps.translationSets.save(set, input.tenantId, tx);
       return ok({ translationSetId: id.toString(), translationCount: 0 });
     });
   }
@@ -141,7 +141,7 @@ export class SetTranslation implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.translationSets.save(set, tx);
+      await this.deps.translationSets.save(set, input.tenantId, tx);
       return ok({ translationSetId: set.id.toString(), translationCount: set.translations.length });
     });
   }
@@ -175,7 +175,7 @@ export class PublishTranslation implements UseCase<
       if (set === null) return err(new NotFoundError("Translation set not found"));
 
       set.publishTranslation(input.key, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.translationSets.save(set, tx);
+      await this.deps.translationSets.save(set, input.tenantId, tx);
       return ok({ translationSetId: set.id.toString(), translationCount: set.translations.length });
     });
   }
