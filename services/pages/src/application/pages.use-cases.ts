@@ -58,7 +58,7 @@ export class CreatePage implements UseCase<CreatePageInput, PageStatusOutput, Do
         seoProfileRef: input.seoProfileRef,
         localeRef: input.localeRef,
       });
-      await this.deps.pages.save(page, tx);
+      await this.deps.pages.save(page, input.tenantId, tx);
       return ok({ pageId: id.toString(), status: page.status });
     });
   }
@@ -93,7 +93,7 @@ export class AdvancePage implements UseCase<AdvancePageInput, PageStatusOutput, 
         throw error;
       }
 
-      await this.deps.pages.save(page, tx);
+      await this.deps.pages.save(page, input.tenantId, tx);
       return ok({ pageId: page.id.toString(), status: page.status });
     });
   }
@@ -133,7 +133,7 @@ export class CreateTemplate implements UseCase<
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const template = Template.create(id, input.name, input.experienceRef);
-      await this.deps.templates.save(template, tx);
+      await this.deps.templates.save(template, input.tenantId, tx);
       return ok({ templateId: id.toString(), status: template.status });
     });
   }
@@ -168,7 +168,7 @@ export class ArchiveTemplate implements UseCase<
         throw error;
       }
 
-      await this.deps.templates.save(template, tx);
+      await this.deps.templates.save(template, input.tenantId, tx);
       return ok({ templateId: template.id.toString(), status: template.status });
     });
   }

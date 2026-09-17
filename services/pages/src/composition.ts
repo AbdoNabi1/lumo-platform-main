@@ -43,12 +43,11 @@ export interface PagesWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaPageRepository` +
-   * `PrismaTemplateRepository` + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wireInventory`); absent ⇒ in-memory, unchanged.
+   * `PrismaTemplateRepository` + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014
+   * (WP-10, T10.5): the repositories built here are tenant-agnostic singletons — no `tenantId` at
+   * composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Pages table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredPages {
@@ -93,10 +92,6 @@ function buildController(
  */
 export function wirePages(deps: PagesWiringDeps): WiredPages {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wirePages: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new PagesEventTranslator(),
@@ -104,8 +99,8 @@ export function wirePages(deps: PagesWiringDeps): WiredPages {
       clock: deps.clock,
       producer: "pages",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const pagesDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    const context = rootEventContext(deps.idGenerator);
+    const pagesDeps = { prisma: deps.prisma, outbox, context };
     const repos: PagesRepos = {
       pages: new PrismaPageRepository(pagesDeps),
       templates: new PrismaTemplateRepository(pagesDeps),

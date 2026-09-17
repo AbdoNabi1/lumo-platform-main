@@ -23,8 +23,13 @@ export interface InMemoryPagesRepositoriesDeps {
   readonly context: EventContext;
 }
 
+/**
+ * In-memory `PageRepository`. ADR-0014 (WP-10, T10.5): keyed by `(tenantId, pageId)` — `Page`
+ * carries no `tenantId` of its own, so the store must key on it explicitly or a cross-tenant leak
+ * here would be invisible to every isolation test.
+ */
 export class InMemoryPageRepository implements PageRepository {
-  private readonly store = new Map<string, Page>();
+  private readonly store = new Map<string, { readonly tenantId: string; readonly page: Page }>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -33,29 +38,42 @@ export class InMemoryPageRepository implements PageRepository {
     this.context = deps.context;
   }
 
-  async save(page: Page, tx?: unknown): Promise<void> {
-    this.store.set(page.id.toString(), page);
+  async save(page: Page, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(page.id.toString(), { tenantId, page });
     await this.outbox.write(page.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<Page | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Page | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.page : null;
   }
 
-  async findByRoutePath(routePath: string, _tenantId: string): Promise<Page | null> {
-    for (const page of this.store.values()) {
-      if (page.routePath.value === routePath) return page;
+  async findByRoutePath(routePath: string, tenantId: string): Promise<Page | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.page.routePath.value === routePath) {
+        return entry.page;
+      }
     }
     return null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Page>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Page>> {
+    const rows = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => entry.page);
+    return paginate(rows, page);
   }
 }
 
+/**
+ * In-memory `TemplateRepository`. ADR-0014 (WP-10, T10.5): keyed by `(tenantId, templateId)` for
+ * the same reason as {@link InMemoryPageRepository}.
+ */
 export class InMemoryTemplateRepository implements TemplateRepository {
-  private readonly store = new Map<string, Template>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly template: Template }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -64,23 +82,27 @@ export class InMemoryTemplateRepository implements TemplateRepository {
     this.context = deps.context;
   }
 
-  async save(template: Template, tx?: unknown): Promise<void> {
-    this.store.set(template.id.toString(), template);
+  async save(template: Template, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(template.id.toString(), { tenantId, template });
     await this.outbox.write(template.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<Template | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Template | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.template : null;
   }
 
-  async findByName(name: string, _tenantId: string): Promise<Template | null> {
-    for (const template of this.store.values()) {
-      if (template.name === name) return template;
+  async findByName(name: string, tenantId: string): Promise<Template | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.template.name === name) return entry.template;
     }
     return null;
   }
 
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Template>> {
-    return paginate([...this.store.values()], page);
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Template>> {
+    const rows = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => entry.template);
+    return paginate(rows, page);
   }
 }

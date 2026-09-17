@@ -34,15 +34,16 @@ describe.runIf(Boolean(databaseUrl))("Prisma Pages repositories (integration)", 
       producer: "pages",
     });
     const context = rootEventContext(ids, tenantId);
-    const pages = new PrismaPageRepository({ prisma, tenantId, outbox, context });
-    const templates = new PrismaTemplateRepository({ prisma, tenantId, outbox, context });
+    const pages = new PrismaPageRepository({ prisma, outbox, context });
+    const templates = new PrismaTemplateRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       pages,
       templates,
-      savePage: (page: Page) => unitOfWork.run((tx) => pages.save(page, tx)),
-      saveTemplate: (template: Template) => unitOfWork.run((tx) => templates.save(template, tx)),
+      savePage: (page: Page) => unitOfWork.run((tx) => pages.save(page, tenantId, tx)),
+      saveTemplate: (template: Template) =>
+        unitOfWork.run((tx) => templates.save(template, tenantId, tx)),
     };
   }
 

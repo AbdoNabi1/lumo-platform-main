@@ -12,7 +12,6 @@ export interface PrismaPagesRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 export class PrismaPageRepository implements PageRepository {
@@ -22,9 +21,8 @@ export class PrismaPageRepository implements PageRepository {
     this.deps = deps;
   }
 
-  async save(page: Page, tx?: unknown): Promise<void> {
+  async save(page: Page, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = page.id.toString();
     const row = PageMapper.toRow(page, tenantId);
 
@@ -102,9 +100,8 @@ export class PrismaTemplateRepository implements TemplateRepository {
     this.deps = deps;
   }
 
-  async save(template: Template, tx?: unknown): Promise<void> {
+  async save(template: Template, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = template.id.toString();
     const row = TemplateMapper.toRow(template, tenantId);
 
