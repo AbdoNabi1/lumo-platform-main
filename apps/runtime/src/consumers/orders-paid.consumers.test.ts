@@ -190,6 +190,7 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
       accounts: fakeAccounts(activeAccount),
       earnPoints: { execute } as unknown as EarnPoints,
       logger: silentLogger,
+      tenantId: "tenant-local",
     });
 
     await consumer.handle(orderPaidEvent());
@@ -201,6 +202,7 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
       // 12_345 minor units -> 123 points at the documented placeholder 1-per-100 rate.
       points: 123,
       ref: "ORD-1001",
+      tenantId: "tenant-local",
     });
   });
 
@@ -210,6 +212,7 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
       accounts: fakeAccounts(null),
       earnPoints: { execute } as unknown as EarnPoints,
       logger: silentLogger,
+      tenantId: "tenant-local",
     });
 
     await expect(consumer.handle(orderPaidEvent())).resolves.toBeUndefined();
@@ -228,6 +231,7 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
         accounts: fakeAccounts({ id: { toString: () => "acc-1" }, status: { value: status } }),
         earnPoints: { execute } as unknown as EarnPoints,
         logger: silentLogger,
+        tenantId: "tenant-local",
       });
 
       await expect(consumer.handle(orderPaidEvent())).resolves.toBeUndefined();
@@ -242,6 +246,7 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
         execute: vi.fn(async () => err(new ValidationError("boom", []))),
       } as unknown as EarnPoints,
       logger: silentLogger,
+      tenantId: "tenant-local",
     });
 
     await expect(consumer.handle(orderPaidEvent())).rejects.toThrow(/boom/);

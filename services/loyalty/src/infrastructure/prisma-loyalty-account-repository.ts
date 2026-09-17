@@ -12,8 +12,6 @@ export interface PrismaLoyaltyAccountRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
   /** The tier ladder — composition-root config, not persisted per-row. */
   readonly tiers: readonly RewardTier[];
 }
@@ -26,9 +24,8 @@ export class PrismaLoyaltyAccountRepository implements LoyaltyAccountRepository 
     this.deps = deps;
   }
 
-  async save(account: LoyaltyAccount, tx?: unknown): Promise<void> {
+  async save(account: LoyaltyAccount, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const accountId = account.id.toString();
     const row = LoyaltyAccountMapper.toRow(account, tenantId);
 

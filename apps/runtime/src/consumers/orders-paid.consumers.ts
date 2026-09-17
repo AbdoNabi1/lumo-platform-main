@@ -223,6 +223,14 @@ export interface LoyaltyOrdersPaidConsumerDeps {
   readonly accounts: LoyaltyAccountRepository;
   readonly earnPoints: EarnPoints;
   readonly logger: Logger;
+  /**
+   * ADR-0014 (WP-10, T10.3): `LoyaltyAccountRepository`/`EarnPoints` now take `tenantId` per call.
+   * This consumer still sources it from `core.config.TENANT_DEFAULT_ID` at builder time, same as
+   * before — reading it from the event envelope's own `tenantId` per message instead is the
+   * separate, already-tracked G-64 fix (`followOnEventContext`), out of scope for this
+   * repository-write-path-only pass.
+   */
+  readonly tenantId: string;
 }
 
 /**
@@ -260,7 +268,7 @@ export class LoyaltyOrdersPaidConsumer implements EventHandler<OrderPaidPayload>
 
   async handle(event: IntegrationEvent<OrderPaidPayload>): Promise<void> {
     const { customerRef, orderNumber, totalAmountMinor } = event.payload;
-    const account = await this.deps.accounts.findByCustomerRef(customerRef);
+    const account = await this.deps.accounts.findByCustomerRef(customerRef, this.deps.tenantId);
     if (account === null) {
       this.deps.logger.debug("loyalty: no account for customer, skipping earn", {
         orderNumber,
@@ -297,6 +305,7 @@ export class LoyaltyOrdersPaidConsumer implements EventHandler<OrderPaidPayload>
       idempotencyKey: `${ORDERS_ORDER_PAID}:earn:${orderNumber}`,
       points,
       ref: orderNumber,
+      tenantId: this.deps.tenantId,
     });
     if (!result.ok) throw result.error;
   }
@@ -450,7 +459,6 @@ export function buildOrdersPaidConsumerRuntimes(
 
   const loyaltyAccounts = new PrismaLoyaltyAccountRepository({
     prisma: core.prisma,
-    tenantId,
     outbox: outboxFor(new LoyaltyEventTranslator(), "loyalty"),
     context,
     tiers: DEFAULT_LOYALTY_TIERS,
@@ -492,6 +500,7 @@ export function buildOrdersPaidConsumerRuntimes(
           tiers: DEFAULT_LOYALTY_TIERS,
         }),
         logger: core.logger,
+        tenantId,
       }),
       "loyalty.orders-paid",
     ),

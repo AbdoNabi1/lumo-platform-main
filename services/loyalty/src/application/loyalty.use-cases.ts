@@ -73,7 +73,7 @@ export class OpenAccount implements UseCase<OpenAccountInput, AccountStatusOutpu
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const account = LoyaltyAccount.create(id, input.customerRef, this.deps.tiers);
-      await this.deps.accounts.save(account, tx);
+      await this.deps.accounts.save(account, input.tenantId, tx);
       return ok(toOutput(account));
     });
   }
@@ -103,7 +103,7 @@ export class AdvanceAccount implements UseCase<
         throw error;
       }
 
-      await this.deps.accounts.save(account, tx);
+      await this.deps.accounts.save(account, input.tenantId, tx);
       return ok(toOutput(account));
     });
   }
@@ -195,7 +195,7 @@ export class RedeemReward implements UseCase<RedeemRewardInput, AccountStatusOut
         throw error;
       }
 
-      await this.deps.accounts.save(account, tx);
+      await this.deps.accounts.save(account, input.tenantId, tx);
       return ok(toOutput(account));
     });
   }
@@ -237,7 +237,7 @@ export class CompleteReferral implements UseCase<
         throw error;
       }
 
-      await this.deps.accounts.save(account, tx);
+      await this.deps.accounts.save(account, input.tenantId, tx);
       return ok(toOutput(account));
     });
   }
@@ -259,7 +259,7 @@ async function runLedgerAction(
       throw error;
     }
 
-    await deps.accounts.save(account, tx);
+    await deps.accounts.save(account, input.tenantId, tx);
     return ok(toOutput(account));
   });
 }
