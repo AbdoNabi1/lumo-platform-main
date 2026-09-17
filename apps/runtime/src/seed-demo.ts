@@ -812,7 +812,7 @@ async function main(): Promise<void> {
       readonly status: ValueLike;
     }
     const existingContent = unwrap<{ items: readonly ContentRecord[] }>(
-      await content.list({ first: 100 }),
+      await content.list({ first: 100, tenantId: TENANT_ID }),
       "list content blocks",
     );
     const contentSeeds = [
@@ -841,7 +841,7 @@ async function main(): Promise<void> {
           });
         } else {
           unwrap(
-            await content.advance({ contentBlockId, toStatus: "published" }),
+            await content.advance({ contentBlockId, toStatus: "published", tenantId: TENANT_ID }),
             `publish content block "${seed.name}"`,
           );
           logger.info(
@@ -862,11 +862,16 @@ async function main(): Promise<void> {
           blockType: seed.blockType,
           format: seed.format,
           content: seed.content,
+          tenantId: TENANT_ID,
         }),
         `create content block "${seed.name}"`,
       );
       unwrap(
-        await content.advance({ contentBlockId: block.contentBlockId, toStatus: "published" }),
+        await content.advance({
+          contentBlockId: block.contentBlockId,
+          toStatus: "published",
+          tenantId: TENANT_ID,
+        }),
         `publish content block "${seed.name}"`,
       );
       logger.info("seed-demo: created + published content block", {

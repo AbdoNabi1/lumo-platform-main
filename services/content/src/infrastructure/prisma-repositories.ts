@@ -11,7 +11,6 @@ export interface PrismaContentRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 /** Production `ContentBlockRepository` on the `content` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -22,9 +21,8 @@ export class PrismaContentBlockRepository implements ContentBlockRepository {
     this.deps = deps;
   }
 
-  async save(block: ContentBlock, tx?: unknown): Promise<void> {
+  async save(block: ContentBlock, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = block.id.toString();
     const row = ContentBlockMapper.toRow(block, tenantId);
 

@@ -59,7 +59,7 @@ export class CreateContentBlock implements UseCase<
         BlockBody.create(input.format, input.content),
         input.locale,
       );
-      await this.deps.blocks.save(block, tx);
+      await this.deps.blocks.save(block, input.tenantId, tx);
       return ok({ contentBlockId: id.toString(), status: block.status.value });
     });
   }
@@ -109,7 +109,7 @@ export class AdvanceContentBlock implements UseCase<
         throw error;
       }
 
-      await this.deps.blocks.save(block, tx);
+      await this.deps.blocks.save(block, input.tenantId, tx);
       return ok({ contentBlockId: block.id.toString(), status: block.status.value });
     });
   }
@@ -144,7 +144,7 @@ export class UpdateContentBody implements UseCase<
         throw error;
       }
 
-      await this.deps.blocks.save(block, tx);
+      await this.deps.blocks.save(block, input.tenantId, tx);
       return ok({ contentBlockId: block.id.toString(), status: block.status.value });
     });
   }
