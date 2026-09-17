@@ -12,8 +12,6 @@ export interface PrismaAutomationWorkflowRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `AutomationWorkflowRepository` on the `automation` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -24,9 +22,8 @@ export class PrismaAutomationWorkflowRepository implements AutomationWorkflowRep
     this.deps = deps;
   }
 
-  async save(workflow: AutomationWorkflow, tx?: unknown): Promise<void> {
+  async save(workflow: AutomationWorkflow, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = workflow.id.toString();
     const row = AutomationWorkflowMapper.toRow(workflow, tenantId);
 

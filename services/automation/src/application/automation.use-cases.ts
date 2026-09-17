@@ -85,7 +85,7 @@ export class CreateWorkflow implements UseCase<
         trigger,
         input.actions.map((a) => AutomationAction.create(a.actionType, a.params)),
       );
-      await this.deps.workflows.save(workflow, tx);
+      await this.deps.workflows.save(workflow, input.tenantId, tx);
       return ok({ workflowId: id.toString(), status: workflow.status.value });
     });
   }
@@ -128,7 +128,7 @@ export class AdvanceWorkflow implements UseCase<
         throw error;
       }
 
-      await this.deps.workflows.save(workflow, tx);
+      await this.deps.workflows.save(workflow, input.tenantId, tx);
       return ok({ workflowId: workflow.id.toString(), status: workflow.status.value });
     });
   }
@@ -271,7 +271,7 @@ export class TriggerWorkflow implements UseCase<
           throw error;
         }
 
-        await this.deps.workflows.save(workflow, tx);
+        await this.deps.workflows.save(workflow, tenantId, tx);
         return ok({
           workflowId: workflow.id.toString(),
           status: workflow.status.value,
@@ -321,7 +321,7 @@ export class TriggerWorkflow implements UseCase<
             if (isDomainError(error)) return err(error);
             throw error;
           }
-          await this.deps.workflows.save(workflow, tx);
+          await this.deps.workflows.save(workflow, tenantId, tx);
         }
 
         return ok({
@@ -367,7 +367,7 @@ export class RetryExecution implements UseCase<
         throw error;
       }
 
-      await this.deps.workflows.save(workflow, tx);
+      await this.deps.workflows.save(workflow, input.tenantId, tx);
       return ok({ workflowId: workflow.id.toString(), status: workflow.status.value });
     });
   }

@@ -38,12 +38,10 @@ export interface AutomationWiringDeps {
   readonly dispatcher?: ActionDispatcherPort;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaAutomationWorkflowRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wireNotifications`); absent ⇒ in-memory, unchanged.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.5): the repository
+   * built here is a tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Automation table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredAutomation {
@@ -78,10 +76,6 @@ function buildController(
  */
 export function wireAutomation(deps: AutomationWiringDeps): WiredAutomation {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireAutomation: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new AutomationEventTranslator(),
@@ -89,10 +83,9 @@ export function wireAutomation(deps: AutomationWiringDeps): WiredAutomation {
       clock: deps.clock,
       producer: "automation",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    const context = rootEventContext(deps.idGenerator);
     const workflows = new PrismaAutomationWorkflowRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });
