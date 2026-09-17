@@ -33,12 +33,10 @@ export interface ComponentsWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaComponentDefinitionRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/`wireSeo`);
-   * absent ⇒ in-memory, unchanged.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository
+   * built here is a tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Components table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredComponents {
@@ -75,10 +73,6 @@ function buildController(
  */
 export function wireComponents(deps: ComponentsWiringDeps): WiredComponents {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireComponents: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new ComponentsEventTranslator(),
@@ -86,10 +80,11 @@ export function wireComponents(deps: ComponentsWiringDeps): WiredComponents {
       clock: deps.clock,
       producer: "components",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see ComponentsWiringDeps'
+    // doc comment) — the repository built below takes tenantId per call instead.
+    const context = rootEventContext(deps.idGenerator);
     const definitions = new PrismaComponentDefinitionRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });

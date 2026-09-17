@@ -71,7 +71,7 @@ export class CreateComponentDefinition implements UseCase<
         }),
         input.featureFlagKey,
       );
-      await this.deps.definitions.save(definition, tx);
+      await this.deps.definitions.save(definition, input.tenantId, tx);
       return ok({ componentDefinitionId: id.toString(), status: definition.status });
     });
   }
@@ -120,7 +120,7 @@ export class AdvanceComponentDefinition implements UseCase<
         throw error;
       }
 
-      await this.deps.definitions.save(definition, tx);
+      await this.deps.definitions.save(definition, input.tenantId, tx);
       return ok({ componentDefinitionId: definition.id.toString(), status: definition.status });
     });
   }

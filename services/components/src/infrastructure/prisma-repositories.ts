@@ -12,7 +12,6 @@ export interface PrismaComponentsRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 /** Production `ComponentDefinitionRepository` on the `components` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -23,9 +22,8 @@ export class PrismaComponentDefinitionRepository implements ComponentDefinitionR
     this.deps = deps;
   }
 
-  async save(definition: ComponentDefinition, tx?: unknown): Promise<void> {
+  async save(definition: ComponentDefinition, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = definition.id.toString();
     const row = ComponentDefinitionMapper.toRow(definition, tenantId);
 
