@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { Paginated } from "@platform/types";
@@ -11,8 +11,6 @@ export interface PrismaCustomerRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -28,9 +26,8 @@ export class PrismaCustomerRepository implements CustomerRepository {
     this.deps = deps;
   }
 
-  async save(customer: Customer, tx?: unknown): Promise<void> {
+  async save(customer: Customer, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const customerId = customer.id.toString();
 
     if (customer.version === 0) {
@@ -58,27 +55,35 @@ export class PrismaCustomerRepository implements CustomerRepository {
     await this.deps.outbox.write(customer.pullDomainEvents(), this.deps.context, client);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Customer | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.customer.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-      include: {
-        addresses: { orderBy: { createdAt: "asc" } },
-        consents: { orderBy: { occurredAt: "asc" } },
-      },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Customer | null> {
+    const run = (client: TransactionClient) =>
+      client.customer.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        include: {
+          addresses: { orderBy: { createdAt: "asc" } },
+          consents: { orderBy: { occurredAt: "asc" } },
+        },
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : CustomerMapper.toDomain(row, row.addresses, row.consents);
   }
 
-  async findByEmail(email: string, tx?: unknown): Promise<Customer | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.customer.findFirst({
-      where: { tenantId: this.deps.tenantId, email, deletedAt: null },
-      include: {
-        addresses: { orderBy: { createdAt: "asc" } },
-        consents: { orderBy: { occurredAt: "asc" } },
-      },
-    });
+  async findByEmail(email: string, tenantId: string, tx?: unknown): Promise<Customer | null> {
+    const run = (client: TransactionClient) =>
+      client.customer.findFirst({
+        where: { tenantId, email, deletedAt: null },
+        include: {
+          addresses: { orderBy: { createdAt: "asc" } },
+          consents: { orderBy: { occurredAt: "asc" } },
+        },
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : CustomerMapper.toDomain(row, row.addresses, row.consents);
   }
 
@@ -87,9 +92,11 @@ export class PrismaCustomerRepository implements CustomerRepository {
    * same technique as `PrismaOrderRepository.list`. `search` matches name or email
    * (case-insensitive substring).
    */
-  async list(query: CustomerListQuery, tx?: unknown): Promise<Paginated<Customer>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const tenantId = this.deps.tenantId;
+  async list(
+    query: CustomerListQuery,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<Customer>> {
     const limit = normalizePageSize(query.first);
     const after = query.after !== undefined ? decodeCursor(query.after) : undefined;
     const search = query.search?.trim();
@@ -103,20 +110,25 @@ export class PrismaCustomerRepository implements CustomerRepository {
           }
         : {};
 
-    const rows = await client.customer.findMany({
-      where: {
-        tenantId,
-        deletedAt: null,
-        ...(after !== undefined ? { id: { lt: after } } : {}),
-        ...searchFilter,
-      },
-      include: {
-        addresses: { orderBy: { createdAt: "asc" } },
-        consents: { orderBy: { occurredAt: "asc" } },
-      },
-      orderBy: { id: "desc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.customer.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          ...(after !== undefined ? { id: { lt: after } } : {}),
+          ...searchFilter,
+        },
+        include: {
+          addresses: { orderBy: { createdAt: "asc" } },
+          consents: { orderBy: { occurredAt: "asc" } },
+        },
+        orderBy: { id: "desc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
 
     const customers = rows.map((row) => CustomerMapper.toDomain(row, row.addresses, row.consents));
     return buildPaginatedPage(customers, limit, (customer) => customer.id.toString());

@@ -104,13 +104,16 @@ function call(
     context: {
       tenantId: "tenant-local",
       requestId: "req-1",
-      headers:
-        options.sessionId !== undefined ? { "x-customer-session": options.sessionId } : {},
+      headers: options.sessionId !== undefined ? { "x-customer-session": options.sessionId } : {},
     },
   } as never) as Promise<Response>;
 }
 
-const CREDENTIALS = { email: "shopper@example.com", name: "Sam Shopper", password: "correct-horse" };
+const CREDENTIALS = {
+  email: "shopper@example.com",
+  name: "Sam Shopper",
+  password: "correct-horse",
+};
 
 async function register(admin: WiredAdmin, overrides: Partial<typeof CREDENTIALS> = {}) {
   return call(admin, "POST", "/public/auth/register", { body: { ...CREDENTIALS, ...overrides } });
@@ -144,7 +147,14 @@ describe("POST /public/auth/register", () => {
     const { customerRef } = response.body as { customerRef: string };
 
     // The Identity customer exists...
-    expect((await h.identity.customers.getCustomer({ customerId: customerRef })).status).toBe(200);
+    expect(
+      (
+        await h.identity.customers.getCustomer({
+          customerId: customerRef,
+          tenantId: "tenant-local",
+        })
+      ).status,
+    ).toBe(200);
     // ...and so does the Security principal that references it — the link T5.16 §1 identified as missing.
     const resolved = await h.security.security.resolvePrincipal({ subjectRef: customerRef });
     const principal = (resolved.body as { principal: { externalId: string; kind: string } | null })
@@ -314,8 +324,9 @@ describe("POST /public/auth/logout", () => {
     // with no session cannot revoke a named one.
     const response = await call(h.admin, "POST", "/public/auth/logout", { body: {} });
     expect(response.body).toEqual({ revoked: false });
-    expect((await call(h.admin, "GET", "/public/auth/me", { sessionId: victim.sessionId })).status)
-      .toBe(200);
+    expect(
+      (await call(h.admin, "GET", "/public/auth/me", { sessionId: victim.sessionId })).status,
+    ).toBe(200);
   });
 });
 
@@ -361,10 +372,12 @@ describe("POST /public/auth/logout-all", () => {
 
     expect(response.status).toBe(200);
     expect((response.body as { revoked: number }).revoked).toBe(2);
-    expect((await call(h.admin, "GET", "/public/auth/me", { sessionId: first.sessionId })).status)
-      .toBe(401);
-    expect((await call(h.admin, "GET", "/public/auth/me", { sessionId: second.sessionId })).status)
-      .toBe(401);
+    expect(
+      (await call(h.admin, "GET", "/public/auth/me", { sessionId: first.sessionId })).status,
+    ).toBe(401);
+    expect(
+      (await call(h.admin, "GET", "/public/auth/me", { sessionId: second.sessionId })).status,
+    ).toBe(401);
   });
 
   it("401s for an unauthenticated caller — it never takes a principal from the request", async () => {

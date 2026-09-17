@@ -134,10 +134,12 @@ export class CustomerAuthAdminController {
     readonly email: string;
     readonly name: string;
     readonly password: string;
+    readonly tenantId: string;
   }): Promise<AdminResponse> {
     const registered = await this.deps.customers.register({
       email: input.email,
       name: input.name,
+      tenantId: input.tenantId,
     });
     // 409 (email already registered), 422 (invalid email/name) — the owning context's presenter
     // already mapped it; the admin layer never re-maps a status (see `AdminResponse`'s doc comment).
@@ -186,7 +188,8 @@ export class CustomerAuthAdminController {
       ...(input.ip !== undefined ? { ip: input.ip } : {}),
       sessionTtlSeconds: this.deps.sessionTtlSeconds,
     });
-    if (outcome.status < 200 || outcome.status >= 300) return CustomerAuthAdminController.failedLogin();
+    if (outcome.status < 200 || outcome.status >= 300)
+      return CustomerAuthAdminController.failedLogin();
 
     const result = outcome.body as {
       readonly authenticated: boolean;
@@ -225,11 +228,13 @@ export class CustomerAuthAdminController {
    * that no longer exists *is* logged out. `revoked` says which actually happened — nothing is
    * fabricated to make the flow look tidier.
    */
-  async logout(sessionId: string | undefined): Promise<AdminResponse> {
-    const guarded = await this.deps.guard.resolve(sessionId);
+  async logout(sessionId: string | undefined, tenantId: string): Promise<AdminResponse> {
+    const guarded = await this.deps.guard.resolve(sessionId, tenantId);
     if (!guarded.ok) return { status: 200, body: { revoked: false } };
 
-    const revoked = await this.deps.security.revokeSession({ sessionId: guarded.session.sessionId });
+    const revoked = await this.deps.security.revokeSession({
+      sessionId: guarded.session.sessionId,
+    });
     if (revoked.status < 200 || revoked.status >= 300) return revoked;
     return { status: 200, body: { revoked: true } };
   }
@@ -241,8 +246,8 @@ export class CustomerAuthAdminController {
    * the session id, which is unchanged by a refresh, so a refresh never requires re-issuing a cookie
    * value — only its expiry moves.
    */
-  async refresh(sessionId: string | undefined): Promise<AdminResponse> {
-    const guarded = await this.deps.guard.resolve(sessionId);
+  async refresh(sessionId: string | undefined, tenantId: string): Promise<AdminResponse> {
+    const guarded = await this.deps.guard.resolve(sessionId, tenantId);
     if (!guarded.ok) return guarded.response;
 
     const refreshed = await this.deps.security.refreshSession({
@@ -260,8 +265,8 @@ export class CustomerAuthAdminController {
    * resolved, never by one the caller supplied. Already built and already proven on the admin console
    * (`RevokeAllSessionsForm`); no new use case was needed, exactly as T5.16 §2 predicted.
    */
-  async revokeAllSessions(sessionId: string | undefined): Promise<AdminResponse> {
-    const guarded = await this.deps.guard.resolve(sessionId);
+  async revokeAllSessions(sessionId: string | undefined, tenantId: string): Promise<AdminResponse> {
+    const guarded = await this.deps.guard.resolve(sessionId, tenantId);
     if (!guarded.ok) return guarded.response;
 
     return this.deps.security.revokeAllSessions({
@@ -270,12 +275,13 @@ export class CustomerAuthAdminController {
   }
 
   /** The signed-in customer's own profile. `customerRef` comes from the guard, never from the caller. */
-  async me(sessionId: string | undefined): Promise<AdminResponse> {
-    const guarded = await this.deps.guard.resolve(sessionId);
+  async me(sessionId: string | undefined, tenantId: string): Promise<AdminResponse> {
+    const guarded = await this.deps.guard.resolve(sessionId, tenantId);
     if (!guarded.ok) return guarded.response;
 
     const response = await this.deps.customers.getCustomer({
       customerId: guarded.session.customerRef,
+      tenantId,
     });
     if (response.status < 200 || response.status >= 300) return response;
 
@@ -319,9 +325,11 @@ export class CustomerAuthAdminController {
    */
   async requireSession(
     sessionId: string | undefined,
+    tenantId: string,
   ): Promise<
-    { readonly ok: true; readonly session: CustomerSession } | { readonly ok: false; readonly response: AdminResponse }
+    | { readonly ok: true; readonly session: CustomerSession }
+    | { readonly ok: false; readonly response: AdminResponse }
   > {
-    return this.deps.guard.resolve(sessionId);
+    return this.deps.guard.resolve(sessionId, tenantId);
   }
 }

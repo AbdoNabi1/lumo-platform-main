@@ -51,6 +51,7 @@ describe("admin wiring (end to end)", () => {
     const customer = await admin.customers.registerCustomer(staff, {
       email: "alice@example.com",
       name: "Alice",
+      tenantId: "tenant-1",
     });
     expect(customer.status).toBe(201);
 
@@ -90,6 +91,7 @@ describe("admin wiring (end to end)", () => {
     const response = await admin.customers.registerCustomer(staff, {
       email: "not-an-email",
       name: "X",
+      tenantId: "tenant-1",
     });
     expect(response.status).toBe(422);
   });

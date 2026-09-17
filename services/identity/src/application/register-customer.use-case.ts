@@ -11,6 +11,7 @@ import { Email } from "../domain/value-objects/email";
 export interface RegisterCustomerInput {
   readonly email: string;
   readonly name: string;
+  readonly tenantId: string;
 }
 
 export interface RegisterCustomerOutput {
@@ -45,7 +46,7 @@ export class RegisterCustomer implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<RegisterCustomerOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.customers.findByEmail(email.value.value, tx);
+      const existing = await this.deps.customers.findByEmail(email.value.value, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError("A customer with this email already exists"));
       }
@@ -58,7 +59,7 @@ export class RegisterCustomer implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.customers.save(customer, tx);
+      await this.deps.customers.save(customer, input.tenantId, tx);
       return ok({ customerId: id.toString() });
     });
   }

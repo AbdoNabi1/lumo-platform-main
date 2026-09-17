@@ -104,7 +104,8 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Public: register a customer account (profile + security principal + credential)",
       schema: { body: registerBody },
-      handle: ({ body }) => admin.customerAuth.register(body),
+      handle: ({ body, context }) =>
+        admin.customerAuth.register({ ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -140,7 +141,8 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Public: revoke the caller's own customer session (logout)",
       schema: { body: emptyBody },
-      handle: ({ context }) => admin.customerAuth.logout(resolveCustomerSessionId(context)),
+      handle: ({ context }) =>
+        admin.customerAuth.logout(resolveCustomerSessionId(context), context.tenantId),
     }),
     defineRoute({
       method: "POST",
@@ -155,7 +157,8 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
        */
       summary: "Public: slide the caller's own session window forward (rotates the refresh token)",
       schema: { body: emptyBody },
-      handle: ({ context }) => admin.customerAuth.refresh(resolveCustomerSessionId(context)),
+      handle: ({ context }) =>
+        admin.customerAuth.refresh(resolveCustomerSessionId(context), context.tenantId),
     }),
     defineRoute({
       method: "POST",
@@ -167,7 +170,7 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "Public: revoke every session for the caller's own principal (sign out everywhere)",
       schema: { body: emptyBody },
       handle: ({ context }) =>
-        admin.customerAuth.revokeAllSessions(resolveCustomerSessionId(context)),
+        admin.customerAuth.revokeAllSessions(resolveCustomerSessionId(context), context.tenantId),
     }),
     defineRoute({
       method: "GET",
@@ -177,7 +180,8 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       public: true,
       summary: "Public: the signed-in customer's own profile (401 when there is no valid session)",
       schema: {},
-      handle: ({ context }) => admin.customerAuth.me(resolveCustomerSessionId(context)),
+      handle: ({ context }) =>
+        admin.customerAuth.me(resolveCustomerSessionId(context), context.tenantId),
     }),
     defineRoute({
       method: "POST",
@@ -199,7 +203,10 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
        * cart id does, never a 403 that would confirm the cart exists.
        */
       handle: async ({ body, context }) => {
-        const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
+        const guarded = await admin.customerAuth.requireSession(
+          resolveCustomerSessionId(context),
+          context.tenantId,
+        );
         if (!guarded.ok) return guarded.response;
 
         const found = await admin.publicReads.cart.get({ cartId: body.cartId });

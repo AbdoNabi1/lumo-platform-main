@@ -5,7 +5,7 @@ import type { DomainError } from "@platform/utils";
 import type { Customer } from "../domain/customer";
 import type { CustomerListQuery, CustomerRepository } from "../domain/customer-repository";
 
-export type ListCustomersInput = CustomerListQuery;
+export type ListCustomersInput = CustomerListQuery & { readonly tenantId: string };
 
 export interface ListCustomersDeps {
   readonly customers: CustomerRepository;
@@ -24,6 +24,6 @@ export class ListCustomers implements UseCase<
   }
 
   async execute(input: ListCustomersInput): Promise<Result<Paginated<Customer>, DomainError>> {
-    return ok(await this.deps.customers.list(input));
+    return ok(await this.deps.customers.list(input, input.tenantId));
   }
 }

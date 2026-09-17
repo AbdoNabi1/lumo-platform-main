@@ -1249,9 +1249,14 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "customers:read",
       summary: "List customers, most recently registered first (cursor-paginated)",
       schema: { querystring: listCustomersQuery },
+      // ADR-0014: ListCustomersInput now requires tenantId — sourced from the already-verified
+      // context.tenantId (packages/http's tenant-resolution chain), never from the query string.
       handle: async ({ query, context }) =>
         mapPage(
-          await admin.customers.listCustomers(context.principal, query),
+          await admin.customers.listCustomers(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
           toCustomerListItemDto,
         ),
     }),
@@ -1263,7 +1268,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get a single customer",
       schema: { params: customerIdParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
-        const response = await admin.customers.getCustomer(context.principal, params);
+        // ADR-0014: GetCustomerInput now requires tenantId — same source as above.
+        const response = await admin.customers.getCustomer(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) {
           return response;
         }

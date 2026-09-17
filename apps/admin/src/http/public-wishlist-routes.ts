@@ -125,7 +125,10 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
     | { readonly ok: true; readonly wishlist: Wishlist; readonly customerRef: string }
     | { readonly ok: false; readonly response: PageResponse }
   > => {
-    const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
+    const guarded = await admin.customerAuth.requireSession(
+      resolveCustomerSessionId(context),
+      context.tenantId,
+    );
     if (!guarded.ok) return { ok: false, response: guarded.response };
     const wishlist = await requireOwnWishlist(
       admin,

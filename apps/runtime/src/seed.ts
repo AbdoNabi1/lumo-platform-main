@@ -181,7 +181,11 @@ async function main(): Promise<void> {
 
     // ---- Identity: one demo customer ----
     const customer = unwrap<{ customerId: string }>(
-      await identity.customers.register({ email: "demo@morbeh.local", name: "Demo Customer" }),
+      await identity.customers.register({
+        email: "demo@morbeh.local",
+        name: "Demo Customer",
+        tenantId: TENANT_ID,
+      }),
       "register customer",
     );
     logger.info("seed: registered customer", {

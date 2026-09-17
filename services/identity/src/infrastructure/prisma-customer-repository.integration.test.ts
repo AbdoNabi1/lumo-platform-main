@@ -21,10 +21,12 @@ import { PrismaCustomerRepository } from "./prisma-customer-repository";
  *   DATABASE_URL_TEST=postgresql://lumo:lumo@localhost:5432/lumo_test pnpm --filter @platform/identity test
  *
  * HONESTLY GATED: without `DATABASE_URL_TEST` the suite is skipped — never faked. Client creation
- * is lazy (inside `wire`, called within each `it`). Unlike the access repositories,
- * `PrismaCustomerRepository` is scoped to a SINGLE tenant at construction time (injected
- * `tenantId`, composition.ts's documented "different-but-real convention") rather than per-call —
- * cross-tenant tests below build two separately-wired repositories to exercise that.
+ * is lazy (inside `wire`, called within each `it`). ADR-0014 (WP-10, T10.3): every method now takes
+ * `tenantId` as an explicit per-call parameter — `wire()` still returns a fresh `tenantId` per test
+ * for isolation between test runs, but it is no longer baked into the repository instance itself.
+ * Some cross-tenant tests below build two separately-wired repositories (mirroring how two
+ * different requests would call in); the dedicated isolation test further down instead reuses a
+ * SINGLE repository instance across two tenants, per T10.5's requirement.
  */
 const databaseUrl = process.env["DATABASE_URL_TEST"];
 
@@ -69,7 +71,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
       producer: "identity",
     });
     const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaCustomerRepository({ prisma, tenantId, outbox, context });
+    const repository = new PrismaCustomerRepository({ prisma, outbox, context });
     return { prisma, repository, tenantId, unitOfWork: new PrismaUnitOfWork(prisma), outboxStore };
   }
 
@@ -88,12 +90,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
   }
 
   it("round-trips a registered customer: email (trimmed/lower-cased), name, version", async () => {
-    const { repository, unitOfWork } = wire();
+    const { repository, tenantId, unitOfWork } = wire();
     const em = must(Email.create("  Alice@ITest.Example.com  "));
     const customer = registerCustomer(em);
 
-    await unitOfWork.run((tx) => repository.save(customer, tx));
-    const loaded = await repository.findById(customer.id.toString());
+    await unitOfWork.run((tx) => repository.save(customer, tenantId, tx));
+    const loaded = await repository.findById(customer.id.toString(), tenantId);
 
     expect(loaded).not.toBeNull();
     expect(loaded?.email.value).toBe("alice@itest.example.com");
@@ -104,23 +106,23 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
   });
 
   it("returns null for a nonexistent customer id", async () => {
-    const { repository } = wire();
-    expect(await repository.findById(crypto.randomUUID())).toBeNull();
+    const { repository, tenantId } = wire();
+    expect(await repository.findById(crypto.randomUUID(), tenantId)).toBeNull();
   });
 
   it("returns null from findByEmail for an email that was never registered", async () => {
-    const { repository } = wire();
-    expect(await repository.findByEmail(email().value)).toBeNull();
+    const { repository, tenantId } = wire();
+    expect(await repository.findByEmail(email().value, tenantId)).toBeNull();
   });
 
   it("rejects a duplicate email within the same tenant (unique tenant_id+email)", async () => {
-    const { repository, unitOfWork } = wire();
+    const { repository, tenantId, unitOfWork } = wire();
     const em = email();
     const first = registerCustomer(em, "Alice");
     const second = registerCustomer(em, "Alice Clone");
 
-    await unitOfWork.run((tx) => repository.save(first, tx));
-    await expect(unitOfWork.run((tx) => repository.save(second, tx))).rejects.toThrow();
+    await unitOfWork.run((tx) => repository.save(first, tenantId, tx));
+    await expect(unitOfWork.run((tx) => repository.save(second, tenantId, tx))).rejects.toThrow();
   });
 
   it("allows the SAME email across two different tenants and never leaks between them", async () => {
@@ -128,45 +130,68 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
     const a = wire();
     const b = wire();
 
-    await a.unitOfWork.run((tx) => a.repository.save(registerCustomer(em, "Alice Tenant A"), tx));
-    await b.unitOfWork.run((tx) => b.repository.save(registerCustomer(em, "Alice Tenant B"), tx));
+    await a.unitOfWork.run((tx) =>
+      a.repository.save(registerCustomer(em, "Alice Tenant A"), a.tenantId, tx),
+    );
+    await b.unitOfWork.run((tx) =>
+      b.repository.save(registerCustomer(em, "Alice Tenant B"), b.tenantId, tx),
+    );
 
-    expect((await a.repository.findByEmail(em.value))?.name).toBe("Alice Tenant A");
-    expect((await b.repository.findByEmail(em.value))?.name).toBe("Alice Tenant B");
+    expect((await a.repository.findByEmail(em.value, a.tenantId))?.name).toBe("Alice Tenant A");
+    expect((await b.repository.findByEmail(em.value, b.tenantId))?.name).toBe("Alice Tenant B");
   });
 
   it("does not leak one tenant's customer through a repository wired to a different tenant", async () => {
     const a = wire();
     const b = wire();
     const customer = registerCustomer();
-    await a.unitOfWork.run((tx) => a.repository.save(customer, tx));
+    await a.unitOfWork.run((tx) => a.repository.save(customer, a.tenantId, tx));
 
-    expect(await b.repository.findById(customer.id.toString())).toBeNull();
-    expect(await b.repository.findByEmail(customer.email.value)).toBeNull();
+    expect(await b.repository.findById(customer.id.toString(), b.tenantId)).toBeNull();
+    expect(await b.repository.findByEmail(customer.email.value, b.tenantId)).toBeNull();
+  });
+
+  it("does not let tenant A read tenant B's customer through a SINGLE shared repository instance (ADR-0014, WP-10 T10.5)", async () => {
+    const { repository, unitOfWork } = wire();
+    const tenantA = `tenant-itest-a-${crypto.randomUUID()}`;
+    const tenantB = `tenant-itest-b-${crypto.randomUUID()}`;
+    usedTenantIds.push(tenantA, tenantB);
+    const customerA = registerCustomer(email(), "Alice");
+
+    await unitOfWork.run((tx) => repository.save(customerA, tenantA, tx));
+
+    expect(await repository.findById(customerA.id.toString(), tenantA)).not.toBeNull();
+    expect(await repository.findById(customerA.id.toString(), tenantB)).toBeNull();
+    expect(await repository.findByEmail(customerA.email.value, tenantA)).not.toBeNull();
+    expect(await repository.findByEmail(customerA.email.value, tenantB)).toBeNull();
+    const pageA = await repository.list({}, tenantA);
+    const pageB = await repository.list({}, tenantB);
+    expect(pageA.items.map((c) => c.id.toString())).toContain(customerA.id.toString());
+    expect(pageB.items.map((c) => c.id.toString())).not.toContain(customerA.id.toString());
   });
 
   it("addAddress persists the address and preserves insertion order across multiple adds", async () => {
-    const { repository, unitOfWork } = wire();
+    const { repository, tenantId, unitOfWork } = wire();
     const customer = registerCustomer();
-    await unitOfWork.run((tx) => repository.save(customer, tx));
+    await unitOfWork.run((tx) => repository.save(customer, tenantId, tx));
 
-    let loaded = await repository.findById(customer.id.toString());
+    let loaded = await repository.findById(customer.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     const addr1 = must(
       Address.create(UniqueEntityId.from(ids.generate()), "1 Main St", "Town", "11111", "US"),
     );
     loaded.addAddress(addr1);
-    await unitOfWork.run((tx) => repository.save(loaded as Customer, tx));
+    await unitOfWork.run((tx) => repository.save(loaded as Customer, tenantId, tx));
 
-    loaded = await repository.findById(customer.id.toString());
+    loaded = await repository.findById(customer.id.toString(), tenantId);
     if (loaded === null) throw new Error("reload failed");
     const addr2 = must(
       Address.create(UniqueEntityId.from(ids.generate()), "2 Side St", "Town", "22222", "US"),
     );
     loaded.addAddress(addr2);
-    await unitOfWork.run((tx) => repository.save(loaded as Customer, tx));
+    await unitOfWork.run((tx) => repository.save(loaded as Customer, tenantId, tx));
 
-    const final = await repository.findById(customer.id.toString());
+    const final = await repository.findById(customer.id.toString(), tenantId);
     expect(final?.addresses).toHaveLength(2);
     expect(final?.addresses[0]?.line1).toBe("1 Main St");
     expect(final?.addresses[1]?.line1).toBe("2 Side St");
@@ -193,11 +218,11 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
   });
 
   it("changeConsent appends to the log; current consent derives from the latest record per scope", async () => {
-    const { repository, unitOfWork } = wire();
+    const { repository, tenantId, unitOfWork } = wire();
     const customer = registerCustomer();
-    await unitOfWork.run((tx) => repository.save(customer, tx));
+    await unitOfWork.run((tx) => repository.save(customer, tenantId, tx));
 
-    let loaded = await repository.findById(customer.id.toString());
+    let loaded = await repository.findById(customer.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     loaded.changeConsent(
       UniqueEntityId.from(ids.generate()),
@@ -206,9 +231,9 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
       ids.generate(),
       clock.now(),
     );
-    await unitOfWork.run((tx) => repository.save(loaded as Customer, tx));
+    await unitOfWork.run((tx) => repository.save(loaded as Customer, tenantId, tx));
 
-    loaded = await repository.findById(customer.id.toString());
+    loaded = await repository.findById(customer.id.toString(), tenantId);
     if (loaded === null) throw new Error("reload failed");
     expect(loaded.consentFor(must(ConsentScope.create("marketing")))).toBe(true);
 
@@ -220,19 +245,19 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
       ids.generate(),
       new Date(clock.now().getTime() + 1000),
     );
-    await unitOfWork.run((tx) => repository.save(loaded as Customer, tx));
+    await unitOfWork.run((tx) => repository.save(loaded as Customer, tenantId, tx));
 
-    const final = await repository.findById(customer.id.toString());
+    const final = await repository.findById(customer.id.toString(), tenantId);
     expect(final?.consents).toHaveLength(2);
     expect(final?.consentFor(must(ConsentScope.create("marketing")))).toBe(false);
   });
 
   it("consent log is genuinely append-only: unrelated scopes don't interfere with each other", async () => {
-    const { repository, unitOfWork } = wire();
+    const { repository, tenantId, unitOfWork } = wire();
     const customer = registerCustomer();
-    await unitOfWork.run((tx) => repository.save(customer, tx));
+    await unitOfWork.run((tx) => repository.save(customer, tenantId, tx));
 
-    const loaded = await repository.findById(customer.id.toString());
+    const loaded = await repository.findById(customer.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     loaded.changeConsent(
       UniqueEntityId.from(ids.generate()),
@@ -248,41 +273,41 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
       ids.generate(),
       clock.now(),
     );
-    await unitOfWork.run((tx) => repository.save(loaded as Customer, tx));
+    await unitOfWork.run((tx) => repository.save(loaded as Customer, tenantId, tx));
 
-    const final = await repository.findById(customer.id.toString());
+    const final = await repository.findById(customer.id.toString(), tenantId);
     expect(final?.consentFor(must(ConsentScope.create("marketing")))).toBe(true);
     expect(final?.consentFor(must(ConsentScope.create("analytics")))).toBe(false);
     expect(final?.consentFor(must(ConsentScope.create("data_sharing")))).toBe(false); // never granted, default false
   });
 
   it("cross-customer isolation: one customer's addresses/consents never appear under another's id", async () => {
-    const { repository, unitOfWork } = wire();
+    const { repository, tenantId, unitOfWork } = wire();
     const customerA = registerCustomer();
     const customerB = registerCustomer();
-    await unitOfWork.run((tx) => repository.save(customerA, tx));
-    await unitOfWork.run((tx) => repository.save(customerB, tx));
+    await unitOfWork.run((tx) => repository.save(customerA, tenantId, tx));
+    await unitOfWork.run((tx) => repository.save(customerB, tenantId, tx));
 
-    const loadedA = await repository.findById(customerA.id.toString());
+    const loadedA = await repository.findById(customerA.id.toString(), tenantId);
     if (loadedA === null) throw new Error("setup failed");
     loadedA.addAddress(
       must(Address.create(UniqueEntityId.from(ids.generate()), "A St", "Town", "11111", "US")),
     );
-    await unitOfWork.run((tx) => repository.save(loadedA as Customer, tx));
+    await unitOfWork.run((tx) => repository.save(loadedA as Customer, tenantId, tx));
 
-    const reloadedB = await repository.findById(customerB.id.toString());
+    const reloadedB = await repository.findById(customerB.id.toString(), tenantId);
     expect(reloadedB?.addresses).toHaveLength(0);
-    const reloadedA = await repository.findById(customerA.id.toString());
+    const reloadedA = await repository.findById(customerA.id.toString(), tenantId);
     expect(reloadedA?.addresses).toHaveLength(1);
   });
 
   it("rejects a stale write with ConcurrencyError — the losing writer's address is never persisted", async () => {
-    const { repository, unitOfWork, prisma } = wire();
+    const { repository, tenantId, unitOfWork, prisma } = wire();
     const customer = registerCustomer();
-    await unitOfWork.run((tx) => repository.save(customer, tx));
+    await unitOfWork.run((tx) => repository.save(customer, tenantId, tx));
 
-    const first = await repository.findById(customer.id.toString());
-    const second = await repository.findById(customer.id.toString());
+    const first = await repository.findById(customer.id.toString(), tenantId);
+    const second = await repository.findById(customer.id.toString(), tenantId);
     if (first === null || second === null) throw new Error("setup failed");
     first.addAddress(
       must(Address.create(UniqueEntityId.from(ids.generate()), "First St", "Town", "11111", "US")),
@@ -291,12 +316,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
       must(Address.create(UniqueEntityId.from(ids.generate()), "Second St", "Town", "22222", "US")),
     );
 
-    await unitOfWork.run((tx) => repository.save(first, tx));
-    await expect(unitOfWork.run((tx) => repository.save(second, tx))).rejects.toBeInstanceOf(
-      ConcurrencyError,
-    );
+    await unitOfWork.run((tx) => repository.save(first, tenantId, tx));
+    await expect(
+      unitOfWork.run((tx) => repository.save(second, tenantId, tx)),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
 
-    const final = await repository.findById(customer.id.toString());
+    const final = await repository.findById(customer.id.toString(), tenantId);
     expect(final?.addresses).toHaveLength(1);
     expect(final?.addresses[0]?.line1).toBe("First St");
     expect(final?.version).toBe(2);
@@ -308,24 +333,24 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
   });
 
   it("does not persist a partial write when the transaction fails after save()", async () => {
-    const { repository, unitOfWork } = wire();
+    const { repository, tenantId, unitOfWork } = wire();
     const customer = registerCustomer();
 
     await expect(
       unitOfWork.run(async (tx) => {
-        await repository.save(customer, tx);
+        await repository.save(customer, tenantId, tx);
         throw new Error("simulated failure after write");
       }),
     ).rejects.toThrow("simulated failure");
 
-    expect(await repository.findById(customer.id.toString())).toBeNull();
+    expect(await repository.findById(customer.id.toString(), tenantId)).toBeNull();
   });
 
   it("writes the outbox row (customer.registered) in the SAME transaction as the aggregate", async () => {
-    const { repository, unitOfWork, prisma } = wire();
+    const { repository, tenantId, unitOfWork, prisma } = wire();
     const customer = registerCustomer();
 
-    await unitOfWork.run((tx) => repository.save(customer, tx));
+    await unitOfWork.run((tx) => repository.save(customer, tenantId, tx));
     // Scoped by key rather than `outboxStore.fetchPending(N)`'s global oldest-first window, which
     // the shared `platform.outbox` table's concurrent writers from every other bounded context's
     // integration suite can push this row outside of under a full-monorepo parallel test run.
@@ -334,11 +359,11 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
   });
 
   it("writes the outbox row (consent.changed) in the SAME transaction as the consent append", async () => {
-    const { repository, unitOfWork, prisma } = wire();
+    const { repository, tenantId, unitOfWork, prisma } = wire();
     const customer = registerCustomer();
-    await unitOfWork.run((tx) => repository.save(customer, tx));
+    await unitOfWork.run((tx) => repository.save(customer, tenantId, tx));
 
-    const loaded = await repository.findById(customer.id.toString());
+    const loaded = await repository.findById(customer.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     loaded.changeConsent(
       UniqueEntityId.from(ids.generate()),
@@ -347,7 +372,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
       ids.generate(),
       clock.now(),
     );
-    await unitOfWork.run((tx) => repository.save(loaded, tx));
+    await unitOfWork.run((tx) => repository.save(loaded, tenantId, tx));
 
     // Scoped by key — see note above.
     const rows = await prisma.outboxEntry.findMany({ where: { key: customer.id.toString() } });
@@ -355,9 +380,9 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
   });
 
   it("assigns real UUIDs and sets createdAt/updatedAt timestamps on the persisted row", async () => {
-    const { repository, unitOfWork, prisma } = wire();
+    const { repository, tenantId, unitOfWork, prisma } = wire();
     const customer = registerCustomer();
-    await unitOfWork.run((tx) => repository.save(customer, tx));
+    await unitOfWork.run((tx) => repository.save(customer, tenantId, tx));
 
     const row = await prisma.customer.findUniqueOrThrow({ where: { id: customer.id.toString() } });
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -82,7 +82,7 @@ export class CustomerGuard {
    * browser JavaScript, and never from a request body or query string a page could be tricked into
    * composing.
    */
-  async resolve(sessionId: string | undefined): Promise<CustomerGuardResult> {
+  async resolve(sessionId: string | undefined, tenantId: string): Promise<CustomerGuardResult> {
     if (sessionId === undefined || sessionId.trim().length === 0) {
       return { ok: false, response: CustomerGuard.unauthenticated() };
     }
@@ -104,7 +104,10 @@ export class CustomerGuard {
 
     // Third hop — the Principal's `subjectRef` is only a reference; confirm the Customer it points at
     // still exists in Identity before letting any route scope data by it.
-    const customer = await this.deps.customers.getCustomer({ customerId: subject.subjectRef });
+    const customer = await this.deps.customers.getCustomer({
+      customerId: subject.subjectRef,
+      tenantId,
+    });
     if (customer.status < 200 || customer.status >= 300) {
       return { ok: false, response: CustomerGuard.unauthenticated() };
     }

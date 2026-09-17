@@ -165,7 +165,10 @@ export function publicReviewsRoutes(admin: WiredAdmin): readonly RouteDefinition
         "Public: the signed-in customer creates a review (one per customer/product; verified-purchase decided server-side)",
       schema: { body: createReviewBody },
       handle: async ({ body, context }): Promise<PageResponse> => {
-        const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
+        const guarded = await admin.customerAuth.requireSession(
+          resolveCustomerSessionId(context),
+          context.tenantId,
+        );
         if (!guarded.ok) return guarded.response;
 
         const created = await admin.publicReads.reviews.create({
@@ -190,7 +193,10 @@ export function publicReviewsRoutes(admin: WiredAdmin): readonly RouteDefinition
         "Public: the signed-in customer records (or replaces) a helpful/unhelpful vote on a review",
       schema: { params: reviewIdParams, body: voteReviewBody },
       handle: async ({ params, body, context }): Promise<PageResponse> => {
-        const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
+        const guarded = await admin.customerAuth.requireSession(
+          resolveCustomerSessionId(context),
+          context.tenantId,
+        );
         if (!guarded.ok) return guarded.response;
 
         const voted = await admin.publicReads.reviews.vote({
@@ -213,7 +219,10 @@ export function publicReviewsRoutes(admin: WiredAdmin): readonly RouteDefinition
         "Public: the signed-in customer records an abuse report (auto-flags once the threshold is reached)",
       schema: { params: reviewIdParams, body: reportReviewBody },
       handle: async ({ params, context }): Promise<PageResponse> => {
-        const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
+        const guarded = await admin.customerAuth.requireSession(
+          resolveCustomerSessionId(context),
+          context.tenantId,
+        );
         if (!guarded.ok) return guarded.response;
 
         const reported = await admin.publicReads.reviews.report({

@@ -43,13 +43,13 @@ describe("ListCustomers", () => {
       },
     };
     const useCase = new ListCustomers({ customers: repo });
-    const result = await useCase.execute({ first: 20, search: "alice" });
+    const result = await useCase.execute({ first: 20, search: "alice", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value).toBe(page);
     }
-    expect(received).toEqual({ first: 20, search: "alice" });
+    expect(received).toEqual({ first: 20, search: "alice", tenantId: "tenant-1" });
   });
 
   it("returns an empty page when nothing matches", async () => {
@@ -60,7 +60,7 @@ describe("ListCustomers", () => {
       list: async () => ({ items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
     };
     const useCase = new ListCustomers({ customers: repo });
-    const result = await useCase.execute({});
+    const result = await useCase.execute({ tenantId: "tenant-1" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {

@@ -13,6 +13,7 @@ export interface AddAddressInput {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  readonly tenantId: string;
 }
 
 export interface AddAddressOutput {
@@ -46,13 +47,13 @@ export class AddAddress implements UseCase<AddAddressInput, AddAddressOutput, Do
     if (!address.ok) return err(address.error);
 
     return this.deps.unitOfWork.run<Result<AddAddressOutput, DomainError>>(async (tx) => {
-      const customer = await this.deps.customers.findById(input.customerId, tx);
+      const customer = await this.deps.customers.findById(input.customerId, input.tenantId, tx);
       if (customer === null) {
         return err(new NotFoundError("Customer not found"));
       }
 
       customer.addAddress(address.value);
-      await this.deps.customers.save(customer, tx);
+      await this.deps.customers.save(customer, input.tenantId, tx);
       return ok({ customerId: customer.id.toString(), addressId: addressId.toString() });
     });
   }

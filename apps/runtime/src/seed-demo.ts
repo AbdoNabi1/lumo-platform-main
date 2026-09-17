@@ -474,7 +474,11 @@ async function main(): Promise<void> {
     const customers: Array<{ customerId: string; email: string }> = [];
     for (const seed of CUSTOMER_SEEDS) {
       const found = unwrap<{ items: readonly CustomerRecord[] }>(
-        await identity.customers.listCustomers({ search: seed.email, first: 5 }),
+        await identity.customers.listCustomers({
+          search: seed.email,
+          first: 5,
+          tenantId: TENANT_ID,
+        }),
         `look up customer "${seed.email}"`,
       );
       const existing = found.items.find((c) => c.email.value === seed.email);
@@ -488,7 +492,11 @@ async function main(): Promise<void> {
         continue;
       }
       const customer = unwrap<{ customerId: string }>(
-        await identity.customers.register({ email: seed.email, name: seed.name }),
+        await identity.customers.register({
+          email: seed.email,
+          name: seed.name,
+          tenantId: TENANT_ID,
+        }),
         `register customer "${seed.email}"`,
       );
       customers.push({ customerId: customer.customerId, email: seed.email });
