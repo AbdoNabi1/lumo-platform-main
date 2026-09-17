@@ -11,8 +11,6 @@ export interface PrismaWishlistRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `WishlistRepository` on the `wishlist` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -23,9 +21,8 @@ export class PrismaWishlistRepository implements WishlistRepository {
     this.deps = deps;
   }
 
-  async save(wishlist: Wishlist, tx?: unknown): Promise<void> {
+  async save(wishlist: Wishlist, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const wishlistId = wishlist.id.toString();
     const row = WishlistMapper.toRow(wishlist, tenantId);
 

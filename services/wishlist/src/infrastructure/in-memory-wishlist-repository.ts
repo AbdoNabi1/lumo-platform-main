@@ -9,9 +9,17 @@ export interface InMemoryWishlistRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `WishlistRepository`. Persists the aggregate and writes events to the outbox on save. */
+/**
+ * In-memory `WishlistRepository`. Persists the aggregate and writes events to the outbox on save.
+ * ADR-0014 (WP-10, T10.3): keyed by `(tenantId, wishlistId)` — `Wishlist` carries no `tenantId` of
+ * its own, so the store must key on it explicitly or a cross-tenant leak here would be invisible
+ * to every isolation test.
+ */
 export class InMemoryWishlistRepository implements WishlistRepository {
-  private readonly store = new Map<string, Wishlist>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly wishlist: Wishlist }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,28 +28,31 @@ export class InMemoryWishlistRepository implements WishlistRepository {
     this.context = deps.context;
   }
 
-  async save(wishlist: Wishlist, tx?: unknown): Promise<void> {
-    this.store.set(wishlist.id.toString(), wishlist);
+  async save(wishlist: Wishlist, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(wishlist.id.toString(), { tenantId, wishlist });
     await this.outbox.write(wishlist.pullDomainEvents(), this.context, tx);
   }
 
-  /** ADR-0014: `tenantId` accepted for signature parity; this fake has no tenant partitioning. */
-  async findById(id: string, _tenantId: string): Promise<Wishlist | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Wishlist | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.wishlist : null;
   }
 
-  async findByCustomerRef(customerRef: string, _tenantId: string): Promise<Wishlist | null> {
-    for (const wishlist of this.store.values()) {
-      if (wishlist.customerRef === customerRef) return wishlist;
+  async findByCustomerRef(customerRef: string, tenantId: string): Promise<Wishlist | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.wishlist.customerRef === customerRef) {
+        return entry.wishlist;
+      }
     }
     return null;
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Wishlist>> {
-    const all = [...this.store.values()].sort((a, b) =>
-      a.id.toString().localeCompare(b.id.toString()),
-    );
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Wishlist>> {
+    const all = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => entry.wishlist)
+      .sort((a, b) => a.id.toString().localeCompare(b.id.toString()));
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const start = after === undefined ? 0 : all.findIndex((x) => x.id.toString() > after);
     const limit = normalizePageSize(page.first);

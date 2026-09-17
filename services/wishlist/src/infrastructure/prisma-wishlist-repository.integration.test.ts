@@ -31,12 +31,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaWishlistRepository (integration)", (
       producer: "wishlist",
     });
     const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaWishlistRepository({ prisma, outbox, context, tenantId });
+    const repository = new PrismaWishlistRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       repository,
-      save: (wishlist: Wishlist) => unitOfWork.run((tx) => repository.save(wishlist, tx)),
+      save: (wishlist: Wishlist) => unitOfWork.run((tx) => repository.save(wishlist, tenantId, tx)),
     };
   }
 
@@ -64,6 +64,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaWishlistRepository (integration)", (
 
     const otherPage = await otherRepository.list({ first: 10 }, other);
     expect(otherPage.items).toHaveLength(1);
+
+    // T10.5: a SINGLE repository instance, asked for a different tenant, must not blend the two —
+    // `repository` was wired against `tenantId` but is otherwise a stateless singleton (ADR-0014).
+    const crossTenantPage = await repository.list({ first: 10 }, other);
+    expect(crossTenantPage.items).toHaveLength(1);
+
     await prisma.$disconnect();
   });
 });

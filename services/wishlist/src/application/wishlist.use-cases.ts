@@ -72,7 +72,7 @@ export class CreateWishlist implements UseCase<
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const wishlist = Wishlist.create(id, input.customerRef);
-      await this.deps.wishlists.save(wishlist, tx);
+      await this.deps.wishlists.save(wishlist, input.tenantId, tx);
       return ok(toOutput(wishlist));
     });
   }
@@ -108,7 +108,7 @@ export class AdvanceWishlist implements UseCase<
         throw error;
       }
 
-      await this.deps.wishlists.save(wishlist, tx);
+      await this.deps.wishlists.save(wishlist, input.tenantId, tx);
       return ok(toOutput(wishlist));
     });
   }
@@ -138,7 +138,7 @@ export class AddWishlistItem implements UseCase<
         throw error;
       }
 
-      await this.deps.wishlists.save(wishlist, tx);
+      await this.deps.wishlists.save(wishlist, input.tenantId, tx);
       return ok(toOutput(wishlist));
     });
   }
@@ -172,7 +172,7 @@ export class RemoveWishlistItem implements UseCase<
         throw error;
       }
 
-      await this.deps.wishlists.save(wishlist, tx);
+      await this.deps.wishlists.save(wishlist, input.tenantId, tx);
       return ok(toOutput(wishlist));
     });
   }
@@ -212,7 +212,7 @@ export class ShareWishlistItem implements UseCase<
         throw error;
       }
 
-      await this.deps.wishlists.save(wishlist, tx);
+      await this.deps.wishlists.save(wishlist, input.tenantId, tx);
       return ok({ ...toOutput(wishlist), shareToken });
     });
   }
@@ -251,7 +251,7 @@ export class MoveWishlistItemToCart implements UseCase<
       }
 
       await this.deps.cart.addItem(wishlist.customerRef, input.productRef);
-      await this.deps.wishlists.save(wishlist, tx);
+      await this.deps.wishlists.save(wishlist, input.tenantId, tx);
       return ok(toOutput(wishlist));
     });
   }
