@@ -34,12 +34,10 @@ export interface ExperienceWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaExperienceRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wireTheme`); absent ⇒ in-memory, unchanged.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.5): the repository
+   * built here is a tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Experience table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredExperience {
@@ -76,10 +74,6 @@ function buildController(
  */
 export function wireExperience(deps: ExperienceWiringDeps): WiredExperience {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireExperience: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new ExperienceEventTranslator(),
@@ -87,10 +81,9 @@ export function wireExperience(deps: ExperienceWiringDeps): WiredExperience {
       clock: deps.clock,
       producer: "experience",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    const context = rootEventContext(deps.idGenerator);
     const experiences = new PrismaExperienceRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });

@@ -9,9 +9,17 @@ export interface InMemoryExperienceRepositoriesDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `ExperienceRepository`. Persists the aggregate and writes events to the outbox on save. */
+/**
+ * In-memory `ExperienceRepository`. Persists the aggregate and writes events to the outbox on
+ * save. ADR-0014 (WP-10, T10.5): keyed by `(tenantId, experienceId)` — `Experience` carries no
+ * `tenantId` of its own, so the store must key on it explicitly or a cross-tenant leak here would
+ * be invisible to every isolation test.
+ */
 export class InMemoryExperienceRepository implements ExperienceRepository {
-  private readonly store = new Map<string, Experience>();
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly experience: Experience }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,27 +28,29 @@ export class InMemoryExperienceRepository implements ExperienceRepository {
     this.context = deps.context;
   }
 
-  async save(experience: Experience, tx?: unknown): Promise<void> {
-    this.store.set(experience.id.toString(), experience);
+  async save(experience: Experience, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(experience.id.toString(), { tenantId, experience });
     await this.outbox.write(experience.pullDomainEvents(), this.context, tx);
   }
 
-  async findById(id: string, _tenantId: string): Promise<Experience | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Experience | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.experience : null;
   }
 
-  async findByName(name: string, _tenantId: string): Promise<Experience | null> {
-    for (const experience of this.store.values()) {
-      if (experience.name === name) return experience;
+  async findByName(name: string, tenantId: string): Promise<Experience | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.experience.name === name) return entry.experience;
     }
     return null;
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage, _tenantId: string): Promise<Paginated<Experience>> {
-    const all = [...this.store.values()].sort((a, b) =>
-      a.id.toString().localeCompare(b.id.toString()),
-    );
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Experience>> {
+    const all = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => entry.experience)
+      .sort((a, b) => a.id.toString().localeCompare(b.id.toString()));
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const start = after === undefined ? 0 : all.findIndex((x) => x.id.toString() > after);
     const limit = normalizePageSize(page.first);

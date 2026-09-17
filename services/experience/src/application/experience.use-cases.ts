@@ -52,7 +52,7 @@ export class CreateExperience implements UseCase<
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const experience = Experience.create(id, input.name, input.experienceType);
-      await this.deps.experiences.save(experience, tx);
+      await this.deps.experiences.save(experience, input.tenantId, tx);
       return ok({ experienceId: id.toString(), status: experience.status.value });
     });
   }
@@ -101,7 +101,7 @@ export class AdvanceExperience implements UseCase<
         throw error;
       }
 
-      await this.deps.experiences.save(experience, tx);
+      await this.deps.experiences.save(experience, input.tenantId, tx);
       return ok({ experienceId: experience.id.toString(), status: experience.status.value });
     });
   }
@@ -139,7 +139,7 @@ export class UpdateCanvas implements UseCase<
         throw error;
       }
 
-      await this.deps.experiences.save(experience, tx);
+      await this.deps.experiences.save(experience, input.tenantId, tx);
       return ok({ experienceId: experience.id.toString(), status: experience.status.value });
     });
   }

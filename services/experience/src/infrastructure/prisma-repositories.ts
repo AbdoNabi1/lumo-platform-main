@@ -12,7 +12,6 @@ export interface PrismaExperienceRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 /** Production `ExperienceRepository` on the `experience` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -23,9 +22,8 @@ export class PrismaExperienceRepository implements ExperienceRepository {
     this.deps = deps;
   }
 
-  async save(experience: Experience, tx?: unknown): Promise<void> {
+  async save(experience: Experience, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = experience.id.toString();
     const row = ExperienceMapper.toRow(experience, tenantId);
 

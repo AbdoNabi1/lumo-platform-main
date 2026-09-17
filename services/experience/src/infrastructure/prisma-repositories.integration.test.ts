@@ -31,12 +31,13 @@ describe.runIf(Boolean(databaseUrl))("PrismaExperienceRepository (integration)",
       producer: "experience",
     });
     const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaExperienceRepository({ prisma, tenantId, outbox, context });
+    const repository = new PrismaExperienceRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       repository,
-      save: (experience: Experience) => unitOfWork.run((tx) => repository.save(experience, tx)),
+      save: (experience: Experience) =>
+        unitOfWork.run((tx) => repository.save(experience, tenantId, tx)),
     };
   }
 
