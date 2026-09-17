@@ -80,7 +80,7 @@ export class CreateExperiment implements UseCase<
         input.hypothesis,
         input.featureFlagRef,
       );
-      await this.deps.experiments.save(experiment, tx);
+      await this.deps.experiments.save(experiment, input.tenantId, tx);
       return ok({ experimentId: id.toString(), status: experiment.status.value });
     });
   }
@@ -129,7 +129,7 @@ export class AdvanceExperiment implements UseCase<
         throw error;
       }
 
-      await this.deps.experiments.save(experiment, tx);
+      await this.deps.experiments.save(experiment, input.tenantId, tx);
       return ok({ experimentId: experiment.id.toString(), status: experiment.status.value });
     });
   }
@@ -175,7 +175,7 @@ export class RecordExperimentResult implements UseCase<
         throw error;
       }
 
-      await this.deps.experiments.save(experiment, tx);
+      await this.deps.experiments.save(experiment, input.tenantId, tx);
       return ok({ experimentId: experiment.id.toString(), status: experiment.status.value });
     });
   }
@@ -217,7 +217,7 @@ export class DeclareWinner implements UseCase<
         throw error;
       }
 
-      await this.deps.experiments.save(experiment, tx);
+      await this.deps.experiments.save(experiment, input.tenantId, tx);
       return ok({ experimentId: experiment.id.toString(), status: experiment.status.value });
     });
   }

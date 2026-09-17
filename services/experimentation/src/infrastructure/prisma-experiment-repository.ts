@@ -12,8 +12,6 @@ export interface PrismaExperimentRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `ExperimentRepository` on the `experiment` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -24,9 +22,8 @@ export class PrismaExperimentRepository implements ExperimentRepository {
     this.deps = deps;
   }
 
-  async save(experiment: Experiment, tx?: unknown): Promise<void> {
+  async save(experiment: Experiment, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = experiment.id.toString();
     const row = ExperimentMapper.toRow(experiment, tenantId);
 
