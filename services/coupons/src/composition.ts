@@ -36,13 +36,11 @@ export interface CouponsWiringDeps {
   /** Defaults to the in-memory stub (always-active) until a real cross-context adapter is wired (deferred, G-39). */
   readonly promotions?: PromotionsPort;
   /**
-   * Production persistence (G-39/C-01). Present ⇒ `PrismaCouponRepository` + `PrismaUnitOfWork`
-   * (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/`wireContent`); absent ⇒
-   * in-memory, unchanged.
+   * Production persistence (G-39/C-01). Present ⇒ `PrismaCouponRepository` + `PrismaUnitOfWork`;
+   * absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository built here is a
+   * tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Coupons table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredCoupons {
@@ -75,10 +73,6 @@ function buildController(
  */
 export function wireCoupons(deps: CouponsWiringDeps): WiredCoupons {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireCoupons: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new CouponsEventTranslator(),
@@ -86,8 +80,10 @@ export function wireCoupons(deps: CouponsWiringDeps): WiredCoupons {
       clock: deps.clock,
       producer: "coupons",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const coupons = new PrismaCouponRepository({ prisma: deps.prisma, tenantId, outbox, context });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see CouponsWiringDeps' doc
+    // comment) — the repository built below takes tenantId per call instead.
+    const context = rootEventContext(deps.idGenerator);
+    const coupons = new PrismaCouponRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {

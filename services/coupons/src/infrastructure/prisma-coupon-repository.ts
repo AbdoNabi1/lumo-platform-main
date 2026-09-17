@@ -11,8 +11,6 @@ export interface PrismaCouponRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `CouponRepository` on the `coupons` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -23,9 +21,8 @@ export class PrismaCouponRepository implements CouponRepository {
     this.deps = deps;
   }
 
-  async save(coupon: Coupon, tx?: unknown): Promise<void> {
+  async save(coupon: Coupon, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const couponId = coupon.id.toString();
     const row = CouponMapper.toRow(coupon, tenantId);
 

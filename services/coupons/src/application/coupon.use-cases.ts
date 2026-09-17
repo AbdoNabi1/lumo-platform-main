@@ -72,7 +72,7 @@ export class CreateCoupon implements UseCase<CreateCouponInput, CouponStatusOutp
         input.expiresAt,
         input.campaignRef,
       );
-      await this.deps.coupons.save(coupon, tx);
+      await this.deps.coupons.save(coupon, input.tenantId, tx);
       return ok({ couponId: id.toString(), status: coupon.status.value });
     });
   }
@@ -98,7 +98,7 @@ export class AdvanceCoupon implements UseCase<AdvanceCouponInput, CouponStatusOu
         throw error;
       }
 
-      await this.deps.coupons.save(coupon, tx);
+      await this.deps.coupons.save(coupon, input.tenantId, tx);
       return ok({ couponId: coupon.id.toString(), status: coupon.status.value });
     });
   }
@@ -174,7 +174,7 @@ export class RedeemCoupon implements UseCase<RedeemCouponInput, RedeemCouponOutp
         throw error;
       }
 
-      await this.deps.coupons.save(coupon, tx);
+      await this.deps.coupons.save(coupon, input.tenantId, tx);
       return ok({
         couponId: coupon.id.toString(),
         status: coupon.status.value,
