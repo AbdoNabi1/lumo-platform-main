@@ -48,6 +48,7 @@ export interface CreateInvoiceInput {
   readonly subscriptionRef: string;
   readonly currency: string;
   readonly lineItems: readonly InvoiceLineItem[];
+  readonly tenantId: string;
 }
 
 /** Creates a draft invoice. */
@@ -70,7 +71,7 @@ export class CreateInvoice implements UseCase<CreateInvoiceInput, IdOutput, Doma
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.invoices.save(invoice, tx);
+      await this.deps.invoices.save(invoice, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -99,7 +100,7 @@ export class IssueInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainErr
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.invoices.save(invoice, tx);
+      await this.deps.invoices.save(invoice, input.tenantId, tx);
       return ok({ id: invoice.id.toString() });
     });
   }
@@ -286,7 +287,7 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
               if (isDomainError(error)) return err(error);
               throw error;
             }
-            await this.deps.invoices.save(invoice, tx);
+            await this.deps.invoices.save(invoice, tenantId, tx);
           }
           return ok({ id: invoice.id.toString(), alreadyPaid });
         },
@@ -299,7 +300,7 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
       const invoice = await this.deps.invoices.findById(invoiceId, tenantId, tx);
       if (invoice !== null && invoice.status === "issued") {
         invoice.markFailed(this.deps.idGenerator.generate(), this.deps.clock.now());
-        await this.deps.invoices.save(invoice, tx);
+        await this.deps.invoices.save(invoice, tenantId, tx);
       }
     });
   }
@@ -309,6 +310,7 @@ export interface GrantCreditInput {
   readonly tenantRef: string;
   readonly amount: number;
   readonly reason: string;
+  readonly tenantId: string;
 }
 
 /** Grants a billing credit. */
@@ -330,7 +332,7 @@ export class GrantCredit implements UseCase<GrantCreditInput, IdOutput, DomainEr
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.credits.save(credit, tx);
+      await this.deps.credits.save(credit, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -363,7 +365,7 @@ export class ConsumeCredit implements UseCase<ConsumeCreditInput, IdOutput, Doma
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.credits.save(credit, tx);
+      await this.deps.credits.save(credit, input.tenantId, tx);
       return ok({ id: credit.id.toString() });
     });
   }
@@ -387,7 +389,7 @@ export class ExpireCredit implements UseCase<CreditIdInput, IdOutput, DomainErro
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.credits.save(credit, tx);
+      await this.deps.credits.save(credit, input.tenantId, tx);
       return ok({ id: credit.id.toString() });
     });
   }

@@ -84,7 +84,7 @@ async function seedIssuedInvoice(invoices: InvoiceRepository, id: string): Promi
     clock.now(),
   );
   invoice.issue("evt-seed-2", clock.now());
-  await invoices.save(invoice);
+  await invoices.save(invoice, "tenant-local");
 }
 
 describe("Task 3 — exploit proof: PSP collect()/Finance postSettlement() run while a DB transaction is open", () => {

@@ -67,7 +67,7 @@ export class CreatePlan implements UseCase<CreatePlanInput, IdOutput, DomainErro
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.plans.save(plan, tx);
+      await this.deps.plans.save(plan, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -104,7 +104,7 @@ export class CreatePlanDraft implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.plans.save(plan, tx);
+      await this.deps.plans.save(plan, input.tenantId, tx);
       return ok({ planVersionId: draft.id.toString() });
     });
   }
@@ -147,7 +147,7 @@ export class SchedulePlanVersion implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.plans.save(plan, tx);
+      await this.deps.plans.save(plan, input.tenantId, tx);
       return ok({ id: input.planVersionId });
     });
   }
@@ -171,7 +171,7 @@ export class PublishPlanVersion implements UseCase<PlanVersionActionInput, IdOut
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.plans.save(plan, tx);
+      await this.deps.plans.save(plan, input.tenantId, tx);
       return ok({ id: input.planVersionId });
     });
   }
@@ -195,7 +195,7 @@ export class RollbackPlan implements UseCase<PlanVersionActionInput, IdOutput, D
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.plans.save(plan, tx);
+      await this.deps.plans.save(plan, input.tenantId, tx);
       return ok({ id: input.planVersionId });
     });
   }
@@ -222,7 +222,7 @@ export class ClonePlanVersion implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.plans.save(plan, tx);
+      await this.deps.plans.save(plan, input.tenantId, tx);
       return ok({ planVersionId: clone.id.toString() });
     });
   }
@@ -246,7 +246,7 @@ export class ArchivePlanVersion implements UseCase<PlanVersionActionInput, IdOut
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.plans.save(plan, tx);
+      await this.deps.plans.save(plan, input.tenantId, tx);
       return ok({ id: input.planVersionId });
     });
   }
@@ -322,7 +322,7 @@ export class CreateSubscription implements UseCase<CreateSubscriptionInput, IdOu
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.subscriptions.save(subscription, tx);
+      await this.deps.subscriptions.save(subscription, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -358,7 +358,7 @@ export class RepinSubscription implements UseCase<RepinSubscriptionInput, IdOutp
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.subscriptions.save(subscription, tx);
+      await this.deps.subscriptions.save(subscription, input.tenantId, tx);
       return ok({ id: subscription.id.toString() });
     });
   }
@@ -386,7 +386,7 @@ export class ActivateSubscription implements UseCase<SubscriptionIdInput, IdOutp
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.subscriptions.save(subscription, tx);
+      await this.deps.subscriptions.save(subscription, input.tenantId, tx);
       return ok({ id: subscription.id.toString() });
     });
   }
@@ -413,7 +413,7 @@ export class PauseSubscription implements UseCase<PauseSubscriptionInput, IdOutp
       );
       if (subscription === null) return err(new NotFoundError("Subscription not found"));
       subscription.pause(input.resumeDate, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.subscriptions.save(subscription, tx);
+      await this.deps.subscriptions.save(subscription, input.tenantId, tx);
       return ok({ id: subscription.id.toString() });
     });
   }
@@ -436,7 +436,7 @@ export class ResumeSubscription implements UseCase<SubscriptionIdInput, IdOutput
       );
       if (subscription === null) return err(new NotFoundError("Subscription not found"));
       subscription.resume(this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.subscriptions.save(subscription, tx);
+      await this.deps.subscriptions.save(subscription, input.tenantId, tx);
       return ok({ id: subscription.id.toString() });
     });
   }
@@ -468,7 +468,7 @@ export class CancelSubscription implements UseCase<CancelSubscriptionInput, IdOu
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.subscriptions.save(subscription, tx);
+      await this.deps.subscriptions.save(subscription, input.tenantId, tx);
       return ok({ id: subscription.id.toString() });
     });
   }
@@ -538,7 +538,7 @@ export class SetMerchantFeatureOverride implements UseCase<
           input.expiresAt,
           input.notes,
         );
-        await this.deps.merchantFeatureOverrides.save(existing, tx);
+        await this.deps.merchantFeatureOverrides.save(existing, input.tenantId, tx);
         return ok({ id: existing.id.toString() });
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
@@ -552,7 +552,7 @@ export class SetMerchantFeatureOverride implements UseCase<
         input.expiresAt,
         input.notes,
       );
-      await this.deps.merchantFeatureOverrides.save(override, tx);
+      await this.deps.merchantFeatureOverrides.save(override, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -606,7 +606,7 @@ export class GrantMerchantCapability implements UseCase<
         input.reason,
         input.notes,
       );
-      await this.deps.merchantCapabilities.save(capabilities, tx);
+      await this.deps.merchantCapabilities.save(capabilities, input.tenantId, tx);
       return ok({ id: capabilities.id.toString() });
     });
   }
@@ -643,7 +643,7 @@ export class RevokeMerchantCapability implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.merchantCapabilities.save(capabilities, tx);
+      await this.deps.merchantCapabilities.save(capabilities, input.tenantId, tx);
       return ok({ id: capabilities.id.toString() });
     });
   }
@@ -698,7 +698,7 @@ export class RecordUsage implements UseCase<RecordUsageInput, RecordUsageOutput,
         input.occurredAt,
         this.deps.idGenerator.generate(),
       );
-      await this.deps.usageCounters.save(counter, tx);
+      await this.deps.usageCounters.save(counter, input.tenantId, tx);
       await this.deps.processedUsageRecords.markProcessed(input.recordId);
       return ok({ id: counter.id.toString(), duplicate: false });
     });

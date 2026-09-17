@@ -114,6 +114,7 @@ describe("licensing (end to end)", () => {
       subscriptionRef: "sub-1",
       currency: "USD",
       lineItems: [{ description: "Growth plan", amount: 2900 }],
+      tenantId: "tenant-local",
     });
     expect(invoice.status).toBe(201);
     const invoiceId = (invoice.body as { id: string }).id;

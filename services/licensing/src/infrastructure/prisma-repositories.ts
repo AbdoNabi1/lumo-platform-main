@@ -39,7 +39,6 @@ export interface PrismaLicensingRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 function requireTx(tx: unknown): TransactionClient {
@@ -54,9 +53,8 @@ export class PrismaPlanRepository implements PlanRepository {
     this.deps = deps;
   }
 
-  async save(plan: Plan, tx?: unknown): Promise<void> {
+  async save(plan: Plan, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = plan.id.toString();
     const row = PlanMapper.toRow(plan, tenantId);
     // `PlanVersionRow[]` has no index signature, so it has no structural overlap with
@@ -110,9 +108,8 @@ export class PrismaSubscriptionRepository implements SubscriptionRepository {
     this.deps = deps;
   }
 
-  async save(subscription: Subscription, tx?: unknown): Promise<void> {
+  async save(subscription: Subscription, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = subscription.id.toString();
     const row = SubscriptionMapper.toRow(subscription, tenantId);
     // `RenewalSchedule`/`RetryPolicy` have no index signature, so they have no structural overlap
@@ -174,9 +171,8 @@ export class PrismaMerchantFeatureOverrideRepository implements MerchantFeatureO
     this.deps = deps;
   }
 
-  async save(override: MerchantFeatureOverride, tx?: unknown): Promise<void> {
+  async save(override: MerchantFeatureOverride, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = override.id.toString();
     const row = MerchantFeatureOverrideMapper.toRow(override, tenantId);
     if (override.version === 0) {
@@ -239,9 +235,8 @@ export class PrismaMerchantCapabilitiesRepository implements MerchantCapabilitie
     this.deps = deps;
   }
 
-  async save(capabilities: MerchantCapabilities, tx?: unknown): Promise<void> {
+  async save(capabilities: MerchantCapabilities, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = capabilities.id.toString();
     const row = MerchantCapabilitiesMapper.toRow(capabilities, tenantId);
     // `CapabilityGrant[]`/`CapabilityAuditEntry[]` have no index signature, so they have no
@@ -300,9 +295,8 @@ export class PrismaUsageCounterRepository implements UsageCounterRepository {
     this.deps = deps;
   }
 
-  async save(counter: UsageCounter, tx?: unknown): Promise<void> {
+  async save(counter: UsageCounter, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = counter.id.toString();
     const row = UsageCounterMapper.toRow(counter, tenantId);
     if (counter.version === 0) {
@@ -357,9 +351,8 @@ export class PrismaCreditRepository implements CreditRepository {
     this.deps = deps;
   }
 
-  async save(credit: Credit, tx?: unknown): Promise<void> {
+  async save(credit: Credit, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = credit.id.toString();
     const row = CreditMapper.toRow(credit, tenantId);
     if (credit.version === 0) {
@@ -392,9 +385,8 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
     this.deps = deps;
   }
 
-  async save(invoice: Invoice, tx?: unknown): Promise<void> {
+  async save(invoice: Invoice, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = invoice.id.toString();
     const row = InvoiceMapper.toRow(invoice, tenantId);
     // `InvoiceLineItem[]` has no index signature, so it has no structural overlap with

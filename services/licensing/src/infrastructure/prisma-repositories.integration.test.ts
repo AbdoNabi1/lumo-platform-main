@@ -36,8 +36,8 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
       producer: "licensing",
     });
     const context = rootEventContext(ids, tenantId);
-    const credits = new PrismaCreditRepository({ prisma, outbox, context, tenantId });
-    const subscriptions = new PrismaSubscriptionRepository({ prisma, outbox, context, tenantId });
+    const credits = new PrismaCreditRepository({ prisma, outbox, context });
+    const subscriptions = new PrismaSubscriptionRepository({ prisma, outbox, context });
     return {
       prisma,
       credits,
@@ -74,7 +74,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
     const { prisma, credits, unitOfWork } = wire();
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
 
-    await unitOfWork.run((tx) => credits.save(credit, tx));
+    await unitOfWork.run((tx) => credits.save(credit, tenantId, tx));
     const loaded = await credits.findById(credit.id.toString(), tenantId);
 
     expect(loaded).not.toBeNull();
@@ -86,12 +86,12 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
   it("updates an existing Credit on consume (update)", async () => {
     const { prisma, credits, unitOfWork } = wire();
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
-    await unitOfWork.run((tx) => credits.save(credit, tx));
+    await unitOfWork.run((tx) => credits.save(credit, tenantId, tx));
 
     const loaded = await credits.findById(credit.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     loaded.consume(400, ids.generate(), clock.now());
-    await unitOfWork.run((tx) => credits.save(loaded, tx));
+    await unitOfWork.run((tx) => credits.save(loaded, tenantId, tx));
 
     const reloaded = await credits.findById(credit.id.toString(), tenantId);
     expect(reloaded?.amount).toBe(600);
@@ -105,10 +105,10 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
   it("enforces the unique (tenantId, tenantRef) Subscription constraint (constraints)", async () => {
     const { prisma, subscriptions, unitOfWork } = wire();
     const tenantRef = `tenant-ref-dup-${ids.generate()}`;
-    await unitOfWork.run((tx) => subscriptions.save(startTrial(tenantRef), tx));
+    await unitOfWork.run((tx) => subscriptions.save(startTrial(tenantRef), tenantId, tx));
 
     await expect(
-      unitOfWork.run((tx) => subscriptions.save(startTrial(tenantRef), tx)),
+      unitOfWork.run((tx) => subscriptions.save(startTrial(tenantRef), tenantId, tx)),
     ).rejects.toThrow();
     await prisma.$disconnect();
   });
@@ -119,7 +119,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
     const { prisma, credits, unitOfWork, outboxStore } = wire();
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
 
-    await unitOfWork.run((tx) => credits.save(credit, tx));
+    await unitOfWork.run((tx) => credits.save(credit, tenantId, tx));
 
     const pending = await outboxStore.fetchPending(10_000);
     expect(pending.some((e) => e.key === credit.id.toString())).toBe(true);
@@ -132,7 +132,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
 
     await expect(
       unitOfWork.run(async (tx) => {
-        await credits.save(credit, tx);
+        await credits.save(credit, tenantId, tx);
         throw new Error("simulated downstream failure after the credit write");
       }),
     ).rejects.toThrow("simulated downstream failure");
@@ -147,7 +147,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
   it("detects a concurrent update via ConcurrencyError rather than silently overwriting (concurrent update / stale write)", async () => {
     const { prisma, credits, unitOfWork } = wire();
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
-    await unitOfWork.run((tx) => credits.save(credit, tx));
+    await unitOfWork.run((tx) => credits.save(credit, tenantId, tx));
 
     const copyA = await credits.findById(credit.id.toString(), tenantId);
     const copyB = await credits.findById(credit.id.toString(), tenantId);
@@ -155,8 +155,8 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
     copyA.consume(100, ids.generate(), clock.now());
     copyB.consume(200, ids.generate(), clock.now());
 
-    await unitOfWork.run((tx) => credits.save(copyA, tx));
-    await expect(unitOfWork.run((tx) => credits.save(copyB, tx))).rejects.toBeInstanceOf(
+    await unitOfWork.run((tx) => credits.save(copyA, tenantId, tx));
+    await expect(unitOfWork.run((tx) => credits.save(copyB, tenantId, tx))).rejects.toBeInstanceOf(
       ConcurrencyError,
     );
 
@@ -168,7 +168,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
   it("rejects true concurrent writes to the same Credit under real simultaneous transactions", async () => {
     const { prisma, credits, unitOfWork } = wire();
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
-    await unitOfWork.run((tx) => credits.save(credit, tx));
+    await unitOfWork.run((tx) => credits.save(credit, tenantId, tx));
 
     const copyA = await credits.findById(credit.id.toString(), tenantId);
     const copyB = await credits.findById(credit.id.toString(), tenantId);
@@ -177,8 +177,8 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
     copyB.consume(75, ids.generate(), clock.now());
 
     const results = await Promise.allSettled([
-      unitOfWork.run((tx) => credits.save(copyA, tx)),
-      unitOfWork.run((tx) => credits.save(copyB, tx)),
+      unitOfWork.run((tx) => credits.save(copyA, tenantId, tx)),
+      unitOfWork.run((tx) => credits.save(copyB, tenantId, tx)),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
@@ -190,11 +190,11 @@ describe.runIf(Boolean(databaseUrl))("Prisma Licensing repositories (integration
   it("never silently duplicates a Credit written twice with the same id (idempotency)", async () => {
     const { prisma, credits, unitOfWork } = wire();
     const credit = grantCredit(`tenant-ref-${ids.generate()}`);
-    await unitOfWork.run((tx) => credits.save(credit, tx));
+    await unitOfWork.run((tx) => credits.save(credit, tenantId, tx));
 
     // Same aggregate, version still 0 in this in-memory copy → repository attempts a second
     // `create`, which must fail on the primary key rather than silently duplicating the row.
-    await expect(unitOfWork.run((tx) => credits.save(credit, tx))).rejects.toThrow();
+    await expect(unitOfWork.run((tx) => credits.save(credit, tenantId, tx))).rejects.toThrow();
     await prisma.$disconnect();
   });
 });

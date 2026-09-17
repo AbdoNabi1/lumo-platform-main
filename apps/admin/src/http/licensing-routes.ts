@@ -209,7 +209,8 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a draft invoice",
       schema: { body: createInvoiceBody },
-      handle: ({ body, context }) => admin.licensing.createInvoice(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.licensing.createInvoice(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -233,7 +234,8 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Grant a billing credit",
       schema: { body: grantCreditBody },
-      handle: ({ body, context }) => admin.licensing.grantCredit(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.licensing.grantCredit(context.principal, { ...body, tenantId: context.tenantId }),
     }),
   ] as readonly RouteDefinition[];
 }

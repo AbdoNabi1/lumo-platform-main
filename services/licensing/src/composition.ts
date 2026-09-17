@@ -86,15 +86,13 @@ export interface LicensingWiringDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   /**
-   * Production persistence (G-39/C-01). Present ⇒ all 7 Prisma repositories + `PrismaUnitOfWork`
-   * (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/`wireTenancy`); absent ⇒
-   * in-memory, unchanged. `processedUsageRecords` (idempotency store) and the deferred
-   * `payments`/`financeLedger` billing-adapter stubs stay in-memory in both branches — out of
-   * scope for C-01.
+   * Production persistence (G-39/C-01). Present ⇒ all 7 Prisma repositories + `PrismaUnitOfWork`;
+   * absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.5): the repositories built here are
+   * tenant-agnostic singletons — no `tenantId` at composition time any more.
+   * `processedUsageRecords` (idempotency store) and the deferred `payments`/`financeLedger`
+   * billing-adapter stubs stay in-memory in both branches — out of scope for C-01.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Licensing table is tenant-scoped. */
-  readonly tenantId?: string;
   /**
    * Production PSP-backed billing collection (M2-3). Absent ⇒ `InMemoryPaymentsAdapter` — an
    * always-succeeds stub whose `collect()` never moves money. Same `deps.X ?? default` convention
@@ -194,10 +192,6 @@ function buildController(
  */
 export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireLicensing: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new LicensingEventTranslator(),
@@ -205,8 +199,8 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
       clock: deps.clock,
       producer: "licensing",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const licensingDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    const context = rootEventContext(deps.idGenerator);
+    const licensingDeps = { prisma: deps.prisma, outbox, context };
     const repos: LicensingRepos = {
       plans: new PrismaPlanRepository(licensingDeps),
       subscriptions: new PrismaSubscriptionRepository(licensingDeps),
