@@ -37,7 +37,9 @@ describe("feature-flags (end to end)", () => {
     });
     expect(rolled.status).toBe(200);
 
-    const enabled = await app.evaluator.isEnabled("new-checkout", { subjectId: "customer-1" });
+    const enabled = await app.evaluator.isEnabled("new-checkout", "tenant-local", {
+      subjectId: "customer-1",
+    });
     expect(enabled).toBe(true);
 
     expect(await app.drainOutbox()).toBeGreaterThan(0);
@@ -65,13 +67,17 @@ describe("feature-flags (end to end)", () => {
       tenantId: "tenant-local",
     });
 
-    const enabled = await app.evaluator.isEnabled("risky-feature", { subjectId: "customer-1" });
+    const enabled = await app.evaluator.isEnabled("risky-feature", "tenant-local", {
+      subjectId: "customer-1",
+    });
     expect(enabled).toBe(false);
   });
 
   it("an unknown flag key evaluates to disabled, never throws", async () => {
     const app = wire();
-    const enabled = await app.evaluator.isEnabled("does-not-exist", { subjectId: "customer-1" });
+    const enabled = await app.evaluator.isEnabled("does-not-exist", "tenant-local", {
+      subjectId: "customer-1",
+    });
     expect(enabled).toBe(false);
   });
 
