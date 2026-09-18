@@ -8,7 +8,6 @@ import {
 
 export interface ClickHouseReadModelStoreDeps {
   readonly client: ClickHouseClient;
-  readonly tenantId: string;
   readonly table?: string;
 }
 
@@ -28,15 +27,16 @@ interface ReadModelRow {
  * surface. Honestly gated: never exercised against a live ClickHouse instance this session
  * (`CLICKHOUSE_URL_TEST` unset, offline environment) — `migrate()` and every query below are
  * written to the described shape but not integration-verified.
+ *
+ * Built once, as a process-wide singleton (ADR-0014, WP-10 T10.3): `tenantId` is a per-call
+ * parameter on every method below, never captured at construction.
  */
 export class ClickHouseReadModelStore implements ReadModelStore {
   private readonly client: ClickHouseClient;
-  private readonly tenantId: string;
   private readonly table: string;
 
   constructor(deps: ClickHouseReadModelStoreDeps) {
     this.client = deps.client;
-    this.tenantId = deps.tenantId;
     this.table = deps.table ?? "finance_read_models";
   }
 
@@ -57,12 +57,12 @@ export class ClickHouseReadModelStore implements ReadModelStore {
     });
   }
 
-  async put(model: string, key: string, value: unknown): Promise<void> {
+  async put(model: string, key: string, value: unknown, tenantId: string): Promise<void> {
     await this.client.insert({
       table: this.table,
       values: [
         {
-          tenant_id: this.tenantId,
+          tenant_id: tenantId,
           model,
           key,
           value: JSON.stringify(value),
@@ -73,14 +73,14 @@ export class ClickHouseReadModelStore implements ReadModelStore {
     });
   }
 
-  async get(model: string, key: string): Promise<unknown> {
+  async get(model: string, key: string, tenantId: string): Promise<unknown> {
     const result = await this.client.query({
       query: `
         SELECT value FROM ${this.table} FINAL
         WHERE tenant_id = {tenantId:String} AND model = {model:String} AND key = {key:String}
         LIMIT 1
       `,
-      query_params: { tenantId: this.tenantId, model, key },
+      query_params: { tenantId, model, key },
       format: "JSONEachRow",
     });
     const rows = await result.json<{ value: string }>();
@@ -88,20 +88,24 @@ export class ClickHouseReadModelStore implements ReadModelStore {
     return first === undefined ? null : (JSON.parse(first.value) as unknown);
   }
 
-  async list(model: string): Promise<readonly unknown[]> {
+  async list(model: string, tenantId: string): Promise<readonly unknown[]> {
     const result = await this.client.query({
       query: `
         SELECT value FROM ${this.table} FINAL
         WHERE tenant_id = {tenantId:String} AND model = {model:String}
       `,
-      query_params: { tenantId: this.tenantId, model },
+      query_params: { tenantId, model },
       format: "JSONEachRow",
     });
     const rows = await result.json<{ value: string }>();
     return rows.map((row): unknown => JSON.parse(row.value));
   }
 
-  async query(model: string, params: ReadModelQueryParams): Promise<ReadModelPage> {
+  async query(
+    model: string,
+    params: ReadModelQueryParams,
+    tenantId: string,
+  ): Promise<ReadModelPage> {
     const limit = clampLimit(params.limit);
     const order = params.order === "desc" ? "DESC" : "ASC";
     const sortExpr = params.sort ? `JSONExtractString(value, {sortField:String})` : "key";
@@ -130,7 +134,7 @@ export class ClickHouseReadModelStore implements ReadModelStore {
         LIMIT {limit:UInt32}
       `,
       query_params: {
-        tenantId: this.tenantId,
+        tenantId,
         model,
         ...(params.sort ? { sortField: params.sort } : {}),
         ...filterParams,
