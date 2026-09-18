@@ -3,6 +3,7 @@ import type { NotificationsController } from "@platform/notifications";
 import { PaymentsNotificationAdapter } from "./payments-notification.adapter";
 
 interface CreateCall {
+  readonly tenantId: string;
   readonly idempotencyKey: string;
   readonly sourceRef: string;
   readonly recipientRef: string;
@@ -17,8 +18,8 @@ interface CreateCall {
 interface FakeCalls {
   readonly sequence: string[];
   readonly create: CreateCall[];
-  readonly queue: { notificationId: string }[];
-  readonly send: { notificationId: string }[];
+  readonly queue: { notificationId: string; tenantId: string }[];
+  readonly send: { notificationId: string; tenantId: string }[];
 }
 
 /** A fake `NotificationsController` narrowed to `create`/`queue`/`send` — the 3 methods this adapter calls — recording both the sequence and the arguments of every call. */
@@ -64,19 +65,32 @@ describe("PaymentsNotificationAdapter (Payments -> Notifications, C-3)", () => {
   it("follows the create -> queue -> send sequence in order", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls);
-    const adapter = new PaymentsNotificationAdapter(notifications);
+    const adapter = new PaymentsNotificationAdapter(notifications, "tenant-a");
 
     await adapter.notify("ORD-1001", "captured");
 
     expect(calls.sequence).toEqual(["create", "queue", "send"]);
     expect(calls.queue[0]?.notificationId).toBe("notif-1");
     expect(calls.send[0]?.notificationId).toBe("notif-1");
+    expect(
+      [calls.create[0], calls.queue[0], calls.send[0]].map(
+        (c) => (c as { tenantId?: string } | undefined)?.tenantId,
+      ),
+    ).toEqual(["tenant-a", "tenant-a", "tenant-a"]);
+  });
+
+  it("throws without a tenant rather than defaulting one (ADR-0014)", async () => {
+    const calls = emptyCalls();
+    const adapter = new PaymentsNotificationAdapter(fakeNotificationsController(calls));
+
+    await expect(adapter.notify("ORD-1001", "captured")).rejects.toThrow(/tenantId is required/);
+    expect(calls.sequence).toEqual([]);
   });
 
   it("maps orderRef/status into a minimal, sane CreateNotificationInput", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls);
-    const adapter = new PaymentsNotificationAdapter(notifications);
+    const adapter = new PaymentsNotificationAdapter(notifications, "tenant-a");
 
     await adapter.notify("ORD-2002", "captured");
 
@@ -95,7 +109,7 @@ describe("PaymentsNotificationAdapter (Payments -> Notifications, C-3)", () => {
   it("idempotencyKey is stable across repeated calls with the same orderRef/status", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls);
-    const adapter = new PaymentsNotificationAdapter(notifications);
+    const adapter = new PaymentsNotificationAdapter(notifications, "tenant-a");
 
     await adapter.notify("ORD-3003", "captured");
     await adapter.notify("ORD-3003", "captured");
@@ -107,7 +121,7 @@ describe("PaymentsNotificationAdapter (Payments -> Notifications, C-3)", () => {
   it("idempotencyKey differs across different statuses for the same order", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls);
-    const adapter = new PaymentsNotificationAdapter(notifications);
+    const adapter = new PaymentsNotificationAdapter(notifications, "tenant-a");
 
     await adapter.notify("ORD-4004", "created");
     await adapter.notify("ORD-4004", "captured");
@@ -118,7 +132,7 @@ describe("PaymentsNotificationAdapter (Payments -> Notifications, C-3)", () => {
   it("propagates a create failure (no swallowing here — the call site already swallows)", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls, { failAt: "create" });
-    const adapter = new PaymentsNotificationAdapter(notifications);
+    const adapter = new PaymentsNotificationAdapter(notifications, "tenant-a");
 
     await expect(adapter.notify("ORD-5005", "captured")).rejects.toThrow();
     expect(calls.sequence).toEqual(["create"]);
@@ -127,7 +141,7 @@ describe("PaymentsNotificationAdapter (Payments -> Notifications, C-3)", () => {
   it("propagates a queue failure after a successful create", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls, { failAt: "queue" });
-    const adapter = new PaymentsNotificationAdapter(notifications);
+    const adapter = new PaymentsNotificationAdapter(notifications, "tenant-a");
 
     await expect(adapter.notify("ORD-6006", "captured")).rejects.toThrow();
     expect(calls.sequence).toEqual(["create", "queue"]);
@@ -136,7 +150,7 @@ describe("PaymentsNotificationAdapter (Payments -> Notifications, C-3)", () => {
   it("propagates a send failure after a successful create+queue", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls, { failAt: "send" });
-    const adapter = new PaymentsNotificationAdapter(notifications);
+    const adapter = new PaymentsNotificationAdapter(notifications, "tenant-a");
 
     await expect(adapter.notify("ORD-7007", "captured")).rejects.toThrow();
     expect(calls.sequence).toEqual(["create", "queue", "send"]);

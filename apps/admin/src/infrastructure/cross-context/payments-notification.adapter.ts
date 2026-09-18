@@ -47,14 +47,35 @@ export class PaymentsNotificationAdapter implements NotificationPort {
 
   private readonly notifications: Pick<NotificationsController, "create" | "queue" | "send">;
 
-  constructor(notifications: Pick<NotificationsController, "create" | "queue" | "send">) {
+  private readonly tenantId: string | undefined;
+
+  /**
+   * ADR-0014 (WP-10, T10.3): Notifications now takes `tenantId` per call, but the port this
+   * adapter implements carries none yet — widening it is that context's own conversion. Until
+   * then the tenant is captured at construction (same not-yet-converted pattern as
+   * `PromotionValidationAdapter`). It stays optional only because `AdminWiringDeps.tenantId` is;
+   * `notify` throws if it is missing (the caller already swallows notification failures), never
+   * defaulting a tenant.
+   */
+  constructor(
+    notifications: Pick<NotificationsController, "create" | "queue" | "send">,
+    tenantId?: string,
+  ) {
     this.notifications = notifications;
+    this.tenantId = tenantId;
   }
 
   async notify(orderRef: string, status: string): Promise<void> {
+    const tenantId = this.tenantId;
+    if (tenantId === undefined) {
+      throw new Error(
+        "PaymentsNotificationAdapter.notify: tenantId is required (ADR-0014) but this adapter was constructed without one.",
+      );
+    }
     const idempotencyKey = `${orderRef}:${status}`;
 
     const createResponse = await this.notifications.create({
+      tenantId,
       idempotencyKey,
       sourceRef: `payments:${orderRef}`,
       recipientRef: orderRef,
@@ -73,7 +94,7 @@ export class PaymentsNotificationAdapter implements NotificationPort {
     }
     const { notificationId } = createResponse.body as CreateNotificationBody;
 
-    const queueResponse = await this.notifications.queue({ notificationId });
+    const queueResponse = await this.notifications.queue({ notificationId, tenantId });
     if (queueResponse.status >= 400) {
       throw new Error(
         `PaymentsNotificationAdapter: queue failed for order "${orderRef}" ` +
@@ -81,7 +102,7 @@ export class PaymentsNotificationAdapter implements NotificationPort {
       );
     }
 
-    const sendResponse = await this.notifications.send({ notificationId });
+    const sendResponse = await this.notifications.send({ notificationId, tenantId });
     if (sendResponse.status >= 400) {
       throw new Error(
         `PaymentsNotificationAdapter: send failed for order "${orderRef}" ` +

@@ -311,11 +311,13 @@ describe("NotificationsOrdersPaidConsumer (Task 17b, C-2)", () => {
     const execute = vi.fn(async () => ok({ notificationId: "ntf-1", status: "created" }));
     const consumer = new NotificationsOrdersPaidConsumer({
       createNotification: { execute } as unknown as CreateNotification,
+      tenantId: "tenant-local",
     });
 
     await consumer.handle(orderPaidEvent());
 
     expect(execute).toHaveBeenCalledWith({
+      tenantId: "tenant-local",
       idempotencyKey: "orders.order.paid:confirmation:ORD-1001",
       // `orders:<orderNumber>` matches OrdersNotificationAdapter's existing sourceRef convention.
       sourceRef: "orders:ORD-1001",
@@ -335,6 +337,7 @@ describe("NotificationsOrdersPaidConsumer (Task 17b, C-2)", () => {
       createNotification: {
         execute: vi.fn(async () => err(new ValidationError("no channels", []))),
       } as unknown as CreateNotification,
+      tenantId: "tenant-local",
     });
 
     await expect(consumer.handle(orderPaidEvent())).rejects.toThrow(/no channels/);

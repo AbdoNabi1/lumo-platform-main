@@ -384,6 +384,12 @@ export class Customer360OrdersPaidConsumer implements EventHandler<OrderPaidPayl
 
 export interface NotificationsOrdersPaidConsumerDeps {
   readonly createNotification: CreateNotification;
+  /**
+   * ADR-0014 (WP-10, T10.3): `CreateNotification` now takes `tenantId` per call. Still sourced from
+   * `core.config.TENANT_DEFAULT_ID` at builder time — reading the event envelope's own tenant per
+   * message is the separate, already-tracked G-64 fix (`followOnEventContext`).
+   */
+  readonly tenantId: string;
 }
 
 /**
@@ -420,6 +426,7 @@ export class NotificationsOrdersPaidConsumer implements EventHandler<OrderPaidPa
   async handle(event: IntegrationEvent<OrderPaidPayload>): Promise<void> {
     const { orderNumber, customerRef, currency, totalAmountMinor } = event.payload;
     const result = await this.deps.createNotification.execute({
+      tenantId: this.deps.tenantId,
       idempotencyKey: `${ORDERS_ORDER_PAID}:confirmation:${orderNumber}`,
       sourceRef: `orders:${orderNumber}`,
       recipientRef: customerRef,
@@ -557,7 +564,6 @@ export function buildOrdersPaidConsumerRuntimes(
         createNotification: new CreateNotification({
           notifications: new PrismaNotificationRepository({
             prisma: core.prisma,
-            tenantId,
             outbox: outboxFor(new NotificationsEventTranslator(), "notifications"),
             context,
           }),
@@ -565,6 +571,7 @@ export function buildOrdersPaidConsumerRuntimes(
           idGenerator: core.idGenerator,
           clock: core.clock,
         }),
+        tenantId,
       }),
       "notifications.orders-paid",
     ),

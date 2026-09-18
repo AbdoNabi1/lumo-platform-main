@@ -30,8 +30,8 @@ export interface WebhookProviderPort {
   send(request: ProviderSendRequest): Promise<ProviderSendResult>;
 }
 
-/** Replay-safe provider-callback dedup — unique per `(provider, callback)`, backing `RecordProviderCallback`'s idempotency. */
+/** Replay-safe provider-callback dedup — unique per `(tenant, provider, callback)`, backing `RecordProviderCallback`'s idempotency. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface ProcessedProviderCallbackStore {
-  hasProcessed(provider: string, callbackId: string): Promise<boolean>;
-  markProcessed(provider: string, callbackId: string): Promise<void>;
+  hasProcessed(provider: string, callbackId: string, tenantId: string): Promise<boolean>;
+  markProcessed(provider: string, callbackId: string, tenantId: string): Promise<void>;
 }

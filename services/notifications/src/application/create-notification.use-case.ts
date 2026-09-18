@@ -12,6 +12,8 @@ import { Notification } from "../domain/notification";
 import type { NotificationRepository } from "../domain/notification-repository";
 
 export interface CreateNotificationInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly idempotencyKey: string;
   readonly sourceRef: string;
   readonly recipientRef: string;
@@ -80,7 +82,11 @@ export class CreateNotification implements UseCase<
     const policy = DeliveryPolicy.create(input.maxAttempts, input.expiresAt);
 
     return this.deps.unitOfWork.run<Result<NotificationStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.notifications.findByIdempotencyKey(input.idempotencyKey, tx);
+      const existing = await this.deps.notifications.findByIdempotencyKey(
+        input.idempotencyKey,
+        input.tenantId,
+        tx,
+      );
       if (existing !== null) {
         return ok({ notificationId: existing.id.toString(), status: existing.status.value });
       }
@@ -96,7 +102,7 @@ export class CreateNotification implements UseCase<
         input.variables,
         policy,
       );
-      await this.deps.notifications.save(notification, tx);
+      await this.deps.notifications.save(notification, input.tenantId, tx);
       return ok({ notificationId: id.toString(), status: notification.status.value });
     });
   }

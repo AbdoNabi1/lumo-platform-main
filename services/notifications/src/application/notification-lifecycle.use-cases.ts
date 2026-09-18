@@ -17,6 +17,8 @@ import type {
 } from "./ports";
 
 export interface NotificationIdInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly notificationId: string;
 }
 
@@ -47,7 +49,11 @@ export class QueueNotification implements UseCase<
     input: NotificationIdInput,
   ): Promise<Result<NotificationStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<NotificationStatusOutput, DomainError>>(async (tx) => {
-      const notification = await this.deps.notifications.findById(input.notificationId, tx);
+      const notification = await this.deps.notifications.findById(
+        input.notificationId,
+        input.tenantId,
+        tx,
+      );
       if (notification === null) {
         return err(new NotFoundError("Notification not found"));
       }
@@ -59,7 +65,7 @@ export class QueueNotification implements UseCase<
         throw error;
       }
 
-      await this.deps.notifications.save(notification, tx);
+      await this.deps.notifications.save(notification, input.tenantId, tx);
       return ok({ notificationId: notification.id.toString(), status: notification.status.value });
     });
   }
@@ -81,7 +87,11 @@ export class AdvanceNotification implements UseCase<
     input: AdvanceNotificationInput,
   ): Promise<Result<NotificationStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<NotificationStatusOutput, DomainError>>(async (tx) => {
-      const notification = await this.deps.notifications.findById(input.notificationId, tx);
+      const notification = await this.deps.notifications.findById(
+        input.notificationId,
+        input.tenantId,
+        tx,
+      );
       if (notification === null) {
         return err(new NotFoundError("Notification not found"));
       }
@@ -97,7 +107,7 @@ export class AdvanceNotification implements UseCase<
         throw error;
       }
 
-      await this.deps.notifications.save(notification, tx);
+      await this.deps.notifications.save(notification, input.tenantId, tx);
       return ok({ notificationId: notification.id.toString(), status: notification.status.value });
     });
   }
@@ -211,7 +221,7 @@ export class SendNotification implements UseCase<
   async execute(
     input: NotificationIdInput,
   ): Promise<Result<NotificationStatusOutput, DomainError>> {
-    const precheck = await this.precheck(input.notificationId);
+    const precheck = await this.precheck(input.notificationId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     const { channel, request } = precheck.value;
 
@@ -221,15 +231,18 @@ export class SendNotification implements UseCase<
       providerRef = result.providerRef;
     } catch (error) {
       const reason = error instanceof Error ? error.message : "provider send failed";
-      return this.settleFailure(input.notificationId, reason);
+      return this.settleFailure(input.notificationId, input.tenantId, reason);
     }
 
-    return this.settleSuccess(input.notificationId, providerRef);
+    return this.settleSuccess(input.notificationId, input.tenantId, providerRef);
   }
 
-  private async precheck(notificationId: string): Promise<Result<SendPrecheck, DomainError>> {
+  private async precheck(
+    notificationId: string,
+    tenantId: string,
+  ): Promise<Result<SendPrecheck, DomainError>> {
     return this.deps.unitOfWork.run<Result<SendPrecheck, DomainError>>(async (tx) => {
-      const notification = await this.deps.notifications.findById(notificationId, tx);
+      const notification = await this.deps.notifications.findById(notificationId, tenantId, tx);
       if (notification === null) {
         return err(new NotFoundError("Notification not found"));
       }
@@ -270,11 +283,12 @@ export class SendNotification implements UseCase<
 
   private async settleSuccess(
     notificationId: string,
+    tenantId: string,
     providerRef: string,
   ): Promise<Result<NotificationStatusOutput, DomainError>> {
     return withConcurrencyRetry(SendNotification.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<NotificationStatusOutput, DomainError>>(async (tx) => {
-        const notification = await this.deps.notifications.findById(notificationId, tx);
+        const notification = await this.deps.notifications.findById(notificationId, tenantId, tx);
         if (notification === null) {
           return err(new NotFoundError("Notification not found"));
         }
@@ -293,7 +307,7 @@ export class SendNotification implements UseCase<
             if (isDomainError(error)) return err(error);
             throw error;
           }
-          await this.deps.notifications.save(notification, tx);
+          await this.deps.notifications.save(notification, tenantId, tx);
         }
 
         return ok({
@@ -306,11 +320,12 @@ export class SendNotification implements UseCase<
 
   private async settleFailure(
     notificationId: string,
+    tenantId: string,
     reason: string,
   ): Promise<Result<NotificationStatusOutput, DomainError>> {
     return withConcurrencyRetry(SendNotification.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<NotificationStatusOutput, DomainError>>(async (tx) => {
-        const notification = await this.deps.notifications.findById(notificationId, tx);
+        const notification = await this.deps.notifications.findById(notificationId, tenantId, tx);
         if (notification === null) {
           return err(new NotFoundError("Notification not found"));
         }
@@ -333,7 +348,7 @@ export class SendNotification implements UseCase<
             if (isDomainError(domainError)) return err(domainError);
             throw domainError;
           }
-          await this.deps.notifications.save(notification, tx);
+          await this.deps.notifications.save(notification, tenantId, tx);
         }
 
         return ok({
@@ -361,7 +376,11 @@ export class RetryNotification implements UseCase<
     input: NotificationIdInput,
   ): Promise<Result<NotificationStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<NotificationStatusOutput, DomainError>>(async (tx) => {
-      const notification = await this.deps.notifications.findById(input.notificationId, tx);
+      const notification = await this.deps.notifications.findById(
+        input.notificationId,
+        input.tenantId,
+        tx,
+      );
       if (notification === null) {
         return err(new NotFoundError("Notification not found"));
       }
@@ -373,7 +392,7 @@ export class RetryNotification implements UseCase<
         throw error;
       }
 
-      await this.deps.notifications.save(notification, tx);
+      await this.deps.notifications.save(notification, input.tenantId, tx);
       return ok({ notificationId: notification.id.toString(), status: notification.status.value });
     });
   }

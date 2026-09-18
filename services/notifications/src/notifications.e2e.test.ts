@@ -3,6 +3,8 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireNotifications } from "./composition";
 
+const TENANT = "tenant-a";
+
 function sequentialIds(): IdGenerator {
   let counter = 0;
   return { generate: () => `id-${(counter += 1)}` };
@@ -20,6 +22,7 @@ function wire() {
 
 function createInput(idempotencyKey: string) {
   return {
+    tenantId: TENANT,
     idempotencyKey,
     sourceRef: "order-1",
     recipientRef: "customer-1",
@@ -42,15 +45,16 @@ describe("notifications (end to end)", () => {
     const app = wire();
     const id = await newNotificationId(app);
 
-    const queued = await app.notifications.queue({ notificationId: id });
+    const queued = await app.notifications.queue({ tenantId: TENANT, notificationId: id });
     expect(queued.status).toBe(200);
     expect((queued.body as { status: string }).status).toBe("queued");
 
-    const sent = await app.notifications.send({ notificationId: id });
+    const sent = await app.notifications.send({ tenantId: TENANT, notificationId: id });
     expect(sent.status).toBe(200);
     expect((sent.body as { status: string }).status).toBe("sent");
 
     const delivered = await app.notifications.callback({
+      tenantId: TENANT,
       notificationId: id,
       provider: "email",
       callbackId: "cb-1",
@@ -79,10 +83,11 @@ describe("notifications (end to end)", () => {
   it("provider-callback idempotency: first processed, replay deduped", async () => {
     const app = wire();
     const id = await newNotificationId(app);
-    await app.notifications.queue({ notificationId: id });
-    await app.notifications.send({ notificationId: id });
+    await app.notifications.queue({ tenantId: TENANT, notificationId: id });
+    await app.notifications.send({ tenantId: TENANT, notificationId: id });
 
     const first = await app.notifications.callback({
+      tenantId: TENANT,
       notificationId: id,
       provider: "email",
       callbackId: "cb-replay",
@@ -91,6 +96,7 @@ describe("notifications (end to end)", () => {
     expect((first.body as { duplicate: boolean }).duplicate).toBe(false);
 
     const replay = await app.notifications.callback({
+      tenantId: TENANT,
       notificationId: id,
       provider: "email",
       callbackId: "cb-replay",
@@ -103,13 +109,18 @@ describe("notifications (end to end)", () => {
   it("rejects an illegal transition (409)", async () => {
     const app = wire();
     const id = await newNotificationId(app);
-    const response = await app.notifications.advance({ notificationId: id, toStatus: "sent" });
+    const response = await app.notifications.advance({
+      tenantId: TENANT,
+      notificationId: id,
+      toStatus: "sent",
+    });
     expect(response.status).toBe(409);
   });
 
   it("returns 404 for an unknown notification", async () => {
     const app = wire();
     const response = await app.notifications.advance({
+      tenantId: TENANT,
       notificationId: "missing",
       toStatus: "queued",
     });

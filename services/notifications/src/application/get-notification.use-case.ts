@@ -18,7 +18,10 @@ export class GetNotification implements UseCase<NotificationIdInput, Notificatio
   }
 
   async execute(input: NotificationIdInput): Promise<Result<Notification, DomainError>> {
-    const notification = await this.deps.notifications.findById(input.notificationId);
+    const notification = await this.deps.notifications.findById(
+      input.notificationId,
+      input.tenantId,
+    );
     return notification === null
       ? err(new NotFoundError("Notification not found"))
       : ok(notification);
