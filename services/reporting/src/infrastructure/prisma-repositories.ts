@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -25,8 +25,18 @@ export interface PrismaReportingRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
+}
+
+/** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
 }
 
 /** Production `ReportDefinitionRepository` on the `reporting` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -37,9 +47,8 @@ export class PrismaReportDefinitionRepository implements ReportDefinitionReposit
     this.deps = deps;
   }
 
-  async save(definition: ReportDefinition, tx?: unknown): Promise<void> {
+  async save(definition: ReportDefinition, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = definition.id.toString();
     const row = ReportDefinitionMapper.toRow(definition, tenantId);
 
@@ -64,36 +73,47 @@ export class PrismaReportDefinitionRepository implements ReportDefinitionReposit
       }
     }
 
-    await this.deps.outbox.write(definition.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      definition.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<ReportDefinition | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.reportDefinition.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<ReportDefinition | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.reportDefinition.findFirst({
+        where: { id, tenantId },
+      }),
+    );
     if (row === null) return null;
     return ReportDefinitionMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findByName(name: string, tx?: unknown): Promise<ReportDefinition | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.reportDefinition.findFirst({
-      where: { name, tenantId: this.deps.tenantId },
-    });
+  async findByName(name: string, tenantId: string, tx?: unknown): Promise<ReportDefinition | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.reportDefinition.findFirst({
+        where: { name, tenantId },
+      }),
+    );
     if (row === null) return null;
     return ReportDefinitionMapper.toDomain(this.toMapperRow(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<ReportDefinition>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(
+    page: CursorPage,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<ReportDefinition>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.reportDefinition.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.reportDefinition.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => ReportDefinitionMapper.toDomain(this.toMapperRow(row))),
       limit,
@@ -139,9 +159,8 @@ export class PrismaDashboardRepository implements DashboardRepository {
     this.deps = deps;
   }
 
-  async save(dashboard: Dashboard, tx?: unknown): Promise<void> {
+  async save(dashboard: Dashboard, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = dashboard.id.toString();
     const row = DashboardMapper.toRow(dashboard, tenantId);
 
@@ -161,32 +180,39 @@ export class PrismaDashboardRepository implements DashboardRepository {
       }
     }
 
-    await this.deps.outbox.write(dashboard.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      dashboard.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Dashboard | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.dashboard.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Dashboard | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.dashboard.findFirst({ where: { id, tenantId } }),
+    );
     if (row === null) return null;
     return DashboardMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findByName(name: string, tx?: unknown): Promise<Dashboard | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.dashboard.findFirst({ where: { name, tenantId: this.deps.tenantId } });
+  async findByName(name: string, tenantId: string, tx?: unknown): Promise<Dashboard | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.dashboard.findFirst({ where: { name, tenantId } }),
+    );
     if (row === null) return null;
     return DashboardMapper.toDomain(this.toMapperRow(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Dashboard>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Dashboard>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.dashboard.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.dashboard.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => DashboardMapper.toDomain(this.toMapperRow(row))),
       limit,
@@ -222,20 +248,25 @@ export class PrismaAnalyticsReportRepository implements AnalyticsReportRepositor
     this.deps = deps;
   }
 
-  async save(report: AnalyticsReport, tx?: unknown): Promise<void> {
+  async save(report: AnalyticsReport, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const row = AnalyticsReportMapper.toRow(report, this.deps.tenantId);
+    const row = AnalyticsReportMapper.toRow(report, tenantId);
     await client.analyticsReport.create({
       data: { ...row, resultData: row.resultData as Prisma.InputJsonValue },
     });
-    await this.deps.outbox.write(report.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      report.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<AnalyticsReport | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.analyticsReport.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<AnalyticsReport | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.analyticsReport.findFirst({
+        where: { id, tenantId },
+      }),
+    );
     if (row === null) return null;
     return AnalyticsReportMapper.toDomain(this.toMapperRow(row));
   }

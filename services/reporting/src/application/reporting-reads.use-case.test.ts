@@ -40,21 +40,29 @@ function harness() {
   return { reportDefinitions, dashboards, analyticsReports, unitOfWork, idGenerator, clock };
 }
 
+const TENANT = "tenant-a";
+
 describe("Reporting read use-cases (Phase 4 T4.20)", () => {
   it("ListReportDefinitions paginates", async () => {
     const h = harness();
     const create = new CreateReportDefinition(h);
     for (let i = 0; i < 3; i += 1) {
-      await create.execute({ name: `report-${i}`, type: "table", metricRefs: ["orders_count"] });
+      await create.execute({
+        tenantId: TENANT,
+        name: `report-${i}`,
+        type: "table",
+        metricRefs: ["orders_count"],
+      });
     }
 
-    const page = await new ListReportDefinitions(h).execute({ first: 2 });
+    const page = await new ListReportDefinitions(h).execute({ tenantId: TENANT, first: 2 });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
     expect(page.value.pageInfo.hasNextPage).toBe(true);
 
     const rest = await new ListReportDefinitions(h).execute({
+      tenantId: TENANT,
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
     });
@@ -67,6 +75,7 @@ describe("Reporting read use-cases (Phase 4 T4.20)", () => {
   it("GetReportDefinition returns the definition, or NotFoundError when absent", async () => {
     const h = harness();
     const created = await new CreateReportDefinition(h).execute({
+      tenantId: TENANT,
       name: "orders-by-day",
       type: "table",
       metricRefs: ["orders_count"],
@@ -75,13 +84,17 @@ describe("Reporting read use-cases (Phase 4 T4.20)", () => {
     if (!created.ok) return;
 
     const found = await new GetReportDefinition(h).execute({
+      tenantId: TENANT,
       reportDefinitionId: created.value.reportDefinitionId,
     });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.name).toBe("orders-by-day");
 
-    const missing = await new GetReportDefinition(h).execute({ reportDefinitionId: "nope" });
+    const missing = await new GetReportDefinition(h).execute({
+      tenantId: TENANT,
+      reportDefinitionId: "nope",
+    });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");
@@ -91,16 +104,17 @@ describe("Reporting read use-cases (Phase 4 T4.20)", () => {
     const h = harness();
     const create = new CreateDashboard(h);
     for (let i = 0; i < 3; i += 1) {
-      await create.execute({ name: `dashboard-${i}`, tileRefs: [] });
+      await create.execute({ tenantId: TENANT, name: `dashboard-${i}`, tileRefs: [] });
     }
 
-    const page = await new ListDashboards(h).execute({ first: 2 });
+    const page = await new ListDashboards(h).execute({ tenantId: TENANT, first: 2 });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
     expect(page.value.pageInfo.hasNextPage).toBe(true);
 
     const rest = await new ListDashboards(h).execute({
+      tenantId: TENANT,
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
     });
@@ -113,18 +127,22 @@ describe("Reporting read use-cases (Phase 4 T4.20)", () => {
   it("GetDashboard returns the dashboard, or NotFoundError when absent", async () => {
     const h = harness();
     const created = await new CreateDashboard(h).execute({
+      tenantId: TENANT,
       name: "sales-overview",
       tileRefs: ["tile-1"],
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetDashboard(h).execute({ dashboardId: created.value.dashboardId });
+    const found = await new GetDashboard(h).execute({
+      tenantId: TENANT,
+      dashboardId: created.value.dashboardId,
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.name).toBe("sales-overview");
 
-    const missing = await new GetDashboard(h).execute({ dashboardId: "nope" });
+    const missing = await new GetDashboard(h).execute({ tenantId: TENANT, dashboardId: "nope" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

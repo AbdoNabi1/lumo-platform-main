@@ -55,12 +55,10 @@ export interface ReportingWiringDeps {
   /**
    * Production persistence (G-39/C-01). Present ⇒ all 3 Prisma repositories
    * (`PrismaReportDefinitionRepository`/`PrismaDashboardRepository`/`PrismaAnalyticsReportRepository`)
-   * + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wireCatalog`); absent ⇒ in-memory, unchanged.
+   * + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repositories
+   * built here are tenant-agnostic singletons — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Reporting table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredReporting {
@@ -109,10 +107,6 @@ function buildController(
  */
 export function wireReporting(deps: ReportingWiringDeps): WiredReporting {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireReporting: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new ReportingEventTranslator(),
@@ -120,8 +114,10 @@ export function wireReporting(deps: ReportingWiringDeps): WiredReporting {
       clock: deps.clock,
       producer: "reporting",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const reportingDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time (see ReportingWiringDeps) — every
+    // repository takes it per call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const reportingDeps = { prisma: deps.prisma, outbox, context };
     const repos: ReportingRepos = {
       reportDefinitions: new PrismaReportDefinitionRepository(reportingDeps),
       dashboards: new PrismaDashboardRepository(reportingDeps),

@@ -379,6 +379,7 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const definition = await admin.reporting.createReportDefinition(staff, {
+      tenantId: "tenant-1",
       name: "Weekly revenue",
       type: "table",
       metricRefs: ["revenue"],
@@ -388,15 +389,20 @@ describe("admin wiring (end to end)", () => {
       .reportDefinitionId;
 
     const activated = await admin.reporting.advanceReportDefinition(staff, {
+      tenantId: "tenant-1",
       reportDefinitionId,
       toStatus: "active",
     });
     expect(activated.status).toBe(200);
 
-    const generated = await admin.reporting.generateReport(staff, { reportDefinitionId });
+    const generated = await admin.reporting.generateReport(staff, {
+      tenantId: "tenant-1",
+      reportDefinitionId,
+    });
     expect(generated.status).toBe(200);
 
     const dashboard = await admin.reporting.createDashboard(staff, {
+      tenantId: "tenant-1",
       name: "Executive overview",
       tileRefs: ["revenue-tile"],
     });
@@ -404,6 +410,7 @@ describe("admin wiring (end to end)", () => {
     const dashboardId = (dashboard.body as { dashboardId: string }).dashboardId;
 
     const archived = await admin.reporting.advanceDashboard(staff, {
+      tenantId: "tenant-1",
       dashboardId,
       toStatus: "archived",
     });

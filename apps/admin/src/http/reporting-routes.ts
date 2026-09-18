@@ -95,6 +95,7 @@ export function reportingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { body: createReportDefinitionBody },
       handle: ({ body, context }) =>
         admin.reporting.createReportDefinition(context.principal, {
+          tenantId: context.tenantId,
           ...body,
           filters: body.filters?.map((f) => ({
             field: f.field,
@@ -113,6 +114,7 @@ export function reportingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: reportDefinitionIdParams, body: advanceReportDefinitionBody },
       handle: ({ params, body, context }) =>
         admin.reporting.advanceReportDefinition(context.principal, {
+          tenantId: context.tenantId,
           reportDefinitionId: params.reportDefinitionId,
           ...body,
         }),
@@ -126,6 +128,7 @@ export function reportingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: reportDefinitionIdParams },
       handle: ({ params, context }) =>
         admin.reporting.generateReport(context.principal, {
+          tenantId: context.tenantId,
           reportDefinitionId: params.reportDefinitionId,
         }),
     }),
@@ -137,7 +140,8 @@ export function reportingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a dashboard",
       schema: { body: createDashboardBody },
-      handle: ({ body, context }) => admin.reporting.createDashboard(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.reporting.createDashboard(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -149,6 +153,7 @@ export function reportingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: dashboardIdParams, body: advanceDashboardBody },
       handle: ({ params, body, context }) =>
         admin.reporting.advanceDashboard(context.principal, {
+          tenantId: context.tenantId,
           dashboardId: params.dashboardId,
           ...body,
         }),
@@ -162,7 +167,10 @@ export function reportingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
         mapPage(
-          await admin.reporting.listReportDefinitions(context.principal, query),
+          await admin.reporting.listReportDefinitions(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
           toReportDefinitionDto,
         ),
     }),
@@ -174,7 +182,10 @@ export function reportingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one report definition by id",
       schema: { params: reportDefinitionIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.reporting.getReportDefinition(context.principal, params);
+        const response = await admin.reporting.getReportDefinition(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toReportDefinitionDto(response.body as ReportDefinition) };
       },
@@ -187,7 +198,13 @@ export function reportingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List dashboards (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.reporting.listDashboards(context.principal, query), toDashboardDto),
+        mapPage(
+          await admin.reporting.listDashboards(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toDashboardDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -197,7 +214,10 @@ export function reportingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one dashboard by id",
       schema: { params: dashboardIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.reporting.getDashboard(context.principal, params);
+        const response = await admin.reporting.getDashboard(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toDashboardDto(response.body as Dashboard) };
       },

@@ -18,7 +18,7 @@ export class GetDashboard implements UseCase<DashboardIdInput, Dashboard, Domain
   }
 
   async execute(input: DashboardIdInput): Promise<Result<Dashboard, DomainError>> {
-    const dashboard = await this.deps.dashboards.findById(input.dashboardId);
+    const dashboard = await this.deps.dashboards.findById(input.dashboardId, input.tenantId);
     return dashboard === null ? err(new NotFoundError("Dashboard not found")) : ok(dashboard);
   }
 }
