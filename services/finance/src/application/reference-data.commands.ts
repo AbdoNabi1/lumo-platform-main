@@ -36,6 +36,7 @@ export interface ReferenceDataDeps {
 
 export interface CreateAccountInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly code: string;
   readonly name: string;
   readonly type: AccountTypeValue;
@@ -60,7 +61,7 @@ export class CreateAccount implements UseCase<CreateAccountInput, { accountId: s
     if (!created.ok) return err(created.error);
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.accounts.save(created.value, tx);
+      await this.deps.accounts.save(created.value, input.tenantId, tx);
       return ok({ accountId: created.value.id.toString() });
     });
   }
@@ -68,6 +69,7 @@ export class CreateAccount implements UseCase<CreateAccountInput, { accountId: s
 
 export interface CreateCostCenterInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly code: string;
   readonly name: string;
 }
@@ -93,7 +95,7 @@ export class CreateCostCenter implements UseCase<CreateCostCenterInput, { costCe
     if (!created.ok) return err(created.error);
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.costCenters.save(created.value, tx);
+      await this.deps.costCenters.save(created.value, input.tenantId, tx);
       return ok({ costCenterId: created.value.id.toString() });
     });
   }
@@ -101,6 +103,7 @@ export class CreateCostCenter implements UseCase<CreateCostCenterInput, { costCe
 
 export interface CreateExpenseCategoryInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly name: string;
   readonly costCenterRef?: string;
 }
@@ -129,7 +132,7 @@ export class CreateExpenseCategory implements UseCase<
     if (!created.ok) return err(created.error);
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.expenseCategories.save(created.value, tx);
+      await this.deps.expenseCategories.save(created.value, input.tenantId, tx);
       return ok({ categoryId: created.value.id.toString() });
     });
   }
@@ -137,6 +140,7 @@ export class CreateExpenseCategory implements UseCase<
 
 export interface DefineTaxProfileInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly jurisdiction: string;
   readonly basisPointsPerRate: readonly number[];
 }
@@ -169,7 +173,7 @@ export class DefineTaxProfile implements UseCase<DefineTaxProfileInput, { taxPro
     if (!created.ok) return err(created.error);
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.taxProfiles.save(created.value, tx);
+      await this.deps.taxProfiles.save(created.value, input.tenantId, tx);
       return ok({ taxProfileId: created.value.id.toString() });
     });
   }
@@ -177,6 +181,7 @@ export class DefineTaxProfile implements UseCase<DefineTaxProfileInput, { taxPro
 
 export interface SetProductCostInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly productRef: string;
   readonly currency: string;
   readonly components: readonly {
@@ -217,7 +222,7 @@ export class SetProductCost implements UseCase<SetProductCostInput, { snapshotId
     }
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.cogsSnapshots.add(snapshot, tx);
+      await this.deps.cogsSnapshots.add(snapshot, input.tenantId, tx);
       return ok({ snapshotId: snapshot.id.toString() });
     });
   }

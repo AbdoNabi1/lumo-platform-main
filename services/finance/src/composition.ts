@@ -84,16 +84,17 @@ export interface FinanceWiringDeps {
   /** Chart-of-accounts references `LedgerPoster`'s commerce-event templates post to. */
   readonly postingAccounts: PostingAccounts;
   /**
-   * Production persistence. Present ⇒ Prisma slice (all ten repositories below, same
-   * `prisma?`/`tenantId?`-presence convention as `wireFeatureRegistry`/`wireCustomer360`); absent
-   * ⇒ in-memory. `security`/`forecast`/`readModels` stay in-memory in both branches — no Prisma
+   * Production persistence. Present ⇒ Prisma slice (all ten repositories below); absent ⇒
+   * in-memory. `security`/`forecast`/`readModels` stay in-memory in both branches — no Prisma
    * counterpart exists for these (Security/AiForecast are stub/policy concerns, not ledger data;
    * the read-model store's only durable backing is ClickHouse, gated separately and untouched
    * here).
+   *
+   * ADR-0014 (WP-10 T10.3): built once, as a process-wide singleton — no `tenantId` here.
+   * `wireFinance`'s Prisma repositories take `tenantId` per call, from the request/event that
+   * reaches each use case, not from composition.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Finance table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredFinance {
@@ -192,10 +193,6 @@ export function wireFinance(deps: FinanceWiringDeps): WiredFinance {
   const readModels = new InMemoryReadModelStore();
 
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireFinance: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new FinanceEventTranslator(),
@@ -203,8 +200,12 @@ export function wireFinance(deps: FinanceWiringDeps): WiredFinance {
       clock: deps.clock,
       producer: "finance",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const financeDeps = { prisma: deps.prisma, tenantId };
+    // ADR-0014 (WP-10 T10.3): no tenantId here — composition builds one process-wide singleton,
+    // not one per tenant. `context` carries no tenantId either (same as `wireWishlist`'s
+    // `rootEventContext(deps.idGenerator)`); the isolation-critical tenantId flows per call into
+    // every repository method below, not through this outbound-event metadata.
+    const context = rootEventContext(deps.idGenerator);
+    const financeDeps = { prisma: deps.prisma };
     const outboxDeps = { ...financeDeps, outbox, context };
 
     const repos: FinanceRepos = {

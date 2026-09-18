@@ -12,18 +12,33 @@ export interface FinanceConsumerDeps {
   readonly clock: Clock;
 }
 
+/**
+ * ADR-0014 (WP-10 T10.3): `tenantId` is read from the event envelope, never defaulted — a message
+ * with no resolvable tenant is rejected (retry → DLQ) rather than posted against a guessed tenant.
+ */
+function requireTenantId(event: IntegrationEvent<unknown>): string {
+  if (event.tenantId === undefined) {
+    throw new Error(
+      `Finance consumer for "${event.type}" received an event with no tenantId (ADR-0014) — ` +
+        "refusing to post a ledger entry against a guessed tenant.",
+    );
+  }
+  return event.tenantId;
+}
+
 async function postAndAppend(
   deps: FinanceConsumerDeps,
   build: (id: UniqueEntityId) => ReturnType<typeof LedgerPoster.forSale>,
   event: IntegrationEvent<unknown>,
 ): Promise<void> {
+  const tenantId = requireTenantId(event);
   const id = UniqueEntityId.from(deps.idGenerator.generate());
   const result = build(id);
   if (!result.ok) {
     throw result.error;
   }
   result.value.post(event.messageId, deps.clock.now());
-  await deps.journals.append(result.value);
+  await deps.journals.append(result.value, tenantId);
 }
 
 /**

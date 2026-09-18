@@ -58,12 +58,14 @@ describe("Task 8 - PrismaJournalRepository.findBySourceRef N+1 elimination", () 
     const { db, ledgerEntryFindManyCalls } = buildFakeDb(5);
     const repo = new PrismaJournalRepository({
       prisma: db,
-      tenantId: "tenant-a",
       outbox: fakeOutbox,
       context: {} as never,
     });
 
-    const journals = await repo.findBySourceRef("order-123");
+    // A fake `tx` (the fake db itself) bypasses `readWith`'s `runReadScoped` fallback, which would
+    // otherwise call the fake client's nonexistent `$transaction` — this test is about the N+1
+    // batching logic, not about tenant-scoped-read wrapping.
+    const journals = await repo.findBySourceRef("order-123", "tenant-a", db);
 
     expect(journals).toHaveLength(5);
     expect(ledgerEntryFindManyCalls()).toBe(1);
@@ -73,12 +75,11 @@ describe("Task 8 - PrismaJournalRepository.findBySourceRef N+1 elimination", () 
     const { db } = buildFakeDb(3);
     const repo = new PrismaJournalRepository({
       prisma: db,
-      tenantId: "tenant-a",
       outbox: fakeOutbox,
       context: {} as never,
     });
 
-    const journals = await repo.findBySourceRef("order-123");
+    const journals = await repo.findBySourceRef("order-123", "tenant-a", db);
 
     for (const [i, journal] of journals.entries()) {
       expect(journal.id.toString()).toBe(`journal-${i}`);
@@ -90,12 +91,11 @@ describe("Task 8 - PrismaJournalRepository.findBySourceRef N+1 elimination", () 
     const { db, ledgerEntryFindManyCalls } = buildFakeDb(0);
     const repo = new PrismaJournalRepository({
       prisma: db,
-      tenantId: "tenant-a",
       outbox: fakeOutbox,
       context: {} as never,
     });
 
-    const journals = await repo.findBySourceRef("order-none");
+    const journals = await repo.findBySourceRef("order-none", "tenant-a", db);
 
     expect(journals).toHaveLength(0);
     expect(ledgerEntryFindManyCalls()).toBe(0);

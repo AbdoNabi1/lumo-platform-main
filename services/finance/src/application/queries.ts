@@ -22,6 +22,7 @@ export interface FinanceQueryDeps {
 
 export interface PeriodQueryInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly startDate: Date;
   readonly endDate: Date;
   readonly currency: string;
@@ -51,7 +52,11 @@ export class TrialBalanceQuery implements UseCase<
     );
     if (!authz.ok) return err(authz.error);
 
-    const entries = await this.deps.ledgerEntries.findByPeriod(input.startDate, input.endDate);
+    const entries = await this.deps.ledgerEntries.findByPeriod(
+      input.startDate,
+      input.endDate,
+      input.tenantId,
+    );
     return ok({ rows: LedgerService.trialBalance(entries) });
   }
 }
@@ -75,9 +80,13 @@ export class IncomeStatementQuery implements UseCase<PeriodQueryInput, IncomeSta
     );
     if (!authz.ok) return err(authz.error);
 
-    const entries = await this.deps.ledgerEntries.findByPeriod(input.startDate, input.endDate);
+    const entries = await this.deps.ledgerEntries.findByPeriod(
+      input.startDate,
+      input.endDate,
+      input.tenantId,
+    );
     const accountRefs = new Set(entries.map((entry) => entry.accountRef));
-    const accounts = (await this.deps.accounts.list()).filter((account) =>
+    const accounts = (await this.deps.accounts.list(input.tenantId)).filter((account) =>
       accountRefs.has(account.code),
     );
     return ok(StatementBuilder.incomeStatement(entries, accounts, input.currency));
@@ -103,9 +112,13 @@ export class BalanceSheetQuery implements UseCase<PeriodQueryInput, BalanceSheet
     );
     if (!authz.ok) return err(authz.error);
 
-    const entries = await this.deps.ledgerEntries.findByPeriod(input.startDate, input.endDate);
+    const entries = await this.deps.ledgerEntries.findByPeriod(
+      input.startDate,
+      input.endDate,
+      input.tenantId,
+    );
     const accountRefs = new Set(entries.map((entry) => entry.accountRef));
-    const accounts = (await this.deps.accounts.list()).filter((account) =>
+    const accounts = (await this.deps.accounts.list(input.tenantId)).filter((account) =>
       accountRefs.has(account.code),
     );
     const income = StatementBuilder.incomeStatement(entries, accounts, input.currency);
