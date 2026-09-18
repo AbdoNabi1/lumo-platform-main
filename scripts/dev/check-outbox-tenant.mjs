@@ -3,19 +3,25 @@
 // per-call tenantId into the event context — `{ ...this.deps.context, tenantId }`.
 // Prints each non-conforming `outbox.write(...)` call as `path:line` and exits 1 if any exist.
 //
-// "Converted" is derived, not listed: a context is unconverted while its composition still builds
+// Roots: with no argument it scans `services`, `packages` and `apps` (the first version scanned
+// services only and missed `packages/usage`); pass one root to scan just that. Each direct child
+// of a root is one unit.
+//
+// "Converted" is derived, not listed: a service is unconverted while its composition still builds
 // `rootEventContext(deps.idGenerator, tenantId)` (construction-time tenant); everything else is
-// converted, so contexts join the check automatically as they convert.
+// converted, so contexts join the check automatically as they convert. Packages and apps have no
+// such composition, so they are always checked — intended: shared infrastructure must always merge
+// the per-call tenant.
 //
 // Catches: a write call whose argument list never mentions `tenantId` (forgot the merge).
 // Does NOT catch: a merge of the wrong tenant, a write via a helper that hides the call, or a
-// context that never writes to the outbox. `services/example` is the generator template and is
+// unit that never writes to the outbox. `services/example` is the generator template and is
 // exempt (it has no tenant; its write site carries a comment saying so).
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const root = process.argv[2] ?? "services";
-const EXEMPT = new Set(["example"]);
+const roots = process.argv[2] === undefined ? ["services", "packages", "apps"] : [process.argv[2]];
+const EXEMPT = new Set(["services/example"]);
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -36,14 +42,20 @@ function isUnconverted(files) {
 }
 
 let bad = 0;
-for (const svc of readdirSync(root)) {
-  const src = join(root, svc, "src");
+const units = roots.flatMap((root) =>
+  readdirSync(root).map((name) => ({
+    key: `${root.replace(/\/+$/, "")}/${name}`,
+    dir: join(root, name),
+  })),
+);
+for (const { key, dir } of units) {
+  const src = join(dir, "src");
   try {
     statSync(src);
   } catch {
     continue;
   }
-  if (EXEMPT.has(svc)) continue;
+  if (EXEMPT.has(key)) continue;
   const files = walk(src);
   if (isUnconverted(files)) continue;
   for (const f of files) {
@@ -61,7 +73,8 @@ for (const svc of readdirSync(root)) {
         i++;
       }
       if (!/\btenantId\b/.test(text.slice(m.index, i))) {
-        console.log(`${f}:${line}: outbox.write without a merged tenantId`);
+        process.stdout.write(`${f}:${line}: outbox.write without a merged tenantId
+`);
         bad++;
       }
     }
