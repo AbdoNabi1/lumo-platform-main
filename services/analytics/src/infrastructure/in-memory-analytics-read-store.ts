@@ -1,6 +1,10 @@
 import type { AnalyticsReadStore, AnalyticsReadStoreFetchParams } from "../domain/ports";
 
-/** Fixture-backed `AnalyticsReadStore` — offline engine tests seed rows per read model id. */
+/**
+ * Fixture-backed `AnalyticsReadStore` — offline engine tests seed rows per read model id.
+ * `tenantId` is accepted to satisfy the `AnalyticsReadStore` contract (ADR-0014) but otherwise
+ * ignored: seeded rows are test fixtures, not tenant-scoped persisted data.
+ */
 export class InMemoryAnalyticsReadStore implements AnalyticsReadStore {
   private readonly tables = new Map<string, readonly Record<string, unknown>[]>();
 
@@ -10,6 +14,7 @@ export class InMemoryAnalyticsReadStore implements AnalyticsReadStore {
 
   async fetch(
     readModelId: string,
+    _tenantId: string,
     params: AnalyticsReadStoreFetchParams,
   ): Promise<readonly Record<string, unknown>[]> {
     const rows = this.tables.get(readModelId) ?? [];

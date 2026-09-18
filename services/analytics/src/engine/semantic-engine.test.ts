@@ -31,9 +31,12 @@ describe("SemanticEngine (Finance semantics, end-to-end)", () => {
     store.seed("finance.cogs", [{ period: "2026-07", currency: "USD", totalMinor: 40000 }]);
     store.seed("finance.expense", [{ period: "2026-07", currency: "USD", totalMinor: 20000 }]);
 
-    const result = await SemanticEngine.execute(registry, store, {
-      metricIds: ["finance.gross_margin"],
-    });
+    const result = await SemanticEngine.execute(
+      registry,
+      store,
+      { metricIds: ["finance.gross_margin"] },
+      "tenant-a",
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -52,9 +55,12 @@ describe("SemanticEngine (Finance semantics, end-to-end)", () => {
     store.seed("finance.cogs", [{ period: "2026-07", currency: "USD", totalMinor: 40000 }]);
     store.seed("finance.expense", [{ period: "2026-07", currency: "USD", totalMinor: 20000 }]);
 
-    const result = await SemanticEngine.execute(registry, store, {
-      metricIds: ["finance.operating_profit", "finance.operating_margin"],
-    });
+    const result = await SemanticEngine.execute(
+      registry,
+      store,
+      { metricIds: ["finance.operating_profit", "finance.operating_margin"] },
+      "tenant-a",
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -67,9 +73,12 @@ describe("SemanticEngine (Finance semantics, end-to-end)", () => {
     registerFinanceSemantics(registry);
     const store = new InMemoryAnalyticsReadStore();
 
-    const result = await SemanticEngine.execute(registry, store, {
-      metricIds: ["finance.does_not_exist"],
-    });
+    const result = await SemanticEngine.execute(
+      registry,
+      store,
+      { metricIds: ["finance.does_not_exist"] },
+      "tenant-a",
+    );
     expect(result.ok).toBe(false);
   });
 });
