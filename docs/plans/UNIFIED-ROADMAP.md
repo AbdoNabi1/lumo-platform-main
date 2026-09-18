@@ -1,5 +1,24 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
+## Status — 2026-09-18 (addendum: converted contexts emitted tenant-less events — fixed)
+
+The T10.3 sweep dropped `tenantId` from the composition-time `EventContext`
+(`rootEventContext(deps.idGenerator)`, one argument) when it moved the tenant to a per-call
+repository parameter, so every event a converted context wrote carried no `tenantId` in the outbox
+envelope (`packages/messaging/src/outbox/outbox-writer.ts:61`). Fixed by merging the per-call tenant
+at every outbox write (`{ ...this.deps.context, tenantId }`; identity uses `aggregate.tenantId`,
+`services/example` is a documented exception) — ADR-0014 Amendment 7. Guarded by
+`assertWriteTimeTenant` per converted context plus `scripts/dev/check-outbox-tenant.mjs` in T10.3's
+done-criterion, so the remaining contexts cannot repeat it.
+
+**Corrected counts (command output, not the prose below):** **23 contexts converted** — the 21 listed
+in the next section plus **finance** and **customer-360**, which converted after that section was
+written — and **14 unconverted**: cart, checkout, fulfillment, inventory, notifications, orders,
+payments, pricing, promotions, reporting, returns, security, shipping, and **tenancy** (parked on
+`morbeh/wp10-tenancy-wip`). Read "15 contexts" / "21 contexts" in the section below as the state on
+its own date. G-64's consumer side (`orders-paid.consumers.ts`, `finance-settlement.consumers.ts`)
+is still open and still needs `tenantId` required on the envelope (F-02) — that is not done here.
+
 ## Status — 2026-09-18 (WP-10 leftovers: feature-flags + analytics closed, scope corrected)
 
 **What this session did.** Followed up on 2026-09-17's T10.3 write-path sweep, which scoped itself

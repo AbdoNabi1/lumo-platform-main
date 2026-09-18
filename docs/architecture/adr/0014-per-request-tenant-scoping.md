@@ -79,6 +79,32 @@
 > shape this amendment names, not repository deps alone, or it would pass exactly the two sites
 > this amendment just fixed.
 
+> **Amended 2026-09-18 (Amendment 7 — the per-call `tenantId` must reach the event envelope, not only
+> the repository query).** T10.3's sweep moved `tenantId` to a per-call repository parameter and, in
+> doing so, briefly dropped it from the composition-time `EventContext` too
+> (`rootEventContext(deps.idGenerator)` with one argument, e.g. `services/coupons/src/composition.ts:85`).
+> Every integration event a converted context emitted therefore carried no `tenantId` in the outbox
+> envelope (`packages/messaging/src/outbox/outbox-writer.ts:61` only stamps it when the context has
+> one) — which made Decision point 4's G-64 fix (`followOnEventContext({ ..., tenantId:
+envelope.tenantId })`) read nothing, and turned gap F-02 ("`tenantId` is optional on the envelope")
+> into "absent". Inert only because the runtime is single-tenant. It was caught in review, by grepping
+> `rootEventContext(` for one-argument calls, before the remaining 14 contexts converted and repeated it.
+> **The rule:** the composition-time `EventContext` is a singleton and carries `correlationId` and
+> `causationId` only; it must not carry a tenant (Decision point 3 forbids the construction-time pin).
+> Every outbox write attaches the tenant at write time from the per-call value —
+> `{ ...this.deps.context, tenantId }` — in the Prisma and in-memory branches alike. `rootEventContext`'s
+> signature and every `…Deps` interface are unchanged. **identity** is the Decision point 1 case:
+> `save(user | organization | membership, tx?)` takes no `tenantId` parameter because the aggregate
+> carries it, so those six sites merge `aggregate.tenantId`
+> (`services/identity/src/infrastructure/prisma-access-repositories.ts:57,96,135`, in-memory
+> counterparts). **`services/example`** has no tenant at all and is excluded, with a comment at its
+> write site, because `turbo/generators/config.ts:5` names it the canonical reference for generated
+> contexts. **Guard:** `assertWriteTimeTenant` (`@platform/messaging/testing`) is called from each
+> converted context's suite; it only catches contexts that call it, so
+> `scripts/dev/check-outbox-tenant.mjs` (T10.3's done-criterion) separately fails any converted
+> context's `outbox.write` call that never mentions `tenantId`. Making `tenantId` required on the
+> envelope type remains the F-02/G-64 work and was deliberately not taken here.
+
 ## Context
 
 ADR-0004 (2026-07-04) reserved `tenantId` on the integration-event envelope but explicitly deferred
