@@ -57,6 +57,27 @@
 > explicit operator sign-off before any of it is built, for the same reason Amendment 2's
 > `migrate resolve` step does: it touches live database roles and grants. See point 8 for the full
 > proposal.
+>
+> **Amended 2026-09-18 (Amendment 6 — scope correction: T10.3's done-criterion was narrower than
+> the actual defect).** `WP-10`'s own T10.3 task description was read in practice as "Prisma
+> repositories converted," which let two non-Prisma-repository sites pass as complete for their
+> context even though they pinned `tenantId` at construction the identical way: a non-Prisma store
+> (`services/analytics`' `ClickHouseAnalyticsReadStore`, unexercised today but built against WP-3's
+> future schema) and a non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`,
+> which this WP's own T10.3 sweep should have caught but scoped past). Both are fixed as of this
+> amendment. `docs/plans/phase-7/WP-10-multi-tenant-runtime.md`'s T10.3 entry now states the
+> corrected done-criterion directly — **repositories, adapters, ports and stores alike, Prisma or
+> otherwise** — plus a widened verification command (the original `deps\.tenantId|this\.tenantId
+= |private readonly tenantId` pattern alone would still miss a third shape found this session:
+> `apps/runtime/src/consumers/finance-settlement.consumers.ts:134` pins its tenant via
+> `config.TENANT_DEFAULT_ID` with no `deps.tenantId` field at all). A full inventory of every
+> remaining construction-time pin, classified against Decision point 3/4/7 below, lives under
+> `WP-10`'s own T10.7 section rather than duplicated here. **This also corrects Decision point 7
+> below**, unchanged in its own text but narrower than intended as written: "fail to boot if any
+> repository is still constructed with a `deps.tenantId` field" must be read as "any repository,
+> adapter, port, or store" — the boot-time assertion T10.4 builds needs to check the same wider
+> shape this amendment names, not repository deps alone, or it would pass exactly the two sites
+> this amendment just fixed.
 
 ## Context
 

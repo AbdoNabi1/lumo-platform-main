@@ -337,6 +337,30 @@ from grant counts alone.
       end; a 40-context change that only compiles at the end is unreviewable and unbisectable.
       Every non-uniform repository you find is worth a note in the ADR.
 
+      **Done when (corrected 2026-09-18): no construction-time tenant pinning anywhere in the
+          converted context — repositories, adapters, ports and stores alike, Prisma or otherwise —
+          not "Prisma repositories converted."** The original, narrower wording let a context pass as
+          "done" while a non-Prisma store (`services/analytics`' `ClickHouseAnalyticsReadStore`) or a
+          non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`) still pinned
+          `tenantId` at construction — both found and fixed in the session that made this correction
+          (see the T10.7 inventory above for the sites still outstanding under the wider definition).
+          **Verification command is the T10.7 inventory's own repo-wide grep, not a `services/`-only
+          one** — the T10.3 sweep's original pattern (`grep ... packages apps services`, restricted in
+          practice to `services/*/src/infrastructure/prisma-*.ts`) would have missed
+          `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`, which pins its tenant via
+          `config.TENANT_DEFAULT_ID` with no `deps.tenantId`/`this.tenantId =` shape at all:
+
+          ```bash
+          grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
+            --include="*.ts" packages apps services | grep -v node_modules | grep -v "\.test\." | grep -v coverage
+          grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
+          ```
+
+          A context is done when every match for it (repository, adapter, port, or store) is gone from
+          the first command's output, and every match for it in the second command's output is
+          classified (A)/(B)/(C)/(D) per the T10.7 inventory's own scheme — not merely absent from a
+          hand-picked list of Prisma files.
+
 - [ ] **T10.4 — Remove the boot refusal, and replace it with a real guard.**
       Deleting the `TENANT_MODE === "multi"` throw is the last step, not the first. What replaces it
       is a boot-time assertion that per-request tenant resolution is actually wired: a request
