@@ -1,5 +1,20 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
+## Status — 2026-09-18 (T10.3 batch 1: pricing, reporting, promotions, notifications, shipping converted)
+
+Five more contexts moved to per-request `tenantId`, one commit each, so **31 of the 40 service
+compositions are converted** (that count includes `services/example`, the exempt template) and
+**9 are not** (cart, checkout, fulfillment, inventory, orders, payments, returns, security, and
+`tenancy`, parked) — derived from `rootEventContext(` call arity in each `composition.ts`, not from
+prose. The earlier "23 converted + 14 unconverted" totals 37, not 40, so read it as an undercount. They were
+measured as leaves by "no `apps/*` class implements their ports", which was the wrong test: each
+context's use-case inputs and controller now carry `tenantId`, so their `apps/admin` routes and
+controllers, `apps/runtime` seeds and the orders-paid consumer changed in the same commits (ADR-0014
+Amendment 8). Also fixed: notifications' and shipping's provider-callback / carrier-webhook dedup
+stores were keyed without a tenant. Three cross-context adapters keep a construction-time tenant until
+checkout, orders and payments convert (T10.7 inventory, class A). Not touched:
+`AnalyticsQueryPort.run` in reporting still takes no tenant (in-memory adapter only today).
+
 ## Status — 2026-09-18 (addendum: converted contexts emitted tenant-less events — fixed)
 
 The T10.3 sweep dropped `tenantId` from the composition-time `EventContext`

@@ -114,6 +114,27 @@ envelope.tenantId })`) read nothing, and turned gap F-02 ("`tenantId` is optiona
 > `apps`, and treats every package and app as converted (shared infrastructure must always merge
 > the per-call tenant). `services/example` remains the only exemption, keyed by path.
 
+> **Amended 2026-09-18 (Amendment 8 — non-uniform shapes found converting pricing, reporting,
+> promotions, notifications and shipping).** Three shapes T10.3 will meet again; none is new design:
+> (1) **"Leaf" is not "no port in `apps/*`".** These five were measured as leaves by checking which
+> `apps/*` classes implement their ports. That misses the other direction: point 1 puts `tenantId`
+> on every use-case input and controller call, so every caller in `apps/admin` (routes, admin
+> controllers) and `apps/runtime` (seeds, consumers) changes in the same commit. Convert a context
+> together with its callers; do not batch by "no adapter implements it".
+> (2) **Non-repository dedup stores were keyed without a tenant.** `ProcessedProviderCallbackStore`
+> (notifications) and `ProcessedCarrierWebhookStore` (shipping) keyed on `(provider, id)` alone, so
+> one tenant's callback id would mark another tenant's as already processed — a leak with no
+> `this.tenantId` for the T10.3 grep to find. Both ports now take `tenantId` per call and the
+> in-memory adapters key on `(tenantId, provider, id)`. When converting a context, check every
+> `has…`/`mark…` style store, not only repositories.
+> (3) **A cross-context adapter for an unconverted port keeps a construction-time tenant.**
+> `PricingValidationAdapter` (checkout), `OrdersNotificationAdapter` (orders) and
+> `PaymentsNotificationAdapter` (payments) implement ports that carry no tenant, and widening those
+> ports is the owning context's own conversion. Until then each captures the tenant at
+> construction, is optional only because `AdminWiringDeps.tenantId` is, and fails closed without one
+> — the same pin `PromotionValidationAdapter` already had. They are class (A) rows in the T10.7
+> inventory and go away when checkout, orders and payments convert.
+
 ## Context
 
 ADR-0004 (2026-07-04) reserved `tenantId` on the integration-event envelope but explicitly deferred
