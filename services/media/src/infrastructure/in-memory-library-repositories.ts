@@ -43,7 +43,7 @@ export class InMemoryFolderRepository implements FolderRepository {
 
   async save(folder: Folder, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(folder.id.toString(), { tenantId, folder });
-    await this.outbox.write(folder.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(folder.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Folder | null> {
@@ -74,7 +74,7 @@ export class InMemoryMediaAssetRepository implements MediaAssetRepository {
 
   async save(asset: MediaAsset, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(asset.id.toString(), { tenantId, asset });
-    await this.outbox.write(asset.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(asset.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<MediaAsset | null> {

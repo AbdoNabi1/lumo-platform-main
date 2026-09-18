@@ -30,7 +30,7 @@ export class InMemoryReviewRepository implements ReviewRepository {
 
   async save(review: Review, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(review.id.toString(), { tenantId, review });
-    await this.outbox.write(review.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(review.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Review | null> {

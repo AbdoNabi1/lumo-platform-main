@@ -30,7 +30,7 @@ export class InMemoryRecommendationModelRepository implements RecommendationMode
 
   async save(model: RecommendationModel, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(model.id.toString(), { tenantId, model });
-    await this.outbox.write(model.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(model.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<RecommendationModel | null> {

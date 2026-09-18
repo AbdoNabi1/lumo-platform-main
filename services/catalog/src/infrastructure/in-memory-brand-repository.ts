@@ -25,7 +25,7 @@ export class InMemoryBrandRepository implements BrandRepository {
 
   async save(brand: Brand, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(brand.id.toString(), { tenantId, brand });
-    await this.outbox.write(brand.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(brand.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Brand | null> {

@@ -35,7 +35,7 @@ export class InMemoryJourneyStore implements JourneyStore {
   ): Promise<void> {
     this.transitions(tenantId).push(transition);
     if (event !== undefined) {
-      await this.outbox.write([event], this.context, tx);
+      await this.outbox.write([event], { ...this.context, tenantId }, tx);
     }
   }
 

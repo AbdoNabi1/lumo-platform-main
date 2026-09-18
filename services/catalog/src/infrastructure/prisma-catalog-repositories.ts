@@ -95,7 +95,11 @@ export class PrismaProductRepository implements ProductRepository {
       await client.productVariant.upsert({ where: { id: row.id }, create: data, update: data });
     }
 
-    await this.deps.outbox.write(product.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      product.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Product | null> {
@@ -222,7 +226,11 @@ export class PrismaCategoryRepository implements CategoryRepository {
       }
     }
 
-    await this.deps.outbox.write(category.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      category.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Category | null> {
@@ -300,7 +308,11 @@ export class PrismaBrandRepository implements BrandRepository {
       }
     }
 
-    await this.deps.outbox.write(brand.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      brand.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Brand | null> {
@@ -376,7 +388,11 @@ export class PrismaCollectionRepository implements CollectionRepository {
       await client.collectionItem.createMany({ data: items });
     }
 
-    await this.deps.outbox.write(collection.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      collection.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Collection | null> {

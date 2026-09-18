@@ -31,7 +31,7 @@ export class InMemoryIdentityDecisionStore implements IdentityDecisionStore {
     tx?: unknown,
   ): Promise<void> {
     this.decisions(tenantId).push(decision);
-    await this.outbox.write([event], this.context, tx);
+    await this.outbox.write([event], { ...this.context, tenantId }, tx);
   }
 
   async listFor(identifier: IdentifierRef, tenantId: string): Promise<readonly IdentityDecision[]> {

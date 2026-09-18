@@ -40,7 +40,11 @@ export class PrismaPageRepository implements PageRepository {
       }
     }
 
-    await this.deps.outbox.write(page.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      page.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -119,7 +123,11 @@ export class PrismaTemplateRepository implements TemplateRepository {
       }
     }
 
-    await this.deps.outbox.write(template.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      template.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */

@@ -30,7 +30,7 @@ export class InMemoryExperimentRepository implements ExperimentRepository {
 
   async save(experiment: Experiment, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(experiment.id.toString(), { tenantId, experiment });
-    await this.outbox.write(experiment.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(experiment.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Experiment | null> {

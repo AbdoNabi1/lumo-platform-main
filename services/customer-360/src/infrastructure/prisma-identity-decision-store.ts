@@ -54,7 +54,7 @@ export class PrismaIdentityDecisionStore implements IdentityDecisionStore {
         occurredAt: new Date(decision.occurredAt),
       },
     });
-    await this.deps.outbox.write([event], this.deps.context, client);
+    await this.deps.outbox.write([event], { ...this.deps.context, tenantId }, client);
   }
 
   async listFor(

@@ -63,7 +63,7 @@ export class PrismaProfileHistoryStore implements ProfileHistoryStore {
         reason: snapshot.reason,
       },
     });
-    await this.deps.outbox.write([event], this.deps.context, client);
+    await this.deps.outbox.write([event], { ...this.deps.context, tenantId }, client);
   }
 
   async listFor(

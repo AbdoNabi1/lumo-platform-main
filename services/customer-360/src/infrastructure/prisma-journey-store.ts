@@ -67,7 +67,7 @@ export class PrismaJourneyStore implements JourneyStore {
       },
     });
     if (event !== undefined) {
-      await this.deps.outbox.write([event], this.deps.context, client);
+      await this.deps.outbox.write([event], { ...this.deps.context, tenantId }, client);
     }
   }
 

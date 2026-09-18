@@ -55,7 +55,7 @@ export class PrismaIdentityGraphStore implements IdentityGraphStore {
       },
     });
     if (event !== undefined) {
-      await this.deps.outbox.write([event], this.deps.context, client);
+      await this.deps.outbox.write([event], { ...this.deps.context, tenantId }, client);
     }
   }
 

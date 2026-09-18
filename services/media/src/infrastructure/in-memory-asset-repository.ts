@@ -25,7 +25,7 @@ export class InMemoryAssetRepository implements AssetRepository {
 
   async save(asset: Asset, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(asset.id.toString(), { tenantId, asset });
-    await this.outbox.write(asset.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(asset.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Asset | null> {

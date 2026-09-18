@@ -32,7 +32,7 @@ export class InMemoryCustomerRepository implements CustomerRepository {
 
   async save(customer: Customer, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(customer.id.toString(), { tenantId, customer });
-    await this.outbox.write(customer.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(customer.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Customer | null> {

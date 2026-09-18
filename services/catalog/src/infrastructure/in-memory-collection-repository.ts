@@ -28,7 +28,7 @@ export class InMemoryCollectionRepository implements CollectionRepository {
 
   async save(collection: Collection, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(collection.id.toString(), { tenantId, collection });
-    await this.outbox.write(collection.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(collection.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Collection | null> {

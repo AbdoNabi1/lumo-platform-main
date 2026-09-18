@@ -30,7 +30,7 @@ export class InMemoryLoyaltyAccountRepository implements LoyaltyAccountRepositor
 
   async save(account: LoyaltyAccount, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(account.id.toString(), { tenantId, account });
-    await this.outbox.write(account.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(account.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<LoyaltyAccount | null> {

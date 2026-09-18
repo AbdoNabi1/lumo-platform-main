@@ -26,7 +26,11 @@ export class InMemoryUserRepository implements UserRepository {
 
   async save(user: User, tx?: unknown): Promise<void> {
     this.store.set(user.id.toString(), user);
-    await this.outbox.write(user.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(
+      user.pullDomainEvents(),
+      { ...this.context, tenantId: user.tenantId },
+      tx,
+    );
   }
 
   async findById(id: string, tenantId: string): Promise<User | null> {
@@ -57,7 +61,11 @@ export class InMemoryOrganizationRepository implements OrganizationRepository {
 
   async save(organization: Organization, tx?: unknown): Promise<void> {
     this.store.set(organization.id.toString(), organization);
-    await this.outbox.write(organization.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(
+      organization.pullDomainEvents(),
+      { ...this.context, tenantId: organization.tenantId },
+      tx,
+    );
   }
 
   async findById(id: string, tenantId: string): Promise<Organization | null> {
@@ -88,7 +96,11 @@ export class InMemoryMembershipRepository implements MembershipRepository {
 
   async save(membership: Membership, tx?: unknown): Promise<void> {
     this.store.set(membership.id.toString(), membership);
-    await this.outbox.write(membership.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(
+      membership.pullDomainEvents(),
+      { ...this.context, tenantId: membership.tenantId },
+      tx,
+    );
   }
 
   async findById(id: string, tenantId: string): Promise<Membership | null> {

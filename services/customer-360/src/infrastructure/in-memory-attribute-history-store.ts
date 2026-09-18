@@ -35,7 +35,7 @@ export class InMemoryAttributeHistoryStore implements AttributeHistoryStore {
   ): Promise<void> {
     this.snapshots(tenantId).push(snapshot);
     if (event !== undefined) {
-      await this.outbox.write([event], this.context, tx);
+      await this.outbox.write([event], { ...this.context, tenantId }, tx);
     }
   }
 

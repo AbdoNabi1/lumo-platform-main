@@ -33,7 +33,7 @@ export class InMemoryIdentityGraphStore implements IdentityGraphStore {
   ): Promise<void> {
     this.graphs.set(tenantId, addEdge(this.graphs.get(tenantId) ?? EMPTY_IDENTITY_GRAPH, edge));
     if (event !== undefined) {
-      await this.outbox.write([event], this.context, tx);
+      await this.outbox.write([event], { ...this.context, tenantId }, tx);
     }
   }
 

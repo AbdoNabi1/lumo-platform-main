@@ -40,7 +40,7 @@ export class InMemoryPageRepository implements PageRepository {
 
   async save(page: Page, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(page.id.toString(), { tenantId, page });
-    await this.outbox.write(page.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(page.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Page | null> {
@@ -84,7 +84,7 @@ export class InMemoryTemplateRepository implements TemplateRepository {
 
   async save(template: Template, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(template.id.toString(), { tenantId, template });
-    await this.outbox.write(template.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(template.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Template | null> {

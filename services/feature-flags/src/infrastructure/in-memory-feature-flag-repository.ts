@@ -30,7 +30,7 @@ export class InMemoryFeatureFlagRepository implements FeatureFlagRepository {
 
   async save(flag: FeatureFlag, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(flag.id.toString(), { tenantId, flag });
-    await this.outbox.write(flag.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(flag.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<FeatureFlag | null> {

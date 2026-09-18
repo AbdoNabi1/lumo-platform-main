@@ -35,7 +35,7 @@ export class InMemorySegmentHistoryStore implements SegmentHistoryStore {
   ): Promise<void> {
     this.entries(tenantId).push(entry);
     if (event !== undefined) {
-      await this.outbox.write([event], this.context, tx);
+      await this.outbox.write([event], { ...this.context, tenantId }, tx);
     }
   }
 

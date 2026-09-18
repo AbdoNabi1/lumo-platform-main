@@ -74,7 +74,11 @@ export class PrismaPlanRepository implements PlanRepository {
       });
       if (updated.count === 0) throw new ConcurrencyError(`Plan ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(plan.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      plan.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -135,7 +139,11 @@ export class PrismaSubscriptionRepository implements SubscriptionRepository {
       if (updated.count === 0)
         throw new ConcurrencyError(`Subscription ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(subscription.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      subscription.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -190,7 +198,11 @@ export class PrismaMerchantFeatureOverrideRepository implements MerchantFeatureO
       if (updated.count === 0)
         throw new ConcurrencyError(`MerchantFeatureOverride ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(override.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      override.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -253,7 +265,11 @@ export class PrismaMerchantCapabilitiesRepository implements MerchantCapabilitie
       if (updated.count === 0)
         throw new ConcurrencyError(`MerchantCapabilities ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(capabilities.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      capabilities.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -314,7 +330,11 @@ export class PrismaUsageCounterRepository implements UsageCounterRepository {
       if (updated.count === 0)
         throw new ConcurrencyError(`UsageCounter ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(counter.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      counter.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -364,7 +384,11 @@ export class PrismaCreditRepository implements CreditRepository {
       });
       if (updated.count === 0) throw new ConcurrencyError(`Credit ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(credit.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      credit.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -406,7 +430,11 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
       if (updated.count === 0)
         throw new ConcurrencyError(`Invoice ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(invoice.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      invoice.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */

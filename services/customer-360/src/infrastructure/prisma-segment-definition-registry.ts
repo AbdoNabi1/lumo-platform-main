@@ -138,7 +138,7 @@ export class PrismaSegmentDefinitionRegistry implements SegmentDefinitionRegistr
     }
 
     if (event !== undefined) {
-      await this.deps.outbox.write([event], this.deps.context, client);
+      await this.deps.outbox.write([event], { ...this.deps.context, tenantId }, client);
     }
   }
 
@@ -163,7 +163,7 @@ export class PrismaSegmentDefinitionRegistry implements SegmentDefinitionRegistr
       );
     }
     if (event !== undefined) {
-      await this.deps.outbox.write([event], this.deps.context, client);
+      await this.deps.outbox.write([event], { ...this.deps.context, tenantId }, client);
     }
   }
 

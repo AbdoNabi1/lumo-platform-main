@@ -59,7 +59,11 @@ export class PrismaSearchIndexRepository implements SearchIndexRepository {
       }
     }
 
-    await this.deps.outbox.write(index.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      index.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */

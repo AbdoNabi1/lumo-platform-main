@@ -33,7 +33,7 @@ export class InMemoryProfileHistoryStore implements ProfileHistoryStore {
     tx?: unknown,
   ): Promise<void> {
     this.snapshots(tenantId).push(snapshot);
-    await this.outbox.write([event], this.context, tx);
+    await this.outbox.write([event], { ...this.context, tenantId }, tx);
   }
 
   async listFor(identifier: IdentifierRef, tenantId: string): Promise<readonly ProfileSnapshot[]> {

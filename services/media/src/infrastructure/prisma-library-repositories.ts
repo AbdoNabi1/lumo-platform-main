@@ -36,7 +36,11 @@ export class PrismaFolderRepository implements FolderRepository {
       if (updated.count === 0) throw new ConcurrencyError(`Folder ${id} was modified concurrently`);
     }
 
-    await this.deps.outbox.write(folder.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      folder.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -102,7 +106,11 @@ export class PrismaMediaAssetRepository implements MediaAssetRepository {
         throw new ConcurrencyError(`MediaAsset ${id} was modified concurrently`);
     }
 
-    await this.deps.outbox.write(asset.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      asset.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */

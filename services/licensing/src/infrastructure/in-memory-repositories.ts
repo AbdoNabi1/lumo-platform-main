@@ -38,7 +38,7 @@ export class InMemoryPlanRepository implements PlanRepository {
 
   async save(plan: Plan, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(plan.id.toString(), { tenantId, plan });
-    await this.outbox.write(plan.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(plan.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Plan | null> {
@@ -69,7 +69,7 @@ export class InMemorySubscriptionRepository implements SubscriptionRepository {
 
   async save(subscription: Subscription, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(subscription.id.toString(), { tenantId, subscription });
-    await this.outbox.write(subscription.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(subscription.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Subscription | null> {
@@ -102,7 +102,7 @@ export class InMemoryMerchantFeatureOverrideRepository implements MerchantFeatur
 
   async save(override: MerchantFeatureOverride, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(override.id.toString(), { tenantId, override });
-    await this.outbox.write(override.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(override.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<MerchantFeatureOverride | null> {
@@ -143,7 +143,7 @@ export class InMemoryMerchantCapabilitiesRepository implements MerchantCapabilit
 
   async save(capabilities: MerchantCapabilities, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(capabilities.id.toString(), { tenantId, capabilities });
-    await this.outbox.write(capabilities.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(capabilities.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<MerchantCapabilities | null> {
@@ -176,7 +176,7 @@ export class InMemoryUsageCounterRepository implements UsageCounterRepository {
 
   async save(counter: UsageCounter, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(counter.id.toString(), { tenantId, counter });
-    await this.outbox.write(counter.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(counter.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<UsageCounter | null> {
@@ -217,7 +217,7 @@ export class InMemoryCreditRepository implements CreditRepository {
 
   async save(credit: Credit, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(credit.id.toString(), { tenantId, credit });
-    await this.outbox.write(credit.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(credit.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Credit | null> {
@@ -241,7 +241,7 @@ export class InMemoryInvoiceRepository implements InvoiceRepository {
 
   async save(invoice: Invoice, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(invoice.id.toString(), { tenantId, invoice });
-    await this.outbox.write(invoice.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(invoice.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Invoice | null> {

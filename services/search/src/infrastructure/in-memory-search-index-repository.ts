@@ -30,7 +30,7 @@ export class InMemorySearchIndexRepository implements SearchIndexRepository {
 
   async save(index: SearchIndex, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(index.id.toString(), { tenantId, index });
-    await this.outbox.write(index.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(index.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<SearchIndex | null> {

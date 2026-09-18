@@ -30,7 +30,7 @@ export class InMemoryContentBlockRepository implements ContentBlockRepository {
 
   async save(block: ContentBlock, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(block.id.toString(), { tenantId, block });
-    await this.outbox.write(block.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(block.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<ContentBlock | null> {

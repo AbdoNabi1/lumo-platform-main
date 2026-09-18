@@ -32,7 +32,7 @@ export class InMemoryProductRepository implements ProductRepository {
 
   async save(product: Product, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(product.id.toString(), { tenantId, product });
-    await this.outbox.write(product.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(product.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Product | null> {

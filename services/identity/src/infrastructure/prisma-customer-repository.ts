@@ -52,7 +52,11 @@ export class PrismaCustomerRepository implements CustomerRepository {
       await client.consentRecord.createMany({ data: consents, skipDuplicates: true });
     }
 
-    await this.deps.outbox.write(customer.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      customer.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Customer | null> {

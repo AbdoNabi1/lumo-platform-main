@@ -41,7 +41,11 @@ export class PrismaFeatureDefinitionRepository implements FeatureDefinitionRepos
           `FeatureDefinition ${id} was modified concurrently (expected version ${feature.version})`,
         );
     }
-    await this.deps.outbox.write(feature.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      feature.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   async findByKey(key: string, tenantId: string, tx?: unknown): Promise<FeatureDefinition | null> {
@@ -97,7 +101,11 @@ export class PrismaFeatureBundleRepository implements FeatureBundleRepository {
           `FeatureBundle ${id} was modified concurrently (expected version ${bundle.version})`,
         );
     }
-    await this.deps.outbox.write(bundle.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      bundle.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   async findByKey(key: string, tenantId: string, tx?: unknown): Promise<FeatureBundle | null> {

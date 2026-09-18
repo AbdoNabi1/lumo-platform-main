@@ -65,7 +65,7 @@ export class InMemorySegmentDefinitionRegistry implements SegmentDefinitionRegis
     }
     definitions.set(definition.id, definition);
     if (event !== undefined) {
-      await this.outbox.write([event], this.context, tx);
+      await this.outbox.write([event], { ...this.context, tenantId }, tx);
     }
   }
 
@@ -90,7 +90,7 @@ export class InMemorySegmentDefinitionRegistry implements SegmentDefinitionRegis
     }
     definitions.delete(id);
     if (event !== undefined) {
-      await this.outbox.write([event], this.context, tx);
+      await this.outbox.write([event], { ...this.context, tenantId }, tx);
     }
   }
 }

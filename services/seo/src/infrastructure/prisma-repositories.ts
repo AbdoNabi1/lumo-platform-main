@@ -58,7 +58,11 @@ export class PrismaSeoProfileRepository implements SeoProfileRepository {
         throw new ConcurrencyError(`SeoProfile ${id} was modified concurrently`);
       }
     }
-    await this.deps.outbox.write(profile.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      profile.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -134,7 +138,11 @@ export class PrismaRedirectRepository implements RedirectRepository {
       if (updated.count === 0)
         throw new ConcurrencyError(`Redirect ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(redirect.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      redirect.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -211,7 +219,11 @@ export class PrismaSitemapRepository implements SitemapRepository {
       if (updated.count === 0)
         throw new ConcurrencyError(`Sitemap ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(sitemap.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      sitemap.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
@@ -286,7 +298,11 @@ export class PrismaRobotsPolicyRepository implements RobotsPolicyRepository {
       if (updated.count === 0)
         throw new ConcurrencyError(`RobotsPolicy ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(policy.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      policy.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
   /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */

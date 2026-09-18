@@ -27,7 +27,7 @@ export class InMemoryThemeRepository implements ThemeRepository {
 
   async save(theme: Theme, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(theme.id.toString(), { tenantId, theme });
-    await this.outbox.write(theme.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(theme.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Theme | null> {

@@ -30,7 +30,7 @@ export class InMemoryCouponRepository implements CouponRepository {
 
   async save(coupon: Coupon, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(coupon.id.toString(), { tenantId, coupon });
-    await this.outbox.write(coupon.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(coupon.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Coupon | null> {

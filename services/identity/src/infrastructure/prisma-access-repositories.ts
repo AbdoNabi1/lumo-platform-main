@@ -54,7 +54,11 @@ export class PrismaUserRepository implements UserRepository {
         );
       }
     }
-    await this.deps.outbox.write(user.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      user.pullDomainEvents(),
+      { ...this.deps.context, tenantId: user.tenantId },
+      client,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<User | null> {
@@ -93,7 +97,11 @@ export class PrismaOrganizationRepository implements OrganizationRepository {
         );
       }
     }
-    await this.deps.outbox.write(organization.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      organization.pullDomainEvents(),
+      { ...this.deps.context, tenantId: organization.tenantId },
+      client,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Organization | null> {
@@ -132,7 +140,11 @@ export class PrismaMembershipRepository implements MembershipRepository {
         );
       }
     }
-    await this.deps.outbox.write(membership.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      membership.pullDomainEvents(),
+      { ...this.deps.context, tenantId: membership.tenantId },
+      client,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Membership | null> {

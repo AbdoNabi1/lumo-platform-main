@@ -30,7 +30,7 @@ export class InMemoryWishlistRepository implements WishlistRepository {
 
   async save(wishlist: Wishlist, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(wishlist.id.toString(), { tenantId, wishlist });
-    await this.outbox.write(wishlist.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(wishlist.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Wishlist | null> {

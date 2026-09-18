@@ -43,7 +43,7 @@ export class InMemoryLocaleRepository implements LocaleRepository {
 
   async save(locale: Locale, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(locale.id.toString(), { tenantId, locale });
-    await this.outbox.write(locale.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(locale.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Locale | null> {
@@ -85,7 +85,7 @@ export class InMemoryTranslationSetRepository implements TranslationSetRepositor
 
   async save(set: TranslationSet, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(set.id.toString(), { tenantId, set });
-    await this.outbox.write(set.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(set.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<TranslationSet | null> {

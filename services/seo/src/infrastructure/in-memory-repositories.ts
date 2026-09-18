@@ -50,7 +50,7 @@ export class InMemorySeoProfileRepository implements SeoProfileRepository {
 
   async save(profile: SeoProfile, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(profile.id.toString(), { tenantId, profile });
-    await this.outbox.write(profile.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(profile.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<SeoProfile | null> {
@@ -88,7 +88,7 @@ export class InMemoryRedirectRepository implements RedirectRepository {
 
   async save(redirect: Redirect, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(redirect.id.toString(), { tenantId, redirect });
-    await this.outbox.write(redirect.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(redirect.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Redirect | null> {
@@ -128,7 +128,7 @@ export class InMemorySitemapRepository implements SitemapRepository {
 
   async save(sitemap: Sitemap, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(sitemap.id.toString(), { tenantId, sitemap });
-    await this.outbox.write(sitemap.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(sitemap.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Sitemap | null> {
@@ -166,7 +166,7 @@ export class InMemoryRobotsPolicyRepository implements RobotsPolicyRepository {
 
   async save(policy: RobotsPolicy, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(policy.id.toString(), { tenantId, policy });
-    await this.outbox.write(policy.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(policy.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<RobotsPolicy | null> {

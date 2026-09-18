@@ -30,7 +30,7 @@ export class InMemoryAutomationWorkflowRepository implements AutomationWorkflowR
 
   async save(workflow: AutomationWorkflow, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(workflow.id.toString(), { tenantId, workflow });
-    await this.outbox.write(workflow.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(workflow.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<AutomationWorkflow | null> {

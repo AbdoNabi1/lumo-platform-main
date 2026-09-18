@@ -62,7 +62,11 @@ export class InMemoryJournalRepository implements JournalRepository, LedgerEntry
         this.entries.push({ tenantId, entry });
       }
     }
-    await this.deps.outbox.write(journal.pullDomainEvents(), this.deps.context, tx);
+    await this.deps.outbox.write(
+      journal.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      tx,
+    );
   }
 
   async findById(id: string, tenantId: string): Promise<Journal | null> {
@@ -173,7 +177,11 @@ export class InMemoryExpenseRepository implements ExpenseRepository {
 
   async save(expense: Expense, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(tenantKey(tenantId, expense.id.toString()), expense);
-    await this.deps.outbox.write(expense.pullDomainEvents(), this.deps.context, tx);
+    await this.deps.outbox.write(
+      expense.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      tx,
+    );
   }
 
   async findById(id: string, tenantId: string): Promise<Expense | null> {
@@ -206,7 +214,7 @@ export class InMemoryBudgetRepository implements BudgetRepository {
 
   async save(budget: Budget, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(tenantKey(tenantId, budget.id.toString()), budget);
-    await this.deps.outbox.write(budget.pullDomainEvents(), this.deps.context, tx);
+    await this.deps.outbox.write(budget.pullDomainEvents(), { ...this.deps.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Budget | null> {
@@ -280,7 +288,7 @@ export class InMemoryFiscalPeriodRepository implements FiscalPeriodRepository {
 
   async save(period: FiscalPeriod, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(tenantKey(tenantId, period.id.toString()), period);
-    await this.deps.outbox.write(period.pullDomainEvents(), this.deps.context, tx);
+    await this.deps.outbox.write(period.pullDomainEvents(), { ...this.deps.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<FiscalPeriod | null> {
@@ -357,7 +365,11 @@ export class InMemoryFinancialSnapshotRepository implements FinancialSnapshotRep
 
   async save(snapshot: FinancialSnapshot, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(tenantKey(tenantId, snapshot.id.toString()), snapshot);
-    await this.deps.outbox.write(snapshot.pullDomainEvents(), this.deps.context, tx);
+    await this.deps.outbox.write(
+      snapshot.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      tx,
+    );
   }
 
   async findById(id: string, tenantId: string): Promise<FinancialSnapshot | null> {

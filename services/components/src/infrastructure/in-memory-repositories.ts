@@ -30,7 +30,7 @@ export class InMemoryComponentDefinitionRepository implements ComponentDefinitio
 
   async save(definition: ComponentDefinition, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(definition.id.toString(), { tenantId, definition });
-    await this.outbox.write(definition.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(definition.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<ComponentDefinition | null> {

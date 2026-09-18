@@ -84,7 +84,11 @@ export class PrismaJournalRepository implements JournalRepository, LedgerEntryRe
     if (entries.length > 0) {
       await db.ledgerEntry.createMany({ data: entries, skipDuplicates: true });
     }
-    await this.deps.outbox.write(journal.pullDomainEvents(), this.deps.context, db);
+    await this.deps.outbox.write(
+      journal.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      db,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Journal | null> {
@@ -303,7 +307,11 @@ export class PrismaExpenseRepository implements ExpenseRepository {
   async save(expense: Expense, tenantId: string, tx?: unknown): Promise<void> {
     const db = requireTx(tx, "PrismaExpenseRepository.save");
     await db.expense.create({ data: FinanceMapper.expenseToRow(expense, tenantId) });
-    await this.deps.outbox.write(expense.pullDomainEvents(), this.deps.context, db);
+    await this.deps.outbox.write(
+      expense.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      db,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Expense | null> {
@@ -356,7 +364,7 @@ export class PrismaBudgetRepository implements BudgetRepository {
         );
       }
     }
-    await this.deps.outbox.write(budget.pullDomainEvents(), this.deps.context, db);
+    await this.deps.outbox.write(budget.pullDomainEvents(), { ...this.deps.context, tenantId }, db);
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<Budget | null> {
@@ -445,7 +453,7 @@ export class PrismaFiscalPeriodRepository implements FiscalPeriodRepository {
         );
       }
     }
-    await this.deps.outbox.write(period.pullDomainEvents(), this.deps.context, db);
+    await this.deps.outbox.write(period.pullDomainEvents(), { ...this.deps.context, tenantId }, db);
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<FiscalPeriod | null> {
@@ -565,7 +573,11 @@ export class PrismaFinancialSnapshotRepository implements FinancialSnapshotRepos
       create: row,
       update: { figures: row.figures },
     });
-    await this.deps.outbox.write(snapshot.pullDomainEvents(), this.deps.context, db);
+    await this.deps.outbox.write(
+      snapshot.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      db,
+    );
   }
 
   async findById(id: string, tenantId: string, tx?: unknown): Promise<FinancialSnapshot | null> {

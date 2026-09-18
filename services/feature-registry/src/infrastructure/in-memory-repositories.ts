@@ -22,7 +22,11 @@ export class InMemoryFeatureDefinitionRepository implements FeatureDefinitionRep
 
   async save(feature: FeatureDefinition, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(feature.key, { tenantId, feature });
-    await this.deps.outbox.write(feature.pullDomainEvents(), this.deps.context, tx);
+    await this.deps.outbox.write(
+      feature.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      tx,
+    );
   }
 
   async findByKey(key: string, tenantId: string): Promise<FeatureDefinition | null> {
@@ -57,7 +61,7 @@ export class InMemoryFeatureBundleRepository implements FeatureBundleRepository 
 
   async save(bundle: FeatureBundle, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(bundle.key, { tenantId, bundle });
-    await this.deps.outbox.write(bundle.pullDomainEvents(), this.deps.context, tx);
+    await this.deps.outbox.write(bundle.pullDomainEvents(), { ...this.deps.context, tenantId }, tx);
   }
 
   async findByKey(key: string, tenantId: string): Promise<FeatureBundle | null> {

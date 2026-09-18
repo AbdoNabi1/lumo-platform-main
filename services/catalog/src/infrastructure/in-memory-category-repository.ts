@@ -28,7 +28,7 @@ export class InMemoryCategoryRepository implements CategoryRepository {
 
   async save(category: Category, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(category.id.toString(), { tenantId, category });
-    await this.outbox.write(category.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(category.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Category | null> {

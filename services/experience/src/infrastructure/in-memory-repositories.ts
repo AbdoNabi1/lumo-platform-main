@@ -30,7 +30,7 @@ export class InMemoryExperienceRepository implements ExperienceRepository {
 
   async save(experience: Experience, tenantId: string, tx?: unknown): Promise<void> {
     this.store.set(experience.id.toString(), { tenantId, experience });
-    await this.outbox.write(experience.pullDomainEvents(), this.context, tx);
+    await this.outbox.write(experience.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
   async findById(id: string, tenantId: string): Promise<Experience | null> {
