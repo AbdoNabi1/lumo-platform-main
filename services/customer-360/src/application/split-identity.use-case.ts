@@ -11,6 +11,9 @@ import type { IdentityGraphStore } from "../ports/identity-graph-store";
 import { edgeKey } from "../ports/identity-resolution";
 
 export interface SplitIdentityInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   /** The exact previously-observed edge being disputed — identified by its full evidence, not
    * just endpoints, so retracting a wrong observation never affects a later correct one between
    * the same two identifiers. */
@@ -61,7 +64,7 @@ export class SplitIdentity implements UseCase<
     // nothing (`excludeRetractedEdges` matches by the same key and finds no edge to exclude) — the
     // actor sees success but resolution is unchanged. `edgeKey` is order-independent, so this also
     // accepts an edge reconstructed with endpoints swapped relative to how it happens to be stored.
-    const graph = await this.deps.graph.loadGraph();
+    const graph = await this.deps.graph.loadGraph(input.tenantId);
     const target = edgeKey(input.edge);
     if (!graph.edges.some((observed) => edgeKey(observed) === target)) {
       return err(
@@ -106,6 +109,7 @@ export class SplitIdentity implements UseCase<
           occurredAt: occurredAt.toISOString(),
         },
         event,
+        input.tenantId,
         tx,
       );
 

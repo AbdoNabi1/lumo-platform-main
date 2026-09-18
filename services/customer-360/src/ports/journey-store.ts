@@ -15,7 +15,16 @@ export interface JourneyStore {
    * published via the paired `SessionHistoryStore.append` call (`SessionClosed`/`SessionStarted`/
    * `SessionUpdated`) — mirrors `IdentityGraphStore.appendEdge`'s optional-event shape exactly, for
    * the same "publish the fact exactly once" reason. */
-  record(transition: SessionTransition, event?: DomainEvent, tx?: unknown): Promise<void>;
+  record(
+    transition: SessionTransition,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void>;
   /** Every transition naming this visitor, oldest first — the journey's own provenance trail. */
-  listForVisitor(visitorId: string, tx?: unknown): Promise<readonly SessionTransition[]>;
+  listForVisitor(
+    visitorId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly SessionTransition[]>;
 }

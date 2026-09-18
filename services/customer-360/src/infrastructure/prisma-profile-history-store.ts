@@ -5,13 +5,13 @@ import type { ProfileSnapshot, ProfileSnapshotReason } from "../domain/profile-s
 import type { IdentifierRef } from "../ports/identity-decision";
 import type { ProfileHistoryStore } from "../ports/profile-history-store";
 import { fieldsToJson, jsonToFields } from "./profile-fields-json";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaProfileHistoryStoreDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
   readonly idGenerator: { generate(): string };
-  readonly tenantId: string;
 }
 
 interface SnapshotRow {
@@ -44,12 +44,17 @@ export class PrismaProfileHistoryStore implements ProfileHistoryStore {
     this.deps = deps;
   }
 
-  async append(snapshot: ProfileSnapshot, event: DomainEvent, tx?: unknown): Promise<void> {
+  async append(
+    snapshot: ProfileSnapshot,
+    event: DomainEvent,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<void> {
     const client = this.requireTx(tx);
     await client.profileSnapshot.create({
       data: {
         id: this.deps.idGenerator.generate(),
-        tenantId: this.deps.tenantId,
+        tenantId,
         identifierType: snapshot.identifierType,
         identifierValue: snapshot.identifierValue,
         version: snapshot.version,
@@ -61,30 +66,40 @@ export class PrismaProfileHistoryStore implements ProfileHistoryStore {
     await this.deps.outbox.write([event], this.deps.context, client);
   }
 
-  async listFor(identifier: IdentifierRef, tx?: unknown): Promise<readonly ProfileSnapshot[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.profileSnapshot.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        identifierType: identifier.type,
-        identifierValue: identifier.value,
-      },
-      orderBy: { capturedAt: "asc" },
+  async listFor(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly ProfileSnapshot[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.profileSnapshot.findMany({
+        where: {
+          tenantId,
+          identifierType: identifier.type,
+          identifierValue: identifier.value,
+        },
+        orderBy: { capturedAt: "asc" },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
-  async latestFor(identifier: IdentifierRef, tx?: unknown): Promise<ProfileSnapshot | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.profileSnapshot.findFirst({
-      where: {
-        tenantId: this.deps.tenantId,
-        identifierType: identifier.type,
-        identifierValue: identifier.value,
-      },
-      orderBy: { capturedAt: "desc" },
+  async latestFor(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<ProfileSnapshot | null> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.profileSnapshot.findFirst({
+        where: {
+          tenantId,
+          identifierType: identifier.type,
+          identifierValue: identifier.value,
+        },
+        orderBy: { capturedAt: "desc" },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 
   private requireTx(tx: unknown): TransactionClient {

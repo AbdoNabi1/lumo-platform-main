@@ -11,6 +11,9 @@ import type { EvaluateSegment } from "./evaluate-segment.use-case";
 import type { UpdateSegmentMembershipProjection } from "./update-segment-membership-projection.use-case";
 
 export interface EvaluateAllSegmentsInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   /** Definitions to evaluate — need not be pre-sorted and no ordering is imposed on them; see this
    * class's own doc for why. May be a proper subset of the full registry
@@ -120,6 +123,7 @@ export class EvaluateAllSegments implements UseCase<
 
     for (const definition of input.definitions) {
       const evaluated = await this.deps.evaluate.execute({
+        tenantId: input.tenantId,
         identifier: input.identifier,
         definition,
       });
@@ -127,6 +131,7 @@ export class EvaluateAllSegments implements UseCase<
       results.push(evaluated.value.result);
 
       const persisted = await this.deps.updateProjection.execute({
+        tenantId: input.tenantId,
         identifier: input.identifier,
         result: evaluated.value.result,
       });

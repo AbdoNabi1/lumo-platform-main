@@ -11,6 +11,9 @@ import {
 } from "./evaluate-attribute-graph.use-case";
 
 export interface RecalculateComputedAttributesInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   /**
    * Attribute ids known to have changed inputs upstream (e.g. a profile field one of them reads was
@@ -73,7 +76,7 @@ export class RecalculateComputedAttributes implements UseCase<
   async execute(
     input: RecalculateComputedAttributesInput,
   ): Promise<Result<RecalculateComputedAttributesOutput, DomainError>> {
-    const all = await this.deps.definitions.list();
+    const all = await this.deps.definitions.list(input.tenantId);
     const byId = new Map(all.map((definition) => [definition.id, definition]));
 
     for (const definition of all) {
@@ -121,6 +124,7 @@ export class RecalculateComputedAttributes implements UseCase<
     const scopedDefinitions = recomputed.map((id) => byId.get(id)!);
 
     const graphResult = await this.deps.evaluateGraph.execute({
+      tenantId: input.tenantId,
       identifier: input.identifier,
       definitions: scopedDefinitions,
     });

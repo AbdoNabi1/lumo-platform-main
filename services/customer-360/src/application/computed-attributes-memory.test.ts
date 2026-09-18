@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireCustomer360 } from "../composition";
 import { generateLayeredDag, toDefinitions } from "../test-support/synthetic-attribute-graph";
+import { TENANT_A } from "../test-support/tenants";
 
 /**
  * Phase 6.4.1 hardening — Task 8 (Memory Profiling).
@@ -65,7 +66,7 @@ async function measureFullRecompute(size: number): Promise<{ deltaMb: number; el
     serializer: new InMemoryEventSerializer(),
     idGenerator: ids,
     clock,
-    computedAttributeDefinitions: definitions,
+    computedAttributeDefinitions: { tenantId: TENANT_A, definitions: definitions },
   });
 
   await settle();
@@ -73,6 +74,7 @@ async function measureFullRecompute(size: number): Promise<{ deltaMb: number; el
   const start = performance.now();
 
   const result = await wired.recalculateComputedAttributes.execute({
+    tenantId: TENANT_A,
     identifier: { type: "customer_id", value: `cust-memory-${size}` },
   });
   if (!result.ok) throw new Error("unreachable");
@@ -142,20 +144,20 @@ describe("Computed Attributes — memory profile (Task 8)", () => {
       serializer: new InMemoryEventSerializer(),
       idGenerator: ids,
       clock,
-      computedAttributeDefinitions: definitions,
+      computedAttributeDefinitions: { tenantId: TENANT_A, definitions: definitions },
     });
     const identifier = { type: "customer_id" as const, value: "cust-memory-repeat" };
 
     // Prime once so the steady state (no-op re-evaluations — nothing to apply, no new snapshots) is
     // what gets measured, not the O(N^2) first-write cost characterized above.
-    await wired.recalculateComputedAttributes.execute({ identifier });
+    await wired.recalculateComputedAttributes.execute({ tenantId: TENANT_A, identifier });
 
     await settle();
     const before = heapMb();
     const samples: number[] = [];
 
     for (let i = 0; i < repeatedRuns; i += 1) {
-      await wired.recalculateComputedAttributes.execute({ identifier });
+      await wired.recalculateComputedAttributes.execute({ tenantId: TENANT_A, identifier });
       if (i % 5 === 4) {
         await settle();
         samples.push(heapMb());

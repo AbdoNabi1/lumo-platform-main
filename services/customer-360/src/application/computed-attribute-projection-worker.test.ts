@@ -12,6 +12,7 @@ import type { AttributeHistoryStore } from "../ports/attribute-history-store";
 import type { AttributeStore } from "../ports/attribute-store";
 import { RebuildComputedAttributes } from "./rebuild-computed-attributes.use-case";
 import { ComputedAttributeProjectionWorker } from "./computed-attribute-projection-worker";
+import { TENANT_A } from "../test-support/tenants";
 
 function wire(seedAttributes: readonly ComputedAttribute[]) {
   const current = new Map<string, ComputedAttribute>();
@@ -76,7 +77,7 @@ function attr(identifierValue: string): ComputedAttribute {
 describe("ComputedAttributeProjectionWorker", () => {
   it("rebuilds every known identifier and reports a zero-failure summary", async () => {
     const { worker } = wire([attr("cust-a"), attr("cust-b")]);
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 2, failed: 0 });
@@ -93,7 +94,7 @@ describe("ComputedAttributeProjectionWorker", () => {
     } as unknown as RebuildComputedAttributes;
     const worker = new ComputedAttributeProjectionWorker({ attributes, rebuild: failingRebuild });
 
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 0, failed: 1 });
@@ -101,7 +102,7 @@ describe("ComputedAttributeProjectionWorker", () => {
 
   it("reports rebuilt: 0, failed: 0 when there is nothing to rebuild yet", async () => {
     const { worker } = wire([]);
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 0, failed: 0 });

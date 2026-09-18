@@ -8,13 +8,13 @@ import {
   type SegmentDefinition,
 } from "../ports/segment-definition";
 import type { SegmentDefinitionRegistry } from "../ports/segment-definition-registry";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaSegmentDefinitionRegistryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
   readonly idGenerator: { generate(): string };
-  readonly tenantId: string;
 }
 
 interface DefinitionRow {
@@ -57,20 +57,22 @@ export class PrismaSegmentDefinitionRegistry implements SegmentDefinitionRegistr
     this.deps = deps;
   }
 
-  async list(tx?: unknown): Promise<readonly SegmentDefinition[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.segmentDefinition.findMany({
-      where: { tenantId: this.deps.tenantId },
+  async list(tenantId: string, tx?: unknown): Promise<readonly SegmentDefinition[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.segmentDefinition.findMany({
+        where: { tenantId },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
-  async getById(id: string, tx?: unknown): Promise<SegmentDefinition | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.segmentDefinition.findUnique({
-      where: { tenantId_segmentId: { tenantId: this.deps.tenantId, segmentId: id } },
+  async getById(id: string, tenantId: string, tx?: unknown): Promise<SegmentDefinition | null> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.segmentDefinition.findUnique({
+        where: { tenantId_segmentId: { tenantId, segmentId: id } },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 
   /** ADR-0060: same `updateMany` + `count === 0` ⇒ `ConcurrencyError` / `expectedVersion === 0` ⇒
@@ -84,13 +86,14 @@ export class PrismaSegmentDefinitionRegistry implements SegmentDefinitionRegistr
    * row write and its paired event write must commit together or not at all. */
   async save(
     definition: SegmentDefinition,
+    tenantId: string,
     expectedVersion?: number,
     event?: DomainEvent,
     tx?: unknown,
   ): Promise<void> {
     const client = this.resolveClient(event, tx);
     const where = {
-      tenantId_segmentId: { tenantId: this.deps.tenantId, segmentId: definition.id },
+      tenantId_segmentId: { tenantId, segmentId: definition.id },
     };
     const data = {
       name: definition.name,
@@ -105,7 +108,7 @@ export class PrismaSegmentDefinitionRegistry implements SegmentDefinitionRegistr
         where,
         create: {
           id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
+          tenantId,
           segmentId: definition.id,
           createdAt: new Date(definition.createdAt),
           ...data,
@@ -116,7 +119,7 @@ export class PrismaSegmentDefinitionRegistry implements SegmentDefinitionRegistr
       await client.segmentDefinition.create({
         data: {
           id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
+          tenantId,
           segmentId: definition.id,
           createdAt: new Date(definition.createdAt),
           ...data,
@@ -124,7 +127,7 @@ export class PrismaSegmentDefinitionRegistry implements SegmentDefinitionRegistr
       });
     } else {
       const updated = await client.segmentDefinition.updateMany({
-        where: { tenantId: this.deps.tenantId, segmentId: definition.id, version: expectedVersion },
+        where: { tenantId, segmentId: definition.id, version: expectedVersion },
         data,
       });
       if (updated.count === 0) {
@@ -146,12 +149,13 @@ export class PrismaSegmentDefinitionRegistry implements SegmentDefinitionRegistr
   async delete(
     id: string,
     expectedVersion: number,
+    tenantId: string,
     event?: DomainEvent,
     tx?: unknown,
   ): Promise<void> {
     const client = this.resolveClient(event, tx);
     const deleted = await client.segmentDefinition.deleteMany({
-      where: { tenantId: this.deps.tenantId, segmentId: id, version: expectedVersion },
+      where: { tenantId, segmentId: id, version: expectedVersion },
     });
     if (deleted.count === 0) {
       throw new ConcurrencyError(

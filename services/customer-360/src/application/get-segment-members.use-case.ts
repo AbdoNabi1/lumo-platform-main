@@ -5,6 +5,9 @@ import type { SegmentMembership, SegmentMembershipStatus } from "../domain/segme
 import type { SegmentStore } from "../ports/segment-store";
 
 export interface GetSegmentMembersInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly segmentId: string;
   /** Defaults to `"entered"` — "who is in this segment right now." */
   readonly status?: SegmentMembershipStatus;
@@ -41,6 +44,7 @@ export class GetSegmentMembers implements UseCase<
   ): Promise<Result<GetSegmentMembersOutput, DomainError>> {
     const members = await this.deps.segments.listMembers(
       input.segmentId,
+      input.tenantId,
       input.status ?? "entered",
     );
     return ok({ members });

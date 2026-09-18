@@ -11,13 +11,11 @@ import {
   jsonToMatchedRuleIds,
   matchedRuleIdsToJson,
 } from "./segment-fields-json";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaSegmentStoreDeps {
   readonly prisma: Database;
   readonly idGenerator: { generate(): string };
-  /** Tenant scope for every query (ADR-0008 §2) — same convention as every other Prisma adapter in
-   * this context. */
-  readonly tenantId: string;
 }
 
 interface MembershipRow {
@@ -65,20 +63,22 @@ export class PrismaSegmentStore implements SegmentStore {
   async getCurrent(
     identifier: IdentifierRef,
     segmentId: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<SegmentMembership | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.segmentMembership.findUnique({
-      where: {
-        tenantId_identifierType_identifierValue_segmentId: {
-          tenantId: this.deps.tenantId,
-          identifierType: identifier.type,
-          identifierValue: identifier.value,
-          segmentId,
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.segmentMembership.findUnique({
+        where: {
+          tenantId_identifierType_identifierValue_segmentId: {
+            tenantId,
+            identifierType: identifier.type,
+            identifierValue: identifier.value,
+            segmentId,
+          },
         },
-      },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 
   /** ADR-0060: same `updateMany` + `count === 0` ⇒ `ConcurrencyError` / `expectedVersion === 0` ⇒
@@ -87,13 +87,14 @@ export class PrismaSegmentStore implements SegmentStore {
    * alone. */
   async saveCurrent(
     membership: SegmentMembership,
+    tenantId: string,
     expectedVersion?: number,
     tx?: unknown,
   ): Promise<void> {
     const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
     const where = {
       tenantId_identifierType_identifierValue_segmentId: {
-        tenantId: this.deps.tenantId,
+        tenantId,
         identifierType: membership.identifierType,
         identifierValue: membership.identifierValue,
         segmentId: membership.segmentId,
@@ -116,7 +117,7 @@ export class PrismaSegmentStore implements SegmentStore {
         where,
         create: {
           id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
+          tenantId,
           identifierType: membership.identifierType,
           identifierValue: membership.identifierValue,
           segmentId: membership.segmentId,
@@ -131,7 +132,7 @@ export class PrismaSegmentStore implements SegmentStore {
       await client.segmentMembership.create({
         data: {
           id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
+          tenantId,
           identifierType: membership.identifierType,
           identifierValue: membership.identifierValue,
           segmentId: membership.segmentId,
@@ -143,7 +144,7 @@ export class PrismaSegmentStore implements SegmentStore {
 
     const updated = await client.segmentMembership.updateMany({
       where: {
-        tenantId: this.deps.tenantId,
+        tenantId,
         identifierType: membership.identifierType,
         identifierValue: membership.identifierValue,
         segmentId: membership.segmentId,
@@ -160,42 +161,48 @@ export class PrismaSegmentStore implements SegmentStore {
 
   async listForIdentifier(
     identifier: IdentifierRef,
+    tenantId: string,
     tx?: unknown,
   ): Promise<readonly SegmentMembership[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.segmentMembership.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        identifierType: identifier.type,
-        identifierValue: identifier.value,
-      },
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.segmentMembership.findMany({
+        where: {
+          tenantId,
+          identifierType: identifier.type,
+          identifierValue: identifier.value,
+        },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
   async listMembers(
     segmentId: string,
+    tenantId: string,
     status: SegmentMembershipStatus = "entered",
     tx?: unknown,
   ): Promise<readonly SegmentMembership[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.segmentMembership.findMany({
-      where: { tenantId: this.deps.tenantId, segmentId, status },
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.segmentMembership.findMany({
+        where: { tenantId, segmentId, status },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
   async listIdentifiers(
+    tenantId: string,
     tx?: unknown,
   ): Promise<readonly { identifier: IdentifierRef; segmentId: string }[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.segmentMembership.findMany({
-      where: { tenantId: this.deps.tenantId },
-      select: { identifierType: true, identifierValue: true, segmentId: true },
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.segmentMembership.findMany({
+        where: { tenantId },
+        select: { identifierType: true, identifierValue: true, segmentId: true },
+      });
+      return rows.map((row) => ({
+        identifier: { type: row.identifierType as IdentifierType, value: row.identifierValue },
+        segmentId: row.segmentId,
+      }));
     });
-    return rows.map((row) => ({
-      identifier: { type: row.identifierType as IdentifierType, value: row.identifierValue },
-      segmentId: row.segmentId,
-    }));
   }
 }

@@ -1,4 +1,4 @@
-﻿import type { UseCase } from "@platform/application";
+import type { UseCase } from "@platform/application";
 import { ok, type Result } from "@platform/types";
 import type { DomainError } from "@platform/utils";
 import type { IdentifierRef } from "../ports/identity-decision";
@@ -7,6 +7,9 @@ import type { IdentityGraphStore } from "../ports/identity-graph-store";
 import type { IdentityTimelineEntry } from "../ports/identity-timeline";
 
 export interface GetIdentityTimelineInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
 }
 
@@ -39,8 +42,8 @@ export class GetIdentityTimeline implements UseCase<
     input: GetIdentityTimelineInput,
   ): Promise<Result<GetIdentityTimelineOutput, DomainError>> {
     const [graph, decisions] = await Promise.all([
-      this.deps.graph.loadGraph(),
-      this.deps.decisions.listFor(input.identifier),
+      this.deps.graph.loadGraph(input.tenantId),
+      this.deps.decisions.listFor(input.identifier, input.tenantId),
     ]);
 
     const observed: IdentityTimelineEntry[] = graph.edges

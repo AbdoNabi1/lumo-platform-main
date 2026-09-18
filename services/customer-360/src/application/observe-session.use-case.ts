@@ -20,6 +20,9 @@ import type { SessionHistoryStore } from "../ports/session-history-store";
 import type { SessionStore } from "../ports/session-store";
 
 export interface ObserveSessionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly sessionId: string;
   readonly visitorId: string;
   readonly deviceId?: string;
@@ -92,7 +95,7 @@ export class ObserveSession implements UseCase<
     }
 
     const timeoutMs = input.timeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS;
-    const existing = await this.deps.sessions.getCurrent(input.sessionId);
+    const existing = await this.deps.sessions.getCurrent(input.sessionId, input.tenantId);
 
     if (
       existing !== null &&
@@ -102,10 +105,16 @@ export class ObserveSession implements UseCase<
       return this.deps.unitOfWork.run<Result<ObserveSessionOutput, DomainError>>(async (tx) => {
         const result = recordActivity(existing, input.occurredAt);
         if (result.applied) {
-          await this.persistUpdate(result.session, tx);
+          await this.persistUpdate(result.session, input.tenantId, tx);
         }
         if (input.identified === true) {
-          await this.maybeRecordIdentified(input.visitorId, input.sessionId, input.occurredAt, tx);
+          await this.maybeRecordIdentified(
+            input.tenantId,
+            input.visitorId,
+            input.sessionId,
+            input.occurredAt,
+            tx,
+          );
         }
         return ok({ sessionId: input.sessionId, opened: false });
       });
@@ -117,12 +126,15 @@ export class ObserveSession implements UseCase<
       // A rollover is not necessarily the *same* sessionId reappearing — the common case is the
       // tracking SDK minting a fresh session_id once its own client-side timeout fires, so the
       // visitor's other still-open session(s) must be checked by visitor, not by the incoming id.
-      const openForVisitor = await this.deps.sessions.listOpenForVisitor(input.visitorId);
+      const openForVisitor = await this.deps.sessions.listOpenForVisitor(
+        input.visitorId,
+        input.tenantId,
+      );
       for (const stale of openForVisitor) {
         if (withinSessionWindow(stale.lastActivityAt, input.occurredAt, timeoutMs)) continue;
 
         const closed = closeSession(stale, "timeout", input.occurredAt);
-        await this.persistClose(closed, tx);
+        await this.persistClose(closed, input.tenantId, tx);
         await this.deps.journey.record(
           {
             id: this.deps.idGenerator.generate(),
@@ -132,6 +144,7 @@ export class ObserveSession implements UseCase<
             toSessionId: input.sessionId,
             occurredAt: input.occurredAt,
           },
+          input.tenantId,
           undefined,
           tx,
         );
@@ -146,9 +159,15 @@ export class ObserveSession implements UseCase<
         source: input.source,
         startedAt: input.occurredAt,
       });
-      await this.persistStart(session, tx);
+      await this.persistStart(session, input.tenantId, tx);
       if (input.identified === true) {
-        await this.maybeRecordIdentified(input.visitorId, input.sessionId, input.occurredAt, tx);
+        await this.maybeRecordIdentified(
+          input.tenantId,
+          input.visitorId,
+          input.sessionId,
+          input.occurredAt,
+          tx,
+        );
       }
 
       return ok({ sessionId: session.sessionId, opened: true, rolledOverFrom });
@@ -159,12 +178,13 @@ export class ObserveSession implements UseCase<
    * rather than tracking a separate flag, so the guarantee holds even across process restarts (no
    * in-memory-only state to lose). */
   private async maybeRecordIdentified(
+    tenantId: string,
     visitorId: string,
     sessionId: string,
     occurredAt: string,
     tx: unknown,
   ): Promise<void> {
-    const transitions = await this.deps.journey.listForVisitor(visitorId);
+    const transitions = await this.deps.journey.listForVisitor(visitorId, tenantId);
     if (transitions.some((t) => t.kind === "anonymous_to_identified")) return;
 
     await this.deps.journey.record(
@@ -175,12 +195,17 @@ export class ObserveSession implements UseCase<
         fromSessionId: sessionId,
         occurredAt,
       },
+      tenantId,
       undefined,
       tx,
     );
   }
 
-  private async persistStart(session: CustomerSession, tx: unknown): Promise<void> {
+  private async persistStart(
+    session: CustomerSession,
+    tenantId: string,
+    tx: unknown,
+  ): Promise<void> {
     const occurredAt = this.deps.clock.now();
     const snapshot = toSnapshot(session, "started", occurredAt.toISOString());
     const event = new SessionStarted(
@@ -197,11 +222,15 @@ export class ObserveSession implements UseCase<
         source: session.source,
       },
     );
-    await this.deps.history.append(snapshot, event, tx);
-    await this.deps.sessions.saveCurrent(session, tx);
+    await this.deps.history.append(snapshot, tenantId, event, tx);
+    await this.deps.sessions.saveCurrent(session, tenantId, tx);
   }
 
-  private async persistUpdate(session: CustomerSession, tx: unknown): Promise<void> {
+  private async persistUpdate(
+    session: CustomerSession,
+    tenantId: string,
+    tx: unknown,
+  ): Promise<void> {
     const occurredAt = this.deps.clock.now();
     const snapshot = toSnapshot(session, "activity", occurredAt.toISOString());
     const event = new SessionUpdated(
@@ -212,11 +241,15 @@ export class ObserveSession implements UseCase<
       },
       { sessionId: session.sessionId, pageCount: session.pageCount },
     );
-    await this.deps.history.append(snapshot, event, tx);
-    await this.deps.sessions.saveCurrent(session, tx);
+    await this.deps.history.append(snapshot, tenantId, event, tx);
+    await this.deps.sessions.saveCurrent(session, tenantId, tx);
   }
 
-  private async persistClose(session: CustomerSession, tx: unknown): Promise<void> {
+  private async persistClose(
+    session: CustomerSession,
+    tenantId: string,
+    tx: unknown,
+  ): Promise<void> {
     const occurredAt = this.deps.clock.now();
     const snapshot = toSnapshot(session, "closed", occurredAt.toISOString());
     const event = new SessionClosed(
@@ -231,7 +264,7 @@ export class ObserveSession implements UseCase<
         pageCount: session.pageCount,
       },
     );
-    await this.deps.history.append(snapshot, event, tx);
-    await this.deps.sessions.saveCurrent(session, tx);
+    await this.deps.history.append(snapshot, tenantId, event, tx);
+    await this.deps.sessions.saveCurrent(session, tenantId, tx);
   }
 }

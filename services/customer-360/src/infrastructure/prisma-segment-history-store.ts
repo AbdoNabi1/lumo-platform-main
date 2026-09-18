@@ -11,13 +11,13 @@ import {
   jsonToMatchedRuleIds,
   matchedRuleIdsToJson,
 } from "./segment-fields-json";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaSegmentHistoryStoreDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
   readonly idGenerator: { generate(): string };
-  readonly tenantId: string;
 }
 
 interface HistoryRow {
@@ -68,12 +68,17 @@ export class PrismaSegmentHistoryStore implements SegmentHistoryStore {
     this.deps = deps;
   }
 
-  async append(entry: SegmentHistoryEntry, event?: DomainEvent, tx?: unknown): Promise<void> {
+  async append(
+    entry: SegmentHistoryEntry,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void> {
     const client = this.requireTx(tx);
     await client.segmentHistory.create({
       data: {
         id: this.deps.idGenerator.generate(),
-        tenantId: this.deps.tenantId,
+        tenantId,
         identifierType: entry.identifierType,
         identifierValue: entry.identifierValue,
         segmentId: entry.segmentId,
@@ -98,37 +103,41 @@ export class PrismaSegmentHistoryStore implements SegmentHistoryStore {
   async listFor(
     identifier: IdentifierRef,
     segmentId: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<readonly SegmentHistoryEntry[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.segmentHistory.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        identifierType: identifier.type,
-        identifierValue: identifier.value,
-        segmentId,
-      },
-      orderBy: { capturedAt: "asc" },
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.segmentHistory.findMany({
+        where: {
+          tenantId,
+          identifierType: identifier.type,
+          identifierValue: identifier.value,
+          segmentId,
+        },
+        orderBy: { capturedAt: "asc" },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
   async latestFor(
     identifier: IdentifierRef,
     segmentId: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<SegmentHistoryEntry | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.segmentHistory.findFirst({
-      where: {
-        tenantId: this.deps.tenantId,
-        identifierType: identifier.type,
-        identifierValue: identifier.value,
-        segmentId,
-      },
-      orderBy: { capturedAt: "desc" },
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.segmentHistory.findFirst({
+        where: {
+          tenantId,
+          identifierType: identifier.type,
+          identifierValue: identifier.value,
+          segmentId,
+        },
+        orderBy: { capturedAt: "desc" },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 
   private requireTx(tx: unknown): TransactionClient {

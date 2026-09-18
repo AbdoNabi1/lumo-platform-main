@@ -12,9 +12,9 @@ import type { ComputedAttributeDefinition } from "./computed-attribute-definitio
 export interface AttributeDefinitionRegistry {
   /** Every known definition — how `EvaluateAttributeGraph`/`ComputedAttributeProjectionWorker`
    * discover the full dependency graph without a caller having to enumerate it by hand. */
-  list(tx?: unknown): Promise<readonly ComputedAttributeDefinition[]>;
+  list(tenantId: string, tx?: unknown): Promise<readonly ComputedAttributeDefinition[]>;
   /** `null` when no definition is registered under this id — not an error; a dependency naming an
    * unregistered id is a configuration problem the caller surfaces explicitly (see
    * `EvaluateAttributeGraph`'s "unknown dependency" validation), not a silent skip. */
-  getById(id: string, tx?: unknown): Promise<ComputedAttributeDefinition | null>;
+  getById(id: string, tenantId: string, tx?: unknown): Promise<ComputedAttributeDefinition | null>;
 }

@@ -11,14 +11,13 @@ import {
   type IdentityGraph,
 } from "@platform/tracking";
 import type { IdentityGraphStore } from "../ports/identity-graph-store";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaIdentityGraphStoreDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
   readonly idGenerator: IdGenerator;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -35,12 +34,17 @@ export class PrismaIdentityGraphStore implements IdentityGraphStore {
     this.deps = deps;
   }
 
-  async appendEdge(edge: IdentityEdge, event?: DomainEvent, tx?: unknown): Promise<void> {
+  async appendEdge(
+    edge: IdentityEdge,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void> {
     const client = this.requireTx(tx);
     await client.identityLink.create({
       data: {
         id: this.deps.idGenerator.generate(),
-        tenantId: this.deps.tenantId,
+        tenantId,
         fromType: edge.fromType,
         fromValue: edge.fromValue,
         toType: edge.toType,
@@ -55,26 +59,27 @@ export class PrismaIdentityGraphStore implements IdentityGraphStore {
     }
   }
 
-  async loadGraph(tx?: unknown): Promise<IdentityGraph> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.identityLink.findMany({
-      where: { tenantId: this.deps.tenantId },
-      orderBy: { observedAt: "asc" },
-    });
-
-    let graph = EMPTY_IDENTITY_GRAPH;
-    for (const row of rows) {
-      graph = addEdge(graph, {
-        fromType: row.fromType as IdentifierType,
-        fromValue: row.fromValue,
-        toType: row.toType as IdentifierType,
-        toValue: row.toValue,
-        confidence: row.confidence as IdentityConfidence,
-        observedAt: row.observedAt.toISOString(),
-        source: row.source,
+  async loadGraph(tenantId: string, tx?: unknown): Promise<IdentityGraph> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.identityLink.findMany({
+        where: { tenantId },
+        orderBy: { observedAt: "asc" },
       });
-    }
-    return graph;
+
+      let graph = EMPTY_IDENTITY_GRAPH;
+      for (const row of rows) {
+        graph = addEdge(graph, {
+          fromType: row.fromType as IdentifierType,
+          fromValue: row.fromValue,
+          toType: row.toType as IdentifierType,
+          toValue: row.toValue,
+          confidence: row.confidence as IdentityConfidence,
+          observedAt: row.observedAt.toISOString(),
+          source: row.source,
+        });
+      }
+      return graph;
+    });
   }
 
   private requireTx(tx: unknown): TransactionClient {

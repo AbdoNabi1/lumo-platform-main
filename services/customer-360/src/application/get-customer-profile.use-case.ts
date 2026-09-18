@@ -15,6 +15,9 @@ import type { ProfileStore } from "../ports/profile-store";
 import type { ResolveIdentity } from "./resolve-identity.use-case";
 
 export interface GetCustomerProfileInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   /** Field names the caller expects, for the Completeness view; omitted ⇒ completeness reads `null`,
    * not a misleading default set the Profile Engine has no business guessing. */
@@ -65,6 +68,7 @@ export class GetCustomerProfile implements UseCase<
     input: GetCustomerProfileInput,
   ): Promise<Result<GetCustomerProfileOutput, DomainError>> {
     const resolved = await this.deps.resolveIdentity.execute({
+      tenantId: input.tenantId,
       type: input.identifier.type,
       value: input.identifier.value,
     });
@@ -81,7 +85,7 @@ export class GetCustomerProfile implements UseCase<
     const memberProfiles: CustomerProfile[] = [];
     const contributedBy: IdentifierRef[] = [];
     for (const member of members) {
-      const profile = await this.deps.profiles.getCurrent(member);
+      const profile = await this.deps.profiles.getCurrent(member, input.tenantId);
       if (profile !== null) {
         memberProfiles.push(profile);
         contributedBy.push(member);

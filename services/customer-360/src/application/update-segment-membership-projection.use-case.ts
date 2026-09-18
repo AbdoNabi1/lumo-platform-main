@@ -16,6 +16,9 @@ import type { SegmentHistoryStore } from "../ports/segment-history-store";
 import type { SegmentStore } from "../ports/segment-store";
 
 export interface UpdateSegmentMembershipProjectionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   /** The output of `EvaluateSegment`/`EvaluateAllSegments` — this use case never evaluates a rule set
    * itself, only persists an already-evaluated result. */
@@ -69,7 +72,11 @@ export class UpdateSegmentMembershipProjection implements UseCase<
   async execute(
     input: UpdateSegmentMembershipProjectionInput,
   ): Promise<Result<UpdateSegmentMembershipProjectionOutput, DomainError>> {
-    const current = await this.deps.segments.getCurrent(input.identifier, input.result.segmentId);
+    const current = await this.deps.segments.getCurrent(
+      input.identifier,
+      input.result.segmentId,
+      input.tenantId,
+    );
     const baseVersion = current?.version ?? INITIAL_SEGMENT_VERSION;
 
     const applyResult = applyMembershipUpdate(
@@ -130,8 +137,8 @@ export class UpdateSegmentMembershipProjection implements UseCase<
 
         // CAS write first (ADR-0060): on a lost race this throws `ConcurrencyError` here, before the
         // history append below ever runs — no orphaned snapshot, no partial effect.
-        await this.deps.segments.saveCurrent(membership, baseVersion, tx);
-        await this.deps.history.append(snapshot, event, tx);
+        await this.deps.segments.saveCurrent(membership, input.tenantId, baseVersion, tx);
+        await this.deps.history.append(snapshot, input.tenantId, event, tx);
 
         return ok({
           applied: true,

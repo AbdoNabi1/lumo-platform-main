@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { IdentityEdge } from "@platform/tracking";
 import type { IdentityGraphStore } from "../ports/identity-graph-store";
 
@@ -25,6 +25,12 @@ export function runIdentityGraphStoreContractTests(
   makeHarness: () => IdentityGraphStoreHarness,
 ): void {
   describe(`IdentityGraphStore contract — ${adapterName}`, () => {
+    // A fresh tenant per test keeps the Prisma run isolated from rows earlier tests left behind.
+    let tenantId: string;
+    beforeEach(() => {
+      tenantId = `tenant-contract-${crypto.randomUUID()}`;
+    });
+
     function edge(overrides: Partial<IdentityEdge> = {}): IdentityEdge {
       return {
         fromType: "visitor_id",
@@ -40,7 +46,7 @@ export function runIdentityGraphStoreContractTests(
 
     it("loadGraph returns an empty graph when nothing has been appended", async () => {
       const { store } = makeHarness();
-      const graph = await store.loadGraph();
+      const graph = await store.loadGraph(tenantId);
       expect(graph.edges).toHaveLength(0);
     });
 
@@ -48,8 +54,8 @@ export function runIdentityGraphStoreContractTests(
       const { store, withTx } = makeHarness();
       const observed = edge();
 
-      await withTx((tx) => store.appendEdge(observed, undefined, tx));
-      const graph = await store.loadGraph();
+      await withTx((tx) => store.appendEdge(observed, tenantId, undefined, tx));
+      const graph = await store.loadGraph(tenantId);
 
       expect(
         graph.edges.some(
@@ -67,12 +73,22 @@ export function runIdentityGraphStoreContractTests(
       const first = edge({ toValue: `hash-${adapterName}-a` });
       const second = edge({ toValue: `hash-${adapterName}-b`, source: "storefront" });
 
-      await withTx((tx) => store.appendEdge(first, undefined, tx));
-      await withTx((tx) => store.appendEdge(second, undefined, tx));
-      const graph = await store.loadGraph();
+      await withTx((tx) => store.appendEdge(first, tenantId, undefined, tx));
+      await withTx((tx) => store.appendEdge(second, tenantId, undefined, tx));
+      const graph = await store.loadGraph(tenantId);
 
       expect(graph.edges.some((e) => e.toValue === first.toValue)).toBe(true);
       expect(graph.edges.some((e) => e.toValue === second.toValue)).toBe(true);
+    });
+
+    it("isolates tenants — an edge appended under one tenant never enters another tenant's graph (ADR-0014)", async () => {
+      const { store, withTx } = makeHarness();
+      const otherTenant = `${tenantId}-other`;
+
+      await withTx((tx) => store.appendEdge(edge(), tenantId, undefined, tx));
+
+      expect((await store.loadGraph(otherTenant)).edges).toHaveLength(0);
+      expect((await store.loadGraph(tenantId)).edges).toHaveLength(1);
     });
   });
 }

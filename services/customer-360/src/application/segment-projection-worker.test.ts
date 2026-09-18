@@ -8,6 +8,7 @@ import type { SegmentHistoryStore } from "../ports/segment-history-store";
 import type { SegmentStore } from "../ports/segment-store";
 import { RebuildSegmentMembership } from "./rebuild-segment-membership.use-case";
 import { SegmentProjectionWorker } from "./segment-projection-worker";
+import { TENANT_A } from "../test-support/tenants";
 
 function membership(identifierValue: string, segmentId: string): SegmentMembership {
   return applyMembershipUpdate(null, "customer_id", identifierValue, segmentId, {
@@ -80,7 +81,7 @@ describe("SegmentProjectionWorker", () => {
       membership("cust-a", "high_value"),
       membership("cust-b", "high_value"),
     ]);
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 2, failed: 0 });
@@ -97,7 +98,7 @@ describe("SegmentProjectionWorker", () => {
     } as unknown as RebuildSegmentMembership;
     const worker = new SegmentProjectionWorker({ segments, rebuild: failingRebuild });
 
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 0, failed: 1 });
@@ -105,7 +106,7 @@ describe("SegmentProjectionWorker", () => {
 
   it("reports rebuilt: 0, failed: 0 when there is nothing to rebuild yet", async () => {
     const { worker } = wire([]);
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 0, failed: 0 });

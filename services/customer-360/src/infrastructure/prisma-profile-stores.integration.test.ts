@@ -32,7 +32,7 @@ const ids: IdGenerator = { generate: () => crypto.randomUUID() };
  */
 const T0 = "2026-07-20T23:59:59.000Z";
 
-function wire(tenantId: string) {
+function wire() {
   const prisma = createTestPrismaClient(databaseUrl);
   const outbox = new OutboxWriter({
     store: new PrismaOutboxStore(prisma),
@@ -42,13 +42,12 @@ function wire(tenantId: string) {
     producer: "customer360",
   });
   const context = rootEventContext(ids);
-  const store = new PrismaProfileStore({ prisma, idGenerator: ids, tenantId });
+  const store = new PrismaProfileStore({ prisma, idGenerator: ids });
   const history = new PrismaProfileHistoryStore({
     prisma,
     outbox,
     context,
     idGenerator: ids,
-    tenantId,
   });
   const unitOfWork = new PrismaUnitOfWork(prisma);
   return { store, history, unitOfWork };
@@ -56,13 +55,12 @@ function wire(tenantId: string) {
 
 describe.runIf(Boolean(databaseUrl))("Prisma Customer Profile stores (integration)", () => {
   runProfileStoreContractTests("prisma", () => {
-    const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    return wire(tenantId).store;
+    return wire().store;
   });
 
   it("appends a snapshot inside a transaction and rehydrates it via listFor/latestFor", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { history, unitOfWork } = wire(tenantId);
+    const { history, unitOfWork } = wire();
     const identifier = { type: "customer_id" as const, value: `cust-${crypto.randomUUID()}` };
 
     const profile = applyFieldUpdate(
@@ -93,20 +91,25 @@ describe.runIf(Boolean(databaseUrl))("Prisma Customer Profile stores (integratio
     );
 
     await unitOfWork.run(async (tx) => {
-      await history.append(snapshot, event, tx);
+      await history.append(snapshot, event, tenantId, tx);
     });
 
-    const listed = await history.listFor(identifier);
+    const listed = await history.listFor(identifier, tenantId);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.fields.get("email")?.value).toBe("a@example.com");
 
-    const latest = await history.latestFor(identifier);
+    const latest = await history.latestFor(identifier, tenantId);
     expect(latest?.reason).toBe("created");
+
+    // ADR-0014: a second tenant sees none of it.
+    const otherTenant = `${tenantId}-other`;
+    expect(await history.listFor(identifier, otherTenant)).toEqual([]);
+    expect(await history.latestFor(identifier, otherTenant)).toBeNull();
   });
 
   it("append rejects a call without a transaction client (ADR-0003)", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { history } = wire(tenantId);
+    const { history } = wire();
     const identifier = { type: "customer_id" as const, value: `cust-${crypto.randomUUID()}` };
     const profile = createEmptyProfile(identifier.type, identifier.value, T0);
     const snapshot = toSnapshot(profile, "created", clock.now().toISOString());
@@ -126,6 +129,6 @@ describe.runIf(Boolean(databaseUrl))("Prisma Customer Profile stores (integratio
       },
     );
 
-    await expect(history.append(snapshot, event)).rejects.toThrow(/transaction client/);
+    await expect(history.append(snapshot, event, tenantId)).rejects.toThrow(/transaction client/);
   });
 });

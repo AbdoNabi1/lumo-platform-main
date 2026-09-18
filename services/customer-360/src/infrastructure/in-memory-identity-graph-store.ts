@@ -16,7 +16,7 @@ export interface InMemoryIdentityGraphStoreDeps {
 /** In-memory adapter — dev/test only. Delegates every mutation to `@platform/tracking`'s pure
  * `addEdge`, so the persisted shape and the pure in-process one can never drift. */
 export class InMemoryIdentityGraphStore implements IdentityGraphStore {
-  private graph: IdentityGraph = EMPTY_IDENTITY_GRAPH;
+  private readonly graphs = new Map<string, IdentityGraph>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -25,14 +25,19 @@ export class InMemoryIdentityGraphStore implements IdentityGraphStore {
     this.context = deps.context;
   }
 
-  async appendEdge(edge: IdentityEdge, event?: DomainEvent, tx?: unknown): Promise<void> {
-    this.graph = addEdge(this.graph, edge);
+  async appendEdge(
+    edge: IdentityEdge,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void> {
+    this.graphs.set(tenantId, addEdge(this.graphs.get(tenantId) ?? EMPTY_IDENTITY_GRAPH, edge));
     if (event !== undefined) {
       await this.outbox.write([event], this.context, tx);
     }
   }
 
-  async loadGraph(): Promise<IdentityGraph> {
-    return this.graph;
+  async loadGraph(tenantId: string): Promise<IdentityGraph> {
+    return this.graphs.get(tenantId) ?? EMPTY_IDENTITY_GRAPH;
   }
 }

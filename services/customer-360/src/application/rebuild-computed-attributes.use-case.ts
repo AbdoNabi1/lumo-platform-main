@@ -12,6 +12,9 @@ import type { AttributeStore } from "../ports/attribute-store";
 import type { IdentifierRef } from "../ports/identity-decision";
 
 export interface RebuildComputedAttributesInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
 }
 
@@ -52,7 +55,7 @@ export class RebuildComputedAttributes implements UseCase<
   async execute(
     input: RebuildComputedAttributesInput,
   ): Promise<Result<RebuildComputedAttributesOutput, DomainError>> {
-    const latest = await this.deps.history.latestFor(input.identifier);
+    const latest = await this.deps.history.latestFor(input.identifier, input.tenantId);
     if (latest === null) {
       return ok({ attribute: null, attributeCount: 0 });
     }
@@ -68,7 +71,11 @@ export class RebuildComputedAttributes implements UseCase<
         // it — doing so would silently regress the cache and append a "rebuilt" ledger entry, out of
         // order, for data that is no longer current. Undetected, that is the exact silent-lost-update
         // failure shape ADR-0060 closed for Update-vs-Update, reopened here via a different write path.
-        const currentCache = await this.deps.attributes.getCurrent(input.identifier, tx);
+        const currentCache = await this.deps.attributes.getCurrent(
+          input.identifier,
+          input.tenantId,
+          tx,
+        );
         if (currentCache !== null && currentCache.version > rebuilt.version) {
           return ok({ attribute: currentCache, attributeCount: currentCache.attributes.size });
         }
@@ -90,12 +97,12 @@ export class RebuildComputedAttributes implements UseCase<
           },
         );
 
-        await this.deps.history.append(snapshot, event, tx);
+        await this.deps.history.append(snapshot, input.tenantId, event, tx);
         // ADR-0060: deliberately no `expectedVersion` — a rebuild's whole point is recovering from a
         // cache whose current version is untrustworthy (missing, corrupted, or stale); CAS-guarding
         // this write would make recovery fail exactly when it's needed most. The staleness check above
         // is what keeps this unconditional overwrite from regressing a cache that has already moved on.
-        await this.deps.attributes.saveCurrent(rebuilt, undefined, tx);
+        await this.deps.attributes.saveCurrent(rebuilt, input.tenantId, undefined, tx);
 
         return ok({ attribute: rebuilt, attributeCount: rebuilt.attributes.size });
       },

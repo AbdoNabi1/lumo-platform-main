@@ -7,6 +7,9 @@ import type { SessionStore } from "../ports/session-store";
 import type { SessionTimelineEntry } from "../ports/session-timeline";
 
 export interface GetJourneyTimelineInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly visitorId: string;
 }
 
@@ -45,15 +48,15 @@ export class GetJourneyTimeline implements UseCase<
     input: GetJourneyTimelineInput,
   ): Promise<Result<GetJourneyTimelineOutput, DomainError>> {
     const [sessions, transitions] = await Promise.all([
-      this.deps.sessions.listForVisitor(input.visitorId),
-      this.deps.journey.listForVisitor(input.visitorId),
+      this.deps.sessions.listForVisitor(input.visitorId, input.tenantId),
+      this.deps.journey.listForVisitor(input.visitorId, input.tenantId),
     ]);
 
     const sessionEntries: SessionTimelineEntry[] = [];
     for (const session of sessions) {
-      const snapshots = [...(await this.deps.history.listFor(session.sessionId))].sort(
-        (a, b) => a.version - b.version,
-      );
+      const snapshots = [
+        ...(await this.deps.history.listFor(session.sessionId, input.tenantId)),
+      ].sort((a, b) => a.version - b.version);
       snapshots.forEach((snapshot, index) => {
         sessionEntries.push({
           kind:

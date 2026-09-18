@@ -3,6 +3,7 @@ import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { SegmentHistoryEntry } from "../domain/segment-history";
 import type { IdentifierRef } from "../ports/identity-decision";
 import type { SegmentHistoryStore } from "../ports/segment-history-store";
+import { bucket } from "./tenant-seed";
 
 export interface InMemorySegmentHistoryStoreDeps {
   readonly outbox: OutboxWriter;
@@ -13,7 +14,11 @@ export interface InMemorySegmentHistoryStoreDeps {
  * `InMemoryAttributeHistoryStore`; `event` is optional (`RebuildSegmentMembership` has nothing new to
  * publish). */
 export class InMemorySegmentHistoryStore implements SegmentHistoryStore {
-  private readonly entries: SegmentHistoryEntry[] = [];
+  private readonly tenants = new Map<string, SegmentHistoryEntry[]>();
+
+  private entries(tenantId: string): SegmentHistoryEntry[] {
+    return bucket(this.tenants, tenantId, () => []);
+  }
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -22,8 +27,13 @@ export class InMemorySegmentHistoryStore implements SegmentHistoryStore {
     this.context = deps.context;
   }
 
-  async append(entry: SegmentHistoryEntry, event?: DomainEvent, tx?: unknown): Promise<void> {
-    this.entries.push(entry);
+  async append(
+    entry: SegmentHistoryEntry,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void> {
+    this.entries(tenantId).push(entry);
     if (event !== undefined) {
       await this.outbox.write([event], this.context, tx);
     }
@@ -32,8 +42,9 @@ export class InMemorySegmentHistoryStore implements SegmentHistoryStore {
   async listFor(
     identifier: IdentifierRef,
     segmentId: string,
+    tenantId: string,
   ): Promise<readonly SegmentHistoryEntry[]> {
-    return this.entries.filter(
+    return this.entries(tenantId).filter(
       (e) =>
         e.identifierType === identifier.type &&
         e.identifierValue === identifier.value &&
@@ -44,8 +55,9 @@ export class InMemorySegmentHistoryStore implements SegmentHistoryStore {
   async latestFor(
     identifier: IdentifierRef,
     segmentId: string,
+    tenantId: string,
   ): Promise<SegmentHistoryEntry | null> {
-    const rows = await this.listFor(identifier, segmentId);
+    const rows = await this.listFor(identifier, segmentId, tenantId);
     return rows.at(-1) ?? null;
   }
 }

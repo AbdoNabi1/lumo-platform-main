@@ -1,8 +1,9 @@
-﻿import type { DomainEvent } from "@platform/domain";
+import type { DomainEvent } from "@platform/domain";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { IdentityEdge } from "@platform/tracking";
 import type { IdentifierRef, IdentityDecision } from "../ports/identity-decision";
 import type { IdentityDecisionStore } from "../ports/identity-decision-store";
+import { bucket } from "./tenant-seed";
 
 export interface InMemoryIdentityDecisionStoreDeps {
   readonly outbox: OutboxWriter;
@@ -10,7 +11,11 @@ export interface InMemoryIdentityDecisionStoreDeps {
 }
 
 export class InMemoryIdentityDecisionStore implements IdentityDecisionStore {
-  private readonly decisions: IdentityDecision[] = [];
+  private readonly tenants = new Map<string, IdentityDecision[]>();
+
+  private decisions(tenantId: string): IdentityDecision[] {
+    return bucket(this.tenants, tenantId, () => []);
+  }
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -19,13 +24,18 @@ export class InMemoryIdentityDecisionStore implements IdentityDecisionStore {
     this.context = deps.context;
   }
 
-  async record(decision: IdentityDecision, event: DomainEvent, tx?: unknown): Promise<void> {
-    this.decisions.push(decision);
+  async record(
+    decision: IdentityDecision,
+    event: DomainEvent,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<void> {
+    this.decisions(tenantId).push(decision);
     await this.outbox.write([event], this.context, tx);
   }
 
-  async listFor(identifier: IdentifierRef): Promise<readonly IdentityDecision[]> {
-    return this.decisions.filter(
+  async listFor(identifier: IdentifierRef, tenantId: string): Promise<readonly IdentityDecision[]> {
+    return this.decisions(tenantId).filter(
       (decision) =>
         (decision.subject.type === identifier.type &&
           decision.subject.value === identifier.value) ||
@@ -33,9 +43,9 @@ export class InMemoryIdentityDecisionStore implements IdentityDecisionStore {
     );
   }
 
-  async retractedEdges(): Promise<readonly IdentityEdge[]> {
+  async retractedEdges(tenantId: string): Promise<readonly IdentityEdge[]> {
     const edges: IdentityEdge[] = [];
-    for (const decision of this.decisions) {
+    for (const decision of this.decisions(tenantId)) {
       if (decision.kind === "split" && decision.retractedEdge !== undefined) {
         edges.push(decision.retractedEdge);
       }

@@ -9,6 +9,7 @@ import { InMemorySegmentStore } from "../infrastructure/in-memory-segment-store"
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import type { SegmentEvaluationResult } from "../ports/segment-evaluation";
 import { UpdateSegmentMembershipProjection } from "./update-segment-membership-projection.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 /**
  * Same CAS race the Phase 6.4.1 hardening suite proves for `UpdateComputedAttributeProjection`
@@ -74,8 +75,16 @@ describe("UpdateSegmentMembershipProjection — concurrency (CAS race)", () => {
     const segmentId = "high_value";
 
     const settled = await Promise.allSettled([
-      useCase.execute({ identifier, result: evaluationResult(identifier, segmentId, true) }),
-      useCase.execute({ identifier, result: evaluationResult(identifier, segmentId, true) }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, segmentId, true),
+      }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, segmentId, true),
+      }),
     ]);
 
     const fulfilled = settled.filter((s) => s.status === "fulfilled");
@@ -86,12 +95,12 @@ describe("UpdateSegmentMembershipProjection — concurrency (CAS race)", () => {
     expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ConcurrencyError);
     expect((rejected[0] as PromiseRejectedResult).reason.retryable).toBe(true);
 
-    const finalState = await segments.getCurrent(identifier, segmentId);
+    const finalState = await segments.getCurrent(identifier, segmentId, TENANT_A);
     expect(finalState?.status).toBe("entered");
     expect(finalState?.version).toBe(1);
 
     // The loser leaves no trace in the durable ledger either (CAS write before history append).
-    const entries = await history.listFor(identifier, segmentId);
+    const entries = await history.listFor(identifier, segmentId, TENANT_A);
     expect(entries).toHaveLength(1);
   });
 
@@ -101,14 +110,23 @@ describe("UpdateSegmentMembershipProjection — concurrency (CAS race)", () => {
     const segmentId = "high_value";
 
     const settled = await Promise.allSettled([
-      useCase.execute({ identifier, result: evaluationResult(identifier, segmentId, true) }),
-      useCase.execute({ identifier, result: evaluationResult(identifier, segmentId, true) }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, segmentId, true),
+      }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, segmentId, true),
+      }),
     ]);
     expect(settled.some((s) => s.status === "rejected")).toBe(true);
 
     // Retry: exit the segment. `UpdateSegmentMembershipProjection` re-reads `getCurrent` at the top of
     // `execute`, so it naturally picks up the winner's now-current version as its new base.
     const retried = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult(identifier, segmentId, false),
     });
@@ -116,7 +134,7 @@ describe("UpdateSegmentMembershipProjection — concurrency (CAS race)", () => {
     if (!retried.ok) throw new Error("unreachable");
     expect(retried.value.transition).toBe("exited");
 
-    const finalState = await segments.getCurrent(identifier, segmentId);
+    const finalState = await segments.getCurrent(identifier, segmentId, TENANT_A);
     expect(finalState?.status).toBe("exited");
     expect(finalState?.version).toBe(2);
   });
@@ -126,14 +144,22 @@ describe("UpdateSegmentMembershipProjection — concurrency (CAS race)", () => {
     const identifier = { type: "customer_id" as const, value: "cust-a" };
 
     const [resultA, resultB] = await Promise.all([
-      useCase.execute({ identifier, result: evaluationResult(identifier, "high_value", true) }),
-      useCase.execute({ identifier, result: evaluationResult(identifier, "churn_risk", true) }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, "high_value", true),
+      }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, "churn_risk", true),
+      }),
     ]);
 
     expect(resultA.ok).toBe(true);
     expect(resultB.ok).toBe(true);
 
-    expect((await segments.getCurrent(identifier, "high_value"))?.status).toBe("entered");
-    expect((await segments.getCurrent(identifier, "churn_risk"))?.status).toBe("entered");
+    expect((await segments.getCurrent(identifier, "high_value", TENANT_A))?.status).toBe("entered");
+    expect((await segments.getCurrent(identifier, "churn_risk", TENANT_A))?.status).toBe("entered");
   });
 });

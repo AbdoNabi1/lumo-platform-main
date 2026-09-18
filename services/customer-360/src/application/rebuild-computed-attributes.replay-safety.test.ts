@@ -28,6 +28,7 @@ import type {
 import { RebuildComputedAttributes } from "./rebuild-computed-attributes.use-case";
 import { RecalculateComputedAttributes } from "./recalculate-computed-attributes.use-case";
 import { UpdateComputedAttributeProjection } from "./update-computed-attribute-projection.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 /**
  * Phase 6.4.1 hardening — Task 3 (Replay Safety).
@@ -126,15 +127,21 @@ describe("Computed Attributes — Replay Safety (Task 3)", () => {
         clock,
       });
       const evaluateGraph = new EvaluateAttributeGraph({ evaluate, updateProjection });
-      const registry = new InMemoryAttributeDefinitionRegistry([definition]);
+      const registry = new InMemoryAttributeDefinitionRegistry({
+        tenantId: TENANT_A,
+        definitions: [definition],
+      });
       return new RecalculateComputedAttributes({ definitions: registry, evaluateGraph });
     }
 
     // "Day 1": definition v1 says "gold".
-    const v1Result = await recalculateAgainst(tierDefinition(1, "gold")).execute({ identifier });
+    const v1Result = await recalculateAgainst(tierDefinition(1, "gold")).execute({
+      tenantId: TENANT_A,
+      identifier,
+    });
     expect(v1Result.ok).toBe(true);
 
-    const afterV1 = await attributes.getCurrent(identifier);
+    const afterV1 = await attributes.getCurrent(identifier, TENANT_A);
     expect(afterV1?.attributes.get("tier")?.value).toBe("gold");
     expect(afterV1?.attributes.get("tier")?.definitionVersion).toBe(1);
 
@@ -142,22 +149,25 @@ describe("Computed Attributes — Replay Safety (Task 3)", () => {
     // re-derives Day 1's cache; a fresh recompute against the new definition is what an upstream
     // caller would trigger (this phase never built that automatic trigger — see the model doc's
     // deferred-work section — but the recompute API itself is exercised here directly).
-    const v2Result = await recalculateAgainst(tierDefinition(2, "bronze")).execute({ identifier });
+    const v2Result = await recalculateAgainst(tierDefinition(2, "bronze")).execute({
+      tenantId: TENANT_A,
+      identifier,
+    });
     expect(v2Result.ok).toBe(true);
 
-    const afterV2 = await attributes.getCurrent(identifier);
+    const afterV2 = await attributes.getCurrent(identifier, TENANT_A);
     expect(afterV2?.attributes.get("tier")?.value).toBe("bronze");
     expect(afterV2?.attributes.get("tier")?.definitionVersion).toBe(2);
 
     // The ledger still holds BOTH snapshots — history is never pruned or overwritten.
-    const allSnapshots = await history.listFor(identifier);
+    const allSnapshots = await history.listFor(identifier, TENANT_A);
     expect(allSnapshots.length).toBe(2);
     expect(allSnapshots[0]?.attributes.get("tier")?.definitionVersion).toBe(1);
     expect(allSnapshots[1]?.attributes.get("tier")?.definitionVersion).toBe(2);
 
     // Ground truth #1: RebuildComputedAttributes reconstructs from the LATEST snapshot only — it
     // returns "bronze"/v2, never "gold"/v1, even though v1's snapshot is still sitting in the ledger.
-    const rebuilt = await rebuild.execute({ identifier });
+    const rebuilt = await rebuild.execute({ tenantId: TENANT_A, identifier });
     expect(rebuilt.ok).toBe(true);
     if (!rebuilt.ok) throw new Error("unreachable");
     expect(rebuilt.value.attribute?.attributes.get("tier")?.value).toBe("bronze");

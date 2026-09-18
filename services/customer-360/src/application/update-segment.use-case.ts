@@ -11,6 +11,9 @@ import type { SegmentDefinition } from "../ports/segment-definition";
 import type { SegmentDefinitionRegistry } from "../ports/segment-definition-registry";
 
 export interface UpdateSegmentInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly id: string;
   readonly expectedVersion: number;
   readonly name?: string;
@@ -48,7 +51,7 @@ export class UpdateSegment implements UseCase<
   }
 
   async execute(input: UpdateSegmentInput): Promise<Result<UpdateSegmentOutput, DomainError>> {
-    const existing = await this.deps.definitions.getById(input.id);
+    const existing = await this.deps.definitions.getById(input.id, input.tenantId);
     if (existing === null) {
       return err(
         new BusinessRuleError(`Segment "${input.id}" does not exist`, {
@@ -88,7 +91,13 @@ export class UpdateSegment implements UseCase<
         },
         { segmentId: definition.id, name: definition.name, version: definition.version },
       );
-      await this.deps.definitions.save(definition, input.expectedVersion, event, tx);
+      await this.deps.definitions.save(
+        definition,
+        input.tenantId,
+        input.expectedVersion,
+        event,
+        tx,
+      );
       return ok({ definition });
     });
   }

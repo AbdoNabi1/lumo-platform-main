@@ -27,17 +27,23 @@ export interface Customer360ControllerDeps {
 }
 
 export interface GetProfileRequest {
+  /** The verified request context's tenant (ADR-0014) — never a body/query/param field. */
+  readonly tenantId: string;
   readonly identifierType: IdentifierType;
   readonly identifierValue: string;
   readonly expectedFields?: readonly string[];
 }
 
 export interface GetIdentifierTimelineRequest {
+  /** The verified request context's tenant (ADR-0014) — never a body/query/param field. */
+  readonly tenantId: string;
   readonly identifierType: IdentifierType;
   readonly identifierValue: string;
 }
 
 export interface GetVisitorJourneyRequest {
+  /** The verified request context's tenant (ADR-0014) — never a body/query/param field. */
+  readonly tenantId: string;
   readonly visitorId: string;
 }
 
@@ -58,6 +64,7 @@ export class Customer360Controller {
 
   async getProfile(request: GetProfileRequest): Promise<ControllerResponse> {
     const input: GetCustomerProfileInput = {
+      tenantId: request.tenantId,
       identifier: { type: request.identifierType, value: request.identifierValue },
       expectedFields: request.expectedFields,
       now: this.deps.clock.now().toISOString(),
@@ -67,18 +74,25 @@ export class Customer360Controller {
 
   async getIdentityTimeline(request: GetIdentifierTimelineRequest): Promise<ControllerResponse> {
     const input: GetIdentityTimelineInput = {
+      tenantId: request.tenantId,
       identifier: { type: request.identifierType, value: request.identifierValue },
     };
     return present(await this.deps.getIdentityTimeline.execute(input), 200);
   }
 
   async getJourneyTimeline(request: GetVisitorJourneyRequest): Promise<ControllerResponse> {
-    const input: GetJourneyTimelineInput = { visitorId: request.visitorId };
+    const input: GetJourneyTimelineInput = {
+      tenantId: request.tenantId,
+      visitorId: request.visitorId,
+    };
     return present(await this.deps.getJourneyTimeline.execute(input), 200);
   }
 
   async getJourneyState(request: GetVisitorJourneyRequest): Promise<ControllerResponse> {
-    const input: GetJourneyStateInput = { visitorId: request.visitorId };
+    const input: GetJourneyStateInput = {
+      tenantId: request.tenantId,
+      visitorId: request.visitorId,
+    };
     return present(await this.deps.getJourneyState.execute(input), 200);
   }
 }

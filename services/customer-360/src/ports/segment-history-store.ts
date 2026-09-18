@@ -14,12 +14,18 @@ export interface SegmentHistoryStore {
    * `AttributeHistoryStore.append`'s shape exactly. Optional: `RebuildSegmentMembership` appends a
    * `reason: "rebuilt"` entry with nothing new to publish (it recomputes the cache, it does not assert
    * a new fact). */
-  append(entry: SegmentHistoryEntry, event?: DomainEvent, tx?: unknown): Promise<void>;
+  append(
+    entry: SegmentHistoryEntry,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void>;
   /** Every entry for this `(identifier, segmentId)` pair, oldest first — the membership's own
    * history/provenance trail. */
   listFor(
     identifier: IdentifierRef,
     segmentId: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<readonly SegmentHistoryEntry[]>;
   /** The most recent entry only — `RebuildSegmentMembership` needs just this (each entry is a full
@@ -27,6 +33,7 @@ export interface SegmentHistoryStore {
   latestFor(
     identifier: IdentifierRef,
     segmentId: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<SegmentHistoryEntry | null>;
 }

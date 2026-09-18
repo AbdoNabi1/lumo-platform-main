@@ -33,6 +33,7 @@ import {
   collectReferencedPaths,
   toSegmentDependencyEdges,
 } from "./evaluate-all-segments.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -159,6 +160,7 @@ describe("EvaluateAllSegments", () => {
   it("evaluates every definition regardless of order — no ordering is imposed", async () => {
     const { evaluateAll, segments } = wire(5000);
     const result = await evaluateAll.execute({
+      tenantId: TENANT_A,
       identifier,
       definitions: [lowValue(), highValue()],
     });
@@ -172,17 +174,25 @@ describe("EvaluateAllSegments", () => {
     // case (applyMembershipUpdate never creates a row for it) — only high_value's entry is persisted.
     expect(result.value.applied).toEqual(["high_value"]);
 
-    expect((await segments.getCurrent(identifier, "high_value"))?.status).toBe("entered");
-    expect(await segments.getCurrent(identifier, "low_value")).toBeNull();
+    expect((await segments.getCurrent(identifier, "high_value", TENANT_A))?.status).toBe("entered");
+    expect(await segments.getCurrent(identifier, "low_value", TENANT_A)).toBeNull();
   });
 
   it("does not re-apply when re-evaluated with unchanged inputs", async () => {
     const { evaluateAll } = wire(5000);
-    const first = await evaluateAll.execute({ identifier, definitions: [highValue()] });
+    const first = await evaluateAll.execute({
+      tenantId: TENANT_A,
+      identifier,
+      definitions: [highValue()],
+    });
     if (!first.ok) throw new Error("unreachable");
     expect(first.value.applied).toEqual(["high_value"]);
 
-    const second = await evaluateAll.execute({ identifier, definitions: [highValue()] });
+    const second = await evaluateAll.execute({
+      tenantId: TENANT_A,
+      identifier,
+      definitions: [highValue()],
+    });
     if (!second.ok) throw new Error("unreachable");
     expect(second.value.applied).toEqual([]);
   });

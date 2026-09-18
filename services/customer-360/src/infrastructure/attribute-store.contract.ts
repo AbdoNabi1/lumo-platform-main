@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ConcurrencyError } from "@platform/utils";
 import { INITIAL_ATTRIBUTE_VERSION } from "../domain/attribute-version";
 import { applyAttributeUpdate, createEmptyComputedAttribute } from "../domain/computed-attribute";
@@ -23,6 +23,12 @@ export function runAttributeStoreContractTests(
   makeStore: () => AttributeStore,
 ): void {
   describe(`AttributeStore contract — ${adapterName}`, () => {
+    // A fresh tenant per test keeps the Prisma run isolated from rows earlier tests left behind.
+    let tenantId: string;
+    beforeEach(() => {
+      tenantId = `tenant-contract-${crypto.randomUUID()}`;
+    });
+
     const identifier = { type: "customer_id" as const, value: `contract-${adapterName}` };
 
     /** Fixture shared by the ADR-0060 CAS tests below: a fresh identifier's first-ever attribute
@@ -44,7 +50,7 @@ export function runAttributeStoreContractTests(
 
     it("getCurrent returns null for an identifier that was never saved", async () => {
       const store = makeStore();
-      expect(await store.getCurrent(identifier)).toBeNull();
+      expect(await store.getCurrent(identifier, tenantId)).toBeNull();
     });
 
     it("saveCurrent then getCurrent round-trips the same attributes/version/updatedAt", async () => {
@@ -62,8 +68,8 @@ export function runAttributeStoreContractTests(
         },
       ).attribute;
 
-      await store.saveCurrent(attribute);
-      const loaded = await store.getCurrent(identifier);
+      await store.saveCurrent(attribute, tenantId);
+      const loaded = await store.getCurrent(identifier, tenantId);
 
       expect(loaded).not.toBeNull();
       expect(loaded?.version).toBe(attribute.version);
@@ -94,9 +100,9 @@ export function runAttributeStoreContractTests(
         evaluatedAt: "2026-07-21T00:00:02.000Z",
       }).attribute;
 
-      await store.saveCurrent(first);
-      await store.saveCurrent(second);
-      const loaded = await store.getCurrent(identifier);
+      await store.saveCurrent(first, tenantId);
+      await store.saveCurrent(second, tenantId);
+      const loaded = await store.getCurrent(identifier, tenantId);
 
       expect(loaded?.attributes.get("tier")?.value).toBe("gold");
       expect(loaded?.version).toBe(2);
@@ -111,8 +117,8 @@ export function runAttributeStoreContractTests(
       const store = makeStore();
       const created = bronzeTier();
 
-      await store.saveCurrent(created, INITIAL_ATTRIBUTE_VERSION);
-      expect((await store.getCurrent(identifier))?.version).toBe(created.version);
+      await store.saveCurrent(created, tenantId, INITIAL_ATTRIBUTE_VERSION);
+      expect((await store.getCurrent(identifier, tenantId))?.version).toBe(created.version);
 
       const updated = applyAttributeUpdate(created, "tier", {
         value: "gold",
@@ -123,8 +129,8 @@ export function runAttributeStoreContractTests(
         evaluatedAt: "2026-07-21T00:00:02.000Z",
       }).attribute;
 
-      await store.saveCurrent(updated, created.version);
-      const loaded = await store.getCurrent(identifier);
+      await store.saveCurrent(updated, tenantId, created.version);
+      const loaded = await store.getCurrent(identifier, tenantId);
       expect(loaded?.attributes.get("tier")?.value).toBe("gold");
       expect(loaded?.version).toBe(updated.version);
     });
@@ -132,7 +138,7 @@ export function runAttributeStoreContractTests(
     it("saveCurrent with a stale expectedVersion (update branch) rejects with ConcurrencyError and never applies the write", async () => {
       const store = makeStore();
       const created = bronzeTier();
-      await store.saveCurrent(created, INITIAL_ATTRIBUTE_VERSION);
+      await store.saveCurrent(created, tenantId, INITIAL_ATTRIBUTE_VERSION);
 
       const staleAttempt = applyAttributeUpdate(created, "tier", {
         value: "gold",
@@ -146,11 +152,11 @@ export function runAttributeStoreContractTests(
       // Deliberately wrong: `created.version` is already stale by the time of this second call in a
       // real race; here we just assert the guard directly by passing an expected version one higher
       // than what's actually stored.
-      await expect(store.saveCurrent(staleAttempt, created.version + 1)).rejects.toBeInstanceOf(
-        ConcurrencyError,
-      );
+      await expect(
+        store.saveCurrent(staleAttempt, tenantId, created.version + 1),
+      ).rejects.toBeInstanceOf(ConcurrencyError);
 
-      const loaded = await store.getCurrent(identifier);
+      const loaded = await store.getCurrent(identifier, tenantId);
       expect(loaded?.attributes.get("tier")?.value).toBe("bronze");
       expect(loaded?.version).toBe(created.version);
     });
@@ -158,25 +164,46 @@ export function runAttributeStoreContractTests(
     it("saveCurrent with expectedVersion omitted still blindly overwrites regardless of current version — RebuildComputedAttributes' recovery semantics, preserved", async () => {
       const store = makeStore();
       const created = bronzeTier();
-      await store.saveCurrent(created, INITIAL_ATTRIBUTE_VERSION);
+      await store.saveCurrent(created, tenantId, INITIAL_ATTRIBUTE_VERSION);
 
       const overwrite = createEmptyComputedAttribute(identifier.type, identifier.value, T1);
-      await store.saveCurrent(overwrite); // no expectedVersion -- unconditional, exactly like today
-      const loaded = await store.getCurrent(identifier);
+      await store.saveCurrent(overwrite, tenantId); // no expectedVersion -- unconditional, exactly like today
+      const loaded = await store.getCurrent(identifier, tenantId);
       expect(loaded?.attributes.size).toBe(0);
     });
 
     it("listIdentifiers reports every saved identifier exactly once", async () => {
       const store = makeStore();
       const other = { type: "customer_id" as const, value: `contract-${adapterName}-2` };
-      await store.saveCurrent(createEmptyComputedAttribute(identifier.type, identifier.value, T0));
-      await store.saveCurrent(createEmptyComputedAttribute(other.type, other.value, T0));
+      await store.saveCurrent(
+        createEmptyComputedAttribute(identifier.type, identifier.value, T0),
+        tenantId,
+      );
+      await store.saveCurrent(createEmptyComputedAttribute(other.type, other.value, T0), tenantId);
       // Re-saving the first identifier must not duplicate it in the listing.
-      await store.saveCurrent(createEmptyComputedAttribute(identifier.type, identifier.value, T1));
+      await store.saveCurrent(
+        createEmptyComputedAttribute(identifier.type, identifier.value, T1),
+        tenantId,
+      );
 
-      const ids = await store.listIdentifiers();
+      const ids = await store.listIdentifiers(tenantId);
       const values = ids.map((id) => id.value).sort();
       expect(values).toEqual([identifier.value, other.value].sort());
+    });
+
+    it("isolates tenants — an attribute saved under one tenant is invisible to another, including its CAS state (ADR-0014)", async () => {
+      const store = makeStore();
+      const otherTenant = `${tenantId}-other`;
+      const attribute = bronzeTier();
+
+      await store.saveCurrent(attribute, tenantId);
+
+      expect(await store.getCurrent(identifier, otherTenant)).toBeNull();
+      expect(await store.listIdentifiers(otherTenant)).toEqual([]);
+
+      // "No row must exist yet" (expectedVersion 0) still holds under the other tenant.
+      await store.saveCurrent(attribute, otherTenant, INITIAL_ATTRIBUTE_VERSION);
+      expect((await store.getCurrent(identifier, tenantId))?.version).toBe(attribute.version);
     });
   });
 }

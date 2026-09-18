@@ -16,6 +16,7 @@ import { InMemoryAttributeHistoryStore } from "../infrastructure/in-memory-attri
 import { InMemoryAttributeStore } from "../infrastructure/in-memory-attribute-store";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { RebuildComputedAttributes } from "./rebuild-computed-attributes.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -53,7 +54,7 @@ function wire() {
 describe("RebuildComputedAttributes", () => {
   it("returns null when the identifier has no history at all", async () => {
     const { useCase } = wire();
-    const result = await useCase.execute({ identifier });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.attribute).toBeNull();
@@ -74,17 +75,17 @@ describe("RebuildComputedAttributes", () => {
         evaluatedAt: "t0",
       },
     ).attribute;
-    await history.append(toSnapshot(evaluated, "created", "t0"), undefined);
+    await history.append(toSnapshot(evaluated, "created", "t0"), TENANT_A, undefined);
     // Corrupt/clear the cache to prove rebuild restores it from the ledger, not from the cache.
-    expect(await attributes.getCurrent(identifier)).toBeNull();
+    expect(await attributes.getCurrent(identifier, TENANT_A)).toBeNull();
 
-    const result = await useCase.execute({ identifier });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.attributeCount).toBe(1);
     expect(result.value.attribute?.attributes.get("is_vip")?.value).toBe(true);
 
-    const cached = await attributes.getCurrent(identifier);
+    const cached = await attributes.getCurrent(identifier, TENANT_A);
     expect(cached?.attributes.get("is_vip")?.value).toBe(true);
     // The rebuild does not inflate the version — it recomputes, it does not assert a new fact.
     expect(cached?.version).toBe(evaluated.version);
@@ -108,8 +109,8 @@ describe("RebuildComputedAttributes", () => {
         evaluatedAt: "t0",
       },
     ).attribute;
-    await history.append(toSnapshot(v1, "created", "t0"), undefined);
-    await attributes.saveCurrent(v1, 0);
+    await history.append(toSnapshot(v1, "created", "t0"), TENANT_A, undefined);
+    await attributes.saveCurrent(v1, TENANT_A, 0);
 
     // Simulate the race directly at the store level: by the time this rebuild's own transaction
     // runs, a concurrent `UpdateComputedAttributeProjection` has already committed a newer version to
@@ -126,12 +127,12 @@ describe("RebuildComputedAttributes", () => {
       inputs: new Map(),
       evaluatedAt: "t1",
     }).attribute;
-    await attributes.saveCurrent(v2, v1.version);
+    await attributes.saveCurrent(v2, TENANT_A, v1.version);
 
     // The rebuild proceeds using the v1 snapshot it read from the ledger. Without the staleness guard
     // this would overwrite the cache back to "bronze"/v1, silently undoing the concurrent update with
     // no error and no signal.
-    const result = await useCase.execute({ identifier });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
 
@@ -139,12 +140,12 @@ describe("RebuildComputedAttributes", () => {
     expect(result.value.attribute?.attributes.get("tier")?.value).toBe("gold");
     expect(result.value.attribute?.version).toBe(v2.version);
 
-    const cached = await attributes.getCurrent(identifier);
+    const cached = await attributes.getCurrent(identifier, TENANT_A);
     expect(cached?.attributes.get("tier")?.value).toBe("gold");
     expect(cached?.version).toBe(v2.version);
 
     // No spurious "rebuilt" snapshot was appended for the stale v1 state either.
-    const snapshots = await history.listFor(identifier);
+    const snapshots = await history.listFor(identifier, TENANT_A);
     expect(snapshots).toHaveLength(1);
     expect(snapshots.map((s) => s.reason)).toEqual(["created"]);
   });

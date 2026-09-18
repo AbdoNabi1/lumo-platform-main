@@ -12,6 +12,9 @@ import type { SessionHistoryStore } from "../ports/session-history-store";
 import type { SessionStore } from "../ports/session-store";
 
 export interface CloseSessionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly sessionId: string;
   /** `"timeout"` is deliberately excluded here — that reason is only ever assigned by
    * `ObserveSession`'s own idle-window rollover, never by an explicit caller. */
@@ -53,7 +56,7 @@ export class CloseSession implements UseCase<CloseSessionInput, CloseSessionOutp
       );
     }
 
-    const existing = await this.deps.sessions.getCurrent(input.sessionId);
+    const existing = await this.deps.sessions.getCurrent(input.sessionId, input.tenantId);
     if (existing === null) {
       return err(
         new ValidationError("Cannot close a session that was never observed", [
@@ -86,8 +89,8 @@ export class CloseSession implements UseCase<CloseSessionInput, CloseSessionOutp
         },
       );
 
-      await this.deps.history.append(snapshot, event, tx);
-      await this.deps.sessions.saveCurrent(closed, tx);
+      await this.deps.history.append(snapshot, input.tenantId, event, tx);
+      await this.deps.sessions.saveCurrent(closed, input.tenantId, tx);
 
       return ok({ sessionId: closed.sessionId });
     });

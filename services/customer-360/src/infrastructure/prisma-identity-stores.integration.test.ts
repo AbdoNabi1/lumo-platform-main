@@ -44,14 +44,12 @@ describe.runIf(Boolean(databaseUrl))("Prisma Customer 360 identity stores (integ
       outbox,
       context,
       idGenerator: ids,
-      tenantId,
     });
     const decisions = new PrismaIdentityDecisionStore({
       prisma,
       outbox,
       context,
       idGenerator: ids,
-      tenantId,
     });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return { graph, decisions, unitOfWork };
@@ -95,10 +93,10 @@ describe.runIf(Boolean(databaseUrl))("Prisma Customer 360 identity stores (integ
     );
 
     await unitOfWork.run(async (tx) => {
-      await graph.appendEdge(edge, event, tx);
+      await graph.appendEdge(edge, tenantId, event, tx);
     });
 
-    const loaded = await graph.loadGraph();
+    const loaded = await graph.loadGraph(tenantId);
     expect(
       loaded.edges.some((e) => e.fromValue === edge.fromValue && e.toValue === edge.toValue),
     ).toBe(true);
@@ -146,11 +144,12 @@ describe.runIf(Boolean(databaseUrl))("Prisma Customer 360 identity stores (integ
           occurredAt: clock.now().toISOString(),
         },
         event,
+        tenantId,
         tx,
       );
     });
 
-    const retracted = await decisions.retractedEdges();
+    const retracted = await decisions.retractedEdges(tenantId);
     expect(
       retracted.some(
         (e) => e.fromValue === retractedEdge.fromValue && e.toValue === retractedEdge.toValue,

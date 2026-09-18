@@ -12,6 +12,7 @@ import type {
   EvaluateAttributeGraphOutput,
 } from "./evaluate-attribute-graph.use-case";
 import { RecalculateComputedAttributes } from "./recalculate-computed-attributes.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const identifier = { type: "customer_id" as const, value: "cust-1" };
 
@@ -44,18 +45,17 @@ function fakeEvaluateGraph(): {
 
 describe("RecalculateComputedAttributes", () => {
   it("recomputes the full registered set when `changed` is omitted", async () => {
-    const registry = new InMemoryAttributeDefinitionRegistry([
-      def("a"),
-      def("b", ["a"]),
-      def("c", ["b"]),
-    ]);
+    const registry = new InMemoryAttributeDefinitionRegistry({
+      tenantId: TENANT_A,
+      definitions: [def("a"), def("b", ["a"]), def("c", ["b"])],
+    });
     const { graph, calls } = fakeEvaluateGraph();
     const useCase = new RecalculateComputedAttributes({
       definitions: registry,
       evaluateGraph: graph,
     });
 
-    const result = await useCase.execute({ identifier });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect([...result.value.recomputed].sort()).toEqual(["a", "b", "c"]);
@@ -63,20 +63,23 @@ describe("RecalculateComputedAttributes", () => {
   });
 
   it("recomputes only the changed attribute's transitive dependents — a chain a<-b<-c<-d plus unrelated e", async () => {
-    const registry = new InMemoryAttributeDefinitionRegistry([
-      def("a"),
-      def("b", ["a"]),
-      def("c", ["b"]),
-      def("d", ["c"]),
-      def("e"), // unrelated
-    ]);
+    const registry = new InMemoryAttributeDefinitionRegistry({
+      tenantId: TENANT_A,
+      definitions: [
+        def("a"),
+        def("b", ["a"]),
+        def("c", ["b"]),
+        def("d", ["c"]),
+        def("e"), // unrelated
+      ],
+    });
     const { graph, calls } = fakeEvaluateGraph();
     const useCase = new RecalculateComputedAttributes({
       definitions: registry,
       evaluateGraph: graph,
     });
 
-    const result = await useCase.execute({ identifier, changed: ["a"] });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier, changed: ["a"] });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect([...result.value.recomputed].sort()).toEqual(["a", "b", "c", "d"]);
@@ -91,35 +94,33 @@ describe("RecalculateComputedAttributes", () => {
   });
 
   it("a leaf attribute with nothing depending on it recomputes only itself when changed", async () => {
-    const registry = new InMemoryAttributeDefinitionRegistry([
-      def("a"),
-      def("b", ["a"]),
-      def("leaf"),
-    ]);
+    const registry = new InMemoryAttributeDefinitionRegistry({
+      tenantId: TENANT_A,
+      definitions: [def("a"), def("b", ["a"]), def("leaf")],
+    });
     const { graph } = fakeEvaluateGraph();
     const useCase = new RecalculateComputedAttributes({
       definitions: registry,
       evaluateGraph: graph,
     });
 
-    const result = await useCase.execute({ identifier, changed: ["leaf"] });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier, changed: ["leaf"] });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.recomputed).toEqual(["leaf"]);
   });
 
   it("stops before evaluating anything when the registered graph has a cycle, even outside the changed scope", async () => {
-    const registry = new InMemoryAttributeDefinitionRegistry([
-      def("a"),
-      def("cyclic1", ["cyclic2"]),
-      def("cyclic2", ["cyclic1"]),
-    ]);
+    const registry = new InMemoryAttributeDefinitionRegistry({
+      tenantId: TENANT_A,
+      definitions: [def("a"), def("cyclic1", ["cyclic2"]), def("cyclic2", ["cyclic1"])],
+    });
     const { graph, calls } = fakeEvaluateGraph();
     const useCase = new RecalculateComputedAttributes({
       definitions: registry,
       evaluateGraph: graph,
     });
 
-    const result = await useCase.execute({ identifier, changed: ["a"] });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier, changed: ["a"] });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.error.message).toMatch(/cycle/i);
@@ -127,14 +128,17 @@ describe("RecalculateComputedAttributes", () => {
   });
 
   it("reports a clear validation error when a definition names an unregistered dependency", async () => {
-    const registry = new InMemoryAttributeDefinitionRegistry([def("a", ["ghost"])]);
+    const registry = new InMemoryAttributeDefinitionRegistry({
+      tenantId: TENANT_A,
+      definitions: [def("a", ["ghost"])],
+    });
     const { graph } = fakeEvaluateGraph();
     const useCase = new RecalculateComputedAttributes({
       definitions: registry,
       evaluateGraph: graph,
     });
 
-    const result = await useCase.execute({ identifier });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.error.message).toMatch(/ghost/);

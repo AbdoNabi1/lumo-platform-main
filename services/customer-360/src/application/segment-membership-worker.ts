@@ -6,7 +6,10 @@ import type { SegmentDefinitionRegistry } from "../ports/segment-definition-regi
 import type { SegmentStore } from "../ports/segment-store";
 import type { EvaluateAllSegments } from "./evaluate-all-segments.use-case";
 
-export type SegmentMembershipWorkerInput = Record<string, never>;
+export interface SegmentMembershipWorkerInput {
+  /** The tenant this sweep is scoped to (ADR-0014). */
+  readonly tenantId: string;
+}
 
 export interface SegmentMembershipWorkerOutput {
   readonly evaluated: number;
@@ -46,21 +49,25 @@ export class SegmentMembershipWorker implements UseCase<
   }
 
   async execute(
-    _input: SegmentMembershipWorkerInput,
+    input: SegmentMembershipWorkerInput,
   ): Promise<Result<SegmentMembershipWorkerOutput, DomainError>> {
-    const pairs = await this.deps.segments.listIdentifiers();
+    const pairs = await this.deps.segments.listIdentifiers(input.tenantId);
     const identifiers = new Map<string, IdentifierRef>();
     for (const pair of pairs) {
       identifiers.set(identifierKey(pair.identifier), pair.identifier);
     }
 
-    const definitions = await this.deps.definitions.list();
+    const definitions = await this.deps.definitions.list(input.tenantId);
     let evaluated = 0;
     let failed = 0;
 
     for (const identifier of identifiers.values()) {
       try {
-        const result = await this.deps.evaluateAll.execute({ identifier, definitions });
+        const result = await this.deps.evaluateAll.execute({
+          tenantId: input.tenantId,
+          identifier,
+          definitions,
+        });
         if (result.ok) evaluated += 1;
         else failed += 1;
       } catch {

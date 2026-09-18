@@ -15,6 +15,7 @@ import { IdentityEventTranslator } from "../infrastructure/identity-event-transl
 import { InMemorySegmentDefinitionRegistry } from "../infrastructure/in-memory-segment-definition-registry";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { CreateSegment } from "./create-segment.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -55,6 +56,7 @@ describe("CreateSegment", () => {
   it("creates a new segment at version 1 and publishes SegmentCreated", async () => {
     const { useCase, definitions, relay } = wire();
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "High value",
       ruleSet: validRuleSet(),
@@ -64,16 +66,22 @@ describe("CreateSegment", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.definition.version).toBe(1);
 
-    const stored = await definitions.getById("high_value");
+    const stored = await definitions.getById("high_value", TENANT_A);
     expect(stored?.name).toBe("High value");
     expect(await relay.drainOnce()).toBe(1);
   });
 
   it("rejects creating a segment id that already exists", async () => {
     const { useCase } = wire();
-    await useCase.execute({ id: "high_value", name: "High value", ruleSet: validRuleSet() });
+    await useCase.execute({
+      tenantId: TENANT_A,
+      id: "high_value",
+      name: "High value",
+      ruleSet: validRuleSet(),
+    });
 
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "Dup",
       ruleSet: validRuleSet(),
@@ -91,11 +99,12 @@ describe("CreateSegment", () => {
     };
 
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       id: "bad_segment",
       name: "Bad",
       ruleSet: invalidRuleSet,
     });
     expect(result.ok).toBe(false);
-    expect(await definitions.getById("bad_segment")).toBeNull();
+    expect(await definitions.getById("bad_segment", TENANT_A)).toBeNull();
   });
 });

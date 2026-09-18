@@ -9,6 +9,9 @@ import type { JourneyStore } from "../ports/journey-store";
 import type { SessionStore } from "../ports/session-store";
 
 export interface MergeSessionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly fromSessionId: string;
   readonly toSessionId: string;
   readonly reason: string;
@@ -62,8 +65,8 @@ export class MergeSession implements UseCase<MergeSessionInput, MergeSessionOutp
     }
 
     const [from, to] = await Promise.all([
-      this.deps.sessions.getCurrent(input.fromSessionId),
-      this.deps.sessions.getCurrent(input.toSessionId),
+      this.deps.sessions.getCurrent(input.fromSessionId, input.tenantId),
+      this.deps.sessions.getCurrent(input.toSessionId, input.tenantId),
     ]);
     if (from === null || to === null) {
       return err(
@@ -102,6 +105,7 @@ export class MergeSession implements UseCase<MergeSessionInput, MergeSessionOutp
           actor: input.actor,
           occurredAt: this.deps.clock.now().toISOString(),
         },
+        input.tenantId,
         event,
         tx,
       );

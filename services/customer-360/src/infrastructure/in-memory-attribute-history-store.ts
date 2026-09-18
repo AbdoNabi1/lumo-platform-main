@@ -3,6 +3,7 @@ import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { AttributeSnapshot } from "../domain/attribute-snapshot";
 import type { AttributeHistoryStore } from "../ports/attribute-history-store";
 import type { IdentifierRef } from "../ports/identity-decision";
+import { bucket } from "./tenant-seed";
 
 export interface InMemoryAttributeHistoryStoreDeps {
   readonly outbox: OutboxWriter;
@@ -13,7 +14,11 @@ export interface InMemoryAttributeHistoryStoreDeps {
  * `InMemoryProfileHistoryStore` (same package, same convention); `event` is optional (mirrors
  * `SessionHistoryStore`'s own divergence — `RebuildComputedAttributes` has nothing new to publish). */
 export class InMemoryAttributeHistoryStore implements AttributeHistoryStore {
-  private readonly snapshots: AttributeSnapshot[] = [];
+  private readonly tenants = new Map<string, AttributeSnapshot[]>();
+
+  private snapshots(tenantId: string): AttributeSnapshot[] {
+    return bucket(this.tenants, tenantId, () => []);
+  }
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -22,21 +27,29 @@ export class InMemoryAttributeHistoryStore implements AttributeHistoryStore {
     this.context = deps.context;
   }
 
-  async append(snapshot: AttributeSnapshot, event?: DomainEvent, tx?: unknown): Promise<void> {
-    this.snapshots.push(snapshot);
+  async append(
+    snapshot: AttributeSnapshot,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void> {
+    this.snapshots(tenantId).push(snapshot);
     if (event !== undefined) {
       await this.outbox.write([event], this.context, tx);
     }
   }
 
-  async listFor(identifier: IdentifierRef): Promise<readonly AttributeSnapshot[]> {
-    return this.snapshots.filter(
+  async listFor(
+    identifier: IdentifierRef,
+    tenantId: string,
+  ): Promise<readonly AttributeSnapshot[]> {
+    return this.snapshots(tenantId).filter(
       (s) => s.identifierType === identifier.type && s.identifierValue === identifier.value,
     );
   }
 
-  async latestFor(identifier: IdentifierRef): Promise<AttributeSnapshot | null> {
-    const rows = await this.listFor(identifier);
+  async latestFor(identifier: IdentifierRef, tenantId: string): Promise<AttributeSnapshot | null> {
+    const rows = await this.listFor(identifier, tenantId);
     return rows.at(-1) ?? null;
   }
 }

@@ -9,6 +9,9 @@ import type { EvaluateComputedAttribute } from "./evaluate-computed-attribute.us
 import type { UpdateComputedAttributeProjection } from "./update-computed-attribute-projection.use-case";
 
 export interface EvaluateAttributeGraphInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   /**
    * Definitions to evaluate — need not be pre-sorted; this use case orders them itself. May be a
@@ -105,6 +108,7 @@ export class EvaluateAttributeGraph implements UseCase<
       const definition = byId.get(id)!;
 
       const evaluated = await this.deps.evaluate.execute({
+        tenantId: input.tenantId,
         identifier: input.identifier,
         definition,
       });
@@ -112,6 +116,7 @@ export class EvaluateAttributeGraph implements UseCase<
       results.push(evaluated.value.result);
 
       const persisted = await this.deps.updateProjection.execute({
+        tenantId: input.tenantId,
         identifier: input.identifier,
         result: evaluated.value.result,
       });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { Expr } from "@platform/expression";
 import type { RuleSet } from "@platform/rules";
 import { ConcurrencyError } from "@platform/utils";
@@ -41,88 +41,127 @@ export function runSegmentDefinitionRegistryContractTests(
   makeRegistry: () => SegmentDefinitionRegistry,
 ): void {
   describe(`SegmentDefinitionRegistry contract — ${adapterName}`, () => {
+    // A fresh tenant per test keeps the Prisma run isolated from rows earlier tests left behind.
+    let tenantId: string;
+    beforeEach(() => {
+      tenantId = `tenant-contract-${crypto.randomUUID()}`;
+    });
+
     it("list/getById are empty for a fresh registry", async () => {
       const registry = makeRegistry();
-      expect(await registry.list()).toEqual([]);
-      expect(await registry.getById("high_value")).toBeNull();
+      expect(await registry.list(tenantId)).toEqual([]);
+      expect(await registry.getById("high_value", tenantId)).toBeNull();
     });
 
     it("save with expectedVersion=INITIAL creates a new definition", async () => {
       const registry = makeRegistry();
-      await registry.save(definition(), INITIAL_SEGMENT_DEFINITION_VERSION);
+      await registry.save(definition(), tenantId, INITIAL_SEGMENT_DEFINITION_VERSION);
 
-      const loaded = await registry.getById("high_value");
+      const loaded = await registry.getById("high_value", tenantId);
       expect(loaded?.name).toBe("High value");
       expect(loaded?.version).toBe(1);
     });
 
     it("save with a matching expectedVersion updates an existing definition", async () => {
       const registry = makeRegistry();
-      await registry.save(definition(), INITIAL_SEGMENT_DEFINITION_VERSION);
+      await registry.save(definition(), tenantId, INITIAL_SEGMENT_DEFINITION_VERSION);
 
-      await registry.save(definition({ name: "High value (updated)", version: 2 }), 1);
-      const loaded = await registry.getById("high_value");
+      await registry.save(definition({ name: "High value (updated)", version: 2 }), tenantId, 1);
+      const loaded = await registry.getById("high_value", tenantId);
       expect(loaded?.name).toBe("High value (updated)");
       expect(loaded?.version).toBe(2);
     });
 
     it("save with a stale expectedVersion rejects with ConcurrencyError and never applies the write", async () => {
       const registry = makeRegistry();
-      await registry.save(definition(), INITIAL_SEGMENT_DEFINITION_VERSION);
+      await registry.save(definition(), tenantId, INITIAL_SEGMENT_DEFINITION_VERSION);
 
       await expect(
-        registry.save(definition({ name: "Stale write", version: 2 }), 5),
+        registry.save(definition({ name: "Stale write", version: 2 }), tenantId, 5),
       ).rejects.toBeInstanceOf(ConcurrencyError);
 
-      const loaded = await registry.getById("high_value");
+      const loaded = await registry.getById("high_value", tenantId);
       expect(loaded?.name).toBe("High value");
       expect(loaded?.version).toBe(1);
     });
 
     it("save with expectedVersion omitted unconditionally upserts", async () => {
       const registry = makeRegistry();
-      await registry.save(definition(), INITIAL_SEGMENT_DEFINITION_VERSION);
-      await registry.save(definition({ name: "Forced overwrite", version: 9 }));
+      await registry.save(definition(), tenantId, INITIAL_SEGMENT_DEFINITION_VERSION);
+      await registry.save(definition({ name: "Forced overwrite", version: 9 }), tenantId);
 
-      const loaded = await registry.getById("high_value");
+      const loaded = await registry.getById("high_value", tenantId);
       expect(loaded?.name).toBe("Forced overwrite");
       expect(loaded?.version).toBe(9);
     });
 
     it("delete with a matching expectedVersion removes the definition", async () => {
       const registry = makeRegistry();
-      await registry.save(definition(), INITIAL_SEGMENT_DEFINITION_VERSION);
+      await registry.save(definition(), tenantId, INITIAL_SEGMENT_DEFINITION_VERSION);
 
-      await registry.delete("high_value", 1);
-      expect(await registry.getById("high_value")).toBeNull();
-      expect(await registry.list()).toEqual([]);
+      await registry.delete("high_value", 1, tenantId);
+      expect(await registry.getById("high_value", tenantId)).toBeNull();
+      expect(await registry.list(tenantId)).toEqual([]);
     });
 
     it("delete with a stale expectedVersion rejects with ConcurrencyError and never deletes", async () => {
       const registry = makeRegistry();
-      await registry.save(definition(), INITIAL_SEGMENT_DEFINITION_VERSION);
+      await registry.save(definition(), tenantId, INITIAL_SEGMENT_DEFINITION_VERSION);
 
-      await expect(registry.delete("high_value", 5)).rejects.toBeInstanceOf(ConcurrencyError);
-      expect(await registry.getById("high_value")).not.toBeNull();
+      await expect(registry.delete("high_value", 5, tenantId)).rejects.toBeInstanceOf(
+        ConcurrencyError,
+      );
+      expect(await registry.getById("high_value", tenantId)).not.toBeNull();
     });
 
     it("delete of a non-existent id rejects with ConcurrencyError", async () => {
       const registry = makeRegistry();
-      await expect(registry.delete("does_not_exist", 1)).rejects.toBeInstanceOf(ConcurrencyError);
+      await expect(registry.delete("does_not_exist", 1, tenantId)).rejects.toBeInstanceOf(
+        ConcurrencyError,
+      );
     });
 
     it("list reports every saved definition exactly once", async () => {
       const registry = makeRegistry();
-      await registry.save(definition({ id: "high_value" }), INITIAL_SEGMENT_DEFINITION_VERSION);
+      await registry.save(
+        definition({ id: "high_value" }),
+        tenantId,
+        INITIAL_SEGMENT_DEFINITION_VERSION,
+      );
       await registry.save(
         definition({ id: "churn_risk", name: "Churn risk" }),
+        tenantId,
         INITIAL_SEGMENT_DEFINITION_VERSION,
       );
       // Re-saving the first must not duplicate it in the listing.
-      await registry.save(definition({ id: "high_value", name: "High value v2", version: 2 }), 1);
+      await registry.save(
+        definition({ id: "high_value", name: "High value v2", version: 2 }),
+        tenantId,
+        1,
+      );
 
-      const all = await registry.list();
+      const all = await registry.list(tenantId);
       expect(all.map((d) => d.id).sort()).toEqual(["churn_risk", "high_value"]);
+    });
+
+    it("isolates tenants — a definition saved under one tenant is invisible to, and undeletable by, another (ADR-0014)", async () => {
+      const registry = makeRegistry();
+      const otherTenant = `${tenantId}-other`;
+
+      await registry.save(definition(), tenantId, INITIAL_SEGMENT_DEFINITION_VERSION);
+
+      expect(await registry.list(otherTenant)).toEqual([]);
+      expect(await registry.getById("high_value", otherTenant)).toBeNull();
+      await expect(registry.delete("high_value", 1, otherTenant)).rejects.toThrow(ConcurrencyError);
+      expect(await registry.getById("high_value", tenantId)).not.toBeNull();
+
+      // The same id can be created independently under the other tenant.
+      await registry.save(
+        definition({ name: "Other tenant's" }),
+        otherTenant,
+        INITIAL_SEGMENT_DEFINITION_VERSION,
+      );
+      expect((await registry.getById("high_value", tenantId))?.name).toBe("High value");
     });
   });
 }

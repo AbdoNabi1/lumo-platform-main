@@ -33,7 +33,7 @@ const ids: IdGenerator = { generate: () => crypto.randomUUID() };
  */
 const T0 = "2026-07-20T23:59:59.000Z";
 
-function wire(tenantId: string) {
+function wire() {
   const prisma = createTestPrismaClient(databaseUrl);
   const outbox = new OutboxWriter({
     store: new PrismaOutboxStore(prisma),
@@ -43,28 +43,26 @@ function wire(tenantId: string) {
     producer: "customer360",
   });
   const context = rootEventContext(ids);
-  const store = new PrismaSessionStore({ prisma, idGenerator: ids, tenantId });
+  const store = new PrismaSessionStore({ prisma, idGenerator: ids });
   const history = new PrismaSessionHistoryStore({
     prisma,
     outbox,
     context,
     idGenerator: ids,
-    tenantId,
   });
-  const journey = new PrismaJourneyStore({ prisma, outbox, context, idGenerator: ids, tenantId });
+  const journey = new PrismaJourneyStore({ prisma, outbox, context, idGenerator: ids });
   const unitOfWork = new PrismaUnitOfWork(prisma);
   return { store, history, journey, unitOfWork };
 }
 
 describe.runIf(Boolean(databaseUrl))("Prisma Session Stitching stores (integration)", () => {
   runSessionStoreContractTests("prisma", () => {
-    const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    return wire(tenantId).store;
+    return wire().store;
   });
 
   it("appends a snapshot inside a transaction and rehydrates it via listFor/latestFor", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { history, unitOfWork } = wire(tenantId);
+    const { history, unitOfWork } = wire();
     const session = openSession({
       sessionId: `sess-${crypto.randomUUID()}`,
       visitorId: "v1",
@@ -81,20 +79,25 @@ describe.runIf(Boolean(databaseUrl))("Prisma Session Stitching stores (integrati
     );
 
     await unitOfWork.run(async (tx) => {
-      await history.append(snapshot, event, tx);
+      await history.append(snapshot, tenantId, event, tx);
     });
 
-    const listed = await history.listFor(session.sessionId);
+    const listed = await history.listFor(session.sessionId, tenantId);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.status).toBe("open");
 
-    const latest = await history.latestFor(session.sessionId);
+    const latest = await history.latestFor(session.sessionId, tenantId);
     expect(latest?.reason).toBe("started");
+
+    // ADR-0014: a second tenant sees none of it.
+    const otherTenant = `${tenantId}-other`;
+    expect(await history.listFor(session.sessionId, otherTenant)).toEqual([]);
+    expect(await history.latestFor(session.sessionId, otherTenant)).toBeNull();
   });
 
   it("append rejects a call without a transaction client (ADR-0003)", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { history } = wire(tenantId);
+    const { history } = wire();
     const session = openSession({
       sessionId: `sess-${crypto.randomUUID()}`,
       visitorId: "v1",
@@ -102,12 +105,14 @@ describe.runIf(Boolean(databaseUrl))("Prisma Session Stitching stores (integrati
     });
     const snapshot = toSnapshot(session, "started", clock.now().toISOString());
 
-    await expect(history.append(snapshot, undefined)).rejects.toThrow(/transaction client/);
+    await expect(history.append(snapshot, tenantId, undefined)).rejects.toThrow(
+      /transaction client/,
+    );
   });
 
   it("journey.record persists a transition and rejects a call without a transaction client", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { journey, unitOfWork } = wire(tenantId);
+    const { journey, unitOfWork } = wire();
     const visitorId = `v-${crypto.randomUUID()}`;
 
     await unitOfWork.run(async (tx) => {
@@ -120,22 +125,30 @@ describe.runIf(Boolean(databaseUrl))("Prisma Session Stitching stores (integrati
           toSessionId: "b",
           occurredAt: clock.now().toISOString(),
         },
+        tenantId,
         undefined,
         tx,
       );
     });
 
-    const listed = await journey.listForVisitor(visitorId);
+    const listed = await journey.listForVisitor(visitorId, tenantId);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.kind).toBe("timed_out");
 
+    // ADR-0014: a second tenant sees none of it.
+    const otherTenant = `${tenantId}-other`;
+    expect(await journey.listForVisitor(visitorId, otherTenant)).toEqual([]);
+
     await expect(
-      journey.record({
-        id: ids.generate(),
-        kind: "timed_out",
-        visitorId,
-        occurredAt: clock.now().toISOString(),
-      }),
+      journey.record(
+        {
+          id: ids.generate(),
+          kind: "timed_out",
+          visitorId,
+          occurredAt: clock.now().toISOString(),
+        },
+        tenantId,
+      ),
     ).rejects.toThrow(/transaction client/);
   });
 });

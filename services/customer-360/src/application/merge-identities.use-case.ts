@@ -11,6 +11,9 @@ import type { IdentityDecisionStore } from "../ports/identity-decision-store";
 import type { IdentityGraphStore } from "../ports/identity-graph-store";
 
 export interface MergeIdentitiesInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly subject: IdentifierRef;
   readonly related: IdentifierRef;
   readonly reason: string;
@@ -93,7 +96,7 @@ export class MergeIdentities implements UseCase<
         },
       );
 
-      await this.deps.graph.appendEdge(edge, undefined, tx);
+      await this.deps.graph.appendEdge(edge, input.tenantId, undefined, tx);
       await this.deps.decisions.record(
         {
           id: decisionId,
@@ -105,6 +108,7 @@ export class MergeIdentities implements UseCase<
           occurredAt: occurredAt.toISOString(),
         },
         event,
+        input.tenantId,
         tx,
       );
 

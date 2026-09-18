@@ -4,13 +4,13 @@ import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { SessionCloseReason } from "../domain/session-boundary";
 import type { SessionSnapshot, SessionSnapshotReason } from "../domain/session-snapshot";
 import type { SessionHistoryStore } from "../ports/session-history-store";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaSessionHistoryStoreDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
   readonly idGenerator: { generate(): string };
-  readonly tenantId: string;
 }
 
 interface SnapshotRow {
@@ -61,12 +61,17 @@ export class PrismaSessionHistoryStore implements SessionHistoryStore {
     this.deps = deps;
   }
 
-  async append(snapshot: SessionSnapshot, event?: DomainEvent, tx?: unknown): Promise<void> {
+  async append(
+    snapshot: SessionSnapshot,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void> {
     const client = this.requireTx(tx);
     await client.sessionSnapshot.create({
       data: {
         id: this.deps.idGenerator.generate(),
-        tenantId: this.deps.tenantId,
+        tenantId,
         sessionId: snapshot.sessionId,
         visitorId: snapshot.visitorId,
         deviceId: snapshot.deviceId,
@@ -88,22 +93,32 @@ export class PrismaSessionHistoryStore implements SessionHistoryStore {
     }
   }
 
-  async listFor(sessionId: string, tx?: unknown): Promise<readonly SessionSnapshot[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.sessionSnapshot.findMany({
-      where: { tenantId: this.deps.tenantId, sessionId },
-      orderBy: { capturedAt: "asc" },
+  async listFor(
+    sessionId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly SessionSnapshot[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.sessionSnapshot.findMany({
+        where: { tenantId, sessionId },
+        orderBy: { capturedAt: "asc" },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
-  async latestFor(sessionId: string, tx?: unknown): Promise<SessionSnapshot | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.sessionSnapshot.findFirst({
-      where: { tenantId: this.deps.tenantId, sessionId },
-      orderBy: { capturedAt: "desc" },
+  async latestFor(
+    sessionId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<SessionSnapshot | null> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.sessionSnapshot.findFirst({
+        where: { tenantId, sessionId },
+        orderBy: { capturedAt: "desc" },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 
   private requireTx(tx: unknown): TransactionClient {

@@ -12,8 +12,13 @@ export interface IdentityGraphStore {
    * outbox in the same unit of work — organic observations always carry one; a merge/split's edge
    * is written silently here because its provenance event is published via
    * {@link IdentityDecisionStore.record} instead, so the fact is published exactly once. */
-  appendEdge(edge: IdentityEdge, event?: DomainEvent, tx?: unknown): Promise<void>;
+  appendEdge(
+    edge: IdentityEdge,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void>;
 
-  /** Rehydrates the full graph from durable storage (tenant-scoped by the adapter). */
-  loadGraph(tx?: unknown): Promise<IdentityGraph>;
+  /** Rehydrates the full graph from durable storage (scoped to the given `tenantId` — never merged across tenants). */
+  loadGraph(tenantId: string, tx?: unknown): Promise<IdentityGraph>;
 }

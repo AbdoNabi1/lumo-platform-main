@@ -8,6 +8,7 @@ import type { ProfileSnapshot } from "../domain/profile-snapshot";
 import type { ProfileHistoryStore } from "../ports/profile-history-store";
 import type { ProfileStore } from "../ports/profile-store";
 import { UpdateProfileProjection } from "./update-profile-projection.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const identifier = { type: "customer_id" as const, value: "cust-1" };
 
@@ -50,6 +51,7 @@ describe("UpdateProfileProjection", () => {
     const deps = fakeDeps();
     const useCase = new UpdateProfileProjection(deps);
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "  ",
       value: "x",
@@ -65,6 +67,7 @@ describe("UpdateProfileProjection", () => {
     const deps = fakeDeps();
     const useCase = new UpdateProfileProjection(deps);
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "email",
       value: "x",
@@ -79,6 +82,7 @@ describe("UpdateProfileProjection", () => {
     const deps = fakeDeps();
     const useCase = new UpdateProfileProjection(deps);
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "email",
       value: "a@example.com",
@@ -99,6 +103,7 @@ describe("UpdateProfileProjection", () => {
     const deps = fakeDeps();
     const useCase = new UpdateProfileProjection(deps);
     await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "email",
       value: "a@example.com",
@@ -107,6 +112,7 @@ describe("UpdateProfileProjection", () => {
       occurredAt: "2026-07-21T00:00:01.000Z",
     });
     const second = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "phone",
       value: "555-0100",
@@ -125,6 +131,7 @@ describe("UpdateProfileProjection", () => {
     const deps = fakeDeps();
     const useCase = new UpdateProfileProjection(deps);
     await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "email",
       value: "current@example.com",
@@ -134,6 +141,7 @@ describe("UpdateProfileProjection", () => {
     });
 
     const stale = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "email",
       value: "late@example.com",

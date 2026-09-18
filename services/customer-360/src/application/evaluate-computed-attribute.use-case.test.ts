@@ -20,6 +20,7 @@ import type {
   GetJourneyStateOutput,
 } from "./get-journey-state.use-case";
 import { EvaluateComputedAttribute } from "./evaluate-computed-attribute.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const identifier = { type: "customer_id" as const, value: "cust-1" };
@@ -97,7 +98,11 @@ describe("EvaluateComputedAttribute", () => {
       clock,
     });
 
-    const result = await useCase.execute({ identifier, definition: isVipDefinition() });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      definition: isVipDefinition(),
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.result.value).toBe(true);
@@ -141,7 +146,11 @@ describe("EvaluateComputedAttribute", () => {
       clock,
     });
 
-    const result = await useCase.execute({ identifier, definition: isVipDefinition() });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      definition: isVipDefinition(),
+    });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.result.value).toBe(false); // fallback
     expect(result.value.result.usedFallback).toBe(true);
@@ -190,7 +199,7 @@ describe("EvaluateComputedAttribute", () => {
       clock,
     });
 
-    const result = await useCase.execute({ identifier, definition });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier, definition });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.result.degraded).toBe(true);
     expect(result.value.result.value).toBeUndefined();
@@ -249,7 +258,7 @@ describe("EvaluateComputedAttribute", () => {
       clock,
     });
 
-    const result = await useCase.execute({ identifier, definition });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier, definition });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.result.value).toBe(true);
     expect(result.value.result.inputs.get("attributes.clv_tier")).toBe("gold");
@@ -276,10 +285,11 @@ describe("EvaluateComputedAttribute", () => {
       clock,
     });
 
-    await useCase.execute({ identifier, definition: isVipDefinition() }); // customer_id, not visitor_id
+    await useCase.execute({ tenantId: TENANT_A, identifier, definition: isVipDefinition() }); // customer_id, not visitor_id
     expect(journeyCalled).toBe(false);
 
     await useCase.execute({
+      tenantId: TENANT_A,
       identifier: { type: "visitor_id", value: "v1" },
       definition: isVipDefinition(),
     });

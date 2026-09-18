@@ -8,6 +8,9 @@ import type { IdentifierRef } from "../ports/identity-decision";
 import type { ResolveIdentity } from "./resolve-identity.use-case";
 
 export interface GetComputedAttributesInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   /** "Now", used only as the merged view's `updatedAt` fallback when every cluster member's own
    * attribute set is itself empty — supplied by the caller so this stays deterministic/testable,
@@ -55,6 +58,7 @@ export class GetComputedAttributes implements UseCase<
     input: GetComputedAttributesInput,
   ): Promise<Result<GetComputedAttributesOutput, DomainError>> {
     const resolved = await this.deps.resolveIdentity.execute({
+      tenantId: input.tenantId,
       type: input.identifier.type,
       value: input.identifier.value,
     });
@@ -71,7 +75,7 @@ export class GetComputedAttributes implements UseCase<
     const memberAttributes: ComputedAttribute[] = [];
     const contributedBy: IdentifierRef[] = [];
     for (const member of members) {
-      const attribute = await this.deps.attributes.getCurrent(member);
+      const attribute = await this.deps.attributes.getCurrent(member, input.tenantId);
       if (attribute !== null) {
         memberAttributes.push(attribute);
         contributedBy.push(member);

@@ -8,11 +8,20 @@ import type { IdentifierRef, IdentityDecision } from "./identity-decision";
  * itself.
  */
 export interface IdentityDecisionStore {
-  record(decision: IdentityDecision, event: DomainEvent, tx?: unknown): Promise<void>;
+  record(
+    decision: IdentityDecision,
+    event: DomainEvent,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<void>;
 
   /** Every merge/split decision touching this identifier, oldest first — the identity timeline. */
-  listFor(identifier: IdentifierRef, tx?: unknown): Promise<readonly IdentityDecision[]>;
+  listFor(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly IdentityDecision[]>;
 
   /** Every edge retracted by a split, across all decisions — resolution excludes these. */
-  retractedEdges(tx?: unknown): Promise<readonly IdentityEdge[]>;
+  retractedEdges(tenantId: string, tx?: unknown): Promise<readonly IdentityEdge[]>;
 }

@@ -1,17 +1,17 @@
-﻿import type { IdGenerator } from "@platform/contracts";
+import type { IdGenerator } from "@platform/contracts";
 import type { Database, TransactionClient } from "@platform/db";
 import type { DomainEvent } from "@platform/domain";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { IdentifierType, IdentityConfidence, IdentityEdge } from "@platform/tracking";
 import type { IdentifierRef, IdentityDecision } from "../ports/identity-decision";
 import type { IdentityDecisionStore } from "../ports/identity-decision-store";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaIdentityDecisionStoreDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
   readonly idGenerator: IdGenerator;
-  readonly tenantId: string;
 }
 
 /** Production `IdentityDecisionStore` on the `customer_360` schema. Append-only, same discipline
@@ -23,12 +23,17 @@ export class PrismaIdentityDecisionStore implements IdentityDecisionStore {
     this.deps = deps;
   }
 
-  async record(decision: IdentityDecision, event: DomainEvent, tx?: unknown): Promise<void> {
+  async record(
+    decision: IdentityDecision,
+    event: DomainEvent,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<void> {
     const client = this.requireTx(tx);
     await client.identityDecision.create({
       data: {
         id: decision.id,
-        tenantId: this.deps.tenantId,
+        tenantId,
         kind: decision.kind,
         subjectType: decision.subject.type,
         subjectValue: decision.subject.value,
@@ -52,32 +57,38 @@ export class PrismaIdentityDecisionStore implements IdentityDecisionStore {
     await this.deps.outbox.write([event], this.deps.context, client);
   }
 
-  async listFor(identifier: IdentifierRef, tx?: unknown): Promise<readonly IdentityDecision[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.identityDecision.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        OR: [
-          { subjectType: identifier.type, subjectValue: identifier.value },
-          { relatedType: identifier.type, relatedValue: identifier.value },
-        ],
-      },
-      orderBy: { occurredAt: "asc" },
+  async listFor(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly IdentityDecision[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.identityDecision.findMany({
+        where: {
+          tenantId,
+          OR: [
+            { subjectType: identifier.type, subjectValue: identifier.value },
+            { relatedType: identifier.type, relatedValue: identifier.value },
+          ],
+        },
+        orderBy: { occurredAt: "asc" },
+      });
+      return rows.map(toDomainDecision);
     });
-    return rows.map(toDomainDecision);
   }
 
-  async retractedEdges(tx?: unknown): Promise<readonly IdentityEdge[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.identityDecision.findMany({
-      where: { tenantId: this.deps.tenantId, kind: "split" },
+  async retractedEdges(tenantId: string, tx?: unknown): Promise<readonly IdentityEdge[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.identityDecision.findMany({
+        where: { tenantId, kind: "split" },
+      });
+      const edges: IdentityEdge[] = [];
+      for (const row of rows) {
+        const edge = toRetractedEdge(row);
+        if (edge !== undefined) edges.push(edge);
+      }
+      return edges;
     });
-    const edges: IdentityEdge[] = [];
-    for (const row of rows) {
-      const edge = toRetractedEdge(row);
-      if (edge !== undefined) edges.push(edge);
-    }
-    return edges;
   }
 
   private requireTx(tx: unknown): TransactionClient {

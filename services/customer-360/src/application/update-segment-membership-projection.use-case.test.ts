@@ -15,6 +15,7 @@ import { InMemorySegmentStore } from "../infrastructure/in-memory-segment-store"
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import type { SegmentEvaluationResult } from "../ports/segment-evaluation";
 import { UpdateSegmentMembershipProjection } from "./update-segment-membership-projection.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -76,7 +77,11 @@ function evaluationResult(
 describe("UpdateSegmentMembershipProjection", () => {
   it("persists the first membership ever and publishes CustomerEnteredSegment", async () => {
     const { useCase, segments, relay } = wire();
-    const result = await useCase.execute({ identifier, result: evaluationResult() });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      result: evaluationResult(),
+    });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
@@ -84,15 +89,16 @@ describe("UpdateSegmentMembershipProjection", () => {
     expect(result.value.transition).toBe("entered");
     expect(result.value.version).toBe(1);
 
-    const stored = await segments.getCurrent(identifier, segmentId);
+    const stored = await segments.getCurrent(identifier, segmentId, TENANT_A);
     expect(stored?.status).toBe("entered");
     expect(await relay.drainOnce()).toBe(1);
   });
 
   it("is a no-op (applied: false) when re-evaluated with the same status and definitionVersion", async () => {
     const { useCase } = wire();
-    await useCase.execute({ identifier, result: evaluationResult() });
+    await useCase.execute({ tenantId: TENANT_A, identifier, result: evaluationResult() });
     const second = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult({ evaluatedAt: "t5" }),
     });
@@ -106,6 +112,7 @@ describe("UpdateSegmentMembershipProjection", () => {
   it("is a no-op when an identifier that was never a member evaluates to not-a-member", async () => {
     const { useCase, segments, relay } = wire();
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult({ isMember: false }),
     });
@@ -113,16 +120,17 @@ describe("UpdateSegmentMembershipProjection", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.applied).toBe(false);
-    expect(await segments.getCurrent(identifier, segmentId)).toBeNull();
+    expect(await segments.getCurrent(identifier, segmentId, TENANT_A)).toBeNull();
     expect(await relay.drainOnce()).toBe(0);
   });
 
   it("transitions to exited and publishes CustomerExitedSegment when membership ends", async () => {
     const { useCase, relay } = wire();
-    await useCase.execute({ identifier, result: evaluationResult() });
+    await useCase.execute({ tenantId: TENANT_A, identifier, result: evaluationResult() });
     await relay.drainOnce();
 
     const second = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult({ isMember: false, evaluatedAt: "2026-07-22T00:00:00.000Z" }),
     });
@@ -135,10 +143,11 @@ describe("UpdateSegmentMembershipProjection", () => {
 
   it("applies but publishes nothing when definitionVersion bumps with status unchanged", async () => {
     const { useCase, segments, relay } = wire();
-    await useCase.execute({ identifier, result: evaluationResult() });
+    await useCase.execute({ tenantId: TENANT_A, identifier, result: evaluationResult() });
     await relay.drainOnce();
 
     const second = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult({ definitionVersion: 2, evaluatedAt: "2026-07-22T00:00:00.000Z" }),
     });
@@ -148,19 +157,20 @@ describe("UpdateSegmentMembershipProjection", () => {
     expect(second.value.transition).toBe("unchanged");
     expect(await relay.drainOnce()).toBe(0);
 
-    const stored = await segments.getCurrent(identifier, segmentId);
+    const stored = await segments.getCurrent(identifier, segmentId, TENANT_A);
     expect(stored?.definitionVersion).toBe(2);
   });
 
   it("appends a history entry for an applied refresh even though nothing transitioned", async () => {
     const { useCase, history } = wire();
-    await useCase.execute({ identifier, result: evaluationResult() });
+    await useCase.execute({ tenantId: TENANT_A, identifier, result: evaluationResult() });
     await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult({ definitionVersion: 2, evaluatedAt: "2026-07-22T00:00:00.000Z" }),
     });
 
-    const entries = await history.listFor(identifier, segmentId);
+    const entries = await history.listFor(identifier, segmentId, TENANT_A);
     expect(entries.map((e) => e.reason)).toEqual(["entered", "refreshed"]);
   });
 });

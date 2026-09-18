@@ -15,6 +15,7 @@ import { toSnapshot } from "../domain/attribute-snapshot";
 import { AttributeCreated } from "../events/attribute-created.event";
 import { IdentityEventTranslator } from "./identity-event-translator";
 import { InMemoryAttributeHistoryStore } from "./in-memory-attribute-history-store";
+import { TENANT_A, TENANT_B } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -74,26 +75,35 @@ describe("InMemoryAttributeHistoryStore", () => {
       },
     );
 
-    await history.append(toSnapshot(attributeSet(), "created", "t0"), event);
-    const listed = await history.listFor(identifier);
+    await history.append(toSnapshot(attributeSet(), "created", "t0"), TENANT_A, event);
+    const listed = await history.listFor(identifier, TENANT_A);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.reason).toBe("created");
   });
 
   it("latestFor returns null when there is no history, and the last snapshot otherwise", async () => {
     const { history } = wire();
-    expect(await history.latestFor(identifier)).toBeNull();
+    expect(await history.latestFor(identifier, TENANT_A)).toBeNull();
 
-    await history.append(toSnapshot(attributeSet(), "created", "t0"), undefined);
-    await history.append(toSnapshot(attributeSet(), "updated", "t1"), undefined);
+    await history.append(toSnapshot(attributeSet(), "created", "t0"), TENANT_A, undefined);
+    await history.append(toSnapshot(attributeSet(), "updated", "t1"), TENANT_A, undefined);
 
-    const latest = await history.latestFor(identifier);
+    const latest = await history.latestFor(identifier, TENANT_A);
     expect(latest?.reason).toBe("updated");
   });
 
   it("publishes an event only when one is supplied (RebuildComputedAttributes calls with none)", async () => {
     const { history, relay } = wire();
-    await history.append(toSnapshot(attributeSet(), "rebuilt", "t0"), undefined);
+    await history.append(toSnapshot(attributeSet(), "rebuilt", "t0"), TENANT_A, undefined);
     expect(await relay.drainOnce()).toBe(0);
+  });
+
+  it("isolates tenants — a snapshot appended under one tenant is invisible to another (ADR-0014)", async () => {
+    const { history } = wire();
+    await history.append(toSnapshot(attributeSet(), "created", "t0"), TENANT_A);
+
+    expect(await history.listFor(identifier, TENANT_B)).toEqual([]);
+    expect(await history.latestFor(identifier, TENANT_B)).toBeNull();
+    expect(await history.listFor(identifier, TENANT_A)).toHaveLength(1);
   });
 });

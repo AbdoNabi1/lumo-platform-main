@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { closeSession, openSession } from "../domain/customer-session";
 import type { SessionStore } from "../ports/session-store";
 
@@ -21,9 +21,15 @@ export function runSessionStoreContractTests(
   makeStore: () => SessionStore,
 ): void {
   describe(`SessionStore contract — ${adapterName}`, () => {
+    // A fresh tenant per test keeps the Prisma run isolated from rows earlier tests left behind.
+    let tenantId: string;
+    beforeEach(() => {
+      tenantId = `tenant-contract-${crypto.randomUUID()}`;
+    });
+
     it("getCurrent returns null for a session that was never saved", async () => {
       const store = makeStore();
-      expect(await store.getCurrent(`contract-${adapterName}-missing`)).toBeNull();
+      expect(await store.getCurrent(`contract-${adapterName}-missing`, tenantId)).toBeNull();
     });
 
     it("saveCurrent then getCurrent round-trips status/version/pageCount", async () => {
@@ -35,8 +41,8 @@ export function runSessionStoreContractTests(
         startedAt: "2026-07-21T00:00:00.000Z",
       });
 
-      await store.saveCurrent(session);
-      const loaded = await store.getCurrent(sessionId);
+      await store.saveCurrent(session, tenantId);
+      const loaded = await store.getCurrent(sessionId, tenantId);
 
       expect(loaded).not.toBeNull();
       expect(loaded?.status).toBe("open");
@@ -50,9 +56,9 @@ export function runSessionStoreContractTests(
       const opened = openSession({ sessionId, visitorId: "visitor-1", startedAt: T0 });
       const closed = closeSession(opened, "manual_logout", T1);
 
-      await store.saveCurrent(opened);
-      await store.saveCurrent(closed);
-      const loaded = await store.getCurrent(sessionId);
+      await store.saveCurrent(opened, tenantId);
+      await store.saveCurrent(closed, tenantId);
+      const loaded = await store.getCurrent(sessionId, tenantId);
 
       expect(loaded?.status).toBe("closed");
       expect(loaded?.closeReason).toBe("manual_logout");
@@ -73,11 +79,11 @@ export function runSessionStoreContractTests(
         startedAt: T0,
       });
 
-      await store.saveCurrent(open);
-      await store.saveCurrent(closed);
-      await store.saveCurrent(otherVisitor);
+      await store.saveCurrent(open, tenantId);
+      await store.saveCurrent(closed, tenantId);
+      await store.saveCurrent(otherVisitor, tenantId);
 
-      const result = await store.listOpenForVisitor(visitorId);
+      const result = await store.listOpenForVisitor(visitorId, tenantId);
       expect(result.map((s) => s.sessionId)).toEqual([open.sessionId]);
     });
 
@@ -91,13 +97,30 @@ export function runSessionStoreContractTests(
         T1,
       );
 
-      await store.saveCurrent(open);
-      await store.saveCurrent(closed);
+      await store.saveCurrent(open, tenantId);
+      await store.saveCurrent(closed, tenantId);
 
-      const result = await store.listForVisitor(visitorId);
+      const result = await store.listForVisitor(visitorId, tenantId);
       expect(result.map((s) => s.sessionId).sort()).toEqual(
         [open.sessionId, closed.sessionId].sort(),
       );
+    });
+
+    it("isolates tenants — a session saved under one tenant is invisible to another (ADR-0014)", async () => {
+      const store = makeStore();
+      const otherTenant = `${tenantId}-other`;
+      const sessionId = `contract-${adapterName}-iso`;
+
+      await store.saveCurrent(
+        openSession({ sessionId, visitorId: "visitor-iso", startedAt: "2026-07-21T00:00:00.000Z" }),
+        tenantId,
+      );
+
+      expect(await store.getCurrent(sessionId, otherTenant)).toBeNull();
+      expect(await store.listOpenForVisitor("visitor-iso", otherTenant)).toEqual([]);
+      expect(await store.listForVisitor("visitor-iso", otherTenant)).toEqual([]);
+      expect(await store.listSessionIds(otherTenant)).toEqual([]);
+      expect(await store.listSessionIds(tenantId)).toEqual([sessionId]);
     });
   });
 }

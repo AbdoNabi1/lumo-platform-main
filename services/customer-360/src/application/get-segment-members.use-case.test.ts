@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { applyMembershipUpdate } from "../domain/segment-membership";
 import { InMemorySegmentStore } from "../infrastructure/in-memory-segment-store";
 import { GetSegmentMembers } from "./get-segment-members.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const memberA = { type: "customer_id" as const, value: "cust-a" };
 const memberB = { type: "customer_id" as const, value: "cust-b" };
@@ -19,6 +20,7 @@ describe("GetSegmentMembers", () => {
         inputs: new Map(),
         evaluatedAt: "t0",
       }).membership!,
+      TENANT_A,
     );
     const bExited = applyMembershipUpdate(
       applyMembershipUpdate(null, memberB.type, memberB.value, segmentId, {
@@ -41,21 +43,21 @@ describe("GetSegmentMembers", () => {
         evaluatedAt: "t1",
       },
     ).membership!;
-    await segments.saveCurrent(bExited);
+    await segments.saveCurrent(bExited, TENANT_A);
 
     const useCase = new GetSegmentMembers({ segments });
-    const entered = await useCase.execute({ segmentId });
+    const entered = await useCase.execute({ tenantId: TENANT_A, segmentId });
     if (!entered.ok) throw new Error("unreachable");
     expect(entered.value.members.map((m) => m.identifierValue)).toEqual([memberA.value]);
 
-    const exited = await useCase.execute({ segmentId, status: "exited" });
+    const exited = await useCase.execute({ tenantId: TENANT_A, segmentId, status: "exited" });
     if (!exited.ok) throw new Error("unreachable");
     expect(exited.value.members.map((m) => m.identifierValue)).toEqual([memberB.value]);
   });
 
   it("returns an empty list for a segment with no members", async () => {
     const useCase = new GetSegmentMembers({ segments: new InMemorySegmentStore() });
-    const result = await useCase.execute({ segmentId: "nobody_here" });
+    const result = await useCase.execute({ tenantId: TENANT_A, segmentId: "nobody_here" });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.members).toEqual([]);
   });

@@ -15,6 +15,7 @@ import { InMemoryAttributeStore } from "../infrastructure/in-memory-attribute-st
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import type { AttributeEvaluationResult } from "../ports/attribute-evaluation";
 import { UpdateComputedAttributeProjection } from "./update-computed-attribute-projection.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -74,22 +75,27 @@ function evaluationResult(
 describe("UpdateComputedAttributeProjection", () => {
   it("persists the first evaluated value ever and publishes AttributeCreated", async () => {
     const { useCase, attributes, relay } = wire();
-    const result = await useCase.execute({ identifier, result: evaluationResult() });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      result: evaluationResult(),
+    });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.applied).toBe(true);
     expect(result.value.version).toBe(1);
 
-    const stored = await attributes.getCurrent(identifier);
+    const stored = await attributes.getCurrent(identifier, TENANT_A);
     expect(stored?.attributes.get("is_vip")?.value).toBe(true);
     expect(await relay.drainOnce()).toBe(1);
   });
 
   it("is a no-op (applied: false) when re-persisting the same value from the same definition version", async () => {
     const { useCase } = wire();
-    await useCase.execute({ identifier, result: evaluationResult() });
+    await useCase.execute({ tenantId: TENANT_A, identifier, result: evaluationResult() });
     const second = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult({ evaluatedAt: "t5" }),
     });
@@ -101,10 +107,11 @@ describe("UpdateComputedAttributeProjection", () => {
 
   it("applies and publishes AttributeUpdated when the value actually changes", async () => {
     const { useCase, relay } = wire();
-    await useCase.execute({ identifier, result: evaluationResult() });
+    await useCase.execute({ tenantId: TENANT_A, identifier, result: evaluationResult() });
     await relay.drainOnce();
 
     const second = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult({ value: false, evaluatedAt: "t5" }),
     });
@@ -118,6 +125,7 @@ describe("UpdateComputedAttributeProjection", () => {
   it("persists nothing and publishes nothing when the evaluation produced no value (no rule matched, no fallback)", async () => {
     const { useCase, attributes, relay } = wire();
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult({ value: undefined, matchedRuleIds: [] }),
     });
@@ -125,7 +133,7 @@ describe("UpdateComputedAttributeProjection", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.applied).toBe(false);
-    expect(await attributes.getCurrent(identifier)).toBeNull();
+    expect(await attributes.getCurrent(identifier, TENANT_A)).toBeNull();
     expect(await relay.drainOnce()).toBe(0);
   });
 });

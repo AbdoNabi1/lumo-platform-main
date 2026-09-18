@@ -23,6 +23,7 @@ import type {
   GetJourneyStateOutput,
 } from "./get-journey-state.use-case";
 import { EvaluateSegment } from "./evaluate-segment.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const identifier = { type: "customer_id" as const, value: "cust-1" };
@@ -107,7 +108,11 @@ describe("EvaluateSegment", () => {
       clock,
     });
 
-    const result = await useCase.execute({ identifier, definition: highValueDefinition() });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      definition: highValueDefinition(),
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.result.isMember).toBe(true);
@@ -145,7 +150,11 @@ describe("EvaluateSegment", () => {
       clock,
     });
 
-    const result = await useCase.execute({ identifier, definition: highValueDefinition() });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      definition: highValueDefinition(),
+    });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.result.isMember).toBe(false);
     expect(result.value.result.usedFallback).toBe(true);
@@ -206,7 +215,7 @@ describe("EvaluateSegment", () => {
       clock,
     });
 
-    const result = await useCase.execute({ identifier, definition });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier, definition });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.result.isMember).toBe(true);
     expect(result.value.result.inputs.get("attributes.clv_tier")).toBe("gold");
@@ -233,10 +242,11 @@ describe("EvaluateSegment", () => {
       clock,
     });
 
-    await useCase.execute({ identifier, definition: highValueDefinition() }); // customer_id, not visitor_id
+    await useCase.execute({ tenantId: TENANT_A, identifier, definition: highValueDefinition() }); // customer_id, not visitor_id
     expect(journeyCalled).toBe(false);
 
     await useCase.execute({
+      tenantId: TENANT_A,
       identifier: { type: "visitor_id", value: "v1" },
       definition: highValueDefinition(),
     });

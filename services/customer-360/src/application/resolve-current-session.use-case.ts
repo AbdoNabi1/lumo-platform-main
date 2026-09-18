@@ -7,6 +7,9 @@ import type { SessionStore } from "../ports/session-store";
 import type { ResolveIdentity } from "./resolve-identity.use-case";
 
 export interface ResolveCurrentSessionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: { readonly type: IdentifierType; readonly value: string };
 }
 
@@ -47,7 +50,10 @@ export class ResolveCurrentSession implements UseCase<
   async execute(
     input: ResolveCurrentSessionInput,
   ): Promise<Result<ResolveCurrentSessionOutput, DomainError>> {
-    const resolved = await this.deps.resolveIdentity.execute(input.identifier);
+    const resolved = await this.deps.resolveIdentity.execute({
+      tenantId: input.tenantId,
+      ...input.identifier,
+    });
     if (!resolved.ok) return resolved;
 
     const visitorIds: readonly string[] =
@@ -65,7 +71,7 @@ export class ResolveCurrentSession implements UseCase<
 
     let current: CustomerSession | null = null;
     for (const visitorId of visitorIds) {
-      const open = await this.deps.sessions.listOpenForVisitor(visitorId);
+      const open = await this.deps.sessions.listOpenForVisitor(visitorId, input.tenantId);
       for (const session of open) {
         if (current === null || session.lastActivityAt > current.lastActivityAt) {
           current = session;

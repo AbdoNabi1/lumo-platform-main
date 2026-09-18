@@ -1,12 +1,12 @@
-import type { Database, Prisma, TransactionClient } from "@platform/db";
+import type { Database, Prisma } from "@platform/db";
 import type { RuleSet } from "@platform/rules";
 import type { AttributeValue } from "../domain/attribute-value";
 import type { AttributeDefinitionRegistry } from "../ports/attribute-definition-registry";
 import type { ComputedAttributeDefinition } from "../ports/computed-attribute-definition";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaAttributeDefinitionRegistryDeps {
   readonly prisma: Database;
-  readonly tenantId: string;
 }
 
 interface DefinitionRow {
@@ -50,20 +50,26 @@ export class PrismaAttributeDefinitionRegistry implements AttributeDefinitionReg
     this.deps = deps;
   }
 
-  async list(tx?: unknown): Promise<readonly ComputedAttributeDefinition[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.computedAttributeDefinition.findMany({
-      where: { tenantId: this.deps.tenantId },
+  async list(tenantId: string, tx?: unknown): Promise<readonly ComputedAttributeDefinition[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.computedAttributeDefinition.findMany({
+        where: { tenantId },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
-  async getById(id: string, tx?: unknown): Promise<ComputedAttributeDefinition | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.computedAttributeDefinition.findUnique({
-      where: { tenantId_definitionId: { tenantId: this.deps.tenantId, definitionId: id } },
+  async getById(
+    id: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<ComputedAttributeDefinition | null> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.computedAttributeDefinition.findUnique({
+        where: { tenantId_definitionId: { tenantId, definitionId: id } },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 }
 

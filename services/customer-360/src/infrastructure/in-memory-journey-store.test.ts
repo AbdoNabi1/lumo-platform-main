@@ -13,6 +13,7 @@ import { UniqueEntityId } from "@platform/domain";
 import { SessionMerged } from "../events/session-merged.event";
 import { IdentityEventTranslator } from "./identity-event-translator";
 import { InMemoryJourneyStore } from "./in-memory-journey-store";
+import { TENANT_A, TENANT_B } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -40,16 +41,19 @@ function wire() {
 describe("InMemoryJourneyStore", () => {
   it("records a transition silently (no event) for organic kinds", async () => {
     const { journey, relay } = wire();
-    await journey.record({
-      id: "t1",
-      kind: "timed_out",
-      visitorId: "v1",
-      fromSessionId: "s1",
-      toSessionId: "s2",
-      occurredAt: "t1",
-    });
+    await journey.record(
+      {
+        id: "t1",
+        kind: "timed_out",
+        visitorId: "v1",
+        fromSessionId: "s1",
+        toSessionId: "s2",
+        occurredAt: "t1",
+      },
+      TENANT_A,
+    );
     expect(await relay.drainOnce()).toBe(0);
-    expect(await journey.listForVisitor("v1")).toHaveLength(1);
+    expect(await journey.listForVisitor("v1", TENANT_A)).toHaveLength(1);
   });
 
   it("publishes the supplied event for explicit kinds", async () => {
@@ -76,6 +80,7 @@ describe("InMemoryJourneyStore", () => {
         actor: "a",
         occurredAt: "t1",
       },
+      TENANT_A,
       event,
     );
     expect(await relay.drainOnce()).toBe(1);
@@ -83,10 +88,27 @@ describe("InMemoryJourneyStore", () => {
 
   it("listForVisitor filters to only that visitor's transitions", async () => {
     const { journey } = wire();
-    await journey.record({ id: "t1", kind: "timed_out", visitorId: "v1", occurredAt: "t1" });
-    await journey.record({ id: "t2", kind: "timed_out", visitorId: "v2", occurredAt: "t1" });
+    await journey.record(
+      { id: "t1", kind: "timed_out", visitorId: "v1", occurredAt: "t1" },
+      TENANT_A,
+    );
+    await journey.record(
+      { id: "t2", kind: "timed_out", visitorId: "v2", occurredAt: "t1" },
+      TENANT_A,
+    );
 
-    const result = await journey.listForVisitor("v1");
+    const result = await journey.listForVisitor("v1", TENANT_A);
     expect(result.map((t) => t.id)).toEqual(["t1"]);
+  });
+
+  it("isolates tenants — a transition recorded under one tenant is invisible to another (ADR-0014)", async () => {
+    const { journey } = wire();
+    await journey.record(
+      { id: "t1", kind: "timed_out", visitorId: "v1", fromSessionId: "s1", occurredAt: "t1" },
+      TENANT_A,
+    );
+
+    expect(await journey.listForVisitor("v1", TENANT_B)).toEqual([]);
+    expect(await journey.listForVisitor("v1", TENANT_A)).toHaveLength(1);
   });
 });

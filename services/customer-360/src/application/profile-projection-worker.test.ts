@@ -12,6 +12,7 @@ import type { ProfileHistoryStore } from "../ports/profile-history-store";
 import type { ProfileStore } from "../ports/profile-store";
 import { RebuildProfileProjection } from "./rebuild-profile-projection.use-case";
 import { ProfileProjectionWorker } from "./profile-projection-worker";
+import { TENANT_A } from "../test-support/tenants";
 
 function wire(seedProfiles: readonly CustomerProfile[]) {
   const current = new Map<string, CustomerProfile>();
@@ -74,7 +75,7 @@ describe("ProfileProjectionWorker", () => {
     }).profile;
 
     const { worker } = wire([a, b]);
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
@@ -99,7 +100,7 @@ describe("ProfileProjectionWorker", () => {
     } as unknown as RebuildProfileProjection;
     const workerWithOneBadDep = new ProfileProjectionWorker({ profiles, rebuild: failingRebuild });
 
-    const result = await workerWithOneBadDep.execute({});
+    const result = await workerWithOneBadDep.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 0, failed: 1 });
@@ -107,7 +108,7 @@ describe("ProfileProjectionWorker", () => {
 
   it("reports rebuilt: 0, failed: 0 when there is nothing to rebuild yet", async () => {
     const { worker } = wire([]);
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 0, failed: 0 });

@@ -5,13 +5,13 @@ import type { AttributeSnapshot, AttributeSnapshotReason } from "../domain/attri
 import type { AttributeHistoryStore } from "../ports/attribute-history-store";
 import type { IdentifierRef } from "../ports/identity-decision";
 import { attributesToJson, jsonToAttributes } from "./attribute-fields-json";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaAttributeHistoryStoreDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
   readonly idGenerator: { generate(): string };
-  readonly tenantId: string;
 }
 
 interface SnapshotRow {
@@ -46,12 +46,17 @@ export class PrismaAttributeHistoryStore implements AttributeHistoryStore {
     this.deps = deps;
   }
 
-  async append(snapshot: AttributeSnapshot, event?: DomainEvent, tx?: unknown): Promise<void> {
+  async append(
+    snapshot: AttributeSnapshot,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void> {
     const client = this.requireTx(tx);
     await client.computedAttributeSnapshot.create({
       data: {
         id: this.deps.idGenerator.generate(),
-        tenantId: this.deps.tenantId,
+        tenantId,
         identifierType: snapshot.identifierType,
         identifierValue: snapshot.identifierValue,
         version: snapshot.version,
@@ -65,30 +70,40 @@ export class PrismaAttributeHistoryStore implements AttributeHistoryStore {
     }
   }
 
-  async listFor(identifier: IdentifierRef, tx?: unknown): Promise<readonly AttributeSnapshot[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.computedAttributeSnapshot.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        identifierType: identifier.type,
-        identifierValue: identifier.value,
-      },
-      orderBy: { capturedAt: "asc" },
+  async listFor(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly AttributeSnapshot[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.computedAttributeSnapshot.findMany({
+        where: {
+          tenantId,
+          identifierType: identifier.type,
+          identifierValue: identifier.value,
+        },
+        orderBy: { capturedAt: "asc" },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
-  async latestFor(identifier: IdentifierRef, tx?: unknown): Promise<AttributeSnapshot | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.computedAttributeSnapshot.findFirst({
-      where: {
-        tenantId: this.deps.tenantId,
-        identifierType: identifier.type,
-        identifierValue: identifier.value,
-      },
-      orderBy: { capturedAt: "desc" },
+  async latestFor(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<AttributeSnapshot | null> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.computedAttributeSnapshot.findFirst({
+        where: {
+          tenantId,
+          identifierType: identifier.type,
+          identifierValue: identifier.value,
+        },
+        orderBy: { capturedAt: "desc" },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 
   private requireTx(tx: unknown): TransactionClient {

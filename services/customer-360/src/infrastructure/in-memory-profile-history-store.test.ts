@@ -8,6 +8,7 @@ import { toSnapshot } from "../domain/profile-snapshot";
 import { ProfileCreated } from "../events/profile-created.event";
 import { IdentityEventTranslator } from "./identity-event-translator";
 import { InMemoryProfileHistoryStore } from "./in-memory-profile-history-store";
+import { TENANT_A, TENANT_B } from "../test-support/tenants";
 
 const identifier = { type: "customer_id" as const, value: "cust-1" };
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
@@ -57,9 +58,9 @@ describe("InMemoryProfileHistoryStore", () => {
       },
     );
 
-    await store.append(snapshot, event);
+    await store.append(snapshot, event, TENANT_A);
 
-    const listed = await store.listFor(identifier);
+    const listed = await store.listFor(identifier, TENANT_A);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.reason).toBe("created");
 
@@ -104,19 +105,53 @@ describe("InMemoryProfileHistoryStore", () => {
       },
     );
 
-    await store.append(snap1, event);
-    await store.append(snap2, event);
+    await store.append(snap1, event, TENANT_A);
+    await store.append(snap2, event, TENANT_A);
 
-    const listed = await store.listFor(identifier);
+    const listed = await store.listFor(identifier, TENANT_A);
     expect(listed.map((s) => s.reason)).toEqual(["created", "updated"]);
 
-    const latest = await store.latestFor(identifier);
+    const latest = await store.latestFor(identifier, TENANT_A);
     expect(latest?.reason).toBe("updated");
     expect(latest?.fields.size).toBe(2);
   });
 
   it("latestFor returns null for an identifier with no history", async () => {
     const { store } = wire();
-    expect(await store.latestFor({ type: "customer_id", value: "unknown" })).toBeNull();
+    expect(await store.latestFor({ type: "customer_id", value: "unknown" }, TENANT_A)).toBeNull();
+  });
+
+  it("isolates tenants — a snapshot appended under one tenant is invisible to another (ADR-0014)", async () => {
+    const { store } = wire();
+    const profile = applyFieldUpdate(
+      createEmptyProfile(identifier.type, identifier.value, "t0"),
+      "email",
+      {
+        value: "a@example.com",
+        source: "orders",
+        confidence: "verified",
+        occurredAt: "2026-07-21T00:00:01.000Z",
+      },
+    ).profile;
+    const event = new ProfileCreated(
+      {
+        eventId: idGenerator.generate(),
+        aggregateId: UniqueEntityId.from(identifier.value),
+        occurredAt: clock.now(),
+      },
+      {
+        identifierType: identifier.type,
+        identifierValue: identifier.value,
+        field: "email",
+        source: "orders",
+        confidence: "verified",
+        version: 1,
+      },
+    );
+    await store.append(toSnapshot(profile, "created", "2026-07-21T00:00:02.000Z"), event, TENANT_A);
+
+    expect(await store.listFor(identifier, TENANT_B)).toEqual([]);
+    expect(await store.latestFor(identifier, TENANT_B)).toBeNull();
+    expect(await store.listFor(identifier, TENANT_A)).toHaveLength(1);
   });
 });
