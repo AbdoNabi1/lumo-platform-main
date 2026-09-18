@@ -115,7 +115,11 @@ export class PromotionValidationAdapter implements PromotionValidationPort {
     );
     const cart: CartSnapshot = { lines, subtotalAmountMinor };
 
-    const response = await this.promotions.evaluate({ cart, customerRef: customerRef ?? "" });
+    const response = await this.promotions.evaluate({
+      cart,
+      customerRef: customerRef ?? "",
+      tenantId,
+    });
     if (response.status !== 200) {
       return {
         valid: false,

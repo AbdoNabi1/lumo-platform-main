@@ -211,6 +211,7 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const created = await admin.promotions.create(staff, {
+      tenantId: "tenant-1",
       name: "10% off carts over $50",
       ruleType: "automatic",
       scope: "cart",
@@ -226,12 +227,14 @@ describe("admin wiring (end to end)", () => {
     const promotionId = (created.body as { promotionId: string }).promotionId;
 
     const activated = await admin.promotions.advance(staff, {
+      tenantId: "tenant-1",
       promotionId,
       toStatus: "active",
     });
     expect(activated.status).toBe(200);
 
     const evaluated = await admin.promotions.evaluate(staff, {
+      tenantId: "tenant-1",
       cart: {
         lines: [{ productRef: "p1", categoryRefs: [], quantity: 1, unitPriceAmountMinor: 6000 }],
         subtotalAmountMinor: 6000,
@@ -243,7 +246,10 @@ describe("admin wiring (end to end)", () => {
       1,
     );
 
-    const recorded = await admin.promotions.recordUsage(staff, { promotionId });
+    const recorded = await admin.promotions.recordUsage(staff, {
+      tenantId: "tenant-1",
+      promotionId,
+    });
     expect(recorded.status).toBe(200);
   });
 

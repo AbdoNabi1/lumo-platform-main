@@ -1,6 +1,5 @@
-import type { CursorPage } from "@platform/types";
 import type { GetPromotion } from "../application/get-promotion.use-case";
-import type { ListPromotions } from "../application/list-promotions.use-case";
+import type { ListPromotions, ListPromotionsInput } from "../application/list-promotions.use-case";
 import type {
   AdvancePromotion,
   AdvancePromotionInput,
@@ -46,7 +45,7 @@ export class PromotionsController {
     return present(await this.deps.recordPromotionUsage.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListPromotionsInput): Promise<ControllerResponse> {
     return present(await this.deps.listPromotions.execute(input), 200);
   }
 

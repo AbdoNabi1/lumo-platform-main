@@ -9,6 +9,8 @@ import { InMemoryPromotionRepository } from "../infrastructure/in-memory-promoti
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { PromotionsEventTranslator } from "../infrastructure/promotions-event-translator";
 
+const TENANT = "tenant-a";
+
 function sequentialIds(): IdGenerator {
   let counter = 0;
   return { generate: () => `id-${(counter += 1)}` };
@@ -34,6 +36,7 @@ function harness() {
 
 function createInput(name: string) {
   return {
+    tenantId: TENANT,
     name,
     ruleType: "automatic" as const,
     scope: "cart" as const,
@@ -54,13 +57,14 @@ describe("Promotions read use-cases (Phase 4 T4.5)", () => {
       await create.execute(createInput(`promo-${i}`));
     }
 
-    const page = await new ListPromotions(h).execute({ first: 2 });
+    const page = await new ListPromotions(h).execute({ tenantId: TENANT, first: 2 });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
     expect(page.value.pageInfo.hasNextPage).toBe(true);
 
     const rest = await new ListPromotions(h).execute({
+      tenantId: TENANT,
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
     });
@@ -76,13 +80,16 @@ describe("Promotions read use-cases (Phase 4 T4.5)", () => {
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetPromotion(h).execute({ promotionId: created.value.promotionId });
+    const found = await new GetPromotion(h).execute({
+      tenantId: TENANT,
+      promotionId: created.value.promotionId,
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.id.toString()).toBe(created.value.promotionId);
     expect(found.value.name).toBe("10% off");
 
-    const missing = await new GetPromotion(h).execute({ promotionId: "nope" });
+    const missing = await new GetPromotion(h).execute({ tenantId: TENANT, promotionId: "nope" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

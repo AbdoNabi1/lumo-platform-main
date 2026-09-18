@@ -26,6 +26,8 @@ import {
 import type { PromotionStatusValue } from "../domain/value-objects/promotion-status";
 
 export interface CreatePromotionInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly name: string;
   readonly ruleType: PromotionRuleType;
   readonly scope: PromotionScope;
@@ -52,6 +54,8 @@ export interface PromotionStatusOutput {
 }
 
 export interface PromotionIdInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly promotionId: string;
 }
 
@@ -128,7 +132,7 @@ export class CreatePromotion implements UseCase<
         PromotionCampaign.create(input.campaignRef),
         input.usageLimit,
       );
-      await this.deps.promotions.save(promotion, tx);
+      await this.deps.promotions.save(promotion, input.tenantId, tx);
       return ok({ promotionId: id.toString(), status: promotion.status.value });
     });
   }
@@ -148,7 +152,7 @@ export class AdvancePromotion implements UseCase<
 
   async execute(input: AdvancePromotionInput): Promise<Result<PromotionStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PromotionStatusOutput, DomainError>>(async (tx) => {
-      const promotion = await this.deps.promotions.findById(input.promotionId, tx);
+      const promotion = await this.deps.promotions.findById(input.promotionId, input.tenantId, tx);
       if (promotion === null) return err(new NotFoundError("Promotion not found"));
 
       try {
@@ -162,13 +166,15 @@ export class AdvancePromotion implements UseCase<
         throw error;
       }
 
-      await this.deps.promotions.save(promotion, tx);
+      await this.deps.promotions.save(promotion, input.tenantId, tx);
       return ok({ promotionId: promotion.id.toString(), status: promotion.status.value });
     });
   }
 }
 
 export interface EvaluatePromotionsInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly cart: CartSnapshot;
   readonly customerRef: string;
   readonly segmentRefs?: readonly string[];
@@ -193,7 +199,7 @@ export class EvaluatePromotions implements UseCase<
   async execute(
     input: EvaluatePromotionsInput,
   ): Promise<Result<EvaluatePromotionsOutput, DomainError>> {
-    const active = await this.deps.promotions.findActive();
+    const active = await this.deps.promotions.findActive(input.tenantId);
     const now = this.deps.clock.now();
     const determinations = active
       .map((promotion) =>
@@ -218,7 +224,7 @@ export class RecordPromotionUsage implements UseCase<
 
   async execute(input: PromotionIdInput): Promise<Result<PromotionStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PromotionStatusOutput, DomainError>>(async (tx) => {
-      const promotion = await this.deps.promotions.findById(input.promotionId, tx);
+      const promotion = await this.deps.promotions.findById(input.promotionId, input.tenantId, tx);
       if (promotion === null) return err(new NotFoundError("Promotion not found"));
 
       try {
@@ -227,7 +233,7 @@ export class RecordPromotionUsage implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.promotions.save(promotion, tx);
+      await this.deps.promotions.save(promotion, input.tenantId, tx);
       return ok({ promotionId: promotion.id.toString(), status: promotion.status.value });
     });
   }

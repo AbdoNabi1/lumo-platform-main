@@ -35,12 +35,10 @@ export interface PromotionsWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaPromotionRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wireAutomation`); absent ⇒ in-memory, unchanged.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository
+   * built here is a tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Promotions table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredPromotions {
@@ -78,10 +76,6 @@ function buildController(
  */
 export function wirePromotions(deps: PromotionsWiringDeps): WiredPromotions {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wirePromotions: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new PromotionsEventTranslator(),
@@ -89,10 +83,11 @@ export function wirePromotions(deps: PromotionsWiringDeps): WiredPromotions {
       clock: deps.clock,
       producer: "promotions",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time (see PromotionsWiringDeps) — every
+    // repository takes it per call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
     const promotions = new PrismaPromotionRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });

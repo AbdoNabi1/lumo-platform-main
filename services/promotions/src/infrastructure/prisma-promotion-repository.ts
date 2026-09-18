@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -11,8 +11,18 @@ export interface PrismaPromotionRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
+}
+
+/** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
 }
 
 /** Production `PromotionRepository` on the `promotions` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -23,9 +33,8 @@ export class PrismaPromotionRepository implements PromotionRepository {
     this.deps = deps;
   }
 
-  async save(promotion: Promotion, tx?: unknown): Promise<void> {
+  async save(promotion: Promotion, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const promotionId = promotion.id.toString();
     const row = PromotionMapper.toRow(promotion, tenantId);
 
@@ -53,36 +62,43 @@ export class PrismaPromotionRepository implements PromotionRepository {
       }
     }
 
-    await this.deps.outbox.write(promotion.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      promotion.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Promotion | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.promotion.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Promotion | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.promotion.findFirst({ where: { id, tenantId } }),
+    );
     if (row === null) return null;
     return PromotionMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findActive(tx?: unknown): Promise<readonly Promotion[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.promotion.findMany({
-      where: { tenantId: this.deps.tenantId, status: "active" },
-    });
+  async findActive(tenantId: string, tx?: unknown): Promise<readonly Promotion[]> {
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.promotion.findMany({
+        where: { tenantId, status: "active" },
+      }),
+    );
     return rows.map((row) => PromotionMapper.toDomain(this.toMapperRow(row)));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Promotion>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Promotion>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.promotion.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.promotion.findMany({
+        where: {
+          tenantId,
+          ...(after ? { id: { gt: after } } : {}),
+        },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => PromotionMapper.toDomain(this.toMapperRow(row))),
       limit,

@@ -18,7 +18,7 @@ export class GetPromotion implements UseCase<PromotionIdInput, Promotion, Domain
   }
 
   async execute(input: PromotionIdInput): Promise<Result<Promotion, DomainError>> {
-    const promotion = await this.deps.promotions.findById(input.promotionId);
+    const promotion = await this.deps.promotions.findById(input.promotionId, input.tenantId);
     return promotion === null ? err(new NotFoundError("Promotion not found")) : ok(promotion);
   }
 }

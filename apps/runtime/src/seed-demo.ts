@@ -661,7 +661,7 @@ async function main(): Promise<void> {
         readonly status: ValueLike;
       }
       const existingPromotions = unwrap<{ items: readonly PromotionRecord[] }>(
-        await promotions.list({ first: 100 }),
+        await promotions.list({ tenantId: TENANT_ID, first: 100 }),
         "list promotions",
       );
       const existingPromotion = existingPromotions.items.find(
@@ -675,7 +675,7 @@ async function main(): Promise<void> {
           });
         } else {
           unwrap(
-            await promotions.advance({ promotionId, toStatus: "active" }),
+            await promotions.advance({ tenantId: TENANT_ID, promotionId, toStatus: "active" }),
             "activate promotion",
           );
           logger.info("seed-demo: promotion already existed but was not active, activated", {
@@ -686,6 +686,7 @@ async function main(): Promise<void> {
       } else {
         const promotion = unwrap<{ promotionId: string; status: string }>(
           await promotions.create({
+            tenantId: TENANT_ID,
             name: "Demo 15% Off Everything",
             ruleType: "automatic",
             scope: "cart",
@@ -699,7 +700,11 @@ async function main(): Promise<void> {
           "create promotion",
         );
         unwrap(
-          await promotions.advance({ promotionId: promotion.promotionId, toStatus: "active" }),
+          await promotions.advance({
+            tenantId: TENANT_ID,
+            promotionId: promotion.promotionId,
+            toStatus: "active",
+          }),
           "activate promotion",
         );
         promotionId = promotion.promotionId;
