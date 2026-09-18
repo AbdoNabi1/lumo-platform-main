@@ -66,7 +66,9 @@ function settlementEvent(
   };
 }
 
-function journalDeps(append: (journal: Journal, tx?: unknown) => Promise<void>) {
+const TEST_TENANT_ID = "tenant-settlement-test";
+
+function journalDeps(append: (journal: Journal, tenantId?: string, tx?: unknown) => Promise<void>) {
   return {
     journals: { append, findById: vi.fn(), findBySourceRef: vi.fn() },
     postingAccounts: POSTING_ACCOUNTS,
@@ -77,8 +79,10 @@ function journalDeps(append: (journal: Journal, tx?: unknown) => Promise<void>) 
 
 describe("FinancePaymentsCapturedConsumer (WP-11, F-11)", () => {
   it("posts a balanced fee entry (debit fees, credit cash — LedgerPoster.forFee's own shape) on the tx it was handed", async () => {
-    const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
-    const consumer = new FinancePaymentsCapturedConsumer(journalDeps(append));
+    const append = vi.fn(
+      async (_journal: Journal, _tenantId?: string, _tx?: unknown): Promise<void> => undefined,
+    );
+    const consumer = new FinancePaymentsCapturedConsumer(journalDeps(append), TEST_TENANT_ID);
 
     await consumer.handleAtomic(
       settlementEvent("payments.payment_intent.captured"),
@@ -86,7 +90,8 @@ describe("FinancePaymentsCapturedConsumer (WP-11, F-11)", () => {
     );
 
     expect(append).toHaveBeenCalledTimes(1);
-    expect(append.mock.calls[0]?.[1]).toBe("runtime-tx");
+    expect(append.mock.calls[0]?.[1]).toBe(TEST_TENANT_ID);
+    expect(append.mock.calls[0]?.[2]).toBe("runtime-tx");
     const journal = append.mock.calls[0]?.[0];
     expect(journal?.sourceRef).toBe("ORD-1001");
     expect(journal?.lines.map((line) => line.accountRef)).toEqual([
@@ -99,9 +104,9 @@ describe("FinancePaymentsCapturedConsumer (WP-11, F-11)", () => {
   it("REFUSES the non-atomic path rather than risk double-posting the fee entry", async () => {
     const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
 
-    await expect(new FinancePaymentsCapturedConsumer(journalDeps(append)).handle()).rejects.toThrow(
-      /requires the atomic path/,
-    );
+    await expect(
+      new FinancePaymentsCapturedConsumer(journalDeps(append), TEST_TENANT_ID).handle(),
+    ).rejects.toThrow(/requires the atomic path/);
     expect(append).not.toHaveBeenCalled();
   });
 
@@ -113,7 +118,7 @@ describe("FinancePaymentsCapturedConsumer (WP-11, F-11)", () => {
     // consumer refusing a second call. This test pins that division of responsibility explicitly,
     // so a future change does not mistake "posts twice when called twice" for a regression here.
     const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
-    const consumer = new FinancePaymentsCapturedConsumer(journalDeps(append));
+    const consumer = new FinancePaymentsCapturedConsumer(journalDeps(append), TEST_TENANT_ID);
     const tx = "runtime-tx" as unknown as TransactionClient;
 
     await consumer.handleAtomic(settlementEvent("payments.payment_intent.captured"), tx);
@@ -126,7 +131,7 @@ describe("FinancePaymentsCapturedConsumer (WP-11, F-11)", () => {
 describe("FinanceRefundsIssuedConsumer (WP-11, F-11)", () => {
   it("posts a balanced contra entry (debit refund contra, credit receivable)", async () => {
     const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
-    const consumer = new FinanceRefundsIssuedConsumer(journalDeps(append));
+    const consumer = new FinanceRefundsIssuedConsumer(journalDeps(append), TEST_TENANT_ID);
 
     await consumer.handleAtomic(
       settlementEvent("payments.payment_intent.refunded", { amountMinor: 2_000 }),
@@ -145,9 +150,9 @@ describe("FinanceRefundsIssuedConsumer (WP-11, F-11)", () => {
   it("REFUSES the non-atomic path rather than risk double-posting the contra entry", async () => {
     const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
 
-    await expect(new FinanceRefundsIssuedConsumer(journalDeps(append)).handle()).rejects.toThrow(
-      /requires the atomic path/,
-    );
+    await expect(
+      new FinanceRefundsIssuedConsumer(journalDeps(append), TEST_TENANT_ID).handle(),
+    ).rejects.toThrow(/requires the atomic path/);
     expect(append).not.toHaveBeenCalled();
   });
 });
@@ -160,10 +165,13 @@ describe("settlement invariant: refund after capture -> one contra entry (WP-11,
     });
     const tx = "runtime-tx" as unknown as TransactionClient;
 
-    const capturedConsumer = new FinancePaymentsCapturedConsumer(journalDeps(append));
+    const capturedConsumer = new FinancePaymentsCapturedConsumer(
+      journalDeps(append),
+      TEST_TENANT_ID,
+    );
     await capturedConsumer.handleAtomic(settlementEvent("payments.payment_intent.captured"), tx);
 
-    const refundedConsumer = new FinanceRefundsIssuedConsumer(journalDeps(append));
+    const refundedConsumer = new FinanceRefundsIssuedConsumer(journalDeps(append), TEST_TENANT_ID);
     await refundedConsumer.handleAtomic(
       settlementEvent("payments.payment_intent.refunded", { amountMinor: 2_000 }),
       tx,

@@ -133,16 +133,20 @@ export class TxBoundJournalRepository implements JournalRepository {
     this.tx = tx;
   }
 
-  async append(journal: Journal, tx?: unknown): Promise<void> {
-    await this.inner.append(journal, tx ?? this.tx);
+  async append(journal: Journal, tenantId: string, tx?: unknown): Promise<void> {
+    await this.inner.append(journal, tenantId, tx ?? this.tx);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Journal | null> {
-    return this.inner.findById(id, tx ?? this.tx);
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Journal | null> {
+    return this.inner.findById(id, tenantId, tx ?? this.tx);
   }
 
-  async findBySourceRef(sourceRef: string, tx?: unknown): Promise<readonly Journal[]> {
-    return this.inner.findBySourceRef(sourceRef, tx ?? this.tx);
+  async findBySourceRef(
+    sourceRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Journal[]> {
+    return this.inner.findBySourceRef(sourceRef, tenantId, tx ?? this.tx);
   }
 }
 
@@ -182,10 +186,20 @@ export class FinanceOrdersPaidConsumer implements EventHandler<
   readonly eventType = ORDERS_ORDER_PAID;
   readonly eventVersion = ORDERS_ORDER_PAID_VERSION;
   private readonly deps: FinanceConsumerDeps;
+  private readonly tenantId: string;
 
-  /** `deps.journals` must accept a per-call `tx` (as `PrismaJournalRepository` does) — see above. */
-  constructor(deps: FinanceConsumerDeps) {
+  /**
+   * `deps.journals` must accept a per-call `tx` (as `PrismaJournalRepository` does) — see above.
+   * `tenantId` (ADR-0014, WP-10 T10.3, G-64): `orders.order.paid` does not yet carry a real
+   * per-event tenant, so this stays sourced from `core.config.TENANT_DEFAULT_ID` at builder time,
+   * same value as before — now passed down as an explicit argument to `journals.append` instead of
+   * being buried inside the repository's own construction. Reading the genuine envelope tenantId
+   * is the separate, already-tracked G-64 fix (making it required on the envelope), out of scope
+   * for this repository-write-path-only pass.
+   */
+  constructor(deps: FinanceConsumerDeps, tenantId: string) {
     this.deps = deps;
+    this.tenantId = tenantId;
   }
 
   /** Rejects (rather than throwing synchronously) so every caller sees the same failure shape. */
@@ -210,6 +224,7 @@ export class FinanceOrdersPaidConsumer implements EventHandler<
     });
     await inner.handle({
       ...event,
+      tenantId: this.tenantId,
       payload: {
         orderRef: event.payload.orderNumber,
         amountMinor: event.payload.totalAmountMinor,
@@ -452,7 +467,6 @@ export function buildOrdersPaidConsumerRuntimes(
 
   const journals = new PrismaJournalRepository({
     prisma: core.prisma,
-    tenantId,
     outbox: outboxFor(new FinanceEventTranslator(), "finance"),
     context,
   });
@@ -478,12 +492,15 @@ export function buildOrdersPaidConsumerRuntimes(
     // across work that already tolerates redelivery.
     buildProcessedConsumer<OrderPaidPayload, TransactionClient>(
       core,
-      new FinanceOrdersPaidConsumer({
-        journals,
-        postingAccounts: DEFAULT_FINANCE_POSTING_ACCOUNTS,
-        idGenerator: core.idGenerator,
-        clock: core.clock,
-      }),
+      new FinanceOrdersPaidConsumer(
+        {
+          journals,
+          postingAccounts: DEFAULT_FINANCE_POSTING_ACCOUNTS,
+          idGenerator: core.idGenerator,
+          clock: core.clock,
+        },
+        tenantId,
+      ),
       "finance.orders-paid",
       producer,
       metrics,

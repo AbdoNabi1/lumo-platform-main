@@ -27,7 +27,6 @@ async function main(): Promise<void> {
 
   const journals = new PrismaJournalRepository({
     prisma: core.prisma,
-    tenantId,
     outbox: new OutboxWriter({
       store: new PrismaOutboxStore(core.prisma),
       translator: new FinanceEventTranslator(),
@@ -46,6 +45,7 @@ async function main(): Promise<void> {
     clock: core.clock,
     unitOfWork: new PrismaUnitOfWork(core.prisma),
     logger: core.logger,
+    tenantId,
   });
 
   logger.info("backfill-finance-settlement: done", { ...result });

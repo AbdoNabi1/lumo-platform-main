@@ -1320,7 +1320,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a chart-of-accounts entry",
       schema: { body: createAccountBody },
-      handle: ({ body, context }) => admin.finance.createAccount(context.principal, body),
+      // ADR-0014: Finance's use-case inputs now require tenantId — sourced from the
+      // already-verified context.tenantId (packages/http's tenant-resolution chain), same
+      // convention as every catalog/products route above.
+      handle: ({ body, context }) =>
+        admin.finance.createAccount(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1330,7 +1334,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a cost center",
       schema: { body: createCostCenterBody },
-      handle: ({ body, context }) => admin.finance.createCostCenter(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.createCostCenter(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1340,7 +1345,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create an expense category",
       schema: { body: createExpenseCategoryBody },
-      handle: ({ body, context }) => admin.finance.createExpenseCategory(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.createExpenseCategory(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1350,7 +1359,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Define a jurisdiction's tax profile",
       schema: { body: defineTaxProfileBody },
-      handle: ({ body, context }) => admin.finance.defineTaxProfile(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.defineTaxProfile(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1360,7 +1370,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Record an effective-dated product cost snapshot",
       schema: { body: setProductCostBody },
-      handle: ({ body, context }) => admin.finance.setProductCost(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.setProductCost(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1370,7 +1381,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Open a fiscal period",
       schema: { body: openFiscalPeriodBody },
-      handle: ({ body, context }) => admin.finance.openFiscalPeriod(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.openFiscalPeriod(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1381,7 +1393,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Close a fiscal period (step-up)",
       schema: { params: fiscalPeriodIdParams },
       handle: ({ params, context }) =>
-        admin.finance.closeFiscalPeriod(context.principal, { periodId: params.periodId }),
+        admin.finance.closeFiscalPeriod(context.principal, {
+          periodId: params.periodId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1391,7 +1406,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Set a new historical exchange rate (step-up)",
       schema: { body: setExchangeRateBody },
-      handle: ({ body, context }) => admin.finance.setExchangeRate(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.setExchangeRate(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1401,7 +1417,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Record a merchant expense",
       schema: { body: recordExpenseBody },
-      handle: ({ body, context }) => admin.finance.recordExpense(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.recordExpense(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1411,7 +1428,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a budget",
       schema: { body: createBudgetBody },
-      handle: ({ body, context }) => admin.finance.createBudget(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.createBudget(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1422,7 +1440,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Revise a budget's amount",
       schema: { params: budgetIdParams, body: reviseBudgetBody },
       handle: ({ params, body, context }) =>
-        admin.finance.reviseBudget(context.principal, { budgetId: params.budgetId, ...body }),
+        admin.finance.reviseBudget(context.principal, {
+          budgetId: params.budgetId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1432,7 +1454,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Post a manual balanced adjustment journal (step-up)",
       schema: { body: recordManualAdjustmentBody },
-      handle: ({ body, context }) => admin.finance.recordManualAdjustment(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.recordManualAdjustment(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1451,7 +1477,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "finance:read",
       summary: "Trial balance for a period",
       schema: { querystring: periodRangeQuery },
-      handle: ({ query, context }) => admin.finance.trialBalance(context.principal, query),
+      handle: ({ query, context }) =>
+        admin.finance.trialBalance(context.principal, { ...query, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -1460,7 +1487,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "finance:read",
       summary: "Income statement for a period",
       schema: { querystring: periodRangeQuery },
-      handle: ({ query, context }) => admin.finance.incomeStatement(context.principal, query),
+      handle: ({ query, context }) =>
+        admin.finance.incomeStatement(context.principal, { ...query, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -1469,7 +1497,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "finance:read",
       summary: "Balance sheet as of a period end",
       schema: { querystring: periodRangeQuery },
-      handle: ({ query, context }) => admin.finance.balanceSheet(context.principal, query),
+      handle: ({ query, context }) =>
+        admin.finance.balanceSheet(context.principal, { ...query, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -1478,7 +1507,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "finance:read",
       summary: "A single projected Finance read-model row",
       schema: { params: readModelParams },
-      handle: ({ params, context }) => admin.finance.getReadModel(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.finance.getReadModel(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -1489,7 +1519,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         "Paginated rows for a Finance read model (dimension/periodKey filter, sort, cursor; limit <= 200)",
       schema: { params: readModelListParams, querystring: readModelQuery },
       handle: ({ params, query, context }) =>
-        admin.finance.queryReadModel(context.principal, { model: params.model, ...query }),
+        admin.finance.queryReadModel(context.principal, {
+          model: params.model,
+          ...query,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",

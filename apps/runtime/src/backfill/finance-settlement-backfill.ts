@@ -59,6 +59,13 @@ export interface FinanceSettlementBackfillDeps {
   readonly clock: Clock;
   readonly unitOfWork: BackfillUnitOfWork;
   readonly logger?: Logger;
+  /**
+   * ADR-0014 (WP-10 T10.3): `JournalRepository` now takes `tenantId` per call. This backfill
+   * already operates on one known tenant per run (classified (C), legitimate, per ADR-0014
+   * Decision point 4 — same as `PrismaPaymentSettlementSource`'s own explicit `tenantId`) — passed
+   * through explicitly here rather than reintroducing a construction-time pin.
+   */
+  readonly tenantId: string;
 }
 
 export interface FinanceSettlementBackfillResult {
@@ -92,7 +99,7 @@ async function postFee(
   const result = LedgerPoster.forFee(id, payment.orderRef, deps.postingAccounts, amount);
   if (!result.ok) throw result.error;
   result.value.post(`backfill:fee:${payment.orderRef}`, deps.clock.now());
-  await deps.journals.append(result.value, tx);
+  await deps.journals.append(result.value, deps.tenantId, tx);
 }
 
 async function postContra(
@@ -105,7 +112,7 @@ async function postContra(
   const result = LedgerPoster.forRefund(id, refund.orderRef, deps.postingAccounts, amount);
   if (!result.ok) throw result.error;
   result.value.post(`backfill:refund:${refund.refundId}`, deps.clock.now());
-  await deps.journals.append(result.value, tx);
+  await deps.journals.append(result.value, deps.tenantId, tx);
 }
 
 /**
@@ -165,7 +172,7 @@ export async function backfillFinanceSettlement(
       .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
 
     await deps.unitOfWork.run(async (tx) => {
-      const existing = await deps.journals.findBySourceRef(orderRef, tx);
+      const existing = await deps.journals.findBySourceRef(orderRef, deps.tenantId, tx);
       const existingFeeCount = countWithMemo(existing, "fee");
       const existingRefundCount = countWithMemo(existing, "refund");
 

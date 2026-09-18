@@ -93,13 +93,20 @@ const POSTING_ACCOUNTS = {
   fees: "6100-FEES",
 };
 
-function financeConsumer(append: (journal: Journal, tx?: unknown) => Promise<void>) {
-  return new FinanceOrdersPaidConsumer({
-    journals: { append, findById: vi.fn(), findBySourceRef: vi.fn() },
-    postingAccounts: POSTING_ACCOUNTS,
-    idGenerator: { generate: () => "journal-1" },
-    clock: { now: () => new Date("2026-08-24T10:00:01.000Z") },
-  });
+const FINANCE_TEST_TENANT_ID = "tenant-orders-paid-test";
+
+function financeConsumer(
+  append: (journal: Journal, tenantId?: string, tx?: unknown) => Promise<void>,
+) {
+  return new FinanceOrdersPaidConsumer(
+    {
+      journals: { append, findById: vi.fn(), findBySourceRef: vi.fn() },
+      postingAccounts: POSTING_ACCOUNTS,
+      idGenerator: { generate: () => "journal-1" },
+      clock: { now: () => new Date("2026-08-24T10:00:01.000Z") },
+    },
+    FINANCE_TEST_TENANT_ID,
+  );
 }
 
 describe("FinanceOrdersPaidConsumer (Task 17b, C-2 — payload adaptation)", () => {
@@ -132,15 +139,19 @@ describe("FinanceOrdersPaidConsumer — atomic ledger posting (C-2 fix round 1, 
   });
 
   it("appends the journal on the tx it was handed — never a transaction of its own", async () => {
-    const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
+    const append = vi.fn(
+      async (_journal: Journal, _tenantId?: string, _tx?: unknown): Promise<void> => undefined,
+    );
     const consumer = financeConsumer(append);
 
     await consumer.handleAtomic(orderPaidEvent(), "runtime-tx" as unknown as TransactionClient);
 
-    // Finance's OrdersPaidConsumer calls `journals.append(journal)` with NO tx argument; the tx
-    // reaching the repository is therefore proof the consumer bound the runtime's transaction.
+    // Finance's OrdersPaidConsumer calls `journals.append(journal, tenantId)` with NO tx argument;
+    // the tx reaching the repository is therefore proof the consumer bound the runtime's
+    // transaction.
     expect(append).toHaveBeenCalledTimes(1);
-    expect(append.mock.calls[0]?.[1]).toBe("runtime-tx");
+    expect(append.mock.calls[0]?.[1]).toBe(FINANCE_TEST_TENANT_ID);
+    expect(append.mock.calls[0]?.[2]).toBe("runtime-tx");
   });
 
   it("REFUSES the non-atomic path rather than risk double-posting the ledger", async () => {

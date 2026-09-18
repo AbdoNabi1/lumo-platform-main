@@ -19,6 +19,8 @@ const POSTING_ACCOUNTS = {
   fees: "6100-FEES",
 };
 
+const TEST_TENANT_ID = "tenant-backfill-test";
+
 /** Fixture-seedable in-memory `JournalRepository` — no Prisma, no DATABASE_URL_TEST needed. */
 class InMemoryJournalRepository implements JournalRepository {
   private readonly rows = new Map<string, Journal>();
@@ -64,6 +66,7 @@ function freshDeps(source: PaymentSettlementSource) {
       idGenerator: { generate: () => `journal-${(idCounter += 1)}` },
       clock: { now: () => new Date("2026-09-09T00:00:00.000Z") },
       unitOfWork,
+      tenantId: TEST_TENANT_ID,
     },
     journals,
   };

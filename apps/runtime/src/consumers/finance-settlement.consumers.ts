@@ -56,9 +56,16 @@ abstract class AtomicFinanceSettlementConsumer implements EventHandler<
   abstract readonly eventType: string;
   readonly eventVersion = 1;
   private readonly deps: FinanceConsumerDeps;
+  private readonly tenantId: string;
 
-  protected constructor(deps: FinanceConsumerDeps) {
+  /**
+   * `tenantId` (ADR-0014, WP-10 T10.3, G-64): sourced from `core.config.TENANT_DEFAULT_ID` at
+   * builder time, unchanged from before — now an explicit argument instead of buried inside the
+   * journal repository's own construction. See `FinanceOrdersPaidConsumer`'s identical note.
+   */
+  protected constructor(deps: FinanceConsumerDeps, tenantId: string) {
     this.deps = deps;
+    this.tenantId = tenantId;
   }
 
   protected abstract buildInner(deps: FinanceConsumerDeps): EventHandler<PaymentSettlementPayload>;
@@ -83,7 +90,7 @@ abstract class AtomicFinanceSettlementConsumer implements EventHandler<
       ...this.deps,
       journals: new TxBoundJournalRepository(this.deps.journals, tx),
     });
-    await inner.handle(event);
+    await inner.handle({ ...event, tenantId: this.tenantId });
   }
 }
 
@@ -91,8 +98,8 @@ abstract class AtomicFinanceSettlementConsumer implements EventHandler<
 export class FinancePaymentsCapturedConsumer extends AtomicFinanceSettlementConsumer {
   readonly eventType = "payments.payment_intent.captured";
 
-  constructor(deps: FinanceConsumerDeps) {
-    super(deps);
+  constructor(deps: FinanceConsumerDeps, tenantId: string) {
+    super(deps, tenantId);
   }
 
   protected buildInner(deps: FinanceConsumerDeps): EventHandler<PaymentSettlementPayload> {
@@ -104,8 +111,8 @@ export class FinancePaymentsCapturedConsumer extends AtomicFinanceSettlementCons
 export class FinanceRefundsIssuedConsumer extends AtomicFinanceSettlementConsumer {
   readonly eventType = "payments.payment_intent.refunded";
 
-  constructor(deps: FinanceConsumerDeps) {
-    super(deps);
+  constructor(deps: FinanceConsumerDeps, tenantId: string) {
+    super(deps, tenantId);
   }
 
   protected buildInner(deps: FinanceConsumerDeps): EventHandler<PaymentSettlementPayload> {
@@ -136,7 +143,6 @@ export function buildFinanceSettlementConsumerRuntimes(
   const context = rootEventContext(core.idGenerator, tenantId);
   const journals = new PrismaJournalRepository({
     prisma: core.prisma,
-    tenantId,
     outbox: new OutboxWriter({
       store: new PrismaOutboxStore(core.prisma),
       translator: new FinanceEventTranslator(),
@@ -159,7 +165,7 @@ export function buildFinanceSettlementConsumerRuntimes(
   return [
     buildProcessedConsumer<PaymentSettlementPayload, TransactionClient>(
       core,
-      new FinancePaymentsCapturedConsumer(deps),
+      new FinancePaymentsCapturedConsumer(deps, tenantId),
       "finance.payments-captured",
       producer,
       metrics,
@@ -167,7 +173,7 @@ export function buildFinanceSettlementConsumerRuntimes(
     ),
     buildProcessedConsumer<PaymentSettlementPayload, TransactionClient>(
       core,
-      new FinanceRefundsIssuedConsumer(deps),
+      new FinanceRefundsIssuedConsumer(deps, tenantId),
       "finance.refunds-issued",
       producer,
       metrics,
