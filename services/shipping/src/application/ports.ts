@@ -33,8 +33,8 @@ export interface CarrierProviderPort {
   voidLabel(request: VoidLabelRequest): Promise<void>;
 }
 
-/** Replay-safe carrier-webhook dedup — unique per `(carrier, event)`, backing `RecordCarrierWebhook`'s idempotency. */
+/** Replay-safe carrier-webhook dedup — unique per `(tenant, carrier, event)`, backing `RecordCarrierWebhook`'s idempotency. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface ProcessedCarrierWebhookStore {
-  hasProcessed(carrier: string, eventId: string): Promise<boolean>;
-  markProcessed(carrier: string, eventId: string): Promise<void>;
+  hasProcessed(carrier: string, eventId: string, tenantId: string): Promise<boolean>;
+  markProcessed(carrier: string, eventId: string, tenantId: string): Promise<void>;
 }

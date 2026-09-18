@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { Shipment } from "../domain/shipment";
@@ -9,8 +9,6 @@ export interface PrismaShipmentRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -19,6 +17,18 @@ export interface PrismaShipmentRepositoryDeps {
  * locking + same-transaction outbox per ADR-0003. Carrier data is carrier-agnostic — no
  * provider-specific columns, no label bytes/rate/PII (G-27).
  */
+/** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
+}
+
 export class PrismaShipmentRepository implements ShipmentRepository {
   private readonly deps: PrismaShipmentRepositoryDeps;
 
@@ -26,9 +36,8 @@ export class PrismaShipmentRepository implements ShipmentRepository {
     this.deps = deps;
   }
 
-  async save(shipment: Shipment, tx?: unknown): Promise<void> {
+  async save(shipment: Shipment, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const shipmentId = shipment.id.toString();
     const row = ShipmentMapper.toRow(shipment, tenantId);
 
@@ -69,15 +78,20 @@ export class PrismaShipmentRepository implements ShipmentRepository {
       await client.shippingAttempt.createMany({ data: attempts, skipDuplicates: true });
     }
 
-    await this.deps.outbox.write(shipment.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      shipment.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Shipment | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.shipment.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-      include: { attempts: { orderBy: { occurredAt: "asc" } } },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Shipment | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.shipment.findFirst({
+        where: { id, tenantId },
+        include: { attempts: { orderBy: { occurredAt: "asc" } } },
+      }),
+    );
     if (row === null) return null;
     return ShipmentMapper.toDomain(
       {
@@ -106,12 +120,17 @@ export class PrismaShipmentRepository implements ShipmentRepository {
   }
 
   /** Scaffolding for retry-safe saga-activity idempotency (Sprint A0 precondition); not yet called by any use case. */
-  async findByIdempotencyKey(idempotencyKey: string, tx?: unknown): Promise<Shipment | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.shipment.findFirst({
-      where: { idempotencyKey, tenantId: this.deps.tenantId },
-      include: { attempts: { orderBy: { occurredAt: "asc" } } },
-    });
+  async findByIdempotencyKey(
+    idempotencyKey: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Shipment | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.shipment.findFirst({
+        where: { idempotencyKey, tenantId },
+        include: { attempts: { orderBy: { occurredAt: "asc" } } },
+      }),
+    );
     if (row === null) return null;
     return ShipmentMapper.toDomain(
       {
@@ -139,12 +158,17 @@ export class PrismaShipmentRepository implements ShipmentRepository {
     );
   }
 
-  async findByFulfillmentRef(fulfillmentRef: string, tx?: unknown): Promise<Shipment | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.shipment.findFirst({
-      where: { fulfillmentRef, tenantId: this.deps.tenantId },
-      include: { attempts: { orderBy: { occurredAt: "asc" } } },
-    });
+  async findByFulfillmentRef(
+    fulfillmentRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Shipment | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.shipment.findFirst({
+        where: { fulfillmentRef, tenantId },
+        include: { attempts: { orderBy: { occurredAt: "asc" } } },
+      }),
+    );
     if (row === null) return null;
     return ShipmentMapper.toDomain(
       {

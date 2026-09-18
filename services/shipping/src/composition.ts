@@ -49,8 +49,6 @@ export interface ShippingWiringDeps {
    * out of scope for C-01.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Shipping table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredShipping {
@@ -110,10 +108,6 @@ function buildController(
  */
 export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireShipping: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new ShippingEventTranslator(),
@@ -121,10 +115,11 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
       clock: deps.clock,
       producer: "shipping",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time (see ShippingWiringDeps) — every
+    // repository takes it per call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
     const shipments = new PrismaShipmentRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });

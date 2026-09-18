@@ -9,6 +9,8 @@ import type { ShipmentStatusValue } from "../domain/value-objects/shipment-statu
 import type { ProcessedCarrierWebhookStore } from "./ports";
 
 export interface RecordCarrierWebhookInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly shipmentId: string;
   readonly carrier: string;
   readonly eventId: string;
@@ -62,7 +64,7 @@ export class RecordCarrierWebhook implements UseCase<
     if (!eventId.ok) return err(eventId.error);
 
     return this.deps.unitOfWork.run<Result<RecordCarrierWebhookOutput, DomainError>>(async (tx) => {
-      const shipment = await this.deps.shipments.findById(input.shipmentId, tx);
+      const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
       if (shipment === null) {
         return err(new NotFoundError("Shipment not found"));
       }
@@ -70,6 +72,7 @@ export class RecordCarrierWebhook implements UseCase<
       const alreadyProcessed = await this.deps.processedCarrierWebhooks.hasProcessed(
         input.carrier,
         input.eventId,
+        input.tenantId,
       );
       if (alreadyProcessed) {
         return ok({
@@ -90,8 +93,12 @@ export class RecordCarrierWebhook implements UseCase<
         throw error;
       }
 
-      await this.deps.shipments.save(shipment, tx);
-      await this.deps.processedCarrierWebhooks.markProcessed(input.carrier, input.eventId);
+      await this.deps.shipments.save(shipment, input.tenantId, tx);
+      await this.deps.processedCarrierWebhooks.markProcessed(
+        input.carrier,
+        input.eventId,
+        input.tenantId,
+      );
       return ok({
         shipmentId: shipment.id.toString(),
         status: shipment.status.value,

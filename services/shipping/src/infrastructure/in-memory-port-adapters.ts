@@ -43,15 +43,15 @@ export class InMemoryNotificationAdapter implements NotificationPort {
   }
 }
 
-/** Replay-safe carrier-webhook dedup — in-memory `Set` keyed `(carrier, eventId)`. Prisma-backed store supersedes this in production (unique `(tenant, carrier, webhook_event_id)`). */
+/** Replay-safe carrier-webhook dedup — in-memory `Set` keyed `(tenantId, carrier, eventId)`. Prisma-backed store supersedes this in production (unique `(tenant, carrier, webhook_event_id)`). */
 export class InMemoryProcessedCarrierWebhookStore implements ProcessedCarrierWebhookStore {
   private readonly processed = new Set<string>();
 
-  async hasProcessed(carrier: string, eventId: string): Promise<boolean> {
-    return this.processed.has(`${carrier}:${eventId}`);
+  async hasProcessed(carrier: string, eventId: string, tenantId: string): Promise<boolean> {
+    return this.processed.has(JSON.stringify([tenantId, carrier, eventId]));
   }
 
-  async markProcessed(carrier: string, eventId: string): Promise<void> {
-    this.processed.add(`${carrier}:${eventId}`);
+  async markProcessed(carrier: string, eventId: string, tenantId: string): Promise<void> {
+    this.processed.add(JSON.stringify([tenantId, carrier, eventId]));
   }
 }

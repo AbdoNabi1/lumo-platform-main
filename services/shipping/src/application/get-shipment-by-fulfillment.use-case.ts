@@ -5,6 +5,8 @@ import type { Shipment } from "../domain/shipment";
 import type { ShipmentRepository } from "../domain/shipment-repository";
 
 export interface GetShipmentByFulfillmentInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly fulfillmentRef: string;
 }
 
@@ -25,7 +27,10 @@ export class GetShipmentByFulfillment implements UseCase<
   }
 
   async execute(input: GetShipmentByFulfillmentInput): Promise<Result<Shipment, DomainError>> {
-    const shipment = await this.deps.shipments.findByFulfillmentRef(input.fulfillmentRef);
+    const shipment = await this.deps.shipments.findByFulfillmentRef(
+      input.fulfillmentRef,
+      input.tenantId,
+    );
     if (shipment === null) {
       return err(new NotFoundError("No shipment found for this fulfillment order"));
     }

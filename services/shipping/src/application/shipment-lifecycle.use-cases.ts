@@ -43,6 +43,8 @@ async function withConcurrencyRetry<T>(maxAttempts: number, attempt: () => Promi
 }
 
 export interface ShipmentIdInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly shipmentId: string;
 }
 
@@ -88,7 +90,7 @@ export class AdvanceShipment implements UseCase<
 
   async execute(input: AdvanceShipmentInput): Promise<Result<ShipmentStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ShipmentStatusOutput, DomainError>>(async (tx) => {
-      const shipment = await this.deps.shipments.findById(input.shipmentId, tx);
+      const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
       if (shipment === null) {
         return err(new NotFoundError("Shipment not found"));
       }
@@ -104,7 +106,7 @@ export class AdvanceShipment implements UseCase<
         throw error;
       }
 
-      await this.deps.shipments.save(shipment, tx);
+      await this.deps.shipments.save(shipment, input.tenantId, tx);
       await notifyBestEffort(this.deps, shipment);
       return ok({ shipmentId: shipment.id.toString(), status: shipment.status.value });
     });
@@ -159,7 +161,7 @@ export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutpu
   }
 
   async execute(input: ShipmentIdInput): Promise<Result<ShipmentStatusOutput, DomainError>> {
-    const precheck = await this.precheck(input.shipmentId);
+    const precheck = await this.precheck(input.shipmentId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     if (precheck.value.alreadyLabeled) {
       return ok({ shipmentId: input.shipmentId, status: precheck.value.status });
@@ -183,6 +185,7 @@ export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutpu
 
     return this.settle(
       input.shipmentId,
+      input.tenantId,
       label.value,
       carrier.value,
       carrierService.value,
@@ -190,9 +193,12 @@ export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutpu
     );
   }
 
-  private async precheck(shipmentId: string): Promise<Result<CreateLabelPrecheck, DomainError>> {
+  private async precheck(
+    shipmentId: string,
+    tenantId: string,
+  ): Promise<Result<CreateLabelPrecheck, DomainError>> {
     return this.deps.unitOfWork.run<Result<CreateLabelPrecheck, DomainError>>(async (tx) => {
-      const shipment = await this.deps.shipments.findById(shipmentId, tx);
+      const shipment = await this.deps.shipments.findById(shipmentId, tenantId, tx);
       if (shipment === null) {
         return err(new NotFoundError("Shipment not found"));
       }
@@ -212,6 +218,7 @@ export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutpu
 
   private async settle(
     shipmentId: string,
+    tenantId: string,
     label: ShippingLabel,
     carrier: Carrier,
     carrierService: CarrierService,
@@ -219,7 +226,7 @@ export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutpu
   ): Promise<Result<ShipmentStatusOutput, DomainError>> {
     return withConcurrencyRetry(CreateLabel.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<ShipmentStatusOutput, DomainError>>(async (tx) => {
-        const shipment = await this.deps.shipments.findById(shipmentId, tx);
+        const shipment = await this.deps.shipments.findById(shipmentId, tenantId, tx);
         if (shipment === null) {
           return err(new NotFoundError("Shipment not found"));
         }
@@ -238,7 +245,7 @@ export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutpu
             if (isDomainError(error)) return err(error);
             throw error;
           }
-          await this.deps.shipments.save(shipment, tx);
+          await this.deps.shipments.save(shipment, tenantId, tx);
           await notifyBestEffort(this.deps, shipment);
         }
         return ok({ shipmentId: shipment.id.toString(), status: shipment.status.value });
@@ -287,7 +294,7 @@ export class VoidLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutput,
   }
 
   async execute(input: ShipmentIdInput): Promise<Result<ShipmentStatusOutput, DomainError>> {
-    const precheck = await this.precheck(input.shipmentId);
+    const precheck = await this.precheck(input.shipmentId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     if (precheck.value.alreadyVoided) {
       return ok({ shipmentId: input.shipmentId, status: precheck.value.status });
@@ -299,12 +306,15 @@ export class VoidLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutput,
       idempotencyKey: `${input.shipmentId}:void`,
     });
 
-    return this.settle(input.shipmentId);
+    return this.settle(input.shipmentId, input.tenantId);
   }
 
-  private async precheck(shipmentId: string): Promise<Result<VoidLabelPrecheck, DomainError>> {
+  private async precheck(
+    shipmentId: string,
+    tenantId: string,
+  ): Promise<Result<VoidLabelPrecheck, DomainError>> {
     return this.deps.unitOfWork.run<Result<VoidLabelPrecheck, DomainError>>(async (tx) => {
-      const shipment = await this.deps.shipments.findById(shipmentId, tx);
+      const shipment = await this.deps.shipments.findById(shipmentId, tenantId, tx);
       if (shipment === null) {
         return err(new NotFoundError("Shipment not found"));
       }
@@ -325,10 +335,13 @@ export class VoidLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutput,
     });
   }
 
-  private async settle(shipmentId: string): Promise<Result<ShipmentStatusOutput, DomainError>> {
+  private async settle(
+    shipmentId: string,
+    tenantId: string,
+  ): Promise<Result<ShipmentStatusOutput, DomainError>> {
     return withConcurrencyRetry(VoidLabel.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<ShipmentStatusOutput, DomainError>>(async (tx) => {
-        const shipment = await this.deps.shipments.findById(shipmentId, tx);
+        const shipment = await this.deps.shipments.findById(shipmentId, tenantId, tx);
         if (shipment === null) {
           return err(new NotFoundError("Shipment not found"));
         }
@@ -340,7 +353,7 @@ export class VoidLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutput,
             if (isDomainError(error)) return err(error);
             throw error;
           }
-          await this.deps.shipments.save(shipment, tx);
+          await this.deps.shipments.save(shipment, tenantId, tx);
           await notifyBestEffort(this.deps, shipment);
         }
         return ok({ shipmentId: shipment.id.toString(), status: shipment.status.value });
@@ -377,7 +390,7 @@ export class UpdateTracking implements UseCase<
     if (!description.ok) return err(description.error);
 
     return this.deps.unitOfWork.run<Result<ShipmentStatusOutput, DomainError>>(async (tx) => {
-      const shipment = await this.deps.shipments.findById(input.shipmentId, tx);
+      const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
       if (shipment === null) {
         return err(new NotFoundError("Shipment not found"));
       }
@@ -389,7 +402,7 @@ export class UpdateTracking implements UseCase<
         throw error;
       }
 
-      await this.deps.shipments.save(shipment, tx);
+      await this.deps.shipments.save(shipment, input.tenantId, tx);
       return ok({ shipmentId: shipment.id.toString(), status: shipment.status.value });
     });
   }
@@ -405,7 +418,7 @@ export class RetryShipment implements UseCase<ShipmentIdInput, ShipmentStatusOut
 
   async execute(input: ShipmentIdInput): Promise<Result<ShipmentStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ShipmentStatusOutput, DomainError>>(async (tx) => {
-      const shipment = await this.deps.shipments.findById(input.shipmentId, tx);
+      const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
       if (shipment === null) {
         return err(new NotFoundError("Shipment not found"));
       }
@@ -417,7 +430,7 @@ export class RetryShipment implements UseCase<ShipmentIdInput, ShipmentStatusOut
         throw error;
       }
 
-      await this.deps.shipments.save(shipment, tx);
+      await this.deps.shipments.save(shipment, input.tenantId, tx);
       await notifyBestEffort(this.deps, shipment);
       return ok({ shipmentId: shipment.id.toString(), status: shipment.status.value });
     });
