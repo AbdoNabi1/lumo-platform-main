@@ -9,7 +9,9 @@ envelope (`packages/messaging/src/outbox/outbox-writer.ts:61`). Fixed by merging
 at every outbox write (`{ ...this.deps.context, tenantId }`; identity uses `aggregate.tenantId`,
 `services/example` is a documented exception) — ADR-0014 Amendment 7. Guarded by
 `assertWriteTimeTenant` per converted context plus `scripts/dev/check-outbox-tenant.mjs` in T10.3's
-done-criterion, so the remaining contexts cannot repeat it.
+done-criterion, so the remaining contexts cannot repeat it. The script first scanned `services` only
+and missed `packages/usage` (`OutboxUsageRecorder`, latent — nothing constructs it); it now scans
+`services`, `packages` and `apps`, and the recorder merges `record.tenant`.
 
 **Corrected counts (command output, not the prose below):** **23 contexts converted** — the 21 listed
 in the next section plus **finance** and **customer-360**, which converted after that section was

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
+import { rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { isValidUsageRecord, normalizeUsageRecord, type UsageRecord } from "./usage-record";
 import { UsageRecorded } from "./usage-recorded.event";
 import { UsageEventTranslator } from "./usage-event-translator";
-import { InMemoryUsageRecorder } from "./usage-recorder.port";
+import { InMemoryUsageRecorder, OutboxUsageRecorder } from "./usage-recorder.port";
 import { isRegisteredResource } from "./usage-resource";
 
 const record: UsageRecord = {
@@ -55,5 +57,23 @@ describe("InMemoryUsageRecorder", () => {
     await recorder.record(record);
     expect(recorder.records).toHaveLength(1);
     expect(recorder.records[0]?.resource).toBe("ai_credits");
+  });
+});
+
+describe("OutboxUsageRecorder write-time tenant (ADR-0014 Amendment 7)", () => {
+  it("carries each record's tenant into the outbox envelope, not the singleton context's", async () => {
+    let n = 0;
+    const idGenerator = {
+      generate: () => `00000000-0000-7000-8000-${(n++).toString().padStart(12, "0")}`,
+    };
+    await assertWriteTimeTenant("usage", async (outbox, tenantId) => {
+      const recorder = new OutboxUsageRecorder({
+        outbox,
+        context: rootEventContext(idGenerator),
+        idGenerator,
+        clock: { now: () => new Date(0) },
+      });
+      await recorder.record({ ...record, tenant: tenantId });
+    });
   });
 });

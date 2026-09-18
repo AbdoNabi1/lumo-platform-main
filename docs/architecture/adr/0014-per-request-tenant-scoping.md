@@ -104,6 +104,15 @@ envelope.tenantId })`) read nothing, and turned gap F-02 ("`tenantId` is optiona
 > `scripts/dev/check-outbox-tenant.mjs` (T10.3's done-criterion) separately fails any converted
 > context's `outbox.write` call that never mentions `tenantId`. Making `tenantId` required on the
 > envelope type remains the F-02/G-64 work and was deliberately not taken here.
+>
+> **Addendum, 2026-09-18 — the check covers `packages` and `apps` too.** The first version of
+> `scripts/dev/check-outbox-tenant.mjs` scanned `services` only and so missed
+> `packages/usage/src/usage-recorder.port.ts:39` (`OutboxUsageRecorder`, the canonical port for
+> `platform.usage.recorded`), which wrote `this.deps.context` with no tenant although
+> `record.tenant` was in scope. Latent, not live: nothing constructs `OutboxUsageRecorder` today.
+> Fixed by merging `record.tenant`; with no argument the script now scans `services`, `packages` and
+> `apps`, and treats every package and app as converted (shared infrastructure must always merge
+> the per-call tenant). `services/example` remains the only exemption, keyed by path.
 
 ## Context
 

@@ -36,7 +36,11 @@ export class OutboxUsageRecorder implements UsageRecorderPort {
       },
       normalizeUsageRecord(record),
     );
-    await this.deps.outbox.write([event], this.deps.context, undefined);
+    await this.deps.outbox.write(
+      [event],
+      { ...this.deps.context, tenantId: record.tenant },
+      undefined,
+    );
   }
 }
 

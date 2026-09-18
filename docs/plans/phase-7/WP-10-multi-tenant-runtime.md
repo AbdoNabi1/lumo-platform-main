@@ -338,51 +338,53 @@ from grant counts alone.
       Every non-uniform repository you find is worth a note in the ADR.
 
       **Done when (corrected 2026-09-18): no construction-time tenant pinning anywhere in the
-                  converted context — repositories, adapters, ports and stores alike, Prisma or otherwise —
-                  not "Prisma repositories converted."** The original, narrower wording let a context pass as
-                  "done" while a non-Prisma store (`services/analytics`' `ClickHouseAnalyticsReadStore`) or a
-                  non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`) still pinned
-                  `tenantId` at construction — both found and fixed in the session that made this correction
-                  (see the T10.7 inventory above for the sites still outstanding under the wider definition).
-                  **Verification command is the T10.7 inventory's own repo-wide grep, not a `services/`-only
-                  one** — the T10.3 sweep's original pattern (`grep ... packages apps services`, restricted in
-                  practice to `services/*/src/infrastructure/prisma-*.ts`) would have missed
-                  `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`, which pins its tenant via
-                  `config.TENANT_DEFAULT_ID` with no `deps.tenantId`/`this.tenantId =` shape at all:
+                          converted context — repositories, adapters, ports and stores alike, Prisma or otherwise —
+                          not "Prisma repositories converted."** The original, narrower wording let a context pass as
+                          "done" while a non-Prisma store (`services/analytics`' `ClickHouseAnalyticsReadStore`) or a
+                          non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`) still pinned
+                          `tenantId` at construction — both found and fixed in the session that made this correction
+                          (see the T10.7 inventory above for the sites still outstanding under the wider definition).
+                          **Verification command is the T10.7 inventory's own repo-wide grep, not a `services/`-only
+                          one** — the T10.3 sweep's original pattern (`grep ... packages apps services`, restricted in
+                          practice to `services/*/src/infrastructure/prisma-*.ts`) would have missed
+                          `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`, which pins its tenant via
+                          `config.TENANT_DEFAULT_ID` with no `deps.tenantId`/`this.tenantId =` shape at all:
 
-                  ```bash
-                  grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
-                    --include="*.ts" packages apps services | grep -v node_modules | grep -v "\.test\." | grep -v coverage
-                  grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
-                  ```
+                          ```bash
+                          grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
+                            --include="*.ts" packages apps services | grep -v node_modules | grep -v "\.test\." | grep -v coverage
+                          grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
+                          ```
 
-                  A context is done when every match for it (repository, adapter, port, or store) is gone from
-                  the first command's output, and every match for it in the second command's output is
-                  classified (A)/(B)/(C)/(D) per the T10.7 inventory's own scheme — not merely absent from a
-                  hand-picked list of Prisma files.
+                          A context is done when every match for it (repository, adapter, port, or store) is gone from
+                          the first command's output, and every match for it in the second command's output is
+                          classified (A)/(B)/(C)/(D) per the T10.7 inventory's own scheme — not merely absent from a
+                          hand-picked list of Prisma files.
 
-                  **Event-envelope tenant (added 2026-09-18, ADR-0014 Amendment 7).** Repository-side
-                  conversion is not complete until the tenant also reaches the outbox envelope. Two more
-                  conditions, both required:
+                          **Event-envelope tenant (added 2026-09-18, ADR-0014 Amendment 7).** Repository-side
+                          conversion is not complete until the tenant also reaches the outbox envelope. Two more
+                          conditions, both required:
 
-                  - The context's suite calls `assertWriteTimeTenant` (`@platform/messaging/testing`,
-                    `packages/messaging/src/testing/write-time-tenant.ts`) against its repository. It only
-                    catches contexts that call it — a context that forgets passes silently — which is why the
-                    next check exists.
-                  - This exits 0 (no output). It lists every `outbox.write(...)` call in a converted context
-                    whose argument list never mentions `tenantId`:
+                          - The context's suite calls `assertWriteTimeTenant` (`@platform/messaging/testing`,
+                            `packages/messaging/src/testing/write-time-tenant.ts`) against its repository. It only
+                            catches contexts that call it — a context that forgets passes silently — which is why the
+                            next check exists.
+                          - This exits 0 (no output). It lists every `outbox.write(...)` call in a converted context, package or app
+                            whose argument list never mentions `tenantId`:
 
-                  ```bash
-                  node scripts/dev/check-outbox-tenant.mjs
-                  ```
+                          ```bash
+                          node scripts/dev/check-outbox-tenant.mjs
+                          ```
 
-                  "Converted" is derived: a context still building `rootEventContext(deps.idGenerator, tenantId)`
-                  in its composition is skipped, so unconverted contexts cause no false positives and a
-                  context joins the check the moment it converts. Verified 2026-09-18 by breaking
-                  `services/coupons/src/infrastructure/prisma-coupon-repository.ts:50` to pass the bare
-                  singleton context: the command printed that site and exited 1; restored, it exits 0. It
-                  does **not** catch a merge of the *wrong* tenant, a write hidden behind a helper, or a
-                  context that never writes; `services/example` is exempt (template, no tenant).
+                          "Converted" is derived: a context still building `rootEventContext(deps.idGenerator, tenantId)`
+                          in its composition is skipped, so unconverted contexts cause no false positives and a
+                          context joins the check the moment it converts. With no argument it scans `services`,
+                          `packages` and `apps` (packages and apps are always checked; it first scanned `services` only and
+                          missed `packages/usage`). Verified 2026-09-18 by breaking
+                          `services/coupons/src/infrastructure/prisma-coupon-repository.ts:50` to pass the bare
+                          singleton context: the command printed that site and exited 1; restored, it exits 0. It
+                          does **not** catch a merge of the *wrong* tenant, a write hidden behind a helper, or a
+                          context that never writes; `services/example` is exempt (template, no tenant).
 
 - [ ] **T10.4 — Remove the boot refusal, and replace it with a real guard.**
       Deleting the `TENANT_MODE === "multi"` throw is the last step, not the first. What replaces it
@@ -450,8 +452,13 @@ unconverted context's own repository sweep, or found only by the second, widened
 
 **Totals: (A) 6 · (B) 1 · (C) 4 · (D) 2 — 13 sites, none unclassifiable.**
 
-Not re-listed: the 14 unconverted contexts' own Prisma repositories (all (A), tracked by the
-roadmap's Status section already) and `tenancy` (parked, per Task A).
+Not re-listed: the 13 unconverted contexts' own Prisma repositories (all (A), tracked by the
+roadmap's Status section already) and `tenancy` (parked, per Task A) — 14 unconverted in all.
+
+**Coverage limit, stated explicitly:** the Prisma branch of the converted repositories (e.g.
+`services/coupons/src/infrastructure/prisma-coupon-repository.ts:50`) has **no database test** for
+the write-time tenant merge. It is covered by the static `scripts/dev/check-outbox-tenant.mjs`
+check alone, which only proves the write mentions `tenantId`, not that it is the right one.
 
 ## Definition of done
 
