@@ -77,6 +77,7 @@ async function seedPublishedPrice(
   currency = "USD",
 ): Promise<void> {
   const created = await admin.pricing.createPrice(staff, {
+    tenantId: "tenant-local",
     priceListId: "price-list-1",
     productId,
     amountMinor,
@@ -88,6 +89,7 @@ async function seedPublishedPrice(
     );
   }
   const published = await admin.pricing.publishPrice(staff, {
+    tenantId: "tenant-local",
     priceId: (created.body as { id: string }).id,
   });
   if (published.status < 200 || published.status >= 300) {

@@ -12,14 +12,7 @@ const createCartBody = z.object({
   currency: z.string().length(3),
 });
 const cartIdParams = z.object({ cartId: z.string().min(1) });
-const cartStatusEnum = z.enum([
-  "active",
-  "checked_out",
-  "abandoned",
-  "locked",
-  "saved",
-  "expired",
-]);
+const cartStatusEnum = z.enum(["active", "checked_out", "abandoned", "locked", "saved", "expired"]);
 const cartListQuery = z.object({
   first: z.coerce.number().int().positive().optional(),
   after: z.string().optional(),
@@ -131,7 +124,7 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Add a line to a cart (merges quantity if the product is already present)",
       schema: { params: cartIdParams, body: addItemBody },
       handle: async ({ params, body, context }): Promise<AdminResponse> => {
-        const price = await resolvePrice(admin, body.productId);
+        const price = await resolvePrice(admin, body.productId, context.tenantId);
         if (price.status !== "ok") return priceUnresolvedResponse();
         return admin.cart.addItem(context.principal, {
           cartId: params.cartId,
@@ -171,7 +164,7 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Replace a line's product (e.g. a different variant)",
       schema: { params: cartIdParams, body: replaceVariantBody },
       handle: async ({ params, body, context }): Promise<AdminResponse> => {
-        const price = await resolvePrice(admin, body.newProductId);
+        const price = await resolvePrice(admin, body.newProductId, context.tenantId);
         if (price.status !== "ok") return priceUnresolvedResponse();
         return admin.cart.replaceVariant(context.principal, {
           cartId: params.cartId,
@@ -276,7 +269,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       path: "/carts",
       version: 1,
       permission: "cart:read",
-      summary: "List carts (cursor pagination; an optional status filter is abandoned-cart recovery)",
+      summary:
+        "List carts (cursor pagination; an optional status filter is abandoned-cart recovery)",
       schema: { querystring: cartListQuery },
       handle: async ({ query, context }) =>
         mapPage(await admin.cart.list(context.principal, query), toCartDto),

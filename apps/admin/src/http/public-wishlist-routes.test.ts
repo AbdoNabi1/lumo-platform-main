@@ -231,7 +231,9 @@ describe("wishlist items are scoped to the session's own customer", () => {
       sessionId: a.sessionId,
     });
 
-    expect((await wish("GET", "/public/wishlists/me", { sessionId: a.sessionId })).status).toBe(401);
+    expect((await wish("GET", "/public/wishlists/me", { sessionId: a.sessionId })).status).toBe(
+      401,
+    );
   });
 });
 
@@ -333,7 +335,8 @@ describe("POST /public/wishlists/me/items/share", () => {
 
   it("401s for an anonymous caller", async () => {
     expect(
-      (await wish("POST", "/public/wishlists/me/items/share", { body: { productRef: "p" } })).status,
+      (await wish("POST", "/public/wishlists/me/items/share", { body: { productRef: "p" } }))
+        .status,
     ).toBe(401);
   });
 });
@@ -342,6 +345,7 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
   /** Same real create-then-publish path `public-cart-routes.test.ts`'s `seedPublishedPrice` uses. */
   async function publishedPrice(productRef: string, amountMinor: number): Promise<void> {
     const created = await h.pricing.prices.create({
+      tenantId: "tenant-local",
       priceListId: "price-list-1",
       productId: productRef,
       amountMinor,
@@ -349,7 +353,7 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
     });
     expect(created.status).toBeLessThan(300);
     const { id } = created.body as { id: string };
-    const published = await h.pricing.prices.publish({ priceId: id });
+    const published = await h.pricing.prices.publish({ tenantId: "tenant-local", priceId: id });
     expect(published.status).toBeLessThan(300);
   }
 

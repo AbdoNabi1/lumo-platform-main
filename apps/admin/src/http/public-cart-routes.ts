@@ -255,10 +255,10 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       public: true,
       summary: "Public: add an item to the caller's own guest cart",
       schema: { params: cartIdParams, body: addItemBody },
-      handle: async ({ params, body }) => {
+      handle: async ({ params, body, context }) => {
         const owned = await requireOwnedCart(admin, params.cartId, body.sessionRef);
         if (!owned.ok) return owned.response;
-        const price = await resolvePrice(admin, body.productId);
+        const price = await resolvePrice(admin, body.productId, context.tenantId);
         if (price.status !== "ok") return priceUnresolvedResponse();
         const result = await admin.publicReads.cart.add({
           cartId: params.cartId,

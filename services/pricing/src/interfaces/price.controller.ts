@@ -1,8 +1,7 @@
 import type { ChangePrice, ChangePriceInput } from "../application/change-price.use-case";
 import type { CreatePrice, CreatePriceInput } from "../application/create-price.use-case";
-import type { ListPrices } from "../application/list-prices.use-case";
+import type { ListPrices, ListPricesInput } from "../application/list-prices.use-case";
 import type { PublishPrice, PublishPriceInput } from "../application/publish-price.use-case";
-import type { CursorPage } from "@platform/types";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface PriceControllerDeps {
@@ -32,7 +31,7 @@ export class PriceController {
     return present(await this.deps.publishPrice.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListPricesInput): Promise<ControllerResponse> {
     return present(await this.deps.listPrices.execute(input), 200);
   }
 }

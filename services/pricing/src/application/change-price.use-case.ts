@@ -7,6 +7,8 @@ import { type DomainError, isDomainError, NotFoundError } from "@platform/utils"
 import type { PriceRepository } from "../domain/price-repository";
 
 export interface ChangePriceInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly priceId: string;
   readonly amountMinor: number;
   readonly currency: string;
@@ -51,7 +53,7 @@ export class ChangePrice implements UseCase<ChangePriceInput, ChangePriceOutput,
     }
 
     return this.deps.unitOfWork.run<Result<ChangePriceOutput, DomainError>>(async (tx) => {
-      const price = await this.deps.prices.findById(input.priceId, tx);
+      const price = await this.deps.prices.findById(input.priceId, input.tenantId, tx);
       if (price === null) {
         return err(new NotFoundError("Price not found"));
       }
@@ -66,7 +68,7 @@ export class ChangePrice implements UseCase<ChangePriceInput, ChangePriceOutput,
         throw error;
       }
 
-      await this.deps.prices.save(price, tx);
+      await this.deps.prices.save(price, input.tenantId, tx);
       return ok({ id: price.id.toString() });
     });
   }

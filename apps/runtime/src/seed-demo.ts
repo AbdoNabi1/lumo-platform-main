@@ -357,6 +357,7 @@ async function main(): Promise<void> {
       const existingPrices = await pricing.priceRepository.findPublishedByProduct(
         product.id,
         CURRENCY,
+        TENANT_ID,
       );
       if (existingPrices.length > 0) {
         priceListId = priceListId ?? existingPrices[0]!.priceListId;
@@ -372,11 +373,15 @@ async function main(): Promise<void> {
     if (productsNeedingPrice.length > 0) {
       if (priceListId === null) {
         const priceList = unwrap<{ id: string }>(
-          await pricing.priceLists.create({ name: "Demo Retail", currency: CURRENCY }),
+          await pricing.priceLists.create({
+            tenantId: TENANT_ID,
+            name: "Demo Retail",
+            currency: CURRENCY,
+          }),
           "create price list",
         );
         unwrap(
-          await pricing.priceLists.activate({ priceListId: priceList.id }),
+          await pricing.priceLists.activate({ tenantId: TENANT_ID, priceListId: priceList.id }),
           "activate price list",
         );
         priceListId = priceList.id;
@@ -393,6 +398,7 @@ async function main(): Promise<void> {
       for (const product of productsNeedingPrice) {
         const price = unwrap<{ id: string }>(
           await pricing.prices.create({
+            tenantId: TENANT_ID,
             priceListId,
             productId: product.id,
             amountMinor: product.priceAmountMinor,
@@ -401,7 +407,7 @@ async function main(): Promise<void> {
           `create price for product "${product.id}"`,
         );
         unwrap(
-          await pricing.prices.publish({ priceId: price.id }),
+          await pricing.prices.publish({ tenantId: TENANT_ID, priceId: price.id }),
           `publish price for product "${product.id}"`,
         );
         logger.info("seed-demo: created + published price", {

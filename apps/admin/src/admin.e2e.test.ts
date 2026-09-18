@@ -73,7 +73,13 @@ describe("admin wiring (end to end)", () => {
 
     // Discounts/Coupons screens → Pricing
     expect(
-      (await admin.pricing.createPriceList(staff, { name: "Retail", currency: "USD" })).status,
+      (
+        await admin.pricing.createPriceList(staff, {
+          tenantId: "tenant-1",
+          name: "Retail",
+          currency: "USD",
+        })
+      ).status,
     ).toBe(201);
 
     // Events from every context flow through the aggregated outbox drain.

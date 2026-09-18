@@ -638,7 +638,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const checkoutDeps = {
     ...deps,
     pricingValidation:
-      deps.pricingValidation ?? new PricingValidationAdapter(pricing.priceRepository),
+      deps.pricingValidation ??
+      new PricingValidationAdapter(pricing.priceRepository, deps.tenantId),
     inventoryValidation:
       deps.inventoryValidation ??
       new InventoryValidationAdapter(inventory.inventory, inventory.warehouseRepository),

@@ -50,12 +50,11 @@ export interface PricingWiringDeps {
   /**
    * Production persistence (G-39/C-01). Present ⇒ all 4 Prisma repositories
    * (`PrismaPriceRepository`/`PrismaPriceListRepository`/`PrismaTaxClassRepository`/
-   * `PrismaPricingRuleRepository`) + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wireCatalog`); absent ⇒ in-memory, unchanged.
+   * `PrismaPricingRuleRepository`) + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged.
+   * ADR-0014 (WP-10, T10.3): the repositories built here are tenant-agnostic singletons — no
+   * `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Pricing table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredPricing {
@@ -132,10 +131,6 @@ function buildControllers(
  */
 export function wirePricing(deps: PricingWiringDeps): WiredPricing {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wirePricing: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new PricingEventTranslator(),
@@ -143,8 +138,10 @@ export function wirePricing(deps: PricingWiringDeps): WiredPricing {
       clock: deps.clock,
       producer: "pricing",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const pricingDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time (see PricingWiringDeps) — every
+    // repository takes it per call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const pricingDeps = { prisma: deps.prisma, outbox, context };
     const repos: PricingRepos = {
       prices: new PrismaPriceRepository(pricingDeps),
       priceLists: new PrismaPriceListRepository(pricingDeps),

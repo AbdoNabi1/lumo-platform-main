@@ -1613,7 +1613,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a draft price list",
       schema: { body: createPriceListBody },
-      handle: ({ body, context }) => admin.pricing.createPriceList(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pricing.createPriceList(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1623,7 +1624,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Activate a draft price list",
       schema: { params: priceListIdParams },
-      handle: ({ params, context }) => admin.pricing.activatePriceList(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.pricing.activatePriceList(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1633,7 +1638,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a price (compare-at/cost/effective window/tax class optional)",
       schema: { body: createPriceBody },
-      handle: ({ body, context }) => admin.pricing.createPrice(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pricing.createPrice(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1644,7 +1650,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Change a price's amount (and optionally compare-at/cost)",
       schema: { params: priceIdParams, body: changePriceBody },
       handle: ({ params, body, context }) =>
-        admin.pricing.changePrice(context.principal, { priceId: params.priceId, ...body }),
+        admin.pricing.changePrice(context.principal, {
+          priceId: params.priceId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1654,7 +1664,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Publish a draft price",
       schema: { params: priceIdParams },
-      handle: ({ params, context }) => admin.pricing.publishPrice(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.pricing.publishPrice(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1664,7 +1675,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a tax classification",
       schema: { body: createTaxClassBody },
-      handle: ({ body, context }) => admin.pricing.createTaxClass(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pricing.createTaxClass(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1674,7 +1686,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a list-price adjustment rule (percentage capped at 100)",
       schema: { body: createPricingRuleBody },
-      handle: ({ body, context }) => admin.pricing.createPricingRule(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pricing.createPricingRule(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",

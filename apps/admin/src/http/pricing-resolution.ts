@@ -25,8 +25,12 @@ export type PriceResolution =
  * semantics mirror `PriceBook.resolve()` exactly: zero published rows for the product is
  * `"unavailable"`, more than one is `"ambiguous"` (never guessed at), exactly one is `"ok"`.
  */
-export async function resolvePrice(admin: WiredAdmin, productId: string): Promise<PriceResolution> {
-  const response = await admin.publicReads.prices.list({ first: 100 });
+export async function resolvePrice(
+  admin: WiredAdmin,
+  productId: string,
+  tenantId: string,
+): Promise<PriceResolution> {
+  const response = await admin.publicReads.prices.list({ first: 100, tenantId });
   if (response.status < 200 || response.status >= 300) return { status: "error" };
   const { items } = response.body as { items: readonly Price[] };
   const matches = items.filter(

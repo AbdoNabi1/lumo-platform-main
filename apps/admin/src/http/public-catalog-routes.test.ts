@@ -419,6 +419,7 @@ describe("public catalog routes — DTO boundary", () => {
     const pricing = pricingFixture();
     const created = unwrap<{ id: string }>(
       await pricing.prices.create({
+        tenantId: "tenant-local",
         priceListId: "price-list-1",
         productId: "product-1",
         amountMinor: 2999,
@@ -440,6 +441,7 @@ describe("public catalog routes — DTO boundary", () => {
     const pricing = pricingFixture();
     const draft = unwrap<{ id: string }>(
       await pricing.prices.create({
+        tenantId: "tenant-local",
         priceListId: "price-list-1",
         productId: "product-1",
         amountMinor: 2999,
@@ -449,6 +451,7 @@ describe("public catalog routes — DTO boundary", () => {
     );
     const published = unwrap<{ id: string }>(
       await pricing.prices.create({
+        tenantId: "tenant-local",
         priceListId: "price-list-1",
         productId: "product-2",
         amountMinor: 1999,
@@ -456,7 +459,10 @@ describe("public catalog routes — DTO boundary", () => {
       }),
       "create published price",
     );
-    unwrap(await pricing.prices.publish({ priceId: published.id }), "publish price");
+    unwrap(
+      await pricing.prices.publish({ tenantId: "tenant-local", priceId: published.id }),
+      "publish price",
+    );
 
     const response = await invoke(stubAdmin(catalogFixture(), pricing), "/public/prices");
 

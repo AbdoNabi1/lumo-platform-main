@@ -333,8 +333,13 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       public: true,
       summary: "Public: list published prices (cursor pagination)",
       schema: { querystring: pageQuery },
-      handle: async ({ query }) =>
-        publishedOnly(mapPage(await admin.publicReads.prices.list(query), toPriceDto)),
+      handle: async ({ query, context }) =>
+        publishedOnly(
+          mapPage(
+            await admin.publicReads.prices.list({ ...query, tenantId: context.tenantId }),
+            toPriceDto,
+          ),
+        ),
     }),
     defineRoute({
       method: "GET",

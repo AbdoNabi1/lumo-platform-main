@@ -36,16 +36,22 @@ async function seedPublishedPrice(
   currency = "USD",
 ): Promise<void> {
   const created = await admin.pricing.createPrice(staff, {
+    tenantId: "tenant-local",
     priceListId: "price-list-1",
     productId,
     amountMinor,
     currency,
   });
   if (created.status < 200 || created.status >= 300) {
-    throw new Error(`seedPublishedPrice: create failed (${created.status}): ${JSON.stringify(created.body)}`);
+    throw new Error(
+      `seedPublishedPrice: create failed (${created.status}): ${JSON.stringify(created.body)}`,
+    );
   }
   const { id } = created.body as { id: string };
-  const published = await admin.pricing.publishPrice(staff, { priceId: id });
+  const published = await admin.pricing.publishPrice(staff, {
+    tenantId: "tenant-local",
+    priceId: id,
+  });
   if (published.status < 200 || published.status >= 300) {
     throw new Error(
       `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,
@@ -89,7 +95,12 @@ function routesFor(admin: WiredAdmin) {
       context: publicContext(),
     } as never) as Promise<Response>;
 
-  const addCartItem = (cartId: string, sessionRef: string, productId: string, quantity: number): Promise<Response> =>
+  const addCartItem = (
+    cartId: string,
+    sessionRef: string,
+    productId: string,
+    quantity: number,
+  ): Promise<Response> =>
     byPathAndMethod(cart, "POST", "/public/carts/:cartId/items").handle({
       body: { sessionRef, productId, quantity },
       params: { cartId },
@@ -122,7 +133,11 @@ function routesFor(admin: WiredAdmin) {
     } as never) as Promise<Response>;
 
   const billingAddress = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/billing-address").handle({
+    byPathAndMethod(
+      checkout,
+      "POST",
+      "/public/checkouts/:checkoutSessionId/billing-address",
+    ).handle({
       body,
       params: { checkoutSessionId },
       query: {},
@@ -130,7 +145,11 @@ function routesFor(admin: WiredAdmin) {
     } as never) as Promise<Response>;
 
   const shippingAddress = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/shipping-address").handle({
+    byPathAndMethod(
+      checkout,
+      "POST",
+      "/public/checkouts/:checkoutSessionId/shipping-address",
+    ).handle({
       body,
       params: { checkoutSessionId },
       query: {},
@@ -138,15 +157,21 @@ function routesFor(admin: WiredAdmin) {
     } as never) as Promise<Response>;
 
   const shippingQuote = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/shipping-quote").handle({
-      body,
-      params: { checkoutSessionId },
-      query: {},
-      context: publicContext(),
-    } as never) as Promise<Response>;
+    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/shipping-quote").handle(
+      {
+        body,
+        params: { checkoutSessionId },
+        query: {},
+        context: publicContext(),
+      } as never,
+    ) as Promise<Response>;
 
   const shippingSelection = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/shipping-selection").handle({
+    byPathAndMethod(
+      checkout,
+      "POST",
+      "/public/checkouts/:checkoutSessionId/shipping-selection",
+    ).handle({
       body,
       params: { checkoutSessionId },
       query: {},
@@ -162,7 +187,11 @@ function routesFor(admin: WiredAdmin) {
     } as never) as Promise<Response>;
 
   const paymentSelection = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/payment-selection").handle({
+    byPathAndMethod(
+      checkout,
+      "POST",
+      "/public/checkouts/:checkoutSessionId/payment-selection",
+    ).handle({
       body,
       params: { checkoutSessionId },
       query: {},
@@ -185,7 +214,10 @@ function routesFor(admin: WiredAdmin) {
       context: publicContext(),
     } as never) as Promise<Response>;
 
-  const paymentIntentRequest = (checkoutSessionId: string, sessionRef: string | undefined): Promise<Response> =>
+  const paymentIntentRequest = (
+    checkoutSessionId: string,
+    sessionRef: string | undefined,
+  ): Promise<Response> =>
     byPathAndMethod(
       checkout,
       "GET",
@@ -445,14 +477,21 @@ describe("public checkout routes — ownership", () => {
     const rawAdmin = buildAdmin();
     await seedPublishedPrice(rawAdmin, "product-1", 500);
     const admin = routesFor(rawAdmin);
-    const victimCart = unwrap<{ id: string }>(await admin.createCart("session-victim"), "victim cart");
+    const victimCart = unwrap<{ id: string }>(
+      await admin.createCart("session-victim"),
+      "victim cart",
+    );
     await admin.addCartItem(victimCart.id, "session-victim", "product-1", 1);
     const attackerCart = unwrap<{ id: string }>(
       await admin.createCart("session-attacker"),
       "attacker cart",
     );
     const started = unwrap<PublicCheckoutSessionDto>(
-      await admin.start({ sessionRef: "session-attacker", cartRef: attackerCart.id, currency: "USD" }),
+      await admin.start({
+        sessionRef: "session-attacker",
+        cartRef: attackerCart.id,
+        currency: "USD",
+      }),
       "start checkout",
     );
 
@@ -535,7 +574,10 @@ describe("public checkout routes — no forged amounts or spoofed identity (.str
 
   it("shipping-selection rejects a body carrying rateAmountMinor", () => {
     const admin = routesFor(buildAdmin());
-    const schema = admin.schemaOf("POST", "/public/checkouts/:checkoutSessionId/shipping-selection");
+    const schema = admin.schemaOf(
+      "POST",
+      "/public/checkouts/:checkoutSessionId/shipping-selection",
+    );
 
     const result = schema?.safeParse({
       sessionRef: "session-a",
@@ -548,11 +590,13 @@ describe("public checkout routes — no forged amounts or spoofed identity (.str
 
   it("shipping-selection still accepts the legitimate shape (method only)", () => {
     const admin = routesFor(buildAdmin());
-    const schema = admin.schemaOf("POST", "/public/checkouts/:checkoutSessionId/shipping-selection");
+    const schema = admin.schemaOf(
+      "POST",
+      "/public/checkouts/:checkoutSessionId/shipping-selection",
+    );
 
     const result = schema?.safeParse({ sessionRef: "session-a", method: "standard" }) as
-      | { success: boolean }
-      | undefined;
+      { success: boolean } | undefined;
 
     expect(result?.success).toBe(true);
   });

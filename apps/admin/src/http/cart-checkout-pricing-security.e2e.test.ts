@@ -30,7 +30,13 @@ const clock: Clock = { now: () => new Date("2026-08-10T00:00:00.000Z") };
 function buildAdmin(overrides: Partial<AdminWiringDeps> = {}): WiredAdmin {
   let n = 0;
   const idGenerator: IdGenerator = { generate: () => `id-${(n += 1)}` };
-  return wireAdmin({ serializer: new InMemoryEventSerializer(), idGenerator, clock, ...overrides });
+  return wireAdmin({
+    serializer: new InMemoryEventSerializer(),
+    idGenerator,
+    clock,
+    tenantId: "tenant-local",
+    ...overrides,
+  });
 }
 
 /** Records calls and returns a fixed `orderRef` — proves the C-2 wiring without a real Orders adapter (a separate task). */
@@ -86,6 +92,7 @@ async function createPrice(
   currency = "USD",
 ): Promise<string> {
   const created = await admin.pricing.createPrice(staff, {
+    tenantId: "tenant-local",
     priceListId: "price-list-1",
     productId,
     amountMinor,
@@ -105,7 +112,10 @@ async function seedPublishedPrice(
   currency = "USD",
 ): Promise<void> {
   const id = await createPrice(admin, productId, amountMinor, currency);
-  const published = await admin.pricing.publishPrice(staff, { priceId: id });
+  const published = await admin.pricing.publishPrice(staff, {
+    tenantId: "tenant-local",
+    priceId: id,
+  });
   if (published.status < 200 || published.status >= 300) {
     throw new Error(
       `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,

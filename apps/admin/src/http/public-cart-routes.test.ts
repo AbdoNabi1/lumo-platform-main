@@ -45,6 +45,7 @@ async function seedPublishedPrice(
   currency = "USD",
 ): Promise<void> {
   const created = await pricing.prices.create({
+    tenantId: "tenant-local",
     priceListId: "price-list-1",
     productId,
     amountMinor,
@@ -56,7 +57,7 @@ async function seedPublishedPrice(
     );
   }
   const { id } = created.body as { id: string };
-  const published = await pricing.prices.publish({ priceId: id });
+  const published = await pricing.prices.publish({ tenantId: "tenant-local", priceId: id });
   if (published.status < 200 || published.status >= 300) {
     throw new Error(
       `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,
@@ -391,6 +392,7 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
   it("a draft (unpublished) price is not resolvable — behaves the same as no price at all", async () => {
     const pricing = pricingFixture();
     await pricing.prices.create({
+      tenantId: "tenant-local",
       priceListId: "price-list-1",
       productId: "p1",
       amountMinor: 1000,

@@ -25,17 +25,31 @@ import type { PriceRepository } from "@platform/pricing";
  */
 export class PricingValidationAdapter implements PricingValidationPort {
   private readonly prices: PriceRepository;
+  private readonly tenantId: string | undefined;
 
-  constructor(prices: PriceRepository) {
+  /**
+   * ADR-0014 (WP-10, T10.3): `PriceRepository.findPublishedByProduct` now takes `tenantId` per
+   * call, but checkout's own `PricingValidationPort.validate(items, currency)` does not carry
+   * one yet — widening it is checkout-context work. Until checkout converts, this adapter captures
+   * the tenant at construction (same not-yet-converted pattern as `PromotionValidationAdapter`).
+   * `tenantId` stays optional only because `AdminWiringDeps.tenantId` is; `validate` fails
+   * closed if it is missing, never defaulting a tenant.
+   */
+  constructor(prices: PriceRepository, tenantId?: string) {
     this.prices = prices;
+    this.tenantId = tenantId;
   }
 
   async validate(
     items: readonly CheckoutItem[],
     currency: string,
   ): Promise<PricingValidationResult> {
+    const tenantId = this.tenantId;
+    if (tenantId === undefined) {
+      return { valid: false, reason: "cannot validate pricing without a tenant" };
+    }
     for (const item of items) {
-      const matches = await this.prices.findPublishedByProduct(item.productRef, currency);
+      const matches = await this.prices.findPublishedByProduct(item.productRef, currency, tenantId);
       if (matches.length === 0) {
         return {
           valid: false,

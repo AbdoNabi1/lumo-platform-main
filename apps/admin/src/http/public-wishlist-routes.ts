@@ -288,7 +288,7 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
           return { status: 404, body: toErrorEnvelope(new NotFoundError("Cart not found")) };
         }
 
-        const price = await resolvePrice(admin, body.productRef);
+        const price = await resolvePrice(admin, body.productRef, context.tenantId);
         if (price.status !== "ok") return priceUnresolvedResponse();
 
         const added = await admin.publicReads.cart.add({

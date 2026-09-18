@@ -200,10 +200,17 @@ async function main(): Promise<void> {
 
     // ---- Pricing: one active price list, one published price per product ----
     const priceList = unwrap<{ id: string }>(
-      await pricing.priceLists.create({ name: "Default Retail", currency: CURRENCY }),
+      await pricing.priceLists.create({
+        tenantId: TENANT_ID,
+        name: "Default Retail",
+        currency: CURRENCY,
+      }),
       "create price list",
     );
-    unwrap(await pricing.priceLists.activate({ priceListId: priceList.id }), "activate price list");
+    unwrap(
+      await pricing.priceLists.activate({ tenantId: TENANT_ID, priceListId: priceList.id }),
+      "activate price list",
+    );
     logger.info("seed: created + activated price list", {
       priceListId: priceList.id,
       name: "Default Retail",
@@ -212,6 +219,7 @@ async function main(): Promise<void> {
     for (const product of products) {
       const price = unwrap<{ id: string }>(
         await pricing.prices.create({
+          tenantId: TENANT_ID,
           priceListId: priceList.id,
           productId: product.id,
           amountMinor: product.priceAmountMinor,
@@ -220,7 +228,7 @@ async function main(): Promise<void> {
         `create price for product "${product.id}"`,
       );
       unwrap(
-        await pricing.prices.publish({ priceId: price.id }),
+        await pricing.prices.publish({ tenantId: TENANT_ID, priceId: price.id }),
         `publish price for product "${product.id}"`,
       );
       logger.info("seed: created + published price", {
