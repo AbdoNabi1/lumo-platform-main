@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Redirect } from "../domain/redirect";
 import { RobotsPolicy } from "../domain/robots-policy";
 import { SeoProfile } from "../domain/seo-profile";
@@ -98,5 +99,25 @@ describe("SEO in-memory repositories tenant isolation (ADR-0014, WP-10 T10.5)", 
     expect(await robotsPolicies.findById(policy.id.toString(), "tenant-b")).toBeNull();
     expect(await robotsPolicies.findByUserAgent("*", "tenant-a")).not.toBeNull();
     expect(await robotsPolicies.findByUserAgent("*", "tenant-b")).toBeNull();
+  });
+});
+
+describe("InMemorySeoProfileRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("seo", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemorySeoProfileRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = SeoProfile.create(
+        UniqueEntityId.from(nextId()),
+        "home",
+        SeoMetadata.create({}),
+        nextId(),
+        new Date(0),
+      );
+      await repository.save(agg, tenantId);
+    });
   });
 });

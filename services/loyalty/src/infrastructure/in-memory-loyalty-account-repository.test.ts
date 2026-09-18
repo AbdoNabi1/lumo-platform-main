@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { LoyaltyAccount } from "../domain/loyalty-account";
 import { DEFAULT_TIERS } from "../composition";
 import { LoyaltyEventTranslator } from "./loyalty-event-translator";
@@ -47,5 +48,20 @@ describe("InMemoryLoyaltyAccountRepository tenant isolation (ADR-0014, WP-10 T10
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((a) => a.id.toString())).toContain(account.id.toString());
     expect(pageB.items.map((a) => a.id.toString())).not.toContain(account.id.toString());
+  });
+});
+
+describe("InMemoryLoyaltyAccountRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("loyalty", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryLoyaltyAccountRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = LoyaltyAccount.create(UniqueEntityId.from(nextId()), "customer-1", DEFAULT_TIERS);
+      agg.suspend(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

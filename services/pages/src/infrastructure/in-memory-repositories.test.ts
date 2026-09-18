@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Page } from "../domain/page";
 import { Template } from "../domain/template";
 import { RoutePath } from "../domain/value-objects/route-path";
@@ -68,5 +69,22 @@ describe("InMemoryTemplateRepository tenant isolation (ADR-0014, WP-10 T10.5)", 
     const pageB = await templates.list({}, "tenant-b");
     expect(pageA.items.map((t) => t.id.toString())).toContain(template.id.toString());
     expect(pageB.items.map((t) => t.id.toString())).not.toContain(template.id.toString());
+  });
+});
+
+describe("InMemoryPageRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("pages", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryPageRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const route = RoutePath.create("/homepage");
+      if (!route.ok) throw new Error("test setup: invalid route path");
+      const agg = Page.create(UniqueEntityId.from(nextId()), "Homepage", route.value);
+      agg.publish(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

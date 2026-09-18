@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Theme } from "../domain/theme";
 import { ThemeVariables } from "../domain/value-objects/theme-variables";
 import { ThemeEventTranslator } from "./theme-event-translator";
@@ -47,5 +48,24 @@ describe("InMemoryThemeRepository tenant isolation (ADR-0014, WP-10 T10.5)", () 
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((t) => t.id.toString())).toContain(theme.id.toString());
     expect(pageB.items.map((t) => t.id.toString())).not.toContain(theme.id.toString());
+  });
+});
+
+describe("InMemoryThemeRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("theme", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryThemeRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = Theme.create(
+        UniqueEntityId.from(nextId()),
+        "default",
+        ThemeVariables.create({}, {}, {}),
+      );
+      agg.publish(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

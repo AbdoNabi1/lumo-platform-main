@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Customer } from "../domain/customer";
 import { Email } from "../domain/value-objects/email";
 import { IdentityEventTranslator } from "./identity-event-translator";
@@ -151,5 +152,25 @@ describe("InMemoryCustomerRepository tenant isolation (ADR-0014, WP-10 T10.5)", 
 
     expect(tenantAPage.items.map((c) => c.name)).toEqual(["Alice"]);
     expect(tenantBPage.items.map((c) => c.name)).toEqual(["Bob"]);
+  });
+});
+
+describe("InMemoryCustomerRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("identity", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryCustomerRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = Customer.register(
+        UniqueEntityId.from(nextId()),
+        must(Email.create("ann@example.com")),
+        "Ann",
+        nextId(),
+        new Date(0),
+      );
+      await repository.save(agg, tenantId);
+    });
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { ComponentDefinition } from "../domain/component-definition";
 import { ComponentContract } from "../domain/value-objects/component-contract";
 import { ComponentSchema } from "../domain/value-objects/component-schema";
@@ -50,5 +51,26 @@ describe("InMemoryComponentDefinitionRepository tenant isolation (ADR-0014, WP-1
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((d) => d.id.toString())).toContain(definition.id.toString());
     expect(pageB.items.map((d) => d.id.toString())).not.toContain(definition.id.toString());
+  });
+});
+
+describe("InMemoryComponentDefinitionRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("components", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryComponentDefinitionRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = ComponentDefinition.create(
+        UniqueEntityId.from(nextId()),
+        "hero",
+        "Hero",
+        ComponentSchema.create([]),
+        ComponentContract.create({ slots: [], events: [], responsive: true }),
+      );
+      agg.publish(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

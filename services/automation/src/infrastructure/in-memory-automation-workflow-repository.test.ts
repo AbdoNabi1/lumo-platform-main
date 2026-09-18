@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { AutomationWorkflow } from "../domain/automation-workflow";
 import { AutomationTrigger } from "../domain/value-objects/trigger-action";
 import { AutomationEventTranslator } from "./automation-event-translator";
@@ -48,5 +49,25 @@ describe("InMemoryAutomationWorkflowRepository tenant isolation (ADR-0014, WP-10
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((w) => w.id.toString())).toContain(workflow.id.toString());
     expect(pageB.items.map((w) => w.id.toString())).not.toContain(workflow.id.toString());
+  });
+});
+
+describe("InMemoryAutomationWorkflowRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("automation", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryAutomationWorkflowRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = AutomationWorkflow.create(
+        UniqueEntityId.from(nextId()),
+        "order-confirmation",
+        AutomationTrigger.event("order.placed"),
+        [],
+      );
+      agg.activate(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

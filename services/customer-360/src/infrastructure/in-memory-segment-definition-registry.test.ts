@@ -8,6 +8,7 @@ import {
   OutboxWriter,
   rootEventContext,
 } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { UniqueEntityId } from "@platform/domain";
 import { Expr } from "@platform/expression";
@@ -125,5 +126,37 @@ describe("InMemorySegmentDefinitionRegistry — event publishing", () => {
       },
     );
     expect(await registry.getById("seeded", TENANT_A)).not.toBeNull();
+  });
+});
+
+describe("InMemorySegmentDefinitionRegistry write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, for save and delete", async () => {
+    await assertWriteTimeTenant("customer-360", async (outbox, tenantId) => {
+      const registry = new InMemorySegmentDefinitionRegistry({
+        outbox,
+        context: rootEventContext(ids),
+      });
+      const event = new SegmentCreated(
+        {
+          eventId: ids.generate(),
+          aggregateId: UniqueEntityId.from("high_value"),
+          occurredAt: clock.now(),
+        },
+        { segmentId: "high_value", name: "High value", version: 1 },
+      );
+      await registry.save(
+        {
+          id: "high_value",
+          name: "High value",
+          version: 1,
+          ruleSet: ruleSet(),
+          createdAt: "t0",
+          updatedAt: "t0",
+        },
+        tenantId,
+        0,
+        event,
+      );
+    });
   });
 });

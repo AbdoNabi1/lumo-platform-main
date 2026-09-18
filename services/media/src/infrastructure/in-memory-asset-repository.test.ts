@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Asset } from "../domain/asset";
 import { ContentType } from "../domain/value-objects/content-type";
 import { StorageKey } from "../domain/value-objects/storage-key";
@@ -47,5 +48,25 @@ describe("InMemoryAssetRepository tenant isolation (ADR-0014, WP-10 T10.5)", () 
 
     expect(await repository.findById(asset.id.toString(), "tenant-a")).not.toBeNull();
     expect(await repository.findById(asset.id.toString(), "tenant-b")).toBeNull();
+  });
+});
+
+describe("InMemoryAssetRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("media", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryAssetRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = Asset.register(
+        UniqueEntityId.from(nextId()),
+        must(StorageKey.create("uploads/a.png")),
+        must(ContentType.create("image/png")),
+        nextId(),
+        new Date(0),
+      );
+      await repository.save(agg, tenantId);
+    });
   });
 });

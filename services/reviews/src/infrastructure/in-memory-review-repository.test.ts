@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Review } from "../domain/review";
 import { Rating } from "../domain/value-objects/rating";
 import { ReviewMedia } from "../domain/value-objects/review-media";
@@ -66,5 +67,28 @@ describe("InMemoryReviewRepository tenant isolation (ADR-0014, WP-10 T10.5)", ()
     const byProductB = await repository.findByProductRef("product-1", {}, "tenant-b");
     expect(byProductA.items.map((r) => r.id.toString())).toContain(review.id.toString());
     expect(byProductB.items.map((r) => r.id.toString())).not.toContain(review.id.toString());
+  });
+});
+
+describe("InMemoryReviewRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("reviews", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryReviewRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = Review.create(
+        UniqueEntityId.from(nextId()),
+        "product-1",
+        "customer-1",
+        must(Rating.create(5)),
+        "Great!",
+        ReviewMedia.create([]),
+        false,
+      );
+      agg.publish(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

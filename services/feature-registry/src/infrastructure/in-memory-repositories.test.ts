@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { FeatureBundle } from "../domain/feature-bundle";
 import { FeatureDefinition } from "../domain/feature-definition";
 import { FeatureRegistryEventTranslator } from "./feature-registry-event-translator";
@@ -74,5 +75,24 @@ describe("InMemoryFeatureBundleRepository tenant isolation (ADR-0014, WP-10 T10.
     const listB = await bundles.list("tenant-b");
     expect(listA.map((b) => b.key)).toContain("ai.pack");
     expect(listB.map((b) => b.key)).not.toContain("ai.pack");
+  });
+});
+
+describe("InMemoryFeatureDefinitionRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("feature-registry", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryFeatureDefinitionRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = FeatureDefinition.register(
+        UniqueEntityId.from(nextId()),
+        { key: "ai.copywriter", name: "AI Copywriter", category: "ai", tenantId },
+        nextId(),
+        clock.now(),
+      );
+      await repository.save(agg, tenantId);
+    });
   });
 });

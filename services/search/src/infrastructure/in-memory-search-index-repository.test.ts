@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { SearchIndex } from "../domain/search-index";
 import { SearchEventTranslator } from "./search-event-translator";
 import { InMemorySearchIndexRepository } from "./in-memory-search-index-repository";
@@ -42,5 +43,20 @@ describe("InMemorySearchIndexRepository tenant isolation (ADR-0014, WP-10 T10.5)
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((i) => i.id.toString())).toContain(index.id.toString());
     expect(pageB.items.map((i) => i.id.toString())).not.toContain(index.id.toString());
+  });
+});
+
+describe("InMemorySearchIndexRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("search", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemorySearchIndexRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = SearchIndex.create(UniqueEntityId.from(nextId()), "products");
+      agg.recordDocumentUpserted("product-1", nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Coupon } from "../domain/coupon";
 import { CouponCode } from "../domain/value-objects/coupon-code";
 import { CouponsEventTranslator } from "./coupons-event-translator";
@@ -56,5 +57,25 @@ describe("InMemoryCouponRepository tenant isolation (ADR-0014, WP-10 T10.5)", ()
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((c) => c.id.toString())).toContain(coupon.id.toString());
     expect(pageB.items.map((c) => c.id.toString())).not.toContain(coupon.id.toString());
+  });
+});
+
+describe("InMemoryCouponRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("coupons", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryCouponRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = Coupon.create(
+        UniqueEntityId.from(nextId()),
+        must(CouponCode.create("SAVE10")),
+        "promo-1",
+        false,
+      );
+      agg.disable(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

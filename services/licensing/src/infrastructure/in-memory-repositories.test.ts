@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Credit } from "../domain/credit";
 import { Invoice } from "../domain/invoice";
 import { MerchantCapabilities } from "../domain/merchant-capabilities";
@@ -172,5 +173,26 @@ describe("Licensing in-memory repositories tenant isolation (ADR-0014, WP-10 T10
 
     expect(await repo.findById(invoice.id.toString(), "tenant-a")).not.toBeNull();
     expect(await repo.findById(invoice.id.toString(), "tenant-b")).toBeNull();
+  });
+});
+
+describe("InMemoryPlanRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("licensing", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryPlanRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = Plan.create(
+        UniqueEntityId.from(nextId()),
+        "growth",
+        "Growth",
+        "growth",
+        nextId(),
+        clock.now(),
+      );
+      await repository.save(agg, tenantId);
+    });
   });
 });

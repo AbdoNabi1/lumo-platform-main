@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Experience } from "../domain/experience";
 import { ExperienceEventTranslator } from "./experience-event-translator";
 import { InMemoryExperienceRepository } from "./in-memory-repositories";
@@ -42,5 +43,20 @@ describe("InMemoryExperienceRepository tenant isolation (ADR-0014, WP-10 T10.5)"
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((e) => e.id.toString())).toContain(experience.id.toString());
     expect(pageB.items.map((e) => e.id.toString())).not.toContain(experience.id.toString());
+  });
+});
+
+describe("InMemoryExperienceRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("experience", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryExperienceRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = Experience.create(UniqueEntityId.from(nextId()), "homepage", "storefront");
+      agg.publish(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

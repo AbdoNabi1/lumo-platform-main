@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Locale } from "../domain/locale";
 import { TranslationSet } from "../domain/translation-set";
 import { LocaleCode } from "../domain/value-objects/locale-code";
@@ -73,5 +74,22 @@ describe("InMemoryTranslationSetRepository tenant isolation (ADR-0014, WP-10 T10
     const pageB = await translationSets.list({}, "tenant-b");
     expect(pageA.items.map((s) => s.id.toString())).toContain(set.id.toString());
     expect(pageB.items.map((s) => s.id.toString())).not.toContain(set.id.toString());
+  });
+});
+
+describe("InMemoryLocaleRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("localization", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryLocaleRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const code = LocaleCode.create("en");
+      if (!code.ok) throw new Error("test setup: invalid locale code");
+      const agg = Locale.create(UniqueEntityId.from(nextId()), code.value, "English", false);
+      agg.deactivate(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

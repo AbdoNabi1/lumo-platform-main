@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { ContentBlock } from "../domain/content-block";
 import { BlockBody } from "../domain/value-objects/block-body";
 import { ContentEventTranslator } from "./content-event-translator";
@@ -48,5 +49,25 @@ describe("InMemoryContentBlockRepository tenant isolation (ADR-0014, WP-10 T10.5
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((b) => b.id.toString())).toContain(block.id.toString());
     expect(pageB.items.map((b) => b.id.toString())).not.toContain(block.id.toString());
+  });
+});
+
+describe("InMemoryContentBlockRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("content", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryContentBlockRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = ContentBlock.create(
+        UniqueEntityId.from(nextId()),
+        "homepage-hero",
+        "hero",
+        BlockBody.create("html", "<h1>Hello</h1>"),
+      );
+      agg.publish(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Wishlist } from "../domain/wishlist";
 import { WishlistEventTranslator } from "./wishlist-event-translator";
 import { InMemoryWishlistRepository } from "./in-memory-wishlist-repository";
@@ -42,5 +43,20 @@ describe("InMemoryWishlistRepository tenant isolation (ADR-0014, WP-10 T10.5)", 
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((w) => w.id.toString())).toContain(wishlist.id.toString());
     expect(pageB.items.map((w) => w.id.toString())).not.toContain(wishlist.id.toString());
+  });
+});
+
+describe("InMemoryWishlistRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("wishlist", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryWishlistRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = Wishlist.create(UniqueEntityId.from(nextId()), "customer-1");
+      agg.addItem("product-1", new Date(0), nextId());
+      await repository.save(agg, tenantId);
+    });
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Money, UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Product } from "../domain/product";
 import { Sku } from "../domain/value-objects/sku";
 import { Slug } from "../domain/value-objects/slug";
@@ -72,5 +73,19 @@ describe("InMemoryProductRepository tenant isolation (ADR-0014, WP-10 T10.5)", (
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((x) => x.id.toString())).toContain(p.id.toString());
     expect(pageB.items.map((x) => x.id.toString())).not.toContain(p.id.toString());
+  });
+});
+
+describe("InMemoryProductRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("catalog", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryProductRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = product(nextId, "SKU-ENV-1", "env-product-1");
+      await repository.save(agg, tenantId);
+    });
   });
 });

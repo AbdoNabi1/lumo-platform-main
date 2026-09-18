@@ -8,6 +8,7 @@ import {
   OutboxWriter,
   rootEventContext,
 } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { UniqueEntityId } from "@platform/domain";
 import { SessionMerged } from "../events/session-merged.event";
@@ -110,5 +111,42 @@ describe("InMemoryJourneyStore", () => {
 
     expect(await journey.listForVisitor("v1", TENANT_B)).toEqual([]);
     expect(await journey.listForVisitor("v1", TENANT_A)).toHaveLength(1);
+  });
+});
+
+describe("InMemoryJourneyStore write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("customer-360", async (outbox, tenantId) => {
+      const journey = new InMemoryJourneyStore({ outbox, context: rootEventContext(ids) });
+      const event = new SessionMerged(
+        {
+          eventId: ids.generate(),
+          aggregateId: UniqueEntityId.from("t1"),
+          occurredAt: clock.now(),
+        },
+        {
+          transitionId: "t1",
+          visitorId: "v1",
+          fromSessionId: "s1",
+          toSessionId: "s2",
+          reason: "r",
+          actor: "a",
+        },
+      );
+      await journey.record(
+        {
+          id: "t1",
+          kind: "explicit_merge",
+          visitorId: "v1",
+          fromSessionId: "s1",
+          toSessionId: "s2",
+          reason: "r",
+          actor: "a",
+          occurredAt: "t1",
+        },
+        tenantId,
+        event,
+      );
+    });
   });
 });

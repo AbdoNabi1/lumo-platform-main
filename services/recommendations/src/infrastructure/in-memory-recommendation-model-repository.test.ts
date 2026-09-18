@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { RecommendationModel } from "../domain/recommendation-model";
 import { RecommendationStrategy } from "../domain/value-objects/recommendation-strategy";
 import { RecommendationsEventTranslator } from "./recommendations-event-translator";
@@ -52,5 +53,24 @@ describe("InMemoryRecommendationModelRepository tenant isolation (ADR-0014, WP-1
     const pageB = await repository.list({}, "tenant-b");
     expect(pageA.items.map((m) => m.id.toString())).toContain(model.id.toString());
     expect(pageB.items.map((m) => m.id.toString())).not.toContain(model.id.toString());
+  });
+});
+
+describe("InMemoryRecommendationModelRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
+    await assertWriteTimeTenant("recommendations", async (outbox, tenantId) => {
+      const nextId = monotonicIds();
+      const repository = new InMemoryRecommendationModelRepository({
+        outbox,
+        context: rootEventContext({ generate: nextId }),
+      });
+      const agg = RecommendationModel.create(
+        UniqueEntityId.from(nextId()),
+        "related-products",
+        must(RecommendationStrategy.create("related")),
+      );
+      agg.startTraining(nextId(), new Date(0));
+      await repository.save(agg, tenantId);
+    });
   });
 });
