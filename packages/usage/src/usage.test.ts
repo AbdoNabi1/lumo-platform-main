@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { rootEventContext } from "@platform/messaging";
-import { assertWriteTimeTenant } from "@platform/messaging/testing";
+import { assertWriteTimeTenant, CapturingOutboxWriter } from "@platform/messaging/testing";
 import { isValidUsageRecord, normalizeUsageRecord, type UsageRecord } from "./usage-record";
 import { UsageRecorded } from "./usage-recorded.event";
 import { UsageEventTranslator } from "./usage-event-translator";
@@ -75,5 +75,25 @@ describe("OutboxUsageRecorder write-time tenant (ADR-0014 Amendment 7)", () => {
       });
       await recorder.record({ ...record, tenant: tenantId });
     });
+  });
+
+  it("puts the same normalized tenant on the envelope, the payload and the aggregate id", async () => {
+    const idGenerator = { generate: () => "00000000-0000-7000-8000-000000000000" };
+    const outbox = new CapturingOutboxWriter();
+    const recorder = new OutboxUsageRecorder({
+      outbox,
+      context: rootEventContext(idGenerator),
+      idGenerator,
+      clock: { now: () => new Date(0) },
+    });
+
+    // `isValidUsageRecord` accepts a padded tenant, so an untrimmed one is reachable input.
+    await recorder.record({ ...record, tenant: "  t-pad  " });
+
+    const write = outbox.writes[0];
+    const event = write?.events[0] as UsageRecorded | undefined;
+    expect(write?.context.tenantId).toBe("t-pad");
+    expect(event?.data.tenant).toBe("t-pad");
+    expect(event?.aggregateId.toString()).toBe("t-pad");
   });
 });

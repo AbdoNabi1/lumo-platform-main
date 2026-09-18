@@ -28,17 +28,21 @@ export class OutboxUsageRecorder implements UsageRecorderPort {
   }
 
   async record(record: UsageRecord): Promise<void> {
+    // Normalise once: payload, aggregate id and envelope tenant must be the same string. Note that
+    // `isValidUsageRecord` accepts a padded tenant, so reading `record.tenant` raw here would put an
+    // untrimmed tenant on the envelope while the payload carried the trimmed one (ADR-0014).
+    const normalized = normalizeUsageRecord(record);
     const event = new UsageRecorded(
       {
         eventId: this.deps.idGenerator.generate(),
-        aggregateId: UniqueEntityId.from(record.tenant),
+        aggregateId: UniqueEntityId.from(normalized.tenant),
         occurredAt: this.deps.clock.now(),
       },
-      normalizeUsageRecord(record),
+      normalized,
     );
     await this.deps.outbox.write(
       [event],
-      { ...this.deps.context, tenantId: record.tenant },
+      { ...this.deps.context, tenantId: normalized.tenant },
       undefined,
     );
   }
