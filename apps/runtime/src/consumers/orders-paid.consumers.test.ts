@@ -276,11 +276,13 @@ describe("Customer360OrdersPaidConsumer (Task 17b, C-2)", () => {
     const execute = vi.fn(async () => ok({ applied: true, version: 1 }));
     const consumer = new Customer360OrdersPaidConsumer({
       updateProfileProjection: { execute } as unknown as UpdateProfileProjection,
+      tenantId: "tenant-local",
     });
 
     await consumer.handle(orderPaidEvent());
 
     expect(execute).toHaveBeenCalledWith({
+      tenantId: "tenant-local",
       identifier: { type: "customer_id", value: "customer-9" },
       field: "lastOrderRef",
       value: "ORD-1001",
@@ -297,6 +299,7 @@ describe("Customer360OrdersPaidConsumer (Task 17b, C-2)", () => {
       updateProfileProjection: {
         execute: vi.fn(async () => err(new ValidationError("bad field", []))),
       } as unknown as UpdateProfileProjection,
+      tenantId: "tenant-local",
     });
 
     await expect(consumer.handle(orderPaidEvent())).rejects.toThrow(/bad field/);

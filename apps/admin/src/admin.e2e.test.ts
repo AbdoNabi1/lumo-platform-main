@@ -1270,6 +1270,7 @@ describe("admin wiring (end to end)", () => {
     const profile = await admin.customer360.getProfile(staff, {
       identifierType: "customer_id",
       identifierValue: "customer-1",
+      tenantId: "tenant-1",
     });
     expect(profile.status).toBe(200);
     expect((profile.body as { profile: unknown }).profile).toBeNull();
@@ -1277,16 +1278,19 @@ describe("admin wiring (end to end)", () => {
     const identityTimeline = await admin.customer360.getIdentityTimeline(staff, {
       identifierType: "customer_id",
       identifierValue: "customer-1",
+      tenantId: "tenant-1",
     });
     expect(identityTimeline.status).toBe(200);
 
     const journeyTimeline = await admin.customer360.getJourneyTimeline(staff, {
       visitorId: "visitor-1",
+      tenantId: "tenant-1",
     });
     expect(journeyTimeline.status).toBe(200);
 
     const journeyState = await admin.customer360.getJourneyState(staff, {
       visitorId: "visitor-1",
+      tenantId: "tenant-1",
     });
     expect(journeyState.status).toBe(200);
   });

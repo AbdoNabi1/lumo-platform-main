@@ -33,7 +33,11 @@ export function customer360Routes(admin: WiredAdmin): readonly RouteDefinition[]
       summary: "Get the merged customer profile for an identifier",
       schema: { params: identifierParams, querystring: profileQuery },
       handle: ({ params, query, context }) =>
-        admin.customer360.getProfile(context.principal, { ...params, ...query }),
+        admin.customer360.getProfile(context.principal, {
+          ...params,
+          ...query,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -43,7 +47,10 @@ export function customer360Routes(admin: WiredAdmin): readonly RouteDefinition[]
       summary: "Get the identity-resolution timeline for an identifier",
       schema: { params: identifierParams },
       handle: ({ params, context }) =>
-        admin.customer360.getIdentityTimeline(context.principal, params),
+        admin.customer360.getIdentityTimeline(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -53,7 +60,10 @@ export function customer360Routes(admin: WiredAdmin): readonly RouteDefinition[]
       summary: "Get a visitor's session journey timeline",
       schema: { params: visitorParams },
       handle: ({ params, context }) =>
-        admin.customer360.getJourneyTimeline(context.principal, params),
+        admin.customer360.getJourneyTimeline(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -62,7 +72,11 @@ export function customer360Routes(admin: WiredAdmin): readonly RouteDefinition[]
       permission: "customer360:read",
       summary: "Get a visitor's current journey state",
       schema: { params: visitorParams },
-      handle: ({ params, context }) => admin.customer360.getJourneyState(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.customer360.getJourneyState(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
   ] as readonly RouteDefinition[];
 }

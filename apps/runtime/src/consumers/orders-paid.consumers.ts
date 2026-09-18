@@ -328,6 +328,15 @@ export class LoyaltyOrdersPaidConsumer implements EventHandler<OrderPaidPayload>
 
 export interface Customer360OrdersPaidConsumerDeps {
   readonly updateProfileProjection: UpdateProfileProjection;
+  /**
+   * ADR-0014 (WP-10, T10.3): customer-360's stores and `UpdateProfileProjection` take `tenantId` per
+   * call. `orders.order.paid` carries no required per-event tenant yet (G-64, T10.7 class D), so
+   * this stays sourced from `core.config.TENANT_DEFAULT_ID` at builder time — now an explicit,
+   * visible argument here instead of a value buried in the stores' own construction. Reading the
+   * envelope's tenant per message is the separate G-64 fix (needs `tenantId` required on the event
+   * envelope), out of scope.
+   */
+  readonly tenantId: string;
 }
 
 /**
@@ -361,6 +370,7 @@ export class Customer360OrdersPaidConsumer implements EventHandler<OrderPaidPayl
 
   async handle(event: IntegrationEvent<OrderPaidPayload>): Promise<void> {
     const result = await this.deps.updateProfileProjection.execute({
+      tenantId: this.deps.tenantId,
       identifier: { type: "customer_id", value: event.payload.customerRef },
       field: "lastOrderRef",
       value: event.payload.orderNumber,
@@ -527,19 +537,18 @@ export function buildOrdersPaidConsumerRuntimes(
           profiles: new PrismaProfileStore({
             prisma: core.prisma,
             idGenerator: core.idGenerator,
-            tenantId,
           }),
           history: new PrismaProfileHistoryStore({
             prisma: core.prisma,
             outbox: customer360Outbox,
             context,
             idGenerator: core.idGenerator,
-            tenantId,
           }),
           unitOfWork,
           idGenerator: core.idGenerator,
           clock: core.clock,
         }),
+        tenantId,
       }),
       "customer360.orders-paid",
     ),
