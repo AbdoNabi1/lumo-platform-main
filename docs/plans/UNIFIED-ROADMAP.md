@@ -1,28 +1,53 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
-## Status — 2026-09-17 (WP-10 T10.3 write-path sweep)
+## Status — 2026-09-18 (WP-10 leftovers: feature-flags + analytics closed, scope corrected)
 
-**What this session did.** Closed the WRITE-side half of the G-64 defect class (a repository's
-write methods reading `tenantId` pinned at composition time instead of per-call, the same shape
-ADR-0014 point 3's read-path conversion already fixed for finders) across 21 contexts: finished
-in-progress work on **identity** and **catalog** (including catalog's remaining unconverted reads —
-`findBySlug`/`findBySku` and all of Category/Brand/Collection), then converted, in commit order,
-**feature-flags, wishlist, reviews, loyalty, coupons, recommendations, experimentation, media,
-search, seo, theme, components, content, experience, pages, automation, localization, licensing,
-feature-registry** — 19 contexts, one commit each, gates green after every commit. Every repository
-fixed this session, across all 21 contexts (identity's `CustomerRepository` included), used
-**Option B** (`tenantId` as an explicit `save(entity, tenantId, tx?)` parameter) — no aggregate
-examined carries `tenantId` as a domain field. ADR-0014 finding #3's **Option A** precedent
-(`PrismaUserRepository.save`, a separate repository already in the identity context) predates this
-session and needed no change. Licensing and feature-registry were checked specifically for
-platform-global (cross-tenant) write methods per WP-10's own caveat for those two contexts — **zero
-found** in either; both have real `tenantId` columns on every table.
+**What this session did.** Followed up on 2026-09-17's T10.3 write-path sweep, which scoped itself
+to "Prisma repositories converted" and, by that narrower reading, left two sites pinning `tenantId`
+at construction the identical way: **feature-flags** (`AggregateFeatureFlags`, a non-repository
+adapter — the sweep converted its Prisma repository but missed this evaluator) and **analytics**
+(`ClickHouseAnalyticsReadStore`, a non-Prisma store — unexercised today, no ClickHouse tables exist
+yet per WP-3/G-44, but built against WP-3's future schema so converting now avoids a second pass).
+Both fixed this session — `FeatureFlags.isEnabled`/`AnalyticsReadStore.fetch` both take `tenantId`
+per call now, matching every other T10.3 conversion's shape. **Re-ran the repo-wide grep across all
+21 previously-converted contexts to confirm nothing else was missed: identity's only remaining match
+was inside a doc comment** (`services/identity/src/composition.ts:51`, a comment literally
+containing the string `deps.tenantId` while describing why the context has none — not live code);
+every other of the 21 contexts had zero matches. **21 contexts are therefore now fully converted**
+(write path, read path, and every adapter/store) — the 19 from 2026-09-17 plus **identity** and
+**catalog**, which the previous session's own text already counted in the 21 but is restated here
+for clarity: identity, catalog, feature-flags, wishlist, reviews, loyalty, coupons,
+recommendations, experimentation, media, search, seo, theme, components, content, experience,
+pages, automation, localization, licensing, feature-registry.
 
-**Explicitly NOT touched this session** (per this session's own scope boundary, unchanged from
-before): `cart`, `checkout`, `customer-360`, `finance`, `fulfillment`, `inventory`, `notifications`,
-`orders`, `payments`, `pricing`, `promotions`, `reporting`, `returns`, `security`, `shipping` — 15
-contexts whose write methods still read a composition-time-pinned `tenantId` and remain G-64-
-affected — and `tenancy`, parked separately (below).
+**Also produced this session:** a complete, classified inventory of every remaining
+construction-time tenant pin outside the 15 unconverted contexts' own repositories — 13 sites,
+**(A) 6** converting with their owning context (checkout, orders, returns ×2, finance, security —
+all sites the T10.3 sweep will pick up when those contexts convert), **(B) 1** belonging to T10.7's
+cross-cutting sweep (`LicensingEntitlementPort`/`wireEntitlement`, T10.7's own scope already names
+entitlements by package — also currently unwired into production composition entirely), **(C) 4**
+legitimate by design and not a gap (`singleTenantGuardedResolver`, removed by T10.4; the WP-11
+backfill script's per-run tenant; the finance-settlement backfill's same shape, already flagged in
+ADR-0014 Amendment B; `SecurityPropagationContext`, a per-request value object, not a boot-pinned
+singleton), and **(D) 2** recorded but not fixed this session — `orders-paid.consumers.ts` and
+`finance-settlement.consumers.ts` (G-64's consumer side; needs the event envelope's `tenantId` to
+become required first, a contract change). Full table: `WP-10-multi-tenant-runtime.md`'s T10.7
+section. This also surfaced that T10.3's own done-criterion was too narrow — corrected in the same
+WP file and in ADR-0014 Amendment 6 to "no construction-time tenant pinning anywhere in the
+converted context — repositories, adapters, ports and stores alike, Prisma or otherwise," with the
+repo-wide grep (plus a `TENANT_DEFAULT_ID` pass — the original pattern alone misses
+`finance-settlement.consumers.ts:134`, which has no `deps.tenantId`/`this.tenantId =` shape at all)
+named as the verification command instead of a `services/`-only one.
+
+**Explicitly NOT touched this session** (unchanged scope boundary from 2026-09-17): `cart`,
+`checkout`, `customer-360`, `finance`, `fulfillment`, `inventory`, `notifications`, `orders`,
+`payments`, `pricing`, `promotions`, `reporting`, `returns`, `security`, `shipping` — 15 contexts
+whose repositories (and, per this session's inventory, several cross-context adapters bridging
+them) still read a composition-time-pinned `tenantId` and remain G-64-affected — and `tenancy`,
+parked separately (below). **`security` (~90 construction-time-pinned references),
+`customer-360` (~53), and `finance` (~49, plus its own `ClickHouseReadModelStore`) are, together,
+roughly two thirds of the remaining conversion work** across all 15 contexts by reference count —
+the three to plan for first if sequencing the remaining sweep by size.
 
 **Task A — tenancy's conversion parked, not abandoned.** `packages/db/prisma/schema/tenancy.prisma`
 and the tenancy context's repository/domain files were uncommitted WIP unrelated to this session's
