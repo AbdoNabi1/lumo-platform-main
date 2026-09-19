@@ -1,6 +1,7 @@
 import type { Authenticator, Cache, IdempotencyKeyStore, RateLimiter } from "@platform/contracts";
 import { HealthRegistry } from "@platform/health";
 import {
+  claimTenantResolver,
   createHttpServer,
   headerTenantResolver,
   registerRoutes,
@@ -14,9 +15,18 @@ import { AllowAllAccessControl } from "../infrastructure/allow-all-access-contro
 import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { AdminGuard } from "../interfaces/admin-guard";
 import { wireAdmin, type AdminWiringDeps } from "../composition";
+import { assertMultiTenantReady } from "../tenant-mode-guard";
 import { adminRoutes } from "./admin-routes";
 
 export interface AdminHttpDeps extends AdminWiringDeps {
+  /**
+   * T10.4. `single` (default) keeps every request locked to `tenantId` via
+   * `singleTenantGuardedResolver`. `multi` resolves the tenant per request (verified claim, then
+   * header), refuses to boot unless `assertMultiTenantReady` passes, and pins the one exempted
+   * context (tenancy, ADR-0014 8f) to `tenantId`. Making multi mode possible is not making it safe:
+   * that is T10.5's adversarial isolation suite.
+   */
+  readonly tenantMode?: "single" | "multi";
   readonly authenticator: Authenticator;
   readonly rateLimiter: RateLimiter;
   readonly idempotencyKeys: IdempotencyKeyStore;
@@ -71,12 +81,19 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     clock: deps.clock,
   });
 
+  const multi = deps.tenantMode === "multi";
+  // Claim FIRST: a forged `x-tenant-id` must never override the tenant of a verified token (T10.5).
+  const tenantResolvers: readonly TenantResolver[] = multi
+    ? [claimTenantResolver, headerTenantResolver]
+    : [singleTenantGuardedResolver(deps.tenantId)];
+  if (multi) assertMultiTenantReady({ resolvers: tenantResolvers, graph: admin });
+
   const httpDeps: HttpServerDeps = {
     logger,
     idGenerator: deps.idGenerator,
     authenticator: deps.authenticator,
     guard,
-    tenantResolvers: [singleTenantGuardedResolver(deps.tenantId)],
+    tenantResolvers,
     rateLimiter: deps.rateLimiter,
     rateLimit: { limit: 300, windowMs: 60_000 },
     idempotencyKeys: deps.idempotencyKeys,
@@ -92,7 +109,14 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
   };
 
   const app = createHttpServer(httpDeps);
-  await registerRoutes(app, httpDeps, adminRoutes(admin));
+  await registerRoutes(
+    app,
+    httpDeps,
+    adminRoutes(
+      admin,
+      multi && deps.tenantId !== undefined ? { tenancyPinnedTo: deps.tenantId } : {},
+    ),
+  );
   await app.ready();
   return app;
 }

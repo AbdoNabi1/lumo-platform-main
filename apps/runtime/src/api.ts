@@ -367,6 +367,10 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     health: runtime.health,
     metrics: runtime.metrics,
     prisma: runtime.prisma,
+    // T10.4: `multi` swaps the pinned resolver for the claim → header chain and runs the boot
+    // assertion inside createAdminHttpApi. `tenantId` below is still passed because the tenancy
+    // context (ADR-0014 8f) alone stays pinned to it; its routes reject every other tenant.
+    tenantMode: runtime.config.TENANT_MODE,
     tenantId: runtime.config.TENANT_DEFAULT_ID,
     paymentVerification: new PrismaPaymentVerificationAdapter(runtime.prisma),
     // Phase A.2 (F-04 closure): gates Returns' DecideResolution refund amount against the

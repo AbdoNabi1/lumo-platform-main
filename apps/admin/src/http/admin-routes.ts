@@ -51,7 +51,7 @@ import { securitySecretsRoutes } from "./security-secrets-routes";
 import { securitySessionsRoutes } from "./security-sessions-routes";
 import { seoRoutes } from "./seo-routes";
 import { shippingRoutes } from "./shipping-routes";
-import { tenancyRoutes } from "./tenancy-routes";
+import { pinRoutesToTenant, tenancyRoutes } from "./tenancy-routes";
 import { themeRoutes } from "./theme-routes";
 import { wishlistRoutes } from "./wishlist-routes";
 
@@ -736,7 +736,10 @@ function toBrandDto(brand: Brand): BrandDto {
  * NOTE: `PlaceOrder` remains an internal/admin operation — the storefront tier must never map
  * price-bearing inputs directly (doc 22 / hardening P0-4 rule).
  */
-export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
+export function adminRoutes(
+  admin: WiredAdmin,
+  options: { readonly tenancyPinnedTo?: string } = {},
+): readonly RouteDefinition[] {
   return [
     defineRoute({
       method: "POST",
@@ -1842,7 +1845,9 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
     ...featureRegistryRoutes(admin),
     ...pagesRoutes(admin),
     ...mediaLibraryRoutes(admin),
-    ...tenancyRoutes(admin),
+    ...(options.tenancyPinnedTo === undefined
+      ? tenancyRoutes(admin)
+      : pinRoutesToTenant(tenancyRoutes(admin), options.tenancyPinnedTo)),
     ...licensingRoutes(admin),
     ...platformConsoleRoutes(admin),
     ...promotionsRoutes(admin),

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
+import { AuthorizationError } from "@platform/utils";
 import type { Tenant, Workspace } from "@platform/tenancy";
 import type { WiredAdmin } from "../composition";
 import { mapPage } from "./public-catalog-routes";
@@ -248,4 +249,30 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       },
     }),
   ] as readonly RouteDefinition[];
+}
+
+/**
+ * TENANT_MODE=multi only (ADR-0014 point 8f). The tenancy context is the one recorded exemption from
+ * per-request scoping: every `Tenant` row is scoped to the deployment tenant it was constructed with,
+ * because a `Tenant` is platform-operator data and the operator identity that should own that scope
+ * does not exist yet. Left unguarded, a request resolved to tenant B would read and write tenant
+ * A's (the deployment tenant's) rows through these routes. So each handler refuses any request
+ * whose resolved tenant is not the pinned one — fail closed, until 8a-8d let this list go away.
+ */
+export function pinRoutesToTenant(
+  routes: readonly RouteDefinition[],
+  pinnedTenantId: string,
+): readonly RouteDefinition[] {
+  return routes.map((route) => ({
+    ...route,
+    handle: (args) => {
+      if (args.context.tenantId !== pinnedTenantId) {
+        throw new AuthorizationError(
+          "Tenant administration is restricted to the platform-operator scope " +
+            "(ADR-0014 point 8f); this tenant may not use it.",
+        );
+      }
+      return route.handle(args);
+    },
+  }));
 }
