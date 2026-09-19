@@ -20,6 +20,7 @@ function wire() {
 
 async function newFulfillmentOrderId(app: ReturnType<typeof wire>): Promise<string> {
   const created = await app.fulfillment.create({
+    tenantId: "tenant-a",
     orderRef: "order-1",
     items: [{ productRef: "product-1", quantity: 2 }],
   });
@@ -32,43 +33,83 @@ describe("fulfillment (end to end)", () => {
     const app = wire();
     const id = await newFulfillmentOrderId(app);
 
-    const reserved = await app.fulfillment.reserve({ fulfillmentOrderId: id });
+    const reserved = await app.fulfillment.reserve({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: id,
+    });
     expect(reserved.status).toBe(200);
     expect((reserved.body as { status: string }).status).toBe("confirmed");
 
     expect(
-      (await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "picking_started" }))
-        .status,
+      (
+        await app.fulfillment.advance({
+          tenantId: "tenant-a",
+          fulfillmentOrderId: id,
+          toStatus: "picking_started",
+        })
+      ).status,
     ).toBe(200);
     expect(
-      (await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "picking_completed" }))
-        .status,
+      (
+        await app.fulfillment.advance({
+          tenantId: "tenant-a",
+          fulfillmentOrderId: id,
+          toStatus: "picking_completed",
+        })
+      ).status,
     ).toBe(200);
     expect(
-      (await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "packing_started" }))
-        .status,
+      (
+        await app.fulfillment.advance({
+          tenantId: "tenant-a",
+          fulfillmentOrderId: id,
+          toStatus: "packing_started",
+        })
+      ).status,
     ).toBe(200);
     expect(
-      (await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "packing_completed" }))
-        .status,
+      (
+        await app.fulfillment.advance({
+          tenantId: "tenant-a",
+          fulfillmentOrderId: id,
+          toStatus: "packing_completed",
+        })
+      ).status,
     ).toBe(200);
 
-    const shipped = await app.fulfillment.ship({ fulfillmentOrderId: id });
+    const shipped = await app.fulfillment.ship({ tenantId: "tenant-a", fulfillmentOrderId: id });
     expect(shipped.status).toBe(200);
     expect((shipped.body as { status: string }).status).toBe("tracking_assigned");
 
     expect(
-      (await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "shipment_dispatched" }))
-        .status,
+      (
+        await app.fulfillment.advance({
+          tenantId: "tenant-a",
+          fulfillmentOrderId: id,
+          toStatus: "shipment_dispatched",
+        })
+      ).status,
     ).toBe(200);
     expect(
-      (await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "in_transit" })).status,
+      (
+        await app.fulfillment.advance({
+          tenantId: "tenant-a",
+          fulfillmentOrderId: id,
+          toStatus: "in_transit",
+        })
+      ).status,
     ).toBe(200);
     expect(
-      (await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "out_for_delivery" }))
-        .status,
+      (
+        await app.fulfillment.advance({
+          tenantId: "tenant-a",
+          fulfillmentOrderId: id,
+          toStatus: "out_for_delivery",
+        })
+      ).status,
     ).toBe(200);
     const delivered = await app.fulfillment.advance({
+      tenantId: "tenant-a",
       fulfillmentOrderId: id,
       toStatus: "delivered",
     });
@@ -85,26 +126,50 @@ describe("fulfillment (end to end)", () => {
     const app = wire();
     const id = await newFulfillmentOrderId(app);
 
-    const found = await app.fulfillment.getByOrder({ orderRef: "order-1" });
+    const found = await app.fulfillment.getByOrder({ tenantId: "tenant-a", orderRef: "order-1" });
     expect(found.status).toBe(200);
     expect((found.body as { id: { toString(): string } }).id.toString()).toBe(id);
 
-    const missing = await app.fulfillment.getByOrder({ orderRef: "order-does-not-exist" });
+    const missing = await app.fulfillment.getByOrder({
+      tenantId: "tenant-a",
+      orderRef: "order-does-not-exist",
+    });
     expect(missing.status).toBe(404);
   });
 
   it("carrier-webhook idempotency: first processed, replay deduped", async () => {
     const app = wire();
     const id = await newFulfillmentOrderId(app);
-    await app.fulfillment.reserve({ fulfillmentOrderId: id });
-    await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "picking_started" });
-    await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "picking_completed" });
-    await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "packing_started" });
-    await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "packing_completed" });
-    await app.fulfillment.ship({ fulfillmentOrderId: id });
-    await app.fulfillment.advance({ fulfillmentOrderId: id, toStatus: "shipment_dispatched" });
+    await app.fulfillment.reserve({ tenantId: "tenant-a", fulfillmentOrderId: id });
+    await app.fulfillment.advance({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: id,
+      toStatus: "picking_started",
+    });
+    await app.fulfillment.advance({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: id,
+      toStatus: "picking_completed",
+    });
+    await app.fulfillment.advance({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: id,
+      toStatus: "packing_started",
+    });
+    await app.fulfillment.advance({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: id,
+      toStatus: "packing_completed",
+    });
+    await app.fulfillment.ship({ tenantId: "tenant-a", fulfillmentOrderId: id });
+    await app.fulfillment.advance({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: id,
+      toStatus: "shipment_dispatched",
+    });
 
     const first = await app.fulfillment.recordWebhook({
+      tenantId: "tenant-a",
       fulfillmentOrderId: id,
       carrier: "ups",
       eventId: "evt-webhook-1",
@@ -115,6 +180,7 @@ describe("fulfillment (end to end)", () => {
     expect((first.body as { status: string }).status).toBe("in_transit");
 
     const replay = await app.fulfillment.recordWebhook({
+      tenantId: "tenant-a",
       fulfillmentOrderId: id,
       carrier: "ups",
       eventId: "evt-webhook-1",
@@ -128,6 +194,7 @@ describe("fulfillment (end to end)", () => {
     const app = wire();
     const id = await newFulfillmentOrderId(app);
     const response = await app.fulfillment.advance({
+      tenantId: "tenant-a",
       fulfillmentOrderId: id,
       toStatus: "shipment_created",
     });
@@ -137,6 +204,7 @@ describe("fulfillment (end to end)", () => {
   it("returns 404 for an unknown fulfillment order", async () => {
     const app = wire();
     const response = await app.fulfillment.advance({
+      tenantId: "tenant-a",
       fulfillmentOrderId: "missing",
       toStatus: "reservation_requested",
     });
@@ -145,7 +213,11 @@ describe("fulfillment (end to end)", () => {
 
   it("rejects an empty item list at creation (422)", async () => {
     const app = wire();
-    const response = await app.fulfillment.create({ orderRef: "order-1", items: [] });
+    const response = await app.fulfillment.create({
+      tenantId: "tenant-a",
+      orderRef: "order-1",
+      items: [],
+    });
     expect(response.status).toBe(422);
   });
 });

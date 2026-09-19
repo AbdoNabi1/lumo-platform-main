@@ -114,7 +114,7 @@ export class RequestReservation implements UseCase<
   async execute(
     input: FulfillmentOrderIdInput,
   ): Promise<Result<FulfillmentOrderStatusOutput, DomainError>> {
-    const reservation = await this.reserve(input.fulfillmentOrderId);
+    const reservation = await this.reserve(input.fulfillmentOrderId, input.tenantId);
     if (!reservation.ok) return err(reservation.error);
     const { status, orderRef, items, proceedToPort } = reservation.value;
 
@@ -122,20 +122,29 @@ export class RequestReservation implements UseCase<
       return ok({ fulfillmentOrderId: input.fulfillmentOrderId, status });
     }
 
-    const reservationResult = await this.deps.inventoryPort.reserve(orderRef, items);
+    const reservationResult = await this.deps.inventoryPort.reserve(
+      orderRef,
+      items,
+      input.tenantId,
+    );
 
-    return this.settle(input.fulfillmentOrderId, reservationResult);
+    return this.settle(input.fulfillmentOrderId, input.tenantId, reservationResult);
   }
 
   private async reserve(
     fulfillmentOrderId: string,
+    tenantId: string,
   ): Promise<Result<ReservationOutcome, DomainError>> {
     let attempt = 0;
     return withConcurrencyRetry(RequestReservation.MAX_CONCURRENCY_RETRIES, () => {
       attempt += 1;
       const isFirstAttempt = attempt === 1;
       return this.deps.unitOfWork.run<Result<ReservationOutcome, DomainError>>(async (tx) => {
-        const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(fulfillmentOrderId, tx);
+        const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(
+          fulfillmentOrderId,
+          tenantId,
+          tx,
+        );
         if (fulfillmentOrder === null) {
           return err(new NotFoundError("Fulfillment order not found"));
         }
@@ -178,7 +187,7 @@ export class RequestReservation implements UseCase<
           throw error;
         }
 
-        await this.deps.fulfillmentOrders.save(fulfillmentOrder, tx);
+        await this.deps.fulfillmentOrders.save(fulfillmentOrder, tenantId, tx);
         return ok({
           status: fulfillmentOrder.status.value,
           orderRef: fulfillmentOrder.orderRef,
@@ -191,11 +200,16 @@ export class RequestReservation implements UseCase<
 
   private async settle(
     fulfillmentOrderId: string,
+    tenantId: string,
     reservationResult: ReservationResult,
   ): Promise<Result<FulfillmentOrderStatusOutput, DomainError>> {
     return withConcurrencyRetry(RequestReservation.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<FulfillmentOrderStatusOutput, DomainError>>(async (tx) => {
-        const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(fulfillmentOrderId, tx);
+        const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(
+          fulfillmentOrderId,
+          tenantId,
+          tx,
+        );
         if (fulfillmentOrder === null) {
           return err(new NotFoundError("Fulfillment order not found"));
         }
@@ -224,8 +238,8 @@ export class RequestReservation implements UseCase<
             throw error;
           }
 
-          await this.deps.fulfillmentOrders.save(fulfillmentOrder, tx);
-          await notifyBestEffort(this.deps, fulfillmentOrder);
+          await this.deps.fulfillmentOrders.save(fulfillmentOrder, tenantId, tx);
+          await notifyBestEffort(this.deps, fulfillmentOrder, tenantId);
         }
         return ok({
           fulfillmentOrderId: fulfillmentOrder.id.toString(),

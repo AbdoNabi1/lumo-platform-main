@@ -7,9 +7,9 @@ export interface InMemoryFulfillmentOrderRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `FulfillmentOrderRepository`. Persists the aggregate and writes events to the outbox on save. */
+/** In-memory `FulfillmentOrderRepository`. Persists the aggregate and writes events to the outbox on save. ADR-0014 (WP-10, T10.3): keyed by `(tenantId, id)`. */
 export class InMemoryFulfillmentOrderRepository implements FulfillmentOrderRepository {
-  private readonly store = new Map<string, FulfillmentOrder>();
+  private readonly store = new Map<string, Map<string, FulfillmentOrder>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -18,17 +18,22 @@ export class InMemoryFulfillmentOrderRepository implements FulfillmentOrderRepos
     this.context = deps.context;
   }
 
-  async save(fulfillmentOrder: FulfillmentOrder, tx?: unknown): Promise<void> {
-    this.store.set(fulfillmentOrder.id.toString(), fulfillmentOrder);
-    await this.outbox.write(fulfillmentOrder.pullDomainEvents(), this.context, tx);
+  async save(fulfillmentOrder: FulfillmentOrder, tenantId: string, tx?: unknown): Promise<void> {
+    let bucket = this.store.get(tenantId);
+    if (bucket === undefined) {
+      bucket = new Map();
+      this.store.set(tenantId, bucket);
+    }
+    bucket.set(fulfillmentOrder.id.toString(), fulfillmentOrder);
+    await this.outbox.write(fulfillmentOrder.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<FulfillmentOrder | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<FulfillmentOrder | null> {
+    return this.store.get(tenantId)?.get(id) ?? null;
   }
 
-  async findByOrderRef(orderRef: string): Promise<FulfillmentOrder | null> {
-    for (const fulfillmentOrder of this.store.values()) {
+  async findByOrderRef(orderRef: string, tenantId: string): Promise<FulfillmentOrder | null> {
+    for (const fulfillmentOrder of this.store.get(tenantId)?.values() ?? []) {
       if (fulfillmentOrder.orderRef === orderRef) {
         return fulfillmentOrder;
       }

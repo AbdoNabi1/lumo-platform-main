@@ -46,15 +46,22 @@ export class InMemoryNotificationAdapter implements NotificationPort {
   }
 }
 
-/** Replay-safe carrier-webhook dedup — in-memory `Set` keyed `(carrier, eventId)`. Prisma-backed store supersedes this in production (unique `(tenant, carrier, webhook_event_id)`). */
+/**
+ * Replay-safe carrier-webhook dedup — in-memory `Set` keyed `(tenantId, carrier, eventId)`.
+ *
+ * This is the ONLY implementation in either composition branch (`composition.ts` builds it outside
+ * the `prisma ?` branch): there is no Prisma-backed dedup store for fulfillment, so the set is lost
+ * on restart and not shared across instances. A durable store is a separate, open gap (see the T10.7
+ * inventory in `docs/plans/phase-7/WP-10-multi-tenant-runtime.md`).
+ */
 export class InMemoryProcessedCarrierWebhookStore implements ProcessedCarrierWebhookStore {
   private readonly processed = new Set<string>();
 
-  async hasProcessed(carrier: string, eventId: string): Promise<boolean> {
-    return this.processed.has(`${carrier}:${eventId}`);
+  async hasProcessed(carrier: string, eventId: string, tenantId: string): Promise<boolean> {
+    return this.processed.has(JSON.stringify([tenantId, carrier, eventId]));
   }
 
-  async markProcessed(carrier: string, eventId: string): Promise<void> {
-    this.processed.add(`${carrier}:${eventId}`);
+  async markProcessed(carrier: string, eventId: string, tenantId: string): Promise<void> {
+    this.processed.add(JSON.stringify([tenantId, carrier, eventId]));
   }
 }

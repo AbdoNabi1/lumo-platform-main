@@ -40,13 +40,11 @@ export interface FulfillmentWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaFulfillmentOrderRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wireShipping`); absent ⇒ in-memory, unchanged. The 3 reference-only outbound ports stay
-   * in-memory in both branches — out of scope for C-01.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. The 3 reference-only outbound ports stay
+   * in-memory in both branches — out of scope for C-01. ADR-0014 (WP-10, T10.3): the repository
+   * built here is a tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Fulfillment table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredFulfillment {
@@ -106,10 +104,6 @@ function buildController(
  */
 export function wireFulfillment(deps: FulfillmentWiringDeps): WiredFulfillment {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireFulfillment: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new FulfillmentEventTranslator(),
@@ -117,10 +111,11 @@ export function wireFulfillment(deps: FulfillmentWiringDeps): WiredFulfillment {
       clock: deps.clock,
       producer: "fulfillment",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — every repository takes it per
+    // call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
     const fulfillmentOrders = new PrismaFulfillmentOrderRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });

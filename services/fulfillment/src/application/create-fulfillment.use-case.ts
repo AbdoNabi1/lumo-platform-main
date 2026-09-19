@@ -14,6 +14,8 @@ export interface CreateFulfillmentItemInput {
 }
 
 export interface CreateFulfillmentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderRef: string;
   readonly items: readonly CreateFulfillmentItemInput[];
 }
@@ -68,7 +70,7 @@ export class CreateFulfillment implements UseCase<
       async (tx) => {
         const id = UniqueEntityId.from(this.deps.idGenerator.generate());
         const fulfillmentOrder = FulfillmentOrder.create(id, input.orderRef, items);
-        await this.deps.fulfillmentOrders.save(fulfillmentOrder, tx);
+        await this.deps.fulfillmentOrders.save(fulfillmentOrder, input.tenantId, tx);
         return ok({ fulfillmentOrderId: id.toString(), status: fulfillmentOrder.status.value });
       },
     );

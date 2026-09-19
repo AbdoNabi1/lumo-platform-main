@@ -79,7 +79,8 @@ export function fulfillmentRoutes(admin: WiredAdmin): readonly RouteDefinition[]
       idempotent: true,
       summary: "Open a fulfillment order for an order's items",
       schema: { body: createFulfillmentBody },
-      handle: ({ body, context }) => admin.fulfillment.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.fulfillment.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -93,6 +94,7 @@ export function fulfillmentRoutes(admin: WiredAdmin): readonly RouteDefinition[]
       handle: ({ params, body, context }) =>
         admin.fulfillment.advance(context.principal, {
           fulfillmentOrderId: params.fulfillmentOrderId,
+          tenantId: context.tenantId,
           toStatus: body.toStatus as Parameters<typeof admin.fulfillment.advance>[1]["toStatus"],
         }),
     }),
@@ -103,7 +105,8 @@ export function fulfillmentRoutes(admin: WiredAdmin): readonly RouteDefinition[]
       permission: "fulfillment:reserve",
       summary: "Request a stock reservation via the InventoryPort",
       schema: { params: fulfillmentOrderIdParams },
-      handle: ({ params, context }) => admin.fulfillment.reserve(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.fulfillment.reserve(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -113,7 +116,8 @@ export function fulfillmentRoutes(admin: WiredAdmin): readonly RouteDefinition[]
       idempotent: true,
       summary: "Request a shipment from the carrier via the ShippingProviderPort",
       schema: { params: fulfillmentOrderIdParams },
-      handle: ({ params, context }) => admin.fulfillment.ship(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.fulfillment.ship(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -124,6 +128,7 @@ export function fulfillmentRoutes(admin: WiredAdmin): readonly RouteDefinition[]
       schema: { params: fulfillmentByOrderParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
         const response = await admin.fulfillment.getByOrder(context.principal, {
+          tenantId: context.tenantId,
           orderRef: params.orderId,
         });
         if (response.status !== 200) {
@@ -143,6 +148,7 @@ export function fulfillmentRoutes(admin: WiredAdmin): readonly RouteDefinition[]
         admin.fulfillment.recordWebhook(context.principal, {
           fulfillmentOrderId: params.fulfillmentOrderId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
   ] as readonly RouteDefinition[];

@@ -159,7 +159,7 @@ describe("Task 1 — exploit proof: the Inventory call happens while a DB transa
     const inventoryPort = new RecordingInventoryPort(uow);
     const useCase = new RequestReservation(buildDeps(repo, inventoryPort, uow));
 
-    const result = await useCase.execute({ fulfillmentOrderId: "ff-tx" });
+    const result = await useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-tx" });
 
     expect(result.ok).toBe(true);
     expect(inventoryPort.calls).toHaveLength(1);
@@ -182,7 +182,7 @@ describe("Task 1 — exploit proof: the Inventory call happens while a DB transa
     };
     const useCase = new RequestReservation(buildDeps(repo, inventoryPort));
 
-    await useCase.execute({ fulfillmentOrderId: "ff-durable" });
+    await useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-durable" });
 
     expect(statusDuringInventoryCall).toBe("reservation_requested");
   });
@@ -195,9 +195,9 @@ describe("Task 1 — Inventory failure recovery", () => {
     const failingPort = new RecordingInventoryPort(undefined, { confirmed: true }, true);
     const useCase = new RequestReservation(buildDeps(repo, failingPort));
 
-    await expect(useCase.execute({ fulfillmentOrderId: "ff-fail" })).rejects.toThrow(
-      /simulated Inventory reserve failure/,
-    );
+    await expect(
+      useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-fail" }),
+    ).rejects.toThrow(/simulated Inventory reserve failure/);
 
     const persisted = await repo.findById("ff-fail");
     expect(persisted?.status.value).toBe("reservation_requested");
@@ -208,11 +208,16 @@ describe("Task 1 — Inventory failure recovery", () => {
     seedCreatedOrder(repo, "ff-retry");
     const failingPort = new RecordingInventoryPort(undefined, { confirmed: true }, true);
     const failingUseCase = new RequestReservation(buildDeps(repo, failingPort));
-    await expect(failingUseCase.execute({ fulfillmentOrderId: "ff-retry" })).rejects.toThrow();
+    await expect(
+      failingUseCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-retry" }),
+    ).rejects.toThrow();
 
     const workingPort = new RecordingInventoryPort();
     const retryUseCase = new RequestReservation(buildDeps(repo, workingPort));
-    const retried = await retryUseCase.execute({ fulfillmentOrderId: "ff-retry" });
+    const retried = await retryUseCase.execute({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: "ff-retry",
+    });
 
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.status).toBe("confirmed");
@@ -229,7 +234,10 @@ describe("Task 1 — Inventory failure recovery", () => {
     });
     const useCase = new RequestReservation(buildDeps(repo, decliningPort));
 
-    const result = await useCase.execute({ fulfillmentOrderId: "ff-declined" });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: "ff-declined",
+    });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("failed");
 
@@ -237,7 +245,10 @@ describe("Task 1 — Inventory failure recovery", () => {
     // succeed if Inventory now confirms.
     const retryPort = new RecordingInventoryPort();
     const retryUseCase = new RequestReservation(buildDeps(repo, retryPort));
-    const retried = await retryUseCase.execute({ fulfillmentOrderId: "ff-declined" });
+    const retried = await retryUseCase.execute({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: "ff-declined",
+    });
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.status).toBe("confirmed");
   });
@@ -250,11 +261,14 @@ describe("Task 1 — idempotent resume on retry", () => {
     const inventoryPort = new RecordingInventoryPort();
     const useCase = new RequestReservation(buildDeps(repo, inventoryPort));
 
-    const first = await useCase.execute({ fulfillmentOrderId: "ff-already" });
+    const first = await useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-already" });
     expect(first.ok).toBe(true);
     expect(inventoryPort.calls).toHaveLength(1);
 
-    const second = await useCase.execute({ fulfillmentOrderId: "ff-already" });
+    const second = await useCase.execute({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: "ff-already",
+    });
     expect(second.ok).toBe(true);
     if (second.ok) expect(second.value.status).toBe("confirmed");
     // No second Inventory call — reserve()'s `confirmed` short-circuit skips it entirely.
@@ -266,7 +280,10 @@ describe("Task 1 — idempotent resume on retry", () => {
     const inventoryPort = new RecordingInventoryPort();
     const useCase = new RequestReservation(buildDeps(repo, inventoryPort));
 
-    const result = await useCase.execute({ fulfillmentOrderId: "does-not-exist" });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: "does-not-exist",
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("NOT_FOUND");
     expect(inventoryPort.calls).toHaveLength(0);
@@ -282,8 +299,8 @@ describe("Task 1 — exploit proof: concurrent reservation requests never double
       const useCase = new RequestReservation(buildDeps(repo, inventoryPort));
 
       const outcomes = await Promise.all([
-        useCase.execute({ fulfillmentOrderId: "ff-race" }),
-        useCase.execute({ fulfillmentOrderId: "ff-race" }),
+        useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-race" }),
+        useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-race" }),
       ]);
 
       // Both callers get back a clean Result — neither one throws an uncaught ConcurrencyError.
@@ -312,8 +329,8 @@ describe("Task 1 — exploit proof: concurrent reservation requests never double
     const useCase = new RequestReservation(buildDeps(repo, inventoryPort));
 
     const [a, b] = await Promise.all([
-      useCase.execute({ fulfillmentOrderId: "ff-a" }),
-      useCase.execute({ fulfillmentOrderId: "ff-b" }),
+      useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-a" }),
+      useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-b" }),
     ]);
 
     expect(a.ok).toBe(true);

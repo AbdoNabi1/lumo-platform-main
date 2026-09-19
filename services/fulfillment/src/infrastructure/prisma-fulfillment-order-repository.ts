@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { FulfillmentOrder } from "../domain/fulfillment-order";
@@ -9,8 +9,6 @@ export interface PrismaFulfillmentOrderRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -26,9 +24,8 @@ export class PrismaFulfillmentOrderRepository implements FulfillmentOrderReposit
     this.deps = deps;
   }
 
-  async save(fulfillmentOrder: FulfillmentOrder, tx?: unknown): Promise<void> {
+  async save(fulfillmentOrder: FulfillmentOrder, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const fulfillmentOrderId = fulfillmentOrder.id.toString();
     const row = FulfillmentOrderMapper.toRow(fulfillmentOrder, tenantId);
 
@@ -65,15 +62,40 @@ export class PrismaFulfillmentOrderRepository implements FulfillmentOrderReposit
       await client.fulfillmentAttempt.createMany({ data: attempts, skipDuplicates: true });
     }
 
-    await this.deps.outbox.write(fulfillmentOrder.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      fulfillmentOrder.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<FulfillmentOrder | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.fulfillmentOrder.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-      include: { attempts: { orderBy: { occurredAt: "asc" } } },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<FulfillmentOrder | null> {
+    return this.findOne({ id, tenantId }, tenantId, tx);
+  }
+
+  async findByOrderRef(
+    orderRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<FulfillmentOrder | null> {
+    return this.findOne({ orderRef, tenantId }, tenantId, tx);
+  }
+
+  private async findOne(
+    where: { readonly tenantId: string } & Record<string, string>,
+    tenantId: string,
+    tx: unknown,
+  ): Promise<FulfillmentOrder | null> {
+    const run = (client: TransactionClient) =>
+      client.fulfillmentOrder.findFirst({
+        where,
+        include: { attempts: { orderBy: { occurredAt: "asc" } } },
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     if (row === null) return null;
     return FulfillmentOrderMapper.toDomain(
       {
@@ -85,31 +107,6 @@ export class PrismaFulfillmentOrderRepository implements FulfillmentOrderReposit
         },
         // Array-of-objects JSON columns need the `unknown` hop: Prisma's `JsonValue` union has no
         // structural overlap with a concrete element shape (comparability fails, not just assignability).
-        packages: row.packages as unknown as {
-          reference: string;
-          itemRefs: readonly string[];
-          weightGrams: number;
-        }[],
-      },
-      row.attempts,
-    );
-  }
-
-  async findByOrderRef(orderRef: string, tx?: unknown): Promise<FulfillmentOrder | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.fulfillmentOrder.findFirst({
-      where: { orderRef, tenantId: this.deps.tenantId },
-      include: { attempts: { orderBy: { occurredAt: "asc" } } },
-    });
-    if (row === null) return null;
-    return FulfillmentOrderMapper.toDomain(
-      {
-        ...row,
-        items: row.items as { productRef: string; quantity: number }[],
-        carrierReference: row.carrierReference as {
-          carrier: string;
-          carrierShipmentId: string;
-        },
         packages: row.packages as unknown as {
           reference: string;
           itemRefs: readonly string[];

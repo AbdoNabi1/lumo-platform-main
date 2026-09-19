@@ -180,7 +180,7 @@ describe("Task 2 — exploit proof: the carrier call happens while a DB transact
     const provider = new RecordingShippingProvider(uow);
     const useCase = new CreateShipment(buildDeps(repo, provider, uow));
 
-    const result = await useCase.execute({ fulfillmentOrderId: "ff-tx" });
+    const result = await useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-tx" });
 
     expect(result.ok).toBe(true);
     expect(provider.calls).toHaveLength(1);
@@ -197,9 +197,9 @@ describe("Task 2 — carrier failure recovery", () => {
     const failingProvider = new RecordingShippingProvider(undefined, true);
     const useCase = new CreateShipment(buildDeps(repo, failingProvider));
 
-    await expect(useCase.execute({ fulfillmentOrderId: "ff-fail" })).rejects.toThrow(
-      /simulated carrier createShipment failure/,
-    );
+    await expect(
+      useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-fail" }),
+    ).rejects.toThrow(/simulated carrier createShipment failure/);
 
     const persisted = await repo.findById("ff-fail");
     expect(persisted?.status.value).toBe("packing_completed");
@@ -210,11 +210,16 @@ describe("Task 2 — carrier failure recovery", () => {
     seedPackingCompletedOrder(repo, "ff-retry");
     const failingProvider = new RecordingShippingProvider(undefined, true);
     const failingUseCase = new CreateShipment(buildDeps(repo, failingProvider));
-    await expect(failingUseCase.execute({ fulfillmentOrderId: "ff-retry" })).rejects.toThrow();
+    await expect(
+      failingUseCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-retry" }),
+    ).rejects.toThrow();
 
     const workingProvider = new RecordingShippingProvider();
     const retryUseCase = new CreateShipment(buildDeps(repo, workingProvider));
-    const retried = await retryUseCase.execute({ fulfillmentOrderId: "ff-retry" });
+    const retried = await retryUseCase.execute({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: "ff-retry",
+    });
 
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.status).toBe("tracking_assigned");
@@ -230,11 +235,14 @@ describe("Task 2 — idempotent resume on retry", () => {
     const provider = new RecordingShippingProvider(undefined, false, false);
     const useCase = new CreateShipment(buildDeps(repo, provider));
 
-    const first = await useCase.execute({ fulfillmentOrderId: "ff-already" });
+    const first = await useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-already" });
     expect(first.ok).toBe(true);
     expect(provider.calls).toHaveLength(1);
 
-    const second = await useCase.execute({ fulfillmentOrderId: "ff-already" });
+    const second = await useCase.execute({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: "ff-already",
+    });
     expect(second.ok).toBe(true);
     if (second.ok) expect(second.value.status).toBe("shipment_created");
     // No second carrier call — precheck's `alreadyShipped` short-circuit skips it entirely.
@@ -246,7 +254,10 @@ describe("Task 2 — idempotent resume on retry", () => {
     const provider = new RecordingShippingProvider();
     const useCase = new CreateShipment(buildDeps(repo, provider));
 
-    const result = await useCase.execute({ fulfillmentOrderId: "does-not-exist" });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      fulfillmentOrderId: "does-not-exist",
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("NOT_FOUND");
     expect(provider.calls).toHaveLength(0);
@@ -264,8 +275,8 @@ describe("Task 2 — concurrent CreateShipment calls for the same order (documen
       const useCase = new CreateShipment(buildDeps(repo, provider));
 
       const outcomes = await Promise.allSettled([
-        useCase.execute({ fulfillmentOrderId: "ff-race" }),
-        useCase.execute({ fulfillmentOrderId: "ff-race" }),
+        useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-race" }),
+        useCase.execute({ tenantId: "tenant-a", fulfillmentOrderId: "ff-race" }),
       ]);
 
       // Desired/safe behavior: neither call rejects with an uncaught exception.
