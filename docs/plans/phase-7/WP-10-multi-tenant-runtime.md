@@ -338,53 +338,53 @@ from grant counts alone.
       Every non-uniform repository you find is worth a note in the ADR.
 
       **Done when (corrected 2026-09-18): no construction-time tenant pinning anywhere in the
-                                              converted context — repositories, adapters, ports and stores alike, Prisma or otherwise —
-                                              not "Prisma repositories converted."** The original, narrower wording let a context pass as
-                                              "done" while a non-Prisma store (`services/analytics`' `ClickHouseAnalyticsReadStore`) or a
-                                              non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`) still pinned
-                                              `tenantId` at construction — both found and fixed in the session that made this correction
-                                              (see the T10.7 inventory above for the sites still outstanding under the wider definition).
-                                              **Verification command is the T10.7 inventory's own repo-wide grep, not a `services/`-only
-                                              one** — the T10.3 sweep's original pattern (`grep ... packages apps services`, restricted in
-                                              practice to `services/*/src/infrastructure/prisma-*.ts`) would have missed
-                                              `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`, which pins its tenant via
-                                              `config.TENANT_DEFAULT_ID` with no `deps.tenantId`/`this.tenantId =` shape at all:
+                                                  converted context — repositories, adapters, ports and stores alike, Prisma or otherwise —
+                                                  not "Prisma repositories converted."** The original, narrower wording let a context pass as
+                                                  "done" while a non-Prisma store (`services/analytics`' `ClickHouseAnalyticsReadStore`) or a
+                                                  non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`) still pinned
+                                                  `tenantId` at construction — both found and fixed in the session that made this correction
+                                                  (see the T10.7 inventory above for the sites still outstanding under the wider definition).
+                                                  **Verification command is the T10.7 inventory's own repo-wide grep, not a `services/`-only
+                                                  one** — the T10.3 sweep's original pattern (`grep ... packages apps services`, restricted in
+                                                  practice to `services/*/src/infrastructure/prisma-*.ts`) would have missed
+                                                  `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`, which pins its tenant via
+                                                  `config.TENANT_DEFAULT_ID` with no `deps.tenantId`/`this.tenantId =` shape at all:
 
-                                              ```bash
-                                              grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
-                                                --include="*.ts" packages apps services | grep -v node_modules | grep -v "\.test\." | grep -v coverage
-                                              grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
-                                              ```
+                                                  ```bash
+                                                  grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
+                                                    --include="*.ts" packages apps services | grep -v node_modules | grep -v "\.test\." | grep -v coverage
+                                                  grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
+                                                  ```
 
-                                              A context is done when every match for it (repository, adapter, port, or store) is gone from
-                                              the first command's output, and every match for it in the second command's output is
-                                              classified (A)/(B)/(C)/(D) per the T10.7 inventory's own scheme — not merely absent from a
-                                              hand-picked list of Prisma files.
+                                                  A context is done when every match for it (repository, adapter, port, or store) is gone from
+                                                  the first command's output, and every match for it in the second command's output is
+                                                  classified (A)/(B)/(C)/(D) per the T10.7 inventory's own scheme — not merely absent from a
+                                                  hand-picked list of Prisma files.
 
-                                              **Event-envelope tenant (added 2026-09-18, ADR-0014 Amendment 7).** Repository-side
-                                              conversion is not complete until the tenant also reaches the outbox envelope. Two more
-                                              conditions, both required:
+                                                  **Event-envelope tenant (added 2026-09-18, ADR-0014 Amendment 7).** Repository-side
+                                                  conversion is not complete until the tenant also reaches the outbox envelope. Two more
+                                                  conditions, both required:
 
-                                              - The context's suite calls `assertWriteTimeTenant` (`@platform/messaging/testing`,
-                                                `packages/messaging/src/testing/write-time-tenant.ts`) against its repository. It only
-                                                catches contexts that call it — a context that forgets passes silently — which is why the
-                                                next check exists.
-                                              - This exits 0 (no output). It lists every `outbox.write(...)` call in a converted context, package or app
-                                                whose argument list never mentions `tenantId`:
+                                                  - The context's suite calls `assertWriteTimeTenant` (`@platform/messaging/testing`,
+                                                    `packages/messaging/src/testing/write-time-tenant.ts`) against its repository. It only
+                                                    catches contexts that call it — a context that forgets passes silently — which is why the
+                                                    next check exists.
+                                                  - This exits 0 (no output). It lists every `outbox.write(...)` call in a converted context, package or app
+                                                    whose argument list never mentions `tenantId`:
 
-                                              ```bash
-                                              node scripts/dev/check-outbox-tenant.mjs
-                                              ```
+                                                  ```bash
+                                                  node scripts/dev/check-outbox-tenant.mjs
+                                                  ```
 
-                                              "Converted" is derived: a context still building `rootEventContext(deps.idGenerator, tenantId)`
-                                              in its composition is skipped, so unconverted contexts cause no false positives and a
-                                              context joins the check the moment it converts. With no argument it scans `services`,
-                                              `packages` and `apps` (packages and apps are always checked; it first scanned `services` only and
-                                              missed `packages/usage`). Verified 2026-09-18 by breaking
-                                              `services/coupons/src/infrastructure/prisma-coupon-repository.ts:50` to pass the bare
-                                              singleton context: the command printed that site and exited 1; restored, it exits 0. It
-                                              does **not** catch a merge of the *wrong* tenant, a write hidden behind a helper, or a
-                                              context that never writes; `services/example` is exempt (template, no tenant).
+                                                  "Converted" is derived: a context still building `rootEventContext(deps.idGenerator, tenantId)`
+                                                  in its composition is skipped, so unconverted contexts cause no false positives and a
+                                                  context joins the check the moment it converts. With no argument it scans `services`,
+                                                  `packages` and `apps` (packages and apps are always checked; it first scanned `services` only and
+                                                  missed `packages/usage`). Verified 2026-09-18 by breaking
+                                                  `services/coupons/src/infrastructure/prisma-coupon-repository.ts:50` to pass the bare
+                                                  singleton context: the command printed that site and exited 1; restored, it exits 0. It
+                                                  does **not** catch a merge of the *wrong* tenant, a write hidden behind a helper, or a
+                                                  context that never writes; `services/example` is exempt (template, no tenant).
 
 - [ ] **T10.4 — Remove the boot refusal, and replace it with a real guard.**
       Deleting the `TENANT_MODE === "multi"` throw is the last step, not the first. What replaces it
@@ -425,12 +425,13 @@ grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
 grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
 ```
 
-The unfiltered run of the first command returns every Prisma repository in the 8 not-yet-converted
-contexts (`cart`, `checkout`, `fulfillment`, `inventory`, `orders`, `payments`, `returns`,
-`security`) plus the parked `tenancy` branch — 9 unconverted in all (corrected 2026-09-18:
+The unfiltered run of the first command returns every Prisma repository in the 2 not-yet-converted
+contexts (`security` and the parked `tenancy` branch) — 2 unconverted in all (corrected 2026-09-19:
 `customer-360`, `finance`, then `pricing`, `reporting`, `promotions`, `notifications` and
-`shipping` converted after this paragraph was written; the count comes from `rootEventContext(`
-call arity in each `composition.ts`, not from this prose) — expected, already tracked by the roadmap's Status
+`shipping`, then `cart`, `inventory`, `payments`, `orders`, `fulfillment`, `checkout` and `returns`
+converted after this paragraph was written; the count comes from `rootEventContext(`
+call arity in each `composition.ts` — `grep -rnE "rootEventContext(s*deps.idGenerators*,s*w+" services/*/src/composition.ts`
+lists exactly `security` and `tenancy` — not from this prose) — expected, already tracked by the roadmap's Status
 section, not re-listed row-by-row here. The table below is everything **else**: sites outside an
 unconverted context's own repository sweep, or found only by the second, widened command.
 
@@ -445,12 +446,12 @@ unconverted context's own repository sweep, or found only by the second, widened
 | `apps/runtime/src/security/security-context-propagation.ts:61` (`SecurityPropagationContext`)                                                                          | **C**                                  | A plain value object constructed fresh per request/event from HTTP headers or event metadata (`fromHttpHeaders`/`fromEventMetadata`), not a boot-time singleton — carries the already-resolved `tenantId` as trace/correlation metadata. This is the shape T10.3 wants, not an instance of the defect it fixes. Currently unwired into production composition (only its own tests call the factories).                                                                                                                                                                                                                           |
 | `apps/runtime/src/consumers/orders-paid.consumers.ts:286,323,373,429` (sourced from `:470`'s `const tenantId = core.config.TENANT_DEFAULT_ID`)                         | **D** — G-64                           | One of "the two consumer sites" named in this session's own instructions. Re-verified when customer-360 converted (2026-09-18): `:373` is `Customer360OrdersPaidConsumer`, whose tenant was previously buried inside `PrismaProfileStore`/`PrismaProfileHistoryStore` construction and is now a visible `deps.tenantId` — same class, same fix. `:429` is `NotificationsOrdersPaidConsumer`, which joined the same way when notifications converted. Fix depends on making `tenantId` required on the event envelope first (a contract change) — out of scope this session, per the roadmap's own "explicitly NOT touched" note. |
 | `apps/runtime/src/consumers/finance-settlement.consumers.ts:134` (`const tenantId = core.config.TENANT_DEFAULT_ID`)                                                    | **D** — G-64                           | The second of "the two consumer sites" — found only by widening the grep to `TENANT_DEFAULT_ID` (this file has no `deps.tenantId`/`this.tenantId =` field at all, so the plan's own starting pattern would have missed it). Same fix dependency as the orders-paid consumer above.                                                                                                                                                                                                                                                                                                                                               |
-| `apps/runtime/src/composition.ts:527` (`buildPaymentCapturedRuntime`), `services/orders/src/interfaces/payment-captured.consumer.ts:22,52` (`PaymentCapturedConsumer`) | **D** — G-64                           | Added 2026-09-19 when orders converted: `MarkOrderPaid` now takes `tenantId` per call, and the consumer has no per-message tenant to hand it until `tenantId` is required on the event envelope (a contract change), so its deps carry one sourced from `core.config.TENANT_DEFAULT_ID` — the same shape and the same fix dependency as `orders-paid.consumers.ts` above. Before this the tenant was buried in `PrismaOrderRepository`/`PrismaPaymentVerificationAdapter` construction at the same `TENANT_DEFAULT_ID` site.                                                                                                     |
+| `apps/runtime/src/composition.ts:534` (`buildPaymentCapturedRuntime`), `services/orders/src/interfaces/payment-captured.consumer.ts:22,52` (`PaymentCapturedConsumer`) | **D** — G-64                           | Added 2026-09-19 when orders converted: `MarkOrderPaid` now takes `tenantId` per call, and the consumer has no per-message tenant to hand it until `tenantId` is required on the event envelope (a contract change), so its deps carry one sourced from `core.config.TENANT_DEFAULT_ID` — the same shape and the same fix dependency as `orders-paid.consumers.ts` above. Before this the tenant was buried in `PrismaOrderRepository`/`PrismaPaymentVerificationAdapter` construction at the same `TENANT_DEFAULT_ID` site.                                                                                                     |
 
-**Totals: (A) 9 · (B) 1 · (C) 4 · (D) 2 — 16 sites, none unclassifiable** (the three added 2026-09-18 are the cross-context adapters that had to keep a construction-time tenant when pricing and notifications converted; ADR-0014 Amendment 8).
+**Totals: (A) 2 · (B) 1 · (C) 4 · (D) 3 — 10 sites, none unclassifiable** (2026-09-19, after T10.3 batch 2: the seven class-A cross-context adapter rows that were pinned "pending this context's own conversion" were deleted as `payments`, `orders`, `checkout` and `returns` converted; one class-D row was added for `PaymentCapturedConsumer`. Two adapters that batch 2 itself had to pin temporarily — `InventoryValidationAdapter`/`OrdersInventoryAdapter`, and `OrdersPaymentAdapter`/`OrderCreationAdapter` — were unpinned again by `checkout` and `orders` within the same batch and never reached this table; ADR-0014 Amendment 8).
 
-Not re-listed: the 8 unconverted contexts' own Prisma repositories (all (A), tracked by the
-roadmap's Status section already) and `tenancy` (parked, per Task A) — 9 unconverted in all.
+Not re-listed: `security`'s own Prisma repositories (all (A), tracked by the
+roadmap's Status section already) and `tenancy` (parked, per Task A) — 2 unconverted in all.
 
 **Coverage limit, stated explicitly:** the Prisma branch of the converted repositories (e.g.
 `services/coupons/src/infrastructure/prisma-coupon-repository.ts:50`) has **no database test** for

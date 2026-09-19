@@ -1,5 +1,17 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
+## Status — 2026-09-19 (T10.3 batch 2: cart, inventory, payments, orders, fulfillment, checkout, returns converted)
+
+Seven more contexts moved to per-request `tenantId`, one commit each, so **38 of the 40 service
+compositions are converted** and **2 are not** (`security`, and `tenancy`, parked) — derived from
+`rootEventContext(` call arity in each `composition.ts`, not from prose. Unlike batch 1 these were not
+leaves: `payments`, `orders`, `checkout` and `returns` each had ports the earlier batch's cross-context
+adapters were pinned behind, and widening them unpinned seven class-A T10.7 rows (all deleted, not
+edited). Also fixed: payments' `ProcessedWebhookStore`, orders' in-memory reservation/shipment stubs and
+fulfillment's carrier-webhook dedup were keyed without a tenant, and payments passed the literal tenant
+`"default"` to the PSP. Left open: `PaymentCapturedConsumer` takes a config-sourced tenant (new class-D
+row, G-64), and fulfillment's webhook dedup is in-memory only in both compositions (G-66).
+
 ## Status — 2026-09-18 (T10.3 batch 1: pricing, reporting, promotions, notifications, shipping converted)
 
 Five more contexts moved to per-request `tenantId`, one commit each, so **31 of the 40 service
