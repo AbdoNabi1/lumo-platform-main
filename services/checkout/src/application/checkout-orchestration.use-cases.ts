@@ -16,6 +16,8 @@ import type {
 } from "./ports";
 
 export interface CheckoutSessionIdInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutSessionId: string;
 }
 
@@ -34,9 +36,10 @@ interface OrchestrationDeps {
 async function loadSession(
   sessions: CheckoutSessionRepository,
   checkoutSessionId: string,
+  tenantId: string,
   tx: unknown,
 ): Promise<Result<CheckoutSession, DomainError>> {
-  const session = await sessions.findById(checkoutSessionId, tx);
+  const session = await sessions.findById(checkoutSessionId, tenantId, tx);
   if (session === null) {
     return err(new NotFoundError("Checkout session not found"));
   }
@@ -71,16 +74,20 @@ export class ValidateCheckout implements UseCase<
   async execute(
     input: CheckoutSessionIdInput,
   ): Promise<Result<ValidateCheckoutOutput, DomainError>> {
-    const session = await this.deps.sessions.findById(input.checkoutSessionId);
+    const session = await this.deps.sessions.findById(input.checkoutSessionId, input.tenantId);
     if (session === null) {
       return err(new NotFoundError("Checkout session not found"));
     }
 
-    const pricing = await this.deps.pricingValidation.validate(session.items, session.currency);
+    const pricing = await this.deps.pricingValidation.validate(
+      session.items,
+      session.currency,
+      input.tenantId,
+    );
     if (!pricing.valid) {
       return ok({ valid: false, reason: pricing.reason ?? "pricing validation failed" });
     }
-    const inventory = await this.deps.inventoryValidation.validate(session.items);
+    const inventory = await this.deps.inventoryValidation.validate(session.items, input.tenantId);
     if (!inventory.valid) {
       return ok({ valid: false, reason: inventory.reason ?? "inventory validation failed" });
     }
@@ -109,7 +116,12 @@ export class RequestTaxCalculation implements UseCase<
   ): Promise<Result<RequestTaxCalculationOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<RequestTaxCalculationOutput, DomainError>>(
       async (tx) => {
-        const loaded = await loadSession(this.deps.sessions, input.checkoutSessionId, tx);
+        const loaded = await loadSession(
+          this.deps.sessions,
+          input.checkoutSessionId,
+          input.tenantId,
+          tx,
+        );
         if (!loaded.ok) return err(loaded.error);
         const session = loaded.value;
 
@@ -124,6 +136,7 @@ export class RequestTaxCalculation implements UseCase<
           session.items,
           session.shippingAddress,
           session.currency,
+          input.tenantId,
         );
 
         try {
@@ -133,7 +146,7 @@ export class RequestTaxCalculation implements UseCase<
           throw error;
         }
 
-        await this.deps.sessions.save(session, tx);
+        await this.deps.sessions.save(session, input.tenantId, tx);
         return ok({
           checkoutSessionId: session.id.toString(),
           state: session.state.value,
@@ -169,7 +182,7 @@ export class RequestShippingQuote implements UseCase<
   async execute(
     input: CheckoutSessionIdInput,
   ): Promise<Result<RequestShippingQuoteOutput, DomainError>> {
-    const session = await this.deps.sessions.findById(input.checkoutSessionId);
+    const session = await this.deps.sessions.findById(input.checkoutSessionId, input.tenantId);
     if (session === null) {
       return err(new NotFoundError("Checkout session not found"));
     }
@@ -181,6 +194,7 @@ export class RequestShippingQuote implements UseCase<
     const quotes = await this.deps.shippingCalculation.quote(
       session.shippingAddress,
       session.currency,
+      input.tenantId,
     );
     return ok({ checkoutSessionId: session.id.toString(), state: session.state.value, quotes });
   }
@@ -213,7 +227,12 @@ export class ValidatePromotion implements UseCase<
     input: ValidatePromotionInput,
   ): Promise<Result<ValidatePromotionOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ValidatePromotionOutput, DomainError>>(async (tx) => {
-      const loaded = await loadSession(this.deps.sessions, input.checkoutSessionId, tx);
+      const loaded = await loadSession(
+        this.deps.sessions,
+        input.checkoutSessionId,
+        input.tenantId,
+        tx,
+      );
       if (!loaded.ok) return err(loaded.error);
       const session = loaded.value;
 
@@ -222,6 +241,7 @@ export class ValidatePromotion implements UseCase<
         session.customerRef,
         input.promotionRef,
         session.currency,
+        input.tenantId,
       );
       if (!result.valid) {
         return ok({
@@ -239,7 +259,7 @@ export class ValidatePromotion implements UseCase<
         throw error;
       }
 
-      await this.deps.sessions.save(session, tx);
+      await this.deps.sessions.save(session, input.tenantId, tx);
       return ok({
         checkoutSessionId: session.id.toString(),
         state: session.state.value,
@@ -267,7 +287,12 @@ export class RecalculateTotals implements UseCase<
   ): Promise<Result<CheckoutSessionStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<CheckoutSessionStatusOutput, DomainError>>(
       async (tx) => {
-        const loaded = await loadSession(this.deps.sessions, input.checkoutSessionId, tx);
+        const loaded = await loadSession(
+          this.deps.sessions,
+          input.checkoutSessionId,
+          input.tenantId,
+          tx,
+        );
         if (!loaded.ok) return err(loaded.error);
         const session = loaded.value;
 
@@ -278,7 +303,7 @@ export class RecalculateTotals implements UseCase<
           throw error;
         }
 
-        await this.deps.sessions.save(session, tx);
+        await this.deps.sessions.save(session, input.tenantId, tx);
         return ok({ checkoutSessionId: session.id.toString(), state: session.state.value });
       },
     );
@@ -302,7 +327,12 @@ export class Lock implements UseCase<
   ): Promise<Result<CheckoutSessionStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<CheckoutSessionStatusOutput, DomainError>>(
       async (tx) => {
-        const loaded = await loadSession(this.deps.sessions, input.checkoutSessionId, tx);
+        const loaded = await loadSession(
+          this.deps.sessions,
+          input.checkoutSessionId,
+          input.tenantId,
+          tx,
+        );
         if (!loaded.ok) return err(loaded.error);
         const session = loaded.value;
 
@@ -313,7 +343,7 @@ export class Lock implements UseCase<
           throw error;
         }
 
-        await this.deps.sessions.save(session, tx);
+        await this.deps.sessions.save(session, input.tenantId, tx);
         return ok({ checkoutSessionId: session.id.toString(), state: session.state.value });
       },
     );
@@ -337,7 +367,12 @@ export class ExpireCheckout implements UseCase<
   ): Promise<Result<CheckoutSessionStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<CheckoutSessionStatusOutput, DomainError>>(
       async (tx) => {
-        const loaded = await loadSession(this.deps.sessions, input.checkoutSessionId, tx);
+        const loaded = await loadSession(
+          this.deps.sessions,
+          input.checkoutSessionId,
+          input.tenantId,
+          tx,
+        );
         if (!loaded.ok) return err(loaded.error);
         const session = loaded.value;
 
@@ -348,7 +383,7 @@ export class ExpireCheckout implements UseCase<
           throw error;
         }
 
-        await this.deps.sessions.save(session, tx);
+        await this.deps.sessions.save(session, input.tenantId, tx);
         return ok({ checkoutSessionId: session.id.toString(), state: session.state.value });
       },
     );

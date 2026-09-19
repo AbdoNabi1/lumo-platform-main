@@ -33,7 +33,7 @@ describe("GetCheckoutSession", () => {
     sessions.seed(session);
     const useCase = new GetCheckoutSession({ sessions });
 
-    const result = await useCase.execute({ checkoutSessionId: "cs-1" });
+    const result = await useCase.execute({ tenantId: "tenant-a", checkoutSessionId: "cs-1" });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
@@ -44,7 +44,7 @@ describe("GetCheckoutSession", () => {
     const sessions = new FakeSessionRepository();
     const useCase = new GetCheckoutSession({ sessions });
 
-    const result = await useCase.execute({ checkoutSessionId: "missing" });
+    const result = await useCase.execute({ tenantId: "tenant-a", checkoutSessionId: "missing" });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected err");

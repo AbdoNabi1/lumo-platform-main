@@ -147,11 +147,19 @@ async function buildRecalculatedCheckout(
     "load items",
   );
   unwrap(
-    await admin.checkout.setBillingAddress(customer, { checkoutSessionId, ...ADDRESS }),
+    await admin.checkout.setBillingAddress(customer, {
+      tenantId: "tenant-local",
+      checkoutSessionId,
+      ...ADDRESS,
+    }),
     "set billing address",
   );
   unwrap(
-    await admin.checkout.setShippingAddress(customer, { checkoutSessionId, ...ADDRESS }),
+    await admin.checkout.setShippingAddress(customer, {
+      tenantId: "tenant-local",
+      checkoutSessionId,
+      ...ADDRESS,
+    }),
     "set shipping address",
   );
   return { checkoutSessionId };
@@ -164,14 +172,27 @@ describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a
     const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
 
     const selected = unwrap<{ checkoutSessionId: string }>(
-      await admin.checkout.selectShipping(customer, { checkoutSessionId, method: "standard" }),
+      await admin.checkout.selectShipping(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+        method: "standard",
+      }),
       "select shipping",
     );
     expect(selected.checkoutSessionId).toBe(checkoutSessionId);
 
-    unwrap(await admin.checkout.recalculateTotals(customer, { checkoutSessionId }), "recalculate");
+    unwrap(
+      await admin.checkout.recalculateTotals(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+      }),
+      "recalculate",
+    );
     const draft = unwrap<{ totals: { shippingMinor: number; totalMinor: number } }>(
-      await admin.checkout.generateOrderDraft(customer, { checkoutSessionId }),
+      await admin.checkout.generateOrderDraft(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+      }),
       "generate order draft",
     );
     expect(draft.totals.shippingMinor).toBe(500);
@@ -223,6 +244,7 @@ describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a
     const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
 
     const selected = await admin.checkout.selectShipping(customer, {
+      tenantId: "tenant-local",
       checkoutSessionId,
       method: "teleportation",
     });
@@ -248,10 +270,20 @@ describe("Phase A.1 — F-02: order total is always re-derived from Checkout's o
     await seedPublishedPrice(admin, "product-1", 1999, "USD");
     const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 2);
     unwrap(
-      await admin.checkout.selectShipping(customer, { checkoutSessionId, method: "standard" }),
+      await admin.checkout.selectShipping(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+        method: "standard",
+      }),
       "select shipping",
     );
-    unwrap(await admin.checkout.recalculateTotals(customer, { checkoutSessionId }), "recalculate");
+    unwrap(
+      await admin.checkout.recalculateTotals(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+      }),
+      "recalculate",
+    );
     return checkoutSessionId;
   }
 
@@ -357,10 +389,20 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
     await seedPublishedPrice(admin, "product-1", 1999, "USD");
     const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
     unwrap(
-      await admin.checkout.selectShipping(customer, { checkoutSessionId, method: "standard" }),
+      await admin.checkout.selectShipping(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+        method: "standard",
+      }),
       "select shipping",
     );
-    unwrap(await admin.checkout.recalculateTotals(customer, { checkoutSessionId }), "recalculate");
+    unwrap(
+      await admin.checkout.recalculateTotals(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+      }),
+      "recalculate",
+    );
 
     const createFromCheckout = byPathAndMethod(adminRoutes(admin), "POST", "/orders/from-checkout");
     const created = unwrap<{ orderId: string }>(

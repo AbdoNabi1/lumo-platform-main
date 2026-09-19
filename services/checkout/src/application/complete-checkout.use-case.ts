@@ -8,6 +8,8 @@ import type { CheckoutSessionRepository } from "../domain/checkout-session-repos
 import type { OrderCreationPort } from "./ports";
 
 export interface CompleteCheckoutInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutSessionId: string;
   readonly idempotencyKey: string;
 }
@@ -51,7 +53,11 @@ export class CompleteCheckout implements UseCase<
     if (!idempotencyKey.ok) return err(idempotencyKey.error);
 
     return this.deps.unitOfWork.run<Result<CompleteCheckoutOutput, DomainError>>(async (tx) => {
-      const session = await this.deps.sessions.findById(input.checkoutSessionId, tx);
+      const session = await this.deps.sessions.findById(
+        input.checkoutSessionId,
+        input.tenantId,
+        tx,
+      );
       if (session === null) {
         return err(new NotFoundError("Checkout session not found"));
       }
@@ -87,6 +93,7 @@ export class CompleteCheckout implements UseCase<
       }
 
       const { orderRef } = await this.deps.orderCreation.create({
+        tenantId: input.tenantId,
         checkoutSessionId: session.id.toString(),
         customerRef: draft.customerRef,
         currency: session.currency,
@@ -104,7 +111,7 @@ export class CompleteCheckout implements UseCase<
         throw error;
       }
 
-      await this.deps.sessions.save(session, tx);
+      await this.deps.sessions.save(session, input.tenantId, tx);
       return ok({ checkoutSessionId: session.id.toString(), state: session.state.value, orderRef });
     });
   }

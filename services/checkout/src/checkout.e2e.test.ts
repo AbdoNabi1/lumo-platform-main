@@ -20,6 +20,7 @@ function wire() {
 
 async function newSessionId(app: ReturnType<typeof wire>): Promise<string> {
   const started = await app.checkout.start({
+    tenantId: "tenant-a",
     cartRef: "cart-1",
     customerRef: "customer-1",
     sessionRef: "session-1",
@@ -40,12 +41,21 @@ const readyAddress = {
 async function readySessionId(app: ReturnType<typeof wire>): Promise<string> {
   const id = await newSessionId(app);
   await app.checkout.loadItems({
+    tenantId: "tenant-a",
     checkoutSessionId: id,
     items: [{ productId: "product-1", quantity: 2, unitPriceAmountMinor: 1000, currency: "USD" }],
   });
-  await app.checkout.setBillingAddress({ checkoutSessionId: id, ...readyAddress });
-  await app.checkout.setShippingAddress({ checkoutSessionId: id, ...readyAddress });
-  await app.checkout.recalculateTotals({ checkoutSessionId: id });
+  await app.checkout.setBillingAddress({
+    tenantId: "tenant-a",
+    checkoutSessionId: id,
+    ...readyAddress,
+  });
+  await app.checkout.setShippingAddress({
+    tenantId: "tenant-a",
+    checkoutSessionId: id,
+    ...readyAddress,
+  });
+  await app.checkout.recalculateTotals({ tenantId: "tenant-a", checkoutSessionId: id });
   return id;
 }
 
@@ -55,6 +65,7 @@ describe("checkout (end to end)", () => {
     const id = await readySessionId(app);
 
     const completed = await app.checkout.complete({
+      tenantId: "tenant-a",
       checkoutSessionId: id,
       idempotencyKey: "idem-1",
     });
@@ -72,10 +83,18 @@ describe("checkout (end to end)", () => {
     const app = wire();
     const id = await readySessionId(app);
 
-    const first = await app.checkout.complete({ checkoutSessionId: id, idempotencyKey: "idem-1" });
+    const first = await app.checkout.complete({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+      idempotencyKey: "idem-1",
+    });
     expect(first.status).toBe(200);
 
-    const second = await app.checkout.complete({ checkoutSessionId: id, idempotencyKey: "idem-1" });
+    const second = await app.checkout.complete({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+      idempotencyKey: "idem-1",
+    });
     expect(second.status).toBe(200);
     expect((second.body as { orderRef: string }).orderRef).toBe(
       (first.body as { orderRef: string }).orderRef,
@@ -86,7 +105,11 @@ describe("checkout (end to end)", () => {
     const app = wire();
     const id = await newSessionId(app);
 
-    const failed = await app.checkout.fail({ checkoutSessionId: id, reason: "payment_failed" });
+    const failed = await app.checkout.fail({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+      reason: "payment_failed",
+    });
     expect(failed.status).toBe(200);
     expect((failed.body as { state: string }).state).toBe("failed");
 
@@ -97,8 +120,13 @@ describe("checkout (end to end)", () => {
   it("rejects completing an already-failed session (409)", async () => {
     const app = wire();
     const id = await newSessionId(app);
-    await app.checkout.fail({ checkoutSessionId: id, reason: "payment_failed" });
+    await app.checkout.fail({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+      reason: "payment_failed",
+    });
     const response = await app.checkout.complete({
+      tenantId: "tenant-a",
       checkoutSessionId: id,
       idempotencyKey: "idem-1",
     });
@@ -108,6 +136,7 @@ describe("checkout (end to end)", () => {
   it("returns 404 for an unknown session", async () => {
     const app = wire();
     const response = await app.checkout.complete({
+      tenantId: "tenant-a",
       checkoutSessionId: "missing",
       idempotencyKey: "idem-1",
     });
@@ -117,6 +146,7 @@ describe("checkout (end to end)", () => {
   it("rejects starting checkout with a blank cart reference (422)", async () => {
     const app = wire();
     const response = await app.checkout.start({
+      tenantId: "tenant-a",
       cartRef: "  ",
       customerRef: "customer-1",
       sessionRef: "session-1",
@@ -130,6 +160,7 @@ describe("checkout (end to end)", () => {
     const id = await newSessionId(app);
 
     const loaded = await app.checkout.loadItems({
+      tenantId: "tenant-a",
       checkoutSessionId: id,
       items: [{ productId: "product-1", quantity: 2, unitPriceAmountMinor: 1000, currency: "USD" }],
     });
@@ -142,21 +173,42 @@ describe("checkout (end to end)", () => {
       country: "US",
     };
     expect(
-      (await app.checkout.setBillingAddress({ checkoutSessionId: id, ...address })).status,
+      (
+        await app.checkout.setBillingAddress({
+          tenantId: "tenant-a",
+          checkoutSessionId: id,
+          ...address,
+        })
+      ).status,
     ).toBe(200);
     expect(
-      (await app.checkout.setShippingAddress({ checkoutSessionId: id, ...address })).status,
+      (
+        await app.checkout.setShippingAddress({
+          tenantId: "tenant-a",
+          checkoutSessionId: id,
+          ...address,
+        })
+      ).status,
     ).toBe(200);
 
-    const validated = await app.checkout.validateCheckout({ checkoutSessionId: id });
+    const validated = await app.checkout.validateCheckout({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+    });
     expect(validated.status).toBe(200);
     expect((validated.body as { valid: boolean }).valid).toBe(true);
 
-    const taxed = await app.checkout.requestTaxCalculation({ checkoutSessionId: id });
+    const taxed = await app.checkout.requestTaxCalculation({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+    });
     expect(taxed.status).toBe(200);
     expect((taxed.body as { taxMinor: number }).taxMinor).toBeGreaterThanOrEqual(0);
 
-    const quoted = await app.checkout.requestShippingQuote({ checkoutSessionId: id });
+    const quoted = await app.checkout.requestShippingQuote({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+    });
     expect(quoted.status).toBe(200);
     const quotes = (
       quoted.body as { quotes: readonly { method: string; rateAmountMinor: number }[] }
@@ -164,6 +216,7 @@ describe("checkout (end to end)", () => {
     expect(quotes.length).toBeGreaterThan(0);
 
     const selected = await app.checkout.selectShipping({
+      tenantId: "tenant-a",
       checkoutSessionId: id,
       method: quotes[0]?.method ?? "standard",
     });
@@ -172,6 +225,7 @@ describe("checkout (end to end)", () => {
     expect(
       (
         await app.checkout.selectPayment({
+          tenantId: "tenant-a",
           checkoutSessionId: id,
           paymentMethodRef: "pm-1",
           provider: "stripe",
@@ -179,17 +233,27 @@ describe("checkout (end to end)", () => {
       ).status,
     ).toBe(200);
 
-    const promo = await app.checkout.validatePromotion({ checkoutSessionId: id });
+    const promo = await app.checkout.validatePromotion({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+    });
     expect(promo.status).toBe(200);
 
-    const recalculated = await app.checkout.recalculateTotals({ checkoutSessionId: id });
+    const recalculated = await app.checkout.recalculateTotals({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+    });
     expect(recalculated.status).toBe(200);
 
-    const draft = await app.checkout.generateOrderDraft({ checkoutSessionId: id });
+    const draft = await app.checkout.generateOrderDraft({
+      tenantId: "tenant-a",
+      checkoutSessionId: id,
+    });
     expect(draft.status).toBe(200);
     expect((draft.body as { items: readonly unknown[] }).items).toHaveLength(1);
 
     const intentRequest = await app.checkout.generatePaymentIntentRequest({
+      tenantId: "tenant-a",
       checkoutSessionId: id,
     });
     expect(intentRequest.status).toBe(200);
@@ -200,11 +264,12 @@ describe("checkout (end to end)", () => {
     const app = wire();
     const id = await readySessionId(app);
 
-    const locked = await app.checkout.lock({ checkoutSessionId: id });
+    const locked = await app.checkout.lock({ tenantId: "tenant-a", checkoutSessionId: id });
     expect(locked.status).toBe(200);
     expect((locked.body as { state: string }).state).toBe("locked");
 
     const completed = await app.checkout.complete({
+      tenantId: "tenant-a",
       checkoutSessionId: id,
       idempotencyKey: "idem-1",
     });
@@ -218,7 +283,7 @@ describe("checkout (end to end)", () => {
     const app = wire();
     const id = await newSessionId(app);
 
-    const expired = await app.checkout.expire({ checkoutSessionId: id });
+    const expired = await app.checkout.expire({ tenantId: "tenant-a", checkoutSessionId: id });
     expect(expired.status).toBe(200);
     expect((expired.body as { state: string }).state).toBe("expired");
 

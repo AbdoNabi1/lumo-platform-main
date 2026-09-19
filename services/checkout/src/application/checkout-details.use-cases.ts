@@ -30,21 +30,24 @@ export interface CheckoutDetailsOutput {
 async function withSession(
   deps: CheckoutDetailsDeps,
   checkoutSessionId: string,
+  tenantId: string,
   mutate: (session: CheckoutSession) => Result<void, DomainError>,
 ): Promise<Result<CheckoutDetailsOutput, DomainError>> {
   return deps.unitOfWork.run<Result<CheckoutDetailsOutput, DomainError>>(async (tx) => {
-    const session = await deps.sessions.findById(checkoutSessionId, tx);
+    const session = await deps.sessions.findById(checkoutSessionId, tenantId, tx);
     if (session === null) {
       return err(new NotFoundError("Checkout session not found"));
     }
     const mutated = mutate(session);
     if (!mutated.ok) return err(mutated.error);
-    await deps.sessions.save(session, tx);
+    await deps.sessions.save(session, tenantId, tx);
     return ok({ checkoutSessionId: session.id.toString() });
   });
 }
 
 export interface LoadItemsInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutSessionId: string;
   readonly items: readonly {
     readonly productId: string;
@@ -77,7 +80,7 @@ export class LoadItems implements UseCase<LoadItemsInput, CheckoutDetailsOutput,
       items.push(item.value);
     }
 
-    return withSession(this.deps, input.checkoutSessionId, (session) => {
+    return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
       try {
         session.loadItems(items);
         return ok(undefined);
@@ -90,6 +93,8 @@ export class LoadItems implements UseCase<LoadItemsInput, CheckoutDetailsOutput,
 }
 
 export interface SetAddressInput extends CheckoutAddressInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutSessionId: string;
 }
 
@@ -109,7 +114,7 @@ export class SetBillingAddress implements UseCase<
     const address = CheckoutAddress.create(input);
     if (!address.ok) return err(address.error);
 
-    return withSession(this.deps, input.checkoutSessionId, (session) => {
+    return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
       try {
         session.setBillingAddress(address.value);
         return ok(undefined);
@@ -137,7 +142,7 @@ export class SetShippingAddress implements UseCase<
     const address = CheckoutAddress.create(input);
     if (!address.ok) return err(address.error);
 
-    return withSession(this.deps, input.checkoutSessionId, (session) => {
+    return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
       try {
         session.setShippingAddress(address.value);
         return ok(undefined);
@@ -150,6 +155,8 @@ export class SetShippingAddress implements UseCase<
 }
 
 export interface SelectShippingInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutSessionId: string;
   readonly method: string;
 }
@@ -176,7 +183,11 @@ export class SelectShipping implements UseCase<
 
   async execute(input: SelectShippingInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<CheckoutDetailsOutput, DomainError>>(async (tx) => {
-      const session = await this.deps.sessions.findById(input.checkoutSessionId, tx);
+      const session = await this.deps.sessions.findById(
+        input.checkoutSessionId,
+        input.tenantId,
+        tx,
+      );
       if (session === null) {
         return err(new NotFoundError("Checkout session not found"));
       }
@@ -189,6 +200,7 @@ export class SelectShipping implements UseCase<
       const quotes = await this.deps.shippingCalculation.quote(
         session.shippingAddress,
         session.currency,
+        input.tenantId,
       );
       const matched = quotes.find((quote) => quote.method === input.method);
       if (matched === undefined) {
@@ -213,13 +225,15 @@ export class SelectShipping implements UseCase<
         throw error;
       }
 
-      await this.deps.sessions.save(session, tx);
+      await this.deps.sessions.save(session, input.tenantId, tx);
       return ok({ checkoutSessionId: session.id.toString() });
     });
   }
 }
 
 export interface SelectPaymentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutSessionId: string;
   readonly paymentMethodRef: string;
   readonly provider: string;
@@ -241,7 +255,7 @@ export class SelectPayment implements UseCase<
     const selection = PaymentSelection.create(input.paymentMethodRef, input.provider);
     if (!selection.ok) return err(selection.error);
 
-    return withSession(this.deps, input.checkoutSessionId, (session) => {
+    return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
       try {
         session.selectPayment(selection.value);
         return ok(undefined);

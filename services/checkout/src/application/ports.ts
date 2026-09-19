@@ -7,9 +7,13 @@ export interface PricingValidationResult {
   readonly reason?: string;
 }
 
-/** Requests price validation for the session's item snapshots — Checkout never prices anything itself. */
+/** Requests price validation for the session's item snapshots — Checkout never prices anything itself. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface PricingValidationPort {
-  validate(items: readonly CheckoutItem[], currency: string): Promise<PricingValidationResult>;
+  validate(
+    items: readonly CheckoutItem[],
+    currency: string,
+    tenantId: string,
+  ): Promise<PricingValidationResult>;
 }
 
 export interface InventoryValidationResult {
@@ -17,21 +21,22 @@ export interface InventoryValidationResult {
   readonly reason?: string;
 }
 
-/** Requests stock-availability validation — Checkout never reserves/modifies stock itself. */
+/** Requests stock-availability validation — Checkout never reserves/modifies stock itself. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface InventoryValidationPort {
-  validate(items: readonly CheckoutItem[]): Promise<InventoryValidationResult>;
+  validate(items: readonly CheckoutItem[], tenantId: string): Promise<InventoryValidationResult>;
 }
 
 export interface TaxCalculationResult {
   readonly taxMinor: number;
 }
 
-/** Requests a tax calculation from Finance (ADR-0024) — Checkout stores the returned snapshot verbatim, never computes tax. */
+/** Requests a tax calculation from Finance (ADR-0024) — Checkout stores the returned snapshot verbatim, never computes tax. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface TaxCalculationPort {
   calculate(
     items: readonly CheckoutItem[],
     shippingAddress: { readonly country: string },
     currency: string,
+    tenantId: string,
   ): Promise<TaxCalculationResult>;
 }
 
@@ -40,11 +45,12 @@ export interface ShippingQuote {
   readonly rateAmountMinor: number;
 }
 
-/** Requests shipping rate quotes from Shipping — Checkout stores the chosen quote's snapshot verbatim, never computes rates. */
+/** Requests shipping rate quotes from Shipping — Checkout stores the chosen quote's snapshot verbatim, never computes rates. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface ShippingCalculationPort {
   quote(
     shippingAddress: { readonly country: string; readonly postalCode: string },
     currency: string,
+    tenantId: string,
   ): Promise<readonly ShippingQuote[]>;
 }
 
@@ -64,6 +70,7 @@ export interface PromotionValidationResult {
  * reference and currency carry none of that. `items` and `customerRef` give an implementation
  * enough to build that snapshot; mirrors `PricingValidationPort`/`InventoryValidationPort`, which
  * already take `items` for the same reason.
+ * ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter.
  */
 export interface PromotionValidationPort {
   validate(
@@ -71,6 +78,7 @@ export interface PromotionValidationPort {
     customerRef: string | undefined,
     promotionRef: string | undefined,
     currency: string,
+    tenantId: string,
   ): Promise<PromotionValidationResult>;
 }
 
@@ -88,6 +96,8 @@ export interface PromotionValidationPort {
  */
 export interface OrderCreationPort {
   create(input: {
+    /** ADR-0014 (WP-10, T10.3): the request's tenant. */
+    readonly tenantId: string;
     readonly checkoutSessionId: string;
     readonly customerRef: string | undefined;
     readonly currency: string;

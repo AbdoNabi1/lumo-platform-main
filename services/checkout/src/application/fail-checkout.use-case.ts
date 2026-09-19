@@ -7,6 +7,8 @@ import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
 
 export interface FailCheckoutInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutSessionId: string;
   readonly reason: string;
 }
@@ -36,7 +38,11 @@ export class FailCheckout implements UseCase<FailCheckoutInput, FailCheckoutOutp
     if (!reason.ok) return err(reason.error);
 
     return this.deps.unitOfWork.run<Result<FailCheckoutOutput, DomainError>>(async (tx) => {
-      const session = await this.deps.sessions.findById(input.checkoutSessionId, tx);
+      const session = await this.deps.sessions.findById(
+        input.checkoutSessionId,
+        input.tenantId,
+        tx,
+      );
       if (session === null) {
         return err(new NotFoundError("Checkout session not found"));
       }
@@ -48,7 +54,7 @@ export class FailCheckout implements UseCase<FailCheckoutInput, FailCheckoutOutp
         throw error;
       }
 
-      await this.deps.sessions.save(session, tx);
+      await this.deps.sessions.save(session, input.tenantId, tx);
       return ok({ checkoutSessionId: session.id.toString(), state: session.state.value });
     });
   }

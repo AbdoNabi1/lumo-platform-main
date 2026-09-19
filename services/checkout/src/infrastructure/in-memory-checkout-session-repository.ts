@@ -7,9 +7,9 @@ export interface InMemoryCheckoutSessionRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `CheckoutSessionRepository`. Persists the aggregate and writes events to the outbox on save. */
+/** In-memory `CheckoutSessionRepository`. Persists the aggregate and writes events to the outbox on save. ADR-0014 (WP-10, T10.3): keyed by `(tenantId, id)`. */
 export class InMemoryCheckoutSessionRepository implements CheckoutSessionRepository {
-  private readonly store = new Map<string, CheckoutSession>();
+  private readonly store = new Map<string, Map<string, CheckoutSession>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -18,12 +18,17 @@ export class InMemoryCheckoutSessionRepository implements CheckoutSessionReposit
     this.context = deps.context;
   }
 
-  async save(session: CheckoutSession, tx?: unknown): Promise<void> {
-    this.store.set(session.id.toString(), session);
-    await this.outbox.write(session.pullDomainEvents(), this.context, tx);
+  async save(session: CheckoutSession, tenantId: string, tx?: unknown): Promise<void> {
+    let bucket = this.store.get(tenantId);
+    if (bucket === undefined) {
+      bucket = new Map();
+      this.store.set(tenantId, bucket);
+    }
+    bucket.set(session.id.toString(), session);
+    await this.outbox.write(session.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<CheckoutSession | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<CheckoutSession | null> {
+    return this.store.get(tenantId)?.get(id) ?? null;
   }
 }

@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { CheckoutSession } from "../domain/checkout-session";
@@ -9,8 +9,6 @@ export interface PrismaCheckoutSessionRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -25,9 +23,8 @@ export class PrismaCheckoutSessionRepository implements CheckoutSessionRepositor
     this.deps = deps;
   }
 
-  async save(session: CheckoutSession, tx?: unknown): Promise<void> {
+  async save(session: CheckoutSession, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const row = CheckoutSessionMapper.toRow(session, tenantId);
 
     if (session.version === 0) {
@@ -57,14 +54,21 @@ export class PrismaCheckoutSessionRepository implements CheckoutSessionRepositor
       }
     }
 
-    await this.deps.outbox.write(session.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      session.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<CheckoutSession | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.checkoutSession.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<CheckoutSession | null> {
+    const run = (client: TransactionClient) =>
+      client.checkoutSession.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null
       ? null
       : CheckoutSessionMapper.toDomain({

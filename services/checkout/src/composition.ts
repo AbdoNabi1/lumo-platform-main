@@ -85,13 +85,12 @@ export interface CheckoutWiringDeps {
   readonly orderCreation?: OrderCreationPort;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaCheckoutSessionRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/`wireCart`);
-   * absent ⇒ in-memory, unchanged. The 5 orchestration ports stay in-memory in both branches —
-   * reference-only stubs, not persistence, out of scope for C-01.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. The 5 orchestration ports stay in-memory
+   * in both branches — reference-only stubs, not persistence, out of scope for C-01. ADR-0014
+   * (WP-10, T10.3): the repository built here is a tenant-agnostic singleton — no `tenantId` at
+   * composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Checkout table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredCheckout {
@@ -176,10 +175,6 @@ function buildController(
  */
 export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireCheckout: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new CheckoutEventTranslator(),
@@ -187,13 +182,10 @@ export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
       clock: deps.clock,
       producer: "checkout",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const sessions = new PrismaCheckoutSessionRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — every repository takes it per
+    // call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const sessions = new PrismaCheckoutSessionRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {

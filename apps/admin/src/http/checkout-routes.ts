@@ -77,7 +77,8 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Start a checkout session for a cart (customerRef optional — guest checkout)",
       schema: { body: startBody },
-      handle: ({ body, context }) => admin.checkout.start(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.checkout.start(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -103,6 +104,7 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
           currency: item.unitPrice.currency,
         }));
         return admin.checkout.loadItems(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           items,
         });
@@ -118,6 +120,7 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: checkoutSessionIdParams, body: addressBody },
       handle: ({ params, body, context }) =>
         admin.checkout.setBillingAddress(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           ...body,
         }),
@@ -132,6 +135,7 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: checkoutSessionIdParams, body: addressBody },
       handle: ({ params, body, context }) =>
         admin.checkout.setShippingAddress(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           ...body,
         }),
@@ -143,7 +147,11 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "checkout:validate",
       summary: "Request price + stock validation for the session's items",
       schema: { params: checkoutSessionIdParams },
-      handle: ({ params, context }) => admin.checkout.validateCheckout(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.checkout.validateCheckout(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -153,7 +161,10 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Request a tax snapshot from Finance and store it",
       schema: { params: checkoutSessionIdParams },
       handle: ({ params, context }) =>
-        admin.checkout.requestTaxCalculation(context.principal, params),
+        admin.checkout.requestTaxCalculation(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -163,7 +174,10 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Request shipping rate quotes from Shipping (does not select one)",
       schema: { params: checkoutSessionIdParams },
       handle: ({ params, context }) =>
-        admin.checkout.requestShippingQuote(context.principal, params),
+        admin.checkout.requestShippingQuote(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -175,6 +189,7 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: checkoutSessionIdParams, body: selectShippingBody },
       handle: ({ params, body, context }) =>
         admin.checkout.selectShipping(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           ...body,
         }),
@@ -189,6 +204,7 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: checkoutSessionIdParams, body: selectPaymentBody },
       handle: ({ params, body, context }) =>
         admin.checkout.selectPayment(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           ...body,
         }),
@@ -202,6 +218,7 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: checkoutSessionIdParams, body: validatePromotionBody },
       handle: ({ params, body, context }) =>
         admin.checkout.validatePromotion(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           ...body,
         }),
@@ -214,7 +231,11 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Recalculate totals as a sum of the session's stored snapshots",
       schema: { params: checkoutSessionIdParams },
-      handle: ({ params, context }) => admin.checkout.recalculateTotals(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.checkout.recalculateTotals(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -224,7 +245,8 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Lock the session against further detail changes",
       schema: { params: checkoutSessionIdParams },
-      handle: ({ params, context }) => admin.checkout.lock(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.checkout.lock(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -234,7 +256,8 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Expire a still-open session",
       schema: { params: checkoutSessionIdParams },
-      handle: ({ params, context }) => admin.checkout.expire(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.checkout.expire(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -247,6 +270,7 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: checkoutSessionIdParams, body: completeBody },
       handle: ({ params, body, context }) =>
         admin.checkout.complete(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           ...body,
         }),
@@ -261,6 +285,7 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: checkoutSessionIdParams, body: failBody },
       handle: ({ params, body, context }) =>
         admin.checkout.fail(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           ...body,
         }),
@@ -272,7 +297,11 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "checkout:generate_order_draft",
       summary: "Assemble the order-draft snapshot handed to Orders",
       schema: { params: checkoutSessionIdParams },
-      handle: ({ params, context }) => admin.checkout.generateOrderDraft(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.checkout.generateOrderDraft(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -282,7 +311,10 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Assemble the payment-intent-request snapshot handed to Payments",
       schema: { params: checkoutSessionIdParams },
       handle: ({ params, context }) =>
-        admin.checkout.generatePaymentIntentRequest(context.principal, params),
+        admin.checkout.generatePaymentIntentRequest(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
   ] as readonly RouteDefinition[];
 }

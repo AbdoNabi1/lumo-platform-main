@@ -35,33 +35,22 @@ interface CheckAvailabilityBody {
 export class InventoryValidationAdapter implements InventoryValidationPort {
   private readonly inventory: Pick<InventoryController, "checkAvailability">;
   private readonly warehouses: WarehouseRepository;
-  private readonly tenantId: string | undefined;
 
-  /**
-   * ADR-0014 (WP-10, T10.3): Inventory's repository and use cases now take `tenantId` per call, but
-   * checkout's own `InventoryValidationPort.validate(items)` does not carry one yet — widening it is
-   * checkout-context work. Until checkout converts, this adapter captures the tenant at
-   * construction (same not-yet-converted pattern as `PricingValidationAdapter`). `tenantId` stays
-   * optional only because `AdminWiringDeps.tenantId` is; `validate` fails closed if it is missing,
-   * never defaulting a tenant.
-   */
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `InventoryValidationPort.validate` carries `tenantId` per call. */
   constructor(
     inventory: Pick<InventoryController, "checkAvailability">,
     warehouses: WarehouseRepository,
-    tenantId?: string,
   ) {
     this.inventory = inventory;
     this.warehouses = warehouses;
-    this.tenantId = tenantId;
   }
 
-  async validate(items: readonly CheckoutItem[]): Promise<InventoryValidationResult> {
+  async validate(
+    items: readonly CheckoutItem[],
+    tenantId: string,
+  ): Promise<InventoryValidationResult> {
     if (items.length === 0) {
       return { valid: true };
-    }
-    const tenantId = this.tenantId;
-    if (tenantId === undefined) {
-      return { valid: false, reason: "cannot validate inventory without a tenant" };
     }
 
     // `first: 2` is enough to distinguish "exactly one" from "more than one" without paging

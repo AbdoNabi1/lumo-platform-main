@@ -95,10 +95,11 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
   it("throws, without fabricating a customerRef, when the checkout session is a guest session", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders, "tenant-a");
+    const adapter = new OrderCreationAdapter(orders);
 
     await expect(
       adapter.create({
+        tenantId: "tenant-local",
         checkoutSessionId: "checkout-guest-1",
         customerRef: undefined,
         currency: "USD",
@@ -115,9 +116,10 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
   it("maps checkoutSessionId/customerRef/currency and returns orderId as orderRef on success", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders, "tenant-a");
+    const adapter = new OrderCreationAdapter(orders);
 
     const result = await adapter.create({
+      tenantId: "tenant-local",
       checkoutSessionId: "checkout-1",
       customerRef: "customer-1",
       currency: "USD",
@@ -137,9 +139,10 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
   it("maps CheckoutItem.productRef to BOTH productId and name (no display name available)", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders, "tenant-a");
+    const adapter = new OrderCreationAdapter(orders);
 
     await adapter.create({
+      tenantId: "tenant-local",
       checkoutSessionId: "checkout-1",
       customerRef: "customer-1",
       currency: "USD",
@@ -158,9 +161,10 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
   it("drops CheckoutAddress.line2 (Orders' address input has no field for it)", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders, "tenant-a");
+    const adapter = new OrderCreationAdapter(orders);
 
     await adapter.create({
+      tenantId: "tenant-local",
       checkoutSessionId: "checkout-1",
       customerRef: "customer-1",
       currency: "USD",
@@ -189,9 +193,10 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
   it("maps the full totals breakdown through unchanged", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders, "tenant-a");
+    const adapter = new OrderCreationAdapter(orders);
 
     await adapter.create({
+      tenantId: "tenant-local",
       checkoutSessionId: "checkout-1",
       customerRef: "customer-1",
       currency: "USD",
@@ -218,10 +223,11 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
       status: 422,
       body: { code: "VALIDATION", message: "invalid totals" },
     });
-    const adapter = new OrderCreationAdapter(orders, "tenant-a");
+    const adapter = new OrderCreationAdapter(orders);
 
     await expect(
       adapter.create({
+        tenantId: "tenant-local",
         checkoutSessionId: "checkout-bad-1",
         customerRef: "customer-1",
         currency: "USD",

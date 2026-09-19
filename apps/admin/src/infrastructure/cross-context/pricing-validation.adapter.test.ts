@@ -65,34 +65,39 @@ class FakePriceRepository implements PriceRepository {
 }
 
 describe("PricingValidationAdapter (Checkout -> Pricing, H-1)", () => {
-  it("passes its tenant to every repository lookup, and fails closed without one (ADR-0014)", async () => {
+  it("one adapter instance serves two tenants, passing each call's tenant to the repository (ADR-0014)", async () => {
     const repo = new FakePriceRepository([publishedPriceFixture("product-1", 1999, "USD")]);
+    const adapter = new PricingValidationAdapter(repo);
     const items = [checkoutItem("product-1", 1, 1999, "USD")];
 
-    expect(await new PricingValidationAdapter(repo, "tenant-a").validate(items, "USD")).toEqual({
-      valid: true,
-    });
-    expect(repo.tenantsSeen).toEqual(["tenant-a"]);
+    expect(await adapter.validate(items, "USD", "tenant-a")).toEqual({ valid: true });
+    await adapter.validate(items, "USD", "tenant-b");
 
-    const untenanted = await new PricingValidationAdapter(repo).validate(items, "USD");
-    expect(untenanted.valid).toBe(false);
-    expect(repo.tenantsSeen).toEqual(["tenant-a"]);
+    expect(repo.tenantsSeen).toEqual(["tenant-a", "tenant-b"]);
   });
 
   it("valid: every item's snapshot price matches the single published price for its product+currency", async () => {
     const repo = new FakePriceRepository([publishedPriceFixture("product-1", 1999, "USD")]);
-    const adapter = new PricingValidationAdapter(repo, "tenant-a");
+    const adapter = new PricingValidationAdapter(repo);
 
-    const result = await adapter.validate([checkoutItem("product-1", 2, 1999, "USD")], "USD");
+    const result = await adapter.validate(
+      [checkoutItem("product-1", 2, 1999, "USD")],
+      "USD",
+      "tenant-a",
+    );
 
     expect(result).toEqual({ valid: true });
   });
 
   it("invalid: no published price exists for the product+currency", async () => {
     const repo = new FakePriceRepository([]);
-    const adapter = new PricingValidationAdapter(repo, "tenant-a");
+    const adapter = new PricingValidationAdapter(repo);
 
-    const result = await adapter.validate([checkoutItem("product-missing", 1, 1999, "USD")], "USD");
+    const result = await adapter.validate(
+      [checkoutItem("product-missing", 1, 1999, "USD")],
+      "USD",
+      "tenant-a",
+    );
 
     expect(result.valid).toBe(false);
     expect(result.reason).toContain("product-missing");
@@ -100,10 +105,14 @@ describe("PricingValidationAdapter (Checkout -> Pricing, H-1)", () => {
 
   it("invalid: the item's snapshot price is stale (published price has since changed)", async () => {
     const repo = new FakePriceRepository([publishedPriceFixture("product-1", 2500, "USD")]);
-    const adapter = new PricingValidationAdapter(repo, "tenant-a");
+    const adapter = new PricingValidationAdapter(repo);
 
     // Caller's snapshot still carries the old 1999 price — must never be trusted over Pricing's own data.
-    const result = await adapter.validate([checkoutItem("product-1", 1, 1999, "USD")], "USD");
+    const result = await adapter.validate(
+      [checkoutItem("product-1", 1, 1999, "USD")],
+      "USD",
+      "tenant-a",
+    );
 
     expect(result.valid).toBe(false);
     expect(result.reason).toContain("product-1");
@@ -114,11 +123,12 @@ describe("PricingValidationAdapter (Checkout -> Pricing, H-1)", () => {
       publishedPriceFixture("product-ambiguous", 500, "USD"),
       publishedPriceFixture("product-ambiguous", 700, "USD"),
     ]);
-    const adapter = new PricingValidationAdapter(repo, "tenant-a");
+    const adapter = new PricingValidationAdapter(repo);
 
     const result = await adapter.validate(
       [checkoutItem("product-ambiguous", 1, 500, "USD")],
       "USD",
+      "tenant-a",
     );
 
     expect(result.valid).toBe(false);
@@ -130,11 +140,12 @@ describe("PricingValidationAdapter (Checkout -> Pricing, H-1)", () => {
       publishedPriceFixture("product-1", 1000, "USD"),
       publishedPriceFixture("product-2", 2000, "USD"),
     ]);
-    const adapter = new PricingValidationAdapter(repo, "tenant-a");
+    const adapter = new PricingValidationAdapter(repo);
 
     const result = await adapter.validate(
       [checkoutItem("product-1", 1, 1000, "USD"), checkoutItem("product-2", 1, 9999, "USD")],
       "USD",
+      "tenant-a",
     );
 
     expect(result.valid).toBe(false);
@@ -143,9 +154,9 @@ describe("PricingValidationAdapter (Checkout -> Pricing, H-1)", () => {
 
   it("empty items: vacuously valid — nothing to price-check", async () => {
     const repo = new FakePriceRepository([]);
-    const adapter = new PricingValidationAdapter(repo, "tenant-a");
+    const adapter = new PricingValidationAdapter(repo);
 
-    const result = await adapter.validate([], "USD");
+    const result = await adapter.validate([], "USD", "tenant-a");
 
     expect(result).toEqual({ valid: true });
   });

@@ -6,6 +6,8 @@ import type { OrderDraft, PaymentIntentRequest } from "../domain/checkout-sessio
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
 
 export interface CheckoutSessionIdInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutSessionId: string;
 }
 
@@ -26,7 +28,7 @@ export class GenerateOrderDraft implements UseCase<
   }
 
   async execute(input: CheckoutSessionIdInput): Promise<Result<OrderDraft, DomainError>> {
-    const session = await this.deps.sessions.findById(input.checkoutSessionId);
+    const session = await this.deps.sessions.findById(input.checkoutSessionId, input.tenantId);
     if (session === null) {
       return err(new NotFoundError("Checkout session not found"));
     }
@@ -52,7 +54,7 @@ export class GeneratePaymentIntentRequest implements UseCase<
   }
 
   async execute(input: CheckoutSessionIdInput): Promise<Result<PaymentIntentRequest, DomainError>> {
-    const session = await this.deps.sessions.findById(input.checkoutSessionId);
+    const session = await this.deps.sessions.findById(input.checkoutSessionId, input.tenantId);
     if (session === null) {
       return err(new NotFoundError("Checkout session not found"));
     }

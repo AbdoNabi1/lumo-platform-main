@@ -1179,6 +1179,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { body: createOrderFromCheckoutBody },
       handle: async ({ body, context }): Promise<AdminResponse> => {
         const draftResponse = await admin.checkout.generateOrderDraft(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: body.checkoutRef,
         });
         if (draftResponse.status < 200 || draftResponse.status >= 300) {

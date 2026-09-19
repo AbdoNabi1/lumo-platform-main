@@ -32,9 +32,12 @@ function warehouseFixture(id: string): Warehouse {
 
 /** A fake `WarehouseRepository` (Common Structure step 3) — only `list` is exercised by this adapter; every other method is unused and throws if ever called. */
 class FakeWarehouseRepository implements WarehouseRepository {
+  readonly tenantsSeen: string[] = [];
+
   constructor(private readonly warehouses: readonly Warehouse[]) {}
 
-  async list(page: CursorPage): Promise<Paginated<Warehouse>> {
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Warehouse>> {
+    this.tenantsSeen.push(tenantId);
     const limit = page.first ?? this.warehouses.length;
     const items = this.warehouses.slice(0, limit);
     return {
@@ -80,12 +83,12 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("valid: single warehouse, sufficient stock for every item", async () => {
     const inventory = fakeInventoryController({ "product-1": 10, "product-2": 5 });
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
+    const adapter = new InventoryValidationAdapter(inventory, warehouses);
 
-    const result = await adapter.validate([
-      checkoutItem("product-1", 2, 1999, "USD"),
-      checkoutItem("product-2", 5, 999, "USD"),
-    ]);
+    const result = await adapter.validate(
+      [checkoutItem("product-1", 2, 1999, "USD"), checkoutItem("product-2", 5, 999, "USD")],
+      "tenant-a",
+    );
 
     expect(result).toEqual({ valid: true });
   });
@@ -93,12 +96,12 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("invalid: insufficient stock for one of the items", async () => {
     const inventory = fakeInventoryController({ "product-1": 10, "product-2": 3 });
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
+    const adapter = new InventoryValidationAdapter(inventory, warehouses);
 
-    const result = await adapter.validate([
-      checkoutItem("product-1", 2, 1999, "USD"),
-      checkoutItem("product-2", 5, 999, "USD"),
-    ]);
+    const result = await adapter.validate(
+      [checkoutItem("product-1", 2, 1999, "USD"), checkoutItem("product-2", 5, 999, "USD")],
+      "tenant-a",
+    );
 
     expect(result.valid).toBe(false);
     expect(result.reason).toContain("product-2");
@@ -107,9 +110,12 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("invalid: no inventory record for the product at the resolved warehouse", async () => {
     const inventory = fakeInventoryController({});
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
+    const adapter = new InventoryValidationAdapter(inventory, warehouses);
 
-    const result = await adapter.validate([checkoutItem("product-missing", 1, 1999, "USD")]);
+    const result = await adapter.validate(
+      [checkoutItem("product-missing", 1, 1999, "USD")],
+      "tenant-a",
+    );
 
     expect(result.valid).toBe(false);
     expect(result.reason).toContain("product-missing");
@@ -118,9 +124,9 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("invalid: zero warehouses registered — reports the gap instead of guessing", async () => {
     const inventory = fakeInventoryController({ "product-1": 10 });
     const warehouses = new FakeWarehouseRepository([]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
+    const adapter = new InventoryValidationAdapter(inventory, warehouses);
 
-    const result = await adapter.validate([checkoutItem("product-1", 1, 1999, "USD")]);
+    const result = await adapter.validate([checkoutItem("product-1", 1, 1999, "USD")], "tenant-a");
 
     expect(result.valid).toBe(false);
     expect(result.reason).toMatch(/warehouse/i);
@@ -132,9 +138,9 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
       warehouseFixture("wh-1"),
       warehouseFixture("wh-2"),
     ]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
+    const adapter = new InventoryValidationAdapter(inventory, warehouses);
 
-    const result = await adapter.validate([checkoutItem("product-1", 1, 1999, "USD")]);
+    const result = await adapter.validate([checkoutItem("product-1", 1, 1999, "USD")], "tenant-a");
 
     expect(result.valid).toBe(false);
     expect(result.reason).toMatch(/warehouse/i);
@@ -143,12 +149,12 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("checks every item, not just the first", async () => {
     const inventory = fakeInventoryController({ "product-1": 10, "product-2": 1 });
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
+    const adapter = new InventoryValidationAdapter(inventory, warehouses);
 
-    const result = await adapter.validate([
-      checkoutItem("product-1", 1, 1999, "USD"),
-      checkoutItem("product-2", 5, 999, "USD"),
-    ]);
+    const result = await adapter.validate(
+      [checkoutItem("product-1", 1, 1999, "USD"), checkoutItem("product-2", 5, 999, "USD")],
+      "tenant-a",
+    );
 
     expect(result.valid).toBe(false);
     expect(result.reason).toContain("product-2");
@@ -157,9 +163,9 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("empty items: vacuously valid — nothing to check, no warehouse resolution needed", async () => {
     const inventory = fakeInventoryController({});
     const warehouses = new FakeWarehouseRepository([]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
+    const adapter = new InventoryValidationAdapter(inventory, warehouses);
 
-    const result = await adapter.validate([]);
+    const result = await adapter.validate([], "tenant-a");
 
     expect(result).toEqual({ valid: true });
   });
@@ -169,27 +175,29 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
     const inventory = fakeInventoryController({ "product-1": 10, "product-2": 10 });
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
     const originalList = warehouses.list.bind(warehouses);
-    warehouses.list = async (page: CursorPage) => {
+    warehouses.list = async (page: CursorPage, tenantId: string) => {
       listCalls += 1;
-      return originalList(page);
+      return originalList(page, tenantId);
     };
-    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
+    const adapter = new InventoryValidationAdapter(inventory, warehouses);
 
-    await adapter.validate([
-      checkoutItem("product-1", 1, 1999, "USD"),
-      checkoutItem("product-2", 1, 999, "USD"),
-    ]);
+    await adapter.validate(
+      [checkoutItem("product-1", 1, 1999, "USD"), checkoutItem("product-2", 1, 999, "USD")],
+      "tenant-a",
+    );
 
     expect(listCalls).toBe(1);
   });
 
-  it("fails closed without a tenant (ADR-0014: never defaults one, until checkout's port carries it)", async () => {
+  it("one adapter instance serves two tenants, passing each call's tenant to the warehouse lookup (ADR-0014)", async () => {
     const inventory = fakeInventoryController({ "product-1": 10 });
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
     const adapter = new InventoryValidationAdapter(inventory, warehouses);
+    const items = [checkoutItem("product-1", 1, 1999, "USD")];
 
-    const result = await adapter.validate([checkoutItem("product-1", 1, 1999, "USD")]);
+    await adapter.validate(items, "tenant-a");
+    await adapter.validate(items, "tenant-b");
 
-    expect(result).toEqual({ valid: false, reason: "cannot validate inventory without a tenant" });
+    expect(warehouses.tenantsSeen).toEqual(["tenant-a", "tenant-b"]);
   });
 });

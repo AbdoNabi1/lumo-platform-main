@@ -98,6 +98,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "cs-1",
       idempotencyKey: "idem-1",
     });
@@ -124,7 +125,7 @@ describe("CompleteCheckout", () => {
       clock,
       orderCreation,
     });
-    const input = { checkoutSessionId: "cs-1", idempotencyKey: "idem-1" };
+    const input = { tenantId: "tenant-a", checkoutSessionId: "cs-1", idempotencyKey: "idem-1" };
 
     const first = await useCase.execute(input);
     expect(first.ok).toBe(true);
@@ -148,6 +149,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "missing",
       idempotencyKey: "idem-1",
     });
@@ -169,7 +171,11 @@ describe("CompleteCheckout", () => {
       orderCreation,
     });
 
-    const result = await useCase.execute({ checkoutSessionId: "cs-1", idempotencyKey: "  " });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      checkoutSessionId: "cs-1",
+      idempotencyKey: "  ",
+    });
 
     expect(result.ok).toBe(false);
     expect(orderCreation.callCount).toBe(0);
@@ -196,6 +202,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "cs-empty",
       idempotencyKey: "idem-1",
     });
@@ -228,6 +235,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "cs-failed",
       idempotencyKey: "idem-1",
     });
@@ -258,6 +266,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "cs-expired",
       idempotencyKey: "idem-1",
     });
