@@ -47,7 +47,7 @@ export interface AdminHttpDeps extends AdminWiringDeps {
  * repository is pinned to anything) behavior is byte-for-byte unchanged from before this guard
  * existed.
  */
-function singleTenantGuardedResolver(pinnedTenantId: string | undefined): TenantResolver {
+export function singleTenantGuardedResolver(pinnedTenantId: string | undefined): TenantResolver {
   return (input) => {
     const resolved = headerTenantResolver(input);
     if (pinnedTenantId === undefined) return resolved;
