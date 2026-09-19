@@ -42,7 +42,12 @@
 > contexts #2-40, per context #1's exact shape including `runReadScoped`. G-65 remains open and
 > remains a hard gate on Phase 2 only.**
 >
-> **PROPOSED — REQUIRES APPROVAL, 2026-09-17 (Amendment 5).** T10.3's context-by-context sweep
+> **PRINCIPLE APPROVED 2026-09-19 by the operator (in session); implementation still gated per
+> sub-point — proposed 2026-09-17 (Amendment 5).** The operator approved naming the
+> platform-operator exception category and the separate privileged database role it rests on. What
+> was approved is the _principle_: no code implements any of it yet, and each sub-point below still
+> needs its own sign-off before it is built, unchanged from the original proposal. T10.3's
+> context-by-context sweep
 > (contexts #2-40, now complete) closed the WRITE-side half of G-64 in every in-scope context and,
 > along the way, surfaced three findings this Amendment records and proposes to resolve: **(1)** no
 > context ever needed a genuinely platform-global (cross-tenant) write method — the `licensing`/
@@ -478,13 +483,15 @@ true)` non-null assertion at every entry point) and Phase 2 (the role switch to 
    transport/consumer boundary, never reach `runReadScoped`/`PrismaUnitOfWork.run` with an empty
    tenant.
 
-8. **PROPOSED — REQUIRES APPROVAL, 2026-09-17 (Amendment 5) — a named platform-operator exception
-   category, for the rare, legitimate case of a call that must read or write across tenants (tenant
-   lifecycle management, a support break-glass read, a cross-tenant migration script), instead of
-   improvising one the first time such a caller shows up.** This is a proposal, not a decision this
-   ADR adopts yet — every sub-point below needs explicit operator sign-off before implementation,
-   the same class of gate Amendment 2 already put on `migrate resolve` (live database roles and
-   grants, not TypeScript).
+8. **PRINCIPLE APPROVED 2026-09-19 (Amendment 5, proposed 2026-09-17) — a named platform-operator
+   exception category, for the rare, legitimate case of a call that must read or write across
+   tenants (tenant lifecycle management, a support break-glass read, a cross-tenant migration
+   script), instead of improvising one the first time such a caller shows up.** The operator
+   approved the principle in session on 2026-09-19. **Nothing below is built yet, and the
+   implementation gate is unchanged: every sub-point still needs its own explicit operator sign-off
+   before it is implemented**, the same class of gate Amendment 2 already put on `migrate resolve`
+   (live database roles and grants, not TypeScript). Approving the category is not approving a
+   privileged role in a live database.
 
    **8a. A distinct privileged database role — never `lumo_app`, never `postgres`.** Point 5 above
    already establishes two roles: `postgres` (`rolbypassrls = true`, used today, superuser-shaped)
