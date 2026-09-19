@@ -131,19 +131,18 @@ export interface RuntimeCore {
 }
 
 export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
-  // C2-6: every wireX({ prisma, tenantId }) branch pins its repositories to ONE tenantId at
-  // construction (ADR-0008) — TENANT_DEFAULT_ID, threaded through from here in api.ts/worker.ts.
-  // There is no per-request re-composition, so TENANT_MODE=multi would boot successfully and then
-  // either silently mis-scope every non-default-tenant request to TENANT_DEFAULT_ID's rows (if the
-  // HTTP tenant guard were absent) or reject every one of them (with it present) — neither is
-  // multi-tenancy. Fail closed at boot rather than advertise a mode nothing here implements.
-  if (config.TENANT_MODE === "multi") {
-    throw new Error(
-      "Runtime composition does not support TENANT_MODE=multi: every Prisma repository is pinned " +
-        "to one tenantId at construction (ADR-0008), never per request. Implementing multi-tenant " +
-        "composition is a design change (ADR), not a configuration switch.",
-    );
-  }
+  // T10.4: TENANT_MODE=multi no longer fails here. What holds instead — and where it is enforced:
+  //  - API: createAdminHttpApi resolves the tenant per request (verified claim, then header; an
+  //    unresolved tenant is rejected, never defaulted) and, under multi, runs assertMultiTenantReady
+  //    (apps/admin/src/tenant-mode-guard.ts): a behavioural probe of the resolver chain plus a scan
+  //    of the composed graph for any construction-time tenant. The one recorded exception is
+  //    services/tenancy (ADR-0014 8f), whose routes are pinned to TENANT_DEFAULT_ID and 403 every
+  //    other tenant.
+  //  - Worker: startWorker still refuses multi (assertWorkerTenantModeSupported) because its event
+  //    consumers take TENANT_DEFAULT_ID at construction until the envelope carries a required
+  //    tenantId (G-64). This function is shared by both processes and no longer decides for them.
+  // Multi mode is now POSSIBLE, not SAFE: T10.5 (adversarial isolation suite) has not been written.
+  // Do not enable TENANT_MODE=multi anywhere until it has.
   const clock = new SystemClock();
   const idGenerator = new CryptoIdGenerator();
   // Phase A.13 (Task 1/2): previously an unsafe `as` cast supplied only `url`/`logQueries` — the real

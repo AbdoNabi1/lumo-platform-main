@@ -591,6 +591,13 @@ the platform `tenantId` primitive `` (`services/tenancy/src/domain/tenant.ts:25-
    `services/tenancy` stays parked (per Task A of this session) and this finding is recorded, not
    acted on.
 
+   **Recorded exemption (2026-09-19, T10.4).** Because 8a-8d do not exist, `services/tenancy` is the ONE
+   context `TENANT_MODE=multi`'s boot assertion exempts (`TENANT_PIN_EXEMPTIONS` in
+   `apps/admin/src/tenant-mode-guard.ts`, a frozen single-entry list; a test fails if it grows). It stays
+   pinned to the deployment tenant, and its admin routes 403 every other tenant under multi mode. This is
+   a decision, not an oversight: removing the exemption is the work item once 8a-8d land, and a second
+   entry is a finding to report, never a configuration to add.
+
 ## Consequences
 
 - **Positive:** the ~40-context migration converges on a shape (identity's access repositories)

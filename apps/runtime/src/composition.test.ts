@@ -109,10 +109,12 @@ describe("composition root (lazy clients — graph builds without any Docker run
     ).toThrow(/KETO_READ_URL/);
   });
 
-  it("FAILS CLOSED on TENANT_MODE=multi — repositories are pinned to one tenant at construction (C2-6)", () => {
+  it("no longer refuses TENANT_MODE=multi at composition — the API and worker each guard their own path (T10.4)", () => {
+    // The blanket refusal moved: createAdminHttpApi asserts per-request resolution, startWorker
+    // refuses until G-64. See tenant-mode-guard.test.ts for both. Composition itself just builds.
     expect(() =>
       buildRuntimeCore(loadRuntimeConfig({ ...validEnv, TENANT_MODE: "multi" })),
-    ).toThrow(/TENANT_MODE=multi/);
+    ).not.toThrow();
   });
 
   it("composes the production payment-captured consumer graph (worker slice)", () => {
