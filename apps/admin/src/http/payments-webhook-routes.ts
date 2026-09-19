@@ -77,6 +77,7 @@ export function paymentsWebhookRoutes(admin: WiredAdmin): readonly RouteDefiniti
         }
 
         return admin.paymentsWebhook.recordWebhook({
+          tenantId: context.tenantId,
           paymentIntentId: body.data.object.id,
           provider: "stripe",
           eventId: body.id,

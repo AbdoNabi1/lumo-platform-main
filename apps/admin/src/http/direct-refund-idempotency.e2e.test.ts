@@ -144,12 +144,21 @@ async function seedCapturedPaymentIntent(
   amountMinor: number,
 ): Promise<string> {
   const created = unwrap<{ paymentIntentId: string }>(
-    await admin.payments.createIntent(staff, { orderRef, amountMinor, currency: "USD" }),
+    await admin.payments.createIntent(staff, {
+      tenantId: "tenant-local",
+      orderRef,
+      amountMinor,
+      currency: "USD",
+    }),
     "create intent",
   );
   const { paymentIntentId } = created;
   const inner = (admin.payments as unknown as { payments: PaymentController }).payments;
-  const advanced = await inner.advance({ paymentIntentId, toStatus: "processing" });
+  const advanced = await inner.advance({
+    tenantId: "tenant-local",
+    paymentIntentId,
+    toStatus: "processing",
+  });
   if (advanced.status < 200 || advanced.status >= 300) {
     throw new Error(
       `advance to processing failed (${advanced.status}): ${JSON.stringify(advanced.body)}`,
@@ -157,6 +166,7 @@ async function seedCapturedPaymentIntent(
   }
   unwrap(
     await admin.payments.authorize(staff, {
+      tenantId: "tenant-local",
       paymentIntentId,
       pspReference: `psp-ref-${orderRef}`,
       paymentMethodToken: "tok_visa",
@@ -164,7 +174,10 @@ async function seedCapturedPaymentIntent(
     }),
     "authorize",
   );
-  unwrap(await admin.payments.capture(staff, { paymentIntentId }), "capture");
+  unwrap(
+    await admin.payments.capture(staff, { tenantId: "tenant-local", paymentIntentId }),
+    "capture",
+  );
   return paymentIntentId;
 }
 
@@ -281,7 +294,7 @@ describe("Phase A.6 — Task 6/7: fixed HTTP contract (Idempotency-Key header, f
     expect(provider.realEffects).toBe(1);
 
     const intent = unwrap<{ refunds: readonly { amount: { amountMinor: number } }[] }>(
-      await admin.payments.getPaymentIntent(staff, { paymentIntentId }),
+      await admin.payments.getPaymentIntent(staff, { tenantId: "tenant-local", paymentIntentId }),
       "get intent",
     );
     expect(intent.refunds).toHaveLength(1);
@@ -321,7 +334,7 @@ describe("Phase A.6 — Task 6/7: fixed HTTP contract (Idempotency-Key header, f
     expect(provider.calls).toHaveLength(1); // the tampered retry never reached the PSP
 
     const intent = unwrap<{ refunds: readonly unknown[] }>(
-      await admin.payments.getPaymentIntent(staff, { paymentIntentId }),
+      await admin.payments.getPaymentIntent(staff, { tenantId: "tenant-local", paymentIntentId }),
       "get intent",
     );
     expect(intent.refunds).toHaveLength(1);
@@ -416,7 +429,7 @@ describe("Phase A.6 — Task 6/7: fixed HTTP contract (Idempotency-Key header, f
     expect(provider.realEffects).toBe(1);
 
     const intent = unwrap<{ refunds: readonly unknown[] }>(
-      await admin.payments.getPaymentIntent(staff, { paymentIntentId }),
+      await admin.payments.getPaymentIntent(staff, { tenantId: "tenant-local", paymentIntentId }),
       "get intent",
     );
     expect(intent.refunds).toHaveLength(1);

@@ -54,14 +54,13 @@ export interface PaymentsWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaPaymentIntentRepository` +
-   * `PrismaUnitOfWork` + `PrismaProcessedWebhookStore` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wireFinance`); absent ⇒ in-memory, unchanged. `ordersPort`/
-   * `financePort`/`notifications` stay in-memory in both branches — reference-only outbound ports,
-   * not persistence, out of scope for C-01.
+   * `PrismaUnitOfWork` + `PrismaProcessedWebhookStore`; absent ⇒ in-memory, unchanged.
+   * `ordersPort`/`financePort`/`notifications` stay in-memory in both branches — reference-only
+   * outbound ports, not persistence, out of scope for C-01. ADR-0014 (WP-10, T10.3): the
+   * repository and store built here are tenant-agnostic singletons — no `tenantId` at composition
+   * time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Payments table is tenant-scoped. */
-  readonly tenantId?: string;
   /**
    * Production PSP adapter (C2-2). Absent ⇒ `InMemoryPaymentProvider` — the offline stub whose
    * `verifyWebhook()` always returns `true` and whose money operations no-op. Same `deps.X ?? default`
@@ -178,10 +177,6 @@ function buildController(
  */
 export function wirePayments(deps: PaymentsWiringDeps): WiredPayments {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wirePayments: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new PaymentEventTranslator(),
@@ -189,15 +184,12 @@ export function wirePayments(deps: PaymentsWiringDeps): WiredPayments {
       clock: deps.clock,
       producer: "payments",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const intents = new PrismaPaymentIntentRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — every repository takes it per
+    // call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const intents = new PrismaPaymentIntentRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
-    const processedWebhooks = new PrismaProcessedWebhookStore(deps.prisma, tenantId);
+    const processedWebhooks = new PrismaProcessedWebhookStore(deps.prisma);
     const built = buildController(intents, unitOfWork, processedWebhooks, deps);
 
     return {

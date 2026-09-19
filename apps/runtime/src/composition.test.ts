@@ -646,6 +646,7 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
 
     expect(calls).toEqual([
       {
+        tenantId: "tenant-local",
         paymentIntentId: "intent-1",
         amountMinor: 300,
         currency: "USD",
@@ -755,6 +756,7 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
 
     expect(calls).toEqual([
       {
+        tenantId: "tenant-local",
         paymentIntentId: "intent-2",
         amountMinor: 900,
         currency: "USD",
@@ -782,6 +784,7 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
 
     expect(calls).toEqual([
       {
+        tenantId: "tenant-local",
         paymentIntentId: "intent-1",
         amountMinor: 1000,
         currency: "USD",

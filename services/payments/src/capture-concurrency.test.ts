@@ -38,7 +38,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, 1);
   }
 
-  async save(intent: PaymentIntent): Promise<void> {
+  async save(intent: PaymentIntent, _tenantId: string): Promise<void> {
     const id = intent.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -53,7 +53,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, existing.intentRow.version + 1);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
+  async findById(id: string, _tenantId: string): Promise<PaymentIntent | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     return PaymentIntentMapper.toDomain(
@@ -64,11 +64,11 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     );
   }
 
-  async findByIdempotencyKey(): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(_key: string, _tenantId: string): Promise<PaymentIntent | null> {
     return null;
   }
 
-  async findByPspReference(pspReference: string): Promise<PaymentIntent | null> {
+  async findByPspReference(pspReference: string, _tenantId: string): Promise<PaymentIntent | null> {
     for (const row of this.rows.values()) {
       if (row.intentRow.pspReference === pspReference) {
         return PaymentIntentMapper.toDomain(
@@ -229,8 +229,8 @@ describe("Task 3/20 — exploit proof: concurrent capture requests for the same 
     const lifecycle = new CapturePaymentLifecycle(buildDeps(repo, provider));
 
     await Promise.allSettled([
-      lifecycle.execute({ paymentIntentId: "pi-key" }),
-      lifecycle.execute({ paymentIntentId: "pi-key" }),
+      lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-key" }),
+      lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-key" }),
     ]);
 
     expect(provider.calls.length).toBeGreaterThanOrEqual(1);
@@ -246,8 +246,8 @@ describe("Task 3/20 — exploit proof: concurrent capture requests for the same 
     const lifecycle = new CapturePaymentLifecycle(buildDeps(repo, provider));
 
     const outcomes = await Promise.allSettled([
-      lifecycle.execute({ paymentIntentId: "pi-race" }),
-      lifecycle.execute({ paymentIntentId: "pi-race" }),
+      lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-race" }),
+      lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-race" }),
     ]);
 
     // Desired/safe behavior: BOTH callers get back a Result (ok or a clean domain err), neither
@@ -266,7 +266,7 @@ describe("Task 2/16 — exploit proof: the PSP call happens while a DB transacti
     const provider = new RecordingCaptureProvider(uow);
     const lifecycle = new CapturePaymentLifecycle(buildDeps(repo, provider, uow));
 
-    await lifecycle.execute({ paymentIntentId: "pi-tx" });
+    await lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-tx" });
 
     expect(provider.calls).toHaveLength(1);
     // Desired/safe behavior: no transaction should be open while the PSP network call is in flight.
@@ -291,6 +291,7 @@ describe("Task 8 — crash-consistency: webhook reconciliation after a crash bet
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo));
 
     const result = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-stuck-authorized",
       provider: "stripe",
       eventId: "evt_stripe_1",
@@ -299,7 +300,7 @@ describe("Task 8 — crash-consistency: webhook reconciliation after a crash bet
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("BUSINESS_RULE");
-    const afterWebhook = await repo.findById("pi-stuck-authorized");
+    const afterWebhook = await repo.findById("pi-stuck-authorized", "tenant-a");
     expect(afterWebhook?.status.value).toBe("authorized"); // permanently stuck under today's crash window
   });
 
@@ -307,14 +308,15 @@ describe("Task 8 — crash-consistency: webhook reconciliation after a crash bet
     const repo = new PostgresLikePaymentIntentRepository();
     seedAuthorizedIntent(repo, "pi-stuck-requested", 1000);
     // Simulate the fixed reserve() step's durable pre-PSP-call commit.
-    const intent = await repo.findById("pi-stuck-requested");
+    const intent = await repo.findById("pi-stuck-requested", "tenant-a");
     if (intent === null) throw new Error("fixture missing");
     intent.requestCapture("evt-reserve", new Date(0));
-    await repo.save(intent);
+    await repo.save(intent, "tenant-a");
     // ^ PSP call happens here (outside any transaction) and "crashes" before `settle()` runs.
 
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo));
     const result = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-stuck-requested",
       provider: "stripe",
       eventId: "evt_stripe_2",
@@ -322,7 +324,7 @@ describe("Task 8 — crash-consistency: webhook reconciliation after a crash bet
     });
 
     expect(result.ok).toBe(true);
-    const afterWebhook = await repo.findById("pi-stuck-requested");
+    const afterWebhook = await repo.findById("pi-stuck-requested", "tenant-a");
     expect(afterWebhook?.status.value).toBe("captured");
   });
 });
@@ -334,13 +336,16 @@ describe("Task 4/18 Scenario D — PSP failure recovery", () => {
     const failingProvider = new RecordingCaptureProvider(undefined, 0, true);
     const lifecycle = new CapturePaymentLifecycle(buildDeps(repo, failingProvider));
 
-    await expect(lifecycle.execute({ paymentIntentId: "pi-psp-fail" })).rejects.toThrow(
-      /simulated PSP capture failure/,
-    );
+    await expect(
+      lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-psp-fail" }),
+    ).rejects.toThrow(/simulated PSP capture failure/);
 
     const workingProvider = new RecordingCaptureProvider();
     const retryLifecycle = new CapturePaymentLifecycle(buildDeps(repo, workingProvider));
-    const retried = await retryLifecycle.execute({ paymentIntentId: "pi-psp-fail" });
+    const retried = await retryLifecycle.execute({
+      tenantId: "tenant-a",
+      paymentIntentId: "pi-psp-fail",
+    });
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.status).toBe("captured");
   });
@@ -353,10 +358,10 @@ describe("Task 4 Scenario F/12 — retry with the same identity and unauthorized
     const provider = new RecordingCaptureProvider();
     const lifecycle = new CapturePaymentLifecycle(buildDeps(repo, provider));
 
-    const first = await lifecycle.execute({ paymentIntentId: "pi-already" });
+    const first = await lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-already" });
     expect(first.ok).toBe(true);
 
-    const second = await lifecycle.execute({ paymentIntentId: "pi-already" });
+    const second = await lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-already" });
     // Desired/safe behavior: a retry after genuine success must not error out or re-charge.
     expect(second.ok).toBe(true);
     expect(provider.realEffects).toBe(1);
@@ -367,7 +372,10 @@ describe("Task 4 Scenario F/12 — retry with the same identity and unauthorized
     const provider = new RecordingCaptureProvider();
     const lifecycle = new CapturePaymentLifecycle(buildDeps(repo, provider));
 
-    const result = await lifecycle.execute({ paymentIntentId: "does-not-exist" });
+    const result = await lifecycle.execute({
+      tenantId: "tenant-a",
+      paymentIntentId: "does-not-exist",
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("NOT_FOUND");
     expect(provider.calls).toHaveLength(0);

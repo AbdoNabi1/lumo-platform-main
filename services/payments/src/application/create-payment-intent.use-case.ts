@@ -8,6 +8,8 @@ import { PaymentIntent } from "../domain/payment-intent";
 import type { PaymentIntentRepository } from "../domain/payment-intent-repository";
 
 export interface CreatePaymentIntentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderRef: string;
   readonly amountMinor: number;
   readonly currency: string;
@@ -46,7 +48,7 @@ export class CreatePaymentIntent implements UseCase<
     return this.deps.unitOfWork.run<Result<CreatePaymentIntentOutput, DomainError>>(async (tx) => {
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const intent = PaymentIntent.create(id, input.orderRef, amount.value);
-      await this.deps.intents.save(intent, tx);
+      await this.deps.intents.save(intent, input.tenantId, tx);
       return ok({ paymentIntentId: id.toString() });
     });
   }

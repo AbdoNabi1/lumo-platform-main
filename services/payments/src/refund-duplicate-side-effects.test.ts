@@ -35,7 +35,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, 1);
   }
 
-  async save(intent: PaymentIntent): Promise<void> {
+  async save(intent: PaymentIntent, _tenantId: string): Promise<void> {
     const id = intent.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -50,7 +50,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, existing.intentRow.version + 1);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
+  async findById(id: string, _tenantId: string): Promise<PaymentIntent | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     return PaymentIntentMapper.toDomain(
@@ -61,11 +61,11 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     );
   }
 
-  async findByIdempotencyKey(): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(_key: string, _tenantId: string): Promise<PaymentIntent | null> {
     return null;
   }
 
-  async findByPspReference(pspReference: string): Promise<PaymentIntent | null> {
+  async findByPspReference(pspReference: string, _tenantId: string): Promise<PaymentIntent | null> {
     for (const row of this.rows.values()) {
       if (row.intentRow.pspReference === pspReference) {
         return PaymentIntentMapper.toDomain(
@@ -233,12 +233,14 @@ describe("Task 2 — RefundPaymentLifecycle duplicate side-effect exploit (Phase
 
     const [a, b] = await Promise.all([
       lifecycle.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-dup-a",
         amountMinor: 400,
         currency: "USD",
         idempotencyKey: "return-1:refund",
       }),
       lifecycle.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-dup-a",
         amountMinor: 400,
         currency: "USD",
@@ -249,7 +251,7 @@ describe("Task 2 — RefundPaymentLifecycle duplicate side-effect exploit (Phase
     expect(a.ok).toBe(true);
     expect(b.ok).toBe(true);
 
-    const final = await repo.findById("pi-dup-a");
+    const final = await repo.findById("pi-dup-a", "tenant-a");
     // Exactly one logical refund reservation was ever created — the PSP was dedup'd correctly.
     expect(final?.refunds).toHaveLength(1);
     expect(provider.realEffects).toBe(1);
@@ -268,6 +270,7 @@ describe("Task 2 — RefundPaymentLifecycle duplicate side-effect exploit (Phase
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider, { notifications }));
 
     const first = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-dup-c",
       amountMinor: 400,
       currency: "USD",
@@ -280,6 +283,7 @@ describe("Task 2 — RefundPaymentLifecycle duplicate side-effect exploit (Phase
     // `alreadyCompleted` short-circuit in `execute()` should catch this before ever reaching PSP or
     // settle() again.
     const second = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-dup-c",
       amountMinor: 400,
       currency: "USD",
@@ -290,7 +294,7 @@ describe("Task 2 — RefundPaymentLifecycle duplicate side-effect exploit (Phase
     expect(provider.calls).toHaveLength(1);
     expect(notifications.calls).toHaveLength(1);
 
-    const final = await repo.findById("pi-dup-c");
+    const final = await repo.findById("pi-dup-c", "tenant-a");
     expect(final?.refunds).toHaveLength(1);
     expect(final?.refunds[0]?.status).toBe("completed");
   });
@@ -303,12 +307,14 @@ describe("Task 2 — RefundPaymentLifecycle duplicate side-effect exploit (Phase
 
     await Promise.all([
       lifecycle.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-dup-events",
         amountMinor: 250,
         currency: "USD",
         idempotencyKey: "return-3:refund",
       }),
       lifecycle.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-dup-events",
         amountMinor: 250,
         currency: "USD",
@@ -316,7 +322,7 @@ describe("Task 2 — RefundPaymentLifecycle duplicate side-effect exploit (Phase
       }),
     ]);
 
-    const final = await repo.findById("pi-dup-events");
+    const final = await repo.findById("pi-dup-events", "tenant-a");
     // Append-only attempt log: exactly one "refund succeeded" attempt, not one per racing settle().
     const refundAttempts = final?.attempts.filter(
       (a) => a.kind === "refund" && a.outcome === "succeeded",

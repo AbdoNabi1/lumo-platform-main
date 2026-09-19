@@ -5,6 +5,8 @@ import type { PaymentIntent } from "../domain/payment-intent";
 import type { PaymentIntentRepository } from "../domain/payment-intent-repository";
 
 export interface GetPaymentIntentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly paymentIntentId: string;
 }
 
@@ -25,7 +27,7 @@ export class GetPaymentIntent implements UseCase<
   }
 
   async execute(input: GetPaymentIntentInput): Promise<Result<PaymentIntent, DomainError>> {
-    const intent = await this.deps.intents.findById(input.paymentIntentId);
+    const intent = await this.deps.intents.findById(input.paymentIntentId, input.tenantId);
     if (intent === null) {
       return err(new NotFoundError("Payment intent not found"));
     }

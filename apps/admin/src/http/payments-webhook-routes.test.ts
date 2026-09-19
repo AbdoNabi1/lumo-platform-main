@@ -67,6 +67,7 @@ describe("payments webhook route (C2-2/C2-6)", () => {
     expect(payloadArg).toBe(rawBody); // the EXACT raw bytes, not a reconstruction
 
     expect(recordWebhook).toHaveBeenCalledWith({
+      tenantId: "t-1",
       paymentIntentId: "pi-1",
       provider: "stripe",
       eventId: "evt-1",

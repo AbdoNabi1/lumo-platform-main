@@ -22,6 +22,8 @@ export interface PaymentIntentStatusOutput {
 }
 
 export interface CreatePaymentIntentLifecycleInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderRef: string;
   readonly amountMinor: number;
   readonly currency: string;
@@ -64,10 +66,14 @@ async function withConcurrencyRetry<T>(maxAttempts: number, attempt: () => Promi
   throw new Error("unreachable");
 }
 
-async function notifyBestEffort(deps: PaymentLifecycleDeps, intent: PaymentIntent): Promise<void> {
+async function notifyBestEffort(
+  deps: PaymentLifecycleDeps,
+  intent: PaymentIntent,
+  tenantId: string,
+): Promise<void> {
   try {
-    await deps.ordersPort?.reportPaymentOutcome(intent.orderRef, intent.status.value);
-    await deps.notifications?.notify(intent.orderRef, intent.status.value);
+    await deps.ordersPort?.reportPaymentOutcome(intent.orderRef, intent.status.value, tenantId);
+    await deps.notifications?.notify(intent.orderRef, intent.status.value, tenantId);
   } catch {
     // Best-effort: a reference-only notification failure never fails the intent's own transition.
   }
@@ -117,19 +123,19 @@ export class CreatePaymentIntentLifecycle implements UseCase<
     if (!amount.ok) return err(amount.error);
 
     const id = UniqueEntityId.from(this.deps.idGenerator.generate());
-    const intent = await this.reserve(id, input.orderRef, amount.value);
+    const intent = await this.reserve(id, input.orderRef, amount.value, input.tenantId);
 
     let providerIntent;
     try {
       providerIntent = await this.deps.paymentProvider.createIntent({
-        tenantId: "default",
+        tenantId: input.tenantId,
         orderRef: input.orderRef,
         amountMinor: input.amountMinor,
         currency: input.currency,
         idempotencyKey: `${id.toString()}:create`,
       });
     } catch (error) {
-      await this.settleFailure(id);
+      await this.settleFailure(id, input.tenantId);
       throw error;
     }
 
@@ -145,26 +151,29 @@ export class CreatePaymentIntentLifecycle implements UseCase<
     id: UniqueEntityId,
     orderRef: string,
     amount: Money,
+    tenantId: string,
   ): Promise<PaymentIntent> {
     const intent = PaymentIntent.createIntent(id, orderRef, amount);
     await this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.intents.save(intent, tx);
+      await this.deps.intents.save(intent, tenantId, tx);
     });
     return intent;
   }
 
-  private async settleFailure(id: UniqueEntityId): Promise<void> {
+  private async settleFailure(id: UniqueEntityId, tenantId: string): Promise<void> {
     await this.deps.unitOfWork.run(async (tx) => {
-      const current = await this.deps.intents.findById(id.toString(), tx);
+      const current = await this.deps.intents.findById(id.toString(), tenantId, tx);
       if (current !== null && current.status.value === "created") {
         current.transition("cancelled", this.deps.idGenerator.generate(), this.deps.clock.now());
-        await this.deps.intents.save(current, tx);
+        await this.deps.intents.save(current, tenantId, tx);
       }
     });
   }
 }
 
 export interface PaymentIntentIdInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly paymentIntentId: string;
 }
 
@@ -188,7 +197,7 @@ export class AdvancePayment implements UseCase<
     input: AdvancePaymentInput,
   ): Promise<Result<PaymentIntentStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PaymentIntentStatusOutput, DomainError>>(async (tx) => {
-      const intent = await this.deps.intents.findById(input.paymentIntentId, tx);
+      const intent = await this.deps.intents.findById(input.paymentIntentId, input.tenantId, tx);
       if (intent === null) {
         return err(new NotFoundError("Payment intent not found"));
       }
@@ -200,8 +209,8 @@ export class AdvancePayment implements UseCase<
         throw error;
       }
 
-      await this.deps.intents.save(intent, tx);
-      await notifyBestEffort(this.deps, intent);
+      await this.deps.intents.save(intent, input.tenantId, tx);
+      await notifyBestEffort(this.deps, intent, input.tenantId);
       return ok({ paymentIntentId: intent.id.toString(), status: intent.status.value });
     });
   }
@@ -235,7 +244,7 @@ export class AuthorizePayment implements UseCase<
     if (!paymentMethod.ok) return err(paymentMethod.error);
 
     return this.deps.unitOfWork.run<Result<PaymentIntentStatusOutput, DomainError>>(async (tx) => {
-      const intent = await this.deps.intents.findById(input.paymentIntentId, tx);
+      const intent = await this.deps.intents.findById(input.paymentIntentId, input.tenantId, tx);
       if (intent === null) {
         return err(new NotFoundError("Payment intent not found"));
       }
@@ -275,7 +284,7 @@ export class AuthorizePayment implements UseCase<
         throw error;
       }
 
-      await this.deps.intents.save(intent, tx);
+      await this.deps.intents.save(intent, input.tenantId, tx);
       return ok({ paymentIntentId: intent.id.toString(), status: intent.status.value });
     });
   }
@@ -346,7 +355,7 @@ export class CapturePaymentLifecycle implements UseCase<
   async execute(
     input: PaymentIntentIdInput,
   ): Promise<Result<PaymentIntentStatusOutput, DomainError>> {
-    const reservation = await this.reserve(input.paymentIntentId);
+    const reservation = await this.reserve(input.paymentIntentId, input.tenantId);
     if (!reservation.ok) return err(reservation.error);
     const { pspReference, alreadyCaptured, status } = reservation.value;
 
@@ -356,13 +365,16 @@ export class CapturePaymentLifecycle implements UseCase<
 
     await this.deps.paymentProvider.capture(pspReference, `${input.paymentIntentId}:capture`);
 
-    return this.settle(input.paymentIntentId);
+    return this.settle(input.paymentIntentId, input.tenantId);
   }
 
-  private async reserve(paymentIntentId: string): Promise<Result<CaptureReservation, DomainError>> {
+  private async reserve(
+    paymentIntentId: string,
+    tenantId: string,
+  ): Promise<Result<CaptureReservation, DomainError>> {
     return withConcurrencyRetry(CapturePaymentLifecycle.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<CaptureReservation, DomainError>>(async (tx) => {
-        const intent = await this.deps.intents.findById(paymentIntentId, tx);
+        const intent = await this.deps.intents.findById(paymentIntentId, tenantId, tx);
         if (intent === null) {
           return err(new NotFoundError("Payment intent not found"));
         }
@@ -394,7 +406,7 @@ export class CapturePaymentLifecycle implements UseCase<
           throw error;
         }
 
-        await this.deps.intents.save(intent, tx);
+        await this.deps.intents.save(intent, tenantId, tx);
         return ok({
           pspReference: intent.pspReference.value,
           alreadyCaptured: false,
@@ -410,10 +422,13 @@ export class CapturePaymentLifecycle implements UseCase<
    * Finance recording, and idempotent-resume safety — rather than duplicating this logic in the
    * webhook use case (see `record-webhook.use-case.ts`'s `CaptureSettlementPort`).
    */
-  async settle(paymentIntentId: string): Promise<Result<PaymentIntentStatusOutput, DomainError>> {
+  async settle(
+    paymentIntentId: string,
+    tenantId: string,
+  ): Promise<Result<PaymentIntentStatusOutput, DomainError>> {
     return withConcurrencyRetry(CapturePaymentLifecycle.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<PaymentIntentStatusOutput, DomainError>>(async (tx) => {
-        const intent = await this.deps.intents.findById(paymentIntentId, tx);
+        const intent = await this.deps.intents.findById(paymentIntentId, tenantId, tx);
         if (intent === null) {
           return err(new NotFoundError("Payment intent not found"));
         }
@@ -432,15 +447,16 @@ export class CapturePaymentLifecycle implements UseCase<
             if (isDomainError(error)) return err(error);
             throw error;
           }
-          await this.deps.intents.save(intent, tx);
+          await this.deps.intents.save(intent, tenantId, tx);
 
-          await notifyBestEffort(this.deps, intent);
+          await notifyBestEffort(this.deps, intent, tenantId);
           try {
             await this.deps.financePort?.recordPaymentEvent(
               intent.orderRef,
               intent.amount.amountMinor,
               intent.amount.currency,
               "captured",
+              tenantId,
             );
           } catch {
             // Best-effort: Finance recording never fails the capture's own result.
@@ -526,6 +542,7 @@ export class RefundPaymentLifecycle implements UseCase<
 
     const reservation = await this.reserve(
       input.paymentIntentId,
+      input.tenantId,
       amount.value,
       input.idempotencyKey,
     );
@@ -540,7 +557,7 @@ export class RefundPaymentLifecycle implements UseCase<
     }
 
     if (pspReference === undefined) {
-      return this.settle(input.paymentIntentId, refundId, { succeeded: true });
+      return this.settle(input.paymentIntentId, input.tenantId, refundId, { succeeded: true });
     }
 
     try {
@@ -551,21 +568,25 @@ export class RefundPaymentLifecycle implements UseCase<
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : "PSP refund call failed";
-      await this.settle(input.paymentIntentId, refundId, { succeeded: false, reason });
+      await this.settle(input.paymentIntentId, input.tenantId, refundId, {
+        succeeded: false,
+        reason,
+      });
       throw error;
     }
 
-    return this.settle(input.paymentIntentId, refundId, { succeeded: true });
+    return this.settle(input.paymentIntentId, input.tenantId, refundId, { succeeded: true });
   }
 
   private async reserve(
     paymentIntentId: string,
+    tenantId: string,
     amount: Money,
     idempotencyKey?: string,
   ): Promise<Result<RefundReservation, DomainError>> {
     return withConcurrencyRetry(RefundPaymentLifecycle.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<RefundReservation, DomainError>>(async (tx) => {
-        const intent = await this.deps.intents.findById(paymentIntentId, tx);
+        const intent = await this.deps.intents.findById(paymentIntentId, tenantId, tx);
         if (intent === null) {
           return err(new NotFoundError("Payment intent not found"));
         }
@@ -587,7 +608,7 @@ export class RefundPaymentLifecycle implements UseCase<
         // A.5) returns the exact same already-durable row, unchanged, so writing it again would
         // just churn `version` for no reason.
         if (outcome.isNew) {
-          await this.deps.intents.save(intent, tx);
+          await this.deps.intents.save(intent, tenantId, tx);
         }
         return ok({
           refundId: outcome.refund.id.toString(),
@@ -601,12 +622,13 @@ export class RefundPaymentLifecycle implements UseCase<
 
   private async settle(
     paymentIntentId: string,
+    tenantId: string,
     refundId: string,
     outcome: { readonly succeeded: true } | { readonly succeeded: false; readonly reason: string },
   ): Promise<Result<PaymentIntentStatusOutput, DomainError>> {
     return withConcurrencyRetry(RefundPaymentLifecycle.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<PaymentIntentStatusOutput, DomainError>>(async (tx) => {
-        const intent = await this.deps.intents.findById(paymentIntentId, tx);
+        const intent = await this.deps.intents.findById(paymentIntentId, tenantId, tx);
         if (intent === null) {
           return err(new NotFoundError("Payment intent not found"));
         }
@@ -641,9 +663,9 @@ export class RefundPaymentLifecycle implements UseCase<
             throw error;
           }
 
-          await this.deps.intents.save(intent, tx);
+          await this.deps.intents.save(intent, tenantId, tx);
           if (outcome.succeeded) {
-            await notifyBestEffort(this.deps, intent);
+            await notifyBestEffort(this.deps, intent, tenantId);
           }
         }
         return ok({ paymentIntentId: intent.id.toString(), status: intent.status.value });

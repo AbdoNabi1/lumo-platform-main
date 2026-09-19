@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { PaymentIntent } from "../domain/payment-intent";
@@ -9,8 +9,6 @@ export interface PrismaPaymentIntentRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -30,9 +28,8 @@ export class PrismaPaymentIntentRepository implements PaymentIntentRepository {
     this.deps = deps;
   }
 
-  async save(intent: PaymentIntent, tx?: unknown): Promise<void> {
+  async save(intent: PaymentIntent, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const intentId = intent.id.toString();
     const row = PaymentIntentMapper.toIntentRow(intent, tenantId);
 
@@ -74,59 +71,55 @@ export class PrismaPaymentIntentRepository implements PaymentIntentRepository {
       await client.paymentAttempt.createMany({ data: attempts, skipDuplicates: true });
     }
 
-    await this.deps.outbox.write(intent.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      intent.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<PaymentIntent | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.paymentIntent.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-      include: {
-        charges: { orderBy: { occurredAt: "asc" } },
-        refunds: { orderBy: { occurredAt: "asc" } },
-        attempts: { orderBy: { occurredAt: "asc" } },
-      },
-    });
-    if (row === null) return null;
-    return PaymentIntentMapper.toDomain(
-      { ...row, paymentMethod: row.paymentMethod as { token: string; brand?: string } },
-      row.charges,
-      row.refunds,
-      row.attempts,
-    );
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<PaymentIntent | null> {
+    return this.findOne({ id, tenantId }, tenantId, tx);
   }
 
   /** Scaffolding for A3's saga-activity idempotency (Sprint A0 precondition); not yet called by any use case. */
-  async findByIdempotencyKey(idempotencyKey: string, tx?: unknown): Promise<PaymentIntent | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.paymentIntent.findFirst({
-      where: { idempotencyKey, tenantId: this.deps.tenantId },
-      include: {
-        charges: { orderBy: { occurredAt: "asc" } },
-        refunds: { orderBy: { occurredAt: "asc" } },
-        attempts: { orderBy: { occurredAt: "asc" } },
-      },
-    });
-    if (row === null) return null;
-    return PaymentIntentMapper.toDomain(
-      { ...row, paymentMethod: row.paymentMethod as { token: string; brand?: string } },
-      row.charges,
-      row.refunds,
-      row.attempts,
-    );
+  async findByIdempotencyKey(
+    idempotencyKey: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<PaymentIntent | null> {
+    return this.findOne({ idempotencyKey, tenantId }, tenantId, tx);
   }
 
   /** Phase A.10 (Tasks 4-6): correlates a PSP webhook's own reference (e.g. Stripe's `pi_...` id) to our domain intent. */
-  async findByPspReference(pspReference: string, tx?: unknown): Promise<PaymentIntent | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.paymentIntent.findFirst({
-      where: { pspReference, tenantId: this.deps.tenantId },
-      include: {
-        charges: { orderBy: { occurredAt: "asc" } },
-        refunds: { orderBy: { occurredAt: "asc" } },
-        attempts: { orderBy: { occurredAt: "asc" } },
-      },
-    });
+  async findByPspReference(
+    pspReference: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<PaymentIntent | null> {
+    return this.findOne({ pspReference, tenantId }, tenantId, tx);
+  }
+
+  /** Shared lookup — every caller's `where` already carries `tenantId`; reads run via `runReadScoped` unless the caller supplied its `tx`. */
+  private async findOne(
+    where: { readonly tenantId: string } & Record<string, string>,
+    tenantId: string,
+    tx: unknown,
+  ): Promise<PaymentIntent | null> {
+    const run = (client: TransactionClient) =>
+      client.paymentIntent.findFirst({
+        where,
+        include: {
+          charges: { orderBy: { occurredAt: "asc" } },
+          refunds: { orderBy: { occurredAt: "asc" } },
+          attempts: { orderBy: { occurredAt: "asc" } },
+        },
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     if (row === null) return null;
     return PaymentIntentMapper.toDomain(
       { ...row, paymentMethod: row.paymentMethod as { token: string; brand?: string } },

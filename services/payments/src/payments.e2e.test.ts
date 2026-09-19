@@ -20,6 +20,7 @@ function wire() {
 
 async function newIntentId(app: ReturnType<typeof wire>): Promise<string> {
   const created = await app.payments.createIntent({
+    tenantId: "tenant-a",
     orderRef: "order-1",
     amountMinor: 3500,
     currency: "USD",
@@ -33,11 +34,16 @@ describe("payments (end to end)", () => {
     const app = wire();
     const id = await newIntentId(app);
 
-    const captured = await app.payments.capture({ paymentIntentId: id, pspToken: "tok_123" });
+    const captured = await app.payments.capture({
+      tenantId: "tenant-a",
+      paymentIntentId: id,
+      pspToken: "tok_123",
+    });
     expect(captured.status).toBe(200);
     expect((captured.body as { status: string }).status).toBe("captured");
 
     const refunded = await app.payments.refund({
+      tenantId: "tenant-a",
       paymentIntentId: id,
       amountMinor: 3500,
       currency: "USD",
@@ -55,7 +61,11 @@ describe("payments (end to end)", () => {
   it("fails a payment intent (200) and publishes payment.failed", async () => {
     const app = wire();
     const id = await newIntentId(app);
-    const failed = await app.payments.fail({ paymentIntentId: id, reason: "card_declined" });
+    const failed = await app.payments.fail({
+      tenantId: "tenant-a",
+      paymentIntentId: id,
+      reason: "card_declined",
+    });
     expect(failed.status).toBe(200);
     expect((failed.body as { status: string }).status).toBe("failed");
     expect(await app.drainOutbox()).toBe(1);
@@ -65,8 +75,9 @@ describe("payments (end to end)", () => {
   it("rejects a refund greater than captured (409)", async () => {
     const app = wire();
     const id = await newIntentId(app);
-    await app.payments.capture({ paymentIntentId: id, pspToken: "tok_123" });
+    await app.payments.capture({ tenantId: "tenant-a", paymentIntentId: id, pspToken: "tok_123" });
     const response = await app.payments.refund({
+      tenantId: "tenant-a",
       paymentIntentId: id,
       amountMinor: 9999,
       currency: "USD",
@@ -76,13 +87,18 @@ describe("payments (end to end)", () => {
 
   it("returns 404 for an unknown intent", async () => {
     const app = wire();
-    const response = await app.payments.capture({ paymentIntentId: "missing", pspToken: "tok_1" });
+    const response = await app.payments.capture({
+      tenantId: "tenant-a",
+      paymentIntentId: "missing",
+      pspToken: "tok_1",
+    });
     expect(response.status).toBe(404);
   });
 
   it("rejects an invalid amount at creation (422)", async () => {
     const app = wire();
     const response = await app.payments.createIntent({
+      tenantId: "tenant-a",
       orderRef: "order-1",
       amountMinor: -1,
       currency: "USD",
@@ -94,6 +110,7 @@ describe("payments (end to end)", () => {
     const app = wire();
 
     const created = await app.payments.createIntentLifecycle({
+      tenantId: "tenant-a",
       orderRef: "order-2",
       amountMinor: 5000,
       currency: "USD",
@@ -103,10 +120,17 @@ describe("payments (end to end)", () => {
     expect((created.body as { status: string }).status).toBe("created");
 
     expect(
-      (await app.payments.advance({ paymentIntentId: id, toStatus: "processing" })).status,
+      (
+        await app.payments.advance({
+          tenantId: "tenant-a",
+          paymentIntentId: id,
+          toStatus: "processing",
+        })
+      ).status,
     ).toBe(200);
 
     const authorized = await app.payments.authorize({
+      tenantId: "tenant-a",
       paymentIntentId: id,
       pspReference: "psp-ref-1",
       paymentMethodToken: "tok_abc",
@@ -116,11 +140,15 @@ describe("payments (end to end)", () => {
     expect(authorized.status).toBe(200);
     expect((authorized.body as { status: string }).status).toBe("authorized");
 
-    const captured = await app.payments.captureLifecycle({ paymentIntentId: id });
+    const captured = await app.payments.captureLifecycle({
+      tenantId: "tenant-a",
+      paymentIntentId: id,
+    });
     expect(captured.status).toBe(200);
     expect((captured.body as { status: string }).status).toBe("captured");
 
     const refunded = await app.payments.refundLifecycle({
+      tenantId: "tenant-a",
       paymentIntentId: id,
       amountMinor: 5000,
       currency: "USD",
@@ -129,21 +157,31 @@ describe("payments (end to end)", () => {
     expect((refunded.body as { status: string }).status).toBe("refunded");
 
     // Illegal: refunded has no outgoing transitions.
-    const illegal = await app.payments.advance({ paymentIntentId: id, toStatus: "processing" });
+    const illegal = await app.payments.advance({
+      tenantId: "tenant-a",
+      paymentIntentId: id,
+      toStatus: "processing",
+    });
     expect(illegal.status).toBe(409);
   });
 
   it("webhook idempotency: first processed, replay deduped", async () => {
     const app = wire();
     const created = await app.payments.createIntentLifecycle({
+      tenantId: "tenant-a",
       orderRef: "order-3",
       amountMinor: 1000,
       currency: "USD",
     });
     const id = (created.body as { paymentIntentId: string }).paymentIntentId;
-    await app.payments.advance({ paymentIntentId: id, toStatus: "processing" });
+    await app.payments.advance({
+      tenantId: "tenant-a",
+      paymentIntentId: id,
+      toStatus: "processing",
+    });
 
     const first = await app.payments.recordWebhook({
+      tenantId: "tenant-a",
       paymentIntentId: id,
       provider: "stripe",
       eventId: "evt-webhook-1",
@@ -154,6 +192,7 @@ describe("payments (end to end)", () => {
     expect((first.body as { status: string }).status).toBe("authorized");
 
     const replay = await app.payments.recordWebhook({
+      tenantId: "tenant-a",
       paymentIntentId: id,
       provider: "stripe",
       eventId: "evt-webhook-1",
@@ -166,7 +205,10 @@ describe("payments (end to end)", () => {
   it("returns a single payment intent by id", async () => {
     const app = wire();
     const id = await newIntentId(app);
-    const response = await app.payments.getPaymentIntent({ paymentIntentId: id });
+    const response = await app.payments.getPaymentIntent({
+      tenantId: "tenant-a",
+      paymentIntentId: id,
+    });
     expect(response.status).toBe(200);
   });
 
@@ -198,24 +240,40 @@ describe("payments (end to end)", () => {
   it("Phase E: two concurrent refunds of 700 against a 1000 capture, zero-latency PSP — the second is correctly rejected (intra-process only; see report for the cross-process risk)", async () => {
     const app = wire();
     const created = await app.payments.createIntentLifecycle({
+      tenantId: "tenant-a",
       orderRef: "order-race-2",
       amountMinor: 1000,
       currency: "USD",
     });
     const id = (created.body as { paymentIntentId: string }).paymentIntentId;
-    await app.payments.advance({ paymentIntentId: id, toStatus: "processing" });
+    await app.payments.advance({
+      tenantId: "tenant-a",
+      paymentIntentId: id,
+      toStatus: "processing",
+    });
     await app.payments.authorize({
+      tenantId: "tenant-a",
       paymentIntentId: id,
       pspReference: "psp-ref-race-2",
       paymentMethodToken: "tok_abc",
       paymentMethodBrand: "visa",
       authorizedAmountMinor: 1000,
     });
-    await app.payments.captureLifecycle({ paymentIntentId: id });
+    await app.payments.captureLifecycle({ tenantId: "tenant-a", paymentIntentId: id });
 
     const [a, b] = await Promise.all([
-      app.payments.refundLifecycle({ paymentIntentId: id, amountMinor: 700, currency: "USD" }),
-      app.payments.refundLifecycle({ paymentIntentId: id, amountMinor: 700, currency: "USD" }),
+      app.payments.refundLifecycle({
+        tenantId: "tenant-a",
+        paymentIntentId: id,
+        amountMinor: 700,
+        currency: "USD",
+      }),
+      app.payments.refundLifecycle({
+        tenantId: "tenant-a",
+        paymentIntentId: id,
+        amountMinor: 700,
+        currency: "USD",
+      }),
     ]);
 
     expect([a.status, b.status].sort()).toEqual([200, 409]);

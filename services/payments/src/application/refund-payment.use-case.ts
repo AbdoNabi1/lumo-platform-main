@@ -7,6 +7,8 @@ import { type DomainError, NotFoundError } from "@platform/utils";
 import type { PaymentIntentRepository } from "../domain/payment-intent-repository";
 
 export interface RefundPaymentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly paymentIntentId: string;
   readonly amountMinor: number;
   readonly currency: string;
@@ -41,7 +43,7 @@ export class RefundPayment implements UseCase<
     if (!amount.ok) return err(amount.error);
 
     return this.deps.unitOfWork.run<Result<RefundPaymentOutput, DomainError>>(async (tx) => {
-      const intent = await this.deps.intents.findById(input.paymentIntentId, tx);
+      const intent = await this.deps.intents.findById(input.paymentIntentId, input.tenantId, tx);
       if (intent === null) {
         return err(new NotFoundError("Payment intent not found"));
       }
@@ -53,7 +55,7 @@ export class RefundPayment implements UseCase<
         throw error;
       }
 
-      await this.deps.intents.save(intent, tx);
+      await this.deps.intents.save(intent, input.tenantId, tx);
       return ok({ paymentIntentId: intent.id.toString(), status: intent.status.value });
     });
   }

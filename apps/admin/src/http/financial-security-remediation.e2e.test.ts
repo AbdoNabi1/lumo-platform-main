@@ -392,7 +392,10 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
       "create intent",
     );
     const fetched = unwrap<{ amount: { amountMinor: number; currency: string } }>(
-      await admin.payments.getPaymentIntent(customer, { paymentIntentId: opened.paymentIntentId }),
+      await admin.payments.getPaymentIntent(customer, {
+        tenantId: "tenant-local",
+        paymentIntentId: opened.paymentIntentId,
+      }),
       "get intent",
     );
     expect(fetched.amount.amountMinor).toBe(realAmountMinor);
@@ -421,7 +424,10 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
     const paymentIntentId = (opened.body as { paymentIntentId: string }).paymentIntentId;
 
     const fetched = unwrap<{ amount: { amountMinor: number; currency: string } }>(
-      await admin.payments.getPaymentIntent(customer, { paymentIntentId }),
+      await admin.payments.getPaymentIntent(customer, {
+        tenantId: "tenant-local",
+        paymentIntentId,
+      }),
       "get intent",
     );
 

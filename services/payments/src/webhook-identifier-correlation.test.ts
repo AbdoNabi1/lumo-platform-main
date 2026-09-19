@@ -34,7 +34,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, 1);
   }
 
-  async save(intent: PaymentIntent): Promise<void> {
+  async save(intent: PaymentIntent, _tenantId: string): Promise<void> {
     const id = intent.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -49,7 +49,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, existing.intentRow.version + 1);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
+  async findById(id: string, _tenantId: string): Promise<PaymentIntent | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     return PaymentIntentMapper.toDomain(
@@ -60,11 +60,11 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     );
   }
 
-  async findByIdempotencyKey(): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(_key: string, _tenantId: string): Promise<PaymentIntent | null> {
     return null;
   }
 
-  async findByPspReference(pspReference: string): Promise<PaymentIntent | null> {
+  async findByPspReference(pspReference: string, _tenantId: string): Promise<PaymentIntent | null> {
     for (const row of this.rows.values()) {
       if (row.intentRow.pspReference === pspReference) {
         return PaymentIntentMapper.toDomain(
@@ -167,6 +167,7 @@ describe("Tasks 4-6 — Stripe webhook identifier correlation (Phase A.10)", () 
     // "bonus finding") — irrelevant to identifier correlation, so this test uses `cancelled`
     // (a legal `authorized -> cancelled` edge) to isolate the ONE thing under test here.
     const result = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: stripeId,
       provider: "stripe",
       eventId: "evt_canceled_1",
@@ -182,7 +183,7 @@ describe("Tasks 4-6 — Stripe webhook identifier correlation (Phase A.10)", () 
       expect(result.value.status).toBe("cancelled");
     }
 
-    const final = await repo.findById(domainId);
+    const final = await repo.findById(domainId, "tenant-a");
     expect(final?.status.value).toBe("cancelled");
     expect(final?.attempts.some((a) => a.kind === "webhook")).toBe(true);
   });
@@ -193,6 +194,7 @@ describe("Tasks 4-6 — Stripe webhook identifier correlation (Phase A.10)", () 
 
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo));
     const result = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi_totally_unknown",
       provider: "stripe",
       eventId: "evt_unknown_1",
@@ -203,7 +205,7 @@ describe("Tasks 4-6 — Stripe webhook identifier correlation (Phase A.10)", () 
     if (!result.ok) expect(result.error.code).toBe("NOT_FOUND");
 
     // The unrelated, actually-known intent must be completely untouched.
-    const untouched = await repo.findById("018f2e6a-27b6-7000-8000-000000000002");
+    const untouched = await repo.findById("018f2e6a-27b6-7000-8000-000000000002", "tenant-a");
     expect(untouched?.status.value).toBe("authorized");
     expect(untouched?.attempts.some((a) => a.kind === "webhook")).toBe(false);
   });
@@ -215,6 +217,7 @@ describe("Tasks 4-6 — Stripe webhook identifier correlation (Phase A.10)", () 
 
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo));
     const result = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: domainId, // domain id, not the PSP reference
       provider: "stripe",
       eventId: "evt_domain_id_1",
@@ -233,6 +236,7 @@ describe("Tasks 4-6 — Stripe webhook identifier correlation (Phase A.10)", () 
 
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo));
     const input = {
+      tenantId: "tenant-a",
       paymentIntentId: stripeId,
       provider: "stripe",
       eventId: "evt_dup_channel_1",

@@ -605,7 +605,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     notifications:
       deps.notifications ??
       new OrdersNotificationAdapter(notifications.notifications, deps.tenantId),
-    paymentPort: deps.paymentPort ?? new OrdersPaymentAdapter(lazyPaymentsController),
+    paymentPort:
+      deps.paymentPort ?? new OrdersPaymentAdapter(lazyPaymentsController, deps.tenantId),
   };
   const orders = wireOrders(ordersDeps);
   ordersControllerCell.controller = orders.orders;
@@ -682,8 +683,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     ...deps,
     ordersPort: deps.ordersPort ?? new PaymentsOrdersAdapter(orders.orders),
     paymentsNotifications:
-      deps.paymentsNotifications ??
-      new PaymentsNotificationAdapter(notifications.notifications, deps.tenantId),
+      deps.paymentsNotifications ?? new PaymentsNotificationAdapter(notifications.notifications),
   };
   const payments = wirePayments(paymentsDeps);
   // Populates `paymentsControllerCell` (see its declaration above, alongside `ordersDeps`) — from

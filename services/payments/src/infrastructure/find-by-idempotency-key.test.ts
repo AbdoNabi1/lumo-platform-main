@@ -35,8 +35,8 @@ describe("PaymentIntentRepository.findByIdempotencyKey (Sprint A0 precondition)"
       context: rootEventContext(sequentialIds()),
     });
     const intent = PaymentIntent.create(UniqueEntityId.from("intent-1"), "order-1", usd(1000));
-    await repo.save(intent);
+    await repo.save(intent, "tenant-a");
 
-    expect(await repo.findByIdempotencyKey("any-key")).toBeNull();
+    expect(await repo.findByIdempotencyKey("any-key", "tenant-a")).toBeNull();
   });
 });

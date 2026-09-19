@@ -47,31 +47,12 @@ export class PaymentsNotificationAdapter implements NotificationPort {
 
   private readonly notifications: Pick<NotificationsController, "create" | "queue" | "send">;
 
-  private readonly tenantId: string | undefined;
-
-  /**
-   * ADR-0014 (WP-10, T10.3): Notifications now takes `tenantId` per call, but the port this
-   * adapter implements carries none yet — widening it is that context's own conversion. Until
-   * then the tenant is captured at construction (same not-yet-converted pattern as
-   * `PromotionValidationAdapter`). It stays optional only because `AdminWiringDeps.tenantId` is;
-   * `notify` throws if it is missing (the caller already swallows notification failures), never
-   * defaulting a tenant.
-   */
-  constructor(
-    notifications: Pick<NotificationsController, "create" | "queue" | "send">,
-    tenantId?: string,
-  ) {
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `NotificationPort.notify` carries `tenantId` per call. */
+  constructor(notifications: Pick<NotificationsController, "create" | "queue" | "send">) {
     this.notifications = notifications;
-    this.tenantId = tenantId;
   }
 
-  async notify(orderRef: string, status: string): Promise<void> {
-    const tenantId = this.tenantId;
-    if (tenantId === undefined) {
-      throw new Error(
-        "PaymentsNotificationAdapter.notify: tenantId is required (ADR-0014) but this adapter was constructed without one.",
-      );
-    }
+  async notify(orderRef: string, status: string, tenantId: string): Promise<void> {
     const idempotencyKey = `${orderRef}:${status}`;
 
     const createResponse = await this.notifications.create({

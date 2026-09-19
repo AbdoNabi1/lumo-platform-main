@@ -41,8 +41,8 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
       clock,
       producer: "payments",
     });
-    const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaPaymentIntentRepository({ prisma, outbox, context, tenantId });
+    const context = rootEventContext(ids);
+    const repository = new PrismaPaymentIntentRepository({ prisma, outbox, context });
     return { prisma, repository, unitOfWork: new PrismaUnitOfWork(prisma), outboxStore, tenantId };
   }
 
@@ -52,11 +52,11 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
   }
 
   it("round-trips the aggregate exactly: amount, status, version", async () => {
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const intent = newIntent();
 
-    await unitOfWork.run(async (tx) => repository.save(intent, tx));
-    const loaded = await repository.findById(intent.id.toString());
+    await unitOfWork.run(async (tx) => repository.save(intent, tenantId, tx));
+    const loaded = await repository.findById(intent.id.toString(), tenantId);
 
     expect(loaded).not.toBeNull();
     expect(loaded?.status.value).toBe("requires_payment");
@@ -72,14 +72,14 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
     // published, so nothing prunes them), and `fetchPending` orders oldest-first, so a freshly
     // written row can fall outside a fixed-size page once the backlog exceeds it. Confirmed live:
     // 123 pre-existing pending rows in `lumo_test` at the time this test was authored.
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const intent = newIntent();
-    await unitOfWork.run(async (tx) => repository.save(intent, tx));
+    await unitOfWork.run(async (tx) => repository.save(intent, tenantId, tx));
 
-    const loaded = await repository.findById(intent.id.toString());
+    const loaded = await repository.findById(intent.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     loaded.capture(unwrap(PspToken.create("tok_visa_4242")), ids.generate(), clock.now());
-    await unitOfWork.run(async (tx) => repository.save(loaded, tx));
+    await unitOfWork.run(async (tx) => repository.save(loaded, tenantId, tx));
 
     const rows = await prisma.outboxEntry.findMany({ where: { key: intent.id.toString() } });
     expect(rows.some((entry) => entry.topic.startsWith("payments.payment_intent.captured"))).toBe(
@@ -90,23 +90,23 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
   });
 
   it("rejects a stale write with ConcurrencyError (no retry, no silent overwrite)", async () => {
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const intent = newIntent();
-    await unitOfWork.run(async (tx) => repository.save(intent, tx));
+    await unitOfWork.run(async (tx) => repository.save(intent, tenantId, tx));
 
-    const first = await repository.findById(intent.id.toString());
-    const second = await repository.findById(intent.id.toString());
+    const first = await repository.findById(intent.id.toString(), tenantId);
+    const second = await repository.findById(intent.id.toString(), tenantId);
     if (first === null || second === null) throw new Error("setup failed");
     first.capture(unwrap(PspToken.create("tok_a")), ids.generate(), clock.now());
     second.fail("card_declined", ids.generate(), clock.now());
 
-    await unitOfWork.run(async (tx) => repository.save(first, tx));
-    await expect(unitOfWork.run(async (tx) => repository.save(second, tx))).rejects.toBeInstanceOf(
-      ConcurrencyError,
-    );
+    await unitOfWork.run(async (tx) => repository.save(first, tenantId, tx));
+    await expect(
+      unitOfWork.run(async (tx) => repository.save(second, tenantId, tx)),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
 
     // Confirm no partial state: reload shows only the winner's transition applied.
-    const reloaded = await repository.findById(intent.id.toString());
+    const reloaded = await repository.findById(intent.id.toString(), tenantId);
     expect(reloaded?.status.value).toBe("captured");
     expect(reloaded?.version).toBe(2);
     await prisma.$disconnect();
@@ -172,9 +172,9 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
   });
 
   it("BEGIN/COMMIT: a committed transaction is durable in a fresh session", async () => {
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const intent = newIntent();
-    await unitOfWork.run(async (tx) => repository.save(intent, tx));
+    await unitOfWork.run(async (tx) => repository.save(intent, tenantId, tx));
 
     const freshSession = createTestPrismaClient(databaseUrl);
     const found = await freshSession.paymentIntent.findUnique({
@@ -227,9 +227,9 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
 
   describe("concurrency: two genuinely concurrent sessions", () => {
     it("racing capture() against the same version: exactly one wins, zero lost updates", async () => {
-      const { prisma, repository, unitOfWork } = wire();
+      const { prisma, repository, unitOfWork, tenantId } = wire();
       const intent = newIntent();
-      await unitOfWork.run(async (tx) => repository.save(intent, tx));
+      await unitOfWork.run(async (tx) => repository.save(intent, tenantId, tx));
 
       const sessionA = createTestPrismaClient(databaseUrl);
       const sessionB = createTestPrismaClient(databaseUrl);

@@ -445,6 +445,7 @@ export class PrismaPaymentsPortAdapter implements ReturnsPaymentsPort {
     }
 
     const response = await this.payments.refundLifecycle({
+      tenantId: this.tenantId,
       paymentIntentId: target.id,
       amountMinor,
       currency,
@@ -473,7 +474,6 @@ export function buildReturnsPaymentsPortAdapter(core: RuntimeCore): PrismaPaymen
     idGenerator: core.idGenerator,
     clock: core.clock,
     prisma: core.prisma,
-    tenantId,
     paymentProvider: core.paymentProvider,
   });
   return new PrismaPaymentsPortAdapter(core.prisma, tenantId, payments);

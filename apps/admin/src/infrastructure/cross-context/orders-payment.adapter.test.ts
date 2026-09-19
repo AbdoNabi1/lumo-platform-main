@@ -74,7 +74,7 @@ describe("OrdersPaymentAdapter (Orders -> Payments, C-3)", () => {
   it("chains createIntentLifecycle -> captureLifecycle in order", async () => {
     const calls = emptyCalls();
     const payments = fakePaymentController(calls);
-    const adapter = new OrdersPaymentAdapter(payments);
+    const adapter = new OrdersPaymentAdapter(payments, "tenant-a");
 
     await adapter.requestCapture("ORD-1001", 5_000, "USD");
 
@@ -85,11 +85,12 @@ describe("OrdersPaymentAdapter (Orders -> Payments, C-3)", () => {
   it("maps orderId/amountMinor/currency directly into CreatePaymentIntentLifecycleInput", async () => {
     const calls = emptyCalls();
     const payments = fakePaymentController(calls);
-    const adapter = new OrdersPaymentAdapter(payments);
+    const adapter = new OrdersPaymentAdapter(payments, "tenant-a");
 
     await adapter.requestCapture("ORD-2002", 12_345, "EUR");
 
     expect(calls.createIntentLifecycle[0]).toEqual({
+      tenantId: "tenant-a",
       orderRef: "ORD-2002",
       amountMinor: 12_345,
       currency: "EUR",
@@ -99,7 +100,7 @@ describe("OrdersPaymentAdapter (Orders -> Payments, C-3)", () => {
   it("returns the created paymentIntentId as paymentRef on a successful capture", async () => {
     const calls = emptyCalls();
     const payments = fakePaymentController(calls);
-    const adapter = new OrdersPaymentAdapter(payments);
+    const adapter = new OrdersPaymentAdapter(payments, "tenant-a");
 
     const result = await adapter.requestCapture("ORD-3003", 1_000, "USD");
 
@@ -109,7 +110,7 @@ describe("OrdersPaymentAdapter (Orders -> Payments, C-3)", () => {
   it("propagates a createIntentLifecycle failure without calling captureLifecycle", async () => {
     const calls = emptyCalls();
     const payments = fakePaymentController(calls, { createStatus: 422 });
-    const adapter = new OrdersPaymentAdapter(payments);
+    const adapter = new OrdersPaymentAdapter(payments, "tenant-a");
 
     await expect(adapter.requestCapture("ORD-4004", 1_000, "USD")).rejects.toThrow();
     expect(calls.sequence).toEqual(["createIntentLifecycle"]);
@@ -118,7 +119,7 @@ describe("OrdersPaymentAdapter (Orders -> Payments, C-3)", () => {
   it("propagates a captureLifecycle transport failure (non-200 status) after a successful create", async () => {
     const calls = emptyCalls();
     const payments = fakePaymentController(calls, { captureStatus: 409 });
-    const adapter = new OrdersPaymentAdapter(payments);
+    const adapter = new OrdersPaymentAdapter(payments, "tenant-a");
 
     await expect(adapter.requestCapture("ORD-5005", 1_000, "USD")).rejects.toThrow();
     expect(calls.sequence).toEqual(["createIntentLifecycle", "captureLifecycle"]);
@@ -127,10 +128,20 @@ describe("OrdersPaymentAdapter (Orders -> Payments, C-3)", () => {
   it('throws, without fabricating a paymentRef, when capture does not reach status "captured"', async () => {
     const calls = emptyCalls();
     const payments = fakePaymentController(calls, { captureResultStatus: "capture_requested" });
-    const adapter = new OrdersPaymentAdapter(payments);
+    const adapter = new OrdersPaymentAdapter(payments, "tenant-a");
 
     await expect(adapter.requestCapture("ORD-6006", 1_000, "USD")).rejects.toThrow(
       /capture_requested/,
     );
+  });
+});
+
+describe("OrdersPaymentAdapter without a tenant (ADR-0014)", () => {
+  it("throws rather than defaulting one, until orders' port carries it", async () => {
+    const calls = emptyCalls();
+    const adapter = new OrdersPaymentAdapter(fakePaymentController(calls));
+
+    await expect(adapter.requestCapture("ORD-1", 100, "USD")).rejects.toThrow(/without a tenant/);
+    expect(calls.sequence).toEqual([]);
   });
 });

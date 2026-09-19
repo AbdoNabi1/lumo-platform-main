@@ -37,7 +37,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, 1);
   }
 
-  async save(intent: PaymentIntent): Promise<void> {
+  async save(intent: PaymentIntent, _tenantId: string): Promise<void> {
     const id = intent.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -52,7 +52,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, existing.intentRow.version + 1);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
+  async findById(id: string, _tenantId: string): Promise<PaymentIntent | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     return PaymentIntentMapper.toDomain(
@@ -63,11 +63,11 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     );
   }
 
-  async findByIdempotencyKey(): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(_key: string, _tenantId: string): Promise<PaymentIntent | null> {
     return null;
   }
 
-  async findByPspReference(pspReference: string): Promise<PaymentIntent | null> {
+  async findByPspReference(pspReference: string, _tenantId: string): Promise<PaymentIntent | null> {
     for (const row of this.rows.values()) {
       if (row.intentRow.pspReference === pspReference) {
         return PaymentIntentMapper.toDomain(
@@ -203,11 +203,13 @@ describe("Task 2 — exploit proof: without idempotencyKey, a full-request retry
     // key from Returns but never passed it to RefundPaymentLifecycleInput, so every retry of the
     // whole `requestRefund()` call reached here with no idempotencyKey at all.
     const first = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-exploit",
       amountMinor: 300,
       currency: "USD",
     });
     const second = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-exploit",
       amountMinor: 300,
       currency: "USD",
@@ -221,7 +223,7 @@ describe("Task 2 — exploit proof: without idempotencyKey, a full-request retry
     expect(provider.calls).toHaveLength(2);
     expect(new Set(provider.calls.map((c) => c.idempotencyKey)).size).toBe(2);
 
-    const finalIntent = await repo.findById("pi-exploit");
+    const finalIntent = await repo.findById("pi-exploit", "tenant-a");
     const totalRefunded = finalIntent?.refunds
       .filter((r) => r.status !== "failed")
       .reduce((sum, r) => sum + r.amount.amountMinor, 0);
@@ -238,6 +240,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     const idempotencyKey = "return-1:refund";
 
     const first = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-retry-1",
       amountMinor: 300,
       currency: "USD",
@@ -248,6 +251,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     // Second attempt: caller believes the first may have been lost (timeout) and retries with the
     // SAME idempotencyKey. The first attempt actually already completed — this must be a safe no-op.
     const second = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-retry-1",
       amountMinor: 300,
       currency: "USD",
@@ -259,7 +263,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     // short-circuited domain-side (the reservation was already `completed`) before reaching the PSP.
     expect(provider.calls).toHaveLength(1);
 
-    const finalIntent = await repo.findById("pi-retry-1");
+    const finalIntent = await repo.findById("pi-retry-1", "tenant-a");
     const totalRefunded = finalIntent?.refunds
       .filter((r) => r.status !== "failed")
       .reduce((sum, r) => sum + r.amount.amountMinor, 0);
@@ -278,7 +282,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     // never throws here), but we stop BEFORE `settle()` — modeling a process crash after step 2
     // succeeded but before step 3's commit lands. Labeled simulation per Task 13: this is an
     // in-process state model of the crash window, not a real distributed-process kill.
-    const intentBeforeCrash = await repo.findById("pi-crash-a");
+    const intentBeforeCrash = await repo.findById("pi-crash-a", "tenant-a");
     if (intentBeforeCrash === null) throw new Error("fixture missing");
     const { refund } = intentBeforeCrash.requestRefund(
       usd(400),
@@ -286,16 +290,17 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
       clock.now(),
       idempotencyKey,
     );
-    await repo.save(intentBeforeCrash);
+    await repo.save(intentBeforeCrash, "tenant-a");
     await provider.refund(`psp-ref-pi-crash-a`, 400, `pi-crash-a:refund:${refund.id.toString()}`);
     // ^ PSP call succeeded for real; the process "crashes" here — settle() never ran, refund stays `pending`.
 
-    const afterCrash = await repo.findById("pi-crash-a");
+    const afterCrash = await repo.findById("pi-crash-a", "tenant-a");
     expect(afterCrash?.refunds[0]?.status).toBe("pending");
     expect(provider.calls).toHaveLength(1);
 
     // The caller retries the WHOLE request with the same idempotencyKey.
     const retried = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-crash-a",
       amountMinor: 400,
       currency: "USD",
@@ -310,7 +315,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     expect(provider.calls[0]?.idempotencyKey).toBe(provider.calls[1]?.idempotencyKey);
     expect(provider.calls[1]?.idempotencyKey).toBe(`pi-crash-a:refund:${refund.id.toString()}`);
 
-    const finalIntent = await repo.findById("pi-crash-a");
+    const finalIntent = await repo.findById("pi-crash-a", "tenant-a");
     expect(finalIntent?.refunds).toHaveLength(1); // still ONE logical refund, not two
     expect(finalIntent?.refunds[0]?.status).toBe("completed");
   });
@@ -324,6 +329,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
 
     await expect(
       lifecycle.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-failed-retry",
         amountMinor: 300,
         currency: "USD",
@@ -331,13 +337,14 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
       }),
     ).rejects.toThrow(/simulated PSP failure/);
 
-    const afterFailure = await repo.findById("pi-failed-retry");
+    const afterFailure = await repo.findById("pi-failed-retry", "tenant-a");
     expect(afterFailure?.refunds[0]?.status).toBe("failed");
 
     // Reusing the SAME key is rejected outright — not silently retried, not silently ignored.
     const provider2 = new RecordingPaymentProvider();
     const lifecycle2 = new RefundPaymentLifecycle(buildDeps(repo, provider2));
     const reused = await lifecycle2.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-failed-retry",
       amountMinor: 300,
       currency: "USD",
@@ -349,6 +356,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
 
     // A genuinely NEW key is a legitimate new attempt and succeeds.
     const freshAttempt = await lifecycle2.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-failed-retry",
       amountMinor: 300,
       currency: "USD",
@@ -366,6 +374,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     const idempotencyKey = "return-tamper:refund";
 
     const first = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-tamper",
       amountMinor: 300,
       currency: "USD",
@@ -374,6 +383,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     expect(first.ok).toBe(true);
 
     const tampered = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-tamper",
       amountMinor: 999,
       currency: "USD",
@@ -392,12 +402,14 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
 
     const [a, b] = await Promise.all([
       lifecycle.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-distinct",
         amountMinor: 400,
         currency: "USD",
         idempotencyKey: "return-a:refund",
       }),
       lifecycle.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-distinct",
         amountMinor: 400,
         currency: "USD",
@@ -410,7 +422,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     expect(provider.calls).toHaveLength(2);
     expect(new Set(provider.calls.map((c) => c.idempotencyKey)).size).toBe(2);
 
-    const finalIntent = await repo.findById("pi-distinct");
+    const finalIntent = await repo.findById("pi-distinct", "tenant-a");
     expect(
       finalIntent?.refunds
         .filter((r) => r.status !== "failed")
@@ -427,12 +439,14 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
 
     const [a, b] = await Promise.all([
       lifecycle.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-concurrent-same",
         amountMinor: 500,
         currency: "USD",
         idempotencyKey,
       }),
       lifecycle.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-concurrent-same",
         amountMinor: 500,
         currency: "USD",
@@ -451,7 +465,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     expect(new Set(provider.calls.map((c) => c.idempotencyKey)).size).toBe(1);
     expect(provider.realEffects).toBe(1);
 
-    const finalIntent = await repo.findById("pi-concurrent-same");
+    const finalIntent = await repo.findById("pi-concurrent-same", "tenant-a");
     expect(finalIntent?.refunds).toHaveLength(1);
     expect(
       finalIntent?.refunds
@@ -467,6 +481,7 @@ describe("Task 8/13/14 — Phase A.5 fix: idempotencyKey makes a full-request re
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     const result = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-no-key",
       amountMinor: 250,
       currency: "USD",
@@ -484,8 +499,18 @@ describe("Task 14 — A4 concurrency regression, unaffected by the A.5 idempoten
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     const [a, b] = await Promise.all([
-      lifecycle.execute({ paymentIntentId: "pi-a4-1", amountMinor: 700, currency: "USD" }),
-      lifecycle.execute({ paymentIntentId: "pi-a4-1", amountMinor: 700, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-a4-1",
+        amountMinor: 700,
+        currency: "USD",
+      }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-a4-1",
+        amountMinor: 700,
+        currency: "USD",
+      }),
     ]);
 
     expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
@@ -499,14 +524,24 @@ describe("Task 14 — A4 concurrency regression, unaffected by the A.5 idempoten
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     const [a, b] = await Promise.all([
-      lifecycle.execute({ paymentIntentId: "pi-a4-2", amountMinor: 500, currency: "USD" }),
-      lifecycle.execute({ paymentIntentId: "pi-a4-2", amountMinor: 500, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-a4-2",
+        amountMinor: 500,
+        currency: "USD",
+      }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-a4-2",
+        amountMinor: 500,
+        currency: "USD",
+      }),
     ]);
 
     expect(a.ok).toBe(true);
     expect(b.ok).toBe(true);
     expect(provider.calls).toHaveLength(2);
-    const finalIntent = await repo.findById("pi-a4-2");
+    const finalIntent = await repo.findById("pi-a4-2", "tenant-a");
     expect(finalIntent?.status.value).toBe("refunded");
   });
 
@@ -517,12 +552,18 @@ describe("Task 14 — A4 concurrency regression, unaffected by the A.5 idempoten
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     await expect(
-      lifecycle.execute({ paymentIntentId: "pi-a4-3", amountMinor: 700, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-a4-3",
+        amountMinor: 700,
+        currency: "USD",
+      }),
     ).rejects.toThrow(/simulated PSP failure/);
 
     const provider2 = new RecordingPaymentProvider();
     const lifecycle2 = new RefundPaymentLifecycle(buildDeps(repo, provider2));
     const retried = await lifecycle2.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-a4-3",
       amountMinor: 700,
       currency: "USD",

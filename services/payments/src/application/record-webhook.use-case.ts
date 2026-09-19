@@ -9,6 +9,8 @@ import type { PaymentStatusValue } from "../domain/value-objects/payment-status"
 import type { ProcessedWebhookStore } from "./ports";
 
 export interface RecordWebhookInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly paymentIntentId: string;
   readonly provider: string;
   readonly eventId: string;
@@ -30,6 +32,7 @@ export interface RecordWebhookOutput {
 export interface CaptureSettlementPort {
   settle(
     paymentIntentId: string,
+    tenantId: string,
   ): Promise<Result<{ readonly paymentIntentId: string; readonly status: string }, DomainError>>;
 }
 
@@ -100,8 +103,8 @@ export class RecordWebhook implements UseCase<
       // RESOLVED domain id (`intent.id`, never the caller-supplied `input.paymentIntentId` verbatim)
       // is what every downstream step — `captureSettlement.settle()`, the response body — must use.
       const intent =
-        (await this.deps.intents.findById(input.paymentIntentId, tx)) ??
-        (await this.deps.intents.findByPspReference(input.paymentIntentId, tx));
+        (await this.deps.intents.findById(input.paymentIntentId, input.tenantId, tx)) ??
+        (await this.deps.intents.findByPspReference(input.paymentIntentId, input.tenantId, tx));
       if (intent === null) {
         return err(new NotFoundError("Payment intent not found"));
       }
@@ -110,6 +113,7 @@ export class RecordWebhook implements UseCase<
       const alreadyProcessed = await this.deps.processedWebhooks.hasProcessed(
         input.provider,
         input.eventId,
+        input.tenantId,
       );
       if (alreadyProcessed) {
         return ok({ paymentIntentId, duplicate: true, status: intent.status.value });
@@ -122,7 +126,7 @@ export class RecordWebhook implements UseCase<
           this.deps.idGenerator.generate(),
           this.deps.clock.now(),
         );
-        // Phase A.11 (Task 11 — webhook ordering): `ProcessedWebhookStore` dedups on `(provider,
+        // Phase A.11 (Task 11 — webhook ordering): `ProcessedWebhookStore` dedups on `(tenant, provider,
         // eventId)` only, so a genuinely DISTINCT Stripe event (different eventId — e.g. a second
         // `payment_intent.payment_failed` for a second failed attempt) that maps to the SAME status
         // the intent has already reached must not be forced through `transition()` — the
@@ -146,12 +150,16 @@ export class RecordWebhook implements UseCase<
         throw error;
       }
 
-      await this.deps.intents.save(intent, tx);
+      await this.deps.intents.save(intent, input.tenantId, tx);
       if (!deferToCaptureSettlement) {
         // Marked processed here, in the same step that fully handled the event. When deferring,
         // marking happens only after `captureSettlement.settle()` below actually succeeds — a
         // webhook whose settlement step fails (or never runs, crash) must remain replayable.
-        await this.deps.processedWebhooks.markProcessed(input.provider, input.eventId);
+        await this.deps.processedWebhooks.markProcessed(
+          input.provider,
+          input.eventId,
+          input.tenantId,
+        );
       }
       return ok({ paymentIntentId, duplicate: false, status: intent.status.value });
     });
@@ -179,10 +187,10 @@ export class RecordWebhook implements UseCase<
     // Uses the RESOLVED domain id (Phase A.10), not `input.paymentIntentId` — `settle()` looks up by
     // `findById` only, so passing Stripe's own reference here would fail the same way `RecordWebhook`
     // itself used to before this phase's fix.
-    const settled = await captureSettlement.settle(recorded.value.paymentIntentId);
+    const settled = await captureSettlement.settle(recorded.value.paymentIntentId, input.tenantId);
     if (!settled.ok) return err(settled.error);
 
-    await this.deps.processedWebhooks.markProcessed(input.provider, input.eventId);
+    await this.deps.processedWebhooks.markProcessed(input.provider, input.eventId, input.tenantId);
     return ok({
       paymentIntentId: recorded.value.paymentIntentId,
       status: settled.value.status,

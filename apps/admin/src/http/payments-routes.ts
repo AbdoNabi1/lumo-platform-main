@@ -96,6 +96,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
           orderRef: body.orderRef,
           amountMinor: order.totalAmount().amountMinor,
           currency: order.currency,
+          tenantId: context.tenantId,
         });
       },
     }),
@@ -111,6 +112,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.payments.authorize(context.principal, {
           paymentIntentId: params.paymentIntentId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -121,7 +123,8 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Request capture from the PSP",
       schema: { params: paymentIntentIdParams },
-      handle: ({ params, context }) => admin.payments.capture(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.payments.capture(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -164,6 +167,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
           paymentIntentId: params.paymentIntentId,
           ...body,
           idempotencyKey,
+          tenantId: context.tenantId,
         });
       },
     }),
@@ -175,7 +179,10 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get a single payment intent",
       schema: { params: paymentIntentIdParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
-        const response = await admin.payments.getPaymentIntent(context.principal, params);
+        const response = await admin.payments.getPaymentIntent(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) {
           return response;
         }
