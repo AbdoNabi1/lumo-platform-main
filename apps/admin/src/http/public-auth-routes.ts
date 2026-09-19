@@ -209,12 +209,16 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
         );
         if (!guarded.ok) return guarded.response;
 
-        const found = await admin.publicReads.cart.get({ cartId: body.cartId });
+        const found = await admin.publicReads.cart.get({
+          tenantId: context.tenantId,
+          cartId: body.cartId,
+        });
         if (found.status < 200 || found.status >= 300) return cartNotFound();
         const cart = found.body as Cart;
         if (cart.sessionRef !== body.sessionRef) return cartNotFound();
 
         return admin.publicReads.cart.assignCustomer({
+          tenantId: context.tenantId,
           cartId: body.cartId,
           customerRef: guarded.session.customerRef,
         });

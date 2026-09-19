@@ -197,7 +197,8 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       permission: "checkout:start",
       public: true,
       idempotent: true,
-      summary: "Public: start a checkout session for the caller's own cart (guest — no customerRef)",
+      summary:
+        "Public: start a checkout session for the caller's own cart (guest — no customerRef)",
       schema: { body: startCheckoutBody },
       handle: async ({ body }) => {
         const started = await admin.publicReads.checkout.start({
@@ -239,10 +240,13 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       summary:
         "Public: load an item snapshot into the caller's own checkout session, re-derived server-side from the given cart",
       schema: { params: checkoutSessionIdParams, body: itemsBody },
-      handle: async ({ params, body }) => {
+      handle: async ({ params, body, context }) => {
         const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
         if (!(owned instanceof CheckoutSession)) return owned;
-        const cartResponse = await admin.publicReads.cart.get({ cartId: body.cartId });
+        const cartResponse = await admin.publicReads.cart.get({
+          tenantId: context.tenantId,
+          cartId: body.cartId,
+        });
         if (cartResponse.status < 200 || cartResponse.status >= 300) return cartResponse;
         const cart = cartResponse.body as Cart;
         // The cart must also belong to the caller — otherwise a guest could load a stranger's cart

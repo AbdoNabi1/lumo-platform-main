@@ -88,7 +88,10 @@ export function checkoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Load an item snapshot into the session, re-derived server-side from the given Cart",
       schema: { params: checkoutSessionIdParams, body: loadItemsBody },
       handle: async ({ params, body, context }): Promise<AdminResponse> => {
-        const cartResponse = await admin.publicReads.cart.get({ cartId: body.cartId });
+        const cartResponse = await admin.publicReads.cart.get({
+          tenantId: context.tenantId,
+          cartId: body.cartId,
+        });
         if (cartResponse.status < 200 || cartResponse.status >= 300) {
           return cartResponse;
         }

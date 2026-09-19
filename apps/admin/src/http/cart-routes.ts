@@ -114,7 +114,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Open a new cart (customerRef optional — guest cart)",
       schema: { body: createCartBody },
-      handle: ({ body, context }) => admin.cart.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.cart.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -131,6 +132,7 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
           ...body,
           unitPriceAmountMinor: price.amountMinor,
           currency: price.currency,
+          tenantId: context.tenantId,
         });
       },
     }),
@@ -143,7 +145,11 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Remove a line from a cart",
       schema: { params: cartIdParams, body: removeItemBody },
       handle: ({ params, body, context }) =>
-        admin.cart.removeItem(context.principal, { cartId: params.cartId, ...body }),
+        admin.cart.removeItem(context.principal, {
+          cartId: params.cartId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -154,7 +160,11 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Change a line's quantity",
       schema: { params: cartIdParams, body: changeQuantityBody },
       handle: ({ params, body, context }) =>
-        admin.cart.changeItemQuantity(context.principal, { cartId: params.cartId, ...body }),
+        admin.cart.changeItemQuantity(context.principal, {
+          cartId: params.cartId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -171,6 +181,7 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
           ...body,
           unitPriceAmountMinor: price.amountMinor,
           currency: price.currency,
+          tenantId: context.tenantId,
         });
       },
     }),
@@ -182,7 +193,11 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Merge a guest cart's lines into this (customer) cart",
       schema: { params: cartIdParams, body: mergeBody },
       handle: ({ params, body, context }) =>
-        admin.cart.merge(context.principal, { targetCartId: params.cartId, ...body }),
+        admin.cart.merge(context.principal, {
+          targetCartId: params.cartId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -192,7 +207,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Lock a cart against further modification",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.lock(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.lock(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -202,7 +218,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Unlock a previously-locked cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.unlock(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.unlock(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -212,7 +229,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Save an active cart for later",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.saveForLater(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.saveForLater(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -222,7 +240,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Restore a saved cart back to active",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.restore(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.restore(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -232,7 +251,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Expire a still-live cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.expire(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.expire(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -242,7 +262,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Clear all lines from an active cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.clear(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.clear(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -252,7 +273,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Check out a cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.checkOut(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.checkOut(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -262,7 +284,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Abandon an active cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.abandon(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.abandon(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -273,7 +296,10 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         "List carts (cursor pagination; an optional status filter is abandoned-cart recovery)",
       schema: { querystring: cartListQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.cart.list(context.principal, query), toCartDto),
+        mapPage(
+          await admin.cart.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toCartDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -283,7 +309,10 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one cart by id",
       schema: { params: cartIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.cart.get(context.principal, params);
+        const response = await admin.cart.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toCartDto(response.body as Cart) };
       },

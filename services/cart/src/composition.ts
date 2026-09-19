@@ -43,13 +43,11 @@ export interface CartWiringDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   /**
-   * Production persistence (G-39/C-01). Present ⇒ `PrismaCartRepository` + `PrismaUnitOfWork`
-   * (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/`wireInventory`); absent ⇒
-   * in-memory, unchanged.
+   * Production persistence (G-39/C-01). Present ⇒ `PrismaCartRepository` + `PrismaUnitOfWork`;
+   * absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository built here is a
+   * tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Cart table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredCart {
@@ -117,10 +115,6 @@ function buildController(
  */
 export function wireCart(deps: CartWiringDeps): WiredCart {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireCart: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new CartEventTranslator(),
@@ -128,8 +122,10 @@ export function wireCart(deps: CartWiringDeps): WiredCart {
       clock: deps.clock,
       producer: "cart",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const carts = new PrismaCartRepository({ prisma: deps.prisma, tenantId, outbox, context });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — every repository takes it per
+    // call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const carts = new PrismaCartRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {

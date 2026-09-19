@@ -43,7 +43,7 @@ describe("GetCart", () => {
     };
     const useCase = new GetCart({ carts: repo });
 
-    const result = await useCase.execute({ cartId: "cart-1" });
+    const result = await useCase.execute({ tenantId: "tenant-a", cartId: "cart-1" });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -61,7 +61,7 @@ describe("GetCart", () => {
     };
     const useCase = new GetCart({ carts: repo });
 
-    const result = await useCase.execute({ cartId: "missing" });
+    const result = await useCase.execute({ tenantId: "tenant-a", cartId: "missing" });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -81,7 +81,7 @@ describe("GetCart", () => {
     };
     const useCase = new GetCart({ carts: repo });
 
-    await useCase.execute({ cartId: "cart-1" });
+    await useCase.execute({ tenantId: "tenant-a", cartId: "cart-1" });
 
     expect(saveCalled).toBe(false);
   });

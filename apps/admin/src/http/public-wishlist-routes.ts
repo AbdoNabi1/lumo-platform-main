@@ -281,7 +281,10 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
         const resolved = await own(context, false);
         if (!resolved.ok) return resolved.response;
 
-        const current = await admin.publicReads.cart.getCurrent({ sessionRef: body.sessionRef });
+        const current = await admin.publicReads.cart.getCurrent({
+          tenantId: context.tenantId,
+          sessionRef: body.sessionRef,
+        });
         if (current.status < 200 || current.status >= 300) return current;
         const cart = current.body as Cart | null;
         if (cart === null) {
@@ -292,6 +295,7 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
         if (price.status !== "ok") return priceUnresolvedResponse();
 
         const added = await admin.publicReads.cart.add({
+          tenantId: context.tenantId,
           cartId: cart.id.toString(),
           productId: body.productRef,
           quantity: 1,

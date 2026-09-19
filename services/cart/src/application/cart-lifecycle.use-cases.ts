@@ -8,6 +8,8 @@ import type { Cart } from "../domain/cart";
 import type { CartRepository } from "../domain/cart-repository";
 
 export interface CartLifecycleInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
 }
 
@@ -37,7 +39,7 @@ abstract class CartLifecycleCommand implements UseCase<
 
   async execute(input: CartLifecycleInput): Promise<Result<CartLifecycleOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<CartLifecycleOutput, DomainError>>(async (tx) => {
-      const cart = await this.deps.carts.findById(input.cartId, tx);
+      const cart = await this.deps.carts.findById(input.cartId, input.tenantId, tx);
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
@@ -49,7 +51,7 @@ abstract class CartLifecycleCommand implements UseCase<
         throw error;
       }
 
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString(), status: cart.status });
     });
   }

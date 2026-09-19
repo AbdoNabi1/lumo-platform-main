@@ -41,7 +41,7 @@ describe("GetCurrentCart", () => {
     };
     const useCase = new GetCurrentCart({ carts: repo });
 
-    const result = await useCase.execute({ sessionRef: "session-1" });
+    const result = await useCase.execute({ tenantId: "tenant-a", sessionRef: "session-1" });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -58,7 +58,10 @@ describe("GetCurrentCart", () => {
     };
     const useCase = new GetCurrentCart({ carts: repo });
 
-    const result = await useCase.execute({ sessionRef: "session-never-shopped" });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      sessionRef: "session-never-shopped",
+    });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -74,7 +77,7 @@ describe("GetCurrentCart", () => {
     };
     const useCase = new GetCurrentCart({ carts: repo });
 
-    const result = await useCase.execute({ sessionRef: "" });
+    const result = await useCase.execute({ tenantId: "tenant-a", sessionRef: "" });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -94,7 +97,7 @@ describe("GetCurrentCart", () => {
     };
     const useCase = new GetCurrentCart({ carts: repo });
 
-    await useCase.execute({ sessionRef: "session-1" });
+    await useCase.execute({ tenantId: "tenant-a", sessionRef: "session-1" });
 
     expect(saveCalled).toBe(false);
   });

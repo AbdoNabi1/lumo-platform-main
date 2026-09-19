@@ -387,7 +387,11 @@ describe("POST /public/auth/logout-all", () => {
 
 describe("POST /public/auth/claim-cart (login-time cart continuity)", () => {
   async function guestCart(sessionRef: string): Promise<string> {
-    const created = await h.cart.cart.create({ sessionRef, currency: "USD" });
+    const created = await h.cart.cart.create({
+      tenantId: "tenant-local",
+      sessionRef,
+      currency: "USD",
+    });
     expect(created.status).toBe(201);
     return (created.body as { cartId: string }).cartId;
   }

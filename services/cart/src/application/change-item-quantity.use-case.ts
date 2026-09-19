@@ -7,6 +7,8 @@ import type { CartRepository } from "../domain/cart-repository";
 import { Quantity } from "../domain/value-objects/quantity";
 
 export interface ChangeItemQuantityInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
   readonly productId: string;
   readonly quantity: number;
@@ -43,7 +45,7 @@ export class ChangeItemQuantity implements UseCase<
     if (!quantity.ok) return err(quantity.error);
 
     return this.deps.unitOfWork.run<Result<ChangeItemQuantityOutput, DomainError>>(async (tx) => {
-      const cart = await this.deps.carts.findById(input.cartId, tx);
+      const cart = await this.deps.carts.findById(input.cartId, input.tenantId, tx);
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
@@ -55,7 +57,7 @@ export class ChangeItemQuantity implements UseCase<
         throw error;
       }
 
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString(), totalAmountMinor: cart.totalAmount().amountMinor });
     });
   }

@@ -32,17 +32,18 @@ describe("ListCarts (Phase 4 T4.13)", () => {
   it("paginates", async () => {
     const carts = repo();
     for (let i = 0; i < 3; i += 1) {
-      await carts.save(cart(`cart-${i}`));
+      await carts.save(cart(`cart-${i}`), "tenant-a");
     }
     const useCase = new ListCarts({ carts });
 
-    const page = await useCase.execute({ first: 2 });
+    const page = await useCase.execute({ tenantId: "tenant-a", first: 2 });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
     expect(page.value.pageInfo.hasNextPage).toBe(true);
 
     const rest = await useCase.execute({
+      tenantId: "tenant-a",
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
     });
@@ -54,17 +55,17 @@ describe("ListCarts (Phase 4 T4.13)", () => {
 
   it("an optional status filter narrows the list to abandoned-cart recovery", async () => {
     const carts = repo();
-    await carts.save(cart("cart-active", "active"));
-    await carts.save(cart("cart-abandoned", "abandoned"));
+    await carts.save(cart("cart-active", "active"), "tenant-a");
+    await carts.save(cart("cart-abandoned", "abandoned"), "tenant-a");
     const useCase = new ListCarts({ carts });
 
-    const abandoned = await useCase.execute({ status: "abandoned" });
+    const abandoned = await useCase.execute({ tenantId: "tenant-a", status: "abandoned" });
     expect(abandoned.ok).toBe(true);
     if (!abandoned.ok) return;
     expect(abandoned.value.items).toHaveLength(1);
     expect(abandoned.value.items[0]?.id.toString()).toBe("cart-abandoned");
 
-    const active = await useCase.execute({ status: "active" });
+    const active = await useCase.execute({ tenantId: "tenant-a", status: "active" });
     expect(active.ok).toBe(true);
     if (!active.ok) return;
     expect(active.value.items).toHaveLength(1);

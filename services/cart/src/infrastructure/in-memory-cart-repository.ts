@@ -11,7 +11,8 @@ export interface InMemoryCartRepositoryDeps {
 
 /** In-memory `CartRepository`. Persists the aggregate and writes its events to the outbox on save. */
 export class InMemoryCartRepository implements CartRepository {
-  private readonly store = new Map<string, Cart>();
+  /** ADR-0014 (WP-10, T10.3): keyed by `(tenantId, cartId)`. */
+  private readonly store = new Map<string, Map<string, Cart>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,19 +21,24 @@ export class InMemoryCartRepository implements CartRepository {
     this.context = deps.context;
   }
 
-  async save(cart: Cart, tx?: unknown): Promise<void> {
-    this.store.set(cart.id.toString(), cart);
-    await this.outbox.write(cart.pullDomainEvents(), this.context, tx);
+  async save(cart: Cart, tenantId: string, tx?: unknown): Promise<void> {
+    let bucket = this.store.get(tenantId);
+    if (bucket === undefined) {
+      bucket = new Map();
+      this.store.set(tenantId, bucket);
+    }
+    bucket.set(cart.id.toString(), cart);
+    await this.outbox.write(cart.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<Cart | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Cart | null> {
+    return this.store.get(tenantId)?.get(id) ?? null;
   }
 
   /** Last matching entry in insertion order wins when more than one exists (see the port doc comment). */
-  async findBySessionRef(sessionRef: string): Promise<Cart | null> {
+  async findBySessionRef(sessionRef: string, tenantId: string): Promise<Cart | null> {
     let match: Cart | null = null;
-    for (const candidate of this.store.values()) {
+    for (const candidate of this.store.get(tenantId)?.values() ?? []) {
       if (candidate.sessionRef === sessionRef && candidate.status === "active") {
         match = candidate;
       }
@@ -41,8 +47,12 @@ export class InMemoryCartRepository implements CartRepository {
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage, filter?: CartListFilter): Promise<Paginated<Cart>> {
-    const all = [...this.store.values()]
+  async list(
+    page: CursorPage,
+    tenantId: string,
+    filter?: CartListFilter,
+  ): Promise<Paginated<Cart>> {
+    const all = [...(this.store.get(tenantId)?.values() ?? [])]
       .filter((cart) => filter?.status === undefined || cart.status === filter.status)
       .sort((a, b) => a.id.toString().localeCompare(b.id.toString()));
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;

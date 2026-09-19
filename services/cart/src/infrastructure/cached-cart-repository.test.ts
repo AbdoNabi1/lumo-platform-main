@@ -33,13 +33,13 @@ function trackingInner(): CartRepository & { finds: number; saves: number } {
   return {
     finds: 0,
     saves: 0,
-    async save(cart: Cart): Promise<void> {
+    async save(cart: Cart, tenantId: string): Promise<void> {
       this.saves += 1;
-      carts.set(cart.id.toString(), cart);
+      carts.set(`${tenantId}:${cart.id.toString()}`, cart);
     },
-    async findById(id: string): Promise<Cart | null> {
+    async findById(id: string, tenantId: string): Promise<Cart | null> {
       this.finds += 1;
-      return carts.get(id) ?? null;
+      return carts.get(`${tenantId}:${id}`) ?? null;
     },
     async findBySessionRef(sessionRef: string): Promise<Cart | null> {
       this.finds += 1;
@@ -74,12 +74,12 @@ describe("CachedCartRepository", () => {
   it("reads through on miss, then serves the rehydrated aggregate from cache", async () => {
     const inner = trackingInner();
     const cache = fakeCache();
-    const repo = new CachedCartRepository({ inner, cache, tenantId: "t-1" });
+    const repo = new CachedCartRepository({ inner, cache });
     const cart = newCart();
-    await repo.save(cart);
+    await repo.save(cart, "t-1");
 
-    const first = await repo.findById(cart.id.toString());
-    const second = await repo.findById(cart.id.toString());
+    const first = await repo.findById(cart.id.toString(), "t-1");
+    const second = await repo.findById(cart.id.toString(), "t-1");
 
     expect(inner.finds).toBe(1); // second read came from cache
     expect(second?.items).toHaveLength(1);
@@ -91,29 +91,29 @@ describe("CachedCartRepository", () => {
   it("save invalidates the cached entry (delete, never update)", async () => {
     const inner = trackingInner();
     const cache = fakeCache();
-    const repo = new CachedCartRepository({ inner, cache, tenantId: "t-1" });
+    const repo = new CachedCartRepository({ inner, cache });
     const cart = newCart();
-    await repo.save(cart);
-    await repo.findById(cart.id.toString()); // populate
+    await repo.save(cart, "t-1");
+    await repo.findById(cart.id.toString(), "t-1"); // populate
     expect(cache.store.size).toBe(1);
 
     cart.abandon("33333333-3333-4333-8333-333333333333", new Date(0));
-    await repo.save(cart);
+    await repo.save(cart, "t-1");
 
     expect(cache.store.size).toBe(0);
-    const reloaded = await repo.findById(cart.id.toString());
+    const reloaded = await repo.findById(cart.id.toString(), "t-1");
     expect(reloaded?.status).toBe("abandoned");
   });
 
   it("transactional reads bypass the cache entirely (read-your-writes)", async () => {
     const inner = trackingInner();
     const cache = fakeCache();
-    const repo = new CachedCartRepository({ inner, cache, tenantId: "t-1" });
+    const repo = new CachedCartRepository({ inner, cache });
     const cart = newCart();
-    await repo.save(cart);
-    await repo.findById(cart.id.toString()); // populate cache
+    await repo.save(cart, "t-1");
+    await repo.findById(cart.id.toString(), "t-1"); // populate cache
 
-    await repo.findById(cart.id.toString(), { tx: true });
+    await repo.findById(cart.id.toString(), "t-1", { tx: true });
 
     expect(inner.finds).toBe(2); // tx read went to the source of truth
   });
@@ -121,12 +121,12 @@ describe("CachedCartRepository", () => {
   it("degrades to the source of truth when the cache read fails", async () => {
     const inner = trackingInner();
     const cache = fakeCache();
-    const repo = new CachedCartRepository({ inner, cache, tenantId: "t-1" });
+    const repo = new CachedCartRepository({ inner, cache });
     const cart = newCart();
-    await repo.save(cart);
+    await repo.save(cart, "t-1");
     cache.failReads = true;
 
-    const loaded = await repo.findById(cart.id.toString());
+    const loaded = await repo.findById(cart.id.toString(), "t-1");
 
     expect(loaded).not.toBeNull();
     expect(inner.finds).toBe(1);
@@ -135,12 +135,12 @@ describe("CachedCartRepository", () => {
   it("findBySessionRef is a pure passthrough — never cached (Phase 17.1)", async () => {
     const inner = trackingInner();
     const cache = fakeCache();
-    const repo = new CachedCartRepository({ inner, cache, tenantId: "t-1" });
+    const repo = new CachedCartRepository({ inner, cache });
     const cart = newCart();
-    await repo.save(cart);
+    await repo.save(cart, "t-1");
 
-    const first = await repo.findBySessionRef("session-1");
-    const second = await repo.findBySessionRef("session-1");
+    const first = await repo.findBySessionRef("session-1", "t-1");
+    const second = await repo.findBySessionRef("session-1", "t-1");
 
     expect(first?.id.toString()).toBe(cart.id.toString());
     expect(second?.id.toString()).toBe(cart.id.toString());
@@ -151,11 +151,23 @@ describe("CachedCartRepository", () => {
   it("tenant-prefixes every cache key (ADR-0008)", async () => {
     const inner = trackingInner();
     const cache = fakeCache();
-    const repo = new CachedCartRepository({ inner, cache, tenantId: "t-9" });
+    const repo = new CachedCartRepository({ inner, cache });
     const cart = newCart();
-    await repo.save(cart);
-    await repo.findById(cart.id.toString());
+    await repo.save(cart, "t-9");
+    await repo.findById(cart.id.toString(), "t-9");
 
     expect([...cache.store.keys()][0]).toBe(`tenant:t-9:cart:${cart.id.toString()}`);
+  });
+
+  it("one instance serves two tenants: an entry cached for tenant A is not served to tenant B (ADR-0014)", async () => {
+    const inner = trackingInner();
+    const cache = fakeCache();
+    const repo = new CachedCartRepository({ inner, cache });
+    const cart = newCart();
+    await repo.save(cart, "tenant-a");
+    await repo.findById(cart.id.toString(), "tenant-a"); // populate tenant A's key
+
+    expect(await repo.findById(cart.id.toString(), "tenant-b")).toBeNull();
+    expect([...cache.store.keys()]).toEqual([`tenant:tenant-a:cart:${cart.id.toString()}`]);
   });
 });

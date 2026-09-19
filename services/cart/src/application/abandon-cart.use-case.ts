@@ -7,6 +7,8 @@ import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
 
 export interface AbandonCartInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
 }
 
@@ -31,7 +33,7 @@ export class AbandonCart implements UseCase<AbandonCartInput, AbandonCartOutput,
 
   async execute(input: AbandonCartInput): Promise<Result<AbandonCartOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<AbandonCartOutput, DomainError>>(async (tx) => {
-      const cart = await this.deps.carts.findById(input.cartId, tx);
+      const cart = await this.deps.carts.findById(input.cartId, input.tenantId, tx);
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
@@ -43,7 +45,7 @@ export class AbandonCart implements UseCase<AbandonCartInput, AbandonCartOutput,
         throw error;
       }
 
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString() });
     });
   }

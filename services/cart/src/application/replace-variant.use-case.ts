@@ -8,6 +8,8 @@ import type { CartRepository } from "../domain/cart-repository";
 import { Quantity } from "../domain/value-objects/quantity";
 
 export interface ReplaceVariantInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
   readonly oldProductId: string;
   readonly newProductId: string;
@@ -50,7 +52,7 @@ export class ReplaceVariant implements UseCase<
     if (!unitPrice.ok) return err(unitPrice.error);
 
     return this.deps.unitOfWork.run<Result<ReplaceVariantOutput, DomainError>>(async (tx) => {
-      const cart = await this.deps.carts.findById(input.cartId, tx);
+      const cart = await this.deps.carts.findById(input.cartId, input.tenantId, tx);
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
@@ -69,7 +71,7 @@ export class ReplaceVariant implements UseCase<
         throw error;
       }
 
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString(), totalAmountMinor: cart.totalAmount().amountMinor });
     });
   }

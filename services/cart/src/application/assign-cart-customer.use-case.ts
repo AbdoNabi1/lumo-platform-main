@@ -6,6 +6,8 @@ import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
 
 export interface AssignCartCustomerInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
   /** The customer this cart now belongs to. Callers MUST derive this from a validated session. */
   readonly customerRef: string;
@@ -52,12 +54,14 @@ export class AssignCartCustomer implements UseCase<
     this.deps = deps;
   }
 
-  async execute(input: AssignCartCustomerInput): Promise<Result<AssignCartCustomerOutput, DomainError>> {
+  async execute(
+    input: AssignCartCustomerInput,
+  ): Promise<Result<AssignCartCustomerOutput, DomainError>> {
     const customerRef = Guard.againstEmpty(input.customerRef, "customerRef");
     if (!customerRef.ok) return err(customerRef.error);
 
     return this.deps.unitOfWork.run<Result<AssignCartCustomerOutput, DomainError>>(async (tx) => {
-      const cart = await this.deps.carts.findById(input.cartId, tx);
+      const cart = await this.deps.carts.findById(input.cartId, input.tenantId, tx);
       if (cart === null) return err(new NotFoundError("Cart not found"));
 
       if (cart.customerRef === input.customerRef) {
@@ -71,7 +75,7 @@ export class AssignCartCustomer implements UseCase<
         throw error;
       }
 
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString(), customerRef: input.customerRef, assigned: true });
     });
   }

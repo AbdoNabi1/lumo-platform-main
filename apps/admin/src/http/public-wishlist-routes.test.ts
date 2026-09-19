@@ -358,7 +358,11 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
   }
 
   async function guestCart(sessionRef: string): Promise<void> {
-    const created = await h.cart.cart.create({ sessionRef, currency: "USD" });
+    const created = await h.cart.cart.create({
+      tenantId: "tenant-local",
+      sessionRef,
+      currency: "USD",
+    });
     expect(created.status).toBe(201);
   }
 
@@ -376,7 +380,7 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
     expect(response.status).toBe(200);
     expect((response.body as PublicWishlistDto).items).toEqual([]);
     // The cart genuinely holds it — this is what routing through the stub `CartPort` would NOT do.
-    const cart = await h.cart.cart.getCurrent({ sessionRef: "guest-1" });
+    const cart = await h.cart.cart.getCurrent({ tenantId: "tenant-local", sessionRef: "guest-1" });
     const items = (cart.body as { items: readonly { productRef: { value: string } }[] }).items;
     expect(items.map((i) => i.productRef.value)).toEqual(["prod-1"]);
   });
@@ -399,7 +403,7 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
       },
     });
 
-    const cart = await h.cart.cart.getCurrent({ sessionRef: "guest-1" });
+    const cart = await h.cart.cart.getCurrent({ tenantId: "tenant-local", sessionRef: "guest-1" });
     const items = (cart.body as { items: readonly { unitPrice: { amountMinor: number } }[] }).items;
     expect(items[0]?.unitPrice.amountMinor).toBe(1500);
   });
@@ -443,7 +447,7 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
     });
 
     expect(response.status).toBe(401);
-    const cart = await h.cart.cart.getCurrent({ sessionRef: "guest-1" });
+    const cart = await h.cart.cart.getCurrent({ tenantId: "tenant-local", sessionRef: "guest-1" });
     expect((cart.body as { items: readonly unknown[] }).items).toEqual([]);
   });
 });
