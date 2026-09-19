@@ -34,12 +34,31 @@ check` — applied 2026-08-23 07:11 and 13:50 respectively (six and a half hours
   `USING` clause is `(tenant_id IS NULL) OR (tenant_id = current_setting(...))` — matching the
   second migration's "nullable" name and this file's own §3 RLS plan below. **This means the RLS
   layer §3 describes as a to-do is in fact already live in production** — see
-  `docs/plans/BLOCKERS.md`'s 2026-09-09 entry for the full drift report and what committing
-  reconstructed migration files back into this repo needs before it's safe. As of this date, the
-  only migration in this repo's local files not yet applied to the live database is WP-11's own
-  `20260909000000_wp11_float_to_decimal_money_columns` — confirmed via read-only `prisma migrate
-status`, not yet deployed (see the same BLOCKERS.md entry for why `migrate deploy` was not run
-  against live infrastructure without explicit sign-off).
+  `docs/plans/BLOCKERS.md`'s 2026-09-09 entry for the full drift report.
+
+  **Both halves of that drift are CLOSED as of 2026-09-19 — 40 migrations, files and history in
+  agreement.** What closed them, and one correction worth keeping:
+
+  - The two RLS migrations were reconstructed a second time from live introspection on 2026-09-19
+    (130 tables carrying `tenant_id`, 130 `tenant_isolation` policies, 130 tables with `FORCE ROW
+LEVEL SECURITY`, and — checked explicitly — **no** tenant-scoped table without a policy) and
+    committed as real migration files. The nullable-read variant is on exactly two tables,
+    `platform.audit_events` and `platform.outbox`, confirming the earlier reading.
+  - **`prisma migrate resolve --applied` was NOT needed and does not work here.** Running it
+    returns `P3008`, "already recorded as applied". The live database always had the history rows
+    — that is precisely how `migrate status` surfaced the gap ("found in the database but not
+    locally"). Only the files were missing, so committing them was the entire fix, with no write
+    to the live database at all. `migrate resolve --applied` is for the opposite drift: a file
+    that exists locally which the database has never recorded. Recorded here because the obvious
+    reading of "the history is out of sync" points at the wrong command.
+  - WP-11's `20260909000000_wp11_float_to_decimal_money_columns` was deployed on 2026-09-19 via
+    `migrate deploy`, after confirming by direct query that all four affected tables
+    (`licensing.usage_counters`, `licensing.credits`, `pricing.pricing_rules`,
+    `finance.exchange_rates`) held **zero rows** — so the type change rewrote no data and the
+    absent backup (Supabase free tier keeps none, and this environment has no `pg_dump`) bounded
+    no real risk. Do not read that as a precedent for deploying without a backup; it was a
+    measured, empty-table exception.
+
 - **Development:** `pnpm db:migrate` (`prisma migrate dev`) against local compose Postgres —
   never edit an applied migration; always add a new one.
 - **Production:** `prisma migrate deploy` in CD, before the new app version serves traffic.

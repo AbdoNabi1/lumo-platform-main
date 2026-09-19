@@ -21,10 +21,14 @@
 -- on the READ side only by the next migration, 20260823010000_rls_nullable_tenant_write_check.
 --
 -- HOW THIS FILE MUST BE APPLIED:
---   * Against the live database — it is ALREADY APPLIED. Use `prisma migrate resolve --applied`
---     to record it, NEVER `migrate deploy`. Running this SQL there would be a no-op at best
---     (every statement is idempotent) but the migration history, not the schema, is what is
---     actually out of sync.
+--   * Against the live database — NOTHING. Do not run it, and do not `migrate resolve` it either.
+--     Corrected 2026-09-19, by running the command and reading the error: the live database
+--     ALREADY HELD the `_prisma_migrations` row for this migration (that is how G-63 was found in
+--     the first place — `migrate status` reported it as "found in the database but not locally").
+--     Only the FILE was missing. `prisma migrate resolve --applied` therefore fails with P3008,
+--     "already recorded as applied", and is the wrong tool: it exists for the opposite drift,
+--     where a file exists and the database does not know about it. Committing this file is the
+--     entire fix; history and files now agree with no database write at all.
 --   * Against a fresh database built from this history — it runs for real, here, in order. That
 --     is precisely why it must be committed: without it, a database created from this repository
 --     comes up with NO row-level security at all while the live one has 130 policies, and nothing
@@ -35,9 +39,10 @@
 -- from this file and must carry its own. As of 2026-09-19 no such table exists (130 = 130 above),
 -- but nothing in the schema enforces that going forward — see G-63 in the gap register.
 --
--- THIS FILE HAS NEVER BEEN EXECUTED, ANYWHERE. It is reconstructed, and it will be recorded with
--- `migrate resolve --applied`, which writes a history row without running the SQL. The live
--- database already has the state it describes. Its first real execution will therefore be on some
+-- THIS FILE HAS NEVER BEEN EXECUTED, ANYWHERE. It is reconstructed, and the live database both
+-- already has the state it describes and already has its history row (see above). Nothing runs
+-- this SQL to bring the live database into line — there is nothing to bring into line. Its first
+-- real execution will therefore be on some
 -- future fresh database, by whoever builds one — and no test in this repository covers that path,
 -- because there is no local Postgres in the development environment this was written in. It is
 -- also the first migration in this history to use a `DO` block (checked: zero of the other 38).

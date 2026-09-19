@@ -33,8 +33,10 @@
 -- Do not "simplify" this by making WITH CHECK match USING. That would reopen tenant-less writes
 -- and convert a closing gap into a permanent one.
 --
--- Like the previous migration, this file has never been executed anywhere: it is reconstructed,
--- will be recorded with `migrate resolve --applied`, and runs for real only on a future fresh
+-- Like the previous migration, this file has never been executed anywhere, and like it, the live
+-- database already holds BOTH the state it describes and its `_prisma_migrations` row — so it
+-- needs no `migrate resolve` (that returns P3008, "already recorded as applied"; verified
+-- 2026-09-19). Committing the file is the whole fix. It runs for real only on a future fresh
 -- database. Verify there with:
 --     SELECT schemaname||'.'||tablename FROM pg_policies
 --      WHERE policyname = 'tenant_isolation' AND qual LIKE '%IS NULL%';
