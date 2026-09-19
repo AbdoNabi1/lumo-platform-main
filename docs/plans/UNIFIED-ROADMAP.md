@@ -1,5 +1,9 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
+## Status — 2026-09-19 (T10.3 batch 3: security converted; 39 of 40)
+
+`security` converted to per-request `tenantId` (b389e9f), so **39 of the 40 service compositions are converted** and **1 is not** (`tenancy`, parked) — from `rootEventContext(` call arity, not prose. T10.3 is NOT complete: `tenancy` stops on ADR-0014 point 8f (which reading of `Tenant.tenantId`), pending operator decision. T10.7: security's class-A row deleted; three class-D rows added (identity/consent projection consumers, provisioning consumers, boot-time bootstrap).
+
 ## Status — 2026-09-19 (T10.3 batch 2: cart, inventory, payments, orders, fulfillment, checkout, returns converted)
 
 Seven more contexts moved to per-request `tenantId`, one commit each, so **38 of the 40 service
