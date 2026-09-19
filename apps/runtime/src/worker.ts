@@ -9,6 +9,7 @@ import {
 } from "./composition";
 import { buildFinanceSettlementConsumerRuntimes } from "./consumers/finance-settlement.consumers";
 import { buildOrdersPaidConsumerRuntimes } from "./consumers/orders-paid.consumers";
+import { assertWorkerTenantModeSupported } from "./tenant-mode-guard";
 import { startHealthServer } from "./health-server";
 import { startOutboxRelay } from "./outbox-relay-runtime";
 import { wireSecurityProvisioning } from "./security/wire-security-provisioning";
@@ -30,6 +31,9 @@ export async function startWorker(
   config: RuntimeConfig,
   core?: RuntimeCore,
 ): Promise<ConsumerSupervisor> {
+  // T10.4: multi mode is possible for the API (per-request resolution) but not for this process —
+  // its consumers are pinned to TENANT_DEFAULT_ID until G-64. Refuse BEFORE building anything.
+  assertWorkerTenantModeSupported(config.TENANT_MODE);
   const runtime = core ?? buildRuntimeCore(config);
   // H-03: see api.ts — same activation, this process's role suffix.
   const telemetry = startRuntimeTelemetry(config, "worker");
