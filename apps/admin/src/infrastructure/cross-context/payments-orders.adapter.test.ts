@@ -57,9 +57,11 @@ describe("PaymentsOrdersAdapter (Payments -> Orders, C-3)", () => {
     const orders = fakeOrderController(calls);
     const adapter = new PaymentsOrdersAdapter(orders);
 
-    await expect(adapter.reportPaymentOutcome("ORD-1001", "captured")).resolves.toBeUndefined();
+    await expect(
+      adapter.reportPaymentOutcome("ORD-1001", "captured", "tenant-a"),
+    ).resolves.toBeUndefined();
 
-    expect(calls.getOrder).toEqual([{ orderId: "ORD-1001" }]);
+    expect(calls.getOrder).toEqual([{ tenantId: "tenant-a", orderId: "ORD-1001" }]);
   });
 
   it("propagates a lookup failure (no swallowing here — the call site already swallows)", async () => {
@@ -67,8 +69,10 @@ describe("PaymentsOrdersAdapter (Payments -> Orders, C-3)", () => {
     const orders = fakeOrderController(calls, { found: false });
     const adapter = new PaymentsOrdersAdapter(orders);
 
-    await expect(adapter.reportPaymentOutcome("ORD-9999", "captured")).rejects.toThrow();
-    expect(calls.getOrder).toEqual([{ orderId: "ORD-9999" }]);
+    await expect(
+      adapter.reportPaymentOutcome("ORD-9999", "captured", "tenant-a"),
+    ).rejects.toThrow();
+    expect(calls.getOrder).toEqual([{ tenantId: "tenant-a", orderId: "ORD-9999" }]);
   });
 
   it("never calls a state-mutating Orders method, even for a 'captured' status transition", async () => {
@@ -78,10 +82,10 @@ describe("PaymentsOrdersAdapter (Payments -> Orders, C-3)", () => {
     const orders = fakeOrderController(calls);
     const adapter = new PaymentsOrdersAdapter(orders);
 
-    await adapter.reportPaymentOutcome("ORD-2002", "created");
-    await adapter.reportPaymentOutcome("ORD-2002", "capture_requested");
-    await adapter.reportPaymentOutcome("ORD-2002", "captured");
-    await adapter.reportPaymentOutcome("ORD-2002", "refunded");
+    await adapter.reportPaymentOutcome("ORD-2002", "created", "tenant-a");
+    await adapter.reportPaymentOutcome("ORD-2002", "capture_requested", "tenant-a");
+    await adapter.reportPaymentOutcome("ORD-2002", "captured", "tenant-a");
+    await adapter.reportPaymentOutcome("ORD-2002", "refunded", "tenant-a");
 
     expect(calls.getOrder).toHaveLength(4);
   });

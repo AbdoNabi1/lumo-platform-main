@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { Paginated } from "@platform/types";
@@ -24,8 +24,6 @@ export interface PrismaOrderRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Prisma requires an explicit SQL-NULL sentinel for nullable `Json?` columns — bare `null` is ambiguous. */
@@ -48,9 +46,8 @@ export class PrismaOrderRepository implements OrderRepository {
     this.deps = deps;
   }
 
-  async save(order: Order, tx?: unknown): Promise<void> {
+  async save(order: Order, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const row = OrderMapper.toOrderRow(order, tenantId);
 
     if (order.version === 0) {
@@ -89,13 +86,23 @@ export class PrismaOrderRepository implements OrderRepository {
       });
     }
 
-    await this.deps.outbox.write(order.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      order.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Order | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const tenantId = this.deps.tenantId;
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Order | null> {
+    return this.scoped(tenantId, tx, (client) => this.findByIdWith(client, id, tenantId));
+  }
 
+  private async findByIdWith(
+    client: TransactionClient,
+    id: string,
+    tenantId: string,
+  ): Promise<Order | null> {
     const row = await client.order.findFirst({
       where: { id, tenantId },
       include: {
@@ -135,9 +142,15 @@ export class PrismaOrderRepository implements OrderRepository {
    * order shipping address lookup instead of N+1, since `findById` fetches it separately) — this
    * mirrors Product's `list()`, which also rehydrates full aggregates rather than a shortcut shape.
    */
-  async list(query: OrderListQuery, tx?: unknown): Promise<Paginated<Order>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const tenantId = this.deps.tenantId;
+  async list(query: OrderListQuery, tenantId: string, tx?: unknown): Promise<Paginated<Order>> {
+    return this.scoped(tenantId, tx, (client) => this.listWith(client, query, tenantId));
+  }
+
+  private async listWith(
+    client: TransactionClient,
+    query: OrderListQuery,
+    tenantId: string,
+  ): Promise<Paginated<Order>> {
     const limit = normalizePageSize(query.first);
     const after = query.after !== undefined ? decodeCursor(query.after) : undefined;
 
@@ -270,6 +283,17 @@ export class PrismaOrderRepository implements OrderRepository {
         address,
       );
     });
+  }
+
+  /** Reuses the caller's `tx` if given, else scopes a read via `runReadScoped` (ADR-0014). */
+  private scoped<T>(
+    tenantId: string,
+    tx: unknown,
+    run: (client: TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return tx !== undefined && tx !== null
+      ? run(tx as TransactionClient)
+      : runReadScoped(this.deps.prisma, tenantId, run);
   }
 
   private requireTx(tx: unknown): TransactionClient {

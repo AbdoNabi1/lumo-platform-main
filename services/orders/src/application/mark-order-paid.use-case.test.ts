@@ -42,6 +42,7 @@ function wire(shadow?: PaymentTruthShadowPort, paymentVerification?: PaymentVeri
 
 async function placeAnOrder(placeOrder: PlaceOrder): Promise<string> {
   const placed = await placeOrder.execute({
+    tenantId: "tenant-a",
     customerRef: "customer-1",
     currency: "USD",
     items: [{ productId: "p-1", name: "Toy Wagon", unitPriceAmountMinor: 1999, quantity: 2 }],
@@ -56,7 +57,11 @@ describe("MarkOrderPaid (Sprint A1 — Payment Truth Foundation)", () => {
     const { placeOrder, markOrderPaid } = wire();
     const orderId = await placeAnOrder(placeOrder);
 
-    const result = await markOrderPaid.execute({ orderId, paymentRef: "payment-1" });
+    const result = await markOrderPaid.execute({
+      tenantId: "tenant-a",
+      orderId,
+      paymentRef: "payment-1",
+    });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("paid");
@@ -68,7 +73,7 @@ describe("MarkOrderPaid (Sprint A1 — Payment Truth Foundation)", () => {
     const { placeOrder, markOrderPaid } = wire(shadow);
     const orderId = await placeAnOrder(placeOrder);
 
-    await markOrderPaid.execute({ orderId, paymentRef: "payment-1" });
+    await markOrderPaid.execute({ tenantId: "tenant-a", orderId, paymentRef: "payment-1" });
 
     expect(observations).toHaveLength(1);
     expect(observations[0]).toEqual({ orderId, paymentRef: "payment-1", resultingStatus: "paid" });
@@ -80,6 +85,7 @@ describe("MarkOrderPaid (Sprint A1 — Payment Truth Foundation)", () => {
     const { markOrderPaid } = wire(shadow);
 
     const result = await markOrderPaid.execute({
+      tenantId: "tenant-a",
       orderId: "missing-order",
       paymentRef: "payment-1",
     });
@@ -92,7 +98,11 @@ describe("MarkOrderPaid (Sprint A1 — Payment Truth Foundation)", () => {
     const { placeOrder, markOrderPaid } = wire();
     const orderId = await placeAnOrder(placeOrder);
 
-    const result = await markOrderPaid.execute({ orderId, paymentRef: "payment-1" });
+    const result = await markOrderPaid.execute({
+      tenantId: "tenant-a",
+      orderId,
+      paymentRef: "payment-1",
+    });
 
     expect(result.ok).toBe(true);
   });
@@ -102,7 +112,11 @@ describe("MarkOrderPaid (Sprint A1 — Payment Truth Foundation)", () => {
     const { placeOrder, markOrderPaid } = wire(undefined, paymentVerification);
     const orderId = await placeAnOrder(placeOrder);
 
-    const result = await markOrderPaid.execute({ orderId, paymentRef: "payment-1" });
+    const result = await markOrderPaid.execute({
+      tenantId: "tenant-a",
+      orderId,
+      paymentRef: "payment-1",
+    });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("paid");
@@ -115,7 +129,11 @@ describe("MarkOrderPaid (Sprint A1 — Payment Truth Foundation)", () => {
     const { placeOrder, markOrderPaid } = wire(shadow, paymentVerification);
     const orderId = await placeAnOrder(placeOrder);
 
-    const result = await markOrderPaid.execute({ orderId, paymentRef: "fake-ref" });
+    const result = await markOrderPaid.execute({
+      tenantId: "tenant-a",
+      orderId,
+      paymentRef: "fake-ref",
+    });
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("VALIDATION");
@@ -135,7 +153,7 @@ describe("MarkOrderPaid (Sprint A1 — Payment Truth Foundation)", () => {
     const { placeOrder, markOrderPaid } = wire(undefined, paymentVerification);
     const orderId = await placeAnOrder(placeOrder);
 
-    await markOrderPaid.execute({ orderId, paymentRef: "payment-xyz" });
+    await markOrderPaid.execute({ tenantId: "tenant-a", orderId, paymentRef: "payment-xyz" });
 
     expect(seen).toEqual([{ orderId, paymentRef: "payment-xyz" }]);
   });

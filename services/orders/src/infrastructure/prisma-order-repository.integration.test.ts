@@ -45,14 +45,10 @@ describe.runIf(Boolean(databaseUrl))("PrismaOrderRepository (integration)", () =
       clock,
       producer: "orders",
     });
-    const context = rootEventContext(ids, "tenant-itest");
-    const repository = new PrismaOrderRepository({
-      prisma,
-      outbox,
-      context,
-      tenantId: "tenant-itest",
-    });
-    return { prisma, repository, unitOfWork: new PrismaUnitOfWork(prisma), outboxStore };
+    const tenantId = "tenant-itest";
+    const context = rootEventContext(ids);
+    const repository = new PrismaOrderRepository({ prisma, outbox, context });
+    return { prisma, repository, unitOfWork: new PrismaUnitOfWork(prisma), outboxStore, tenantId };
   }
 
   function placeOrder(): Order {
@@ -72,11 +68,11 @@ describe.runIf(Boolean(databaseUrl))("PrismaOrderRepository (integration)", () =
   }
 
   it("round-trips the aggregate exactly: items, address, derived status, version", async () => {
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const order = placeOrder();
 
-    await unitOfWork.run(async (tx) => repository.save(order, tx));
-    const loaded = await repository.findById(order.id.toString());
+    await unitOfWork.run(async (tx) => repository.save(order, tenantId, tx));
+    const loaded = await repository.findById(order.id.toString(), tenantId);
 
     expect(loaded).not.toBeNull();
     expect(loaded?.status).toBe("placed"); // derived from history rows, never stored
@@ -88,10 +84,10 @@ describe.runIf(Boolean(databaseUrl))("PrismaOrderRepository (integration)", () =
   });
 
   it("writes the outbox row in the SAME transaction as the aggregate", async () => {
-    const { prisma, repository, unitOfWork, outboxStore } = wire();
+    const { prisma, repository, unitOfWork, outboxStore, tenantId } = wire();
     const order = placeOrder();
 
-    await unitOfWork.run(async (tx) => repository.save(order, tx));
+    await unitOfWork.run(async (tx) => repository.save(order, tenantId, tx));
     const pending = await outboxStore.fetchPending(100);
 
     expect(pending.some((entry) => entry.key === order.id.toString())).toBe(true);
@@ -99,20 +95,20 @@ describe.runIf(Boolean(databaseUrl))("PrismaOrderRepository (integration)", () =
   });
 
   it("rejects a stale write with ConcurrencyError (no retry, no silent overwrite)", async () => {
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const order = placeOrder();
-    await unitOfWork.run(async (tx) => repository.save(order, tx));
+    await unitOfWork.run(async (tx) => repository.save(order, tenantId, tx));
 
-    const first = await repository.findById(order.id.toString());
-    const second = await repository.findById(order.id.toString());
+    const first = await repository.findById(order.id.toString(), tenantId);
+    const second = await repository.findById(order.id.toString(), tenantId);
     if (first === null || second === null) throw new Error("setup failed");
     first.markPaid(crypto.randomUUID(), ids.generate(), clock.now());
     second.markPaid(crypto.randomUUID(), ids.generate(), clock.now());
 
-    await unitOfWork.run(async (tx) => repository.save(first, tx));
-    await expect(unitOfWork.run(async (tx) => repository.save(second, tx))).rejects.toBeInstanceOf(
-      ConcurrencyError,
-    );
+    await unitOfWork.run(async (tx) => repository.save(first, tenantId, tx));
+    await expect(
+      unitOfWork.run(async (tx) => repository.save(second, tenantId, tx)),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
     await prisma.$disconnect();
   });
 
@@ -149,8 +145,8 @@ describe.runIf(Boolean(databaseUrl))("PrismaOrderRepository (integration)", () =
         producer: "orders",
       });
       const tenantId = `tenant-list-itest-${ids.generate()}`;
-      const context = rootEventContext(ids, tenantId);
-      const repository = new PrismaOrderRepository({ prisma, outbox, context, tenantId });
+      const context = rootEventContext(ids);
+      const repository = new PrismaOrderRepository({ prisma, outbox, context });
       return { prisma, repository, unitOfWork: new PrismaUnitOfWork(prisma), tenantId, ids };
     }
 
@@ -171,23 +167,23 @@ describe.runIf(Boolean(databaseUrl))("PrismaOrderRepository (integration)", () =
     }
 
     it("returns an empty page for a tenant with no orders", async () => {
-      const { prisma, repository } = wireList(monotonicIds());
-      const page = await repository.list({});
+      const { prisma, repository, tenantId } = wireList(monotonicIds());
+      const page = await repository.list({}, tenantId);
       expect(page).toEqual({ items: [], pageInfo: { hasNextPage: false, endCursor: null } });
       await prisma.$disconnect();
     });
 
     it("pages most-recently-placed first and is tenant-scoped", async () => {
       const ids = monotonicIds();
-      const { prisma, repository, unitOfWork } = wireList(ids);
+      const { prisma, repository, unitOfWork, tenantId } = wireList(ids);
       const first = placeOrderWith(ids);
-      await unitOfWork.run((tx) => repository.save(first, tx));
+      await unitOfWork.run((tx) => repository.save(first, tenantId, tx));
       const second = placeOrderWith(ids);
-      await unitOfWork.run((tx) => repository.save(second, tx));
+      await unitOfWork.run((tx) => repository.save(second, tenantId, tx));
       const third = placeOrderWith(ids);
-      await unitOfWork.run((tx) => repository.save(third, tx));
+      await unitOfWork.run((tx) => repository.save(third, tenantId, tx));
 
-      const page1 = await repository.list({ first: 2 });
+      const page1 = await repository.list({ first: 2 }, tenantId);
       expect(page1.items.map((o) => o.id.toString())).toEqual([
         third.id.toString(),
         second.id.toString(),
@@ -195,10 +191,13 @@ describe.runIf(Boolean(databaseUrl))("PrismaOrderRepository (integration)", () =
       expect(page1.pageInfo.hasNextPage).toBe(true);
       expect(page1.pageInfo.endCursor).not.toBeNull();
 
-      const page2 = await repository.list({
-        first: 2,
-        after: page1.pageInfo.endCursor ?? undefined,
-      });
+      const page2 = await repository.list(
+        {
+          first: 2,
+          after: page1.pageInfo.endCursor ?? undefined,
+        },
+        tenantId,
+      );
       expect(page2.items.map((o) => o.id.toString())).toEqual([first.id.toString()]);
       expect(page2.pageInfo.hasNextPage).toBe(false);
       await prisma.$disconnect();

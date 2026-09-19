@@ -9,6 +9,8 @@ import type { PaymentTruthShadowPort } from "./payment-truth-shadow";
 import type { PaymentVerificationPort } from "./ports";
 
 export interface MarkOrderPaidInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderId: string;
   readonly paymentRef: string;
 }
@@ -61,6 +63,7 @@ export class MarkOrderPaid implements UseCase<
       const verified = await this.deps.paymentVerification.hasCapturedPayment(
         input.orderId,
         input.paymentRef,
+        input.tenantId,
       );
       if (!verified) {
         return err(
@@ -72,7 +75,7 @@ export class MarkOrderPaid implements UseCase<
     }
 
     return this.deps.unitOfWork.run<Result<MarkOrderPaidOutput, DomainError>>(async (tx) => {
-      const order = await this.deps.orders.findById(input.orderId, tx);
+      const order = await this.deps.orders.findById(input.orderId, input.tenantId, tx);
       if (order === null) {
         return err(new NotFoundError("Order not found"));
       }
@@ -88,7 +91,7 @@ export class MarkOrderPaid implements UseCase<
         throw error;
       }
 
-      await this.deps.orders.save(order, tx);
+      await this.deps.orders.save(order, input.tenantId, tx);
       this.deps.shadow?.observe({
         orderId: order.id.toString(),
         paymentRef: input.paymentRef,

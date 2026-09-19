@@ -369,7 +369,8 @@ describe("PrismaPaymentVerificationAdapter (M2-7 — now also wired into the con
   }
 
   function fakePrisma(rows: readonly FakeRow[]): Database {
-    return {
+    const client = {
+      $executeRaw: async () => 0,
       paymentIntent: {
         findFirst: async ({ where }: { where: FakeRow }) => {
           const row = rows.find(
@@ -382,8 +383,13 @@ describe("PrismaPaymentVerificationAdapter (M2-7 — now also wired into the con
           return row ?? null;
         },
       },
-      // Deliberately partial fixture (only `paymentIntent.findFirst`) — needs the `unknown` hop
-      // since it has no structural overlap with the full `Database` (PrismaClient) type.
+      // Deliberately partial fixture (`paymentIntent.findFirst` + the transaction hooks
+      // `runReadScoped` needs) — needs the `unknown` hop since it has no structural overlap with
+      // the full `Database` (PrismaClient) type.
+    };
+    return {
+      ...client,
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(client),
     } as unknown as Database;
   }
 
@@ -391,42 +397,52 @@ describe("PrismaPaymentVerificationAdapter (M2-7 — now also wired into the con
     const prisma = fakePrisma([
       { id: "pay-1", orderRef: "order-1", tenantId: "tenant-local", status: "captured" },
     ]);
-    const adapter = new PrismaPaymentVerificationAdapter(prisma, "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(true);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(true);
+  });
+
+  it("one adapter instance serves two tenants: tenant B cannot verify tenant A's captured payment (ADR-0014)", async () => {
+    const prisma = fakePrisma([
+      { id: "pay-1", orderRef: "order-1", tenantId: "tenant-a", status: "captured" },
+    ]);
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
+
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-a")).toBe(true);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-b")).toBe(false);
   });
 
   it("rejects when no matching captured payment exists — the invalid case", async () => {
-    const adapter = new PrismaPaymentVerificationAdapter(fakePrisma([]), "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(fakePrisma([]));
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(false);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(false);
   });
 
   it("rejects a payment id captured for a different order (replayed/mismatched event guard)", async () => {
     const prisma = fakePrisma([
       { id: "pay-1", orderRef: "order-2", tenantId: "tenant-local", status: "captured" },
     ]);
-    const adapter = new PrismaPaymentVerificationAdapter(prisma, "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(false);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(false);
   });
 
   it("rejects a payment scoped to a different tenant (tenant-isolation guard)", async () => {
     const prisma = fakePrisma([
       { id: "pay-1", orderRef: "order-1", tenantId: "other-tenant", status: "captured" },
     ]);
-    const adapter = new PrismaPaymentVerificationAdapter(prisma, "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(false);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(false);
   });
 
   it("rejects a matching row that is not yet captured (e.g. still requires_payment)", async () => {
     const prisma = fakePrisma([
       { id: "pay-1", orderRef: "order-1", tenantId: "tenant-local", status: "requires_payment" },
     ]);
-    const adapter = new PrismaPaymentVerificationAdapter(prisma, "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(false);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(false);
   });
 });
 

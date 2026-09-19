@@ -65,9 +65,9 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
   it("follows the create -> queue -> send sequence in order", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls);
-    const adapter = new OrdersNotificationAdapter(notifications, "tenant-a");
+    const adapter = new OrdersNotificationAdapter(notifications);
 
-    await adapter.notify("customer-1", "ORD-1001", "fulfillment_requested");
+    await adapter.notify("customer-1", "ORD-1001", "fulfillment_requested", "tenant-a");
 
     expect(calls.sequence).toEqual(["create", "queue", "send"]);
     expect(calls.queue[0]?.notificationId).toBe("notif-1");
@@ -79,22 +79,22 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
     ).toEqual(["tenant-a", "tenant-a", "tenant-a"]);
   });
 
-  it("throws without a tenant rather than defaulting one (ADR-0014)", async () => {
+  it("one adapter instance serves two tenants, each call carrying its own tenant (ADR-0014)", async () => {
     const calls = emptyCalls();
     const adapter = new OrdersNotificationAdapter(fakeNotificationsController(calls));
 
-    await expect(adapter.notify("customer-1", "ORD-1001", "fulfillment_requested")).rejects.toThrow(
-      /tenantId is required/,
-    );
-    expect(calls.sequence).toEqual([]);
+    await adapter.notify("customer-1", "ORD-1001", "shipped", "tenant-a");
+    await adapter.notify("customer-1", "ORD-1001", "shipped", "tenant-b");
+
+    expect(calls.send.map((c) => c.tenantId)).toEqual(["tenant-a", "tenant-b"]);
   });
 
   it("maps customerRef/orderNumber/status into a minimal, sane CreateNotificationInput", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls);
-    const adapter = new OrdersNotificationAdapter(notifications, "tenant-a");
+    const adapter = new OrdersNotificationAdapter(notifications);
 
-    await adapter.notify("customer-42", "ORD-2002", "fulfillment_requested");
+    await adapter.notify("customer-42", "ORD-2002", "fulfillment_requested", "tenant-a");
 
     const created = calls.create[0];
     expect(created).toBeDefined();
@@ -114,10 +114,10 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
   it("idempotencyKey is stable across repeated calls with the same customerRef/orderNumber/status", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls);
-    const adapter = new OrdersNotificationAdapter(notifications, "tenant-a");
+    const adapter = new OrdersNotificationAdapter(notifications);
 
-    await adapter.notify("customer-1", "ORD-3003", "shipped");
-    await adapter.notify("customer-1", "ORD-3003", "shipped");
+    await adapter.notify("customer-1", "ORD-3003", "shipped", "tenant-a");
+    await adapter.notify("customer-1", "ORD-3003", "shipped", "tenant-a");
 
     expect(calls.create).toHaveLength(2);
     expect(calls.create[0]?.idempotencyKey).toBe(calls.create[1]?.idempotencyKey);
@@ -126,10 +126,10 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
   it("idempotencyKey differs across different statuses for the same order", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls);
-    const adapter = new OrdersNotificationAdapter(notifications, "tenant-a");
+    const adapter = new OrdersNotificationAdapter(notifications);
 
-    await adapter.notify("customer-1", "ORD-4004", "fulfillment_requested");
-    await adapter.notify("customer-1", "ORD-4004", "shipped");
+    await adapter.notify("customer-1", "ORD-4004", "fulfillment_requested", "tenant-a");
+    await adapter.notify("customer-1", "ORD-4004", "shipped", "tenant-a");
 
     expect(calls.create[0]?.idempotencyKey).not.toBe(calls.create[1]?.idempotencyKey);
   });
@@ -137,27 +137,27 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
   it("propagates a create failure (no swallowing here — the call site already swallows)", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls, { failAt: "create" });
-    const adapter = new OrdersNotificationAdapter(notifications, "tenant-a");
+    const adapter = new OrdersNotificationAdapter(notifications);
 
-    await expect(adapter.notify("customer-1", "ORD-5005", "shipped")).rejects.toThrow();
+    await expect(adapter.notify("customer-1", "ORD-5005", "shipped", "tenant-a")).rejects.toThrow();
     expect(calls.sequence).toEqual(["create"]);
   });
 
   it("propagates a queue failure after a successful create", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls, { failAt: "queue" });
-    const adapter = new OrdersNotificationAdapter(notifications, "tenant-a");
+    const adapter = new OrdersNotificationAdapter(notifications);
 
-    await expect(adapter.notify("customer-1", "ORD-6006", "shipped")).rejects.toThrow();
+    await expect(adapter.notify("customer-1", "ORD-6006", "shipped", "tenant-a")).rejects.toThrow();
     expect(calls.sequence).toEqual(["create", "queue"]);
   });
 
   it("propagates a send failure after a successful create+queue", async () => {
     const calls = emptyCalls();
     const notifications = fakeNotificationsController(calls, { failAt: "send" });
-    const adapter = new OrdersNotificationAdapter(notifications, "tenant-a");
+    const adapter = new OrdersNotificationAdapter(notifications);
 
-    await expect(adapter.notify("customer-1", "ORD-7007", "shipped")).rejects.toThrow();
+    await expect(adapter.notify("customer-1", "ORD-7007", "shipped", "tenant-a")).rejects.toThrow();
     expect(calls.sequence).toEqual(["create", "queue", "send"]);
   });
 });

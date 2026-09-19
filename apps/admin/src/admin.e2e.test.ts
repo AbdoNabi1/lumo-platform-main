@@ -70,6 +70,7 @@ describe("admin wiring (end to end)", () => {
 
     // Orders screen → Orders
     const order = await admin.orders.placeOrder(staff, {
+      tenantId: "tenant-1",
       customerRef: "customer-1",
       currency: "USD",
       items: [{ productId, name: "Toy Wagon", unitPriceAmountMinor: 1999, quantity: 2 }],
@@ -127,13 +128,16 @@ describe("admin wiring (end to end)", () => {
   it("delegates business-rule errors unchanged — refunding an unpaid order is 409", async () => {
     const admin = wire();
     const order = await admin.orders.placeOrder(staff, {
+      tenantId: "tenant-1",
       customerRef: "customer-1",
       currency: "USD",
       items: [{ productId: "p1", name: "Item", unitPriceAmountMinor: 500, quantity: 1 }],
       shippingAddress: { line1: "1 Main St", city: "Town", postalCode: "12345", country: "US" },
     });
     const orderId = (order.body as { orderId: string }).orderId;
-    expect((await admin.orders.refundOrder(staff, { orderId })).status).toBe(409);
+    expect((await admin.orders.refundOrder(staff, { tenantId: "tenant-1", orderId })).status).toBe(
+      409,
+    );
   });
 
   it("drives the Coupons screen through create, advance, and redeem", async () => {
@@ -1328,7 +1332,10 @@ describe("admin wiring (end to end)", () => {
       accessControl: { authorize: async () => false },
     });
 
-    const response = await admin.orders.refundOrder(staff, { orderId: "o-1" });
+    const response = await admin.orders.refundOrder(staff, {
+      tenantId: "tenant-1",
+      orderId: "o-1",
+    });
 
     expect(response.status).toBe(403);
     expect((response.body as { code: string }).code).toBe("FORBIDDEN");
@@ -1349,7 +1356,7 @@ describe("admin wiring (end to end)", () => {
       slug: "wagons",
       tenantId: "tenant-1",
     });
-    await admin.orders.refundOrder(staff, { orderId: "o-1" });
+    await admin.orders.refundOrder(staff, { tenantId: "tenant-1", orderId: "o-1" });
 
     expect(auditTrail.snapshot()).toEqual([
       {

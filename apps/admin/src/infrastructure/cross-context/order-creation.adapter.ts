@@ -62,9 +62,18 @@ type OrderCreationInput = Parameters<OrderCreationPort["create"]>[0];
  */
 export class OrderCreationAdapter implements OrderCreationPort {
   private readonly orders: Pick<OrderController, "createFromCheckout">;
+  private readonly tenantId: string | undefined;
 
-  constructor(orders: Pick<OrderController, "createFromCheckout">) {
+  /**
+   * ADR-0014 (WP-10, T10.3): Orders' controller now takes `tenantId` per call, but checkout's own
+   * `OrderCreationPort.create(input)` does not carry one yet — widening it is checkout-context work.
+   * Until checkout converts, this adapter captures the tenant at construction (same
+   * not-yet-converted pattern as `PricingValidationAdapter`). `tenantId` stays optional only because
+   * `AdminWiringDeps.tenantId` is; `create` throws if it is missing, never defaulting a tenant.
+   */
+  constructor(orders: Pick<OrderController, "createFromCheckout">, tenantId?: string) {
     this.orders = orders;
+    this.tenantId = tenantId;
   }
 
   async create(input: OrderCreationInput): Promise<{ readonly orderRef: string }> {
@@ -77,7 +86,15 @@ export class OrderCreationAdapter implements OrderCreationPort {
       );
     }
 
+    const tenantId = this.tenantId;
+    if (tenantId === undefined) {
+      throw new Error(
+        `OrderCreationAdapter: cannot create an order for checkout session "${input.checkoutSessionId}" without a tenant`,
+      );
+    }
+
     const response = await this.orders.createFromCheckout({
+      tenantId,
       checkoutRef: input.checkoutSessionId,
       customerRef: input.customerRef,
       currency: input.currency,

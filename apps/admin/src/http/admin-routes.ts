@@ -1152,7 +1152,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Place an order (backoffice)",
       schema: { body: placeOrderBody },
-      handle: ({ body, context }) => admin.orders.placeOrder(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.orders.placeOrder(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1163,7 +1164,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Refund an order",
       schema: { params: orderIdParams },
       handle: ({ params, context }) =>
-        admin.orders.refundOrder(context.principal, { orderId: params.orderId }),
+        admin.orders.refundOrder(context.principal, {
+          orderId: params.orderId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1198,6 +1202,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
             discountMinor: draft.totals.discountMinor,
             totalMinor: draft.totals.totalMinor,
           },
+          tenantId: context.tenantId,
         });
       },
     }),
@@ -1213,6 +1218,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       handle: ({ params, body, context }) =>
         admin.orders.advanceOrder(context.principal, {
           orderId: params.orderId,
+          tenantId: context.tenantId,
           toStatus: body.toStatus as Parameters<typeof admin.orders.advanceOrder>[1]["toStatus"],
         }),
     }),
@@ -1228,6 +1234,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       handle: ({ params, body, context }) =>
         admin.orders.markOrderPaid(context.principal, {
           orderId: params.orderId,
+          tenantId: context.tenantId,
           paymentRef: body.paymentRef,
         }),
     }),
@@ -1239,7 +1246,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Request payment capture via the PaymentPort",
       schema: { params: orderIdParams },
       handle: ({ params, context }) =>
-        admin.orders.requestPaymentCapture(context.principal, { orderId: params.orderId }),
+        admin.orders.requestPaymentCapture(context.principal, {
+          orderId: params.orderId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1249,7 +1259,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Request fulfillment via the Inventory/Shipping ports",
       schema: { params: orderIdParams },
       handle: ({ params, context }) =>
-        admin.orders.requestFulfillment(context.principal, { orderId: params.orderId }),
+        admin.orders.requestFulfillment(context.principal, {
+          orderId: params.orderId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -1259,7 +1272,13 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List orders, most recently placed first (cursor-paginated)",
       schema: { querystring: listOrdersQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.orders.listOrders(context.principal, query), toOrderListItemDto),
+        mapPage(
+          await admin.orders.listOrders(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toOrderListItemDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -1270,6 +1289,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: orderIdParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
         const response = await admin.orders.getOrder(context.principal, {
+          tenantId: context.tenantId,
           orderId: params.orderId,
         });
         if (response.status !== 200) {

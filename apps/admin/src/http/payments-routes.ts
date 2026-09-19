@@ -86,6 +86,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { body: createIntentBody },
       handle: async ({ body, context }): Promise<AdminResponse> => {
         const orderResponse = await admin.orders.getOrder(context.principal, {
+          tenantId: context.tenantId,
           orderId: body.orderRef,
         });
         if (orderResponse.status < 200 || orderResponse.status >= 300) {

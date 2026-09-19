@@ -12,6 +12,7 @@ import {
   PrismaOutboxStore,
   PrismaProcessedEventStore,
   PrismaUnitOfWork,
+  runReadScoped,
   type Database,
 } from "@platform/db";
 import { JsonEventSerializer, type EventSerializer } from "@platform/domain-events";
@@ -295,18 +296,23 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
  */
 export class PrismaPaymentVerificationAdapter implements PaymentVerificationPort {
   private readonly prisma: RuntimeCore["prisma"];
-  private readonly tenantId: string;
 
-  constructor(prisma: RuntimeCore["prisma"], tenantId: string) {
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `PaymentVerificationPort.hasCapturedPayment` carries `tenantId` per call. */
+  constructor(prisma: RuntimeCore["prisma"]) {
     this.prisma = prisma;
-    this.tenantId = tenantId;
   }
 
-  async hasCapturedPayment(orderId: string, paymentRef: string): Promise<boolean> {
-    const row = await this.prisma.paymentIntent.findFirst({
-      where: { id: paymentRef, orderRef: orderId, tenantId: this.tenantId, status: "captured" },
-      select: { id: true },
-    });
+  async hasCapturedPayment(
+    orderId: string,
+    paymentRef: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    const row = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.paymentIntent.findFirst({
+        where: { id: paymentRef, orderRef: orderId, tenantId, status: "captured" },
+        select: { id: true },
+      }),
+    );
     return row !== null;
   }
 }
@@ -499,8 +505,7 @@ export function buildPaymentCapturedRuntime(
   const orders = new PrismaOrderRepository({
     prisma: core.prisma,
     outbox,
-    context: rootEventContext(core.idGenerator, core.config.TENANT_DEFAULT_ID),
-    tenantId: core.config.TENANT_DEFAULT_ID,
+    context: rootEventContext(core.idGenerator),
   });
   const markOrderPaid = new MarkOrderPaid({
     orders,
@@ -510,15 +515,17 @@ export function buildPaymentCapturedRuntime(
     // M2-7: this consumer path omitted the same verification gate the admin path (`api.ts`) already
     // wires — reuses the identical `PrismaPaymentVerificationAdapter`, no new class, no contract
     // change (the field is already optional on `MarkOrderPaidDeps`).
-    paymentVerification: new PrismaPaymentVerificationAdapter(
-      core.prisma,
-      core.config.TENANT_DEFAULT_ID,
-    ),
+    paymentVerification: new PrismaPaymentVerificationAdapter(core.prisma),
   });
   const producer = new KafkaMessageProducer(core.kafka);
   return new KafkaConsumerRuntime({
     kafka: core.kafka,
-    handler: new PaymentCapturedConsumer({ markOrderPaid, logger: core.logger }),
+    handler: new PaymentCapturedConsumer({
+      markOrderPaid,
+      logger: core.logger,
+      // G-64 (class D): sourced from config until `tenantId` is required on the event envelope.
+      tenantId: core.config.TENANT_DEFAULT_ID,
+    }),
     consumerGroup,
     serializer: core.serializer,
     processedEvents: new PrismaProcessedEventStore(core.prisma, consumerGroup),

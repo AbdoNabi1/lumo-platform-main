@@ -54,35 +54,17 @@ interface CaptureBody {
 export class OrdersPaymentAdapter implements PaymentPort {
   private readonly payments: Pick<PaymentController, "createIntentLifecycle" | "captureLifecycle">;
 
-  private readonly tenantId: string | undefined;
-
-  /**
-   * ADR-0014 (WP-10, T10.3): Payments' controller now takes `tenantId` per call, but orders' own
-   * `PaymentPort.requestCapture(orderId, amountMinor, currency)` does not carry one yet — widening it
-   * is orders-context work. Until orders converts, this adapter captures the tenant at
-   * construction (same not-yet-converted pattern as `OrdersNotificationAdapter`). `tenantId` stays
-   * optional only because `AdminWiringDeps.tenantId` is; `requestCapture` throws if it is missing,
-   * never defaulting a tenant.
-   */
-  constructor(
-    payments: Pick<PaymentController, "createIntentLifecycle" | "captureLifecycle">,
-    tenantId?: string,
-  ) {
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `PaymentPort.requestCapture` carries `tenantId` per call. */
+  constructor(payments: Pick<PaymentController, "createIntentLifecycle" | "captureLifecycle">) {
     this.payments = payments;
-    this.tenantId = tenantId;
   }
 
   async requestCapture(
     orderId: string,
     amountMinor: number,
     currency: string,
+    tenantId: string,
   ): Promise<{ readonly paymentRef: string }> {
-    const tenantId = this.tenantId;
-    if (tenantId === undefined) {
-      throw new Error(
-        `OrdersPaymentAdapter: cannot request capture for order "${orderId}" without a tenant`,
-      );
-    }
     const createResponse = await this.payments.createIntentLifecycle({
       tenantId,
       orderRef: orderId,

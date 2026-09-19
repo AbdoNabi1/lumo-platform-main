@@ -536,7 +536,7 @@ async function main(): Promise<void> {
       readonly id: IdLike;
     }
     const existingOrders = unwrap<{ items: readonly OrderRecord[] }>(
-      await orders.listOrders({ first: 1 }),
+      await orders.listOrders({ tenantId: "TENANT_ID", first: 1 }),
       "list orders",
     );
     if (existingOrders.items.length > 0) {
@@ -554,6 +554,7 @@ async function main(): Promise<void> {
       // Order 1: placed only — awaiting payment.
       const order1 = unwrap<{ orderId: string; orderNumber: string }>(
         await orders.place({
+          tenantId: "TENANT_ID",
           customerRef: customers[0]!.customerId,
           currency: CURRENCY,
           items: [
@@ -576,6 +577,7 @@ async function main(): Promise<void> {
       // Order 2: placed -> paid.
       const order2 = unwrap<{ orderId: string; orderNumber: string }>(
         await orders.place({
+          tenantId: "TENANT_ID",
           customerRef: customers[1]!.customerId,
           currency: CURRENCY,
           items: [
@@ -592,6 +594,7 @@ async function main(): Promise<void> {
       );
       unwrap(
         await orders.markPaid({
+          tenantId: "TENANT_ID",
           orderId: order2.orderId,
           paymentRef: `seed-payment-${order2.orderId}`,
         }),
@@ -605,6 +608,7 @@ async function main(): Promise<void> {
       // Order 3: placed -> paid -> refunded.
       const order3 = unwrap<{ orderId: string; orderNumber: string }>(
         await orders.place({
+          tenantId: "TENANT_ID",
           customerRef: customers[2]!.customerId,
           currency: CURRENCY,
           items: [
@@ -627,12 +631,16 @@ async function main(): Promise<void> {
       );
       unwrap(
         await orders.markPaid({
+          tenantId: "TENANT_ID",
           orderId: order3.orderId,
           paymentRef: `seed-payment-${order3.orderId}`,
         }),
         "mark order 3 paid",
       );
-      unwrap(await orders.refund({ orderId: order3.orderId }), "refund order 3");
+      unwrap(
+        await orders.refund({ tenantId: "TENANT_ID", orderId: order3.orderId }),
+        "refund order 3",
+      );
       logger.info("seed-demo: order placed + paid + refunded (status=refunded)", {
         orderId: order3.orderId,
         orderNumber: order3.orderNumber,

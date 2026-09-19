@@ -19,6 +19,7 @@ function wire() {
 }
 
 const sampleOrder = {
+  tenantId: "tenant-a",
   customerRef: "customer-1",
   currency: "USD",
   items: [
@@ -38,11 +39,15 @@ describe("orders (end to end)", () => {
     expect(body.totalAmountMinor).toBe(3500);
     expect(body.orderNumber).toMatch(/^ORD-/);
 
-    const paid = await app.orders.markPaid({ orderId: body.orderId, paymentRef: "payment-1" });
+    const paid = await app.orders.markPaid({
+      tenantId: "tenant-a",
+      orderId: body.orderId,
+      paymentRef: "payment-1",
+    });
     expect(paid.status).toBe(200);
     expect((paid.body as { status: string }).status).toBe("paid");
 
-    const refunded = await app.orders.refund({ orderId: body.orderId });
+    const refunded = await app.orders.refund({ tenantId: "tenant-a", orderId: body.orderId });
     expect(refunded.status).toBe(200);
     expect((refunded.body as { status: string }).status).toBe("refunded");
 
@@ -62,7 +67,11 @@ describe("orders (end to end)", () => {
 
   it("returns 404 when paying an unknown order", async () => {
     const app = wire();
-    const response = await app.orders.markPaid({ orderId: "missing", paymentRef: "payment-1" });
+    const response = await app.orders.markPaid({
+      tenantId: "tenant-a",
+      orderId: "missing",
+      paymentRef: "payment-1",
+    });
     expect(response.status).toBe(404);
   });
 
@@ -70,7 +79,7 @@ describe("orders (end to end)", () => {
     const app = wire();
     const placed = await app.orders.place(sampleOrder);
     const orderId = (placed.body as { orderId: string }).orderId;
-    const response = await app.orders.refund({ orderId });
+    const response = await app.orders.refund({ tenantId: "tenant-a", orderId });
     expect(response.status).toBe(409);
   });
 
@@ -78,6 +87,7 @@ describe("orders (end to end)", () => {
     const app = wire();
 
     const created = await app.orders.createFromCheckout({
+      tenantId: "tenant-a",
       checkoutRef: "checkout-1",
       customerRef: "customer-1",
       currency: "USD",
@@ -98,25 +108,49 @@ describe("orders (end to end)", () => {
     const orderId = (created.body as { orderId: string }).orderId;
     expect((created.body as { status: string }).status).toBe("created");
 
-    expect((await app.orders.advance({ orderId, toStatus: "confirmed" })).status).toBe(200);
-    expect((await app.orders.advance({ orderId, toStatus: "awaiting_payment" })).status).toBe(200);
+    expect(
+      (await app.orders.advance({ tenantId: "tenant-a", orderId, toStatus: "confirmed" })).status,
+    ).toBe(200);
+    expect(
+      (await app.orders.advance({ tenantId: "tenant-a", orderId, toStatus: "awaiting_payment" }))
+        .status,
+    ).toBe(200);
 
-    const paymentRequested = await app.orders.requestPaymentCapture({ orderId });
+    const paymentRequested = await app.orders.requestPaymentCapture({
+      tenantId: "tenant-a",
+      orderId,
+    });
     expect(paymentRequested.status).toBe(200);
     expect((paymentRequested.body as { status: string }).status).toBe("payment_requested");
 
-    expect((await app.orders.advance({ orderId, toStatus: "payment_received" })).status).toBe(200);
-    expect((await app.orders.advance({ orderId, toStatus: "ready_for_fulfillment" })).status).toBe(
-      200,
-    );
+    expect(
+      (await app.orders.advance({ tenantId: "tenant-a", orderId, toStatus: "payment_received" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await app.orders.advance({
+          tenantId: "tenant-a",
+          orderId,
+          toStatus: "ready_for_fulfillment",
+        })
+      ).status,
+    ).toBe(200);
 
-    const fulfillmentRequested = await app.orders.requestFulfillment({ orderId });
+    const fulfillmentRequested = await app.orders.requestFulfillment({
+      tenantId: "tenant-a",
+      orderId,
+    });
     expect(fulfillmentRequested.status).toBe(200);
     expect((fulfillmentRequested.body as { status: string }).status).toBe("fulfillment_requested");
 
-    expect((await app.orders.advance({ orderId, toStatus: "fulfilled" })).status).toBe(200);
-    expect((await app.orders.advance({ orderId, toStatus: "delivered" })).status).toBe(200);
-    const closed = await app.orders.advance({ orderId, toStatus: "closed" });
+    expect(
+      (await app.orders.advance({ tenantId: "tenant-a", orderId, toStatus: "fulfilled" })).status,
+    ).toBe(200);
+    expect(
+      (await app.orders.advance({ tenantId: "tenant-a", orderId, toStatus: "delivered" })).status,
+    ).toBe(200);
+    const closed = await app.orders.advance({ tenantId: "tenant-a", orderId, toStatus: "closed" });
     expect(closed.status).toBe(200);
     expect((closed.body as { status: string }).status).toBe("closed");
   });
@@ -124,6 +158,7 @@ describe("orders (end to end)", () => {
   it("rejects an illegal transition (409)", async () => {
     const app = wire();
     const created = await app.orders.createFromCheckout({
+      tenantId: "tenant-a",
       checkoutRef: "checkout-2",
       customerRef: "customer-1",
       currency: "USD",
@@ -142,7 +177,11 @@ describe("orders (end to end)", () => {
     });
     const orderId = (created.body as { orderId: string }).orderId;
 
-    const response = await app.orders.advance({ orderId, toStatus: "fulfilled" });
+    const response = await app.orders.advance({
+      tenantId: "tenant-a",
+      orderId,
+      toStatus: "fulfilled",
+    });
     expect(response.status).toBe(409);
   });
 
@@ -151,7 +190,7 @@ describe("orders (end to end)", () => {
     const placed = await app.orders.place(sampleOrder);
     const orderId = (placed.body as { orderId: string }).orderId;
 
-    const response = await app.orders.getOrder({ orderId });
+    const response = await app.orders.getOrder({ tenantId: "tenant-a", orderId });
     expect(response.status).toBe(200);
   });
 });

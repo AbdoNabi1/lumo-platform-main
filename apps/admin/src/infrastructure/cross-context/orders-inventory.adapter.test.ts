@@ -71,6 +71,7 @@ function fakeOrderController(
 }
 
 interface ReserveCall {
+  readonly tenantId: string;
   readonly productId: string;
   readonly warehouseId: string;
   readonly quantity: number;
@@ -177,10 +178,9 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
-      "tenant-a",
     );
 
-    const result = await adapter.requestReservation("order-1");
+    const result = await adapter.requestReservation("order-1", "tenant-a");
 
     expect(result).toEqual({ reservationRef: "order-1" });
     expect(system.reserveCalls).toEqual([
@@ -211,10 +211,9 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
-      "tenant-a",
     );
 
-    await expect(adapter.requestReservation("order-1")).rejects.toThrow(/warehouse/i);
+    await expect(adapter.requestReservation("order-1", "tenant-a")).rejects.toThrow(/warehouse/i);
   });
 
   it("more than one warehouse registered: throws instead of guessing", async () => {
@@ -230,10 +229,9 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
-      "tenant-a",
     );
 
-    await expect(adapter.requestReservation("order-1")).rejects.toThrow(/warehouse/i);
+    await expect(adapter.requestReservation("order-1", "tenant-a")).rejects.toThrow(/warehouse/i);
   });
 
   it("order not found: throws a clear error rather than reserving nothing silently", async () => {
@@ -245,10 +243,11 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
-      "tenant-a",
     );
 
-    await expect(adapter.requestReservation("missing-order")).rejects.toThrow(/missing-order/);
+    await expect(adapter.requestReservation("missing-order", "tenant-a")).rejects.toThrow(
+      /missing-order/,
+    );
   });
 
   it("a failed per-item reservation throws instead of returning a partial success", async () => {
@@ -262,10 +261,9 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
-      "tenant-a",
     );
 
-    await expect(adapter.requestReservation("order-1")).rejects.toThrow(/product-1/);
+    await expect(adapter.requestReservation("order-1", "tenant-a")).rejects.toThrow(/product-1/);
   });
 
   it("idempotency: retrying requestReservation(orderId) for an already-reserved order does not create a second reservation for any line item", async () => {
@@ -284,11 +282,10 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
-      "tenant-a",
     );
 
-    const first = await adapter.requestReservation("order-1");
-    const second = await adapter.requestReservation("order-1");
+    const first = await adapter.requestReservation("order-1", "tenant-a");
+    const second = await adapter.requestReservation("order-1", "tenant-a");
 
     expect(first).toEqual({ reservationRef: "order-1" });
     expect(second).toEqual({ reservationRef: "order-1" });
@@ -321,7 +318,6 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
-      "tenant-a",
     );
 
     // Simulate a prior partial success: product-1 got reserved (e.g. a crash/timeout hit before
@@ -335,7 +331,7 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
     });
     system.reserveCalls.length = 0; // reset so the assertion below only sees THIS adapter call
 
-    const result = await adapter.requestReservation("order-1");
+    const result = await adapter.requestReservation("order-1", "tenant-a");
 
     expect(result).toEqual({ reservationRef: "order-1" });
     // Only product-2 should have been reserved by the adapter — product-1 was already covered.
@@ -350,7 +346,7 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
     ]);
   });
 
-  it("throws without a tenant (ADR-0014: never defaults one, until orders' port carries it)", async () => {
+  it("uses the per-call tenant for the order lookup and every reservation (ADR-0014)", async () => {
     const system = new FakeInventorySystem();
     system.registerItem("product-1", "wh-1");
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
@@ -362,7 +358,8 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       orders,
     );
 
-    await expect(adapter.requestReservation("order-1")).rejects.toThrow(/without a tenant/);
-    expect(system.reserveCalls).toEqual([]);
+    await adapter.requestReservation("order-1", "tenant-b");
+
+    expect(system.reserveCalls.map((call) => call.tenantId)).toEqual(["tenant-b"]);
   });
 });

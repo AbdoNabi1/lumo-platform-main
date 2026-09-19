@@ -673,7 +673,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
     // A REAL aggregate now exists behind that ref — read back through the real Orders controller,
     // never through a fake or a repository poke.
     const order = unwrap<{ status: string; orderNumber: { value: string } }>(
-      await admin.orders.getOrder(staff, { orderId: completed.orderRef }),
+      await admin.orders.getOrder(staff, { tenantId: "tenant-local", orderId: completed.orderRef }),
       "read back the created order",
     );
     expect(order.status).toBe("created");

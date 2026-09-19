@@ -245,7 +245,7 @@ describe("Task 2/2 — InventoryPort/ShippingPort calls no longer run while a DB
     const shipping = new RecordingShippingPort(uow);
     const useCase = new RequestFulfillment(buildDeps(repo, inventory, shipping, uow));
 
-    const result = await useCase.execute({ orderId: "order-1" });
+    const result = await useCase.execute({ tenantId: "tenant-a", orderId: "order-1" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("fulfillment_requested");
@@ -268,7 +268,7 @@ describe("Task 2/2 — InventoryPort/ShippingPort calls no longer run while a DB
     const shipping = new RecordingShippingPort(uow);
     const useCase = new RequestFulfillment(buildDeps(repo, inventory, shipping, uow));
 
-    await useCase.execute({ orderId: "order-2" });
+    await useCase.execute({ tenantId: "tenant-a", orderId: "order-2" });
 
     const persisted = await repo.findById("order-2");
     expect(persisted?.status).toBe("fulfillment_requested");
@@ -285,7 +285,7 @@ describe("Idempotent resume", () => {
     const shipping = new RecordingShippingPort(uow);
     const useCase = new RequestFulfillment(buildDeps(repo, inventory, shipping, uow));
 
-    const result = await useCase.execute({ orderId: "order-3" });
+    const result = await useCase.execute({ tenantId: "tenant-a", orderId: "order-3" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("fulfillment_requested");
@@ -302,7 +302,7 @@ describe("Idempotent resume", () => {
     const shipping = new RecordingShippingPort(uow);
     const useCase = new RequestFulfillment(buildDeps(repo, inventory, shipping, uow));
 
-    const result = await useCase.execute({ orderId: "missing" });
+    const result = await useCase.execute({ tenantId: "tenant-a", orderId: "missing" });
 
     expect(result.ok).toBe(false);
     expect(inventory.calls).toHaveLength(0);
@@ -319,7 +319,7 @@ describe("Residual risk #1 — partial failure (second external call throws) lea
     const shipping = new RecordingShippingPort(uow, true);
     const useCase = new RequestFulfillment(buildDeps(repo, inventory, shipping, uow));
 
-    await expect(useCase.execute({ orderId: "order-4" })).rejects.toThrow(
+    await expect(useCase.execute({ tenantId: "tenant-a", orderId: "order-4" })).rejects.toThrow(
       /simulated Shipping requestShipment failure/,
     );
 
@@ -346,8 +346,8 @@ describe("Task — concurrent fulfillment requests, run repeatedly to rule out f
       const useCase = new RequestFulfillment(buildDeps(repo, inventory, shipping, uow));
 
       const [a, b] = await Promise.all([
-        useCase.execute({ orderId }),
-        useCase.execute({ orderId }),
+        useCase.execute({ tenantId: "tenant-a", orderId }),
+        useCase.execute({ tenantId: "tenant-a", orderId }),
       ]);
 
       expect(a.ok).toBe(true);

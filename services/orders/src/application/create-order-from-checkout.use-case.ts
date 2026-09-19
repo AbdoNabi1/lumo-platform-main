@@ -35,6 +35,8 @@ export interface CreateOrderFromCheckoutTotalsInput {
 }
 
 export interface CreateOrderFromCheckoutInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutRef: string;
   readonly customerRef: string;
   readonly currency: string;
@@ -142,7 +144,7 @@ export class CreateOrderFromCheckout implements UseCase<
           this.deps.idGenerator.generate(),
           this.deps.clock.now(),
         );
-        await this.deps.orders.save(order, tx);
+        await this.deps.orders.save(order, input.tenantId, tx);
         return ok({
           orderId: id.toString(),
           orderNumber: orderNumber.value.value,

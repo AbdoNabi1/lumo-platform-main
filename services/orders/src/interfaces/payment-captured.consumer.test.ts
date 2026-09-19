@@ -50,7 +50,11 @@ function wire() {
   const unitOfWork = new InMemoryUnitOfWork();
   const placeOrder = new PlaceOrder({ orders, unitOfWork, idGenerator, clock });
   const markOrderPaid = new MarkOrderPaid({ orders, unitOfWork, idGenerator, clock });
-  const consumer = new PaymentCapturedConsumer({ markOrderPaid, logger: silentLogger() });
+  const consumer = new PaymentCapturedConsumer({
+    tenantId: "tenant-a",
+    markOrderPaid,
+    logger: silentLogger(),
+  });
   return { placeOrder, consumer, orders, outbox: outboxStore };
 }
 
@@ -74,6 +78,7 @@ function capturedEvent(
 
 async function placeAnOrder(placeOrder: PlaceOrder): Promise<string> {
   const placed = await placeOrder.execute({
+    tenantId: "tenant-a",
     customerRef: "customer-1",
     currency: "USD",
     items: [{ productId: "p-1", name: "Toy Wagon", unitPriceAmountMinor: 1999, quantity: 2 }],
@@ -121,7 +126,7 @@ async function orderAwaitingCapture(
   order.confirm("evt-1", new Date(0));
   order.markAwaitingPayment("evt-2", new Date(0));
   order.requestPayment("payment-requested-ref", "evt-3", new Date(0));
-  await orders.save(order);
+  await orders.save(order, "tenant-a");
 }
 
 describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
@@ -131,7 +136,7 @@ describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
 
     await consumer.handle(capturedEvent(orderId));
 
-    const order = await orders.findById(orderId);
+    const order = await orders.findById(orderId, "tenant-a");
     expect(order?.status).toBe("paid");
   });
 
@@ -142,7 +147,7 @@ describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
 
     await expect(consumer.handle(capturedEvent(orderId, "msg-2"))).resolves.toBeUndefined();
 
-    expect((await orders.findById(orderId))?.status).toBe("paid");
+    expect((await orders.findById(orderId, "tenant-a"))?.status).toBe("paid");
   });
 
   it("WP-11 (T11.6): a duplicate captured event produces one paid order and exactly one orders.order.paid event — the guard in markPaid throws before the second call ever raises a second one", async () => {
@@ -152,7 +157,7 @@ describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
     await consumer.handle(capturedEvent(orderId, "msg-1"));
     await consumer.handle(capturedEvent(orderId, "msg-2")); // redelivery of the same fact
 
-    expect((await orders.findById(orderId))?.status).toBe("paid");
+    expect((await orders.findById(orderId, "tenant-a"))?.status).toBe("paid");
     const paidEntries = outbox.snapshot().filter((entry) => entry.topic === "orders.order.paid.v1");
     expect(paidEntries).toHaveLength(1);
   });
@@ -168,9 +173,9 @@ describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
     const { placeOrder, consumer, orders } = wire();
     const orderId = await placeAnOrder(placeOrder);
     await consumer.handle(capturedEvent(orderId, "msg-1"));
-    const order = await orders.findById(orderId);
+    const order = await orders.findById(orderId, "tenant-a");
     order?.refund({ canRefund: (status) => status === "paid" }, "evt-r", clock.now());
-    if (order) await orders.save(order);
+    if (order) await orders.save(order, "tenant-a");
 
     await expect(consumer.handle(capturedEvent(orderId, "msg-3"))).rejects.toThrow(/refunded/);
   });
@@ -182,7 +187,7 @@ describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
 
     await consumer.handle(capturedEvent(orderId));
 
-    const order = await orders.findById(orderId);
+    const order = await orders.findById(orderId, "tenant-a");
     expect(order?.status).toBe("payment_received");
   });
 
@@ -194,6 +199,6 @@ describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
 
     await expect(consumer.handle(capturedEvent(orderId, "msg-2"))).resolves.toBeUndefined();
 
-    expect((await orders.findById(orderId))?.status).toBe("payment_received");
+    expect((await orders.findById(orderId, "tenant-a"))?.status).toBe("payment_received");
   });
 });

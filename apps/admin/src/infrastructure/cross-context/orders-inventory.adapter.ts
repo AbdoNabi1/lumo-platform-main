@@ -79,16 +79,7 @@ export class OrdersInventoryAdapter implements InventoryPort {
     "findByProductAndWarehouse" | "findByReservationReference"
   >;
   private readonly orders: Pick<OrderController, "getOrder">;
-  private readonly tenantId: string | undefined;
-
-  /**
-   * ADR-0014 (WP-10, T10.3): Inventory's repositories and use cases now take `tenantId` per call,
-   * but orders' own `InventoryPort.requestReservation(orderId)` does not carry one yet — widening
-   * it is orders-context work. Until orders converts, this adapter captures the tenant at
-   * construction (same not-yet-converted pattern as `OrdersNotificationAdapter`). `tenantId` stays
-   * optional only because `AdminWiringDeps.tenantId` is; `requestReservation` throws if it is
-   * missing, never defaulting a tenant.
-   */
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `InventoryPort.requestReservation` carries `tenantId` per call. */
   constructor(
     inventory: Pick<InventoryController, "reserve">,
     warehouses: WarehouseRepository,
@@ -97,23 +88,18 @@ export class OrdersInventoryAdapter implements InventoryPort {
       "findByProductAndWarehouse" | "findByReservationReference"
     >,
     orders: Pick<OrderController, "getOrder">,
-    tenantId?: string,
   ) {
     this.inventory = inventory;
     this.warehouses = warehouses;
     this.items = items;
     this.orders = orders;
-    this.tenantId = tenantId;
   }
 
-  async requestReservation(orderId: string): Promise<{ readonly reservationRef: string }> {
-    const tenantId = this.tenantId;
-    if (tenantId === undefined) {
-      throw new Error(
-        `OrdersInventoryAdapter: cannot reserve stock for order "${orderId}" without a tenant`,
-      );
-    }
-    const orderResponse = await this.orders.getOrder({ orderId });
+  async requestReservation(
+    orderId: string,
+    tenantId: string,
+  ): Promise<{ readonly reservationRef: string }> {
+    const orderResponse = await this.orders.getOrder({ tenantId, orderId });
     if (orderResponse.status !== 200) {
       throw new Error(
         `OrdersInventoryAdapter: cannot load order "${orderId}" for reservation ` +

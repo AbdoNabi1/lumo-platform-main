@@ -26,6 +26,8 @@ export interface PlaceOrderAddressInput {
 }
 
 export interface PlaceOrderInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly customerRef: string;
   readonly currency: string;
   readonly items: readonly PlaceOrderItemInput[];
@@ -109,7 +111,7 @@ export class PlaceOrder implements UseCase<PlaceOrderInput, PlaceOrderOutput, Do
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.orders.save(order, tx);
+      await this.deps.orders.save(order, input.tenantId, tx);
       return ok({
         orderId: id.toString(),
         orderNumber: orderNumber.value.value,

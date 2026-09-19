@@ -39,16 +39,19 @@ export interface OrderStatusOutput {
 async function notifyBestEffort(
   notifications: NotificationPort | undefined,
   order: Order,
+  tenantId: string,
 ): Promise<void> {
   if (notifications === undefined) return;
   try {
-    await notifications.notify(order.customerRef, order.orderNumber.value, order.status);
+    await notifications.notify(order.customerRef, order.orderNumber.value, order.status, tenantId);
   } catch {
     // Best-effort: a notification failure never fails the order's own transition.
   }
 }
 
 export interface AdvanceOrderInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderId: string;
   readonly toStatus: OrderEventType;
 }
@@ -71,7 +74,7 @@ export class AdvanceOrder implements UseCase<AdvanceOrderInput, OrderStatusOutpu
 
   async execute(input: AdvanceOrderInput): Promise<Result<OrderStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<OrderStatusOutput, DomainError>>(async (tx) => {
-      const order = await this.deps.orders.findById(input.orderId, tx);
+      const order = await this.deps.orders.findById(input.orderId, input.tenantId, tx);
       if (order === null) {
         return err(new NotFoundError("Order not found"));
       }
@@ -83,14 +86,16 @@ export class AdvanceOrder implements UseCase<AdvanceOrderInput, OrderStatusOutpu
         throw error;
       }
 
-      await this.deps.orders.save(order, tx);
-      await notifyBestEffort(this.deps.notifications, order);
+      await this.deps.orders.save(order, input.tenantId, tx);
+      await notifyBestEffort(this.deps.notifications, order, input.tenantId);
       return ok({ orderId: order.id.toString(), status: order.status });
     });
   }
 }
 
 export interface OrderIdInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderId: string;
 }
 
@@ -162,7 +167,7 @@ export class RequestPaymentCapture implements UseCase<
   }
 
   async execute(input: OrderIdInput): Promise<Result<OrderStatusOutput, DomainError>> {
-    const precheck = await this.precheck(input.orderId);
+    const precheck = await this.precheck(input.orderId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     if (precheck.value.alreadyRequested) {
       return ok({ orderId: input.orderId, status: precheck.value.status });
@@ -173,14 +178,18 @@ export class RequestPaymentCapture implements UseCase<
       input.orderId,
       amountMinor,
       currency,
+      input.tenantId,
     );
 
-    return this.settle(input.orderId, capture.paymentRef);
+    return this.settle(input.orderId, input.tenantId, capture.paymentRef);
   }
 
-  private async precheck(orderId: string): Promise<Result<RequestCapturePrecheck, DomainError>> {
+  private async precheck(
+    orderId: string,
+    tenantId: string,
+  ): Promise<Result<RequestCapturePrecheck, DomainError>> {
     return this.deps.unitOfWork.run<Result<RequestCapturePrecheck, DomainError>>(async (tx) => {
-      const order = await this.deps.orders.findById(orderId, tx);
+      const order = await this.deps.orders.findById(orderId, tenantId, tx);
       if (order === null) {
         return err(new NotFoundError("Order not found"));
       }
@@ -206,11 +215,12 @@ export class RequestPaymentCapture implements UseCase<
 
   private async settle(
     orderId: string,
+    tenantId: string,
     paymentRef: string,
   ): Promise<Result<OrderStatusOutput, DomainError>> {
     return withConcurrencyRetry(RequestPaymentCapture.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<OrderStatusOutput, DomainError>>(async (tx) => {
-        const order = await this.deps.orders.findById(orderId, tx);
+        const order = await this.deps.orders.findById(orderId, tenantId, tx);
         if (order === null) {
           return err(new NotFoundError("Order not found"));
         }
@@ -226,8 +236,8 @@ export class RequestPaymentCapture implements UseCase<
             if (isDomainError(error)) return err(error);
             throw error;
           }
-          await this.deps.orders.save(order, tx);
-          await notifyBestEffort(this.deps.notifications, order);
+          await this.deps.orders.save(order, tenantId, tx);
+          await notifyBestEffort(this.deps.notifications, order, tenantId);
         }
         return ok({ orderId: order.id.toString(), status: order.status });
       }),
@@ -323,23 +333,31 @@ export class RequestFulfillment implements UseCase<OrderIdInput, OrderStatusOutp
   }
 
   async execute(input: OrderIdInput): Promise<Result<OrderStatusOutput, DomainError>> {
-    const precheck = await this.precheck(input.orderId);
+    const precheck = await this.precheck(input.orderId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     if (precheck.value.alreadyRequested) {
       return ok({ orderId: input.orderId, status: precheck.value.status });
     }
 
-    const reservation = await this.deps.inventoryPort.requestReservation(input.orderId);
-    const shipment = await this.deps.shippingPort.requestShipment(input.orderId);
+    const reservation = await this.deps.inventoryPort.requestReservation(
+      input.orderId,
+      input.tenantId,
+    );
+    const shipment = await this.deps.shippingPort.requestShipment(input.orderId, input.tenantId);
 
-    return this.settle(input.orderId, `${reservation.reservationRef}|${shipment.shipmentRef}`);
+    return this.settle(
+      input.orderId,
+      input.tenantId,
+      `${reservation.reservationRef}|${shipment.shipmentRef}`,
+    );
   }
 
   private async precheck(
     orderId: string,
+    tenantId: string,
   ): Promise<Result<RequestFulfillmentPrecheck, DomainError>> {
     return this.deps.unitOfWork.run<Result<RequestFulfillmentPrecheck, DomainError>>(async (tx) => {
-      const order = await this.deps.orders.findById(orderId, tx);
+      const order = await this.deps.orders.findById(orderId, tenantId, tx);
       if (order === null) {
         return err(new NotFoundError("Order not found"));
       }
@@ -360,11 +378,12 @@ export class RequestFulfillment implements UseCase<OrderIdInput, OrderStatusOutp
 
   private async settle(
     orderId: string,
+    tenantId: string,
     fulfillmentRef: string,
   ): Promise<Result<OrderStatusOutput, DomainError>> {
     return withConcurrencyRetry(RequestFulfillment.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<OrderStatusOutput, DomainError>>(async (tx) => {
-        const order = await this.deps.orders.findById(orderId, tx);
+        const order = await this.deps.orders.findById(orderId, tenantId, tx);
         if (order === null) {
           return err(new NotFoundError("Order not found"));
         }
@@ -380,8 +399,8 @@ export class RequestFulfillment implements UseCase<OrderIdInput, OrderStatusOutp
             if (isDomainError(error)) return err(error);
             throw error;
           }
-          await this.deps.orders.save(order, tx);
-          await notifyBestEffort(this.deps.notifications, order);
+          await this.deps.orders.save(order, tenantId, tx);
+          await notifyBestEffort(this.deps.notifications, order, tenantId);
         }
         return ok({ orderId: order.id.toString(), status: order.status });
       }),

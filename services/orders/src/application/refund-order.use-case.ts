@@ -8,6 +8,8 @@ import type { OrderRepository } from "../domain/order-repository";
 import { RefundPolicy } from "../domain/refund-policy";
 
 export interface RefundOrderInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderId: string;
 }
 
@@ -34,7 +36,7 @@ export class RefundOrder implements UseCase<RefundOrderInput, RefundOrderOutput,
 
   async execute(input: RefundOrderInput): Promise<Result<RefundOrderOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<RefundOrderOutput, DomainError>>(async (tx) => {
-      const order = await this.deps.orders.findById(input.orderId, tx);
+      const order = await this.deps.orders.findById(input.orderId, input.tenantId, tx);
       if (order === null) {
         return err(new NotFoundError("Order not found"));
       }
@@ -46,7 +48,7 @@ export class RefundOrder implements UseCase<RefundOrderInput, RefundOrderOutput,
         throw error;
       }
 
-      await this.deps.orders.save(order, tx);
+      await this.deps.orders.save(order, input.tenantId, tx);
       return ok({ orderId: order.id.toString(), status: order.status });
     });
   }

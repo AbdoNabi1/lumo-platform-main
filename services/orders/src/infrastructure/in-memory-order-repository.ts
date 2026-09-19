@@ -9,9 +9,9 @@ export interface InMemoryOrderRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `OrderRepository`. Persists the aggregate and writes its events to the outbox on save. */
+/** In-memory `OrderRepository`. Persists the aggregate and writes its events to the outbox on save. ADR-0014 (WP-10, T10.3): keyed by `(tenantId, orderId)`. */
 export class InMemoryOrderRepository implements OrderRepository {
-  private readonly store = new Map<string, Order>();
+  private readonly store = new Map<string, Map<string, Order>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,20 +20,25 @@ export class InMemoryOrderRepository implements OrderRepository {
     this.context = deps.context;
   }
 
-  async save(order: Order, tx?: unknown): Promise<void> {
-    this.store.set(order.id.toString(), order);
-    await this.outbox.write(order.pullDomainEvents(), this.context, tx);
+  async save(order: Order, tenantId: string, tx?: unknown): Promise<void> {
+    let bucket = this.store.get(tenantId);
+    if (bucket === undefined) {
+      bucket = new Map();
+      this.store.set(tenantId, bucket);
+    }
+    bucket.set(order.id.toString(), order);
+    await this.outbox.write(order.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<Order | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Order | null> {
+    return this.store.get(tenantId)?.get(id) ?? null;
   }
 
   /** Most-recently-placed-first cursor page, mirroring `PrismaOrderRepository.list`'s `id desc` ordering. */
-  async list(query: OrderListQuery): Promise<Paginated<Order>> {
+  async list(query: OrderListQuery, tenantId: string): Promise<Paginated<Order>> {
     const after = query.after !== undefined ? decodeCursor(query.after) : undefined;
     const limit = normalizePageSize(query.first);
-    const sorted = [...this.store.values()].sort((a, b) =>
+    const sorted = [...(this.store.get(tenantId)?.values() ?? [])].sort((a, b) =>
       a.id.toString() < b.id.toString() ? 1 : -1,
     );
     const filtered = sorted.filter((order) => matchesQuery(order, query));

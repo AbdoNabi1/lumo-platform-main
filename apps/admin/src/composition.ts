@@ -600,13 +600,9 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
         inventory.warehouseRepository,
         inventory.inventoryItemRepository,
         lazyOrdersController,
-        deps.tenantId,
       ),
-    notifications:
-      deps.notifications ??
-      new OrdersNotificationAdapter(notifications.notifications, deps.tenantId),
-    paymentPort:
-      deps.paymentPort ?? new OrdersPaymentAdapter(lazyPaymentsController, deps.tenantId),
+    notifications: deps.notifications ?? new OrdersNotificationAdapter(notifications.notifications),
+    paymentPort: deps.paymentPort ?? new OrdersPaymentAdapter(lazyPaymentsController),
   };
   const orders = wireOrders(ordersDeps);
   ordersControllerCell.controller = orders.orders;
@@ -654,7 +650,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     promotionValidation:
       deps.promotionValidation ??
       new PromotionValidationAdapter(catalog.products, promotions.promotions, deps.tenantId),
-    orderCreation: deps.orderCreation ?? new OrderCreationAdapter(orders.orders),
+    orderCreation: deps.orderCreation ?? new OrderCreationAdapter(orders.orders, deps.tenantId),
   };
   const checkout = wireCheckout(checkoutDeps);
   // Phase 3 Task 13 (C-3): real `ordersPort`/`paymentsNotifications` adapters for Payments'

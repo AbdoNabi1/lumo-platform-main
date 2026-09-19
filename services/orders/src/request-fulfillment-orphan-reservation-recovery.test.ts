@@ -239,7 +239,7 @@ describe("Task 4 Scenario 1 — successful fulfillment", () => {
     const shipping = new IdempotentShippingPort();
     const useCase = new RequestFulfillment(buildDeps(repo, inventory, shipping));
 
-    const result = await useCase.execute({ orderId: "order-happy" });
+    const result = await useCase.execute({ tenantId: "tenant-a", orderId: "order-happy" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("fulfillment_requested");
@@ -258,9 +258,9 @@ describe("Task 4 Scenario 2 — external call failure (shipment throws after res
     const shipping = new IdempotentShippingPort(true);
     const useCase = new RequestFulfillment(buildDeps(repo, inventory, shipping));
 
-    await expect(useCase.execute({ orderId: "order-extfail" })).rejects.toThrow(
-      /simulated Shipping requestShipment failure/,
-    );
+    await expect(
+      useCase.execute({ tenantId: "tenant-a", orderId: "order-extfail" }),
+    ).rejects.toThrow(/simulated Shipping requestShipment failure/);
 
     expect(inventory.calls).toHaveLength(1);
     const persisted = await repo.findById("order-extfail");
@@ -288,9 +288,9 @@ describe("Task 4 Scenario 3 — local persistence failure (both external calls s
     };
     const useCase = new RequestFulfillment(buildDeps(flakyOrders, inventory, shipping));
 
-    await expect(useCase.execute({ orderId: "order-persistfail" })).rejects.toThrow(
-      /simulated transient DB failure/,
-    );
+    await expect(
+      useCase.execute({ tenantId: "tenant-a", orderId: "order-persistfail" }),
+    ).rejects.toThrow(/simulated transient DB failure/);
     expect(inventory.calls).toHaveLength(1);
     expect(shipping.calls).toHaveLength(1);
     const afterFail = await repo.findById("order-persistfail");
@@ -298,7 +298,10 @@ describe("Task 4 Scenario 3 — local persistence failure (both external calls s
 
     // Retry against the now-working repository — both port calls happen again...
     const retryUseCase = new RequestFulfillment(buildDeps(repo, inventory, shipping));
-    const retried = await retryUseCase.execute({ orderId: "order-persistfail" });
+    const retried = await retryUseCase.execute({
+      tenantId: "tenant-a",
+      orderId: "order-persistfail",
+    });
 
     expect(retried.ok).toBe(true);
     expect(inventory.calls).toHaveLength(2);
@@ -319,7 +322,7 @@ describe("Task 4 Scenario 4 — process failure after reservation, then retry", 
     const crashingShipping = new IdempotentShippingPort(true);
     const useCase = new RequestFulfillment(buildDeps(repo, inventory, crashingShipping));
 
-    await expect(useCase.execute({ orderId: "order-crash" })).rejects.toThrow(
+    await expect(useCase.execute({ tenantId: "tenant-a", orderId: "order-crash" })).rejects.toThrow(
       /simulated Shipping requestShipment failure/,
     );
     const afterCrash = await repo.findById("order-crash");
@@ -329,7 +332,7 @@ describe("Task 4 Scenario 4 — process failure after reservation, then retry", 
 
     const workingShipping = new IdempotentShippingPort();
     const retryUseCase = new RequestFulfillment(buildDeps(repo, inventory, workingShipping));
-    const retried = await retryUseCase.execute({ orderId: "order-crash" });
+    const retried = await retryUseCase.execute({ tenantId: "tenant-a", orderId: "order-crash" });
 
     expect(retried.ok).toBe(true);
     expect(inventory.calls).toHaveLength(2);
@@ -349,12 +352,17 @@ describe("Task 4 Scenario 5 — retry after partial failure, repeated multiple t
     for (let i = 0; i < 2; i += 1) {
       const failingShipping = new IdempotentShippingPort(true);
       const useCase = new RequestFulfillment(buildDeps(repo, inventory, failingShipping));
-      await expect(useCase.execute({ orderId: "order-multi-retry" })).rejects.toThrow();
+      await expect(
+        useCase.execute({ tenantId: "tenant-a", orderId: "order-multi-retry" }),
+      ).rejects.toThrow();
     }
 
     const workingShipping = new IdempotentShippingPort();
     const finalUseCase = new RequestFulfillment(buildDeps(repo, inventory, workingShipping));
-    const result = await finalUseCase.execute({ orderId: "order-multi-retry" });
+    const result = await finalUseCase.execute({
+      tenantId: "tenant-a",
+      orderId: "order-multi-retry",
+    });
 
     expect(result.ok).toBe(true);
     expect(inventory.calls).toHaveLength(3);
@@ -376,8 +384,8 @@ describe("Task 4 Scenario 6 / Task 6 — concurrent duplicate RequestFulfillment
       const useCase = new RequestFulfillment(buildDeps(repo, inventory, shipping));
 
       const [a, b] = await Promise.all([
-        useCase.execute({ orderId }),
-        useCase.execute({ orderId }),
+        useCase.execute({ tenantId: "tenant-a", orderId }),
+        useCase.execute({ tenantId: "tenant-a", orderId }),
       ]);
 
       expect(a.ok).toBe(true);

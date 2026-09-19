@@ -280,7 +280,7 @@ describe("Phase A.1 — F-02: order total is always re-derived from Checkout's o
     );
 
     const fetched = unwrap<{ totalAmount(): { amountMinor: number; currency: string } }>(
-      await admin.orders.getOrder(customer, { orderId: created.orderId }),
+      await admin.orders.getOrder(customer, { tenantId: "tenant-local", orderId: created.orderId }),
       "get order",
     );
     expect(fetched.totalAmount().amountMinor).toBe(REAL_TOTAL);
@@ -318,7 +318,7 @@ describe("Phase A.1 — F-02: order total is always re-derived from Checkout's o
     const orderId = (created.body as { orderId: string }).orderId;
 
     const fetched = unwrap<{ totalAmount(): { amountMinor: number; currency: string } }>(
-      await admin.orders.getOrder(customer, { orderId }),
+      await admin.orders.getOrder(customer, { tenantId: "tenant-local", orderId }),
       "get order",
     );
 

@@ -13,6 +13,13 @@ export interface PaymentCapturedPayload {
 export interface PaymentCapturedConsumerDeps {
   readonly markOrderPaid: MarkOrderPaid;
   readonly logger: Logger;
+  /**
+   * ADR-0014 (WP-10, T10.3): `MarkOrderPaid` takes `tenantId` per call. Until `tenantId` is required
+   * on the event envelope (G-64 — a contract change, out of scope here) the composition root
+   * supplies it, exactly as the other event consumers in `apps/runtime` do; reading the envelope
+   * tenant per message is the separate G-64 fix.
+   */
+  readonly tenantId: string;
 }
 
 /**
@@ -42,6 +49,7 @@ export class PaymentCapturedConsumer implements EventHandler<PaymentCapturedPayl
 
   async handle(event: IntegrationEvent<PaymentCapturedPayload>): Promise<void> {
     const result = await this.deps.markOrderPaid.execute({
+      tenantId: this.deps.tenantId,
       orderId: event.payload.orderRef,
       paymentRef: event.aggregateId, // the payment intent id
     });
