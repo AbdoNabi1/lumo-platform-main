@@ -123,8 +123,9 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
        */
       summary: "Public: authenticate a customer and establish a session",
       schema: { body: loginBody },
-      handle: ({ body }) =>
+      handle: ({ body, context }) =>
         admin.customerAuth.login({
+          tenantId: context.tenantId,
           email: body.email,
           password: body.password,
           ...(body.deviceFingerprint !== undefined

@@ -50,13 +50,18 @@ class SingleMethodResolver implements MfaProviderResolver {
 
 async function enroll(app: ReturnType<typeof wireSecurity>): Promise<string> {
   await app.security.registerPrincipal({
+    tenantId: "tenant-a",
     externalId: "admin-1",
     kind: "human",
     displayName: "Admin",
     subjectRef: "user-1",
     tenantRef: "t1",
   });
-  const enrolled = await app.security.enrollMfa({ principalExternalId: "admin-1", method: "totp" });
+  const enrolled = await app.security.enrollMfa({
+    tenantId: "tenant-a",
+    principalExternalId: "admin-1",
+    method: "totp",
+  });
   return body<{ id: string }>(enrolled).id;
 }
 
@@ -73,12 +78,17 @@ describe("MFA provider injection (C2-4)", () => {
     const enrollmentId = await enroll(app);
 
     const rejectedHardcoded = await app.security.verifyMfaEnrollment({
+      tenantId: "tenant-a",
       enrollmentId,
       code: "123456",
     });
     expect(rejectedHardcoded.status).not.toBe(200);
 
-    const verified = await app.security.verifyMfaEnrollment({ enrollmentId, code: "999999" });
+    const verified = await app.security.verifyMfaEnrollment({
+      tenantId: "tenant-a",
+      enrollmentId,
+      code: "999999",
+    });
     expect(verified.status).toBe(200);
     expect(body<{ status: string }>(verified).status).toBe("active");
   });
@@ -93,6 +103,7 @@ describe("MFA provider injection (C2-4)", () => {
       mfaProviders: new SingleMethodResolver(injected),
     });
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "admin-1",
       kind: "human",
       displayName: "Admin",
@@ -101,6 +112,7 @@ describe("MFA provider injection (C2-4)", () => {
     });
 
     const enrolled = await app.security.enrollMfa({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       method: "totp",
     });
@@ -119,7 +131,11 @@ describe("MFA provider injection (C2-4)", () => {
     });
     const enrollmentId = await enroll(app);
 
-    const verified = await app.security.verifyMfaEnrollment({ enrollmentId, code: "123456" });
+    const verified = await app.security.verifyMfaEnrollment({
+      tenantId: "tenant-a",
+      enrollmentId,
+      code: "123456",
+    });
     expect(verified.status).toBe(200);
     expect(body<{ status: string }>(verified).status).toBe("active");
   });

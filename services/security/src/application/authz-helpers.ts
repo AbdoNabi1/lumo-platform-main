@@ -9,11 +9,12 @@ import type { Role } from "../domain/role";
 export async function loadRoleClosure(
   roles: RoleRepository,
   assignmentKeys: readonly string[],
+  tenantId: string,
 ): Promise<Map<string, Role>> {
   const map = new Map<string, Role>();
   let frontier = [...new Set(assignmentKeys)];
   while (frontier.length > 0) {
-    const found = await roles.findByKeys(frontier);
+    const found = await roles.findByKeys(frontier, tenantId);
     const next: string[] = [];
     for (const role of found) {
       if (!map.has(role.key)) {

@@ -156,7 +156,10 @@ describe("POST /public/auth/register", () => {
       ).status,
     ).toBe(200);
     // ...and so does the Security principal that references it — the link T5.16 §1 identified as missing.
-    const resolved = await h.security.security.resolvePrincipal({ subjectRef: customerRef });
+    const resolved = await h.security.security.resolvePrincipal({
+      tenantId: "tenant-local",
+      subjectRef: customerRef,
+    });
     const principal = (resolved.body as { principal: { externalId: string; kind: string } | null })
       .principal;
     expect(principal).not.toBeNull();

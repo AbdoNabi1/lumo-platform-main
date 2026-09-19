@@ -12,6 +12,8 @@ import type { SecurityDeps } from "./deps";
  */
 
 export interface ResolvePrincipalInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   /** The Identity subject id (a human principal's `subjectRef`, the shared identity id). */
   readonly subjectRef: string;
 }
@@ -45,9 +47,9 @@ export class ResolvePrincipal implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: ResolvePrincipalInput): Promise<Result<ResolvedPrincipal, DomainError>> {
-    const principal = await this.deps.principals.findBySubjectRef(input.subjectRef);
-    const user = await this.deps.identityProjection.getUser(input.subjectRef);
-    const memberships = await this.resolveMemberships(input.subjectRef);
+    const principal = await this.deps.principals.findBySubjectRef(input.subjectRef, input.tenantId);
+    const user = await this.deps.identityProjection.getUser(input.subjectRef, input.tenantId);
+    const memberships = await this.resolveMemberships(input.subjectRef, input.tenantId);
     return ok({
       principal:
         principal === null
@@ -67,11 +69,14 @@ export class ResolvePrincipal implements UseCase<
     });
   }
 
-  private async resolveMemberships(userId: string): Promise<readonly ResolvedMembership[]> {
-    const rows = await this.deps.identityProjection.listMembershipsByUser(userId);
+  private async resolveMemberships(
+    userId: string,
+    tenantId: string,
+  ): Promise<readonly ResolvedMembership[]> {
+    const rows = await this.deps.identityProjection.listMembershipsByUser(userId, tenantId);
     const resolved: ResolvedMembership[] = [];
     for (const m of rows) {
-      const org = await this.deps.identityProjection.getOrganization(m.organizationId);
+      const org = await this.deps.identityProjection.getOrganization(m.organizationId, tenantId);
       resolved.push({
         membershipId: m.membershipId,
         organizationId: m.organizationId,
@@ -84,6 +89,8 @@ export class ResolvePrincipal implements UseCase<
 }
 
 export interface ResolveMembershipInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly userId: string;
 }
 export interface MembershipResolution {
@@ -99,10 +106,16 @@ export class ResolveMembership implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: ResolveMembershipInput): Promise<Result<MembershipResolution, DomainError>> {
-    const rows = await this.deps.identityProjection.listMembershipsByUser(input.userId);
+    const rows = await this.deps.identityProjection.listMembershipsByUser(
+      input.userId,
+      input.tenantId,
+    );
     const memberships: ResolvedMembership[] = [];
     for (const m of rows) {
-      const org = await this.deps.identityProjection.getOrganization(m.organizationId);
+      const org = await this.deps.identityProjection.getOrganization(
+        m.organizationId,
+        input.tenantId,
+      );
       memberships.push({
         membershipId: m.membershipId,
         organizationId: m.organizationId,
@@ -115,6 +128,8 @@ export class ResolveMembership implements UseCase<
 }
 
 export interface ResolveOrganizationInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly organizationId: string;
 }
 export interface OrganizationResolution {
@@ -133,13 +148,18 @@ export class ResolveOrganization implements UseCase<
   async execute(
     input: ResolveOrganizationInput,
   ): Promise<Result<OrganizationResolution, DomainError>> {
-    const org = await this.deps.identityProjection.getOrganization(input.organizationId);
+    const org = await this.deps.identityProjection.getOrganization(
+      input.organizationId,
+      input.tenantId,
+    );
     if (org === null) return err(new NotFoundError("Organization not found in projection"));
     return ok({ organizationId: org.organizationId, slug: org.slug, tenant: org.orgTenant });
   }
 }
 
 export interface ResolveMachineIdentityInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
 }
 export interface MachineIdentityResolution {
@@ -161,9 +181,15 @@ export class ResolveMachineIdentity implements UseCase<
   async execute(
     input: ResolveMachineIdentityInput,
   ): Promise<Result<MachineIdentityResolution, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
-    const profile = await this.deps.machineProfiles.findByPrincipal(principal.id.toString());
+    const profile = await this.deps.machineProfiles.findByPrincipal(
+      principal.id.toString(),
+      input.tenantId,
+    );
     if (profile === null) return err(new NotFoundError("Machine identity is not governed"));
     return ok({
       principalRef: profile.principalRef,

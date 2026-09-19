@@ -50,6 +50,14 @@ function ensureProvisioned(response: ControllerResponse, action: string): void {
 interface ProvisioningDeps {
   readonly security: SecurityController;
   readonly logger: Logger;
+  /**
+   * ADR-0014 (WP-10, T10.3): every `SecurityController` use-case takes `tenantId` per call. Until
+   * `tenantId` is required on the event envelope (G-64 — a contract change, out of scope here) the
+   * composition root supplies it, exactly as the other event consumers in `apps/runtime` do; reading
+   * the envelope tenant per message is the separate G-64 fix. (`tenantRef` below is the Identity
+   * user's own tenant, a business attribute — not this row scope.)
+   */
+  readonly tenantId: string;
 }
 
 /** `identity.user.created` → register the human Security Principal (idempotent per Identity user id). */
@@ -61,6 +69,7 @@ export class ProvisionPrincipalOnUserCreated implements EventHandler<IdentityUse
     const { userId, tenantId } = event.payload;
     ensureProvisioned(
       await this.deps.security.registerPrincipal({
+        tenantId: this.deps.tenantId,
         externalId: userId,
         kind: "human",
         displayName: userId,
@@ -80,6 +89,7 @@ export class DisablePrincipalOnUserDeactivated implements EventHandler<IdentityU
   async handle(event: IntegrationEvent<IdentityUserDeactivatedPayload>): Promise<void> {
     ensureProvisioned(
       await this.deps.security.transitionPrincipal({
+        tenantId: this.deps.tenantId,
         externalId: event.payload.userId,
         to: "disabled",
       }),
@@ -96,6 +106,7 @@ export class AssignRoleOnMembershipCreated implements EventHandler<IdentityMembe
   async handle(event: IntegrationEvent<IdentityMembershipCreatedPayload>): Promise<void> {
     ensureProvisioned(
       await this.deps.security.assignRole({
+        tenantId: this.deps.tenantId,
         principalExternalId: event.payload.userId,
         roleKey: mapMembershipRole(event.payload.role),
         grantedBy: SYSTEM_GRANTOR,

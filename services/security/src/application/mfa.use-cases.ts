@@ -30,6 +30,8 @@ function present(e: MfaEnrollment, provisioningUri?: string): MfaEnrollmentOutpu
 }
 
 export interface EnrollMfaInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   readonly method: MfaMethodKind;
 }
@@ -38,7 +40,10 @@ export interface EnrollMfaInput {
 export class EnrollMfa implements UseCase<EnrollMfaInput, MfaEnrollmentOutput, DomainError> {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: EnrollMfaInput): Promise<Result<MfaEnrollmentOutput, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
     const provider = this.deps.mfaProviders.get(input.method);
     if (provider === null)
@@ -56,8 +61,9 @@ export class EnrollMfa implements UseCase<EnrollMfaInput, MfaEnrollmentOutput, D
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.mfaEnrollments.save(enrollment, tx);
+      await this.deps.mfaEnrollments.save(enrollment, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.mfa.enrolled",
         decision: "allow",
@@ -70,6 +76,8 @@ export class EnrollMfa implements UseCase<EnrollMfaInput, MfaEnrollmentOutput, D
 }
 
 export interface VerifyMfaInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly enrollmentId: string;
   readonly code: string;
 }
@@ -82,7 +90,7 @@ export class VerifyMfaEnrollment implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: VerifyMfaInput): Promise<Result<MfaEnrollmentOutput, DomainError>> {
-    const enrollment = await this.deps.mfaEnrollments.findById(input.enrollmentId);
+    const enrollment = await this.deps.mfaEnrollments.findById(input.enrollmentId, input.tenantId);
     if (enrollment === null) return err(new NotFoundError("MFA enrollment not found"));
     const provider = this.deps.mfaProviders.get(enrollment.method);
     if (provider === null)
@@ -99,9 +107,10 @@ export class VerifyMfaEnrollment implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.mfaEnrollments.save(enrollment, tx);
+      await this.deps.mfaEnrollments.save(enrollment, input.tenantId, tx);
       this.deps.telemetry.increment("security.mfa.succeeded");
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: enrollment.principalRef,
         action: "security.mfa.verified",
         decision: "allow",
@@ -113,6 +122,8 @@ export class VerifyMfaEnrollment implements UseCase<
 }
 
 export interface GenerateBackupCodesInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly enrollmentId: string;
   readonly count?: number;
 }
@@ -132,7 +143,7 @@ export class GenerateBackupCodes implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: GenerateBackupCodesInput): Promise<Result<BackupCodesOutput, DomainError>> {
-    const enrollment = await this.deps.mfaEnrollments.findById(input.enrollmentId);
+    const enrollment = await this.deps.mfaEnrollments.findById(input.enrollmentId, input.tenantId);
     if (enrollment === null) return err(new NotFoundError("MFA enrollment not found"));
     const count = input.count ?? 10;
     const codes: string[] = [];
@@ -144,8 +155,9 @@ export class GenerateBackupCodes implements UseCase<
     }
     return this.deps.unitOfWork.run<Result<BackupCodesOutput, DomainError>>(async (tx) => {
       enrollment.setBackupCodes(hashes);
-      await this.deps.mfaEnrollments.save(enrollment, tx);
+      await this.deps.mfaEnrollments.save(enrollment, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: enrollment.principalRef,
         action: "security.mfa.backup_codes_generated",
         decision: "allow",
@@ -157,6 +169,8 @@ export class GenerateBackupCodes implements UseCase<
 }
 
 export interface RevokeMfaInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly enrollmentId: string;
 }
 
@@ -165,11 +179,16 @@ export class RevokeMfa implements UseCase<RevokeMfaInput, MfaEnrollmentOutput, D
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: RevokeMfaInput): Promise<Result<MfaEnrollmentOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<MfaEnrollmentOutput, DomainError>>(async (tx) => {
-      const enrollment = await this.deps.mfaEnrollments.findById(input.enrollmentId, tx);
+      const enrollment = await this.deps.mfaEnrollments.findById(
+        input.enrollmentId,
+        input.tenantId,
+        tx,
+      );
       if (enrollment === null) return err(new NotFoundError("MFA enrollment not found"));
       enrollment.revoke(this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.mfaEnrollments.save(enrollment, tx);
+      await this.deps.mfaEnrollments.save(enrollment, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: enrollment.principalRef,
         action: "security.mfa.revoked",
         decision: "allow",
@@ -181,6 +200,8 @@ export class RevokeMfa implements UseCase<RevokeMfaInput, MfaEnrollmentOutput, D
 }
 
 export interface DecideMfaInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   readonly deviceFingerprint?: string;
   readonly riskBand: RiskBand;
@@ -192,17 +213,26 @@ export interface DecideMfaInput {
 export class DecideMfa implements UseCase<DecideMfaInput, MfaDecision, DomainError> {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: DecideMfaInput): Promise<Result<MfaDecision, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
     const profile =
       principal.tenantRef !== null
-        ? await this.deps.tenantProfiles.findByTenant(principal.tenantRef)
+        ? await this.deps.tenantProfiles.findByTenant(principal.tenantRef, input.tenantId)
         : null;
-    const enrollments = await this.deps.mfaEnrollments.listByPrincipal(principal.id.toString());
+    const enrollments = await this.deps.mfaEnrollments.listByPrincipal(
+      principal.id.toString(),
+      input.tenantId,
+    );
     const hasActiveEnrollment = enrollments.some((e) => e.isActive);
     let deviceTrusted = false;
     if (input.deviceFingerprint !== undefined) {
-      const device = await this.deps.devices.findByFingerprint(input.deviceFingerprint);
+      const device = await this.deps.devices.findByFingerprint(
+        input.deviceFingerprint,
+        input.tenantId,
+      );
       deviceTrusted = device !== null && device.isTrusted;
     }
     const decision = this.deps.mfaEngine.decide({

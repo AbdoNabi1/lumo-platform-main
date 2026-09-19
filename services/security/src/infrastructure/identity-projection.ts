@@ -4,6 +4,7 @@ import type {
   IdentityProjectionStore,
   IdentityUserRecord,
 } from "../application/ports";
+import { ScopedMap } from "./in-memory-scoped-map";
 
 /**
  * In-memory {@link IdentityProjectionStore} (offline/tests) — the read projection of Identity's
@@ -12,24 +13,25 @@ import type {
  * real projection/LWW logic; the Prisma store implements the same contract for production.
  */
 export class InMemoryIdentityProjectionStore implements IdentityProjectionStore {
-  private readonly users = new Map<string, IdentityUserRecord>();
-  private readonly orgs = new Map<string, IdentityOrganizationRecord>();
-  private readonly memberships = new Map<string, IdentityMembershipRecord>();
+  private readonly users = new ScopedMap<IdentityUserRecord>();
+  private readonly orgs = new ScopedMap<IdentityOrganizationRecord>();
+  private readonly memberships = new ScopedMap<IdentityMembershipRecord>();
 
-  async upsertUser(record: IdentityUserRecord): Promise<void> {
-    const existing = this.users.get(record.userId);
+  async upsertUser(record: IdentityUserRecord, tenantId: string): Promise<void> {
+    const existing = this.users.get(tenantId, record.userId);
     if (existing !== undefined && existing.occurredAt > record.occurredAt) return; // strictly-older ⇒ drop
-    this.users.set(record.userId, record);
+    this.users.set(tenantId, record.userId, record);
   }
 
   async setUserStatus(
     userId: string,
     status: IdentityUserRecord["status"],
     occurredAt: string,
+    tenantId: string,
   ): Promise<void> {
-    const existing = this.users.get(userId);
+    const existing = this.users.get(tenantId, userId);
     if (existing !== undefined && existing.occurredAt > occurredAt) return;
-    this.users.set(userId, {
+    this.users.set(tenantId, userId, {
       userId,
       userTenant: existing?.userTenant ?? null,
       status,
@@ -37,34 +39,45 @@ export class InMemoryIdentityProjectionStore implements IdentityProjectionStore 
     });
   }
 
-  async getUser(userId: string): Promise<IdentityUserRecord | null> {
-    return this.users.get(userId) ?? null;
+  async getUser(userId: string, tenantId: string): Promise<IdentityUserRecord | null> {
+    return this.users.get(tenantId, userId) ?? null;
   }
 
-  async upsertOrganization(record: IdentityOrganizationRecord): Promise<void> {
-    const existing = this.orgs.get(record.organizationId);
+  async upsertOrganization(record: IdentityOrganizationRecord, tenantId: string): Promise<void> {
+    const existing = this.orgs.get(tenantId, record.organizationId);
     if (existing !== undefined && existing.occurredAt > record.occurredAt) return;
-    this.orgs.set(record.organizationId, record);
+    this.orgs.set(tenantId, record.organizationId, record);
   }
 
-  async getOrganization(organizationId: string): Promise<IdentityOrganizationRecord | null> {
-    return this.orgs.get(organizationId) ?? null;
+  async getOrganization(
+    organizationId: string,
+    tenantId: string,
+  ): Promise<IdentityOrganizationRecord | null> {
+    return this.orgs.get(tenantId, organizationId) ?? null;
   }
 
-  async upsertMembership(record: IdentityMembershipRecord): Promise<void> {
-    const existing = this.memberships.get(record.membershipId);
+  async upsertMembership(record: IdentityMembershipRecord, tenantId: string): Promise<void> {
+    const existing = this.memberships.get(tenantId, record.membershipId);
     if (existing !== undefined && existing.occurredAt > record.occurredAt) return;
-    this.memberships.set(record.membershipId, record);
+    this.memberships.set(tenantId, record.membershipId, record);
   }
 
-  async setMembershipRole(membershipId: string, role: string, occurredAt: string): Promise<void> {
-    const existing = this.memberships.get(membershipId);
+  async setMembershipRole(
+    membershipId: string,
+    role: string,
+    occurredAt: string,
+    tenantId: string,
+  ): Promise<void> {
+    const existing = this.memberships.get(tenantId, membershipId);
     if (existing === undefined) return; // create precedes role-change per aggregate ordering
     if (existing.occurredAt > occurredAt) return;
-    this.memberships.set(membershipId, { ...existing, role, occurredAt });
+    this.memberships.set(tenantId, membershipId, { ...existing, role, occurredAt });
   }
 
-  async listMembershipsByUser(userId: string): Promise<readonly IdentityMembershipRecord[]> {
-    return [...this.memberships.values()].filter((m) => m.userId === userId);
+  async listMembershipsByUser(
+    userId: string,
+    tenantId: string,
+  ): Promise<readonly IdentityMembershipRecord[]> {
+    return this.memberships.values(tenantId).filter((m) => m.userId === userId);
   }
 }

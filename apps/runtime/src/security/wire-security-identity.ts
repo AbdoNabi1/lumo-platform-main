@@ -65,13 +65,11 @@ export function wireSecurityIdentity(
 
   const consentStore = new PrismaConsentProjectionStore({
     prisma: core.prisma,
-    tenantId: config.TENANT_DEFAULT_ID,
     idGenerator: core.idGenerator,
   });
   const consent = new ProjectionConsentPort(consentStore);
   const identityProjection = new PrismaIdentityProjectionStore({
     prisma: core.prisma,
-    tenantId: config.TENANT_DEFAULT_ID,
     idGenerator: core.idGenerator,
   });
   const relationshipSync = new KetoRelationshipSync(keto);
@@ -83,10 +81,14 @@ export function wireSecurityIdentity(
   const build = <T>(handler: EventHandler<T>, consumerGroup: string): SupervisedConsumer =>
     buildProcessedConsumer<T>(core, handler, consumerGroup, producer, metrics);
 
-  const idp = { store: identityProjection, logger: core.logger };
+  // ADR-0014 (WP-10, T10.3) — class D / G-64: the projection stores take `tenantId` per call, but the
+  // event envelope carries no required tenant yet, so the consumers are handed the deployment tenant
+  // here (T10.7 inventory). Reading the envelope tenant per message is the separate G-64 fix.
+  const tenantId = config.TENANT_DEFAULT_ID;
+  const idp = { store: identityProjection, logger: core.logger, tenantId };
   const runtimes: readonly SupervisedConsumer[] = [
     build(
-      new ConsentChangedConsumer({ store: consentStore, logger: core.logger }),
+      new ConsentChangedConsumer({ store: consentStore, logger: core.logger, tenantId }),
       "security.consent-projection",
     ),
     build(

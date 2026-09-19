@@ -45,7 +45,12 @@ export async function wireSecurityProvisioning(
   await bootstrapSecurity(wired.security, core.config.TENANT_DEFAULT_ID, core.logger);
 
   const producer = new KafkaMessageProducer(core.kafka);
-  const deps = { security: wired.security, logger: core.logger };
+  // Class D / G-64 (T10.7): the consumers take the deployment tenant until the envelope carries one.
+  const deps = {
+    security: wired.security,
+    logger: core.logger,
+    tenantId: core.config.TENANT_DEFAULT_ID,
+  };
   const build = <T>(handler: EventHandler<T>, consumerGroup: string): SupervisedConsumer =>
     buildProcessedConsumer<T>(core, handler, consumerGroup, producer, metrics);
 

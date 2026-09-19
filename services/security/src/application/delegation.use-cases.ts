@@ -28,6 +28,8 @@ function present(d: Delegation): DelegationOutput {
 }
 
 export interface GrantDelegationInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly delegatorExternalId: string;
   readonly delegateExternalId: string;
   readonly scope?: SecurityScopeProps;
@@ -44,9 +46,15 @@ export class GrantDelegation implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: GrantDelegationInput): Promise<Result<DelegationOutput, DomainError>> {
-    const delegator = await this.deps.principals.findByExternalId(input.delegatorExternalId);
+    const delegator = await this.deps.principals.findByExternalId(
+      input.delegatorExternalId,
+      input.tenantId,
+    );
     if (delegator === null) return err(new NotFoundError("Delegator principal not found"));
-    const delegate = await this.deps.principals.findByExternalId(input.delegateExternalId);
+    const delegate = await this.deps.principals.findByExternalId(
+      input.delegateExternalId,
+      input.tenantId,
+    );
     if (delegate === null) return err(new NotFoundError("Delegate principal not found"));
     return this.deps.unitOfWork.run<Result<DelegationOutput, DomainError>>(async (tx) => {
       const now = this.deps.clock.now();
@@ -71,8 +79,9 @@ export class GrantDelegation implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.delegations.save(delegation, tx);
+      await this.deps.delegations.save(delegation, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: delegate.externalId,
         action: "security.delegation.granted",
         decision: "allow",
@@ -84,6 +93,8 @@ export class GrantDelegation implements UseCase<
 }
 
 export interface RevokeDelegationInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly delegationId: string;
 }
 
@@ -96,11 +107,16 @@ export class RevokeDelegation implements UseCase<
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: RevokeDelegationInput): Promise<Result<DelegationOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DelegationOutput, DomainError>>(async (tx) => {
-      const delegation = await this.deps.delegations.findById(input.delegationId, tx);
+      const delegation = await this.deps.delegations.findById(
+        input.delegationId,
+        input.tenantId,
+        tx,
+      );
       if (delegation === null) return err(new NotFoundError("Delegation not found"));
       delegation.revoke(this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.delegations.save(delegation, tx);
+      await this.deps.delegations.save(delegation, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: delegation.delegateRef,
         action: "security.delegation.revoked",
         decision: "allow",
@@ -111,6 +127,8 @@ export class RevokeDelegation implements UseCase<
 }
 
 export interface StartImpersonationInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly delegationId: string;
   readonly refreshFingerprint: string;
   readonly ttlSeconds: number;
@@ -135,7 +153,7 @@ export class StartImpersonation implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: StartImpersonationInput): Promise<Result<ImpersonationOutput, DomainError>> {
-    const delegation = await this.deps.delegations.findById(input.delegationId);
+    const delegation = await this.deps.delegations.findById(input.delegationId, input.tenantId);
     if (delegation === null) return err(new NotFoundError("Delegation not found"));
     const now = this.deps.clock.now();
     if (!delegation.isActiveAt(now)) return err(new BusinessRuleError("Delegation is not active"));
@@ -159,9 +177,10 @@ export class StartImpersonation implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.sessions.save(session, tx);
+      await this.deps.sessions.save(session, input.tenantId, tx);
       this.deps.telemetry.increment("security.session.established");
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: delegation.delegatorRef,
         action: "security.session.established",
         decision: "allow",

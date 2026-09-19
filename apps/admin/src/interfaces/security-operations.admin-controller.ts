@@ -113,37 +113,43 @@ export class SecurityOperationsAdminController {
   }
 
   /** Console read model — incident explorer (Part 10). Not `present()`-wrapped upstream; wrapped here. */
-  async incidentExplorer(principal: Principal): Promise<AdminResponse> {
+  async incidentExplorer(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:incident_explorer");
     if (denied) return denied;
-    return { status: 200, body: await this.security.incidentExplorer() };
+    return { status: 200, body: await this.security.incidentExplorer(tenantId) };
   }
 
   /** Console read model — audit explorer (Part 10), optionally scoped to a tenant. Wrapped here. */
   async auditExplorer(
     principal: Principal,
+    tenantId: string,
     tenantRef: string | null = null,
   ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:audit_explorer");
     if (denied) return denied;
-    return { status: 200, body: await this.security.auditExplorer(tenantRef) };
+    return { status: 200, body: await this.security.auditExplorer(tenantId, tenantRef) };
   }
 
   /** Console read model — security dashboard (Part 10), optionally scoped to a tenant. Wrapped here. */
   async securityDashboard(
     principal: Principal,
+    tenantId: string,
     tenantRef: string | null = null,
   ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:security_dashboard");
     if (denied) return denied;
-    return { status: 200, body: await this.security.securityDashboard(tenantRef) };
+    return { status: 200, body: await this.security.securityDashboard(tenantId, tenantRef) };
   }
 
   /** Console read model — trust center (Part 10), optionally scoped to a tenant. Wrapped here. */
-  async trustCenter(principal: Principal, tenantRef: string | null = null): Promise<AdminResponse> {
+  async trustCenter(
+    principal: Principal,
+    tenantId: string,
+    tenantRef: string | null = null,
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:trust_center");
     if (denied) return denied;
-    return { status: 200, body: await this.security.trustCenter(tenantRef) };
+    return { status: 200, body: await this.security.trustCenter(tenantId, tenantRef) };
   }
 
   /** Console read model — security analytics (Part 10). Synchronous upstream; wrapped here. */

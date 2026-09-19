@@ -28,6 +28,8 @@ function present(d: Device): DeviceOutput {
 }
 
 export interface RegisterDeviceInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly fingerprint: string;
   readonly principalExternalId?: string;
   readonly tenantRef?: string | null;
@@ -40,12 +42,19 @@ export class RegisterDevice implements UseCase<RegisterDeviceInput, DeviceOutput
   async execute(input: RegisterDeviceInput): Promise<Result<DeviceOutput, DomainError>> {
     let principalRef: string | null = null;
     if (input.principalExternalId !== undefined) {
-      const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+      const principal = await this.deps.principals.findByExternalId(
+        input.principalExternalId,
+        input.tenantId,
+      );
       if (principal === null) return err(new NotFoundError("Principal not found"));
       principalRef = principal.id.toString();
     }
     return this.deps.unitOfWork.run<Result<DeviceOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.devices.findByFingerprint(input.fingerprint, tx);
+      const existing = await this.deps.devices.findByFingerprint(
+        input.fingerprint,
+        input.tenantId,
+        tx,
+      );
       if (existing !== null) return ok(present(existing));
       let device: Device;
       try {
@@ -64,8 +73,9 @@ export class RegisterDevice implements UseCase<RegisterDeviceInput, DeviceOutput
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.devices.save(device, tx);
+      await this.deps.devices.save(device, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principalRef ?? "anonymous",
         action: "security.device.registered",
         decision: "allow",
@@ -78,6 +88,8 @@ export class RegisterDevice implements UseCase<RegisterDeviceInput, DeviceOutput
 }
 
 export interface RecordDeviceSignalInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly fingerprint: string;
   readonly type: string;
   readonly severity: SignalSeverity;
@@ -92,14 +104,18 @@ export class RecordDeviceSignal implements UseCase<
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: RecordDeviceSignalInput): Promise<Result<DeviceOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DeviceOutput, DomainError>>(async (tx) => {
-      const device = await this.deps.devices.findByFingerprint(input.fingerprint, tx);
+      const device = await this.deps.devices.findByFingerprint(
+        input.fingerprint,
+        input.tenantId,
+        tx,
+      );
       if (device === null) return err(new NotFoundError("Device not found"));
       device.recordSignal({
         type: input.type,
         severity: input.severity,
         at: this.deps.clock.now(),
       });
-      await this.deps.devices.save(device, tx);
+      await this.deps.devices.save(device, input.tenantId, tx);
       if (input.severity === "high") this.deps.telemetry.increment("security.threat.indicated");
       return ok(present(device));
     });
@@ -107,6 +123,8 @@ export class RecordDeviceSignal implements UseCase<
 }
 
 export interface DeviceActionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly fingerprint: string;
 }
 
@@ -115,7 +133,11 @@ export class TrustDevice implements UseCase<DeviceActionInput, DeviceOutput, Dom
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: DeviceActionInput): Promise<Result<DeviceOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DeviceOutput, DomainError>>(async (tx) => {
-      const device = await this.deps.devices.findByFingerprint(input.fingerprint, tx);
+      const device = await this.deps.devices.findByFingerprint(
+        input.fingerprint,
+        input.tenantId,
+        tx,
+      );
       if (device === null) return err(new NotFoundError("Device not found"));
       try {
         device.trust(this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -123,8 +145,9 @@ export class TrustDevice implements UseCase<DeviceActionInput, DeviceOutput, Dom
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.devices.save(device, tx);
+      await this.deps.devices.save(device, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: device.principalRef ?? "anonymous",
         action: "security.device.trusted",
         decision: "allow",
@@ -140,11 +163,16 @@ export class BlockDevice implements UseCase<DeviceActionInput, DeviceOutput, Dom
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: DeviceActionInput): Promise<Result<DeviceOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DeviceOutput, DomainError>>(async (tx) => {
-      const device = await this.deps.devices.findByFingerprint(input.fingerprint, tx);
+      const device = await this.deps.devices.findByFingerprint(
+        input.fingerprint,
+        input.tenantId,
+        tx,
+      );
       if (device === null) return err(new NotFoundError("Device not found"));
       device.block(this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.devices.save(device, tx);
+      await this.deps.devices.save(device, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: device.principalRef ?? "anonymous",
         action: "security.device.blocked",
         decision: "block",

@@ -210,8 +210,6 @@ export interface SecurityWiringDeps {
   readonly clock: Clock;
   /** Production persistence (G-SEC-1). Present ⇒ Postgres-backed Prisma repositories; absent ⇒ in-memory (tests). */
   readonly prisma?: Database;
-  /** Row scope for every Prisma query/write (ADR-0008) — required when `prisma` is provided. */
-  readonly tenantId?: string;
   /** Seed known Identity subject refs so human principals can be registered offline (tests). */
   readonly knownSubjects?: readonly string[];
   /** Seed trusted device refs (tests). */
@@ -281,9 +279,6 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
   const translator = new SecurityEventTranslator();
   if (deps.prisma !== undefined) {
     const prisma = deps.prisma;
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined)
-      throw new Error("wireSecurity: tenantId is required when prisma is provided (ADR-0008).");
     const outbox = new OutboxWriter<TransactionClient>({
       store: new PrismaOutboxStore(prisma),
       translator,
@@ -291,8 +286,8 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
       clock: deps.clock,
       producer: "security",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const rd = { prisma, outbox, context, tenantId };
+    const context = rootEventContext(deps.idGenerator);
+    const rd = { prisma, outbox, context };
     return {
       principals: new PrismaPrincipalRepository(rd),
       credentials: new PrismaCredentialRepository(rd),
@@ -311,10 +306,12 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
       auditLedger: new PrismaAuditLedgerRepository(rd),
       unitOfWork: new PrismaUnitOfWork(prisma),
       securityOutbox: {
-        publish: (events, tx) =>
+        publish: (events, tenantId, tx) =>
           tx !== undefined
-            ? outbox.write(events, context, tx as TransactionClient)
-            : runInTransaction(prisma, (client) => outbox.write(events, context, client)),
+            ? outbox.write(events, { ...context, tenantId }, tx as TransactionClient)
+            : runInTransaction(prisma, (client) =>
+                outbox.write(events, { ...context, tenantId }, client),
+              ),
       },
       drainOutbox: async () => 0, // the OutboxRelay runs in the worker entrypoint in production
       deliveredEventTypes: [],
@@ -359,7 +356,9 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
     aiProfiles: new InMemoryAiGovernanceProfileRepository(rd),
     auditLedger: new InMemoryAuditLedgerRepository(),
     unitOfWork: new InMemoryUnitOfWork(),
-    securityOutbox: { publish: (events, tx) => outbox.write(events, context, tx) },
+    securityOutbox: {
+      publish: (events, tenantId, tx) => outbox.write(events, { ...context, tenantId }, tx),
+    },
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

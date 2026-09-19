@@ -50,7 +50,6 @@ export function wireSecurityRuntime(core: RuntimeCore): WiredSecurity {
     idGenerator: core.idGenerator,
     clock: core.clock,
     prisma: core.prisma,
-    tenantId: config.TENANT_DEFAULT_ID,
     // H-2 live identity binding — present outside local; absent ⇒ the context's offline reference adapters.
     ...(ory !== null
       ? {
@@ -62,12 +61,10 @@ export function wireSecurityRuntime(core: RuntimeCore): WiredSecurity {
     // Shared Prisma projections the resolution use-cases read + the identity/consent consumers write (H-2).
     consentStore: new PrismaConsentProjectionStore({
       prisma: core.prisma,
-      tenantId: config.TENANT_DEFAULT_ID,
       idGenerator: core.idGenerator,
     }),
     identityProjection: new PrismaIdentityProjectionStore({
       prisma: core.prisma,
-      tenantId: config.TENANT_DEFAULT_ID,
       idGenerator: core.idGenerator,
     }),
     // H-3 cloud KMS/crypto/threat providers — undefined ⇒ the context's node:crypto + reference feed.

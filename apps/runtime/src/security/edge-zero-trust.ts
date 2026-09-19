@@ -32,6 +32,7 @@ export interface ZeroTrustDecider {
  */
 export interface SessionFederator {
   federateSession(input: {
+    readonly tenantId: string;
     readonly principalExternalId: string;
     readonly externalRef: string;
     readonly refreshFingerprint: string;
@@ -41,6 +42,8 @@ export interface SessionFederator {
 }
 
 export interface EdgeRequest {
+  /** ADR-0014 (WP-10, T10.3): the request's resolved tenant — the per-call scope of every Security read/write. */
+  readonly tenantId: string;
   readonly principalId: string;
   readonly permission: string;
   /** The upstream IdP session id (`sid`) from the verified token — federated to a Security session. */
@@ -135,6 +138,7 @@ export class EdgeZeroTrustEvaluator {
       logContext,
       async () => {
         const input: EvaluateAccessInput = {
+          tenantId: request.tenantId,
           principalExternalId: request.principalId,
           permission: request.permission,
           ...(sessionId !== undefined ? { sessionId } : {}),
@@ -167,6 +171,7 @@ export class EdgeZeroTrustEvaluator {
     const federation = this.options.federation;
     if (federation === undefined || request.sessionId === undefined) return request.sessionId;
     const outcome = await federation.federateSession({
+      tenantId: request.tenantId,
       principalExternalId: request.principalId,
       externalRef: request.sessionId,
       // A mirror never holds a token — only a non-reversible marker tying it to this upstream session.

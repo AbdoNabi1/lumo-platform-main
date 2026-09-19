@@ -11,6 +11,8 @@ import { loadRoleClosure } from "./authz-helpers";
 import { recordAudit, securityEvent, type SecurityDeps } from "./deps";
 
 export interface EvaluateAccessInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   /** The required permission, `"<resource>:<action>"`. */
   readonly permission: string;
@@ -58,14 +60,17 @@ export class EvaluateAccess implements UseCase<
     if (!requiredSpec.ok) return err(requiredSpec.error);
     const now = this.deps.clock.now();
 
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     const principalRef = principal?.externalId ?? input.principalExternalId;
     const tenantRef = principal?.tenantRef ?? null;
 
     // Session validity — human principals require a valid session; non-human principals are sessionless.
     let sessionValid: boolean;
     if (input.sessionId !== undefined) {
-      const session = await this.deps.sessions.findById(input.sessionId);
+      const session = await this.deps.sessions.findById(input.sessionId, input.tenantId);
       sessionValid = session !== null && session.isValidAt(now);
     } else {
       sessionValid = principal !== null && principal.kind !== "human";
@@ -77,10 +82,14 @@ export class EvaluateAccess implements UseCase<
     let roleKeys: readonly string[] = [];
     let permissionGranted = false;
     if (principal !== null) {
-      const assignments = await this.deps.assignments.listByPrincipal(principal.id.toString());
+      const assignments = await this.deps.assignments.listByPrincipal(
+        principal.id.toString(),
+        input.tenantId,
+      );
       const roles = await loadRoleClosure(
         this.deps.roles,
         assignments.map((a) => a.roleKey),
+        input.tenantId,
       );
       const effective = this.deps.authorization.resolve({ assignments, roles, requestScope, now });
       permissionGranted = this.deps.authorization.isAuthorized(effective, requiredSpec.value);
@@ -98,10 +107,11 @@ export class EvaluateAccess implements UseCase<
     // Resolve governing policy: explicit key, else the tenant profile default.
     let policyKey = input.policyKey ?? null;
     if (policyKey === null && tenantRef !== null) {
-      const profile = await this.deps.tenantProfiles.findByTenant(tenantRef);
+      const profile = await this.deps.tenantProfiles.findByTenant(tenantRef, input.tenantId);
       policyKey = profile?.defaultPolicyKey ?? null;
     }
-    const policy = policyKey !== null ? await this.deps.policies.findByKey(policyKey) : null;
+    const policy =
+      policyKey !== null ? await this.deps.policies.findByKey(policyKey, input.tenantId) : null;
     const activeVersion = policy?.activePolicyVersion() ?? null;
 
     let resource: ResourceUrn | null = null;
@@ -130,6 +140,7 @@ export class EvaluateAccess implements UseCase<
 
     return this.deps.unitOfWork.run<Result<AccessDecisionOutput, DomainError>>(async (tx) => {
       const audit = await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef,
         action: requiredSpec.value.toString(),
         decision: decision.effect,
@@ -154,6 +165,7 @@ export class EvaluateAccess implements UseCase<
             decision.effect,
           ),
         ],
+        input.tenantId,
         tx,
       );
       return ok({
@@ -180,6 +192,8 @@ export class EvaluateAccess implements UseCase<
 }
 
 export interface VerifyAuditChainInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly tenantRef?: string | null;
 }
 
@@ -198,7 +212,7 @@ export class VerifyAuditChain implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: VerifyAuditChainInput): Promise<Result<AuditChainReport, DomainError>> {
-    const records = await this.deps.auditLedger.list(input.tenantRef ?? null);
+    const records = await this.deps.auditLedger.list(input.tenantRef ?? null, input.tenantId);
     const verification = this.deps.auditChain.verify(records);
     return ok({
       valid: verification.valid,

@@ -35,7 +35,21 @@ export class SecurityPermissionGuard implements PermissionGuard {
     permission: Permission,
     context?: GuardRequestContext,
   ): Promise<TransportResponse | null> {
+    // The transport resolves the tenant before any guard runs; a guard invoked without one fails closed.
+    if (context?.tenantId === undefined) {
+      return {
+        status: 403,
+        body: {
+          code: "FORBIDDEN",
+          message: "Access denied: no tenant resolved for this request",
+          retryable: false,
+          fields: [],
+          reasons: ["no tenant resolved"],
+        },
+      };
+    }
     const request: EdgeRequest = {
+      tenantId: context.tenantId,
       principalId: principal.id,
       permission,
       ...(context?.sessionId !== undefined ? { sessionId: context.sessionId } : {}),

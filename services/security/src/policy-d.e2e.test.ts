@@ -24,17 +24,20 @@ describe("composable policy language / security registry / compliance (end to en
     const app = wire();
 
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "svc-1",
       kind: "service_account",
       displayName: "Svc",
       tenantRef: "t1",
     });
     await app.security.defineRole({
+      tenantId: "tenant-a",
       key: "refunder",
       name: "Refunder",
       permissions: ["orders:refund"],
     });
     await app.security.assignRole({
+      tenantId: "tenant-a",
       principalExternalId: "svc-1",
       roleKey: "refunder",
       grantedBy: "system",
@@ -42,11 +45,18 @@ describe("composable policy language / security registry / compliance (end to en
 
     // ── §8 composable policy: a reusable fragment referenced by a policy rule ──
     await app.security.registerPolicyFragment({
+      tenantId: "tenant-a",
       key: "risky",
       expression: { anyOf: [{ leaf: { minRisk: 50 } }, { leaf: { requireDeviceTrust: true } }] },
     });
-    await app.security.definePolicy({ key: "p1", name: "Composed", mode: "custom" });
+    await app.security.definePolicy({
+      tenantId: "tenant-a",
+      key: "p1",
+      name: "Composed",
+      mode: "custom",
+    });
     await app.security.publishPolicyVersion({
+      tenantId: "tenant-a",
       key: "p1",
       rules: [
         {
@@ -60,6 +70,7 @@ describe("composable policy language / security registry / compliance (end to en
       defaultEffect: "allow",
     });
     await app.security.configureTenantSecurity({
+      tenantId: "tenant-a",
       tenantRef: "t1",
       config: { defaultPolicyKey: "p1", mfaRequired: true },
     });
@@ -67,6 +78,7 @@ describe("composable policy language / security registry / compliance (end to en
     // trusted device + low risk ⇒ fragment does not fire ⇒ allow
     const allow = body<{ effect: string }>(
       await app.security.evaluateAccess({
+        tenantId: "tenant-a",
         principalExternalId: "svc-1",
         permission: "orders:refund",
         scope: { tenant: "t1" },
@@ -77,6 +89,7 @@ describe("composable policy language / security registry / compliance (end to en
     // high risk ⇒ fragment fires ⇒ block
     const blockRisk = body<{ effect: string }>(
       await app.security.evaluateAccess({
+        tenantId: "tenant-a",
         principalExternalId: "svc-1",
         permission: "orders:refund",
         scope: { tenant: "t1" },
@@ -88,6 +101,7 @@ describe("composable policy language / security registry / compliance (end to en
     // untrusted device ⇒ fragment fires ⇒ block
     const blockDevice = body<{ effect: string }>(
       await app.security.evaluateAccess({
+        tenantId: "tenant-a",
         principalExternalId: "svc-1",
         permission: "orders:refund",
         scope: { tenant: "t1" },
@@ -97,18 +111,32 @@ describe("composable policy language / security registry / compliance (end to en
     // simulation honours fragments too
     expect(
       body<{ effect: string }>(
-        await app.security.simulatePolicy({ key: "p1", context: { risk: 90 } }),
+        await app.security.simulatePolicy({
+          tenantId: "tenant-a",
+          key: "p1",
+          context: { risk: 90 },
+        }),
       ).effect,
     ).toBe("block");
 
     // ── §6 versioned security registry ──
-    await app.security.registerAuthMethod({ kind: "password", displayName: "Password" });
-    await app.security.registerMfaMethod({ kind: "totp", displayName: "Authenticator" });
+    await app.security.registerAuthMethod({
+      tenantId: "tenant-a",
+      kind: "password",
+      displayName: "Password",
+    });
+    await app.security.registerMfaMethod({
+      tenantId: "tenant-a",
+      kind: "totp",
+      displayName: "Authenticator",
+    });
     await app.security.registerPermission({
+      tenantId: "tenant-a",
       permission: "orders:refund",
       description: "Refund an order",
     });
     await app.security.registerComplianceRule({
+      tenantId: "tenant-a",
       id: "CC6.1",
       framework: "soc2",
       description: "MFA enforced",
@@ -117,6 +145,7 @@ describe("composable policy language / security registry / compliance (end to en
     // versioning: re-register mints v2
     const v2 = body<{ version: number }>(
       await app.security.registerPermission({
+        tenantId: "tenant-a",
         permission: "orders:refund",
         description: "Refund an order (v2)",
       }),
@@ -129,6 +158,7 @@ describe("composable policy language / security registry / compliance (end to en
     // ── §9 compliance: evaluated against live state + attestations ──
     const compliant = body<{ compliant: boolean; failed: number }>(
       await app.security.evaluateCompliance({
+        tenantId: "tenant-a",
         framework: "soc2",
         tenantRef: "t1",
         attestations: { encryptionAtRest: true },
@@ -137,6 +167,7 @@ describe("composable policy language / security registry / compliance (end to en
     expect(compliant.compliant).toBe(true); // mfaRequired + audit chain valid + encryption attested
     const nonCompliant = body<{ compliant: boolean }>(
       await app.security.evaluateCompliance({
+        tenantId: "tenant-a",
         framework: "soc2",
         tenantRef: "t1",
         attestations: { encryptionAtRest: false },
@@ -145,7 +176,13 @@ describe("composable policy language / security registry / compliance (end to en
     expect(nonCompliant.compliant).toBe(false); // CC6.7 encryption fails
     // unknown framework with no pack ⇒ 404
     expect(
-      (await app.security.evaluateCompliance({ framework: "gdpr", tenantRef: "t1" })).status,
+      (
+        await app.security.evaluateCompliance({
+          tenantId: "tenant-a",
+          framework: "gdpr",
+          tenantRef: "t1",
+        })
+      ).status,
     ).toBe(200); // gdpr pack exists (default packs)
 
     // ── canonical events ──

@@ -16,6 +16,13 @@ export interface ConsentChangedPayload {
 export interface ConsentChangedConsumerDeps {
   readonly store: ConsentProjectionStore;
   readonly logger: Logger;
+  /**
+   * ADR-0014 (WP-10, T10.3): the projection store takes `tenantId` per call. Until `tenantId` is
+   * required on the event envelope (G-64) the composition root supplies it, exactly as the other
+   * event consumers in `apps/runtime` do; reading the envelope tenant per message is the separate
+   * G-64 fix.
+   */
+  readonly tenantId: string;
 }
 
 /**
@@ -46,11 +53,14 @@ export class ConsentChangedConsumer implements EventHandler<ConsentChangedPayloa
       });
       return;
     }
-    await this.deps.store.upsert({
-      subjectRef,
-      purpose: event.payload.scope,
-      granted: event.payload.granted,
-      occurredAt: event.occurredAt,
-    });
+    await this.deps.store.upsert(
+      {
+        subjectRef,
+        purpose: event.payload.scope,
+        granted: event.payload.granted,
+        occurredAt: event.occurredAt,
+      },
+      this.deps.tenantId,
+    );
   }
 }

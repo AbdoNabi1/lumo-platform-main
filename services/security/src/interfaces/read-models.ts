@@ -273,8 +273,8 @@ const SUSPICIOUS_REFRESH = 10;
 export class SecurityConsoleReadModels {
   constructor(private readonly deps: SecurityReadModelDeps) {}
 
-  async identityOverview(): Promise<IdentityOverview> {
-    const principals = await this.deps.principals.listAll();
+  async identityOverview(tenantId: string): Promise<IdentityOverview> {
+    const principals = await this.deps.principals.listAll(tenantId);
     const byStatus: Record<string, number> = {};
     let humans = 0;
     const rows: PrincipalOverviewRow[] = principals.map((p) => {
@@ -298,9 +298,9 @@ export class SecurityConsoleReadModels {
     };
   }
 
-  async permissionExplorer(): Promise<PermissionExplorer> {
-    const roles = await this.deps.roles.listAll();
-    const policies = await this.deps.policies.listAll();
+  async permissionExplorer(tenantId: string): Promise<PermissionExplorer> {
+    const roles = await this.deps.roles.listAll(tenantId);
+    const policies = await this.deps.policies.listAll(tenantId);
     return {
       roles: roles.map((r) => ({
         key: r.key,
@@ -320,8 +320,8 @@ export class SecurityConsoleReadModels {
     };
   }
 
-  async auditExplorer(tenantRef: string | null = null): Promise<AuditExplorer> {
-    const records = await this.deps.auditLedger.list(tenantRef);
+  async auditExplorer(tenantId: string, tenantRef: string | null = null): Promise<AuditExplorer> {
+    const records = await this.deps.auditLedger.list(tenantRef, tenantId);
     const verification = this.deps.auditChain.verify(records);
     return {
       count: records.length,
@@ -339,8 +339,11 @@ export class SecurityConsoleReadModels {
     };
   }
 
-  async securityDashboard(tenantRef: string | null = null): Promise<SecurityDashboard> {
-    const records = await this.deps.auditLedger.list(tenantRef);
+  async securityDashboard(
+    tenantId: string,
+    tenantRef: string | null = null,
+  ): Promise<SecurityDashboard> {
+    const records = await this.deps.auditLedger.list(tenantRef, tenantId);
     const verification = this.deps.auditChain.verify(records);
     return {
       metrics: this.deps.telemetry.snapshot(),
@@ -349,8 +352,8 @@ export class SecurityConsoleReadModels {
     };
   }
 
-  async deviceExplorer(): Promise<DeviceExplorer> {
-    const devices = await this.deps.devices.listAll();
+  async deviceExplorer(tenantId: string): Promise<DeviceExplorer> {
+    const devices = await this.deps.devices.listAll(tenantId);
     let trusted = 0;
     let blocked = 0;
     const rows: DeviceExplorerRow[] = devices.map((d) => {
@@ -368,8 +371,8 @@ export class SecurityConsoleReadModels {
     return { total: rows.length, trusted, blocked, devices: rows };
   }
 
-  async incidentExplorer(): Promise<IncidentExplorer> {
-    const incidents = await this.deps.incidents.listAll();
+  async incidentExplorer(tenantId: string): Promise<IncidentExplorer> {
+    const incidents = await this.deps.incidents.listAll(tenantId);
     const bySeverity: Record<string, number> = {};
     const byStatus: Record<string, number> = {};
     let open = 0;
@@ -390,10 +393,10 @@ export class SecurityConsoleReadModels {
   }
 
   /** The **Trust Center** (§12) — a read-only, real-data aggregate of the platform's security posture. */
-  async trustCenter(tenantRef: string | null = null): Promise<TrustCenter> {
-    const records = await this.deps.auditLedger.list(tenantRef);
+  async trustCenter(tenantId: string, tenantRef: string | null = null): Promise<TrustCenter> {
+    const records = await this.deps.auditLedger.list(tenantRef, tenantId);
     const auditChainValid = this.deps.auditChain.verify(records).valid;
-    const incidents = await this.deps.incidents.listAll();
+    const incidents = await this.deps.incidents.listAll(tenantId);
     const openIncidents = incidents.filter((i) => i.isOpen).length;
     const criticalIncidents = incidents.filter((i) => i.severity === "critical" && i.isOpen).length;
     const metrics = this.deps.telemetry.snapshot();
@@ -440,8 +443,8 @@ export class SecurityConsoleReadModels {
   }
 
   /** **Session Intelligence** (§5) — every session with derived suspicious flags + rollup counts. */
-  async sessionExplorer(): Promise<SessionExplorer> {
-    const sessions = await this.deps.sessions.listAll();
+  async sessionExplorer(tenantId: string): Promise<SessionExplorer> {
+    const sessions = await this.deps.sessions.listAll(tenantId);
     let active = 0;
     let revoked = 0;
     let expired = 0;
@@ -481,8 +484,8 @@ export class SecurityConsoleReadModels {
   }
 
   /** **Policy Explorer** (§17) — policies with versions + reusable fragments. */
-  async policyExplorer(): Promise<PolicyExplorer> {
-    const policies = await this.deps.policies.listAll();
+  async policyExplorer(tenantId: string): Promise<PolicyExplorer> {
+    const policies = await this.deps.policies.listAll(tenantId);
     return {
       policies: policies.map((p) => ({
         key: p.key,
@@ -511,8 +514,8 @@ export class SecurityConsoleReadModels {
   }
 
   /** **Secret Explorer** (§17) — credentials + rotation status. Never exposes secret values. */
-  async secretExplorer(): Promise<SecretExplorer> {
-    const credentials = await this.deps.credentials.listAll();
+  async secretExplorer(tenantId: string): Promise<SecretExplorer> {
+    const credentials = await this.deps.credentials.listAll(tenantId);
     const byStatus: Record<string, number> = {};
     let rotationDue = 0;
     const rows: SecretRow[] = credentials.map((c) => {
@@ -530,8 +533,8 @@ export class SecurityConsoleReadModels {
   }
 
   /** **AI Governance Explorer** (§20) — governed AI identities with budgets/quotas/isolation. */
-  async aiGovernanceExplorer(): Promise<AiGovernanceExplorer> {
-    const profiles = await this.deps.aiProfiles.listAll();
+  async aiGovernanceExplorer(tenantId: string): Promise<AiGovernanceExplorer> {
+    const profiles = await this.deps.aiProfiles.listAll(tenantId);
     let active = 0;
     let suspended = 0;
     const rows: AiGovernanceRow[] = profiles.map((p) => {
@@ -567,8 +570,8 @@ export class SecurityConsoleReadModels {
     return { totalEntries: registries.reduce((sum, r) => sum + r.entryCount, 0), registries };
   }
 
-  async machineIdentityExplorer(): Promise<MachineIdentityExplorer> {
-    const profiles = await this.deps.machineProfiles.listAll();
+  async machineIdentityExplorer(tenantId: string): Promise<MachineIdentityExplorer> {
+    const profiles = await this.deps.machineProfiles.listAll(tenantId);
     let active = 0;
     let suspended = 0;
     const rows: MachineIdentityRow[] = profiles.map((p) => {

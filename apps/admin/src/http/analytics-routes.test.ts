@@ -61,7 +61,11 @@ function buildDimension(): DimensionDefinition {
   return okOrThrow(dimension);
 }
 
-function okOrThrow<T>(result: { readonly ok: boolean; readonly value?: T; readonly error?: unknown }): T {
+function okOrThrow<T>(result: {
+  readonly ok: boolean;
+  readonly value?: T;
+  readonly error?: unknown;
+}): T {
   if (!result.ok) throw new Error(`unexpected error: ${JSON.stringify(result.error)}`);
   return result.value as T;
 }
@@ -162,7 +166,7 @@ describe("analytics routes — DTO boundary", () => {
   });
 
   it("passes a non-2xx body through untouched — an error envelope is not a metric", async () => {
-    const envelope = { code: "NOT_FOUND", message: "Metric \"x\" not found" };
+    const envelope = { code: "NOT_FOUND", message: 'Metric "x" not found' };
     const admin = {
       analytics: {
         getMetric: async () => ({ status: 404, body: envelope }),

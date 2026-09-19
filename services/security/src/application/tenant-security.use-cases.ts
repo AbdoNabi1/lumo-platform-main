@@ -33,6 +33,8 @@ function present(p: TenantSecurityProfile): TenantSecurityProfileOutput {
 }
 
 export interface ConfigureTenantSecurityInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly tenantRef: string;
   readonly config: TenantSecurityConfig;
 }
@@ -54,7 +56,11 @@ export class ConfigureTenantSecurity implements UseCase<
       async (tx) => {
         const now = this.deps.clock.now();
         const eventId = this.deps.idGenerator.generate();
-        const existing = await this.deps.tenantProfiles.findByTenant(input.tenantRef, tx);
+        const existing = await this.deps.tenantProfiles.findByTenant(
+          input.tenantRef,
+          input.tenantId,
+          tx,
+        );
         let profile: TenantSecurityProfile;
         try {
           if (existing === null) {
@@ -73,8 +79,9 @@ export class ConfigureTenantSecurity implements UseCase<
           if (isDomainError(error)) return err(error);
           throw error;
         }
-        await this.deps.tenantProfiles.save(profile, tx);
+        await this.deps.tenantProfiles.save(profile, input.tenantId, tx);
         await recordAudit(this.deps, tx, {
+          tenantId: input.tenantId,
           principalRef: "system",
           action: "security.tenant_profile.configured",
           decision: "allow",

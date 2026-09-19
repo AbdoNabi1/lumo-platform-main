@@ -101,7 +101,10 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       summary: "Establish an authenticated session for a principal",
       schema: { body: establishSessionBody },
       handle: ({ body, context }) =>
-        admin.securitySessions.establishSession(context.principal, body),
+        admin.securitySessions.establishSession(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -113,6 +116,7 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: sessionIdParams, body: refreshSessionBody },
       handle: ({ params, body, context }) =>
         admin.securitySessions.refreshSession(context.principal, {
+          tenantId: context.tenantId,
           sessionId: params.sessionId,
           ...body,
         }),
@@ -126,7 +130,10 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       summary: "Revoke a session (logout / forced revocation)",
       schema: { params: sessionIdParams },
       handle: ({ params, context }) =>
-        admin.securitySessions.revokeSession(context.principal, { sessionId: params.sessionId }),
+        admin.securitySessions.revokeSession(context.principal, {
+          tenantId: context.tenantId,
+          sessionId: params.sessionId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -137,6 +144,7 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: sessionIdParams },
       handle: ({ params, context }) =>
         admin.securitySessions.introspectSession(context.principal, {
+          tenantId: context.tenantId,
           sessionId: params.sessionId,
         }),
     }),
@@ -150,6 +158,7 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: principalExternalIdParams },
       handle: ({ params, context }) =>
         admin.securitySessions.revokeAllSessions(context.principal, {
+          tenantId: context.tenantId,
           principalExternalId: params.externalId,
         }),
     }),
@@ -162,7 +171,10 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       summary: "Register/update an authentication method in the Registry Engine",
       schema: { body: registerAuthMethodBody },
       handle: ({ body, context }) =>
-        admin.securitySessions.registerAuthMethod(context.principal, body),
+        admin.securitySessions.registerAuthMethod(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -171,7 +183,11 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       permission: "security:authenticate",
       summary: "The provider-agnostic authenticate() flow",
       schema: { body: authenticateBody },
-      handle: ({ body, context }) => admin.securitySessions.authenticate(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.securitySessions.authenticate(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -181,7 +197,11 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       idempotent: true,
       summary: "Register a device (idempotent per fingerprint; starts untrusted)",
       schema: { body: registerDeviceBody },
-      handle: ({ body, context }) => admin.securitySessions.registerDevice(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.securitySessions.registerDevice(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -192,6 +212,7 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: fingerprintParams, body: recordDeviceSignalBody },
       handle: ({ params, body, context }) =>
         admin.securitySessions.recordDeviceSignal(context.principal, {
+          tenantId: context.tenantId,
           fingerprint: params.fingerprint,
           ...body,
         }),
@@ -206,6 +227,7 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: fingerprintParams },
       handle: ({ params, context }) =>
         admin.securitySessions.trustDevice(context.principal, {
+          tenantId: context.tenantId,
           fingerprint: params.fingerprint,
         }),
     }),
@@ -219,6 +241,7 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: fingerprintParams },
       handle: ({ params, context }) =>
         admin.securitySessions.blockDevice(context.principal, {
+          tenantId: context.tenantId,
           fingerprint: params.fingerprint,
         }),
     }),
@@ -230,7 +253,11 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       idempotent: true,
       summary: "Enroll a principal in an MFA method",
       schema: { body: enrollMfaBody },
-      handle: ({ body, context }) => admin.securitySessions.enrollMfa(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.securitySessions.enrollMfa(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -242,6 +269,7 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: enrollmentIdParams, body: verifyMfaBody },
       handle: ({ params, body, context }) =>
         admin.securitySessions.verifyMfaEnrollment(context.principal, {
+          tenantId: context.tenantId,
           enrollmentId: params.enrollmentId,
           ...body,
         }),
@@ -255,6 +283,7 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: enrollmentIdParams, body: generateBackupCodesBody },
       handle: ({ params, body, context }) =>
         admin.securitySessions.generateBackupCodes(context.principal, {
+          tenantId: context.tenantId,
           enrollmentId: params.enrollmentId,
           ...body,
         }),
@@ -269,6 +298,7 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: enrollmentIdParams },
       handle: ({ params, context }) =>
         admin.securitySessions.revokeMfa(context.principal, {
+          tenantId: context.tenantId,
           enrollmentId: params.enrollmentId,
         }),
     }),
@@ -279,7 +309,11 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       permission: "security:decide_mfa",
       summary: "Decide the MFA requirement for a request (read-only)",
       schema: { body: decideMfaBody },
-      handle: ({ body, context }) => admin.securitySessions.decideMfa(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.securitySessions.decideMfa(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -290,7 +324,10 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       summary: "Register/update an MFA method definition",
       schema: { body: registerMfaMethodBody },
       handle: ({ body, context }) =>
-        admin.securitySessions.registerMfaMethod(context.principal, body),
+        admin.securitySessions.registerMfaMethod(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -299,7 +336,11 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       permission: "security:evaluate_risk",
       summary: "Evaluate request risk via the Risk Engine (explainable factors)",
       schema: { body: evaluateRiskBody },
-      handle: ({ body, context }) => admin.securitySessions.evaluateRisk(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.securitySessions.evaluateRisk(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -308,7 +349,8 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       permission: "security:session_explorer",
       summary: "Console read model — session explorer",
       schema: {},
-      handle: ({ context }) => admin.securitySessions.sessionExplorer(context.principal),
+      handle: ({ context }) =>
+        admin.securitySessions.sessionExplorer(context.principal, context.tenantId),
     }),
     defineRoute({
       method: "GET",
@@ -317,7 +359,8 @@ export function securitySessionsRoutes(admin: WiredAdmin): readonly RouteDefinit
       permission: "security:device_explorer",
       summary: "Console read model — device explorer",
       schema: {},
-      handle: ({ context }) => admin.securitySessions.deviceExplorer(context.principal),
+      handle: ({ context }) =>
+        admin.securitySessions.deviceExplorer(context.principal, context.tenantId),
     }),
     defineRoute({
       method: "GET",

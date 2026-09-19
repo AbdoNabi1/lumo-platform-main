@@ -87,7 +87,7 @@ export class CustomerGuard {
       return { ok: false, response: CustomerGuard.unauthenticated() };
     }
 
-    const introspected = await this.deps.security.introspectSessionSubject({ sessionId });
+    const introspected = await this.deps.security.introspectSessionSubject({ tenantId, sessionId });
     if (introspected.status < 200 || introspected.status >= 300) {
       return { ok: false, response: CustomerGuard.unauthenticated() };
     }

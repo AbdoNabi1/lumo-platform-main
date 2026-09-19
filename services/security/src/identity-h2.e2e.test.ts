@@ -51,7 +51,11 @@ describe("H-2 live identity binding (end to end)", () => {
       clock,
       consentStore,
     });
-    const consumer = new ConsentChangedConsumer({ store: consentStore, logger: silent });
+    const consumer = new ConsentChangedConsumer({
+      tenantId: "tenant-a",
+      store: consentStore,
+      logger: silent,
+    });
 
     const grant: IntegrationEvent<ConsentChangedPayload> = {
       messageId: "e1",
@@ -68,11 +72,19 @@ describe("H-2 live identity binding (end to end)", () => {
     await consumer.handle(grant);
 
     const decision = body<{ granted: boolean }>(
-      await app.security.checkConsent({ subjectRef: "cust-7", purpose: "marketing" }),
+      await app.security.checkConsent({
+        tenantId: "tenant-a",
+        subjectRef: "cust-7",
+        purpose: "marketing",
+      }),
     );
     expect(decision.granted).toBe(true);
     const none = body<{ granted: boolean }>(
-      await app.security.checkConsent({ subjectRef: "cust-7", purpose: "analytics" }),
+      await app.security.checkConsent({
+        tenantId: "tenant-a",
+        subjectRef: "cust-7",
+        purpose: "analytics",
+      }),
     );
     expect(none.granted).toBe(false);
   });
@@ -88,6 +100,7 @@ describe("H-2 live identity binding (end to end)", () => {
     });
 
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "admin-1",
       kind: "human",
       displayName: "Admin",
@@ -95,18 +108,23 @@ describe("H-2 live identity binding (end to end)", () => {
       tenantRef: "t1",
     });
     await app.security.establishSession({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       refreshFingerprint: "rt-a",
       ttlSeconds: 3600,
     });
     await app.security.establishSession({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       refreshFingerprint: "rt-b",
       ttlSeconds: 3600,
     });
 
     const revoked = body<{ revoked: number }>(
-      await app.security.revokeAllSessions({ principalExternalId: "admin-1" }),
+      await app.security.revokeAllSessions({
+        tenantId: "tenant-a",
+        principalExternalId: "admin-1",
+      }),
     );
     expect(revoked.revoked).toBe(2);
 
@@ -138,6 +156,7 @@ describe("H-2 live identity binding (end to end)", () => {
       clock,
     });
     await app.security.writeRelationTuple({
+      tenantId: "tenant-a",
       namespace: "permissions",
       object: "doc:1",
       relation: "viewer",

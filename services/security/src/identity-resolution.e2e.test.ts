@@ -59,10 +59,15 @@ describe("H-2 identity resolution (end to end)", () => {
     });
 
     // Identity emits — Security projects (owned by Identity).
-    await new IdentityUserCreatedConsumer({ store: identityProjection, logger: silent }).handle(
+    await new IdentityUserCreatedConsumer({
+      tenantId: "tenant-a",
+      store: identityProjection,
+      logger: silent,
+    }).handle(
       evt("identity.user.created", "kratos-7", { userId: "kratos-7", tenantId: "tenant-1" }),
     );
     await new IdentityOrganizationCreatedConsumer({
+      tenantId: "tenant-a",
       store: identityProjection,
       logger: silent,
     }).handle(
@@ -73,6 +78,7 @@ describe("H-2 identity resolution (end to end)", () => {
       }),
     );
     await new IdentityMembershipCreatedConsumer({
+      tenantId: "tenant-a",
       store: identityProjection,
       logger: silent,
     }).handle(
@@ -86,6 +92,7 @@ describe("H-2 identity resolution (end to end)", () => {
 
     // Security owns the principal (references Identity via subjectRef).
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "admin-1",
       kind: "human",
       displayName: "Admin",
@@ -97,7 +104,7 @@ describe("H-2 identity resolution (end to end)", () => {
       principal: { externalId: string } | null;
       identityUser: { status: string } | null;
       memberships: { organizationId: string; role: string; organizationSlug: string | null }[];
-    }>(await app.security.resolvePrincipal({ subjectRef: "kratos-7" }));
+    }>(await app.security.resolvePrincipal({ tenantId: "tenant-a", subjectRef: "kratos-7" }));
     expect(resolved.principal?.externalId).toBe("admin-1");
     expect(resolved.identityUser?.status).toBe("active");
     expect(resolved.memberships).toHaveLength(1);
@@ -108,12 +115,12 @@ describe("H-2 identity resolution (end to end)", () => {
     });
 
     const membership = body<{ memberships: unknown[] }>(
-      await app.security.resolveMembership({ userId: "kratos-7" }),
+      await app.security.resolveMembership({ tenantId: "tenant-a", userId: "kratos-7" }),
     );
     expect(membership.memberships).toHaveLength(1);
 
     const org = body<{ slug: string }>(
-      await app.security.resolveOrganization({ organizationId: "org-1" }),
+      await app.security.resolveOrganization({ tenantId: "tenant-a", organizationId: "org-1" }),
     );
     expect(org.slug).toBe("acme");
   });
@@ -125,12 +132,14 @@ describe("H-2 identity resolution (end to end)", () => {
       clock,
     });
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "svc-1",
       kind: "service_account",
       displayName: "CI",
       tenantRef: "tenant-1",
     });
     await app.security.governMachineIdentity({
+      tenantId: "tenant-a",
       principalExternalId: "svc-1",
       config: {
         owner: "platform",
@@ -141,7 +150,10 @@ describe("H-2 identity resolution (end to end)", () => {
     });
 
     const resolved = body<{ status: string; owner: string; allowedScopes: string[] }>(
-      await app.security.resolveMachineIdentity({ principalExternalId: "svc-1" }),
+      await app.security.resolveMachineIdentity({
+        tenantId: "tenant-a",
+        principalExternalId: "svc-1",
+      }),
     );
     expect(resolved.status).toBe("active");
     expect(resolved.owner).toBe("platform");
@@ -149,6 +161,7 @@ describe("H-2 identity resolution (end to end)", () => {
 
     // A human principal has no machine-identity profile.
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "human-1",
       kind: "human",
       displayName: "H",
@@ -156,7 +169,12 @@ describe("H-2 identity resolution (end to end)", () => {
       tenantRef: "tenant-1",
     });
     expect(
-      (await app.security.resolveMachineIdentity({ principalExternalId: "human-1" })).status,
+      (
+        await app.security.resolveMachineIdentity({
+          tenantId: "tenant-a",
+          principalExternalId: "human-1",
+        })
+      ).status,
     ).toBe(404);
   });
 });

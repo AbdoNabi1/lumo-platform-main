@@ -68,7 +68,10 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       summary: "Register a principal (idempotent per externalId)",
       schema: { body: registerPrincipalBody },
       handle: ({ body, context }) =>
-        admin.securityIdentity.registerPrincipal(context.principal, body),
+        admin.securityIdentity.registerPrincipal(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -80,6 +83,7 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: principalExternalIdParams, body: transitionPrincipalBody },
       handle: ({ params, body, context }) =>
         admin.securityIdentity.transitionPrincipal(context.principal, {
+          tenantId: context.tenantId,
           externalId: params.externalId,
           ...body,
         }),
@@ -93,7 +97,10 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       summary: "Issue a credential for a principal",
       schema: { body: issueCredentialBody },
       handle: ({ body, context }) =>
-        admin.securityIdentity.issueCredential(context.principal, body),
+        admin.securityIdentity.issueCredential(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -105,6 +112,7 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: credentialIdParams, body: rotateCredentialBody },
       handle: ({ params, body, context }) =>
         admin.securityIdentity.rotateCredential(context.principal, {
+          tenantId: context.tenantId,
           credentialId: params.credentialId,
           ...body,
         }),
@@ -119,6 +127,7 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: credentialIdParams },
       handle: ({ params, context }) =>
         admin.securityIdentity.revokeCredential(context.principal, {
+          tenantId: context.tenantId,
           credentialId: params.credentialId,
         }),
     }),
@@ -132,6 +141,7 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: principalExternalIdParams, body: governMachineIdentityBody },
       handle: ({ params, body, context }) =>
         admin.securityIdentity.governMachineIdentity(context.principal, {
+          tenantId: context.tenantId,
           principalExternalId: params.externalId,
           ...body,
         }),
@@ -146,6 +156,7 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: principalExternalIdParams },
       handle: ({ params, context }) =>
         admin.securityIdentity.suspendMachineIdentity(context.principal, {
+          tenantId: context.tenantId,
           principalExternalId: params.externalId,
         }),
     }),
@@ -158,7 +169,10 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
         "Resolve an Identity subject to the Security principal + projected user + memberships",
       schema: { params: subjectRefParams },
       handle: ({ params, context }) =>
-        admin.securityIdentity.resolvePrincipal(context.principal, params),
+        admin.securityIdentity.resolvePrincipal(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -168,7 +182,10 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       summary: "Resolve the organizations/roles a user belongs to",
       schema: { params: userIdParams },
       handle: ({ params, context }) =>
-        admin.securityIdentity.resolveMembership(context.principal, params),
+        admin.securityIdentity.resolveMembership(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -178,7 +195,10 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       summary: "Resolve an organization from the Identity projection",
       schema: { params: organizationIdParams },
       handle: ({ params, context }) =>
-        admin.securityIdentity.resolveOrganization(context.principal, params),
+        admin.securityIdentity.resolveOrganization(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -189,6 +209,7 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       schema: { params: principalExternalIdParams },
       handle: ({ params, context }) =>
         admin.securityIdentity.resolveMachineIdentity(context.principal, {
+          tenantId: context.tenantId,
           principalExternalId: params.externalId,
         }),
     }),
@@ -199,7 +220,8 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       permission: "security:identity_overview",
       summary: "Console read model — identity overview",
       schema: {},
-      handle: ({ context }) => admin.securityIdentity.identityOverview(context.principal),
+      handle: ({ context }) =>
+        admin.securityIdentity.identityOverview(context.principal, context.tenantId),
     }),
     defineRoute({
       method: "GET",
@@ -208,7 +230,8 @@ export function securityIdentityRoutes(admin: WiredAdmin): readonly RouteDefinit
       permission: "security:machine_identity_explorer",
       summary: "Console read model — machine-identity explorer",
       schema: {},
-      handle: ({ context }) => admin.securityIdentity.machineIdentityExplorer(context.principal),
+      handle: ({ context }) =>
+        admin.securityIdentity.machineIdentityExplorer(context.principal, context.tenantId),
     }),
   ] as readonly RouteDefinition[];
 }

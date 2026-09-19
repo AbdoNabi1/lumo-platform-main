@@ -41,8 +41,16 @@ function evt<T>(
 describe("identity projection (H-2)", () => {
   it("projects a user then a deactivation (status transition, LWW)", async () => {
     const store = new InMemoryIdentityProjectionStore();
-    const created = new IdentityUserCreatedConsumer({ store, logger: silent });
-    const deactivated = new IdentityUserDeactivatedConsumer({ store, logger: silent });
+    const created = new IdentityUserCreatedConsumer({
+      tenantId: "tenant-a",
+      store,
+      logger: silent,
+    });
+    const deactivated = new IdentityUserDeactivatedConsumer({
+      tenantId: "tenant-a",
+      store,
+      logger: silent,
+    });
 
     await created.handle(
       evt(
@@ -52,7 +60,7 @@ describe("identity projection (H-2)", () => {
         "2026-07-18T00:00:00.000Z",
       ),
     );
-    expect(await store.getUser("u1")).toMatchObject({
+    expect(await store.getUser("u1", "tenant-a")).toMatchObject({
       userId: "u1",
       userTenant: "t1",
       status: "active",
@@ -61,17 +69,19 @@ describe("identity projection (H-2)", () => {
     await deactivated.handle(
       evt("identity.user.deactivated", "u1", { userId: "u1" }, "2026-07-18T01:00:00.000Z"),
     );
-    const u = await store.getUser("u1");
+    const u = await store.getUser("u1", "tenant-a");
     expect(u?.status).toBe("deactivated");
     expect(u?.userTenant).toBe("t1"); // preserved across a status-only event
   });
 
   it("is last-writer-wins: an older redelivered create never regresses a newer deactivation", async () => {
     const store = new InMemoryIdentityProjectionStore();
-    await new IdentityUserDeactivatedConsumer({ store, logger: silent }).handle(
-      evt("identity.user.deactivated", "u1", { userId: "u1" }, "2026-07-18T02:00:00.000Z"),
-    );
-    await new IdentityUserCreatedConsumer({ store, logger: silent }).handle(
+    await new IdentityUserDeactivatedConsumer({
+      tenantId: "tenant-a",
+      store,
+      logger: silent,
+    }).handle(evt("identity.user.deactivated", "u1", { userId: "u1" }, "2026-07-18T02:00:00.000Z"));
+    await new IdentityUserCreatedConsumer({ tenantId: "tenant-a", store, logger: silent }).handle(
       evt(
         "identity.user.created",
         "u1",
@@ -79,12 +89,16 @@ describe("identity projection (H-2)", () => {
         "2026-07-18T01:00:00.000Z",
       ),
     );
-    expect((await store.getUser("u1"))?.status).toBe("deactivated"); // newer deactivation wins
+    expect((await store.getUser("u1", "tenant-a"))?.status).toBe("deactivated"); // newer deactivation wins
   });
 
   it("projects organizations and memberships and updates a role", async () => {
     const store = new InMemoryIdentityProjectionStore();
-    await new IdentityOrganizationCreatedConsumer({ store, logger: silent }).handle(
+    await new IdentityOrganizationCreatedConsumer({
+      tenantId: "tenant-a",
+      store,
+      logger: silent,
+    }).handle(
       evt(
         "identity.organization.created",
         "org1",
@@ -92,7 +106,11 @@ describe("identity projection (H-2)", () => {
         "2026-07-18T00:00:00.000Z",
       ),
     );
-    await new IdentityMembershipCreatedConsumer({ store, logger: silent }).handle(
+    await new IdentityMembershipCreatedConsumer({
+      tenantId: "tenant-a",
+      store,
+      logger: silent,
+    }).handle(
       evt(
         "identity.membership.created",
         "m1",
@@ -101,12 +119,16 @@ describe("identity projection (H-2)", () => {
       ),
     );
 
-    expect((await store.getOrganization("org1"))?.slug).toBe("acme");
-    const before = await store.listMembershipsByUser("u1");
+    expect((await store.getOrganization("org1", "tenant-a"))?.slug).toBe("acme");
+    const before = await store.listMembershipsByUser("u1", "tenant-a");
     expect(before).toHaveLength(1);
     expect(before[0]?.role).toBe("member");
 
-    await new IdentityMembershipRoleChangedConsumer({ store, logger: silent }).handle(
+    await new IdentityMembershipRoleChangedConsumer({
+      tenantId: "tenant-a",
+      store,
+      logger: silent,
+    }).handle(
       evt(
         "identity.membership.role_changed",
         "m1",
@@ -114,12 +136,16 @@ describe("identity projection (H-2)", () => {
         "2026-07-18T00:20:00.000Z",
       ),
     );
-    expect((await store.listMembershipsByUser("u1"))[0]?.role).toBe("admin");
+    expect((await store.listMembershipsByUser("u1", "tenant-a"))[0]?.role).toBe("admin");
   });
 
   it("ignores a role change for an unknown membership (create precedes mutate)", async () => {
     const store = new InMemoryIdentityProjectionStore();
-    await new IdentityMembershipRoleChangedConsumer({ store, logger: silent }).handle(
+    await new IdentityMembershipRoleChangedConsumer({
+      tenantId: "tenant-a",
+      store,
+      logger: silent,
+    }).handle(
       evt(
         "identity.membership.role_changed",
         "ghost",
@@ -127,6 +153,6 @@ describe("identity projection (H-2)", () => {
         "2026-07-18T00:00:00.000Z",
       ),
     );
-    expect(await store.listMembershipsByUser("u1")).toHaveLength(0);
+    expect(await store.listMembershipsByUser("u1", "tenant-a")).toHaveLength(0);
   });
 });

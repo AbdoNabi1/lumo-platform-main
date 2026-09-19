@@ -4,6 +4,8 @@ import type { DomainError } from "@platform/utils";
 import type { SecurityDeps } from "./deps";
 
 export interface CheckConsentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   /** The Identity subject id (the human principal's `subjectRef`). */
   readonly subjectRef: string;
   /** The consent scope/purpose being checked (Identity's `ConsentScope`). */
@@ -27,7 +29,11 @@ export class CheckConsent implements UseCase<CheckConsentInput, ConsentDecision,
   constructor(private readonly deps: SecurityDeps) {}
 
   async execute(input: CheckConsentInput): Promise<Result<ConsentDecision, DomainError>> {
-    const granted = await this.deps.consent.hasConsent(input.subjectRef, input.purpose);
+    const granted = await this.deps.consent.hasConsent(
+      input.subjectRef,
+      input.purpose,
+      input.tenantId,
+    );
     return ok({ subjectRef: input.subjectRef, purpose: input.purpose, granted });
   }
 }

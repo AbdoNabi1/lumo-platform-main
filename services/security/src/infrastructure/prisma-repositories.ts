@@ -1,5 +1,5 @@
 import type { DomainEvent } from "@platform/domain";
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { AuditRecord } from "../domain/audit-record";
@@ -44,8 +44,6 @@ export interface PrismaSecurityRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Row scope for every query/write (ADR-0008) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 function requireTx(tx: unknown): TransactionClient {
@@ -69,6 +67,7 @@ async function persist(opts: {
   update: () => Promise<{ count: number }>;
   events: readonly DomainEvent[];
   deps: PrismaSecurityRepositoryDeps;
+  tenantId: string;
   client: TransactionClient;
 }): Promise<void> {
   if (opts.isNew) {
@@ -80,13 +79,24 @@ async function persist(opts: {
         `${opts.entityLabel} was modified concurrently (expected version ${opts.version})`,
       );
   }
-  await opts.deps.outbox.write(opts.events, opts.deps.context, opts.client);
+  await opts.deps.outbox.write(
+    opts.events,
+    { ...opts.deps.context, tenantId: opts.tenantId },
+    opts.client,
+  );
 }
 
 abstract class BasePrismaRepository {
   constructor(protected readonly deps: PrismaSecurityRepositoryDeps) {}
-  protected reader(tx: unknown): TransactionClient | Database {
-    return (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  /** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+  protected read<T>(
+    tenantId: string,
+    tx: unknown,
+    run: (client: TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return tx !== undefined && tx !== null
+      ? run(tx as TransactionClient)
+      : runReadScoped(this.deps.prisma, tenantId, run);
   }
 }
 
@@ -95,7 +105,7 @@ export class PrismaPrincipalRepository
   extends BasePrismaRepository
   implements PrincipalRepository, PrincipalDirectory
 {
-  async save(principal: Principal, tx?: unknown): Promise<void> {
+  async save(principal: Principal, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = principal.id.toString();
     await persist({
@@ -104,40 +114,57 @@ export class PrismaPrincipalRepository
       entityLabel: `Principal ${id}`,
       create: () =>
         client.securityPrincipal.create({
-          data: M.PrincipalMapper.toRow(principal, this.deps.tenantId),
+          data: M.PrincipalMapper.toRow(principal, tenantId),
         }),
       update: () =>
         client.securityPrincipal.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: principal.version },
+          where: { id, tenantId, version: principal.version },
           data: { ...M.PrincipalMapper.toUpdate(principal), version: { increment: 1 } },
         }),
       events: principal.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findById(id: string, tx?: unknown): Promise<Principal | null> {
-    const row = await this.reader(tx).securityPrincipal.findFirst({
-      where: { tenantId: this.deps.tenantId, id },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Principal | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityPrincipal.findFirst({
+        where: { tenantId, id },
+      }),
+    );
     return row === null ? null : M.PrincipalMapper.toDomain(row);
   }
-  async findByExternalId(externalId: string, tx?: unknown): Promise<Principal | null> {
-    const row = await this.reader(tx).securityPrincipal.findFirst({
-      where: { tenantId: this.deps.tenantId, externalId },
-    });
+  async findByExternalId(
+    externalId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Principal | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityPrincipal.findFirst({
+        where: { tenantId, externalId },
+      }),
+    );
     return row === null ? null : M.PrincipalMapper.toDomain(row);
   }
-  async findBySubjectRef(subjectRef: string, tx?: unknown): Promise<Principal | null> {
-    const row = await this.reader(tx).securityPrincipal.findFirst({
-      where: { tenantId: this.deps.tenantId, subjectRef },
-    });
+  async findBySubjectRef(
+    subjectRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Principal | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityPrincipal.findFirst({
+        where: { tenantId, subjectRef },
+      }),
+    );
     return row === null ? null : M.PrincipalMapper.toDomain(row);
   }
-  async listAll(tx?: unknown): Promise<readonly Principal[]> {
-    const rows = await this.reader(tx).securityPrincipal.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly Principal[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityPrincipal.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.PrincipalMapper.toDomain);
   }
 }
@@ -147,7 +174,7 @@ export class PrismaCredentialRepository
   extends BasePrismaRepository
   implements CredentialRepository
 {
-  async save(credential: Credential, tx?: unknown): Promise<void> {
+  async save(credential: Credential, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = credential.id.toString();
     await persist({
@@ -156,47 +183,64 @@ export class PrismaCredentialRepository
       entityLabel: `Credential ${id}`,
       create: () =>
         client.securityCredential.create({
-          data: M.CredentialMapper.toRow(credential, this.deps.tenantId),
+          data: M.CredentialMapper.toRow(credential, tenantId),
         }),
       update: () =>
         client.securityCredential.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: credential.version },
+          where: { id, tenantId, version: credential.version },
           data: { ...M.CredentialMapper.toUpdate(credential), version: { increment: 1 } },
         }),
       events: credential.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findById(id: string, tx?: unknown): Promise<Credential | null> {
-    const row = await this.reader(tx).securityCredential.findFirst({
-      where: { tenantId: this.deps.tenantId, id },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Credential | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityCredential.findFirst({
+        where: { tenantId, id },
+      }),
+    );
     return row === null ? null : M.CredentialMapper.toDomain(row);
   }
-  async listByPrincipal(principalRef: string, tx?: unknown): Promise<readonly Credential[]> {
-    const rows = await this.reader(tx).securityCredential.findMany({
-      where: { tenantId: this.deps.tenantId, principalRef },
-    });
+  async listByPrincipal(
+    principalRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Credential[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityCredential.findMany({
+        where: { tenantId, principalRef },
+      }),
+    );
     return rows.map(M.CredentialMapper.toDomain);
   }
-  async listDueForRotation(now: Date, tx?: unknown): Promise<readonly Credential[]> {
-    const rows = await this.reader(tx).securityCredential.findMany({
-      where: { tenantId: this.deps.tenantId, status: "active", rotationDueAt: { lte: now } },
-    });
+  async listDueForRotation(
+    now: Date,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Credential[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityCredential.findMany({
+        where: { tenantId, status: "active", rotationDueAt: { lte: now } },
+      }),
+    );
     return rows.map(M.CredentialMapper.toDomain);
   }
-  async listAll(tx?: unknown): Promise<readonly Credential[]> {
-    const rows = await this.reader(tx).securityCredential.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly Credential[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityCredential.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.CredentialMapper.toDomain);
   }
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────────────────────────
 export class PrismaSessionRepository extends BasePrismaRepository implements SessionRepository {
-  async save(session: Session, tx?: unknown): Promise<void> {
+  async save(session: Session, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = session.id.toString();
     await persist({
@@ -204,40 +248,57 @@ export class PrismaSessionRepository extends BasePrismaRepository implements Ses
       version: session.version,
       entityLabel: `Session ${id}`,
       create: () =>
-        client.securitySession.create({ data: M.SessionMapper.toRow(session, this.deps.tenantId) }),
+        client.securitySession.create({ data: M.SessionMapper.toRow(session, tenantId) }),
       update: () =>
         client.securitySession.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: session.version },
+          where: { id, tenantId, version: session.version },
           data: { ...M.SessionMapper.toUpdate(session), version: { increment: 1 } },
         }),
       events: session.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findById(id: string, tx?: unknown): Promise<Session | null> {
-    const row = await this.reader(tx).securitySession.findFirst({
-      where: { tenantId: this.deps.tenantId, id },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Session | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securitySession.findFirst({
+        where: { tenantId, id },
+      }),
+    );
     return row === null ? null : M.SessionMapper.toDomain(row);
   }
-  async findByExternalRef(externalRef: string, tx?: unknown): Promise<Session | null> {
-    const row = await this.reader(tx).securitySession.findFirst({
-      where: { tenantId: this.deps.tenantId, externalRef },
-      orderBy: { establishedAt: "desc" },
-    });
+  async findByExternalRef(
+    externalRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Session | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securitySession.findFirst({
+        where: { tenantId, externalRef },
+        orderBy: { establishedAt: "desc" },
+      }),
+    );
     return row === null ? null : M.SessionMapper.toDomain(row);
   }
-  async listByPrincipal(principalRef: string, tx?: unknown): Promise<readonly Session[]> {
-    const rows = await this.reader(tx).securitySession.findMany({
-      where: { tenantId: this.deps.tenantId, principalRef },
-    });
+  async listByPrincipal(
+    principalRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Session[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securitySession.findMany({
+        where: { tenantId, principalRef },
+      }),
+    );
     return rows.map(M.SessionMapper.toDomain);
   }
-  async listAll(tx?: unknown): Promise<readonly Session[]> {
-    const rows = await this.reader(tx).securitySession.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly Session[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securitySession.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.SessionMapper.toDomain);
   }
 }
@@ -247,47 +308,63 @@ export class PrismaDeviceRepository
   extends BasePrismaRepository
   implements DeviceRepository, DeviceDirectory
 {
-  async save(device: Device, tx?: unknown): Promise<void> {
+  async save(device: Device, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = device.id.toString();
     await persist({
       isNew: device.version === 0,
       version: device.version,
       entityLabel: `Device ${id}`,
-      create: () =>
-        client.securityDevice.create({ data: M.DeviceMapper.toRow(device, this.deps.tenantId) }),
+      create: () => client.securityDevice.create({ data: M.DeviceMapper.toRow(device, tenantId) }),
       update: () =>
         client.securityDevice.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: device.version },
+          where: { id, tenantId, version: device.version },
           data: { ...M.DeviceMapper.toUpdate(device), version: { increment: 1 } },
         }),
       events: device.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findById(id: string, tx?: unknown): Promise<Device | null> {
-    const row = await this.reader(tx).securityDevice.findFirst({
-      where: { tenantId: this.deps.tenantId, id },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Device | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityDevice.findFirst({
+        where: { tenantId, id },
+      }),
+    );
     return row === null ? null : M.DeviceMapper.toDomain(row);
   }
-  async findByFingerprint(fingerprint: string, tx?: unknown): Promise<Device | null> {
-    const row = await this.reader(tx).securityDevice.findFirst({
-      where: { tenantId: this.deps.tenantId, fingerprint },
-    });
+  async findByFingerprint(
+    fingerprint: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Device | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityDevice.findFirst({
+        where: { tenantId, fingerprint },
+      }),
+    );
     return row === null ? null : M.DeviceMapper.toDomain(row);
   }
-  async listByPrincipal(principalRef: string, tx?: unknown): Promise<readonly Device[]> {
-    const rows = await this.reader(tx).securityDevice.findMany({
-      where: { tenantId: this.deps.tenantId, principalRef },
-    });
+  async listByPrincipal(
+    principalRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Device[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityDevice.findMany({
+        where: { tenantId, principalRef },
+      }),
+    );
     return rows.map(M.DeviceMapper.toDomain);
   }
-  async listAll(tx?: unknown): Promise<readonly Device[]> {
-    const rows = await this.reader(tx).securityDevice.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly Device[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityDevice.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.DeviceMapper.toDomain);
   }
 }
@@ -297,7 +374,7 @@ export class PrismaMfaEnrollmentRepository
   extends BasePrismaRepository
   implements MfaEnrollmentRepository
 {
-  async save(enrollment: MfaEnrollment, tx?: unknown): Promise<void> {
+  async save(enrollment: MfaEnrollment, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = enrollment.id.toString();
     await persist({
@@ -306,28 +383,37 @@ export class PrismaMfaEnrollmentRepository
       entityLabel: `MfaEnrollment ${id}`,
       create: () =>
         client.securityMfaEnrollment.create({
-          data: M.MfaEnrollmentMapper.toRow(enrollment, this.deps.tenantId),
+          data: M.MfaEnrollmentMapper.toRow(enrollment, tenantId),
         }),
       update: () =>
         client.securityMfaEnrollment.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: enrollment.version },
+          where: { id, tenantId, version: enrollment.version },
           data: { ...M.MfaEnrollmentMapper.toUpdate(enrollment), version: { increment: 1 } },
         }),
       events: enrollment.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findById(id: string, tx?: unknown): Promise<MfaEnrollment | null> {
-    const row = await this.reader(tx).securityMfaEnrollment.findFirst({
-      where: { tenantId: this.deps.tenantId, id },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<MfaEnrollment | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityMfaEnrollment.findFirst({
+        where: { tenantId, id },
+      }),
+    );
     return row === null ? null : M.MfaEnrollmentMapper.toDomain(row);
   }
-  async listByPrincipal(principalRef: string, tx?: unknown): Promise<readonly MfaEnrollment[]> {
-    const rows = await this.reader(tx).securityMfaEnrollment.findMany({
-      where: { tenantId: this.deps.tenantId, principalRef },
-    });
+  async listByPrincipal(
+    principalRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly MfaEnrollment[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityMfaEnrollment.findMany({
+        where: { tenantId, principalRef },
+      }),
+    );
     return rows.map(M.MfaEnrollmentMapper.toDomain);
   }
 }
@@ -337,41 +423,51 @@ export class PrismaRoleRepository
   extends BasePrismaRepository
   implements RoleRepository, RoleRegistry
 {
-  async save(role: Role, tx?: unknown): Promise<void> {
+  async save(role: Role, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = role.id.toString();
     await persist({
       isNew: role.version === 0,
       version: role.version,
       entityLabel: `Role ${id}`,
-      create: () =>
-        client.securityRole.create({ data: M.RoleMapper.toRow(role, this.deps.tenantId) }),
+      create: () => client.securityRole.create({ data: M.RoleMapper.toRow(role, tenantId) }),
       update: () =>
         client.securityRole.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: role.version },
+          where: { id, tenantId, version: role.version },
           data: { ...M.RoleMapper.toUpdate(role), version: { increment: 1 } },
         }),
       events: role.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findByKey(key: string, tx?: unknown): Promise<Role | null> {
-    const row = await this.reader(tx).securityRole.findFirst({
-      where: { tenantId: this.deps.tenantId, key },
-    });
+  async findByKey(key: string, tenantId: string, tx?: unknown): Promise<Role | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityRole.findFirst({
+        where: { tenantId, key },
+      }),
+    );
     return row === null ? null : M.RoleMapper.toDomain(row);
   }
-  async findByKeys(keys: readonly string[], tx?: unknown): Promise<readonly Role[]> {
-    const rows = await this.reader(tx).securityRole.findMany({
-      where: { tenantId: this.deps.tenantId, key: { in: [...keys] } },
-    });
+  async findByKeys(
+    keys: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Role[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityRole.findMany({
+        where: { tenantId, key: { in: [...keys] } },
+      }),
+    );
     return rows.map(M.RoleMapper.toDomain);
   }
-  async listAll(tx?: unknown): Promise<readonly Role[]> {
-    const rows = await this.reader(tx).securityRole.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly Role[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityRole.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.RoleMapper.toDomain);
   }
 }
@@ -380,7 +476,7 @@ export class PrismaRoleAssignmentRepository
   extends BasePrismaRepository
   implements RoleAssignmentRepository
 {
-  async save(assignment: RoleAssignment, tx?: unknown): Promise<void> {
+  async save(assignment: RoleAssignment, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = assignment.id.toString();
     await persist({
@@ -389,28 +485,37 @@ export class PrismaRoleAssignmentRepository
       entityLabel: `RoleAssignment ${id}`,
       create: () =>
         client.securityRoleAssignment.create({
-          data: M.RoleAssignmentMapper.toRow(assignment, this.deps.tenantId),
+          data: M.RoleAssignmentMapper.toRow(assignment, tenantId),
         }),
       update: () =>
         client.securityRoleAssignment.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: assignment.version },
+          where: { id, tenantId, version: assignment.version },
           data: { ...M.RoleAssignmentMapper.toUpdate(assignment), version: { increment: 1 } },
         }),
       events: assignment.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findById(id: string, tx?: unknown): Promise<RoleAssignment | null> {
-    const row = await this.reader(tx).securityRoleAssignment.findFirst({
-      where: { tenantId: this.deps.tenantId, id },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<RoleAssignment | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityRoleAssignment.findFirst({
+        where: { tenantId, id },
+      }),
+    );
     return row === null ? null : M.RoleAssignmentMapper.toDomain(row);
   }
-  async listByPrincipal(principalRef: string, tx?: unknown): Promise<readonly RoleAssignment[]> {
-    const rows = await this.reader(tx).securityRoleAssignment.findMany({
-      where: { tenantId: this.deps.tenantId, principalRef },
-    });
+  async listByPrincipal(
+    principalRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly RoleAssignment[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityRoleAssignment.findMany({
+        where: { tenantId, principalRef },
+      }),
+    );
     return rows.map(M.RoleAssignmentMapper.toDomain);
   }
 }
@@ -420,26 +525,28 @@ export class PrismaRelationTupleRepository
   extends BasePrismaRepository
   implements RelationTupleRepository
 {
-  async put(tuple: RelationTuple, tx?: unknown): Promise<void> {
+  async put(tuple: RelationTuple, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
-    const row = M.RelationTupleMapper.toRow(tuple, this.deps.tenantId);
+    const row = M.RelationTupleMapper.toRow(tuple, tenantId);
     await client.securityRelationTuple.upsert({
-      where: { tenantId_tupleKey: { tenantId: this.deps.tenantId, tupleKey: row.tupleKey } },
+      where: { tenantId_tupleKey: { tenantId, tupleKey: row.tupleKey } },
       create: row,
       update: {},
     });
   }
-  async remove(key: string, tx?: unknown): Promise<boolean> {
+  async remove(key: string, tenantId: string, tx?: unknown): Promise<boolean> {
     const client = requireTx(tx);
     const deleted = await client.securityRelationTuple.deleteMany({
-      where: { tenantId: this.deps.tenantId, tupleKey: key },
+      where: { tenantId, tupleKey: key },
     });
     return deleted.count > 0;
   }
-  async listAll(tx?: unknown): Promise<readonly RelationTuple[]> {
-    const rows = await this.reader(tx).securityRelationTuple.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly RelationTuple[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityRelationTuple.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.RelationTupleMapper.toDomain);
   }
 }
@@ -449,35 +556,39 @@ export class PrismaPolicyRepository
   extends BasePrismaRepository
   implements PolicyRepository, PolicyRegistry
 {
-  async save(policy: Policy, tx?: unknown): Promise<void> {
+  async save(policy: Policy, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = policy.id.toString();
     await persist({
       isNew: policy.version === 0,
       version: policy.version,
       entityLabel: `Policy ${id}`,
-      create: () =>
-        client.securityPolicy.create({ data: M.PolicyMapper.toRow(policy, this.deps.tenantId) }),
+      create: () => client.securityPolicy.create({ data: M.PolicyMapper.toRow(policy, tenantId) }),
       update: () =>
         client.securityPolicy.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: policy.version },
+          where: { id, tenantId, version: policy.version },
           data: { ...M.PolicyMapper.toUpdate(policy), version: { increment: 1 } },
         }),
       events: policy.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findByKey(key: string, tx?: unknown): Promise<Policy | null> {
-    const row = await this.reader(tx).securityPolicy.findFirst({
-      where: { tenantId: this.deps.tenantId, key },
-    });
+  async findByKey(key: string, tenantId: string, tx?: unknown): Promise<Policy | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityPolicy.findFirst({
+        where: { tenantId, key },
+      }),
+    );
     return row === null ? null : M.PolicyMapper.toDomain(row);
   }
-  async listAll(tx?: unknown): Promise<readonly Policy[]> {
-    const rows = await this.reader(tx).securityPolicy.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly Policy[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityPolicy.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.PolicyMapper.toDomain);
   }
 }
@@ -486,7 +597,7 @@ export class PrismaDelegationRepository
   extends BasePrismaRepository
   implements DelegationRepository
 {
-  async save(delegation: Delegation, tx?: unknown): Promise<void> {
+  async save(delegation: Delegation, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = delegation.id.toString();
     await persist({
@@ -495,28 +606,37 @@ export class PrismaDelegationRepository
       entityLabel: `Delegation ${id}`,
       create: () =>
         client.securityDelegation.create({
-          data: M.DelegationMapper.toRow(delegation, this.deps.tenantId),
+          data: M.DelegationMapper.toRow(delegation, tenantId),
         }),
       update: () =>
         client.securityDelegation.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: delegation.version },
+          where: { id, tenantId, version: delegation.version },
           data: { ...M.DelegationMapper.toUpdate(delegation), version: { increment: 1 } },
         }),
       events: delegation.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findById(id: string, tx?: unknown): Promise<Delegation | null> {
-    const row = await this.reader(tx).securityDelegation.findFirst({
-      where: { tenantId: this.deps.tenantId, id },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Delegation | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityDelegation.findFirst({
+        where: { tenantId, id },
+      }),
+    );
     return row === null ? null : M.DelegationMapper.toDomain(row);
   }
-  async listByDelegate(delegateRef: string, tx?: unknown): Promise<readonly Delegation[]> {
-    const rows = await this.reader(tx).securityDelegation.findMany({
-      where: { tenantId: this.deps.tenantId, delegateRef },
-    });
+  async listByDelegate(
+    delegateRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Delegation[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityDelegation.findMany({
+        where: { tenantId, delegateRef },
+      }),
+    );
     return rows.map(M.DelegationMapper.toDomain);
   }
 }
@@ -526,7 +646,7 @@ export class PrismaTenantSecurityProfileRepository
   extends BasePrismaRepository
   implements TenantSecurityProfileRepository
 {
-  async save(profile: TenantSecurityProfile, tx?: unknown): Promise<void> {
+  async save(profile: TenantSecurityProfile, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = profile.id.toString();
     await persist({
@@ -535,22 +655,29 @@ export class PrismaTenantSecurityProfileRepository
       entityLabel: `TenantSecurityProfile ${id}`,
       create: () =>
         client.securityTenantProfile.create({
-          data: M.TenantProfileMapper.toRow(profile, this.deps.tenantId),
+          data: M.TenantProfileMapper.toRow(profile, tenantId),
         }),
       update: () =>
         client.securityTenantProfile.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: profile.version },
+          where: { id, tenantId, version: profile.version },
           data: { ...M.TenantProfileMapper.toUpdate(profile), version: { increment: 1 } },
         }),
       events: profile.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findByTenant(tenantRef: string, tx?: unknown): Promise<TenantSecurityProfile | null> {
-    const row = await this.reader(tx).securityTenantProfile.findFirst({
-      where: { tenantId: this.deps.tenantId, tenantRef },
-    });
+  async findByTenant(
+    tenantRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<TenantSecurityProfile | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityTenantProfile.findFirst({
+        where: { tenantId, tenantRef },
+      }),
+    );
     return row === null ? null : M.TenantProfileMapper.toDomain(row);
   }
 }
@@ -559,7 +686,7 @@ export class PrismaMachineIdentityProfileRepository
   extends BasePrismaRepository
   implements MachineIdentityProfileRepository
 {
-  async save(profile: MachineIdentityProfile, tx?: unknown): Promise<void> {
+  async save(profile: MachineIdentityProfile, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = profile.id.toString();
     await persist({
@@ -568,31 +695,37 @@ export class PrismaMachineIdentityProfileRepository
       entityLabel: `MachineIdentityProfile ${id}`,
       create: () =>
         client.securityMachineIdentity.create({
-          data: M.MachineIdentityMapper.toRow(profile, this.deps.tenantId),
+          data: M.MachineIdentityMapper.toRow(profile, tenantId),
         }),
       update: () =>
         client.securityMachineIdentity.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: profile.version },
+          where: { id, tenantId, version: profile.version },
           data: { ...M.MachineIdentityMapper.toUpdate(profile), version: { increment: 1 } },
         }),
       events: profile.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
   async findByPrincipal(
     principalRef: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<MachineIdentityProfile | null> {
-    const row = await this.reader(tx).securityMachineIdentity.findFirst({
-      where: { tenantId: this.deps.tenantId, principalRef },
-    });
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityMachineIdentity.findFirst({
+        where: { tenantId, principalRef },
+      }),
+    );
     return row === null ? null : M.MachineIdentityMapper.toDomain(row);
   }
-  async listAll(tx?: unknown): Promise<readonly MachineIdentityProfile[]> {
-    const rows = await this.reader(tx).securityMachineIdentity.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly MachineIdentityProfile[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityMachineIdentity.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.MachineIdentityMapper.toDomain);
   }
 }
@@ -601,7 +734,7 @@ export class PrismaAiGovernanceProfileRepository
   extends BasePrismaRepository
   implements AiGovernanceProfileRepository
 {
-  async save(profile: AiGovernanceProfile, tx?: unknown): Promise<void> {
+  async save(profile: AiGovernanceProfile, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = profile.id.toString();
     await persist({
@@ -610,35 +743,44 @@ export class PrismaAiGovernanceProfileRepository
       entityLabel: `AiGovernanceProfile ${id}`,
       create: () =>
         client.securityAiGovernance.create({
-          data: M.AiGovernanceMapper.toRow(profile, this.deps.tenantId),
+          data: M.AiGovernanceMapper.toRow(profile, tenantId),
         }),
       update: () =>
         client.securityAiGovernance.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: profile.version },
+          where: { id, tenantId, version: profile.version },
           data: { ...M.AiGovernanceMapper.toUpdate(profile), version: { increment: 1 } },
         }),
       events: profile.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findByPrincipal(principalRef: string, tx?: unknown): Promise<AiGovernanceProfile | null> {
-    const row = await this.reader(tx).securityAiGovernance.findFirst({
-      where: { tenantId: this.deps.tenantId, principalRef },
-    });
+  async findByPrincipal(
+    principalRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<AiGovernanceProfile | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityAiGovernance.findFirst({
+        where: { tenantId, principalRef },
+      }),
+    );
     return row === null ? null : M.AiGovernanceMapper.toDomain(row);
   }
-  async listAll(tx?: unknown): Promise<readonly AiGovernanceProfile[]> {
-    const rows = await this.reader(tx).securityAiGovernance.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly AiGovernanceProfile[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityAiGovernance.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.AiGovernanceMapper.toDomain);
   }
 }
 
 // ── Incident ──────────────────────────────────────────────────────────────────────────────────────
 export class PrismaIncidentRepository extends BasePrismaRepository implements IncidentRepository {
-  async save(incident: Incident, tx?: unknown): Promise<void> {
+  async save(incident: Incident, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = incident.id.toString();
     await persist({
@@ -647,34 +789,45 @@ export class PrismaIncidentRepository extends BasePrismaRepository implements In
       entityLabel: `Incident ${id}`,
       create: () =>
         client.securityIncident.create({
-          data: M.IncidentMapper.toRow(incident, this.deps.tenantId),
+          data: M.IncidentMapper.toRow(incident, tenantId),
         }),
       update: () =>
         client.securityIncident.updateMany({
-          where: { id, tenantId: this.deps.tenantId, version: incident.version },
+          where: { id, tenantId, version: incident.version },
           data: { ...M.IncidentMapper.toUpdate(incident), version: { increment: 1 } },
         }),
       events: incident.pullDomainEvents(),
       deps: this.deps,
+      tenantId,
       client,
     });
   }
-  async findById(id: string, tx?: unknown): Promise<Incident | null> {
-    const row = await this.reader(tx).securityIncident.findFirst({
-      where: { tenantId: this.deps.tenantId, id },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Incident | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityIncident.findFirst({
+        where: { tenantId, id },
+      }),
+    );
     return row === null ? null : M.IncidentMapper.toDomain(row);
   }
-  async findByReference(reference: string, tx?: unknown): Promise<Incident | null> {
-    const row = await this.reader(tx).securityIncident.findFirst({
-      where: { tenantId: this.deps.tenantId, reference },
-    });
+  async findByReference(
+    reference: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Incident | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityIncident.findFirst({
+        where: { tenantId, reference },
+      }),
+    );
     return row === null ? null : M.IncidentMapper.toDomain(row);
   }
-  async listAll(tx?: unknown): Promise<readonly Incident[]> {
-    const rows = await this.reader(tx).securityIncident.findMany({
-      where: { tenantId: this.deps.tenantId },
-    });
+  async listAll(tenantId: string, tx?: unknown): Promise<readonly Incident[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityIncident.findMany({
+        where: { tenantId },
+      }),
+    );
     return rows.map(M.IncidentMapper.toDomain);
   }
 }
@@ -684,24 +837,36 @@ export class PrismaAuditLedgerRepository
   extends BasePrismaRepository
   implements AuditLedgerRepository
 {
-  async append(record: AuditRecord, tx?: unknown): Promise<void> {
+  async append(record: AuditRecord, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     await client.securityAuditRecord.create({
-      data: M.AuditRecordMapper.toRow(record, this.deps.tenantId),
+      data: M.AuditRecordMapper.toRow(record, tenantId),
     });
   }
-  async tail(tenantRef: string | null, tx?: unknown): Promise<AuditRecord | null> {
-    const row = await this.reader(tx).securityAuditRecord.findFirst({
-      where: { tenantId: this.deps.tenantId, tenantScope: tenantRef },
-      orderBy: { sequence: "desc" },
-    });
+  async tail(
+    tenantRef: string | null,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<AuditRecord | null> {
+    const row = await this.read(tenantId, tx, (c) =>
+      c.securityAuditRecord.findFirst({
+        where: { tenantId, tenantScope: tenantRef },
+        orderBy: { sequence: "desc" },
+      }),
+    );
     return row === null ? null : M.AuditRecordMapper.toDomain(row);
   }
-  async list(tenantRef: string | null, tx?: unknown): Promise<readonly AuditRecord[]> {
-    const rows = await this.reader(tx).securityAuditRecord.findMany({
-      where: { tenantId: this.deps.tenantId, tenantScope: tenantRef },
-      orderBy: { sequence: "asc" },
-    });
+  async list(
+    tenantRef: string | null,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly AuditRecord[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityAuditRecord.findMany({
+        where: { tenantId, tenantScope: tenantRef },
+        orderBy: { sequence: "asc" },
+      }),
+    );
     return rows.map(M.AuditRecordMapper.toDomain);
   }
 }

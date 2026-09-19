@@ -15,12 +15,15 @@ const body = <T>(r: { body: unknown }): T => r.body as T;
 describe("resolution use-cases (H-2)", () => {
   it("resolvePrincipal returns a null principal but the projected user when Security has no principal yet", async () => {
     const identityProjection = new InMemoryIdentityProjectionStore();
-    await identityProjection.upsertUser({
-      userId: "kratos-1",
-      userTenant: "t1",
-      status: "active",
-      occurredAt: "2026-07-18T00:00:00.000Z",
-    });
+    await identityProjection.upsertUser(
+      {
+        userId: "kratos-1",
+        userTenant: "t1",
+        status: "active",
+        occurredAt: "2026-07-18T00:00:00.000Z",
+      },
+      "tenant-a",
+    );
     const app = wireSecurity({
       serializer: new InMemoryEventSerializer(),
       idGenerator: sequentialIds(),
@@ -29,7 +32,7 @@ describe("resolution use-cases (H-2)", () => {
     });
 
     const resolved = body<{ principal: unknown; identityUser: { userId: string } | null }>(
-      await app.security.resolvePrincipal({ subjectRef: "kratos-1" }),
+      await app.security.resolvePrincipal({ tenantId: "tenant-a", subjectRef: "kratos-1" }),
     );
     expect(resolved.principal).toBeNull(); // no Security principal registered
     expect(resolved.identityUser?.userId).toBe("kratos-1"); // but the Identity user is projected
@@ -41,7 +44,10 @@ describe("resolution use-cases (H-2)", () => {
       idGenerator: sequentialIds(),
       clock,
     });
-    expect((await app.security.resolveOrganization({ organizationId: "nope" })).status).toBe(404);
+    expect(
+      (await app.security.resolveOrganization({ tenantId: "tenant-a", organizationId: "nope" }))
+        .status,
+    ).toBe(404);
   });
 
   it("resolveMachineIdentity 404s for a principal that is not governed", async () => {
@@ -51,13 +57,19 @@ describe("resolution use-cases (H-2)", () => {
       clock,
     });
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "svc-x",
       kind: "service_account",
       displayName: "X",
       tenantRef: "t1",
     });
     expect(
-      (await app.security.resolveMachineIdentity({ principalExternalId: "svc-x" })).status,
+      (
+        await app.security.resolveMachineIdentity({
+          tenantId: "tenant-a",
+          principalExternalId: "svc-x",
+        })
+      ).status,
     ).toBe(404);
   });
 });

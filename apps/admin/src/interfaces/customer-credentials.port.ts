@@ -31,9 +31,5 @@ export interface CustomerCredentialsPort {
    * mapping the login `identifier` (the customer's email) to the `principalExternalId` that
    * `Authenticate` will resolve on success. Called exactly once, at registration.
    */
-  setPassword(
-    identifier: string,
-    password: string,
-    principalExternalId: string,
-  ): Promise<void>;
+  setPassword(identifier: string, password: string, principalExternalId: string): Promise<void>;
 }

@@ -12,7 +12,7 @@ export class InMemoryRelationshipCheck implements RelationshipCheckPort {
   private readonly graph = new RelationshipGraph();
   constructor(private readonly tuples: RelationTupleRepository) {}
 
-  async check(query: RelationQuery): Promise<boolean> {
-    return this.graph.check(await this.tuples.listAll(), query);
+  async check(query: RelationQuery, tenantId: string): Promise<boolean> {
+    return this.graph.check(await this.tuples.listAll(tenantId), query);
   }
 }

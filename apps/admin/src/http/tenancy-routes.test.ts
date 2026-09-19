@@ -98,7 +98,11 @@ describe("tenancy routes — read side (Phase 4 T4.15)", () => {
   it("list/get workspaces and GET /workspaces/current return flat DTOs", async () => {
     const routes = tenancyRoutes(buildAdmin());
 
-    const noWorkspaceYet = await call(byPathAndMethod(routes, "GET", "/workspaces/current"), {}, {});
+    const noWorkspaceYet = await call(
+      byPathAndMethod(routes, "GET", "/workspaces/current"),
+      {},
+      {},
+    );
     expect(noWorkspaceYet.status).toBe(404);
 
     const tenant = unwrap<{ id: string }>(

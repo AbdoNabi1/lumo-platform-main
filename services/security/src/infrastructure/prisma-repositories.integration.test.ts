@@ -39,8 +39,8 @@ describe.runIf(Boolean(databaseUrl))("Prisma security repositories (integration)
       clock,
       producer: "security",
     });
-    const context = rootEventContext(ids, tenantId);
-    const deps = { prisma, outbox, context, tenantId };
+    const context = rootEventContext(ids);
+    const deps = { prisma, outbox, context };
     return {
       prisma,
       uow: new PrismaUnitOfWork(prisma),
@@ -59,9 +59,9 @@ describe.runIf(Boolean(databaseUrl))("Prisma security repositories (integration)
         ids.generate(),
         clock.now(),
       );
-      await principals.save(p, tx);
+      await principals.save(p, tenantId, tx);
     });
-    const back = await principals.findByExternalId(externalId);
+    const back = await principals.findByExternalId(externalId, tenantId);
     expect(back?.externalId).toBe(externalId);
     expect(back?.kind).toBe("service_account");
   });
@@ -78,20 +78,21 @@ describe.runIf(Boolean(databaseUrl))("Prisma security repositories (integration)
           ids.generate(),
           clock.now(),
         ),
+        tenantId,
         tx,
       ),
     );
 
-    const loaded = await principals.findByExternalId(externalId); // version 1
+    const loaded = await principals.findByExternalId(externalId, tenantId); // version 1
     if (loaded === null) throw new Error("setup");
     loaded.suspend(ids.generate(), clock.now());
-    await uow.run(async (tx) => principals.save(loaded, tx)); // DB advances to version 2
+    await uow.run(async (tx) => principals.save(loaded, tenantId, tx)); // DB advances to version 2
 
     // `loaded` still carries version 1 — a second save is a stale write and must conflict.
     loaded.activate(ids.generate(), clock.now());
-    await expect(uow.run(async (tx) => principals.save(loaded, tx))).rejects.toBeInstanceOf(
-      ConcurrencyError,
-    );
+    await expect(
+      uow.run(async (tx) => principals.save(loaded, tenantId, tx)),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
   });
 
   it("appends and verifies a WORM audit chain", async () => {
@@ -99,7 +100,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma security repositories (integration)
     const chain = new AuditChain();
     const scope = `scope-${ids.generate()}`;
     await uow.run(async (tx) => {
-      const tail = await audit.tail(scope, tx);
+      const tail = await audit.tail(scope, tenantId, tx);
       const r1 = chain.append(tail, {
         id: ids.generate(),
         principalRef: "svc",
@@ -108,7 +109,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma security repositories (integration)
         occurredAt: clock.now().toISOString(),
         tenantRef: scope,
       });
-      await audit.append(r1, tx);
+      await audit.append(r1, tenantId, tx);
       const r2 = chain.append(r1, {
         id: ids.generate(),
         principalRef: "svc",
@@ -117,9 +118,9 @@ describe.runIf(Boolean(databaseUrl))("Prisma security repositories (integration)
         occurredAt: clock.now().toISOString(),
         tenantRef: scope,
       });
-      await audit.append(r2, tx);
+      await audit.append(r2, tenantId, tx);
     });
-    const records = await audit.list(scope);
+    const records = await audit.list(scope, tenantId);
     expect(records).toHaveLength(2);
     expect(chain.verify(records).valid).toBe(true);
   });
@@ -138,7 +139,7 @@ describe.runIf(Boolean(databaseUrl))("Prisma security repositories (integration)
         tenantRef: scope,
       });
       recordId = r.id;
-      await audit.append(r, tx);
+      await audit.append(r, tenantId, tx);
     });
     const raw = prisma as {
       $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;

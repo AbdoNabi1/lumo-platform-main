@@ -11,6 +11,8 @@ import { recordAudit, securityEvent, type SecurityDeps } from "./deps";
 import { enrichRiskSignals } from "./risk-helpers";
 
 export interface RegisterAuthMethodInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly kind: AuthMethodKind;
   readonly displayName: string;
   readonly enabled?: boolean;
@@ -48,16 +50,19 @@ export class RegisterAuthMethod implements UseCase<
       tags: [spec.enabled ? "enabled" : "disabled"],
     });
     if (!registered.ok) return err(registered.error);
-    await this.deps.outbox.publish([
-      securityEvent(
-        this.deps,
-        "auth_method",
-        this.deps.idGenerator.generate(),
-        input.kind,
-        "security.auth_method.registered",
-        spec.enabled ? "enabled" : "disabled",
-      ),
-    ]);
+    await this.deps.outbox.publish(
+      [
+        securityEvent(
+          this.deps,
+          "auth_method",
+          this.deps.idGenerator.generate(),
+          input.kind,
+          "security.auth_method.registered",
+          spec.enabled ? "enabled" : "disabled",
+        ),
+      ],
+      input.tenantId,
+    );
     return ok({
       kind: input.kind,
       version: registered.value.version,
@@ -68,6 +73,8 @@ export class RegisterAuthMethod implements UseCase<
 }
 
 export interface AuthenticateInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly method: AuthMethodKind;
   readonly identifier: string;
   readonly credential?: string;
@@ -128,21 +135,30 @@ export class Authenticate implements UseCase<
     if (!result.ok || result.principalExternalId === undefined) {
       return this.fail(input, risk, result.reason ?? "authentication failed");
     }
-    const principal = await this.deps.principals.findByExternalId(result.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      result.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null)
       return this.fail(input, risk, "authenticated subject is not a known principal");
 
     // Device trust + MFA decision.
     let deviceTrusted = false;
     if (input.deviceFingerprint !== undefined) {
-      const existing = await this.deps.devices.findByFingerprint(input.deviceFingerprint);
+      const existing = await this.deps.devices.findByFingerprint(
+        input.deviceFingerprint,
+        input.tenantId,
+      );
       deviceTrusted = existing !== null && existing.isTrusted;
     }
     const profile =
       principal.tenantRef !== null
-        ? await this.deps.tenantProfiles.findByTenant(principal.tenantRef)
+        ? await this.deps.tenantProfiles.findByTenant(principal.tenantRef, input.tenantId)
         : null;
-    const enrollments = await this.deps.mfaEnrollments.listByPrincipal(principal.id.toString());
+    const enrollments = await this.deps.mfaEnrollments.listByPrincipal(
+      principal.id.toString(),
+      input.tenantId,
+    );
     const mfa = this.deps.mfaEngine.decide({
       tenantMfaRequired: profile?.mfaRequired ?? false,
       hasActiveEnrollment: enrollments.some((e) => e.isActive),
@@ -157,6 +173,7 @@ export class Authenticate implements UseCase<
     const refreshFingerprint = await this.deps.crypto.randomToken(24);
     return this.deps.unitOfWork.run<Result<AuthenticationOutcome, DomainError>>(async (tx) => {
       await this.ensureDevice(
+        input.tenantId,
         input.deviceFingerprint,
         principal.id.toString(),
         principal.tenantRef,
@@ -179,7 +196,7 @@ export class Authenticate implements UseCase<
           this.deps.idGenerator.generate(),
           this.deps.clock.now(),
         );
-        await this.deps.sessions.save(session, tx);
+        await this.deps.sessions.save(session, input.tenantId, tx);
         sessionId = session.id.toString();
         this.deps.telemetry.increment("security.session.established");
       }
@@ -195,9 +212,11 @@ export class Authenticate implements UseCase<
             mfaSatisfied ? "session" : "mfa_pending",
           ),
         ],
+        input.tenantId,
         tx,
       );
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.auth.succeeded",
         decision: "allow",
@@ -217,24 +236,29 @@ export class Authenticate implements UseCase<
   }
 
   private async evaluateRisk(input: AuthenticateInput): Promise<{ score: number; band: RiskBand }> {
-    const signals = await enrichRiskSignals(this.deps, {
-      ...(input.ip !== undefined ? { ip: input.ip } : {}),
-      ...(input.deviceFingerprint !== undefined
-        ? { deviceFingerprint: input.deviceFingerprint }
-        : {}),
-    });
+    const signals = await enrichRiskSignals(
+      this.deps,
+      {
+        ...(input.ip !== undefined ? { ip: input.ip } : {}),
+        ...(input.deviceFingerprint !== undefined
+          ? { deviceFingerprint: input.deviceFingerprint }
+          : {}),
+      },
+      input.tenantId,
+    );
     const evaluation = this.deps.riskEngine.evaluate(signals);
     return { score: evaluation.score.value, band: evaluation.score.band };
   }
 
   private async ensureDevice(
+    tenantId: string,
     fingerprint: string | undefined,
     principalRef: string,
     tenantRef: string | null,
     tx: unknown,
   ): Promise<void> {
     if (fingerprint === undefined) return;
-    const existing = await this.deps.devices.findByFingerprint(fingerprint, tx);
+    const existing = await this.deps.devices.findByFingerprint(fingerprint, tenantId, tx);
     if (existing === null) {
       const device = Device.register(
         UniqueEntityId.from(this.deps.idGenerator.generate()),
@@ -242,10 +266,10 @@ export class Authenticate implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.devices.save(device, tx);
+      await this.deps.devices.save(device, tenantId, tx);
     } else {
       existing.touch(this.deps.clock.now());
-      await this.deps.devices.save(existing, tx);
+      await this.deps.devices.save(existing, tenantId, tx);
     }
   }
 
@@ -268,9 +292,11 @@ export class Authenticate implements UseCase<
             "denied",
           ),
         ],
+        input.tenantId,
         tx,
       );
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: input.identifier,
         action: "security.auth.failed",
         decision: "deny",

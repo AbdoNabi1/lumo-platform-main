@@ -20,38 +20,47 @@ describe.runIf(Boolean(databaseUrl))("PrismaConsentProjectionStore (integration)
 
   function store() {
     const prisma = createTestPrismaClient(databaseUrl);
-    return new PrismaConsentProjectionStore({ prisma, tenantId, idGenerator: ids });
+    return new PrismaConsentProjectionStore({ prisma, idGenerator: ids });
   }
 
   it("upserts, reads back, and enforces last-writer-wins by occurredAt", async () => {
     const s = store();
     const subject = `cust-${crypto.randomUUID()}`;
-    await s.upsert({
-      subjectRef: subject,
-      purpose: "marketing",
-      granted: true,
-      occurredAt: "2026-07-18T09:00:00.000Z",
-    });
-    expect((await s.get(subject, "marketing"))?.granted).toBe(true);
+    await s.upsert(
+      {
+        subjectRef: subject,
+        purpose: "marketing",
+        granted: true,
+        occurredAt: "2026-07-18T09:00:00.000Z",
+      },
+      tenantId,
+    );
+    expect((await s.get(subject, "marketing", tenantId))?.granted).toBe(true);
 
     // Newer revoke wins.
-    await s.upsert({
-      subjectRef: subject,
-      purpose: "marketing",
-      granted: false,
-      occurredAt: "2026-07-18T10:00:00.000Z",
-    });
-    expect((await s.get(subject, "marketing"))?.granted).toBe(false);
+    await s.upsert(
+      {
+        subjectRef: subject,
+        purpose: "marketing",
+        granted: false,
+        occurredAt: "2026-07-18T10:00:00.000Z",
+      },
+      tenantId,
+    );
+    expect((await s.get(subject, "marketing", tenantId))?.granted).toBe(false);
 
     // Older redelivery is ignored (no regression).
-    await s.upsert({
-      subjectRef: subject,
-      purpose: "marketing",
-      granted: true,
-      occurredAt: "2026-07-18T08:00:00.000Z",
-    });
-    expect((await s.get(subject, "marketing"))?.granted).toBe(false);
+    await s.upsert(
+      {
+        subjectRef: subject,
+        purpose: "marketing",
+        granted: true,
+        occurredAt: "2026-07-18T08:00:00.000Z",
+      },
+      tenantId,
+    );
+    expect((await s.get(subject, "marketing", tenantId))?.granted).toBe(false);
 
-    expect(await s.get(subject, "never-set")).toBeNull();
+    expect(await s.get(subject, "never-set", tenantId)).toBeNull();
   });
 });

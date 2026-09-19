@@ -128,7 +128,11 @@ describe("reporting routes — read side (Phase 4 T4.20)", () => {
       "create dashboard",
     );
 
-    const listResponse = await call(byPathAndMethod(routes, "GET", "/reporting/dashboards"), {}, {});
+    const listResponse = await call(
+      byPathAndMethod(routes, "GET", "/reporting/dashboards"),
+      {},
+      {},
+    );
     expect(listResponse.status).toBe(200);
     const listBody = listResponse.body as { items: unknown[]; pageInfo: unknown };
     expect(listBody.items).toHaveLength(1);

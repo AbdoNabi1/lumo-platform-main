@@ -194,17 +194,17 @@ export class SecurityAuthorizationAdminController {
   }
 
   /** Console read model — permission explorer (Part 10). Not `present()`-wrapped upstream; wrapped here. */
-  async permissionExplorer(principal: Principal): Promise<AdminResponse> {
+  async permissionExplorer(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:permission_explorer");
     if (denied) return denied;
-    return { status: 200, body: await this.security.permissionExplorer() };
+    return { status: 200, body: await this.security.permissionExplorer(tenantId) };
   }
 
   /** Console read model — policy explorer (Part 10). Wrapped here (see above). */
-  async policyExplorer(principal: Principal): Promise<AdminResponse> {
+  async policyExplorer(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:policy_explorer");
     if (denied) return denied;
-    return { status: 200, body: await this.security.policyExplorer() };
+    return { status: 200, body: await this.security.policyExplorer(tenantId) };
   }
 
   /** Console read model — security registry explorer (Part 10). Synchronous upstream; wrapped here. */

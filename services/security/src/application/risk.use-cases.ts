@@ -7,6 +7,8 @@ import { securityEvent, type SecurityDeps } from "./deps";
 import { enrichRiskSignals } from "./risk-helpers";
 
 export interface EvaluateRiskInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId?: string;
   readonly ip?: string;
   readonly deviceFingerprint?: string;
@@ -27,25 +29,32 @@ export interface RiskEvaluationOutput {
 export class EvaluateRisk implements UseCase<EvaluateRiskInput, RiskEvaluationOutput, DomainError> {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: EvaluateRiskInput): Promise<Result<RiskEvaluationOutput, DomainError>> {
-    const signals = await enrichRiskSignals(this.deps, {
-      ...(input.ip !== undefined ? { ip: input.ip } : {}),
-      ...(input.deviceFingerprint !== undefined
-        ? { deviceFingerprint: input.deviceFingerprint }
-        : {}),
-      ...(input.signals !== undefined ? { base: input.signals } : {}),
-    });
+    const signals = await enrichRiskSignals(
+      this.deps,
+      {
+        ...(input.ip !== undefined ? { ip: input.ip } : {}),
+        ...(input.deviceFingerprint !== undefined
+          ? { deviceFingerprint: input.deviceFingerprint }
+          : {}),
+        ...(input.signals !== undefined ? { base: input.signals } : {}),
+      },
+      input.tenantId,
+    );
     const evaluation = this.deps.riskEngine.evaluate(signals);
     this.deps.telemetry.recordRiskBand(evaluation.score.band);
-    await this.deps.outbox.publish([
-      securityEvent(
-        this.deps,
-        "risk",
-        this.deps.idGenerator.generate(),
-        input.principalExternalId ?? "anonymous",
-        "security.risk.evaluated",
-        evaluation.score.band,
-      ),
-    ]);
+    await this.deps.outbox.publish(
+      [
+        securityEvent(
+          this.deps,
+          "risk",
+          this.deps.idGenerator.generate(),
+          input.principalExternalId ?? "anonymous",
+          "security.risk.evaluated",
+          evaluation.score.band,
+        ),
+      ],
+      input.tenantId,
+    );
 
     return ok({
       score: evaluation.score.value,

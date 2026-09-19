@@ -56,21 +56,25 @@ function evaluatorReturning(
 describe("SecurityPermissionGuard (@platform/http seam)", () => {
   it("allows (returns null) on an allow decision", async () => {
     const guard = new SecurityPermissionGuard(evaluatorReturning("allow", true));
-    expect(await guard.ensure(principal, "orders:read")).toBeNull();
+    expect(await guard.ensure(principal, "orders:read", { tenantId: "tenant-a" })).toBeNull();
   });
 
   it("denies with 403 FORBIDDEN", async () => {
     const guard = new SecurityPermissionGuard(
       evaluatorReturning("block", false, ["no-permission"]),
     );
-    const response = await guard.ensure(principal, "orders:write");
+    const response = await guard.ensure(principal, "orders:write", {
+      tenantId: "tenant-a",
+    });
     expect(response?.status).toBe(403);
     expect((response?.body as { code: string }).code).toBe("FORBIDDEN");
   });
 
   it("challenges with 401 STEP_UP_REQUIRED", async () => {
     const guard = new SecurityPermissionGuard(evaluatorReturning("challenge", false));
-    const response = await guard.ensure(principal, "orders:write");
+    const response = await guard.ensure(principal, "orders:write", {
+      tenantId: "tenant-a",
+    });
     expect(response?.status).toBe(401);
     expect((response?.body as { code: string }).code).toBe("STEP_UP_REQUIRED");
   });
@@ -95,6 +99,7 @@ describe("named middleware factories", () => {
   it("authorizationMiddleware + policyMiddleware map decisions", async () => {
     expect(
       await authorizationMiddleware(evaluatorReturning("allow", true))({
+        tenantId: "tenant-a",
         principalId: "p",
         permission: "x:y",
       }),
@@ -103,7 +108,7 @@ describe("named middleware factories", () => {
       await policyMiddleware(
         evaluatorReturning("block", false, ["denied"]),
         "prod",
-      )({ principalId: "p", permission: "x:y" }),
+      )({ tenantId: "tenant-a", principalId: "p", permission: "x:y" }),
     ).toMatchObject({ allowed: false, status: 403, reasons: ["denied"] });
   });
 

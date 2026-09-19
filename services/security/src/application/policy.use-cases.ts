@@ -30,6 +30,8 @@ function present(p: Policy): PolicyOutput {
 }
 
 export interface DefinePolicyInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly key: string;
   readonly name: string;
   readonly mode: PolicyMode;
@@ -40,7 +42,7 @@ export class DefinePolicy implements UseCase<DefinePolicyInput, PolicyOutput, Do
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: DefinePolicyInput): Promise<Result<PolicyOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PolicyOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.policies.findByKey(input.key, tx);
+      const existing = await this.deps.policies.findByKey(input.key, input.tenantId, tx);
       if (existing !== null) return ok(present(existing));
       let policy: Policy;
       try {
@@ -54,8 +56,9 @@ export class DefinePolicy implements UseCase<DefinePolicyInput, PolicyOutput, Do
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.policies.save(policy, tx);
+      await this.deps.policies.save(policy, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: "system",
         action: "security.policy.defined",
         decision: "allow",
@@ -67,6 +70,8 @@ export class DefinePolicy implements UseCase<DefinePolicyInput, PolicyOutput, Do
 }
 
 export interface PublishPolicyVersionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly key: string;
   readonly rules: readonly PolicyRule[];
   readonly defaultEffect?: PolicyEffect;
@@ -81,7 +86,7 @@ export class PublishPolicyVersion implements UseCase<
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: PublishPolicyVersionInput): Promise<Result<PolicyOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PolicyOutput, DomainError>>(async (tx) => {
-      const policy = await this.deps.policies.findByKey(input.key, tx);
+      const policy = await this.deps.policies.findByKey(input.key, input.tenantId, tx);
       if (policy === null) return err(new NotFoundError("Policy not found"));
       try {
         policy.publishVersion(
@@ -93,8 +98,9 @@ export class PublishPolicyVersion implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.policies.save(policy, tx);
+      await this.deps.policies.save(policy, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: "system",
         action: "security.policy.version_published",
         decision: "allow",
@@ -106,6 +112,8 @@ export class PublishPolicyVersion implements UseCase<
 }
 
 export interface ArchivePolicyInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly key: string;
 }
 
@@ -114,11 +122,12 @@ export class ArchivePolicy implements UseCase<ArchivePolicyInput, PolicyOutput, 
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: ArchivePolicyInput): Promise<Result<PolicyOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PolicyOutput, DomainError>>(async (tx) => {
-      const policy = await this.deps.policies.findByKey(input.key, tx);
+      const policy = await this.deps.policies.findByKey(input.key, input.tenantId, tx);
       if (policy === null) return err(new NotFoundError("Policy not found"));
       policy.archive(this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.policies.save(policy, tx);
+      await this.deps.policies.save(policy, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: "system",
         action: "security.policy.archived",
         decision: "allow",
@@ -130,6 +139,8 @@ export class ArchivePolicy implements UseCase<ArchivePolicyInput, PolicyOutput, 
 }
 
 export interface SimulatePolicyInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly key: string;
   readonly context: {
     readonly principalActive?: boolean;
@@ -155,7 +166,7 @@ export class SimulatePolicy implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: SimulatePolicyInput): Promise<Result<ZeroTrustDecision, DomainError>> {
-    const policy = await this.deps.policies.findByKey(input.key);
+    const policy = await this.deps.policies.findByKey(input.key, input.tenantId);
     if (policy === null) return err(new NotFoundError("Policy not found"));
     const c = input.context;
     let resource: ResourceUrn | null = null;

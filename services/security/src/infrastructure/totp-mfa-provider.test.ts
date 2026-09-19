@@ -41,7 +41,10 @@ describe("TotpMfaProvider", () => {
     const clock = clockAt("2026-01-01T00:00:30.000Z");
     const provider = new TotpMfaProvider(new NodeCrypto(), clock);
     const { secretRef, provisioningUri } = await provider.enroll({ principalRef: "principal-1" });
-    const expected = totp(secretBytesFromProvisioningUri(provisioningUri!), secondsOf(clock.now().toISOString()));
+    const expected = totp(
+      secretBytesFromProvisioningUri(provisioningUri!),
+      secondsOf(clock.now().toISOString()),
+    );
 
     const result = await provider.verify({ secretRef, code: expected });
 

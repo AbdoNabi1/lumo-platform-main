@@ -8,7 +8,7 @@ import type { RelationQuery, RelationTupleProps } from "../domain/relationship";
  * tuple store on the enforcement path.
  */
 export interface RelationshipCheckPort {
-  check(query: RelationQuery): Promise<boolean>;
+  check(query: RelationQuery, tenantId: string): Promise<boolean>;
 }
 
 /**

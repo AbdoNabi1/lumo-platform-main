@@ -45,12 +45,13 @@ function expectOk(response: ControllerResponse, step: string): void {
  */
 export async function bootstrapSecurity(
   security: SecurityController,
-  tenantRef: string,
+  tenantId: string,
   logger: Logger,
 ): Promise<SecurityBootstrapSummary> {
   // 1. Roles — a full-authority human admin role and a read-scoped service role (extend via DefineRole).
   expectOk(
     await security.defineRole({
+      tenantId,
       key: PLATFORM_ADMIN_ROLE,
       name: "Platform Administrator",
       permissions: ["*:*"],
@@ -59,6 +60,7 @@ export async function bootstrapSecurity(
   );
   expectOk(
     await security.defineRole({
+      tenantId,
       key: PLATFORM_SERVICE_ROLE,
       name: "Platform Service",
       permissions: ["*:read"],
@@ -69,6 +71,7 @@ export async function bootstrapSecurity(
   // 2. Baseline zero-trust policy (balanced): default-allow once gates pass; step-up then block on risk.
   expectOk(
     await security.definePolicy({
+      tenantId,
       key: BASELINE_POLICY_KEY,
       name: "Platform Baseline",
       mode: "balanced",
@@ -77,6 +80,7 @@ export async function bootstrapSecurity(
   );
   expectOk(
     await security.publishPolicyVersion({
+      tenantId,
       key: BASELINE_POLICY_KEY,
       rules: [
         {
@@ -99,7 +103,8 @@ export async function bootstrapSecurity(
   // 3. Tenant security profile — pins the baseline policy as the tenant's default governing policy.
   expectOk(
     await security.configureTenantSecurity({
-      tenantRef,
+      tenantId,
+      tenantRef: tenantId,
       config: { securityMode: "balanced", defaultPolicyKey: BASELINE_POLICY_KEY },
     }),
     "configureTenantSecurity",
@@ -108,12 +113,12 @@ export async function bootstrapSecurity(
   const summary: SecurityBootstrapSummary = {
     roles: [PLATFORM_ADMIN_ROLE, PLATFORM_SERVICE_ROLE],
     policyKey: BASELINE_POLICY_KEY,
-    tenantRef,
+    tenantRef: tenantId,
   };
   logger.info("security baseline provisioned", {
     roles: summary.roles.join(","),
     policy: summary.policyKey,
-    tenant: tenantRef,
+    tenant: tenantId,
   });
   return summary;
 }

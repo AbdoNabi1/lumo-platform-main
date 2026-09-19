@@ -85,7 +85,7 @@ export class CustomerAuthAdminController {
    * created. A method an operator has explicitly *disabled* is left disabled — login then fails, which
    * is the correct outcome for "password login is turned off", not something to silently re-enable.
    */
-  private async ensurePasswordMethod(): Promise<void> {
+  private async ensurePasswordMethod(tenantId: string): Promise<void> {
     this.passwordMethodReady ??= (async () => {
       const registries = this.deps.security.registryExplorer().registries;
       const authMethods = registries.find((registry) => registry.name === "auth-methods");
@@ -93,6 +93,7 @@ export class CustomerAuthAdminController {
         authMethods?.entries.some((entry) => entry.key === "password") ?? false;
       if (alreadyRegistered) return;
       await this.deps.security.registerAuthMethod({
+        tenantId,
         kind: "password",
         displayName: "Password",
       });
@@ -149,6 +150,7 @@ export class CustomerAuthAdminController {
 
     await this.deps.credentials.registerSubject(customerId);
     const principal = await this.deps.security.registerPrincipal({
+      tenantId: input.tenantId,
       externalId: customerId,
       kind: "human",
       displayName: customerId,
@@ -156,7 +158,7 @@ export class CustomerAuthAdminController {
     });
     if (principal.status < 200 || principal.status >= 300) return principal;
 
-    await this.ensurePasswordMethod();
+    await this.ensurePasswordMethod(input.tenantId);
     await this.deps.credentials.setPassword(input.email, input.password, customerId);
 
     return { status: 201, body: { customerRef: customerId } };
@@ -172,13 +174,15 @@ export class CustomerAuthAdminController {
    * (T5.16 §2), not the hour `Authenticate` would otherwise default to or the cart cookie's 30 days.
    */
   async login(input: {
+    readonly tenantId: string;
     readonly email: string;
     readonly password: string;
     readonly deviceFingerprint?: string;
     readonly ip?: string;
   }): Promise<AdminResponse> {
-    await this.ensurePasswordMethod();
+    await this.ensurePasswordMethod(input.tenantId);
     const outcome = await this.deps.security.authenticate({
+      tenantId: input.tenantId,
       method: "password",
       identifier: input.email,
       credential: input.password,
@@ -215,7 +219,7 @@ export class CustomerAuthAdminController {
       return CustomerAuthAdminController.failedLogin();
     }
 
-    return this.presentSession(result.sessionId);
+    return this.presentSession(result.sessionId, input.tenantId);
   }
 
   /**
@@ -233,6 +237,7 @@ export class CustomerAuthAdminController {
     if (!guarded.ok) return { status: 200, body: { revoked: false } };
 
     const revoked = await this.deps.security.revokeSession({
+      tenantId,
       sessionId: guarded.session.sessionId,
     });
     if (revoked.status < 200 || revoked.status >= 300) return revoked;
@@ -251,13 +256,14 @@ export class CustomerAuthAdminController {
     if (!guarded.ok) return guarded.response;
 
     const refreshed = await this.deps.security.refreshSession({
+      tenantId,
       sessionId: guarded.session.sessionId,
       newRefreshFingerprint: this.deps.idGenerator.generate(),
       ttlSeconds: this.deps.sessionTtlSeconds,
     });
     if (refreshed.status < 200 || refreshed.status >= 300) return refreshed;
 
-    return this.presentSession(guarded.session.sessionId);
+    return this.presentSession(guarded.session.sessionId, tenantId);
   }
 
   /**
@@ -270,6 +276,7 @@ export class CustomerAuthAdminController {
     if (!guarded.ok) return guarded.response;
 
     return this.deps.security.revokeAllSessions({
+      tenantId,
       principalExternalId: guarded.session.principalExternalId,
     });
   }
@@ -300,8 +307,8 @@ export class CustomerAuthAdminController {
    * `IntrospectSessionSubject` hop every guarded request uses. A session that cannot be resolved back
    * immediately after being established is a genuine inconsistency, not a login — it fails closed.
    */
-  private async presentSession(sessionId: string): Promise<AdminResponse> {
-    const introspected = await this.deps.security.introspectSessionSubject({ sessionId });
+  private async presentSession(sessionId: string, tenantId: string): Promise<AdminResponse> {
+    const introspected = await this.deps.security.introspectSessionSubject({ tenantId, sessionId });
     if (introspected.status < 200 || introspected.status >= 300) {
       return CustomerAuthAdminController.failedLogin();
     }

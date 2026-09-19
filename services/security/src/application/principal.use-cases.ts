@@ -27,6 +27,8 @@ export function presentPrincipal(p: Principal): PrincipalOutput {
 }
 
 export interface RegisterPrincipalInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly externalId: string;
   readonly kind: PrincipalKind;
   readonly displayName: string;
@@ -56,7 +58,11 @@ export class RegisterPrincipal implements UseCase<
       }
     }
     return this.deps.unitOfWork.run<Result<PrincipalOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.principals.findByExternalId(input.externalId, tx);
+      const existing = await this.deps.principals.findByExternalId(
+        input.externalId,
+        input.tenantId,
+        tx,
+      );
       if (existing !== null) return ok(presentPrincipal(existing));
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       let principal: Principal;
@@ -71,8 +77,9 @@ export class RegisterPrincipal implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.principals.save(principal, tx);
+      await this.deps.principals.save(principal, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.principal.registered",
         decision: "allow",
@@ -85,6 +92,8 @@ export class RegisterPrincipal implements UseCase<
 }
 
 export interface TransitionPrincipalInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly externalId: string;
   readonly to: "suspended" | "active" | "disabled";
 }
@@ -98,7 +107,11 @@ export class TransitionPrincipal implements UseCase<
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: TransitionPrincipalInput): Promise<Result<PrincipalOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PrincipalOutput, DomainError>>(async (tx) => {
-      const principal = await this.deps.principals.findByExternalId(input.externalId, tx);
+      const principal = await this.deps.principals.findByExternalId(
+        input.externalId,
+        input.tenantId,
+        tx,
+      );
       if (principal === null) return err(new NotFoundError("Principal not found"));
       const eventId = this.deps.idGenerator.generate();
       const now = this.deps.clock.now();
@@ -110,8 +123,9 @@ export class TransitionPrincipal implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.principals.save(principal, tx);
+      await this.deps.principals.save(principal, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: `security.principal.${input.to}`,
         decision: "allow",
