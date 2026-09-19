@@ -18,6 +18,8 @@ export interface CreateReturnRequestItemInput {
 }
 
 export interface CreateReturnRequestInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderRef: string;
   readonly items: readonly CreateReturnRequestItemInput[];
 }
@@ -77,7 +79,7 @@ export class CreateReturnRequest implements UseCase<
     return this.deps.unitOfWork.run<Result<ReturnStatusOutput, DomainError>>(async (tx) => {
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const returnRequest = ReturnRequest.create(id, input.orderRef, items);
-      await this.deps.returns.save(returnRequest, tx);
+      await this.deps.returns.save(returnRequest, input.tenantId, tx);
       return ok({ returnId: id.toString(), status: returnRequest.status.value });
     });
   }

@@ -100,7 +100,8 @@ export function returnsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Open a return request (RMA) for an order's items",
       schema: { body: createReturnRequestBody },
-      handle: ({ body, context }) => admin.returns.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.returns.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -111,7 +112,11 @@ export function returnsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Approve or reject a return request",
       schema: { params: returnIdParams, body: decisionBody },
       handle: ({ params, body, context }) =>
-        admin.returns.decision(context.principal, { returnId: params.returnId, ...body }),
+        admin.returns.decision(context.principal, {
+          returnId: params.returnId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -122,7 +127,11 @@ export function returnsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Generate the RMA number for an approved return",
       schema: { params: returnIdParams, body: rmaBody },
       handle: ({ params, body, context }) =>
-        admin.returns.rma(context.principal, { returnId: params.returnId, ...body }),
+        admin.returns.rma(context.principal, {
+          returnId: params.returnId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -132,7 +141,11 @@ export function returnsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Record the returned package's receipt (verified with Shipping, replay-safe)",
       schema: { params: returnIdParams, body: receiveBody },
       handle: ({ params, body, context }) =>
-        admin.returns.receive(context.principal, { returnId: params.returnId, ...body }),
+        admin.returns.receive(context.principal, {
+          returnId: params.returnId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -142,7 +155,11 @@ export function returnsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Record one item's inspection result (idempotent by itemRef)",
       schema: { params: returnIdParams, body: inspectionBody },
       handle: ({ params, body, context }) =>
-        admin.returns.inspection(context.principal, { returnId: params.returnId, ...body }),
+        admin.returns.inspection(context.principal, {
+          returnId: params.returnId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -153,7 +170,11 @@ export function returnsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Accept inspected items with their dispositions (restocks via InventoryPort)",
       schema: { params: returnIdParams, body: acceptBody },
       handle: ({ params, body, context }) =>
-        admin.returns.accept(context.principal, { returnId: params.returnId, ...body }),
+        admin.returns.accept(context.principal, {
+          returnId: params.returnId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -167,6 +188,7 @@ export function returnsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       handle: ({ params, body, context }) =>
         admin.returns.advance(context.principal, {
           returnId: params.returnId,
+          tenantId: context.tenantId,
           toStatus: body.toStatus as Parameters<typeof admin.returns.advance>[1]["toStatus"],
         }),
     }),
@@ -179,6 +201,7 @@ export function returnsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: returnByOrderParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
         const response = await admin.returns.getByOrder(context.principal, {
+          tenantId: context.tenantId,
           orderRef: params.orderId,
         });
         if (response.status !== 200) {
@@ -196,7 +219,11 @@ export function returnsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Decide the resolution (refund/replacement/repair) for accepted items",
       schema: { params: returnIdParams, body: resolutionBody },
       handle: ({ params, body, context }) =>
-        admin.returns.resolution(context.principal, { returnId: params.returnId, ...body }),
+        admin.returns.resolution(context.principal, {
+          returnId: params.returnId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
   ] as readonly RouteDefinition[];
 }

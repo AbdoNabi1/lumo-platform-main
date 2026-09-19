@@ -130,26 +130,27 @@ async function buildAcceptedReturn(
   ]);
   returnRequest.pullDomainEvents();
   const returnId = returnRequest.id.toString();
-  await returns.save(returnRequest);
+  await returns.save(returnRequest, "tenant-a");
 
   const deps = { returns, unitOfWork, idGenerator: ids, clock };
 
   const approve = returnRequest;
   approve.approve(ids.generate(), clock.now());
   approve.pullDomainEvents();
-  await returns.save(approve);
+  await returns.save(approve, "tenant-a");
 
   approve.generateRma("RMA-1", ids.generate(), clock.now());
   approve.pullDomainEvents();
-  await returns.save(approve);
+  await returns.save(approve, "tenant-a");
 
   approve.recordWarehouseCallback(clock.now(), "cb-1");
   approve.receivePackage(ids.generate(), clock.now());
   approve.pullDomainEvents();
-  await returns.save(approve);
+  await returns.save(approve, "tenant-a");
 
   const inspectItems = new InspectItems(deps);
   const inspected = await inspectItems.execute({
+    tenantId: "tenant-a",
     returnId,
     itemRef: "order-item-1",
     passed: true,
@@ -158,10 +159,11 @@ async function buildAcceptedReturn(
 
   approve.transition("inspection_completed", ids.generate(), clock.now());
   approve.pullDomainEvents();
-  await returns.save(approve);
+  await returns.save(approve, "tenant-a");
 
   const acceptItems = new AcceptItems({ ...deps, inventoryPort: new InMemoryInventoryAdapter() });
   const accepted = await acceptItems.execute({
+    tenantId: "tenant-a",
     returnId,
     items: [{ orderItemRef: "order-item-1", disposition: "restock" }],
   });
@@ -185,6 +187,7 @@ describe("Task 2/12 — exploit + fix proof: PaymentsPort.requestRefund must run
     });
 
     const result = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 500,
@@ -214,6 +217,7 @@ describe("Task 2/12 — exploit + fix proof: PaymentsPort.requestRefund must run
     });
 
     await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 500,
@@ -252,6 +256,7 @@ describe("Task 2/12 — exploit + fix proof: PaymentsPort.requestRefund must run
     });
 
     await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 500,
@@ -278,7 +283,11 @@ describe("Task 2/12 — exploit + fix proof: PaymentsPort.requestRefund must run
       paymentsPort,
     });
 
-    const result = await decideResolution.execute({ returnId, outcome: "replacement" });
+    const result = await decideResolution.execute({
+      tenantId: "tenant-a",
+      returnId,
+      outcome: "replacement",
+    });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("replacement_requested");
@@ -306,7 +315,13 @@ describe("Task 9 — PSP failure recovery", () => {
     });
 
     await expect(
-      decideResolution.execute({ returnId, outcome: "refund", amountMinor: 500, currency: "USD" }),
+      decideResolution.execute({
+        tenantId: "tenant-a",
+        returnId,
+        outcome: "refund",
+        amountMinor: 500,
+        currency: "USD",
+      }),
     ).rejects.toThrow(/simulated PSP refund failure/);
 
     // Crash-window analysis (Task 10): the reservation committed in its own transaction (Phase A)
@@ -342,6 +357,7 @@ describe("Task 6/7 — resolution semantics and idempotency key preserved", () =
     });
 
     const result = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 0,
@@ -368,6 +384,7 @@ describe("Task 6/7 — resolution semantics and idempotency key preserved", () =
     });
 
     const first = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 300,
@@ -376,6 +393,7 @@ describe("Task 6/7 — resolution semantics and idempotency key preserved", () =
     expect(first.ok).toBe(true);
 
     const second = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 300,

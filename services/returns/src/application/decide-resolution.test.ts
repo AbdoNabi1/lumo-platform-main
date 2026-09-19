@@ -81,7 +81,7 @@ async function buildAcceptedReturn(returns: ReturnRequestRepository): Promise<st
   ]);
   returnRequest.pullDomainEvents();
   const returnId = returnRequest.id.toString();
-  await returns.save(returnRequest);
+  await returns.save(returnRequest, "tenant-a");
 
   const uow = new InMemoryUnitOfWork();
   const deps = { returns, unitOfWork: uow, idGenerator: ids, clock };
@@ -89,19 +89,20 @@ async function buildAcceptedReturn(returns: ReturnRequestRepository): Promise<st
   const approve = returnRequest;
   approve.approve(ids.generate(), clock.now());
   approve.pullDomainEvents();
-  await returns.save(approve);
+  await returns.save(approve, "tenant-a");
 
   approve.generateRma("RMA-1", ids.generate(), clock.now());
   approve.pullDomainEvents();
-  await returns.save(approve);
+  await returns.save(approve, "tenant-a");
 
   approve.recordWarehouseCallback(clock.now(), "cb-1");
   approve.receivePackage(ids.generate(), clock.now());
   approve.pullDomainEvents();
-  await returns.save(approve);
+  await returns.save(approve, "tenant-a");
 
   const inspectItems = new InspectItems(deps);
   const inspected = await inspectItems.execute({
+    tenantId: "tenant-a",
     returnId,
     itemRef: "order-item-1",
     passed: true,
@@ -110,10 +111,11 @@ async function buildAcceptedReturn(returns: ReturnRequestRepository): Promise<st
 
   approve.transition("inspection_completed", ids.generate(), clock.now());
   approve.pullDomainEvents();
-  await returns.save(approve);
+  await returns.save(approve, "tenant-a");
 
   const acceptItems = new AcceptItems({ ...deps, inventoryPort: new InMemoryInventoryAdapter() });
   const accepted = await acceptItems.execute({
+    tenantId: "tenant-a",
     returnId,
     items: [{ orderItemRef: "order-item-1", disposition: "restock" }],
   });
@@ -144,6 +146,7 @@ describe("DecideResolution — F-04 refund amount", () => {
     });
 
     const result = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 5000,
@@ -172,6 +175,7 @@ describe("DecideResolution — F-04 refund amount", () => {
     });
 
     const result = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 5000,
@@ -199,6 +203,7 @@ describe("DecideResolution — F-04 refund amount", () => {
     });
 
     const result = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 800,
@@ -225,6 +230,7 @@ describe("DecideResolution — F-04 refund amount", () => {
     });
 
     const result = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 801,
@@ -250,6 +256,7 @@ describe("DecideResolution — F-04 refund amount", () => {
     });
 
     const first = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 300,
@@ -258,6 +265,7 @@ describe("DecideResolution — F-04 refund amount", () => {
     expect(first.ok).toBe(true);
 
     const second = await decideResolution.execute({
+      tenantId: "tenant-a",
       returnId,
       outcome: "refund",
       amountMinor: 300,

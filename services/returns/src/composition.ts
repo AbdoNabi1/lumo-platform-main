@@ -47,15 +47,14 @@ export interface ReturnsWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaReturnRequestRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wireFulfillment`); absent ⇒ in-memory, unchanged. The 4 reference-only outbound ports stay
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. The 4 reference-only outbound ports stay
    * in-memory in both branches — out of scope for C-01. `ReceivePackage`'s warehouse-callback dedup
    * (Phase A.18) is no longer a separate port — it reads `ReturnRequest.attempts` directly, so it
-   * is automatically Prisma-backed and tx-scoped whenever the aggregate itself is.
+   * is automatically Prisma-backed and tx-scoped whenever the aggregate itself is. ADR-0014 (WP-10,
+   * T10.3): the repository built here is a tenant-agnostic singleton — no `tenantId` at
+   * composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Returns table is tenant-scoped. */
-  readonly tenantId?: string;
   /**
    * Gates `DecideResolution`'s staff-decided refund amount against the order's refundable ceiling
    * (Phase A.1, F-04). Passed straight through to `DecideResolution` below; defaults to Returns'
@@ -130,10 +129,6 @@ function buildController(
  */
 export function wireReturns(deps: ReturnsWiringDeps): WiredReturns {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireReturns: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new ReturnsEventTranslator(),
@@ -141,13 +136,10 @@ export function wireReturns(deps: ReturnsWiringDeps): WiredReturns {
       clock: deps.clock,
       producer: "returns",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const returns = new PrismaReturnRequestRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — every repository takes it per
+    // call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const returns = new PrismaReturnRequestRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {

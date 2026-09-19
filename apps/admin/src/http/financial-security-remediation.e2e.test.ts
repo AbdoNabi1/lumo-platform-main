@@ -492,6 +492,7 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
   async function buildAcceptedReturn(admin: WiredAdmin): Promise<string> {
     const created = unwrap<{ returnId: string }>(
       await admin.returns.create(staff, {
+        tenantId: "tenant-local",
         orderRef: "order-1",
         items: [
           {
@@ -505,22 +506,43 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
       "create return",
     );
     const returnId = created.returnId;
-    unwrap(await admin.returns.decision(staff, { returnId, approved: true }), "decision");
-    unwrap(await admin.returns.rma(staff, { returnId, rmaNumber: "RMA-1" }), "rma");
     unwrap(
-      await admin.returns.receive(staff, { returnId, source: "warehouse-1", callbackId: "cb-1" }),
+      await admin.returns.decision(staff, { tenantId: "tenant-local", returnId, approved: true }),
+      "decision",
+    );
+    unwrap(
+      await admin.returns.rma(staff, { tenantId: "tenant-local", returnId, rmaNumber: "RMA-1" }),
+      "rma",
+    );
+    unwrap(
+      await admin.returns.receive(staff, {
+        tenantId: "tenant-local",
+        returnId,
+        source: "warehouse-1",
+        callbackId: "cb-1",
+      }),
       "receive",
     );
     unwrap(
-      await admin.returns.inspection(staff, { returnId, itemRef: "order-item-1", passed: true }),
+      await admin.returns.inspection(staff, {
+        tenantId: "tenant-local",
+        returnId,
+        itemRef: "order-item-1",
+        passed: true,
+      }),
       "inspection",
     );
     unwrap(
-      await admin.returns.advance(staff, { returnId, toStatus: "inspection_completed" }),
+      await admin.returns.advance(staff, {
+        tenantId: "tenant-local",
+        returnId,
+        toStatus: "inspection_completed",
+      }),
       "advance to inspection_completed",
     );
     unwrap(
       await admin.returns.accept(staff, {
+        tenantId: "tenant-local",
         returnId,
         items: [{ orderItemRef: "order-item-1", disposition: "restock" }],
       }),
@@ -542,6 +564,7 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
     const returnId = await buildAcceptedReturn(admin);
 
     const resolved = await admin.returns.resolution(staff, {
+      tenantId: "tenant-local",
       returnId,
       outcome: "refund",
       amountMinor: 999_999_999,
@@ -560,6 +583,7 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
     const returnId = await buildAcceptedReturn(admin);
 
     const resolved = await admin.returns.resolution(staff, {
+      tenantId: "tenant-local",
       returnId,
       outcome: "refund",
       amountMinor: REFUNDABLE_CEILING_MINOR + 1,
@@ -574,6 +598,7 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
     const returnId = await buildAcceptedReturn(admin);
 
     const resolved = await admin.returns.resolution(staff, {
+      tenantId: "tenant-local",
       returnId,
       outcome: "refund",
       amountMinor: REFUNDABLE_CEILING_MINOR,
@@ -588,7 +613,11 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
     const admin = buildAdmin({ refundVerification: strictRefundVerification });
     const returnId = await buildAcceptedReturn(admin);
 
-    const resolved = await admin.returns.resolution(staff, { returnId, outcome: "replacement" });
+    const resolved = await admin.returns.resolution(staff, {
+      tenantId: "tenant-local",
+      returnId,
+      outcome: "replacement",
+    });
     expect(resolved.status).toBe(200);
   });
 });

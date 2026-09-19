@@ -338,53 +338,53 @@ from grant counts alone.
       Every non-uniform repository you find is worth a note in the ADR.
 
       **Done when (corrected 2026-09-18): no construction-time tenant pinning anywhere in the
-                                          converted context — repositories, adapters, ports and stores alike, Prisma or otherwise —
-                                          not "Prisma repositories converted."** The original, narrower wording let a context pass as
-                                          "done" while a non-Prisma store (`services/analytics`' `ClickHouseAnalyticsReadStore`) or a
-                                          non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`) still pinned
-                                          `tenantId` at construction — both found and fixed in the session that made this correction
-                                          (see the T10.7 inventory above for the sites still outstanding under the wider definition).
-                                          **Verification command is the T10.7 inventory's own repo-wide grep, not a `services/`-only
-                                          one** — the T10.3 sweep's original pattern (`grep ... packages apps services`, restricted in
-                                          practice to `services/*/src/infrastructure/prisma-*.ts`) would have missed
-                                          `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`, which pins its tenant via
-                                          `config.TENANT_DEFAULT_ID` with no `deps.tenantId`/`this.tenantId =` shape at all:
+                                              converted context — repositories, adapters, ports and stores alike, Prisma or otherwise —
+                                              not "Prisma repositories converted."** The original, narrower wording let a context pass as
+                                              "done" while a non-Prisma store (`services/analytics`' `ClickHouseAnalyticsReadStore`) or a
+                                              non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`) still pinned
+                                              `tenantId` at construction — both found and fixed in the session that made this correction
+                                              (see the T10.7 inventory above for the sites still outstanding under the wider definition).
+                                              **Verification command is the T10.7 inventory's own repo-wide grep, not a `services/`-only
+                                              one** — the T10.3 sweep's original pattern (`grep ... packages apps services`, restricted in
+                                              practice to `services/*/src/infrastructure/prisma-*.ts`) would have missed
+                                              `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`, which pins its tenant via
+                                              `config.TENANT_DEFAULT_ID` with no `deps.tenantId`/`this.tenantId =` shape at all:
 
-                                          ```bash
-                                          grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
-                                            --include="*.ts" packages apps services | grep -v node_modules | grep -v "\.test\." | grep -v coverage
-                                          grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
-                                          ```
+                                              ```bash
+                                              grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
+                                                --include="*.ts" packages apps services | grep -v node_modules | grep -v "\.test\." | grep -v coverage
+                                              grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
+                                              ```
 
-                                          A context is done when every match for it (repository, adapter, port, or store) is gone from
-                                          the first command's output, and every match for it in the second command's output is
-                                          classified (A)/(B)/(C)/(D) per the T10.7 inventory's own scheme — not merely absent from a
-                                          hand-picked list of Prisma files.
+                                              A context is done when every match for it (repository, adapter, port, or store) is gone from
+                                              the first command's output, and every match for it in the second command's output is
+                                              classified (A)/(B)/(C)/(D) per the T10.7 inventory's own scheme — not merely absent from a
+                                              hand-picked list of Prisma files.
 
-                                          **Event-envelope tenant (added 2026-09-18, ADR-0014 Amendment 7).** Repository-side
-                                          conversion is not complete until the tenant also reaches the outbox envelope. Two more
-                                          conditions, both required:
+                                              **Event-envelope tenant (added 2026-09-18, ADR-0014 Amendment 7).** Repository-side
+                                              conversion is not complete until the tenant also reaches the outbox envelope. Two more
+                                              conditions, both required:
 
-                                          - The context's suite calls `assertWriteTimeTenant` (`@platform/messaging/testing`,
-                                            `packages/messaging/src/testing/write-time-tenant.ts`) against its repository. It only
-                                            catches contexts that call it — a context that forgets passes silently — which is why the
-                                            next check exists.
-                                          - This exits 0 (no output). It lists every `outbox.write(...)` call in a converted context, package or app
-                                            whose argument list never mentions `tenantId`:
+                                              - The context's suite calls `assertWriteTimeTenant` (`@platform/messaging/testing`,
+                                                `packages/messaging/src/testing/write-time-tenant.ts`) against its repository. It only
+                                                catches contexts that call it — a context that forgets passes silently — which is why the
+                                                next check exists.
+                                              - This exits 0 (no output). It lists every `outbox.write(...)` call in a converted context, package or app
+                                                whose argument list never mentions `tenantId`:
 
-                                          ```bash
-                                          node scripts/dev/check-outbox-tenant.mjs
-                                          ```
+                                              ```bash
+                                              node scripts/dev/check-outbox-tenant.mjs
+                                              ```
 
-                                          "Converted" is derived: a context still building `rootEventContext(deps.idGenerator, tenantId)`
-                                          in its composition is skipped, so unconverted contexts cause no false positives and a
-                                          context joins the check the moment it converts. With no argument it scans `services`,
-                                          `packages` and `apps` (packages and apps are always checked; it first scanned `services` only and
-                                          missed `packages/usage`). Verified 2026-09-18 by breaking
-                                          `services/coupons/src/infrastructure/prisma-coupon-repository.ts:50` to pass the bare
-                                          singleton context: the command printed that site and exited 1; restored, it exits 0. It
-                                          does **not** catch a merge of the *wrong* tenant, a write hidden behind a helper, or a
-                                          context that never writes; `services/example` is exempt (template, no tenant).
+                                              "Converted" is derived: a context still building `rootEventContext(deps.idGenerator, tenantId)`
+                                              in its composition is skipped, so unconverted contexts cause no false positives and a
+                                              context joins the check the moment it converts. With no argument it scans `services`,
+                                              `packages` and `apps` (packages and apps are always checked; it first scanned `services` only and
+                                              missed `packages/usage`). Verified 2026-09-18 by breaking
+                                              `services/coupons/src/infrastructure/prisma-coupon-repository.ts:50` to pass the bare
+                                              singleton context: the command printed that site and exited 1; restored, it exits 0. It
+                                              does **not** catch a merge of the *wrong* tenant, a write hidden behind a helper, or a
+                                              context that never writes; `services/example` is exempt (template, no tenant).
 
 - [ ] **T10.4 — Remove the boot refusal, and replace it with a real guard.**
       Deleting the `TENANT_MODE === "multi"` throw is the last step, not the first. What replaces it
@@ -436,8 +436,6 @@ unconverted context's own repository sweep, or found only by the second, widened
 
 | Site                                                                                                                                                                   | Class                                  | Reasoning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/runtime/src/composition.ts:326,330` + `apps/runtime/src/api.ts:378-381` (`PrismaRefundVerificationAdapter`)                                                      | **A** — returns                        | Implements returns' own `RefundVerificationPort` (`services/returns/src/application/ports.ts:27`); same shape as the payment-verification adapter above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `apps/runtime/src/composition.ts:406,411,479` (`PrismaPaymentsPortAdapter`)                                                                                            | **A** — returns                        | Implements returns' own `ReturnsPaymentsPort`; bridges to Payments' real refund execution path, tenant-scoped at construction, pending returns' own T10.3 conversion.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `services/finance/src/infrastructure/clickhouse-read-model-store.ts:34,39` (`ClickHouseReadModelStore`)                                                                | **A** — finance                        | Same construction-time-pin shape Task 2 fixed in analytics' `ClickHouseAnalyticsReadStore` — checked per Task 2's own instruction, left unconverted because finance itself is out of scope this session.                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `apps/runtime/src/security/wire-security-identity.ts:68,74`, `wire-security-runtime.ts:53,65,70`, `wire-security-provisioning.ts:45`                                   | **A** — security                       | The runtime-composition-root half of security's own wiring (`services/security` is one of the 15 unconverted contexts); all source `config.TENANT_DEFAULT_ID` directly at boot, the same pattern as every other unconverted context's `wireX({ prisma, tenantId })` call.                                                                                                                                                                                                                                                                                                                                                        |
 | `apps/runtime/src/entitlement/licensing-entitlement.adapter.ts:65`, `apps/runtime/src/entitlement/wire-entitlement.ts:59` (`LicensingEntitlementPort`)                 | **B** — T10.7                          | T10.7's own scope names entitlements explicitly ("`packages/entitlement` is explicitly tenant×feature — verify"). Also currently fully unwired in production composition (`wireEntitlement` has no caller outside its own tests) — dormant, not exercised. `check()` already receives `request.tenant` per call for the Licensing half of the decision but uses the construction-time `tenantId` for the Feature Registry half — worth resolving as part of T10.7, not assumed identical without checking.                                                                                                                       |

@@ -329,18 +329,24 @@ export class PrismaPaymentVerificationAdapter implements PaymentVerificationPort
  */
 export class PrismaRefundVerificationAdapter implements RefundVerificationPort {
   private readonly prisma: RuntimeCore["prisma"];
-  private readonly tenantId: string;
 
-  constructor(prisma: RuntimeCore["prisma"], tenantId: string) {
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `RefundVerificationPort.isRefundable` carries `tenantId` per call. */
+  constructor(prisma: RuntimeCore["prisma"]) {
     this.prisma = prisma;
-    this.tenantId = tenantId;
   }
 
-  async isRefundable(orderRef: string, amountMinor: number, currency: string): Promise<boolean> {
-    const intents = await this.prisma.paymentIntent.findMany({
-      where: { orderRef, tenantId: this.tenantId, currency },
-      include: { charges: true, refunds: true },
-    });
+  async isRefundable(
+    orderRef: string,
+    amountMinor: number,
+    currency: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    const intents = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.paymentIntent.findMany({
+        where: { orderRef, tenantId, currency },
+        include: { charges: true, refunds: true },
+      }),
+    );
     const totalCaptured = intents.reduce(
       (sum, intent) =>
         sum + intent.charges.reduce((chargeSum, charge) => chargeSum + charge.amountMinor, 0),
@@ -409,12 +415,11 @@ export class PrismaRefundVerificationAdapter implements RefundVerificationPort {
  */
 export class PrismaPaymentsPortAdapter implements ReturnsPaymentsPort {
   private readonly prisma: RuntimeCore["prisma"];
-  private readonly tenantId: string;
   private readonly payments: PaymentController;
 
-  constructor(prisma: RuntimeCore["prisma"], tenantId: string, payments: PaymentController) {
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `PaymentsPort.requestRefund` carries `tenantId` per call. */
+  constructor(prisma: RuntimeCore["prisma"], payments: PaymentController) {
     this.prisma = prisma;
-    this.tenantId = tenantId;
     this.payments = payments;
   }
 
@@ -423,11 +428,14 @@ export class PrismaPaymentsPortAdapter implements ReturnsPaymentsPort {
     amountMinor: number,
     currency: string,
     idempotencyKey: string,
+    tenantId: string,
   ): Promise<void> {
-    const intents = await this.prisma.paymentIntent.findMany({
-      where: { orderRef, tenantId: this.tenantId, currency },
-      include: { charges: true, refunds: true },
-    });
+    const intents = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.paymentIntent.findMany({
+        where: { orderRef, tenantId, currency },
+        include: { charges: true, refunds: true },
+      }),
+    );
     const target = intents.find((intent) => {
       const captured = intent.charges.reduce((sum, charge) => sum + charge.amountMinor, 0);
       // Phase A.10 (Task 3): mirrors `PaymentIntent.remaining()` (`services/payments/src/domain/
@@ -451,7 +459,7 @@ export class PrismaPaymentsPortAdapter implements ReturnsPaymentsPort {
     }
 
     const response = await this.payments.refundLifecycle({
-      tenantId: this.tenantId,
+      tenantId,
       paymentIntentId: target.id,
       amountMinor,
       currency,
@@ -474,7 +482,6 @@ export class PrismaPaymentsPortAdapter implements ReturnsPaymentsPort {
  * not duplicated persistence.
  */
 export function buildReturnsPaymentsPortAdapter(core: RuntimeCore): PrismaPaymentsPortAdapter {
-  const tenantId = core.config.TENANT_DEFAULT_ID;
   const { payments } = wirePayments({
     serializer: core.serializer,
     idGenerator: core.idGenerator,
@@ -482,7 +489,7 @@ export function buildReturnsPaymentsPortAdapter(core: RuntimeCore): PrismaPaymen
     prisma: core.prisma,
     paymentProvider: core.paymentProvider,
   });
-  return new PrismaPaymentsPortAdapter(core.prisma, tenantId, payments);
+  return new PrismaPaymentsPortAdapter(core.prisma, payments);
 }
 
 /**

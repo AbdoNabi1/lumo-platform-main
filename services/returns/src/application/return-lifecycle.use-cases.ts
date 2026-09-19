@@ -47,6 +47,8 @@ async function withConcurrencyRetry<T>(maxAttempts: number, attempt: () => Promi
 }
 
 export interface ReturnIdInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly returnId: string;
 }
 
@@ -75,10 +77,15 @@ export interface ReturnLifecycleDeps {
 export async function notifyBestEffort(
   deps: ReturnLifecycleDeps,
   returnRequest: ReturnRequest,
+  tenantId: string,
 ): Promise<void> {
   try {
-    await deps.ordersPort?.reportReturnOutcome(returnRequest.orderRef, returnRequest.status.value);
-    await deps.notifications?.notify(returnRequest.orderRef, returnRequest.status.value);
+    await deps.ordersPort?.reportReturnOutcome(
+      returnRequest.orderRef,
+      returnRequest.status.value,
+      tenantId,
+    );
+    await deps.notifications?.notify(returnRequest.orderRef, returnRequest.status.value, tenantId);
   } catch {
     // Best-effort: a reference-only notification failure never fails the transition's own result.
   }
@@ -94,7 +101,7 @@ export class AdvanceReturn implements UseCase<AdvanceReturnInput, ReturnStatusOu
 
   async execute(input: AdvanceReturnInput): Promise<Result<ReturnStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ReturnStatusOutput, DomainError>>(async (tx) => {
-      const returnRequest = await this.deps.returns.findById(input.returnId, tx);
+      const returnRequest = await this.deps.returns.findById(input.returnId, input.tenantId, tx);
       if (returnRequest === null) {
         return err(new NotFoundError("Return request not found"));
       }
@@ -110,8 +117,8 @@ export class AdvanceReturn implements UseCase<AdvanceReturnInput, ReturnStatusOu
         throw error;
       }
 
-      await this.deps.returns.save(returnRequest, tx);
-      await notifyBestEffort(this.deps, returnRequest);
+      await this.deps.returns.save(returnRequest, input.tenantId, tx);
+      await notifyBestEffort(this.deps, returnRequest, input.tenantId);
       return ok({ returnId: returnRequest.id.toString(), status: returnRequest.status.value });
     });
   }
@@ -131,7 +138,7 @@ export class DecideApproval implements UseCase<
 
   async execute(input: DecideApprovalInput): Promise<Result<ReturnStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ReturnStatusOutput, DomainError>>(async (tx) => {
-      const returnRequest = await this.deps.returns.findById(input.returnId, tx);
+      const returnRequest = await this.deps.returns.findById(input.returnId, input.tenantId, tx);
       if (returnRequest === null) {
         return err(new NotFoundError("Return request not found"));
       }
@@ -151,8 +158,8 @@ export class DecideApproval implements UseCase<
         throw error;
       }
 
-      await this.deps.returns.save(returnRequest, tx);
-      await notifyBestEffort(this.deps, returnRequest);
+      await this.deps.returns.save(returnRequest, input.tenantId, tx);
+      await notifyBestEffort(this.deps, returnRequest, input.tenantId);
       return ok({ returnId: returnRequest.id.toString(), status: returnRequest.status.value });
     });
   }
@@ -171,7 +178,7 @@ export class GenerateRma implements UseCase<GenerateRmaInput, ReturnStatusOutput
     if (!rmaNumber.ok) return err(rmaNumber.error);
 
     return this.deps.unitOfWork.run<Result<ReturnStatusOutput, DomainError>>(async (tx) => {
-      const returnRequest = await this.deps.returns.findById(input.returnId, tx);
+      const returnRequest = await this.deps.returns.findById(input.returnId, input.tenantId, tx);
       if (returnRequest === null) {
         return err(new NotFoundError("Return request not found"));
       }
@@ -187,8 +194,8 @@ export class GenerateRma implements UseCase<GenerateRmaInput, ReturnStatusOutput
         throw error;
       }
 
-      await this.deps.returns.save(returnRequest, tx);
-      await notifyBestEffort(this.deps, returnRequest);
+      await this.deps.returns.save(returnRequest, input.tenantId, tx);
+      await notifyBestEffort(this.deps, returnRequest, input.tenantId);
       return ok({ returnId: returnRequest.id.toString(), status: returnRequest.status.value });
     });
   }
@@ -251,7 +258,7 @@ export class ReceivePackage implements UseCase<
 
     return withConcurrencyRetry(ReceivePackage.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<ReceivePackageOutput, DomainError>>(async (tx) => {
-        const returnRequest = await this.deps.returns.findById(input.returnId, tx);
+        const returnRequest = await this.deps.returns.findById(input.returnId, input.tenantId, tx);
         if (returnRequest === null) {
           return err(new NotFoundError("Return request not found"));
         }
@@ -270,7 +277,10 @@ export class ReceivePackage implements UseCase<
           });
         }
 
-        const verified = await this.deps.shippingPort.verifyReturnShipment(returnRequest.orderRef);
+        const verified = await this.deps.shippingPort.verifyReturnShipment(
+          returnRequest.orderRef,
+          input.tenantId,
+        );
         if (!verified) {
           return err(new ValidationError("Return shipment could not be verified", []));
         }
@@ -283,8 +293,8 @@ export class ReceivePackage implements UseCase<
           throw error;
         }
 
-        await this.deps.returns.save(returnRequest, tx);
-        await notifyBestEffort(this.deps, returnRequest);
+        await this.deps.returns.save(returnRequest, input.tenantId, tx);
+        await notifyBestEffort(this.deps, returnRequest, input.tenantId);
         return ok({
           returnId: returnRequest.id.toString(),
           status: returnRequest.status.value,
@@ -314,7 +324,7 @@ export class InspectItems implements UseCase<InspectItemsInput, ReturnStatusOutp
     if (!itemRef.ok) return err(itemRef.error);
 
     return this.deps.unitOfWork.run<Result<ReturnStatusOutput, DomainError>>(async (tx) => {
-      const returnRequest = await this.deps.returns.findById(input.returnId, tx);
+      const returnRequest = await this.deps.returns.findById(input.returnId, input.tenantId, tx);
       if (returnRequest === null) {
         return err(new NotFoundError("Return request not found"));
       }
@@ -329,7 +339,7 @@ export class InspectItems implements UseCase<InspectItemsInput, ReturnStatusOutp
         throw error;
       }
 
-      await this.deps.returns.save(returnRequest, tx);
+      await this.deps.returns.save(returnRequest, input.tenantId, tx);
       return ok({ returnId: returnRequest.id.toString(), status: returnRequest.status.value });
     });
   }
@@ -365,7 +375,7 @@ export class AcceptItems implements UseCase<AcceptItemsInput, ReturnStatusOutput
     }
 
     return this.deps.unitOfWork.run<Result<ReturnStatusOutput, DomainError>>(async (tx) => {
-      const returnRequest = await this.deps.returns.findById(input.returnId, tx);
+      const returnRequest = await this.deps.returns.findById(input.returnId, input.tenantId, tx);
       if (returnRequest === null) {
         return err(new NotFoundError("Return request not found"));
       }
@@ -381,20 +391,24 @@ export class AcceptItems implements UseCase<AcceptItemsInput, ReturnStatusOutput
         throw error;
       }
 
-      await this.deps.returns.save(returnRequest, tx);
+      await this.deps.returns.save(returnRequest, input.tenantId, tx);
 
       const restockItems = returnRequest.items
         .filter((item) => item.disposition?.value === "restock")
         .map((item) => ({ productRef: item.productRef.value, quantity: item.quantity }));
       if (restockItems.length > 0) {
         try {
-          await this.deps.inventoryPort.restock(returnRequest.orderRef, restockItems);
+          await this.deps.inventoryPort.restock(
+            returnRequest.orderRef,
+            restockItems,
+            input.tenantId,
+          );
         } catch {
           // Best-effort: a reference-only restock failure never fails the acceptance's own result.
         }
       }
 
-      await notifyBestEffort(this.deps, returnRequest);
+      await notifyBestEffort(this.deps, returnRequest, input.tenantId);
       return ok({ returnId: returnRequest.id.toString(), status: returnRequest.status.value });
     });
   }
@@ -458,7 +472,7 @@ export class DecideResolution implements UseCase<
 
     const committed = await this.deps.unitOfWork.run<Result<ReturnRequest, DomainError>>(
       async (tx) => {
-        const returnRequest = await this.deps.returns.findById(input.returnId, tx);
+        const returnRequest = await this.deps.returns.findById(input.returnId, input.tenantId, tx);
         if (returnRequest === null) {
           return err(new NotFoundError("Return request not found"));
         }
@@ -468,6 +482,7 @@ export class DecideResolution implements UseCase<
             returnRequest.orderRef,
             refundRequest.amountMinor,
             refundRequest.currency,
+            input.tenantId,
           );
           if (!refundable) {
             return err(
@@ -489,12 +504,12 @@ export class DecideResolution implements UseCase<
           throw error;
         }
 
-        await this.deps.returns.save(returnRequest, tx);
+        await this.deps.returns.save(returnRequest, input.tenantId, tx);
 
         // Non-refund outcomes have no external call left to make — notify now, exactly as before
         // this phase (unchanged code path, still inside the transaction).
         if (refundRequest === undefined) {
-          await notifyBestEffort(this.deps, returnRequest);
+          await notifyBestEffort(this.deps, returnRequest, input.tenantId);
         }
 
         return ok(returnRequest);
@@ -515,8 +530,9 @@ export class DecideResolution implements UseCase<
         refundRequest.amountMinor,
         refundRequest.currency,
         `${returnRequest.id.toString()}:refund`,
+        input.tenantId,
       );
-      await notifyBestEffort(this.deps, returnRequest);
+      await notifyBestEffort(this.deps, returnRequest, input.tenantId);
     }
 
     return ok({ returnId: returnRequest.id.toString(), status: returnRequest.status.value });

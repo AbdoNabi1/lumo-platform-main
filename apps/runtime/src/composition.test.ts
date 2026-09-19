@@ -463,7 +463,8 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
   }
 
   function fakePrisma(rows: readonly FakeIntentRow[]): Database {
-    return {
+    const client = {
+      $executeRaw: async () => 0,
       paymentIntent: {
         findMany: async ({
           where,
@@ -479,6 +480,10 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
       },
       // Deliberately partial fixture (only `paymentIntent.findMany`) — same convention as
       // `PrismaPaymentVerificationAdapter`'s fixture above.
+    };
+    return {
+      ...client,
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(client),
     } as unknown as Database;
   }
 
@@ -490,41 +495,38 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
     refunds: [{ amountMinor: 200 }],
   };
 
-  it("valid: a refund well within the remaining ceiling (300 of 800 remaining) is allowed", async () => {
+  it("one adapter instance serves two tenants: tenant B cannot borrow tenant A's refundable ceiling (ADR-0014)", async () => {
     const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
+      fakePrisma([{ ...CAPTURED_1000_REFUNDED_200, tenantId: "tenant-a" }]),
     );
-    expect(await adapter.isRefundable("order-1", 300, "USD")).toBe(true);
+
+    expect(await adapter.isRefundable("order-1", 300, "USD", "tenant-a")).toBe(true);
+    expect(await adapter.isRefundable("order-1", 300, "USD", "tenant-b")).toBe(false);
+  });
+
+  it("valid: a refund well within the remaining ceiling (300 of 800 remaining) is allowed", async () => {
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 300, "USD", "tenant-local")).toBe(true);
   });
 
   it("boundary: a refund of exactly the remaining ceiling (800) is allowed", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
-    );
-    expect(await adapter.isRefundable("order-1", 800, "USD")).toBe(true);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 800, "USD", "tenant-local")).toBe(true);
   });
 
   it("invalid: a refund one cent over the remaining ceiling (801) is rejected", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
-    );
-    expect(await adapter.isRefundable("order-1", 801, "USD")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 801, "USD", "tenant-local")).toBe(false);
   });
 
   it("extreme (Task 4 exploit scenario): captured=1000, alreadyRefunded=200, requested=5000 is rejected — never reaches PaymentsPort", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
-    );
-    expect(await adapter.isRefundable("order-1", 5000, "USD")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 5000, "USD", "tenant-local")).toBe(false);
   });
 
   it("extreme: an absurd request (1,000,000) against a 0-captured order is rejected", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([]), "tenant-local");
-    expect(await adapter.isRefundable("order-1", 1_000_000, "USD")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([]));
+    expect(await adapter.isRefundable("order-1", 1_000_000, "USD", "tenant-local")).toBe(false);
   });
 
   it("sums charges/refunds across multiple payment intents for the same order", async () => {
@@ -544,18 +546,17 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
         refunds: [{ amountMinor: 200 }],
       },
     ];
-    const adapter = new PrismaRefundVerificationAdapter(fakePrisma(rows), "tenant-local");
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma(rows));
     // totalCaptured = 1000, totalRefunded = 200, remaining = 800
-    expect(await adapter.isRefundable("order-1", 800, "USD")).toBe(true);
-    expect(await adapter.isRefundable("order-1", 801, "USD")).toBe(false);
+    expect(await adapter.isRefundable("order-1", 800, "USD", "tenant-local")).toBe(true);
+    expect(await adapter.isRefundable("order-1", 801, "USD", "tenant-local")).toBe(false);
   });
 
   it("rejects a refund scoped to a different tenant (tenant-isolation guard)", async () => {
     const adapter = new PrismaRefundVerificationAdapter(
       fakePrisma([{ ...CAPTURED_1000_REFUNDED_200, tenantId: "other-tenant" }]),
-      "tenant-local",
     );
-    expect(await adapter.isRefundable("order-1", 300, "USD")).toBe(false);
+    expect(await adapter.isRefundable("order-1", 300, "USD", "tenant-local")).toBe(false);
   });
 
   it("Phase A.10 (Task 3): a FAILED refund's released reservation does not shrink the refundable ceiling", async () => {
@@ -569,22 +570,19 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
       // check must match, not double-count it as still-refunded.
       refunds: [{ amountMinor: 600, status: "failed" }],
     };
-    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([row]), "tenant-local");
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([row]));
     // remaining = 1000 - 0 (failed excluded) = 1000, not 1000 - 600 = 400.
-    expect(await adapter.isRefundable("order-1", 1000, "USD")).toBe(true);
+    expect(await adapter.isRefundable("order-1", 1000, "USD", "tenant-local")).toBe(true);
   });
 
   it("rejects a currency mismatch (order captured in USD, refund requested in EUR)", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
-    );
-    expect(await adapter.isRefundable("order-1", 300, "EUR")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 300, "EUR", "tenant-local")).toBe(false);
   });
 
   it("rejects any amount when no captured payment exists for the order", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([]), "tenant-local");
-    expect(await adapter.isRefundable("order-1", 1, "USD")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([]));
+    expect(await adapter.isRefundable("order-1", 1, "USD", "tenant-local")).toBe(false);
   });
 });
 
@@ -606,7 +604,8 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
   }
 
   function fakePrisma(rows: readonly FakeIntentRow[]): Database {
-    return {
+    const client = {
+      $executeRaw: async () => 0,
       paymentIntent: {
         findMany: async ({
           where,
@@ -623,6 +622,10 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
       // Deliberately partial fixture (only `paymentIntent.findMany`) — same convention as
       // `PrismaRefundVerificationAdapter`'s fixture above; the WRITE goes through the fake
       // `PaymentController` below, never through this fake client.
+    };
+    return {
+      ...client,
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(client),
     } as unknown as Database;
   }
 
@@ -654,11 +657,10 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await adapter.requestRefund("order-1", 300, "USD", "return-1:refund");
+    await adapter.requestRefund("order-1", 300, "USD", "return-1:refund", "tenant-local");
 
     expect(calls).toEqual([
       {
@@ -675,12 +677,11 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await adapter.requestRefund("order-1", 300, "USD", "return-42:refund");
-    await adapter.requestRefund("order-1", 300, "USD", "return-42:refund");
+    await adapter.requestRefund("order-1", 300, "USD", "return-42:refund", "tenant-local");
+    await adapter.requestRefund("order-1", 300, "USD", "return-42:refund", "tenant-local");
 
     expect(calls).toHaveLength(2);
     expect((calls[0] as { idempotencyKey: string }).idempotencyKey).toBe("return-42:refund");
@@ -691,11 +692,10 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await adapter.requestRefund("order-1", 800, "USD", "return-1:refund");
+    await adapter.requestRefund("order-1", 800, "USD", "return-1:refund", "tenant-local");
 
     expect(calls).toHaveLength(1);
   });
@@ -704,21 +704,22 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await expect(adapter.requestRefund("order-1", 801, "USD", "return-1:refund")).rejects.toThrow(
-      /sufficient remaining amount/,
-    );
+    await expect(
+      adapter.requestRefund("order-1", 801, "USD", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow(/sufficient remaining amount/);
     expect(calls).toHaveLength(0);
   });
 
   it("fails closed when no payment intent exists for the order at all", async () => {
     const { controller, calls } = fakePaymentController();
-    const adapter = new PrismaPaymentsPortAdapter(fakePrisma([]), "tenant-local", controller);
+    const adapter = new PrismaPaymentsPortAdapter(fakePrisma([]), controller);
 
-    await expect(adapter.requestRefund("order-1", 1, "USD", "return-1:refund")).rejects.toThrow();
+    await expect(
+      adapter.requestRefund("order-1", 1, "USD", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow();
     expect(calls).toHaveLength(0);
   });
 
@@ -726,11 +727,12 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([{ ...SINGLE_INTENT_800_REMAINING, tenantId: "other-tenant" }]),
-      "tenant-local",
       controller,
     );
 
-    await expect(adapter.requestRefund("order-1", 300, "USD", "return-1:refund")).rejects.toThrow();
+    await expect(
+      adapter.requestRefund("order-1", 300, "USD", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow();
     expect(calls).toHaveLength(0);
   });
 
@@ -738,11 +740,12 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await expect(adapter.requestRefund("order-1", 300, "EUR", "return-1:refund")).rejects.toThrow();
+    await expect(
+      adapter.requestRefund("order-1", 300, "EUR", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow();
     expect(calls).toHaveLength(0);
   });
 
@@ -766,9 +769,9 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
       },
     ];
     const { controller, calls } = fakePaymentController();
-    const adapter = new PrismaPaymentsPortAdapter(fakePrisma(rows), "tenant-local", controller);
+    const adapter = new PrismaPaymentsPortAdapter(fakePrisma(rows), controller);
 
-    await adapter.requestRefund("order-1", 900, "USD", "return-1:refund");
+    await adapter.requestRefund("order-1", 900, "USD", "return-1:refund", "tenant-local");
 
     expect(calls).toEqual([
       {
@@ -791,12 +794,18 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
       refunds: [{ amountMinor: 700, status: "failed" }],
     };
     const { controller, calls } = fakePaymentController();
-    const adapter = new PrismaPaymentsPortAdapter(fakePrisma([row]), "tenant-local", controller);
+    const adapter = new PrismaPaymentsPortAdapter(fakePrisma([row]), controller);
 
     // Pre-fix this adapter computed remaining = 1000 - 700 = 300 and would have rejected this call
     // ("no payment intent has sufficient remaining amount") even though the failed refund's
     // reservation was actually released — the domain's own `remaining()` would allow the full 1000.
-    await adapter.requestRefund("order-1", 1000, "USD", "return-failed-retry:refund");
+    await adapter.requestRefund(
+      "order-1",
+      1000,
+      "USD",
+      "return-failed-retry:refund",
+      "tenant-local",
+    );
 
     expect(calls).toEqual([
       {
@@ -816,13 +825,12 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     });
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await expect(adapter.requestRefund("order-1", 300, "USD", "return-1:refund")).rejects.toThrow(
-      /refund execution failed \(status 409\)/,
-    );
+    await expect(
+      adapter.requestRefund("order-1", 300, "USD", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow(/refund execution failed \(status 409\)/);
     expect(calls).toHaveLength(1); // it DID call through — the failure is Payments', not a silent no-op
   });
 });

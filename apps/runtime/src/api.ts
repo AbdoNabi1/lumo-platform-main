@@ -372,10 +372,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // Phase A.2 (F-04 closure): gates Returns' DecideResolution refund amount against the
     // refundable ceiling derived from Payments' own charges/refunds ledger — same wiring
     // convention as paymentVerification above (mirrors PrismaPaymentVerificationAdapter).
-    refundVerification: new PrismaRefundVerificationAdapter(
-      runtime.prisma,
-      runtime.config.TENANT_DEFAULT_ID,
-    ),
+    refundVerification: new PrismaRefundVerificationAdapter(runtime.prisma),
     // Phase A.3 (refund execution closure): the actual write side effect of an approved Returns
     // refund — bridges to Payments' own real `RefundPaymentLifecycle`, same wiring convention as
     // refundVerification above (present ⇒ real adapter; absent ⇒ Returns' own no-op stub, unchanged
