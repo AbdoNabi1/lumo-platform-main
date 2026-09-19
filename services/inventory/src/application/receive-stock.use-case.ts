@@ -10,6 +10,8 @@ import { Quantity } from "../domain/value-objects/quantity";
 import { WarehouseId } from "../domain/value-objects/warehouse-id";
 
 export interface ReceiveStockInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly productId: string;
   readonly warehouseId: string;
   readonly quantity: number;
@@ -46,6 +48,7 @@ export class ReceiveStock implements UseCase<ReceiveStockInput, ReceiveStockOutp
       const existing = await this.deps.items.findByProductAndWarehouse(
         product.value.value,
         warehouse.value.value,
+        input.tenantId,
         tx,
       );
       const item =
@@ -57,7 +60,7 @@ export class ReceiveStock implements UseCase<ReceiveStockInput, ReceiveStockOutp
         );
 
       item.receive(quantity.value, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.items.save(item, tx);
+      await this.deps.items.save(item, input.tenantId, tx);
       return ok({ available: item.stockLevel.available });
     });
   }

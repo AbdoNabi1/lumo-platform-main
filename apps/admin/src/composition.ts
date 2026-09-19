@@ -600,6 +600,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
         inventory.warehouseRepository,
         inventory.inventoryItemRepository,
         lazyOrdersController,
+        deps.tenantId,
       ),
     notifications:
       deps.notifications ??
@@ -644,7 +645,11 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       new PricingValidationAdapter(pricing.priceRepository, deps.tenantId),
     inventoryValidation:
       deps.inventoryValidation ??
-      new InventoryValidationAdapter(inventory.inventory, inventory.warehouseRepository),
+      new InventoryValidationAdapter(
+        inventory.inventory,
+        inventory.warehouseRepository,
+        deps.tenantId,
+      ),
     promotionValidation:
       deps.promotionValidation ??
       new PromotionValidationAdapter(catalog.products, promotions.promotions, deps.tenantId),

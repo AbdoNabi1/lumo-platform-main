@@ -50,8 +50,14 @@ describe("admin wiring (end to end)", () => {
 
     // Inventory screen → Inventory
     expect(
-      (await admin.inventory.receiveStock(staff, { productId, warehouseId: "wh-1", quantity: 10 }))
-        .status,
+      (
+        await admin.inventory.receiveStock(staff, {
+          tenantId: "tenant-1",
+          productId,
+          warehouseId: "wh-1",
+          quantity: 10,
+        })
+      ).status,
     ).toBe(200);
 
     // Customers screen → Identity

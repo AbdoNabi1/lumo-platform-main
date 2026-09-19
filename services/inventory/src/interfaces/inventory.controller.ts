@@ -14,7 +14,10 @@ import type {
   ListInventoryByProduct,
   ListInventoryByProductInput,
 } from "../application/list-inventory-by-product.use-case";
-import type { ListInventoryItems } from "../application/list-inventory-items.use-case";
+import type {
+  ListInventoryItems,
+  ListInventoryItemsInput,
+} from "../application/list-inventory-items.use-case";
 import type {
   ReleaseReservation,
   ReleaseReservationInput,
@@ -22,7 +25,6 @@ import type {
 import type { ReserveStock, ReserveStockInput } from "../application/reserve-stock.use-case";
 import type { ReceiveStock, ReceiveStockInput } from "../application/receive-stock.use-case";
 import type { TransferStock, TransferStockInput } from "../application/transfer-stock.use-case";
-import type { CursorPage } from "@platform/types";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface InventoryControllerDeps {
@@ -69,7 +71,7 @@ export class InventoryController {
     return present(await this.deps.transferStock.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListInventoryItemsInput): Promise<ControllerResponse> {
     return present(await this.deps.listInventoryItems.execute(input), 200);
   }
 

@@ -18,7 +18,7 @@ describe("ListInventoryByProduct", () => {
       },
     };
     const useCase = new ListInventoryByProduct({ items });
-    const result = await useCase.execute({ productId: "product-1" });
+    const result = await useCase.execute({ tenantId: "tenant-a", productId: "product-1" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -37,7 +37,7 @@ describe("ListInventoryByProduct", () => {
       findByProduct: async () => [],
     };
     const useCase = new ListInventoryByProduct({ items });
-    const result = await useCase.execute({ productId: "no-such-product" });
+    const result = await useCase.execute({ tenantId: "tenant-a", productId: "no-such-product" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {

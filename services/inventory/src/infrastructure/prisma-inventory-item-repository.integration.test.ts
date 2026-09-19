@@ -42,8 +42,8 @@ describe.runIf(Boolean(databaseUrl))("PrismaInventoryItemRepository (integration
       clock,
       producer: "inventory",
     });
-    const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaInventoryItemRepository({ prisma, outbox, context, tenantId });
+    const context = rootEventContext(ids);
+    const repository = new PrismaInventoryItemRepository({ prisma, outbox, context });
     return { prisma, repository, unitOfWork: new PrismaUnitOfWork(prisma), outboxStore, tenantId };
   }
 
@@ -54,12 +54,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaInventoryItemRepository (integration
   }
 
   it("round-trips the aggregate exactly: stock level, version", async () => {
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const item = newItem();
     item.receive(unwrap(Quantity.create(100)), ids.generate(), clock.now());
 
-    await unitOfWork.run(async (tx) => repository.save(item, tx));
-    const loaded = await repository.findById(item.id.toString());
+    await unitOfWork.run(async (tx) => repository.save(item, tenantId, tx));
+    const loaded = await repository.findById(item.id.toString(), tenantId);
 
     expect(loaded).not.toBeNull();
     expect(loaded?.stockLevel.onHand).toBe(100);
@@ -73,10 +73,10 @@ describe.runIf(Boolean(databaseUrl))("PrismaInventoryItemRepository (integration
     // accumulates pending rows across every integration suite run (C-08 — CDC never marks rows
     // published, so nothing prunes them), and `fetchPending` orders oldest-first, so a freshly
     // written row can fall outside a fixed-size page once the backlog exceeds it.
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const item = newItem();
     item.receive(unwrap(Quantity.create(50)), ids.generate(), clock.now());
-    await unitOfWork.run(async (tx) => repository.save(item, tx));
+    await unitOfWork.run(async (tx) => repository.save(item, tenantId, tx));
 
     const rows = await prisma.outboxEntry.findMany({ where: { key: item.id.toString() } });
     expect(rows.length).toBeGreaterThan(0);
@@ -114,34 +114,38 @@ describe.runIf(Boolean(databaseUrl))("PrismaInventoryItemRepository (integration
   });
 
   it("rejects a stale write with ConcurrencyError (no retry, no silent overwrite)", async () => {
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const item = newItem();
     item.receive(unwrap(Quantity.create(20)), ids.generate(), clock.now());
-    await unitOfWork.run(async (tx) => repository.save(item, tx));
+    await unitOfWork.run(async (tx) => repository.save(item, tenantId, tx));
 
-    const first = await repository.findById(item.id.toString());
-    const second = await repository.findById(item.id.toString());
+    const first = await repository.findById(item.id.toString(), tenantId);
+    const second = await repository.findById(item.id.toString(), tenantId);
     if (first === null || second === null) throw new Error("setup failed");
     first.receive(unwrap(Quantity.create(5)), ids.generate(), clock.now());
     second.receive(unwrap(Quantity.create(7)), ids.generate(), clock.now());
 
-    await unitOfWork.run(async (tx) => repository.save(first, tx));
-    await expect(unitOfWork.run(async (tx) => repository.save(second, tx))).rejects.toBeInstanceOf(
-      ConcurrencyError,
-    );
+    await unitOfWork.run(async (tx) => repository.save(first, tenantId, tx));
+    await expect(
+      unitOfWork.run(async (tx) => repository.save(second, tenantId, tx)),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
 
-    const reloaded = await repository.findById(item.id.toString());
+    const reloaded = await repository.findById(item.id.toString(), tenantId);
     expect(reloaded?.stockLevel.onHand).toBe(25); // only the winner's +5 applied, not +7
     await prisma.$disconnect();
   });
 
   it("BEGIN/ROLLBACK: an aborted transaction leaves no trace in a fresh session", async () => {
-    const { prisma, repository } = wire();
+    const { prisma, repository, tenantId } = wire();
     const item = newItem();
 
     await expect(
       prisma.$transaction(async (tx) => {
-        await repository.save(item, tx as unknown as Parameters<typeof repository.save>[1]);
+        await repository.save(
+          item,
+          tenantId,
+          tx as unknown as Parameters<typeof repository.save>[2],
+        );
         throw new Error("forced rollback");
       }),
     ).rejects.toThrow("forced rollback");
@@ -156,9 +160,9 @@ describe.runIf(Boolean(databaseUrl))("PrismaInventoryItemRepository (integration
   });
 
   it("BEGIN/COMMIT: a committed transaction is durable in a fresh session", async () => {
-    const { prisma, repository, unitOfWork } = wire();
+    const { prisma, repository, unitOfWork, tenantId } = wire();
     const item = newItem();
-    await unitOfWork.run(async (tx) => repository.save(item, tx));
+    await unitOfWork.run(async (tx) => repository.save(item, tenantId, tx));
 
     const freshSession = createTestPrismaClient(databaseUrl);
     const found = await freshSession.inventoryItem.findUnique({
@@ -171,10 +175,10 @@ describe.runIf(Boolean(databaseUrl))("PrismaInventoryItemRepository (integration
 
   describe("concurrency: no oversell under real concurrent reservation attempts", () => {
     it("two sessions racing a reserve() against the same version: exactly one wins", async () => {
-      const { prisma, repository, unitOfWork } = wire();
+      const { prisma, repository, unitOfWork, tenantId } = wire();
       const item = newItem();
       item.receive(unwrap(Quantity.create(10)), ids.generate(), clock.now());
-      await unitOfWork.run(async (tx) => repository.save(item, tx));
+      await unitOfWork.run(async (tx) => repository.save(item, tenantId, tx));
 
       const sessionA = createTestPrismaClient(databaseUrl);
       const sessionB = createTestPrismaClient(databaseUrl);

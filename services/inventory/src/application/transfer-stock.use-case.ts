@@ -10,6 +10,8 @@ import { Quantity } from "../domain/value-objects/quantity";
 import { WarehouseId } from "../domain/value-objects/warehouse-id";
 
 export interface TransferStockInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly productId: string;
   readonly sourceWarehouseId: string;
   readonly destinationWarehouseId: string;
@@ -61,6 +63,7 @@ export class TransferStock implements UseCase<
       const sourceItem = await this.deps.items.findByProductAndWarehouse(
         product.value.value,
         source.value.value,
+        input.tenantId,
         tx,
       );
       if (sourceItem === null) {
@@ -71,6 +74,7 @@ export class TransferStock implements UseCase<
         (await this.deps.items.findByProductAndWarehouse(
           product.value.value,
           destination.value.value,
+          input.tenantId,
           tx,
         )) ??
         InventoryItem.create(
@@ -95,8 +99,8 @@ export class TransferStock implements UseCase<
         throw error;
       }
 
-      await this.deps.items.save(sourceItem, tx);
-      await this.deps.items.save(destinationItem, tx);
+      await this.deps.items.save(sourceItem, input.tenantId, tx);
+      await this.deps.items.save(destinationItem, input.tenantId, tx);
 
       return ok({
         sourceAvailable: sourceItem.stockLevel.available,

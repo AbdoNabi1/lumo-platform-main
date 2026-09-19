@@ -177,14 +177,27 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
+      "tenant-a",
     );
 
     const result = await adapter.requestReservation("order-1");
 
     expect(result).toEqual({ reservationRef: "order-1" });
     expect(system.reserveCalls).toEqual([
-      { productId: "product-1", warehouseId: "wh-1", quantity: 2, reference: "order-1" },
-      { productId: "product-2", warehouseId: "wh-1", quantity: 5, reference: "order-1" },
+      {
+        tenantId: "tenant-a",
+        productId: "product-1",
+        warehouseId: "wh-1",
+        quantity: 2,
+        reference: "order-1",
+      },
+      {
+        tenantId: "tenant-a",
+        productId: "product-2",
+        warehouseId: "wh-1",
+        quantity: 5,
+        reference: "order-1",
+      },
     ]);
   });
 
@@ -198,6 +211,7 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
+      "tenant-a",
     );
 
     await expect(adapter.requestReservation("order-1")).rejects.toThrow(/warehouse/i);
@@ -216,6 +230,7 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
+      "tenant-a",
     );
 
     await expect(adapter.requestReservation("order-1")).rejects.toThrow(/warehouse/i);
@@ -230,6 +245,7 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
+      "tenant-a",
     );
 
     await expect(adapter.requestReservation("missing-order")).rejects.toThrow(/missing-order/);
@@ -246,6 +262,7 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
+      "tenant-a",
     );
 
     await expect(adapter.requestReservation("order-1")).rejects.toThrow(/product-1/);
@@ -267,6 +284,7 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
+      "tenant-a",
     );
 
     const first = await adapter.requestReservation("order-1");
@@ -303,11 +321,13 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
       warehouses,
       system.items(),
       orders,
+      "tenant-a",
     );
 
     // Simulate a prior partial success: product-1 got reserved (e.g. a crash/timeout hit before
     // product-2's `reserve()` call went out — RequestFulfillment's own documented RESIDUAL RISK #1).
     await system.controller().reserve({
+      tenantId: "tenant-a",
       productId: "product-1",
       warehouseId: "wh-1",
       quantity: 1,
@@ -320,7 +340,29 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
     expect(result).toEqual({ reservationRef: "order-1" });
     // Only product-2 should have been reserved by the adapter — product-1 was already covered.
     expect(system.reserveCalls).toEqual([
-      { productId: "product-2", warehouseId: "wh-1", quantity: 3, reference: "order-1" },
+      {
+        tenantId: "tenant-a",
+        productId: "product-2",
+        warehouseId: "wh-1",
+        quantity: 3,
+        reference: "order-1",
+      },
     ]);
+  });
+
+  it("throws without a tenant (ADR-0014: never defaults one, until orders' port carries it)", async () => {
+    const system = new FakeInventorySystem();
+    system.registerItem("product-1", "wh-1");
+    const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
+    const orders = fakeOrderController({ "order-1": [{ productId: "product-1", quantity: 1 }] });
+    const adapter = new OrdersInventoryAdapter(
+      system.controller(),
+      warehouses,
+      system.items(),
+      orders,
+    );
+
+    await expect(adapter.requestReservation("order-1")).rejects.toThrow(/without a tenant/);
+    expect(system.reserveCalls).toEqual([]);
   });
 });

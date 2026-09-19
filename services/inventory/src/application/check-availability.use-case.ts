@@ -6,6 +6,8 @@ import type { InventoryItemRepository } from "../domain/inventory-item-repositor
 import { WarehouseId } from "../domain/value-objects/warehouse-id";
 
 export interface CheckAvailabilityInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly productId: string;
   readonly warehouseId: string;
 }
@@ -49,6 +51,7 @@ export class CheckAvailability implements UseCase<
     const item = await this.deps.items.findByProductAndWarehouse(
       product.value.value,
       warehouse.value.value,
+      input.tenantId,
     );
     if (item === null) {
       return err(new NotFoundError("Inventory item not found"));

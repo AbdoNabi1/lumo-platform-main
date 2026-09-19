@@ -9,6 +9,8 @@ import { Quantity } from "../domain/value-objects/quantity";
 import { WarehouseId } from "../domain/value-objects/warehouse-id";
 
 export interface ReserveStockInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly productId: string;
   readonly warehouseId: string;
   readonly quantity: number;
@@ -50,6 +52,7 @@ export class ReserveStock implements UseCase<ReserveStockInput, ReserveStockOutp
       const item = await this.deps.items.findByProductAndWarehouse(
         product.value.value,
         warehouse.value.value,
+        input.tenantId,
         tx,
       );
       if (item === null) {
@@ -70,7 +73,7 @@ export class ReserveStock implements UseCase<ReserveStockInput, ReserveStockOutp
         throw error;
       }
 
-      await this.deps.items.save(item, tx);
+      await this.deps.items.save(item, input.tenantId, tx);
       return ok({ reservationId: reservationId.toString(), available: item.stockLevel.available });
     });
   }

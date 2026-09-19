@@ -9,6 +9,8 @@ import { Warehouse } from "../domain/warehouse";
 import type { WarehouseRepository } from "../domain/warehouse-repository";
 
 export interface RegisterWarehouseInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly code: string;
   readonly name: string;
 }
@@ -46,7 +48,7 @@ export class RegisterWarehouse implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<WarehouseOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.warehouses.findByCode(input.code, tx);
+      const existing = await this.deps.warehouses.findByCode(input.code, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Warehouse code '${input.code}' is already registered`));
       }
@@ -58,7 +60,7 @@ export class RegisterWarehouse implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.warehouses.save(warehouse, tx);
+      await this.deps.warehouses.save(warehouse, input.tenantId, tx);
 
       return ok({
         warehouseId: warehouse.id.toString(),
@@ -71,6 +73,8 @@ export class RegisterWarehouse implements UseCase<
 }
 
 export interface DeactivateWarehouseInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly warehouseId: string;
 }
 
@@ -88,7 +92,7 @@ export class DeactivateWarehouse implements UseCase<
 
   async execute(input: DeactivateWarehouseInput): Promise<Result<WarehouseOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<WarehouseOutput, DomainError>>(async (tx) => {
-      const warehouse = await this.deps.warehouses.findById(input.warehouseId, tx);
+      const warehouse = await this.deps.warehouses.findById(input.warehouseId, input.tenantId, tx);
       if (warehouse === null) {
         return err(new NotFoundError("Warehouse not found"));
       }
@@ -100,7 +104,7 @@ export class DeactivateWarehouse implements UseCase<
         throw error;
       }
 
-      await this.deps.warehouses.save(warehouse, tx);
+      await this.deps.warehouses.save(warehouse, input.tenantId, tx);
       return ok({
         warehouseId: warehouse.id.toString(),
         code: warehouse.code,

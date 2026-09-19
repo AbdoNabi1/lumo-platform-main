@@ -51,12 +51,16 @@ describe("InventoryItemRepository.findByReservationReference (Sprint A0 precondi
       "evt-reserve",
       new Date("2026-07-26T00:00:00.000Z"),
     );
-    await repo.save(item);
+    await repo.save(item, "tenant-a");
 
-    const found = await repo.findByReservationReference("item-1", "order-42");
+    const found = await repo.findByReservationReference("item-1", "order-42", "tenant-a");
     expect(found?.id.toString()).toBe("item-1");
 
-    expect(await repo.findByReservationReference("item-1", "order-does-not-exist")).toBeNull();
-    expect(await repo.findByReservationReference("item-does-not-exist", "order-42")).toBeNull();
+    expect(
+      await repo.findByReservationReference("item-1", "order-does-not-exist", "tenant-a"),
+    ).toBeNull();
+    expect(
+      await repo.findByReservationReference("item-does-not-exist", "order-42", "tenant-a"),
+    ).toBeNull();
   });
 });

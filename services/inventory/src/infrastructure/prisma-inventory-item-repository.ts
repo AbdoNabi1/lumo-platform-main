@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -11,8 +11,6 @@ export interface PrismaInventoryItemRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -29,9 +27,8 @@ export class PrismaInventoryItemRepository implements InventoryItemRepository {
     this.deps = deps;
   }
 
-  async save(item: InventoryItem, tx?: unknown): Promise<void> {
+  async save(item: InventoryItem, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const itemId = item.id.toString();
 
     if (item.version === 0) {
@@ -58,37 +55,50 @@ export class PrismaInventoryItemRepository implements InventoryItemRepository {
       await client.reservation.createMany({ data: reservations });
     }
 
-    await this.deps.outbox.write(item.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      item.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<InventoryItem | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.inventoryItem.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-      include: { reservations: true },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<InventoryItem | null> {
+    const row = await this.scoped(tenantId, tx, (client) =>
+      client.inventoryItem.findFirst({
+        where: { id, tenantId },
+        include: { reservations: true },
+      }),
+    );
     return row === null ? null : InventoryItemMapper.toDomain(row, row.reservations);
   }
 
   async findByProductAndWarehouse(
     productId: string,
     warehouseId: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<InventoryItem | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.inventoryItem.findFirst({
-      where: { tenantId: this.deps.tenantId, productRef: productId, warehouseId },
-      include: { reservations: true },
-    });
+    const row = await this.scoped(tenantId, tx, (client) =>
+      client.inventoryItem.findFirst({
+        where: { tenantId, productRef: productId, warehouseId },
+        include: { reservations: true },
+      }),
+    );
     return row === null ? null : InventoryItemMapper.toDomain(row, row.reservations);
   }
 
-  async findByProduct(productId: string, tx?: unknown): Promise<readonly InventoryItem[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.inventoryItem.findMany({
-      where: { tenantId: this.deps.tenantId, productRef: productId },
-      include: { reservations: true },
-    });
+  async findByProduct(
+    productId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly InventoryItem[]> {
+    const rows = await this.scoped(tenantId, tx, (client) =>
+      client.inventoryItem.findMany({
+        where: { tenantId, productRef: productId },
+        include: { reservations: true },
+      }),
+    );
     return rows.map((row) => InventoryItemMapper.toDomain(row, row.reservations));
   }
 
@@ -96,31 +106,43 @@ export class PrismaInventoryItemRepository implements InventoryItemRepository {
   async findByReservationReference(
     itemId: string,
     reference: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<InventoryItem | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const reservation = await client.reservation.findFirst({
-      where: { itemId, reference, tenantId: this.deps.tenantId },
-    });
+    const reservation = await this.scoped(tenantId, tx, (client) =>
+      client.reservation.findFirst({ where: { itemId, reference, tenantId } }),
+    );
     if (reservation === null) return null;
-    return this.findById(reservation.itemId, tx);
+    return this.findById(reservation.itemId, tenantId, tx);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<InventoryItem>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<InventoryItem>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.inventoryItem.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      include: { reservations: true },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await this.scoped(tenantId, tx, (client) =>
+      client.inventoryItem.findMany({
+        where: {
+          tenantId,
+          ...(after ? { id: { gt: after } } : {}),
+        },
+        include: { reservations: true },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     const items = rows.map((row) => InventoryItemMapper.toDomain(row, row.reservations));
     return buildPaginatedPage(items, limit, (i) => i.id.toString());
+  }
+
+  /** Reuses the caller's `tx` if given, else scopes a read via `runReadScoped` (ADR-0014). */
+  private scoped<T>(
+    tenantId: string,
+    tx: unknown,
+    run: (client: TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return tx !== undefined && tx !== null
+      ? run(tx as TransactionClient)
+      : runReadScoped(this.deps.prisma, tenantId, run);
   }
 
   private requireTx(tx: unknown): TransactionClient {

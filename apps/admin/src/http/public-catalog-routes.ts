@@ -349,8 +349,11 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       public: true,
       summary: "Public: list inventory availability (cursor pagination)",
       schema: { querystring: pageQuery },
-      handle: async ({ query }) =>
-        mapPage(await admin.publicReads.inventory.list(query), toInventoryDto),
+      handle: async ({ query, context }) =>
+        mapPage(
+          await admin.publicReads.inventory.list({ ...query, tenantId: context.tenantId }),
+          toInventoryDto,
+        ),
     }),
   ] as readonly RouteDefinition[];
 }

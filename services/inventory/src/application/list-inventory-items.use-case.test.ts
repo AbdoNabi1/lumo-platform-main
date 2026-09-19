@@ -14,7 +14,7 @@ describe("ListInventoryItems", () => {
       list: async () => ({ items: rows, pageInfo: { hasNextPage: true, endCursor: "item-2" } }),
     };
     const useCase = new ListInventoryItems({ items });
-    const result = await useCase.execute({ first: 2 });
+    const result = await useCase.execute({ tenantId: "tenant-a", first: 2 });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -35,11 +35,14 @@ describe("ListInventoryItems", () => {
       list: async () => ({ items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
     };
     const useCase = new ListInventoryItems({ items });
-    const result = await useCase.execute({ first: 2 });
+    const result = await useCase.execute({ tenantId: "tenant-a", first: 2 });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toEqual({ items: [], pageInfo: { hasNextPage: false, endCursor: null } });
+      expect(result.value).toEqual({
+        items: [],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      });
     }
   });
 });

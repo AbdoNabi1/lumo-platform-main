@@ -241,7 +241,11 @@ async function main(): Promise<void> {
 
     // ---- Inventory: one warehouse, stocked with every product ----
     const warehouse = unwrap<{ warehouseId: string }>(
-      await inventory.warehouse.register({ code: "MAIN", name: "Main Warehouse" }),
+      await inventory.warehouse.register({
+        tenantId: TENANT_ID,
+        code: "MAIN",
+        name: "Main Warehouse",
+      }),
       "register warehouse",
     );
     logger.info("seed: registered warehouse", {
@@ -253,6 +257,7 @@ async function main(): Promise<void> {
     for (const product of products) {
       const received = unwrap<{ available: number }>(
         await inventory.inventory.receive({
+          tenantId: TENANT_ID,
           productId: product.id,
           warehouseId: warehouse.warehouseId,
           quantity: 100,

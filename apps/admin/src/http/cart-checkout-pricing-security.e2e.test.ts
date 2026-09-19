@@ -136,6 +136,7 @@ async function seedInventory(
   quantity: number,
 ): Promise<void> {
   const registered = await admin.inventory.registerWarehouse(staff, {
+    tenantId: "tenant-local",
     code: "wh-1",
     name: "Warehouse 1",
   });
@@ -145,7 +146,12 @@ async function seedInventory(
     );
   }
   const { warehouseId } = registered.body as { warehouseId: string };
-  const received = await admin.inventory.receiveStock(staff, { productId, warehouseId, quantity });
+  const received = await admin.inventory.receiveStock(staff, {
+    tenantId: "tenant-local",
+    productId,
+    warehouseId,
+    quantity,
+  });
   if (received.status < 200 || received.status >= 300) {
     throw new Error(
       `seedInventory: receiveStock failed (${received.status}): ${JSON.stringify(received.body)}`,

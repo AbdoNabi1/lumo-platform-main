@@ -427,14 +427,18 @@ async function main(): Promise<void> {
     // registration natural key, exposed directly via `warehouseRepository` (the same cross-context
     // read convention `WiredInventory` documents for Checkout's adapters) — a real read, not a raw
     // Prisma query. ----
-    const existingWarehouse = await inventory.warehouseRepository.findByCode("DEMO");
+    const existingWarehouse = await inventory.warehouseRepository.findByCode("DEMO", TENANT_ID);
     let warehouseId: string;
     if (existingWarehouse !== null) {
       warehouseId = existingWarehouse.id.toString();
       logger.info("seed-demo: warehouse already exists, reusing", { warehouseId, code: "DEMO" });
     } else {
       const warehouse = unwrap<{ warehouseId: string }>(
-        await inventory.warehouse.register({ code: "DEMO", name: "Demo Warehouse" }),
+        await inventory.warehouse.register({
+          tenantId: TENANT_ID,
+          code: "DEMO",
+          name: "Demo Warehouse",
+        }),
         "register warehouse",
       );
       warehouseId = warehouse.warehouseId;
@@ -451,6 +455,7 @@ async function main(): Promise<void> {
       const existingItem = await inventory.inventoryItemRepository.findByProductAndWarehouse(
         product.id,
         warehouseId,
+        TENANT_ID,
       );
       if (existingItem !== null && existingItem.stockLevel.onHand > 0) {
         logger.info("seed-demo: stock already received for product, skipping", {
@@ -462,6 +467,7 @@ async function main(): Promise<void> {
       }
       const received = unwrap<{ available: number }>(
         await inventory.inventory.receive({
+          tenantId: TENANT_ID,
           productId: product.id,
           warehouseId,
           quantity: 50,

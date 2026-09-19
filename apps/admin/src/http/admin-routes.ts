@@ -795,7 +795,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get a product's stock across every warehouse",
       schema: { params: productInventoryParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
-        const response = await admin.inventory.inventoryForProduct(context.principal, params);
+        const response = await admin.inventory.inventoryForProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) {
           return response;
         }
@@ -1697,7 +1700,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Receive stock for a product at a warehouse",
       schema: { body: receiveStockBody },
-      handle: ({ body, context }) => admin.inventory.receiveStock(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.receiveStock(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1707,7 +1711,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Adjust an item's on-hand stock",
       schema: { body: adjustInventoryBody },
-      handle: ({ body, context }) => admin.inventory.adjustStock(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.adjustStock(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1716,7 +1721,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "inventory:reserve",
       summary: "Reserve available stock for an order/cart",
       schema: { body: reserveStockBody },
-      handle: ({ body, context }) => admin.inventory.reserveStock(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.reserveStock(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1726,7 +1732,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Release a held reservation",
       schema: { body: releaseReservationBody },
-      handle: ({ body, context }) => admin.inventory.releaseReservation(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.releaseReservation(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1736,7 +1746,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Commit a held reservation (ADR-0013 fulfillment step)",
       schema: { body: commitReservationBody },
-      handle: ({ body, context }) => admin.inventory.commitReservation(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.commitReservation(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1745,7 +1759,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "inventory:transfer",
       summary: "Transfer unreserved stock between warehouses",
       schema: { body: transferStockBody },
-      handle: ({ body, context }) => admin.inventory.transferStock(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.transferStock(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1755,7 +1770,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Register a warehouse",
       schema: { body: registerWarehouseBody },
-      handle: ({ body, context }) => admin.inventory.registerWarehouse(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.registerWarehouse(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1766,7 +1785,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Deactivate a warehouse",
       schema: { params: warehouseIdParams },
       handle: ({ params, context }) =>
-        admin.inventory.deactivateWarehouse(context.principal, params),
+        admin.inventory.deactivateWarehouse(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     ...analyticsRoutes(admin),
     ...automationRoutes(admin),

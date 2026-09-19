@@ -79,7 +79,16 @@ export class OrdersInventoryAdapter implements InventoryPort {
     "findByProductAndWarehouse" | "findByReservationReference"
   >;
   private readonly orders: Pick<OrderController, "getOrder">;
+  private readonly tenantId: string | undefined;
 
+  /**
+   * ADR-0014 (WP-10, T10.3): Inventory's repositories and use cases now take `tenantId` per call,
+   * but orders' own `InventoryPort.requestReservation(orderId)` does not carry one yet — widening
+   * it is orders-context work. Until orders converts, this adapter captures the tenant at
+   * construction (same not-yet-converted pattern as `OrdersNotificationAdapter`). `tenantId` stays
+   * optional only because `AdminWiringDeps.tenantId` is; `requestReservation` throws if it is
+   * missing, never defaulting a tenant.
+   */
   constructor(
     inventory: Pick<InventoryController, "reserve">,
     warehouses: WarehouseRepository,
@@ -88,14 +97,22 @@ export class OrdersInventoryAdapter implements InventoryPort {
       "findByProductAndWarehouse" | "findByReservationReference"
     >,
     orders: Pick<OrderController, "getOrder">,
+    tenantId?: string,
   ) {
     this.inventory = inventory;
     this.warehouses = warehouses;
     this.items = items;
     this.orders = orders;
+    this.tenantId = tenantId;
   }
 
   async requestReservation(orderId: string): Promise<{ readonly reservationRef: string }> {
+    const tenantId = this.tenantId;
+    if (tenantId === undefined) {
+      throw new Error(
+        `OrdersInventoryAdapter: cannot reserve stock for order "${orderId}" without a tenant`,
+      );
+    }
     const orderResponse = await this.orders.getOrder({ orderId });
     if (orderResponse.status !== 200) {
       throw new Error(
@@ -107,7 +124,7 @@ export class OrdersInventoryAdapter implements InventoryPort {
 
     // `first: 2` is enough to distinguish "exactly one" from "more than one" without paging
     // through the whole registry (same convention as `InventoryValidationAdapter`).
-    const page = await this.warehouses.list({ first: 2 });
+    const page = await this.warehouses.list({ first: 2 }, tenantId);
     const [warehouse, extra] = page.items;
     if (warehouse === undefined || extra !== undefined) {
       throw new Error(
@@ -128,11 +145,13 @@ export class OrdersInventoryAdapter implements InventoryPort {
       const inventoryItem = await this.items.findByProductAndWarehouse(
         item.snapshot.productId,
         warehouseId,
+        tenantId,
       );
       if (inventoryItem !== null) {
         const existing = await this.items.findByReservationReference(
           inventoryItem.id.toString(),
           orderId,
+          tenantId,
         );
         if (existing !== null) {
           continue;
@@ -140,6 +159,7 @@ export class OrdersInventoryAdapter implements InventoryPort {
       }
 
       const response = await this.inventory.reserve({
+        tenantId,
         productId: item.snapshot.productId,
         warehouseId,
         quantity: item.quantity,

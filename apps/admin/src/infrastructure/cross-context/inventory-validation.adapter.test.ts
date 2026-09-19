@@ -80,7 +80,7 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("valid: single warehouse, sufficient stock for every item", async () => {
     const inventory = fakeInventoryController({ "product-1": 10, "product-2": 5 });
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses);
+    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
 
     const result = await adapter.validate([
       checkoutItem("product-1", 2, 1999, "USD"),
@@ -93,7 +93,7 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("invalid: insufficient stock for one of the items", async () => {
     const inventory = fakeInventoryController({ "product-1": 10, "product-2": 3 });
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses);
+    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
 
     const result = await adapter.validate([
       checkoutItem("product-1", 2, 1999, "USD"),
@@ -107,7 +107,7 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("invalid: no inventory record for the product at the resolved warehouse", async () => {
     const inventory = fakeInventoryController({});
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses);
+    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
 
     const result = await adapter.validate([checkoutItem("product-missing", 1, 1999, "USD")]);
 
@@ -118,7 +118,7 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("invalid: zero warehouses registered — reports the gap instead of guessing", async () => {
     const inventory = fakeInventoryController({ "product-1": 10 });
     const warehouses = new FakeWarehouseRepository([]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses);
+    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
 
     const result = await adapter.validate([checkoutItem("product-1", 1, 1999, "USD")]);
 
@@ -132,7 +132,7 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
       warehouseFixture("wh-1"),
       warehouseFixture("wh-2"),
     ]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses);
+    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
 
     const result = await adapter.validate([checkoutItem("product-1", 1, 1999, "USD")]);
 
@@ -143,7 +143,7 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("checks every item, not just the first", async () => {
     const inventory = fakeInventoryController({ "product-1": 10, "product-2": 1 });
     const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses);
+    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
 
     const result = await adapter.validate([
       checkoutItem("product-1", 1, 1999, "USD"),
@@ -157,7 +157,7 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
   it("empty items: vacuously valid — nothing to check, no warehouse resolution needed", async () => {
     const inventory = fakeInventoryController({});
     const warehouses = new FakeWarehouseRepository([]);
-    const adapter = new InventoryValidationAdapter(inventory, warehouses);
+    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
 
     const result = await adapter.validate([]);
 
@@ -173,7 +173,7 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
       listCalls += 1;
       return originalList(page);
     };
-    const adapter = new InventoryValidationAdapter(inventory, warehouses);
+    const adapter = new InventoryValidationAdapter(inventory, warehouses, "tenant-a");
 
     await adapter.validate([
       checkoutItem("product-1", 1, 1999, "USD"),
@@ -181,5 +181,15 @@ describe("InventoryValidationAdapter (Checkout -> Inventory, C-3)", () => {
     ]);
 
     expect(listCalls).toBe(1);
+  });
+
+  it("fails closed without a tenant (ADR-0014: never defaults one, until checkout's port carries it)", async () => {
+    const inventory = fakeInventoryController({ "product-1": 10 });
+    const warehouses = new FakeWarehouseRepository([warehouseFixture("wh-1")]);
+    const adapter = new InventoryValidationAdapter(inventory, warehouses);
+
+    const result = await adapter.validate([checkoutItem("product-1", 1, 1999, "USD")]);
+
+    expect(result).toEqual({ valid: false, reason: "cannot validate inventory without a tenant" });
   });
 });
