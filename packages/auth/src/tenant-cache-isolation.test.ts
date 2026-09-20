@@ -11,7 +11,7 @@ import { KratosSessionAuthenticator } from "./kratos";
  * The authorization-DECISION cache (`CachedAccessControl`) is deliberately absent from this file:
  * its key is `authz:<principalId>:<permission>` and the `AccessControl` port has no tenant at all,
  * so "A's decision is not served to B" cannot even be expressed against it. That is a finding, not a
- * test — see the T10.5 entry in docs/plans/phase-7/WP-10-multi-tenant-runtime.md and gap G-70.
+ * test — see the T10.5 entry in docs/plans/phase-7/WP-10-multi-tenant-runtime.md and gap G-67.
  */
 function sharedKeyspace(): Cache {
   const store = new Map<string, unknown>();

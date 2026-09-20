@@ -37,6 +37,7 @@ function envelope<T>(type: string, tenantId: string, aggregateId: string, payloa
     occurredAt: "2026-09-20T00:00:00.000Z",
     correlationId: "c",
     causationId: "c",
+    metadata: {},
     tenantId,
     payload,
   } satisfies IntegrationEvent<T>;

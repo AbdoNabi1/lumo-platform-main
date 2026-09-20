@@ -1,5 +1,9 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
+## Status — 2026-09-20 (T10.5 done: the adversarial suite exists — and multi mode is STILL NOT SAFE)
+
+T10.5's isolation suite is written (shared harness + per-context opt-ins) and it found two open cross-tenant gaps: **G-67** — authorization decisions are tenant-blind end to end (Keto check, the `authz:<principal>:<permission>` cache key, the audit record), so a decision made for tenant A is served to tenant B; and **G-68 / F-22** — tenant A can register tenant B's storage key and obtain a signed URL for it. Neither is fixed (both are design changes). One finding was fixed: a claim-less token could pick its tenant by `x-tenant-id` (G-69). **`TENANT_MODE=multi` must not be enabled** until G-67 and G-68 close; the worker still refuses multi (G-64). Nothing enables it anywhere.
+
 ## Status — 2026-09-19 (T10.4 done: multi mode is possible, NOT safe)
 
 T10.4 is done: the `TENANT_MODE=multi` boot refusal is replaced by `assertMultiTenantReady` (per-request resolver chain probed, composed graph scanned for construction-time tenants, one recorded exemption: `services/tenancy`, ADR-0014 8f). **`TENANT_MODE=multi` is now possible but not safe** — T10.5's adversarial isolation suite has not been written, and the worker still refuses multi until G-64. Nothing enables multi mode anywhere.
