@@ -46,8 +46,18 @@ function buildAdmin(
   });
 }
 
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
-const otherStaff: Principal = { id: "staff-2", kind: "staff", roles: ["admin"] };
+const staff: Principal = {
+  id: "staff-1",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
+const otherStaff: Principal = {
+  id: "staff-2",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
 
 interface Response {
   readonly status: number;

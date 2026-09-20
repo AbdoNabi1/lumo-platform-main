@@ -7,7 +7,7 @@ import type {
   ClaimsAuthenticator,
   IdempotencyClaim,
   IdempotencyKeyStore,
-  Principal,
+  AuthenticatedIdentity,
   RateLimiter,
 } from "@platform/contracts";
 import { HealthRegistry } from "@platform/health";
@@ -22,7 +22,7 @@ import {
 import { defineRoute } from "./route";
 import { headerTenantResolver } from "./tenant-resolution";
 
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: AuthenticatedIdentity = { id: "staff-1", kind: "staff", roles: ["admin"] };
 
 function silentLogger(): Logger {
   const log: Logger = {

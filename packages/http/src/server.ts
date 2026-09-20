@@ -10,6 +10,7 @@ import type {
   IdGenerator,
   IdempotencyKeyStore,
   Permission,
+  AuthenticatedIdentity,
   Principal,
   RateLimitDecision,
   RateLimiter,
@@ -300,7 +301,15 @@ export async function registerRoutes(
   }
 }
 
-const PUBLIC_PRINCIPAL: Principal = { id: PUBLIC_PRINCIPAL_ID, kind: "customer", roles: [] };
+/**
+ * The fixed anonymous identity. It has no tenant of its own: the request's resolved tenant is bound
+ * to it below (`actor`), so the public principal carries the tenant the storefront request IS for.
+ */
+const PUBLIC_IDENTITY: AuthenticatedIdentity = {
+  id: PUBLIC_PRINCIPAL_ID,
+  kind: "customer",
+  roles: [],
+};
 
 async function executeRoute(
   route: RouteDefinition,
@@ -311,10 +320,10 @@ async function executeRoute(
   //    2.7 — expose verified claims for tenant resolution; null ⇒ 401). A `public` route (Phase 9
   //    hardening) accepts anonymous traffic instead — it resolves to a fixed principal rather than
   //    running the same verification every authenticated route requires.
-  let principal: Principal;
+  let identity: AuthenticatedIdentity;
   let claims: Record<string, unknown>;
   if (route.public === true) {
-    principal = PUBLIC_PRINCIPAL;
+    identity = PUBLIC_IDENTITY;
     claims = {};
   } else {
     const token = bearerToken(request);
@@ -329,23 +338,27 @@ async function executeRoute(
     if (authContext === null) {
       throw new AuthenticationError();
     }
-    principal = authContext.principal;
+    identity = authContext.principal;
     claims = authContext.claims;
   }
-  request.principal = principal;
 
   // 2. Tenant-resolution-first (ADR-0008): nothing below runs tenant-less, public routes included
   //    (a storefront read is still scoped to one merchant's catalog via `x-tenant-id`).
   const tenantId = resolveTenant(deps.tenantResolvers, {
     headers: request.headers as Record<string, string | undefined>,
     hostname: request.hostname,
-    principal,
+    principal: identity,
     claims,
   });
   if (tenantId === null) {
     throw new AuthorizationError("No tenant resolved for this request");
   }
   request.tenantId = tenantId;
+
+  // The identity is bound to the RESOLVED tenant exactly once, here — never defaulted. Everything
+  // downstream (guard, authorization cache key, audit record, handlers) sees a tenant-scoped principal.
+  const principal: Principal = { ...identity, tenantId };
+  request.principal = principal;
 
   // 3. Authorize through the single policy engine (the app injects AdminGuard, or — when zero-trust
   //    enforcement is enabled, P2.0.2 — SecurityPermissionGuard). Skipped entirely for a `public`

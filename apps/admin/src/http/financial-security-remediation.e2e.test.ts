@@ -31,8 +31,18 @@ function buildAdmin(extra?: Partial<AdminWiringDeps>): WiredAdmin {
   return wireAdmin({ serializer: new InMemoryEventSerializer(), idGenerator, clock, ...extra });
 }
 
-const customer: Principal = { id: "customer-1", kind: "customer", roles: [] };
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const customer: Principal = {
+  id: "customer-1",
+  kind: "customer",
+  roles: [],
+  tenantId: "tenant-local",
+};
+const staff: Principal = {
+  id: "staff-1",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
 
 interface Response {
   readonly status: number;

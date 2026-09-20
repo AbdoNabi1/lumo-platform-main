@@ -9,7 +9,7 @@ import type {
   IdempotencyClaim,
   IdempotencyKeyStore,
   PaymentProvider,
-  Principal,
+  AuthenticatedIdentity,
   RateLimiter,
 } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
@@ -26,7 +26,7 @@ import { createAdminHttpApi } from "./server";
  * stale timestamp (replay protection) are all rejected with 401 before `recordWebhook` ever runs.
  */
 
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: AuthenticatedIdentity = { id: "staff-1", kind: "staff", roles: ["admin"] };
 const clock: Clock = { now: () => new Date("2026-08-05T00:00:00.000Z") };
 const WEBHOOK_SECRET = "whsec_e2e_test_secret";
 

@@ -7,7 +7,7 @@ import type {
   ClaimsAuthenticator,
   IdempotencyClaim,
   IdempotencyKeyStore,
-  Principal,
+  AuthenticatedIdentity,
   RateLimiter,
 } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
@@ -28,7 +28,11 @@ import { createAdminHttpApi } from "./server";
 const clock: Clock = { now: () => new Date("2026-09-20T00:00:00.000Z") };
 
 /** The SAME principal id in two tenants: what a per-principal-only key would wrongly merge. */
-const shared = { id: "svc-shared", kind: "staff", roles: ["admin"] } as const satisfies Principal;
+const shared = {
+  id: "svc-shared",
+  kind: "staff",
+  roles: ["admin"],
+} as const satisfies AuthenticatedIdentity;
 const sessions: Record<string, AuthenticatedContext> = {
   "tok-a": { principal: shared, claims: { tenant_id: "tenant-a" } },
   "tok-b": { principal: shared, claims: { tenant_id: "tenant-b" } },

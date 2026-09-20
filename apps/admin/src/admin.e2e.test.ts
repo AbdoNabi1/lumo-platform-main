@@ -4,7 +4,7 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireAdmin } from "./composition";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
 
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"], tenantId: "tenant-1" };
 
 function sequentialIds(): IdGenerator {
   let counter = 0;

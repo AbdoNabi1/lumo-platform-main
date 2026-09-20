@@ -116,7 +116,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
       }),
     );
     const sessionId = await establishSession(wired, ADMIN_USER);
-    const principal: Principal = { id: ADMIN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: ADMIN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     const denied = await guard.ensure(principal, "orders:read", {
       tenantId: TENANT,
@@ -150,7 +150,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
       }),
     );
     const sessionId = await establishSession(wired, SERVICE_USER);
-    const principal: Principal = { id: SERVICE_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: SERVICE_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     const denied = await guard.ensure(principal, "orders:write", {
       tenantId: TENANT,
@@ -175,7 +175,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
         role: "admin",
       }),
     );
-    const principal: Principal = { id: ADMIN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: ADMIN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     const denied = await guard.ensure(principal, "orders:read", {
       tenantId: TENANT,

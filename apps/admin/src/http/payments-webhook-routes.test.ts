@@ -22,7 +22,7 @@ const rawBody = new TextEncoder().encode(
 function contextWith(headers: Record<string, string | undefined>): RequestContext {
   return {
     tenantId: "t-1",
-    principal: { id: "public", kind: "customer", roles: [] },
+    principal: { id: "public", kind: "customer", roles: [], tenantId: "t-1" },
     requestId: "req-1",
     correlationId: "req-1",
     rawBody,

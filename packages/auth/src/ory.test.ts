@@ -12,7 +12,7 @@ const silent: Logger = {
   child: () => silent,
 };
 const clock: Clock = { now: () => new Date("2026-07-05T00:00:00.000Z") };
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"], tenantId: "tenant-1" };
 
 function fakeCache(): Cache & { store: Map<string, unknown> } {
   const store = new Map<string, unknown>();

@@ -7,14 +7,14 @@ import type {
   IdGenerator,
   IdempotencyClaim,
   IdempotencyKeyStore,
-  Principal,
+  AuthenticatedIdentity,
   RateLimiter,
 } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { createAdminHttpApi } from "./server";
 
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: AuthenticatedIdentity = { id: "staff-1", kind: "staff", roles: ["admin"] };
 const clock: Clock = { now: () => new Date("2026-07-05T00:00:00.000Z") };
 
 function fakes() {

@@ -33,8 +33,9 @@ const staff: Principal = {
   id: "staff-1",
   kind: "staff",
   roles: ["finance:manage", "finance:read"],
+  tenantId: "tenant-1",
 };
-const stranger: Principal = { id: "guest-1", kind: "customer", roles: [] };
+const stranger: Principal = { id: "guest-1", kind: "customer", roles: [], tenantId: "tenant-1" };
 const tenantId = "tenant-1";
 
 function wire(): WiredFinance {

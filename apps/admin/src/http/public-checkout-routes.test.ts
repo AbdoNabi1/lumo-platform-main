@@ -21,7 +21,12 @@ import { publicCheckoutRoutes, type PublicCheckoutSessionDto } from "./public-ch
  */
 
 const clock: Clock = { now: () => new Date("2026-08-29T00:00:00.000Z") };
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: Principal = {
+  id: "staff-1",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
 
 function buildAdmin(): WiredAdmin {
   let n = 0;

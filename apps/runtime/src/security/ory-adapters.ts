@@ -1,5 +1,5 @@
 import type { KetoRelationshipClient, KratosIdentityService } from "@platform/auth";
-import type { Principal } from "@platform/contracts";
+import type { AuthenticatedIdentity } from "@platform/contracts";
 import type {
   IdentityDirectoryPort,
   RelationshipCheckPort,
@@ -66,7 +66,7 @@ export class KratosIdentityDirectory implements IdentityDirectoryPort {
 export class KratosSessionRevoker implements SessionRevocationPort {
   constructor(
     private readonly kratos: KratosIdentityService,
-    private readonly revokedBy: Principal,
+    private readonly revokedBy: AuthenticatedIdentity,
   ) {}
   async revokeAllForIdentity(externalIdentityId: string): Promise<void> {
     const ok = await this.kratos.revokeSessions(externalIdentityId, this.revokedBy);

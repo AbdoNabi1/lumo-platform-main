@@ -12,7 +12,7 @@ const silent: Logger = {
   child: () => silent,
 };
 
-const principal = { id: "principal:a", kind: "staff" as const, roles: [] };
+const principal = { id: "principal:a", kind: "staff" as const, roles: [], tenantId: "tenant-a" };
 
 describe("KetoAccessControl — subject_id convention (default, self-hosted Keto)", () => {
   it("checks with subject_id and no subject_set params, honors allowed=true", async () => {

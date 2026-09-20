@@ -1,10 +1,10 @@
-import type { Principal } from "@platform/contracts";
+import type { AuthenticatedIdentity } from "@platform/contracts";
 
 /** What a resolver sees — transport-shape, framework-free (testable without Fastify). */
 export interface TenantResolutionInput {
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly hostname: string;
-  readonly principal: Principal | null;
+  readonly principal: AuthenticatedIdentity | null;
   /** Verified token claims when authentication ran (e.g. a `tenant_id` claim). */
   readonly claims: Readonly<Record<string, unknown>> | null;
 }

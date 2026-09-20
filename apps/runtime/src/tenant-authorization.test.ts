@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { FastifyInstance } from "fastify";
+type FastifyInstance = Awaited<ReturnType<typeof createAdminHttpApi>>;
 import type {
   AccessControl,
   AuditEvent,

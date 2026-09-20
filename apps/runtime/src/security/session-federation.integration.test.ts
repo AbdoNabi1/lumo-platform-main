@@ -87,7 +87,7 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
 
   it("ALLOWS a human carrying only a Kratos sid — the mirror is established on first sight", async () => {
     await provision(HUMAN_USER);
-    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     // No Security session exists; the request carries only the upstream sid.
     const denied = await guard.ensure(principal, "orders:read", {
@@ -107,7 +107,7 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
 
   it("is the missing half: the same request without a federator fails closed (P2.0.2 behaviour)", async () => {
     await provision(HUMAN_USER);
-    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     const denied = await unfederatedGuard.ensure(principal, "orders:read", {
       tenantId: TENANT,
@@ -120,7 +120,7 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
 
   it("federates idempotently — repeated requests reuse the one mirror, they do not mint sessions", async () => {
     await provision(HUMAN_USER);
-    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     for (let i = 0; i < 3; i += 1) {
       const denied = await guard.ensure(principal, "orders:read", {
@@ -139,7 +139,7 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
 
   it("refuses to resurrect a REVOKED mirror — revocation actually holds against a replayed sid", async () => {
     await provision(HUMAN_USER);
-    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT };
     expect(
       await guard.ensure(principal, "orders:read", {
         tenantId: TENANT,
@@ -174,19 +174,27 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
     await provision(HUMAN_USER);
     await provision(OTHER_USER);
     expect(
-      await guard.ensure({ id: HUMAN_USER, kind: "staff", roles: [] }, "orders:read", {
-        tenantId: TENANT,
-        sessionId: KRATOS_SID,
-        deviceRef: DEVICE,
-      }),
+      await guard.ensure(
+        { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT },
+        "orders:read",
+        {
+          tenantId: TENANT,
+          sessionId: KRATOS_SID,
+          deviceRef: DEVICE,
+        },
+      ),
     ).toBeNull();
 
     // A second principal presenting the first principal's sid gets no session → fail-closed deny.
-    const denied = await guard.ensure({ id: OTHER_USER, kind: "staff", roles: [] }, "orders:read", {
-      tenantId: TENANT,
-      sessionId: KRATOS_SID,
-      deviceRef: DEVICE,
-    });
+    const denied = await guard.ensure(
+      { id: OTHER_USER, kind: "staff", roles: [], tenantId: TENANT },
+      "orders:read",
+      {
+        tenantId: TENANT,
+        sessionId: KRATOS_SID,
+        deviceRef: DEVICE,
+      },
+    );
     expect(denied?.status).toBe(403);
     expect(JSON.stringify(denied?.body)).toContain("no valid session");
   });

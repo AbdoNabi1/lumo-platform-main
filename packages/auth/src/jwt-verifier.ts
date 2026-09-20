@@ -2,7 +2,7 @@ import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } 
 import type {
   AuthenticatedContext,
   ClaimsAuthenticator,
-  Principal,
+  AuthenticatedIdentity,
   PrincipalKind,
 } from "@platform/contracts";
 import type { Logger } from "@platform/utils";
@@ -27,7 +27,7 @@ export interface JwtVerifierOptions {
 
 /**
  * JWKS-based `ClaimsAuthenticator` (Sprint 2.7, D-048). Verifies signature, `iss`, `aud`,
- * `exp`/`nbf` (with bounded clock tolerance) and maps claims onto the platform `Principal`:
+ * `exp`/`nbf` (with bounded clock tolerance) and maps claims onto the platform `AuthenticatedIdentity` (the transport binds the tenant):
  * `sub` → id, `kind` → principal kind (default `customer`), `roles` → roles. Tenant
  * (`tenant_id`) and scopes ride the returned claims for the transport's resolvers — this
  * adapter never decides tenancy or permissions itself. Replay protection: JWTs are bearer
@@ -53,7 +53,7 @@ export class JwtVerifier implements ClaimsAuthenticator {
     }
   }
 
-  async verify(token: string): Promise<Principal | null> {
+  async verify(token: string): Promise<AuthenticatedIdentity | null> {
     const context = await this.verifyWithClaims(token);
     return context?.principal ?? null;
   }
@@ -102,7 +102,7 @@ function readClaim(payload: JWTPayload, name: string): unknown {
   return (ext as Record<string, unknown>)[name];
 }
 
-function toPrincipal(payload: JWTPayload): Principal | null {
+function toPrincipal(payload: JWTPayload): AuthenticatedIdentity | null {
   if (typeof payload.sub !== "string" || payload.sub.length === 0) {
     return null;
   }

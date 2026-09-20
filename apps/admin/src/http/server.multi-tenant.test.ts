@@ -3,7 +3,7 @@ import type {
   Cache,
   IdGenerator,
   IdempotencyKeyStore,
-  Principal,
+  AuthenticatedIdentity,
   RateLimiter,
 } from "@platform/contracts";
 import type { Database } from "@platform/db";
@@ -14,7 +14,7 @@ import type { FastifyInstance } from "fastify";
 import { pinRoutesToTenant } from "./tenancy-routes";
 import { createAdminHttpApi, type AdminHttpDeps } from "./server";
 
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: AuthenticatedIdentity = { id: "staff-1", kind: "staff", roles: ["admin"] };
 const clock = { now: () => new Date("2026-09-19T00:00:00.000Z") };
 
 function harness(claimTenant?: string) {

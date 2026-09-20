@@ -50,11 +50,26 @@ class FakeOrderCreationPort implements OrderCreationPort {
 }
 
 /** The attacker: an ordinary authenticated customer — never granted any staff/admin role. */
-const attacker: Principal = { id: "customer-attacker", kind: "customer", roles: [] };
+const attacker: Principal = {
+  id: "customer-attacker",
+  kind: "customer",
+  roles: [],
+  tenantId: "tenant-local",
+};
 /** A second, distinct customer identity — used for the cross-user cart-access check. */
-const victim: Principal = { id: "customer-victim", kind: "customer", roles: [] };
+const victim: Principal = {
+  id: "customer-victim",
+  kind: "customer",
+  roles: [],
+  tenantId: "tenant-local",
+};
 /** Used only to seed price fixtures — any principal works under the current stub guard. */
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: Principal = {
+  id: "staff-1",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
 
 interface Response {
   readonly status: number;
