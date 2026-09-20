@@ -1444,6 +1444,7 @@ describe("admin wiring (end to end)", () => {
       {
         principalId: "staff-1",
         principalKind: "staff",
+        tenantId: "tenant-1",
         permission: "categories:create",
         decision: "allow",
         occurredAt: "2026-06-30T00:00:00.000Z",
@@ -1451,6 +1452,7 @@ describe("admin wiring (end to end)", () => {
       {
         principalId: "staff-1",
         principalKind: "staff",
+        tenantId: "tenant-1",
         permission: "orders:refund",
         decision: "deny",
         occurredAt: "2026-06-30T00:00:00.000Z",
