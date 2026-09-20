@@ -70,14 +70,16 @@ const get = (app: FastifyInstance, headers: Record<string, string>) =>
 
 describe("createAdminHttpApi — TENANT_MODE=multi", () => {
   it("serves two different tenants through the same process, each scoped to its own id", async () => {
-    const { deps, rateKeys } = harness();
-    const app = await boot({ ...deps, tenantMode: "multi" });
-    const a = await get(app, { authorization: "Bearer good", "x-tenant-id": "t-a" });
-    const b = await get(app, { authorization: "Bearer good", "x-tenant-id": "t-b" });
-    expect(a.statusCode).toBe(200);
-    expect(b.statusCode).toBe(200);
-    expect(rateKeys.some((k) => k.startsWith("rl:t-a:"))).toBe(true);
-    expect(rateKeys.some((k) => k.startsWith("rl:t-b:"))).toBe(true);
+    // T10.5: the tenant comes from each caller's VERIFIED claim (a claim-less token no longer
+    // resolves by header — see tenant-isolation.e2e.test.ts), so each tenant is its own token.
+    const a = harness("t-a");
+    const b = harness("t-b");
+    const appA = await boot({ ...a.deps, tenantMode: "multi" });
+    const appB = await boot({ ...b.deps, tenantMode: "multi" });
+    expect((await get(appA, { authorization: "Bearer good" })).statusCode).toBe(200);
+    expect((await get(appB, { authorization: "Bearer good" })).statusCode).toBe(200);
+    expect(a.rateKeys.some((k) => k.startsWith("rl:t-a:"))).toBe(true);
+    expect(b.rateKeys.some((k) => k.startsWith("rl:t-b:"))).toBe(true);
   });
 
   it("rejects a request with no resolvable tenant — never defaults it", async () => {
@@ -97,7 +99,9 @@ describe("createAdminHttpApi — TENANT_MODE=multi", () => {
   });
 
   it("keeps tenancy routes pinned to the deployment tenant (ADR-0014 8f exemption)", async () => {
-    const { deps } = harness();
+    // The caller's VERIFIED tenant is t-other, so tenant resolution succeeds and it is the pin
+    // (not "no tenant resolved") that must refuse.
+    const { deps } = harness("t-other");
     const app = await boot({
       ...deps,
       tenantMode: "multi",
@@ -107,9 +111,10 @@ describe("createAdminHttpApi — TENANT_MODE=multi", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/tenants",
-      headers: { authorization: "Bearer good", "x-tenant-id": "t-other" },
+      headers: { authorization: "Bearer good" },
     });
     expect(res.statusCode).toBe(403);
+    expect(res.body).toMatch(/platform-operator/);
   });
 });
 

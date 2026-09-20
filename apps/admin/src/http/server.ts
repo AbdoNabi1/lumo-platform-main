@@ -4,6 +4,7 @@ import {
   claimTenantResolver,
   createHttpServer,
   headerTenantResolver,
+  publicHeaderTenantResolver,
   registerRoutes,
   type HttpMetricsSink,
   type HttpServerDeps,
@@ -82,9 +83,10 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
   });
 
   const multi = deps.tenantMode === "multi";
-  // Claim FIRST: a forged `x-tenant-id` must never override the tenant of a verified token (T10.5).
+  // Claim FIRST, and the header only for UNAUTHENTICATED requests (T10.5): a forged `x-tenant-id` must
+  // neither override a verified token's tenant nor supply one for a token that has none.
   const tenantResolvers: readonly TenantResolver[] = multi
-    ? [claimTenantResolver, headerTenantResolver]
+    ? [claimTenantResolver, publicHeaderTenantResolver]
     : [singleTenantGuardedResolver(deps.tenantId)];
   if (multi) assertMultiTenantReady({ resolvers: tenantResolvers, graph: admin });
 

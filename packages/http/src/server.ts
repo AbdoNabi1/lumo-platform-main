@@ -24,7 +24,7 @@ import {
 import { InProcessRateLimiter } from "./degraded-rate-limiter";
 import { mapError } from "./error-mapping";
 import type { RequestContext, RouteDefinition, TransportResponse } from "./route";
-import { resolveTenant, type TenantResolver } from "./tenant-resolution";
+import { PUBLIC_PRINCIPAL_ID, resolveTenant, type TenantResolver } from "./tenant-resolution";
 
 /**
  * Per-request signals a guard MAY consume for a context-aware authorization decision (zero-trust). Built
@@ -300,7 +300,7 @@ export async function registerRoutes(
   }
 }
 
-const PUBLIC_PRINCIPAL: Principal = { id: "public", kind: "customer", roles: [] };
+const PUBLIC_PRINCIPAL: Principal = { id: PUBLIC_PRINCIPAL_ID, kind: "customer", roles: [] };
 
 async function executeRoute(
   route: RouteDefinition,

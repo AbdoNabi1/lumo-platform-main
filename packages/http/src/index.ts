@@ -3,6 +3,8 @@ export {
   claimTenantResolver,
   domainTenantResolver,
   headerTenantResolver,
+  PUBLIC_PRINCIPAL_ID,
+  publicHeaderTenantResolver,
   resolveTenant,
   type TenantResolutionInput,
   type TenantResolver,
