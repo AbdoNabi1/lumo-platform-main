@@ -31,3 +31,5 @@ export function createTestPrismaClient(
     statementTimeoutMs: 5000,
   });
 }
+
+export { createFakePrisma, type FakePrisma } from "./fake-prisma";
