@@ -11,6 +11,8 @@
 //   KETO_WRITE_URL    (default http://localhost:4467)
 //   AUTH_CLIENT_ID    (default morbeh-admin-web, matches .env AUTH_CLIENT_ID)
 //   AUTH_CLIENT_SECRET (default morbeh-admin-web-secret-change-me — dev-only placeholder)
+//   TENANT_DEFAULT_ID (default tenant-local — the tenant every grant is qualified with, G-70; must
+//                      match the runtime's TENANT_DEFAULT_ID)
 //   ADMIN_DEV_EMAIL   (default admin@morbeh.local)
 //   ADMIN_DEV_PASSWORD (REQUIRED — no default; refuses to run without it, never invents/prints one)
 
@@ -23,6 +25,10 @@ const REDIRECT_URI = process.env.ADMIN_WEB_CALLBACK_URL ?? "http://localhost:310
 const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
 const ADMIN_EMAIL = process.env.ADMIN_DEV_EMAIL ?? "admin@morbeh.local";
 const ADMIN_PASSWORD = process.env.ADMIN_DEV_PASSWORD;
+// G-70: every grant is written twice — the bare tuple (what reads still check until the switch) and
+// its tenant-qualified twin `tenant/<tenantId>/<permission>`. The tenant is named here, once, and
+// passed to the writer; the writer never reads a default of its own.
+const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 // Every :read permission the Admin Web screens built in Phase A.30/A.31 call through AdminGuard
 // (apps/admin/src/interfaces/*.admin-controller.ts) — grep'd, not guessed.
@@ -107,32 +113,35 @@ async function ensureAdminIdentity() {
   return identity.id;
 }
 
-async function ensurePermissionTuples(identityId) {
+async function putGrant(object, identityId) {
+  const response = await fetch(`${KETO_WRITE_URL}/admin/relation-tuples`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      namespace: "permissions",
+      object,
+      relation: "granted",
+      subject_id: identityId,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`failed to grant "${object}": ${response.status} ${await response.text()}`);
+  }
+}
+
+async function ensurePermissionTuples(identityId, tenantId) {
   for (const permission of READ_PERMISSIONS) {
-    const response = await fetch(`${KETO_WRITE_URL}/admin/relation-tuples`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        namespace: "permissions",
-        object: permission,
-        relation: "granted",
-        subject_id: identityId,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `failed to grant "${permission}": ${response.status} ${await response.text()}`,
-      );
-    }
+    await putGrant(permission, identityId);
+    await putGrant(`tenant/${tenantId}/${permission}`, identityId);
   }
 }
 
 try {
   await ensureHydraClient();
   const identityId = await ensureAdminIdentity();
-  await ensurePermissionTuples(identityId);
+  await ensurePermissionTuples(identityId, TENANT_ID);
   console.error(
-    `Auth stack seeded: Hydra client "${CLIENT_ID}", Kratos identity ${identityId} (${ADMIN_EMAIL}), ${READ_PERMISSIONS.length} Keto grants.`,
+    `Auth stack seeded: Hydra client "${CLIENT_ID}", Kratos identity ${identityId} (${ADMIN_EMAIL}), ${READ_PERMISSIONS.length} Keto grants (bare + tenant/${TENANT_ID}/ twin).`,
   );
 } catch (error) {
   console.error(

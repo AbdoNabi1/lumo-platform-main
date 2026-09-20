@@ -9,7 +9,12 @@
 //
 // Usage:  ADMIN_DEV_PASSWORD='<strong password>' node scripts/ops/seed-ory-network.mjs
 // Reads ORY_SDK_URL, ORY_API_KEY, AUTH_CLIENT_ID, AUTH_CLIENT_SECRET, AUTH_AUDIENCE,
-// ADMIN_WEB_ORIGIN from the environment.
+// ADMIN_WEB_ORIGIN from the environment. TENANT_DEFAULT_ID (default tenant-local) is the tenant every
+// grant is qualified with (G-70) — it must match the runtime's TENANT_DEFAULT_ID.
+//
+// G-70: each grant is written twice — the bare tuple and its `tenant/<tenantId>/<permission>` twin.
+// The migration scripts beside this one (ory-keto-backfill / -count-gate / -delete-bare) move the
+// EXISTING bare tuples; see docs/operations/KETO_TENANT_MIGRATION.md.
 
 function required(name) {
   const v = process.env[name];
@@ -26,6 +31,8 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "admin@morbeh.local";
 const ADMIN_PASSWORD = required("ADMIN_DEV_PASSWORD");
 const ORIGIN = process.env.ADMIN_WEB_ORIGIN ?? "http://localhost:3100";
 const SCHEMA_ID = process.env.ORY_IDENTITY_SCHEMA_ID ?? "preset://email";
+// Named once here and passed to grantAll; the writer reads no default of its own.
+const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 const PERMISSIONS = [
   "analytics:read",
@@ -188,10 +195,11 @@ async function ensureIdentity() {
 // subject_id. Must match keto.ts's `subjectSetNamespace` default exactly, or checks silently deny.
 const SUBJECT_SET_NAMESPACE = "User";
 
-function grantTupleBody(subjectId, permission) {
+/** `object` is the bare permission or its tenant-qualified twin (`tenant/<tenantId>/<permission>`). */
+function grantTupleBody(subjectId, object) {
   return {
     namespace: "permissions",
-    object: permission,
+    object,
     relation: "granted",
     subject_set: { namespace: SUBJECT_SET_NAMESPACE, object: subjectId, relation: "" },
   };
@@ -216,7 +224,7 @@ function grantTupleBody(subjectId, permission) {
  * the client and identity above are still fully usable without Permissions, and `KetoAccessControl`
  * fails closed, so a half-granted store would be worse than none.
  */
-async function grantAll(subjectId) {
+async function grantAll(subjectId, tenantId) {
   const probe = await api("/admin/relation-tuples", {
     method: "PUT",
     body: JSON.stringify(grantTupleBody(subjectId, PERMISSIONS[0])),
@@ -241,20 +249,30 @@ async function grantAll(subjectId) {
     return false;
   }
 
-  for (const permission of PERMISSIONS.slice(1)) {
+  // The probe wrote PERMISSIONS[0] bare; write its twin, then both twins of every other permission.
+  const objects = [
+    `tenant/${tenantId}/${PERMISSIONS[0]}`,
+    ...PERMISSIONS.slice(1).flatMap((permission) => [
+      permission,
+      `tenant/${tenantId}/${permission}`,
+    ]),
+  ];
+  for (const object of objects) {
     const res = await api("/admin/relation-tuples", {
       method: "PUT",
-      body: JSON.stringify(grantTupleBody(subjectId, permission)),
+      body: JSON.stringify(grantTupleBody(subjectId, object)),
     });
-    if (!res.ok) throw new Error(`grant "${permission}" failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`grant "${object}" failed: ${res.status} ${await res.text()}`);
   }
-  console.log(`Granted all ${PERMISSIONS.length} permissions to ${subjectId}.`);
+  console.log(
+    `Granted all ${PERMISSIONS.length} permissions to ${subjectId} (bare + tenant/${tenantId}/ twin).`,
+  );
   return true;
 }
 
 await ensureOAuthClient();
 const identityId = await ensureIdentity();
-const permissionsGranted = await grantAll(identityId);
+const permissionsGranted = await grantAll(identityId, TENANT_ID);
 
 console.log(`\nOry Network seeded.`);
 console.log(`  project      : ${ORY}`);

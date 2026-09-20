@@ -18,6 +18,8 @@
 //   KETO_WRITE_URL    (default http://localhost:4467)
 //   AUTH_CLIENT_ID    (default morbeh-admin-web, must match the client seed-auth-local.mjs/admin-web use)
 //   AUTH_CLIENT_SECRET (default morbeh-admin-web-secret-change-me — dev-only placeholder)
+//   TENANT_DEFAULT_ID (default tenant-local — the tenant every grant is qualified with, G-70; must
+//                      match the runtime's TENANT_DEFAULT_ID)
 //   E2E_PASSWORD      (REQUIRED — no default; refuses to run without it, never invents/prints one)
 
 const HYDRA_ADMIN_URL = process.env.HYDRA_ADMIN_URL ?? "http://localhost:4445";
@@ -28,6 +30,9 @@ const CLIENT_SECRET = process.env.AUTH_CLIENT_SECRET ?? "morbeh-admin-web-secret
 const REDIRECT_URI = process.env.ADMIN_WEB_CALLBACK_URL ?? "http://localhost:3100/auth/callback";
 const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
 const PASSWORD = process.env.E2E_PASSWORD;
+// G-70: each grant is written twice — bare, and tenant-qualified (`tenant/<tenantId>/<permission>`).
+// The tenant is named once here and passed to the writer; the writer reads no default of its own.
+const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 // These three helpers are the one place raw JSON leaves Kratos's response and becomes a typed
 // value this script trusts — a runtime `typeof` check, not just a TS assertion, so a
@@ -166,22 +171,32 @@ async function ensureIdentity(email, role) {
 
 /**
  * @param {string} identityId
- * @param {string} permission
+ * @param {string} object the Keto object: a bare permission or its tenant-qualified twin
  */
-async function grantPermission(identityId, permission) {
+async function putGrant(identityId, object) {
   const response = await fetch(`${KETO_WRITE_URL}/admin/relation-tuples`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       namespace: "permissions",
-      object: permission,
+      object,
       relation: "granted",
       subject_id: identityId,
     }),
   });
   if (!response.ok) {
-    throw new Error(`failed to grant "${permission}": ${response.status} ${await response.text()}`);
+    throw new Error(`failed to grant "${object}": ${response.status} ${await response.text()}`);
   }
+}
+
+/**
+ * @param {string} identityId
+ * @param {string} permission
+ * @param {string} tenantId
+ */
+async function grantPermission(identityId, permission, tenantId) {
+  await putGrant(identityId, permission);
+  await putGrant(identityId, `tenant/${tenantId}/${permission}`);
 }
 
 try {
@@ -191,9 +206,11 @@ try {
     const permissions =
       role === "viewer" ? READ_PERMISSIONS : [...READ_PERMISSIONS, ...extraPermissions];
     for (const permission of permissions) {
-      await grantPermission(identityId, permission);
+      await grantPermission(identityId, permission, TENANT_ID);
     }
-    console.error(`Seeded ${role}: ${email} (${identityId}), ${permissions.length} Keto grants.`);
+    console.error(
+      `Seeded ${role}: ${email} (${identityId}), ${permissions.length} Keto grants (bare + tenant/${TENANT_ID}/ twin).`,
+    );
   }
 } catch (error) {
   console.error(

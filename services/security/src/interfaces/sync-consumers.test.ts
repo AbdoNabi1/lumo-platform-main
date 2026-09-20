@@ -22,7 +22,10 @@ const silent: Logger = {
   child: () => silent,
 };
 
-function relEvent(key: string): IntegrationEvent<SecurityRelationPayload> {
+function relEvent(
+  key: string,
+  tenantId: string | null = "tenant-a", // null = an envelope with no tenant
+): IntegrationEvent<SecurityRelationPayload> {
   return {
     messageId: "m",
     type: "security.relation.written",
@@ -32,6 +35,7 @@ function relEvent(key: string): IntegrationEvent<SecurityRelationPayload> {
     occurredAt: "2026-07-18T00:00:00.000Z",
     correlationId: "c",
     causationId: "c",
+    ...(tenantId !== null ? { tenantId } : {}),
     payload: { key },
     metadata: {},
   };
@@ -65,18 +69,29 @@ function recordingSync(): RelationshipSyncPort & {
   };
 }
 
+function capturingLogger(): Logger & { warns: { message: string }[] } {
+  const warns: { message: string }[] = [];
+  return { ...silent, warns, warn: (message: string) => void warns.push({ message }) };
+}
+
 describe("relationship synchronization (H-2)", () => {
-  it("parses the tuple key and writes it to the sync port", async () => {
+  it("parses the tuple key and writes the bare tuple AND its tenant-qualified twin", async () => {
     const sync = recordingSync();
     await new RelationWrittenConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:doc:1#viewer@principal:a"),
     );
     expect(sync.writes).toEqual([
       { namespace: "permissions", object: "doc:1", relation: "viewer", subject: "principal:a" },
+      {
+        namespace: "permissions",
+        object: "tenant/tenant-a/doc:1",
+        relation: "viewer",
+        subject: "principal:a",
+      },
     ]);
   });
 
-  it("round-trips a subject-set subject through the key", async () => {
+  it("round-trips a subject-set subject through the key, on both twins", async () => {
     const sync = recordingSync();
     await new RelationWrittenConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:doc:1#viewer@group:eng#member"),
@@ -87,14 +102,31 @@ describe("relationship synchronization (H-2)", () => {
       relation: "viewer",
       subject: "group:eng#member",
     });
+    expect(sync.writes[1]).toEqual({
+      namespace: "permissions",
+      object: "tenant/tenant-a/doc:1",
+      relation: "viewer",
+      subject: "group:eng#member",
+    });
   });
 
-  it("deletes the enforcement tuple on relation.deleted", async () => {
+  it("qualifies with the ENVELOPE's tenant, not a fixed one", async () => {
+    const sync = recordingSync();
+    await new RelationWrittenConsumer({ sync, logger: silent }).handle(
+      relEvent("permissions:orders:refund#granted@user-1", "tenant-b"),
+    );
+    expect(sync.writes.map((t) => t.object)).toEqual([
+      "orders:refund",
+      "tenant/tenant-b/orders:refund",
+    ]);
+  });
+
+  it("deletes BOTH the bare tuple and the qualified twin on relation.deleted", async () => {
     const sync = recordingSync();
     await new RelationDeletedConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:doc:1#viewer@principal:a"),
     );
-    expect(sync.deletes).toHaveLength(1);
+    expect(sync.deletes.map((t) => t.object)).toEqual(["doc:1", "tenant/tenant-a/doc:1"]);
   });
 
   it("skips (does not throw) on an unparseable key", async () => {
@@ -103,6 +135,39 @@ describe("relationship synchronization (H-2)", () => {
       new RelationWrittenConsumer({ sync, logger: silent }).handle(relEvent("not-a-tuple")),
     ).resolves.toBeUndefined();
     expect(sync.writes).toHaveLength(0);
+  });
+
+  describe("an envelope with no tenant (IntegrationEvent.tenantId is optional)", () => {
+    it("write: writes NOTHING — no bare tuple either — and warns", async () => {
+      const sync = recordingSync();
+      const logger = capturingLogger();
+      await expect(
+        new RelationWrittenConsumer({ sync, logger }).handle(
+          relEvent("permissions:orders:refund#granted@user-1", null),
+        ),
+      ).resolves.toBeUndefined();
+      expect(sync.writes).toEqual([]);
+      expect(logger.warns).toHaveLength(1);
+      expect(logger.warns[0]?.message).toMatch(/no tenant/);
+    });
+
+    it("write: an empty-string tenant is treated as absent", async () => {
+      const sync = recordingSync();
+      await new RelationWrittenConsumer({ sync, logger: silent }).handle(
+        relEvent("permissions:orders:refund#granted@user-1", ""),
+      );
+      expect(sync.writes).toEqual([]);
+    });
+
+    it("delete: still removes the bare tuple, cannot name the twin, and warns that it was left", async () => {
+      const sync = recordingSync();
+      const logger = capturingLogger();
+      await new RelationDeletedConsumer({ sync, logger }).handle(
+        relEvent("permissions:orders:refund#granted@user-1", null),
+      );
+      expect(sync.deletes.map((t) => t.object)).toEqual(["orders:refund"]);
+      expect(logger.warns[0]?.message).toMatch(/qualified twin NOT removed/);
+    });
   });
 });
 
