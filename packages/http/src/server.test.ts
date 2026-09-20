@@ -8,6 +8,7 @@ import type {
   IdempotencyClaim,
   IdempotencyKeyStore,
   AuthenticatedIdentity,
+  Principal,
   RateLimiter,
 } from "@platform/contracts";
 import { HealthRegistry } from "@platform/health";
@@ -77,6 +78,8 @@ interface TestOverrides {
   readonly denyPermissions?: boolean;
   /** Observes the request context the transport hands the guard (session/device/IP). */
   readonly onGuard?: (context?: GuardRequestContext) => void;
+  /** Observes the principal the transport hands the guard (G-67: it must carry the tenant). */
+  readonly onGuardPrincipal?: (principal: Principal) => void;
   /** Observes every rate-limiter key the transport consumes. */
   readonly onRateLimitKey?: (key: string) => void;
   readonly metrics?: HttpMetricsSink;
@@ -93,8 +96,9 @@ async function buildServer(overrides: TestOverrides = {}): Promise<FastifyInstan
       overrides.authenticator ??
       ({ verify: async (token) => (token === "good" ? staff : null) } satisfies Authenticator),
     guard: {
-      ensure: async (_principal, permission, context) => {
+      ensure: async (principal, permission, context) => {
         guardCalls += 1;
+        overrides.onGuardPrincipal?.(principal);
         overrides.onGuard?.(context);
         return overrides.denyPermissions === true
           ? {
@@ -444,6 +448,22 @@ describe("HTTP transport", () => {
     });
   });
 
+  describe("principal tenant binding (G-67)", () => {
+    it("hands the guard a principal bound to the resolved tenant, not the identity's own", async () => {
+      const seen: Principal[] = [];
+      const bound = await buildServer({ onGuardPrincipal: (p) => seen.push(p) });
+      await bound.inject({
+        method: "POST",
+        url: "/api/v1/widgets",
+        headers: { ...good.headers, "x-tenant-id": "t-9" },
+        payload: { name: "a", quantity: 1 },
+      });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ id: "staff-1", tenantId: "t-9" });
+      await bound.close();
+    });
+  });
+
   describe("public routes (Phase 9 hardening — storefront reads)", () => {
     it("accepts anonymous requests with no Authorization header and still resolves a tenant", async () => {
       const res = await app.inject({
@@ -456,6 +476,22 @@ describe("HTTP transport", () => {
         tenantId: "t-1",
         principal: { id: "public", kind: "customer", roles: [] },
       });
+    });
+
+    it("binds the anonymous principal to the tenant the request resolved to (G-67)", async () => {
+      // The public principal has no tenant of its own; it must carry the storefront request's tenant,
+      // per request, so a decision or audit made "as public" can never be attributed to another tenant.
+      for (const tenant of ["t-a", "t-b"]) {
+        await app.inject({
+          method: "GET",
+          url: "/api/v1/public-widgets",
+          headers: { "x-tenant-id": tenant },
+        });
+        expect(handled.at(-1)).toMatchObject({
+          tenantId: tenant,
+          principal: { id: "public", tenantId: tenant },
+        });
+      }
     });
 
     it("never calls the permission guard for a public route", async () => {
