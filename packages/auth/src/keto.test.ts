@@ -32,7 +32,7 @@ describe("KetoAccessControl — subject_id convention (default, self-hosted Keto
     expect(await ac.authorize(principal, "products:read")).toBe(true);
     const parsed = new URL(calledUrl!);
     expect(parsed.searchParams.get("namespace")).toBe("permissions");
-    expect(parsed.searchParams.get("object")).toBe("products:read");
+    expect(parsed.searchParams.get("object")).toBe("tenant/tenant-a/products:read");
     expect(parsed.searchParams.get("relation")).toBe("granted");
     expect(parsed.searchParams.get("subject_id")).toBe("principal:a");
     expect(parsed.searchParams.has("subject_set.namespace")).toBe(false);
@@ -83,7 +83,7 @@ describe("KetoAccessControl — subject_set convention (Ory Network)", () => {
     expect(await ac.authorize(principal, "products:read")).toBe(true);
     const parsed = new URL(calledUrl!);
     expect(parsed.searchParams.get("namespace")).toBe("permissions");
-    expect(parsed.searchParams.get("object")).toBe("products:read");
+    expect(parsed.searchParams.get("object")).toBe("tenant/tenant-a/products:read");
     expect(parsed.searchParams.get("relation")).toBe("granted");
     expect(parsed.searchParams.has("subject_id")).toBe(false);
     expect(parsed.searchParams.get("subject_set.namespace")).toBe("User");

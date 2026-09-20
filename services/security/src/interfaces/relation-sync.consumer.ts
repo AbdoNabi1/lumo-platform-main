@@ -18,7 +18,7 @@ export interface RelationSyncConsumerDeps {
  * The tenant-qualified twin of an enforcement tuple (G-70): the object becomes
  * `tenant/<tenantId>/<object>`; namespace, relation and subject are unchanged (principal ids are
  * globally unique Kratos ids, so the subject stays bare). This is the shape `KetoAccessControl` and
- * `KetoRelationshipCheck` read once reads are switched; `scripts/ops/lib/keto-tenant-tuples.mjs` and
+ * `KetoRelationshipCheck` read once reads are switched; `scripts/ops/keto-tenant-tuples.mjs` and
  * `packages/auth/src/keto.ts` build the same string and a test pins them together.
  */
 export function tenantQualifiedTuple(

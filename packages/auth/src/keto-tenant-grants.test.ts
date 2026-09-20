@@ -4,18 +4,19 @@ import type { Logger } from "@platform/utils";
 import { CachedAccessControl, KetoAccessControl } from "./keto";
 import { KetoRelationshipClient } from "./keto-relationships";
 import type { HttpFetch } from "./kratos";
+import { qualify } from "../../../scripts/ops/keto-tenant-tuples.mjs";
 
 /**
- * G-67 (closed) and G-70 (OPEN) — tenant scoping of authorization.
+ * G-67 (closed) and G-70 (code-complete, migration pending) — tenant scoping of authorization.
  *
  * G-67: the DECISION CACHE and the audit record were tenant-blind. Fixed: the key carries the tenant.
- * G-70: the Keto TUPLE model carries no tenant, so a grant is still global per principal. NOT fixed —
- * it needs the tuples rewritten in a live Ory project (dual-write, switch reads, delete bare). The one
- * `it.fails` below is that gap made executable: it goes red the day the tuples are qualified, and
- * whoever does that flips it to `it()`.
+ * G-70: the Keto TUPLE carried no tenant, so a grant was global per principal. The code now writes the
+ * tenant-qualified tuple `tenant/<tenantId>/<permission>` and reads it (`objectFor`); the case below
+ * was an `it.fails` reproducing the leak and is a plain `it()` now. It proves the CODE. It does not
+ * prove the LIVE tuples are migrated — that is the operator runbook, not a test.
  *
- * `it.fails` passes for ANY failure, including a broken fixture, so the case is a single assertion on
- * the leak, and the plain `it()` beside it (the control) proves the fake Keto and the writer work.
+ * The control beside it proves the fake Keto and the writer work, so the leak assertion cannot pass
+ * on a broken fixture.
  */
 
 const logger = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
@@ -102,11 +103,11 @@ function fakeKeto() {
   return { tuples, fetch };
 }
 
-describe("Keto grants are tenant-scoped (G-70, OPEN)", () => {
+describe("Keto grants are tenant-scoped (G-70, code-complete)", () => {
   async function granted() {
     const keto = fakeKeto();
-    // The production write path — the same call `relation-sync.consumer.ts` makes for a tuple a
-    // tenant-A operator granted. Note what it can express: namespace, object, relation, subject.
+    // The production write path — the same call `relation-sync.consumer.ts` makes for the
+    // tenant-qualified twin of a tuple a tenant-A operator granted.
     await new KetoRelationshipClient({
       readUrl: "http://keto:4466",
       writeUrl: "http://keto:4467",
@@ -114,7 +115,7 @@ describe("Keto grants are tenant-scoped (G-70, OPEN)", () => {
       logger,
     }).write({
       namespace: "permissions",
-      object: "orders:refund",
+      object: qualify("tenant-a", "orders:refund"),
       relation: "granted",
       subject: "user-1",
     });
@@ -132,8 +133,44 @@ describe("Keto grants are tenant-scoped (G-70, OPEN)", () => {
     expect(await access.authorize(inTenant("user-2", "tenant-a"), "orders:refund")).toBe(false);
   });
 
-  it.fails("a grant made for tenant A does not allow the same principal in tenant B", async () => {
+  it("a grant made for tenant A does not allow the same principal in tenant B", async () => {
     const { access } = await granted();
     expect(await access.authorize(inTenant("user-1", "tenant-b"), "orders:refund")).toBe(false);
+  });
+
+  it("a BARE tuple (not yet migrated) allows nobody: reads no longer look at it", async () => {
+    const keto = fakeKeto();
+    await new KetoRelationshipClient({
+      readUrl: "http://keto:4466",
+      writeUrl: "http://keto:4467",
+      fetch: keto.fetch,
+      logger,
+    }).write({
+      namespace: "permissions",
+      object: "orders:refund",
+      relation: "granted",
+      subject: "user-1",
+    });
+    const access = new KetoAccessControl({
+      readUrl: "http://keto:4466",
+      fetch: keto.fetch,
+      logger,
+    });
+    expect(await access.authorize(inTenant("user-1", "tenant-a"), "orders:refund")).toBe(false);
+  });
+
+  it("objectFor and the operator scripts' qualify() build the same object", async () => {
+    const keto = fakeKeto();
+    const seen: string[] = [];
+    const spy: HttpFetch = async (url, init) => {
+      seen.push(new URL(url).searchParams.get("object") ?? "");
+      return keto.fetch(url, init);
+    };
+    await new KetoAccessControl({
+      readUrl: "http://keto:4466",
+      fetch: spy,
+      logger,
+    }).authorize(inTenant("user-1", "tenant-a"), "orders:refund");
+    expect(seen).toEqual([qualify("tenant-a", "orders:refund")]);
   });
 });

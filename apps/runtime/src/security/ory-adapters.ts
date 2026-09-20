@@ -17,13 +17,17 @@ import type {
  * `@platform/auth` client (no duplicate Ory client, no duplicate tuple store).
  */
 
-/** Live Keto ReBAC check — the enforcement-aligned {@link RelationshipCheckPort} (fail-closed in Keto). */
+/**
+ * Live Keto ReBAC check — the enforcement-aligned {@link RelationshipCheckPort} (fail-closed in Keto).
+ * It reads the tuples `RelationWrittenConsumer` writes, so it checks the tenant-qualified object
+ * `tenant/<tenantId>/<object>` (G-70) — the same shape as `KetoAccessControl`'s grants.
+ */
 export class KetoRelationshipCheck implements RelationshipCheckPort {
   constructor(private readonly keto: KetoRelationshipClient) {}
-  async check(query: RelationQuery): Promise<boolean> {
+  async check(query: RelationQuery, tenantId: string): Promise<boolean> {
     return this.keto.check({
       namespace: query.namespace,
-      object: query.object,
+      object: `tenant/${tenantId}/${query.object}`,
       relation: query.relation,
       subjectId: query.subjectId,
     });

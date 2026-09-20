@@ -45,17 +45,15 @@ export interface KetoOptions {
  * subject is a direct id or a subject-set membership depending on `subjectConvention` (see that
  * option's doc). Roles and hierarchy are Keto **subject-sets** (role tuples pointing at
  * permission objects) — expansion happens inside Keto, which is exactly the ReBAC-ready shape;
- * ABAC/tenant-scoped objects extend the tuple object (`tenant/<id>/<permission>`) when
- * per-tenant grants arrive with the Tenancy context (G-23/G-38) — no port change either way.
+ * tenant-scoped objects extend the tuple object (`tenant/<id>/<permission>`) — no port change.
  *
- * **Tenant scoping is NOT YET ENFORCED HERE (G-70).** The principal now carries its tenant
- * (`Principal.tenantId`, ADR-0015) and every decision below is made "for" that tenant, but the
- * tuples that exist today (seeds, `relation-sync.consumer.ts`) are `(permissions, <bare
- * permission>, granted, <principal id>)`: they carry no tenant, so a grant is still global per
- * principal. `objectFor` is the single place the object is built; it returns the bare permission
- * until the tuples are rewritten (dual-write, switch reads, delete bare), when it becomes
- * `tenant/<tenantId>/<permission>`. Passing the tenant changes no Keto decision before then.
- * The decision CACHE below is tenant-scoped already.
+ * **Tenant scoping (G-70).** The principal carries its tenant (`Principal.tenantId`, ADR-0015) and the
+ * check is made against the tenant-qualified object `tenant/<tenantId>/<permission>`, so a grant made
+ * for one tenant does not allow the same principal in another. `objectFor` is the single place the
+ * object is built. The tuples must exist in that shape: every writer dual-writes them and the operator
+ * migration (scripts/ops/ory-keto-*.mjs, docs/operations/KETO_TENANT_MIGRATION.md) backfills the
+ * existing bare ones — a principal whose grant has no qualified twin is DENIED, which is the point.
+ * The decision CACHE below is tenant-scoped too.
  *
  * Fail-closed: any non-200 or transport failure denies (never throws into the guard) — an
  * authorization outage must not become an authorization bypass.
@@ -68,13 +66,13 @@ export class KetoAccessControl implements AccessControl {
   }
 
   /**
-   * The Keto `object` a permission is checked against for this principal's tenant. Today: the bare
-   * permission (tenant-blind, G-70). The principal is threaded here on purpose so the switch to
-   * `tenant/<tenantId>/<permission>` is a one-line change once the tuples are qualified; do not read
-   * the parameter's presence as enforcement.
+   * The Keto `object` a permission is checked against for this principal's tenant:
+   * `tenant/<tenantId>/<permission>`. Must stay identical to `qualify` in
+   * scripts/ops/keto-tenant-tuples.mjs and to the consumer's `tenantQualifiedTuple` (a test pins the
+   * first). The subject stays the bare principal id — Kratos ids are globally unique.
    */
-  private objectFor(_principal: Principal, permission: Permission): string {
-    return permission;
+  private objectFor(principal: Principal, permission: Permission): string {
+    return `tenant/${principal.tenantId}/${permission}`;
   }
 
   async authorize(principal: Principal, permission: Permission): Promise<boolean> {
