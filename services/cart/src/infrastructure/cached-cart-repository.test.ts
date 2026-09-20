@@ -171,3 +171,34 @@ describe("CachedCartRepository", () => {
     expect([...cache.store.keys()]).toEqual([`tenant:tenant-a:cart:${cart.id.toString()}`]);
   });
 });
+
+// ── T10.5 case 5: a cache entry populated by A is not served to B ────────────────────────────────
+// The Redis prefix (`morbeh:`) is global, so isolation rests entirely on THIS key carrying the
+// tenant. Layer: application cache key, one shared keyspace for both tenants (no RLS involved).
+describe("CachedCartRepository tenant isolation (T10.5, cache layer)", () => {
+  it("B never reads A's cached cart, and the same cart id caches separately per tenant", async () => {
+    const inner = trackingInner();
+    const cache = fakeCache();
+    const repo = new CachedCartRepository({ inner, cache });
+    const cart = newCart();
+    await repo.save(cart, "tenant-a");
+    await repo.findById(cart.id.toString(), "tenant-a"); // populates A's entry
+    expect(cache.store.size).toBe(1);
+
+    // B asks for A's cart id: a miss in the shared keyspace must NOT be satisfied by A's entry.
+    expect(await repo.findById(cart.id.toString(), "tenant-b")).toBeNull();
+    expect(cache.store.size).toBe(1); // nothing was cached for B (there is nothing to cache)
+
+    // Same id under B with different content: each tenant gets its own entry and its own cart.
+    const bCart = Cart.create(cart.id, "customer-b", "session-b", "USD");
+    await repo.save(bCart, "tenant-b");
+    const seenByB = await repo.findById(cart.id.toString(), "tenant-b");
+    const seenByA = await repo.findById(cart.id.toString(), "tenant-a");
+    expect(seenByB?.items).toHaveLength(0);
+    expect(seenByA?.items).toHaveLength(1);
+    expect(cache.store.size).toBe(2);
+    expect(
+      [...cache.store.keys()].every((k) => k.includes("tenant-a") || k.includes("tenant-b")),
+    ).toBe(true);
+  });
+});
