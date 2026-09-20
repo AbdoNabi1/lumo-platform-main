@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { Money, UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
-import { assertWriteTimeTenant } from "@platform/messaging/testing";
+import {
+  assertWriteTimeTenant,
+  tenantRowIsolationCases,
+  type TenantRowStore,
+} from "@platform/messaging/testing";
 import { Order } from "../domain/order";
 import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
@@ -18,14 +22,14 @@ function unwrap<T>(result: { ok: boolean; value?: T }): T {
   return result.value;
 }
 
-function placeOrder(id: string): Order {
+function placeOrder(id: string, customerRef = "customer-1"): Order {
   const snapshot = unwrap(
     ProductSnapshot.create("product-1", "Toy", unwrap(Money.create(500, "USD"))),
   );
   return Order.place(
     UniqueEntityId.from(id),
     unwrap(OrderNumber.create("ORD-1")),
-    "customer-1",
+    customerRef,
     "USD",
     [OrderItem.create(UniqueEntityId.from("item-1"), snapshot, 1)],
     unwrap(AddressSnapshot.create("1 Main St", "Town", "12345", "US")),
@@ -51,15 +55,6 @@ function repository(outbox?: OutboxWriter) {
 }
 
 describe("orders tenant isolation (ADR-0014)", () => {
-  it("two tenants sharing one repository and an identical order id never see each other's orders", async () => {
-    const repo = repository();
-    await repo.save(placeOrder("order-1"), "tenant-a");
-
-    expect(await repo.findById("order-1", "tenant-b")).toBeNull();
-    expect((await repo.list({ first: 10 }, "tenant-b")).items).toHaveLength(0);
-    expect((await repo.list({ first: 10 }, "tenant-a")).items).toHaveLength(1);
-  });
-
   it("the offline reservation/shipment stubs dedupe per (tenant, order), not per order alone", async () => {
     const inventory = new InMemoryInventoryAdapter();
     const shipping = new InMemoryShippingAdapter();
@@ -80,4 +75,30 @@ describe("orders tenant isolation (ADR-0014)", () => {
       await repository(outbox).save(placeOrder("order-1"), tenantId);
     });
   });
+});
+
+// ── T10.5 row isolation (shared harness) ─────────────────────────────────────────────────────────
+// Orders: money and PII. In-memory adapter ONLY — the Prisma repository reads through `include`
+// (items/events relations) which the fake-prisma does not model, so its tenant scoping is covered
+// solely by the DATABASE_URL_TEST-gated integration suite (which does not run in CI here). That is
+// a stated coverage limit of this case, recorded in the gap register.
+function orderStore(): TenantRowStore {
+  const repo = repository();
+  return {
+    insert: (tenantId, key, marker) => repo.save(placeOrder(key, marker), tenantId),
+    find: async (tenantId, key) => (await repo.findById(key, tenantId))?.customerRef ?? null,
+    list: async (tenantId) =>
+      (await repo.list({ first: 100 }, tenantId)).items.map((order) => order.customerRef),
+    // The attacker addresses the victim's order id under its own tenant.
+    update: (tenantId, key, marker) => repo.save(placeOrder(key, marker), tenantId),
+  };
+}
+
+describe("orders tenant isolation via the shared harness (T10.5)", () => {
+  for (const c of tenantRowIsolationCases({
+    context: "orders/order",
+    layer: "in-memory adapter (Prisma: integration suite only)",
+    make: orderStore,
+  }))
+    it(c.name, c.run);
 });

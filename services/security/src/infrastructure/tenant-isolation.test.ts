@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { TransactionClient } from "@platform/db";
+import { createFakePrisma } from "@platform/db/testing";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
-import { assertWriteTimeTenant } from "@platform/messaging/testing";
+import {
+  assertWriteTimeTenant,
+  CapturingOutboxWriter,
+  tenantRowIsolationCases,
+  type TenantRowIsolationFixture,
+  type TenantRowStore,
+} from "@platform/messaging/testing";
 import { Principal } from "../domain/principal";
+import type { PrincipalDirectory, PrincipalRepository } from "../domain/repositories";
 import { InMemoryConsentProjectionStore, ProjectionConsentPort } from "./consent-projection";
 import { InMemoryIdentityProjectionStore } from "./identity-projection";
 import {
@@ -41,16 +49,6 @@ function newPrincipal(externalId: string): Principal {
 }
 
 describe("security tenant isolation (ADR-0014)", () => {
-  it("two tenants sharing one repository and an identical external id never see each other's principals", async () => {
-    const repo = new InMemoryPrincipalRepository(inMemoryRepos());
-    await repo.save(newPrincipal("svc-billing"), "tenant-a");
-
-    expect(await repo.findByExternalId("svc-billing", "tenant-b")).toBeNull();
-    expect(await repo.findById("p-svc-billing", "tenant-b")).toBeNull();
-    expect(await repo.listAll("tenant-b")).toHaveLength(0);
-    expect(await repo.findByExternalId("svc-billing", "tenant-a")).not.toBeNull();
-  });
-
   it("does not let one tenant's role key or audit chain leak into another's", async () => {
     const roles = new InMemoryRoleRepository(inMemoryRepos());
     const { Role } = await import("../domain/role");
@@ -115,4 +113,69 @@ describe("security tenant isolation (ADR-0014)", () => {
       await repo.save(newPrincipal("svc-1"), tenantId, tx);
     });
   });
+});
+
+// ── T10.5 row isolation (shared harness) ─────────────────────────────────────────────────────────
+// Principals are the identity the authorization model is built on: a cross-tenant leak here is a
+// cross-tenant identity leak. Both adapters run; the Prisma one over a fake that applies `where`
+// literally, so it cannot pass because of RLS.
+function principalStore(
+  repo: PrincipalRepository & PrincipalDirectory,
+  tx: () => unknown,
+): TenantRowStore {
+  const forged = (key: string, marker: string) =>
+    Principal.reconstitute(UniqueEntityId.from(`p-${key}`), {
+      externalId: key,
+      kind: "service_account",
+      displayName: marker,
+      subjectRef: null,
+      tenantRef: null,
+      status: "active",
+      attributes: {},
+      version: 1,
+    });
+  return {
+    insert: async (tenantId, key, marker) => {
+      const principal = Principal.register(
+        UniqueEntityId.from(`p-${key}`),
+        { externalId: key, kind: "service_account", displayName: marker },
+        "evt-1",
+        new Date(0),
+      );
+      await repo.save(principal, tenantId, tx());
+    },
+    find: async (tenantId, key) =>
+      (await repo.findByExternalId(key, tenantId, tx()))?.displayName ?? null,
+    list: async (tenantId) =>
+      (await repo.listAll(tenantId, tx())).map((principal) => principal.displayName),
+    // Forged aggregate: the victim's id, submitted under the attacker's tenant.
+    update: (tenantId, key, marker) => repo.save(forged(key, marker), tenantId, tx()),
+  };
+}
+
+describe("security principal tenant isolation (T10.5)", () => {
+  const fixtures: TenantRowIsolationFixture[] = [
+    {
+      context: "security/principal",
+      layer: "in-memory adapter",
+      make: () => principalStore(new InMemoryPrincipalRepository(inMemoryRepos()), () => undefined),
+    },
+    {
+      context: "security/principal",
+      layer: "prisma repository over fake-prisma (app-layer where, no RLS)",
+      make: () => {
+        const fake = createFakePrisma();
+        return principalStore(
+          new PrismaPrincipalRepository({
+            prisma: fake.database,
+            outbox: new CapturingOutboxWriter() as never,
+            context,
+          }),
+          () => fake.database,
+        );
+      },
+    },
+  ];
+  for (const fixture of fixtures)
+    for (const c of tenantRowIsolationCases(fixture)) it(c.name, c.run);
 });
