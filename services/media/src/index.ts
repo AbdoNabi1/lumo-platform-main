@@ -18,6 +18,7 @@ export { Folder } from "./domain/folder";
 export { MediaAsset } from "./domain/media-asset";
 export type { FolderRepository, MediaAssetRepository } from "./domain/library-repositories";
 export type { ObjectStoragePort } from "./application/object-storage.port";
+export type { LegacyStorageKeys, StorageKeyPolicy } from "./application/storage-key-ownership";
 export {
   InMemoryObjectStorage,
   StorageServiceObjectStorage,

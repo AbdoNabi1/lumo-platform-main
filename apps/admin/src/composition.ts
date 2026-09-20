@@ -42,7 +42,7 @@ import { wireInventory, type InventoryController } from "@platform/inventory";
 import { wireLicensing, type FinanceLedgerPort, type PaymentsPort } from "@platform/licensing";
 import { wireLocalization } from "@platform/localization";
 import { wireLoyalty, type LoyaltyController } from "@platform/loyalty";
-import { wireMediaLibrary, type ObjectStoragePort } from "@platform/media";
+import { wireMediaLibrary, type LegacyStorageKeys, type ObjectStoragePort } from "@platform/media";
 import { wireNotifications } from "@platform/notifications";
 import {
   wireOrders,
@@ -233,6 +233,12 @@ export interface AdminWiringDeps {
    * resolved adapter is still that in-memory stub.
    */
   readonly objectStorage?: ObjectStoragePort;
+  /**
+   * Whether the Media Library may still sign an existing asset whose key is not tenant-prefixed
+   * (G-68). Default `"refuse"`; `createAdminHttpApi` passes `"allow"` under `TENANT_MODE=single` so
+   * existing rows keep working, and `"refuse"` under multi. Registration is strict either way.
+   */
+  readonly legacyStorageKeys?: LegacyStorageKeys;
   /**
    * Production PSP adapter for Payments (C2-2). Passed straight through to `wirePayments(deps)`
    * below; absent ⇒ Payments' own `InMemoryPaymentProvider` (`verifyWebhook()` always `true`, every

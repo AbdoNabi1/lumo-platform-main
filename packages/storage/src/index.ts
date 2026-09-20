@@ -11,7 +11,10 @@ export { createStorageHealthCheck } from "./health";
 export { S3ObjectStorage } from "./s3-object-storage";
 export {
   StorageKeyFactory,
+  parseStorageKey,
   resolveBucket,
+  storageKeyBelongsToTenant,
+  type ParsedStorageKey,
   type BucketPurpose,
   type BuildKeyInput,
   type StorageKeyFactoryDeps,

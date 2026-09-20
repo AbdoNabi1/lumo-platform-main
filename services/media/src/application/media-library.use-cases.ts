@@ -8,6 +8,12 @@ import { Folder } from "../domain/folder";
 import type { FolderRepository, MediaAssetRepository } from "../domain/library-repositories";
 import { MediaAsset } from "../domain/media-asset";
 import type { ObjectStoragePort } from "./object-storage.port";
+import {
+  checkRegistrableKey,
+  checkSignableKey,
+  type LegacyStorageKeys,
+  type StorageKeyPolicy,
+} from "./storage-key-ownership";
 
 export interface MediaLibraryDeps {
   readonly folders: FolderRepository;
@@ -100,6 +106,7 @@ export interface MediaAssetIdOutput {
 
 export interface RegisterMediaAssetDeps extends MediaLibraryDeps {
   readonly objectStorage: ObjectStoragePort;
+  readonly keyPolicy: StorageKeyPolicy;
 }
 
 /** Registers a media asset in the library — verifies object existence via `ObjectStoragePort` first. */
@@ -117,6 +124,11 @@ export class RegisterMediaAsset implements UseCase<
   async execute(input: RegisterMediaAssetInput): Promise<Result<MediaAssetIdOutput, DomainError>> {
     const name = Guard.againstEmpty(input.name, "name");
     if (!name.ok) return err(name.error);
+
+    // Ownership BEFORE existence: a foreign key must be indistinguishable from a malformed one, and
+    // the shared bucket must never be probed with a key this tenant does not own (G-68 / F-22).
+    const notOwned = checkRegistrableKey(this.deps.keyPolicy, input.tenantId, input.storageKey);
+    if (notOwned !== null) return err(notOwned);
 
     const exists = await this.deps.objectStorage.exists(input.storageKey);
     if (!exists) {
@@ -186,6 +198,9 @@ export interface DownloadUrlOutput {
 
 export interface GetDownloadUrlDeps extends MediaLibraryDeps {
   readonly objectStorage: ObjectStoragePort;
+  readonly keyPolicy: StorageKeyPolicy;
+  /** Policy for rows holding an unprefixed legacy key. Default `"refuse"` — see {@link LegacyStorageKeys}. */
+  readonly legacyStorageKeys?: LegacyStorageKeys;
 }
 
 /** Issues a download URL for a media asset through `ObjectStoragePort`. */
@@ -203,6 +218,13 @@ export class GetDownloadUrl implements UseCase<
   async execute(input: GetDownloadUrlInput): Promise<Result<DownloadUrlOutput, DomainError>> {
     const asset = await this.deps.mediaAssets.findById(input.mediaAssetId, input.tenantId);
     if (asset === null) return err(new NotFoundError("Media asset not found"));
+    const foreign = checkSignableKey(
+      this.deps.keyPolicy,
+      input.tenantId,
+      asset.storageKey,
+      this.deps.legacyStorageKeys ?? "refuse",
+    );
+    if (foreign !== null) return err(foreign);
     const url = await this.deps.objectStorage.getDownloadUrl(asset.storageKey);
     return ok({ url });
   }

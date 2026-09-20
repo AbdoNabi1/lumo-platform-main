@@ -14,6 +14,7 @@ import {
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { InMemoryObjectStorage } from "../infrastructure/object-storage-adapters";
 import { MediaLibraryEventTranslator } from "../infrastructure/media-library-event-translator";
+import { TenantPrefixedKeyPolicy } from "../infrastructure/tenant-prefixed-key-policy";
 
 function sequentialIds(): IdGenerator {
   let counter = 0;
@@ -37,7 +38,8 @@ function harness() {
   const unitOfWork = new InMemoryUnitOfWork();
   const idGenerator = sequentialIds();
   const objectStorage = new InMemoryObjectStorage();
-  return { folders, mediaAssets, unitOfWork, idGenerator, clock, objectStorage };
+  const keyPolicy = new TenantPrefixedKeyPolicy();
+  return { folders, mediaAssets, unitOfWork, idGenerator, clock, objectStorage, keyPolicy };
 }
 
 describe("Media Library read use-cases (Phase 4 T4.14)", () => {
@@ -75,7 +77,7 @@ describe("Media Library read use-cases (Phase 4 T4.14)", () => {
     const h = harness();
     const created = await new RegisterMediaAsset(h).execute({
       name: "hero.png",
-      storageKey: "media/hero.png",
+      storageKey: "tenants/tenant-1/product-images/2026/09/hero.png",
       tenantId: "tenant-1",
     });
     expect(created.ok).toBe(true);

@@ -30,7 +30,7 @@ describe("media library (end to end)", () => {
 
     const asset = await app.mediaLibrary.registerMediaAsset({
       name: "hero.png",
-      storageKey: "media/hero.png",
+      storageKey: "tenants/tenant-local/product-images/2026/09/hero.png",
       folderRef: folderId,
       tenantId: "tenant-local",
     });
@@ -42,7 +42,9 @@ describe("media library (end to end)", () => {
       tenantId: "tenant-local",
     });
     expect(url.status).toBe(200);
-    expect((url.body as { url: string }).url).toContain("media/hero.png");
+    expect((url.body as { url: string }).url).toContain(
+      "tenants/tenant-local/product-images/2026/09/hero.png",
+    );
 
     expect(await app.drainOutbox()).toBeGreaterThan(0);
     expect(app.deliveredEventTypes).toContain("media.folder.created");

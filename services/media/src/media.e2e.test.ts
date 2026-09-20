@@ -23,7 +23,7 @@ describe("media (end to end)", () => {
     const app = wire();
 
     const response = await app.assets.register({
-      storageKey: "uploads/a.png",
+      storageKey: "tenants/tenant-local/product-images/2026/09/a.png",
       contentType: "image/png",
       tenantId: "tenant-local",
     });
@@ -36,7 +36,7 @@ describe("media (end to end)", () => {
   it("rejects an invalid content type at the boundary (422)", async () => {
     const app = wire();
     const response = await app.assets.register({
-      storageKey: "uploads/a.png",
+      storageKey: "tenants/tenant-local/product-images/2026/09/a.png",
       contentType: "not-a-mime",
       tenantId: "tenant-local",
     });

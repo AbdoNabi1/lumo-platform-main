@@ -8,6 +8,7 @@ import { Asset } from "../domain/asset";
 import type { AssetRepository } from "../domain/asset-repository";
 import { ContentType } from "../domain/value-objects/content-type";
 import { StorageKey } from "../domain/value-objects/storage-key";
+import { checkRegistrableKey, type StorageKeyPolicy } from "./storage-key-ownership";
 
 export interface RegisterAssetInput {
   readonly storageKey: string;
@@ -25,6 +26,7 @@ export interface RegisterAssetDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  readonly keyPolicy: StorageKeyPolicy;
 }
 
 /** Registers an asset's metadata and emits `media.asset_ready`. */
@@ -42,6 +44,14 @@ export class RegisterAsset implements UseCase<
   async execute(input: RegisterAssetInput): Promise<Result<RegisterAssetOutput, DomainError>> {
     const storageKey = StorageKey.create(input.storageKey);
     if (!storageKey.ok) return err(storageKey.error);
+    // Same ownership rule as the Media Library door (G-68 / F-22): this path takes a client-supplied
+    // key too, and today nothing checks it exists either.
+    const notOwned = checkRegistrableKey(
+      this.deps.keyPolicy,
+      input.tenantId,
+      storageKey.value.value,
+    );
+    if (notOwned !== null) return err(notOwned);
     const contentType = ContentType.create(input.contentType);
     if (!contentType.ok) return err(contentType.error);
 

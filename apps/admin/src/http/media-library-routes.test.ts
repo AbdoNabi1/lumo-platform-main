@@ -102,7 +102,7 @@ describe("media library routes — read side (Phase 4 T4.14)", () => {
         byPathAndMethod(routes, "POST", "/media/assets"),
         {},
         {},
-        { name: "hero.png", storageKey: "media/hero.png" },
+        { name: "hero.png", storageKey: "tenants/tenant-local/product-images/2026/09/hero.png" },
       ),
       "register media asset",
     );
@@ -118,7 +118,7 @@ describe("media library routes — read side (Phase 4 T4.14)", () => {
     expect(get.body).toMatchObject({
       id: created.mediaAssetId,
       name: "hero.png",
-      storageKey: "media/hero.png",
+      storageKey: "tenants/tenant-local/product-images/2026/09/hero.png",
       status: "active",
     });
 

@@ -23,12 +23,14 @@ import {
   RegisterMediaAsset,
 } from "./application/media-library.use-cases";
 import type { ObjectStoragePort } from "./application/object-storage.port";
+import type { LegacyStorageKeys } from "./application/storage-key-ownership";
 import type { FolderRepository, MediaAssetRepository } from "./domain/library-repositories";
 import {
   InMemoryFolderRepository,
   InMemoryMediaAssetRepository,
 } from "./infrastructure/in-memory-library-repositories";
 import { InMemoryObjectStorage } from "./infrastructure/object-storage-adapters";
+import { TenantPrefixedKeyPolicy } from "./infrastructure/tenant-prefixed-key-policy";
 import {
   MEDIA_LIBRARY_PUBLISHED_EVENTS,
   MediaLibraryEventTranslator,
@@ -45,6 +47,12 @@ export interface MediaLibraryWiringDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   readonly objectStorage?: ObjectStoragePort;
+  /**
+   * What `getDownloadUrl` does with an existing row whose key is not in the tenant-prefixed shape.
+   * Default `"refuse"`. The admin composition passes `"allow"` only under `TENANT_MODE=single` — the
+   * explicit, recorded legacy allowance (G-68). Registration ignores it: it never accepts legacy keys.
+   */
+  readonly legacyStorageKeys?: LegacyStorageKeys;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaFolderRepository` +
    * `PrismaMediaAssetRepository` + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. `wireMedia`
@@ -74,6 +82,7 @@ function buildController(
   deps: MediaLibraryWiringDeps,
 ): MediaLibraryController {
   const objectStorage = deps.objectStorage ?? new InMemoryObjectStorage();
+  const keyPolicy = new TenantPrefixedKeyPolicy();
   const libraryDeps = {
     ...repos,
     unitOfWork,
@@ -84,9 +93,16 @@ function buildController(
   return new MediaLibraryController({
     createFolder: new CreateFolder(libraryDeps),
     archiveFolder: new ArchiveFolder(libraryDeps),
-    registerMediaAsset: new RegisterMediaAsset({ ...libraryDeps, objectStorage }),
+    registerMediaAsset: new RegisterMediaAsset({ ...libraryDeps, objectStorage, keyPolicy }),
     archiveMediaAsset: new ArchiveMediaAsset(libraryDeps),
-    getDownloadUrl: new GetDownloadUrl({ ...libraryDeps, objectStorage }),
+    getDownloadUrl: new GetDownloadUrl({
+      ...libraryDeps,
+      objectStorage,
+      keyPolicy,
+      ...(deps.legacyStorageKeys === undefined
+        ? {}
+        : { legacyStorageKeys: deps.legacyStorageKeys }),
+    }),
     listFolders: new ListFolders({ folders: repos.folders }),
     getFolder: new GetFolder({ folders: repos.folders }),
     listMediaAssets: new ListMediaAssets({ mediaAssets: repos.mediaAssets }),

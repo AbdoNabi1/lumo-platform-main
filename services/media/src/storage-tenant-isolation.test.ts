@@ -5,18 +5,14 @@ import { wireMediaLibrary } from "./media-library.composition";
 import type { ObjectStoragePort } from "./application/object-storage.port";
 
 /**
- * G-68 (T10.5 case 4, gap F-22) — "a storage key written by A is unreachable from B". OPEN.
+ * G-68 (T10.5 case 4, gap F-22) — "a storage key written by A is unreachable from B". CLOSED.
  *
  * The bucket is ONE namespace shared by every tenant (tenants are key PREFIXES, never buckets), so
- * isolation must come from the application refusing a key outside the caller's prefix. It does not:
- * `RegisterMediaAsset` only checks that the key exists, and `GetDownloadUrl` signs whatever the asset
- * row holds. Fixing it needs server-side key minting (`StorageKeyFactory` has no caller today) and a
- * legacy-key policy — its own task, T10.7.
- *
- * The two attack cases are `it.fails()`: the suite stays green while the gap is executable and visible,
- * and the day a fix lands they go red — flip them to `it()`. `it.fails` passes for ANY failure, so each
- * case is kept to a single assertion on the leak, and the control below (a plain `it()`) proves the
- * wiring itself works, so a broken fixture cannot masquerade as a reproduced leak.
+ * isolation must come from the application refusing a key outside the caller's prefix. Before the fix
+ * it did not: `RegisterMediaAsset` only checked that the key exists, and `GetDownloadUrl` signed
+ * whatever the asset row held. Both doors now check the key against the caller's tenant
+ * (`storageKeyBelongsToTenant`, `@platform/storage`, the exact inverse of `StorageKeyFactory`). The
+ * two attack cases below were `it.fails()` while the gap was open and are plain `it()` now.
  */
 const clock: Clock = { now: () => new Date("2026-09-20T00:00:00.000Z") };
 const ids = (): IdGenerator => {
@@ -40,7 +36,7 @@ function wire() {
   });
 }
 
-describe("media storage keys vs tenant isolation (G-68, open)", () => {
+describe("media storage keys vs tenant isolation (G-68, closed)", () => {
   it("control: A registers a key under its own prefix and gets a URL", async () => {
     const app = wire();
     const registered = await app.mediaLibrary.registerMediaAsset({
@@ -54,7 +50,7 @@ describe("media storage keys vs tenant isolation (G-68, open)", () => {
     expect((url.body as { url?: string }).url).toContain("tenants/tenant-a/");
   });
 
-  it.fails("A cannot register B's object key as its own asset", async () => {
+  it("A cannot register B's object key as its own asset", async () => {
     const app = wire();
     const forged = await app.mediaLibrary.registerMediaAsset({
       name: "stolen.png",
@@ -64,20 +60,17 @@ describe("media storage keys vs tenant isolation (G-68, open)", () => {
     expect(forged.status).toBeGreaterThanOrEqual(400);
   });
 
-  it.fails(
-    "A cannot mint a signed download URL for B's object via a registered asset",
-    async () => {
-      const app = wire();
-      const forged = await app.mediaLibrary.registerMediaAsset({
-        name: "stolen.png",
-        storageKey: B_KEY,
-        tenantId: "tenant-a",
-      });
-      // A refusal at registration would satisfy the property; today it is 201, so we go on to sign.
-      if (forged.status >= 400) return;
-      const id = (forged.body as { mediaAssetId: string }).mediaAssetId;
-      const url = await app.mediaLibrary.getDownloadUrl({ mediaAssetId: id, tenantId: "tenant-a" });
-      expect((url.body as { url?: string }).url ?? "").not.toContain(B_KEY);
-    },
-  );
+  it("A cannot mint a signed download URL for B's object via a registered asset", async () => {
+    const app = wire();
+    const forged = await app.mediaLibrary.registerMediaAsset({
+      name: "stolen.png",
+      storageKey: B_KEY,
+      tenantId: "tenant-a",
+    });
+    // A refusal at registration would satisfy the property; today it is 201, so we go on to sign.
+    if (forged.status >= 400) return;
+    const id = (forged.body as { mediaAssetId: string }).mediaAssetId;
+    const url = await app.mediaLibrary.getDownloadUrl({ mediaAssetId: id, tenantId: "tenant-a" });
+    expect((url.body as { url?: string }).url ?? "").not.toContain(B_KEY);
+  });
 });

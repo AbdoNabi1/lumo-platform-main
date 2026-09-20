@@ -75,7 +75,12 @@ export function singleTenantGuardedResolver(pinnedTenantId: string | undefined):
  * inject fakes — the transport cannot tell the difference, which is the point.
  */
 export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyInstance> {
-  const admin = wireAdmin(deps);
+  // G-68: unprefixed legacy storage keys stay signable only where there is one tenant. Explicit, and
+  // overridable by the caller, never inferred from data.
+  const admin = wireAdmin({
+    ...deps,
+    legacyStorageKeys: deps.legacyStorageKeys ?? (deps.tenantMode === "multi" ? "refuse" : "allow"),
+  });
   const guard = new AdminGuard({
     accessControl: deps.accessControl ?? new AllowAllAccessControl(),
     auditTrail: deps.auditTrail ?? new InMemoryAuditTrail(),
