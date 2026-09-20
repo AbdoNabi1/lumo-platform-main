@@ -1,5 +1,9 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
+## Status — 2026-09-20 (G-68 storage keys closed; one of two blockers gone — multi is STILL forbidden)
+
+Tenant A can no longer register tenant B's storage key or obtain a signed URL for it: registration and signing both check the key against the caller's tenant (**G-68 / F-22 closed**; the client still names the key, validated not minted — **G-71**; unprefixed legacy rows are signable only under `TENANT_MODE=single` and must be counted and migrated before multi is ever enabled). **This is one of two blockers, and closing it does not make multi any safer to enable in any operational sense:** **G-70** — the Keto tuples carry no tenant, so a grant is still global per principal — is open, Critical, and needs a production rewrite in the live Ory Network project (dual-write, switch reads, delete bare, with a count gate). **`TENANT_MODE=multi` must not be enabled** until G-70 closes; the worker still refuses multi (G-64). Nothing enables it anywhere.
+
 ## Status — 2026-09-20 (G-67 cache and audit closed; multi mode is NOT closer to safe)
 
 `Principal` now carries the request's tenant (ADR-0015, shape B): the authorization decision cache is tenant-scoped and the audit record says which tenant a decision was for. **This does not make `TENANT_MODE=multi` safe, and it is not closer to safe in any way that matters for enabling it.** The Keto tuples still carry no tenant, so a grant is still global per principal (**G-70**, Critical under multi; fixing it rewrites tuples in the live Ory Network project — a production data migration, decided as dual-write, switch reads, delete bare, with a bare-vs-qualified count gate before the delete) and **G-68** (tenant A can register tenant B's storage key and get a signed URL) is open. Both are held executable as `it.fails()` tests. **`TENANT_MODE=multi` must not be enabled** until G-70 and G-68 close; the worker still refuses multi (G-64). Nothing enables it anywhere.
@@ -308,7 +312,7 @@ F-05, F-13) are **not** a separate WP in this roadmap. Here is where each one ac
 
 - **F-21** (ClickHouse tenant scoping) — moot until `WP-3` exists; closed by construction per §2.
   Re-open only if `WP-3`'s delivered schema does _not_ lead with `tenant_id`.
-- **F-22** (object-storage key scoping) — `WP-10`'s T10.7 ("cross-cutting sweep") already names
+- **F-22** (object-storage key scoping) — **closed 2026-09-20 as G-68** (media registration and signing check the key against the tenant). It was originally read as `WP-10`'s T10.7 ("cross-cutting sweep") already names
   "object-storage prefixes" as one of the singletons to re-key by tenant. Treat Morbeh's F-22 as
   the citation backing that line item; no separate audit task needed.
 - **F-23** (scheduler/job tenant propagation) — same T10.7 sweep names "the scheduler's jobs...
