@@ -338,92 +338,93 @@ from grant counts alone.
       Every non-uniform repository you find is worth a note in the ADR.
 
       **Done when (corrected 2026-09-18): no construction-time tenant pinning anywhere in the
-                                                                  converted context — repositories, adapters, ports and stores alike, Prisma or otherwise —
-                                                                  not "Prisma repositories converted."** The original, narrower wording let a context pass as
-                                                                  "done" while a non-Prisma store (`services/analytics`' `ClickHouseAnalyticsReadStore`) or a
-                                                                  non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`) still pinned
-                                                                  `tenantId` at construction — both found and fixed in the session that made this correction
-                                                                  (see the T10.7 inventory above for the sites still outstanding under the wider definition).
-                                                                  **Verification command is the T10.7 inventory's own repo-wide grep, not a `services/`-only
-                                                                  one** — the T10.3 sweep's original pattern (`grep ... packages apps services`, restricted in
-                                                                  practice to `services/*/src/infrastructure/prisma-*.ts`) would have missed
-                                                                  `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`, which pins its tenant via
-                                                                  `config.TENANT_DEFAULT_ID` with no `deps.tenantId`/`this.tenantId =` shape at all:
+                                                                          converted context — repositories, adapters, ports and stores alike, Prisma or otherwise —
+                                                                          not "Prisma repositories converted."** The original, narrower wording let a context pass as
+                                                                          "done" while a non-Prisma store (`services/analytics`' `ClickHouseAnalyticsReadStore`) or a
+                                                                          non-repository adapter (`services/feature-flags`' `AggregateFeatureFlags`) still pinned
+                                                                          `tenantId` at construction — both found and fixed in the session that made this correction
+                                                                          (see the T10.7 inventory above for the sites still outstanding under the wider definition).
+                                                                          **Verification command is the T10.7 inventory's own repo-wide grep, not a `services/`-only
+                                                                          one** — the T10.3 sweep's original pattern (`grep ... packages apps services`, restricted in
+                                                                          practice to `services/*/src/infrastructure/prisma-*.ts`) would have missed
+                                                                          `apps/runtime/src/consumers/finance-settlement.consumers.ts:134`, which pins its tenant via
+                                                                          `config.TENANT_DEFAULT_ID` with no `deps.tenantId`/`this.tenantId =` shape at all:
 
-                                                                  ```bash
-                                                                  grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
-                                                                    --include="*.ts" packages apps services | grep -v node_modules | grep -v "\.test\." | grep -v coverage
-                                                                  grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
-                                                                  ```
+                                                                          ```bash
+                                                                          grep -rnE "deps\.tenantId|this\.tenantId = |private readonly tenantId" \
+                                                                            --include="*.ts" packages apps services | grep -v node_modules | grep -v "\.test\." | grep -v coverage
+                                                                          grep -rn "TENANT_DEFAULT_ID" --include="*.ts" apps services packages | grep -v node_modules | grep -v "\.test\."
+                                                                          ```
 
-                                                                  A context is done when every match for it (repository, adapter, port, or store) is gone from
-                                                                  the first command's output, and every match for it in the second command's output is
-                                                                  classified (A)/(B)/(C)/(D) per the T10.7 inventory's own scheme — not merely absent from a
-                                                                  hand-picked list of Prisma files.
+                                                                          A context is done when every match for it (repository, adapter, port, or store) is gone from
+                                                                          the first command's output, and every match for it in the second command's output is
+                                                                          classified (A)/(B)/(C)/(D) per the T10.7 inventory's own scheme — not merely absent from a
+                                                                          hand-picked list of Prisma files.
 
-                                                                  **Event-envelope tenant (added 2026-09-18, ADR-0014 Amendment 7).** Repository-side
-                                                                  conversion is not complete until the tenant also reaches the outbox envelope. Two more
-                                                                  conditions, both required:
+                                                                          **Event-envelope tenant (added 2026-09-18, ADR-0014 Amendment 7).** Repository-side
+                                                                          conversion is not complete until the tenant also reaches the outbox envelope. Two more
+                                                                          conditions, both required:
 
-                                                                  - The context's suite calls `assertWriteTimeTenant` (`@platform/messaging/testing`,
-                                                                    `packages/messaging/src/testing/write-time-tenant.ts`) against its repository. It only
-                                                                    catches contexts that call it — a context that forgets passes silently — which is why the
-                                                                    next check exists.
-                                                                  - This exits 0 (no output). It lists every `outbox.write(...)` call in a converted context, package or app
-                                                                    whose argument list never mentions `tenantId`:
+                                                                          - The context's suite calls `assertWriteTimeTenant` (`@platform/messaging/testing`,
+                                                                            `packages/messaging/src/testing/write-time-tenant.ts`) against its repository. It only
+                                                                            catches contexts that call it — a context that forgets passes silently — which is why the
+                                                                            next check exists.
+                                                                          - This exits 0 (no output). It lists every `outbox.write(...)` call in a converted context, package or app
+                                                                            whose argument list never mentions `tenantId`:
 
-                                                                  ```bash
-                                                                  node scripts/dev/check-outbox-tenant.mjs
-                                                                  ```
+                                                                          ```bash
+                                                                          node scripts/dev/check-outbox-tenant.mjs
+                                                                          ```
 
-                                                                  "Converted" is derived: a context still building `rootEventContext(deps.idGenerator, tenantId)`
-                                                                  in its composition is skipped, so unconverted contexts cause no false positives and a
-                                                                  context joins the check the moment it converts. With no argument it scans `services`,
-                                                                  `packages` and `apps` (packages and apps are always checked; it first scanned `services` only and
-                                                                  missed `packages/usage`). Verified 2026-09-18 by breaking
-                                                                  `services/coupons/src/infrastructure/prisma-coupon-repository.ts:50` to pass the bare
-                                                                  singleton context: the command printed that site and exited 1; restored, it exits 0. It
-                                                                  does **not** catch a merge of the *wrong* tenant, a write hidden behind a helper, or a
-                                                                  context that never writes; `services/example` is exempt (template, no tenant).
+                                                                          "Converted" is derived: a context still building `rootEventContext(deps.idGenerator, tenantId)`
+                                                                          in its composition is skipped, so unconverted contexts cause no false positives and a
+                                                                          context joins the check the moment it converts. With no argument it scans `services`,
+                                                                          `packages` and `apps` (packages and apps are always checked; it first scanned `services` only and
+                                                                          missed `packages/usage`). Verified 2026-09-18 by breaking
+                                                                          `services/coupons/src/infrastructure/prisma-coupon-repository.ts:50` to pass the bare
+                                                                          singleton context: the command printed that site and exited 1; restored, it exits 0. It
+                                                                          does **not** catch a merge of the *wrong* tenant, a write hidden behind a helper, or a
+                                                                          context that never writes; `services/example` is exempt (template, no tenant).
 
 - [x] **T10.4 — Remove the boot refusal, and replace it with a real guard.** _Done 2026-09-19. **This makes `TENANT_MODE=multi` possible, not safe** — T10.5's adversarial isolation suite is what makes it safe, and it has not been written. Do not set `TENANT_MODE=multi` in any env file, manifest or CI job until it has._
       Deleting the `TENANT_MODE === "multi"` throw was the last step, not the first. What replaced it: - **API** — `createAdminHttpApi` (`apps/admin/src/http/server.ts`) resolves the tenant per request under multi (`claimTenantResolver` then `headerTenantResolver`; claim first so a forged header cannot override a verified tenant) and runs `assertMultiTenantReady` (`apps/admin/src/tenant-mode-guard.ts`) before serving. It (1) **probes the actual resolver chain** with two distinct tenants and with no tenant — a pinned resolver, an empty chain, or one that defaults all fail — and (2) **scans the composed graph** for any object still carrying a `tenantId` (ADR-0014 point 7 as widened by Amendment 6). All failed checks are named in one error, same shape as `apps/runtime/src/api.ts`'s `assertProduction*` guards. `resolveTenant` is untouched: still no default, unresolved is an error. - **The one exemption** — `services/tenancy`, ADR-0014 point 8f (a `Tenant` row is platform-operator data; the operator identity, 8a-8d, does not exist yet). `TENANT_PIN_EXEMPTIONS` is a frozen single-entry list keyed on the exact graph key `tenancy`; `tenant-mode-guard.test.ts` fails if it grows. Because tenancy stays pinned to `TENANT_DEFAULT_ID`, its routes are wrapped (`pinRoutesToTenant`) to 403 every other tenant. **Removing the exemption is the work item**: when 8a-8d land, tenancy reads the operator scope and the list becomes empty. - **Worker — still refuses multi.** Its event consumers take `TENANT_DEFAULT_ID` at construction (T10.7 class D, G-64; the envelope has no required `tenantId`). `assertWorkerTenantModeSupported` (`apps/runtime/src/tenant-mode-guard.ts`) refuses before anything is built and names each pinned consumer. This is a separate, still-failing check, not an exemption. - **`TENANT_DEFAULT_ID`** — all 28 references classified (14 code, 14 comment-only); `TENANT_DEFAULT_ID_SITES` has exactly one `request-path` site (`apps/runtime/src/api.ts`), and a test diffs the table against the source tree. - **Evidence** — the assertion against a deliberately pinned graph (`singleTenantGuardedResolver` + an `orders.repo.tenantId` pin), from `tenant-mode-guard.test.ts`:
 
       ```text
-                  admin: refusing to boot with TENANT_MODE=multi — 2 checks failed:
+                          admin: refusing to boot with TENANT_MODE=multi — 2 checks failed:
 
-                  1. resolver-chain: the configured chain is not a real per-request resolver — probe tenant "probe-tenant-a" resolved to null (a pinned resolver rejects or rewrites every tenant but its own); probe tenant "probe-tenant-b" resolved to null (a pinned resolver rejects or rewrites every tenant but its own).
+                          1. resolver-chain: the configured chain is not a real per-request resolver — probe tenant "probe-tenant-a" resolved to null (a pinned resolver rejects or rewrites every tenant but its own); probe tenant "probe-tenant-b" resolved to null (a pinned resolver rejects or rewrites every tenant but its own).
 
-                  2. construction-time-tenant: these objects in the composed graph still carry a tenantId fixed at construction (ADR-0014 point 7 / Amendment 6): orders.repo.tenantId.
-                  ```
+                          2. construction-time-tenant: these objects in the composed graph still carry a tenantId fixed at construction (ADR-0014 point 7 / Amendment 6): orders.repo.tenantId.
+                          ```
 
-                  And on the real graph with the exemption removed, only `tenancy.tenancy.deps.createTenant.deps.tenants.deps.tenantId` and `…deps.context.tenantId` are reported.
-                  **Known limits, stated plainly:** the graph scan sees object fields, not values closed over in lambdas; and a principal with no `tenant_id` claim still falls through to the `x-tenant-id` header — T10.5's forged-header case must decide whether that fallback survives. _(Resolved by T10.5: it does not survive — G-69.)_
+                          And on the real graph with the exemption removed, only `tenancy.tenancy.deps.createTenant.deps.tenants.deps.tenantId` and `…deps.context.tenantId` are reported.
+                          **Known limits, stated plainly:** the graph scan sees object fields, not values closed over in lambdas; and a principal with no `tenant_id` claim still falls through to the `x-tenant-id` header — T10.5's forged-header case must decide whether that fallback survives. _(Resolved by T10.5: it does not survive — G-69.)_
 
 - [x] **T10.5 — Tenant isolation tests. This is the deliverable.** _Done 2026-09-20 — and it found that multi mode is **not** safe: two open findings (G-67 authorization, G-68 storage keys) and one found-and-fixed (G-69, the header fallback)._
+      **Update 2026-09-20 (same day): G-67 was split.** The decision cache and audit record are fixed (ADR-0015: `Principal.tenantId`, tenant-scoped cache key, tenant on the audit record) and G-67 is closed. The Keto tuple model still carries no tenant — a grant is global per principal — and that is **G-70**, open, Critical under multi, held executable as an `it.fails()`. G-68 is unchanged and open, also `it.fails()`. Multi mode is not closer to safe: both must close first.
       Not a smoke test — an adversarial one. The suite is a shared harness plus per-context opt-ins, not one-offs.
 
       **Harness.** `tenantRowIsolationCases(fixture)` in `@platform/messaging/testing` (next to `assertWriteTimeTenant`, the convention it extends): a context adds ONE call and a small `TenantRowStore` adapter (insert / find / list / count / update / remove). It uses the *same key under two tenants* on purpose — distinct keys would let a tenant-blind lookup pass by accident. `createFakePrisma()` in `@platform/db/testing` runs the shipped Prisma repositories with every `where` applied literally (no RLS), so a dropped `tenantId` leaks exactly as it does under the `postgres` role. Both are self-tested: `tenant-isolation.test.ts` feeds the harness deliberately leaky stores (read, list, count, update, delete, key-overwrite) and requires each to be caught.
 
-              **Which layer each case tests — none can pass because of RLS** (inert under `postgres` until ADR-0014 Phase 2): 1 and 3 → application layer (adapter filter); 2 → transport; 4 → application (use case); 5 → application cache key; 6 and 7 → transport key construction.
+                      **Which layer each case tests — none can pass because of RLS** (inert under `postgres` until ADR-0014 Phase 2): 1 and 3 → application layer (adapter filter); 2 → transport; 4 → application (use case); 5 → application cache key; 6 and 7 → transport key construction.
 
-              | # | Case | Contexts | Result | How it was shown able to fail |
-              |---|------|----------|--------|-------------------------------|
-              | 1 | A cannot read / write / delete / **count** B's rows | finance (account: in-memory + Prisma; read-model store: in-memory + ClickHouse, count = `query().total`), security (principal: in-memory + Prisma), orders (in-memory) | **pass** | Production tenant filters removed one at a time (Prisma `where` in findById / list / updateMany, ClickHouse `WHERE tenant_id` in get and query, in-memory map keys) — each turned the suite red; the count case alone caught the ClickHouse `query()` break. Harness also self-tested. |
-              | 2 | Forged `x-tenant-id` vs verified claim | admin HTTP pipeline, real chain, multi mode | **fail → fixed (G-69)** | claim-less token + header returned 201 into tenant B; fixed by `publicHeaderTenantResolver`. |
-              | 3 | Event under A not consumed into B's projection | security identity + consent consumers | **pass, as-is (class D, G-64)** | Pins current behaviour: consumers write to their construction-time tenant and ignore `event.tenantId`, so the event reaches neither B nor A. Making a consumer write to B, or honour the envelope, each turns it red; it must be flipped deliberately when G-64 lands. |
-              | 4 | Storage key written by A unreachable from B | media | **FAIL — open (G-68)** | Reproduced: A registers B's key → 201 → receives a signed URL. Test held out of the tree (fails by design); not fixed — needs a key-minting design. |
-              | 5 | Cache entry populated by A not served to B | response cache (shared with 6), entitlement cache + guard, kratos session cache, cart cache; **authz decision cache: FAIL — open (G-67)** | pass, except authz | Entitlement, kratos, cart and response-cache keys each mutated → red. A first draft of the guard-level entitlement case survived its own mutation (it used `can()`, which never writes the cache); it was rewritten on `evaluate()` and re-proven. |
-              | 6 | A's idempotency key doesn't suppress B | admin HTTP, multi mode | **pass** | `${tenantId}` deleted from the idempotency/response-cache key in `packages/http/src/server.ts` → red; a same-tenant control proves dedup works at all. |
-              | 7 | Rate-limit bucket not shared | admin HTTP (public route, same IP; authenticated, same principal id) | **pass** | `${tenantId}` deleted from each of the two key forms → red; a control proves the limiter bites. |
+                      | # | Case | Contexts | Result | How it was shown able to fail |
+                      |---|------|----------|--------|-------------------------------|
+                      | 1 | A cannot read / write / delete / **count** B's rows | finance (account: in-memory + Prisma; read-model store: in-memory + ClickHouse, count = `query().total`), security (principal: in-memory + Prisma), orders (in-memory) | **pass** | Production tenant filters removed one at a time (Prisma `where` in findById / list / updateMany, ClickHouse `WHERE tenant_id` in get and query, in-memory map keys) — each turned the suite red; the count case alone caught the ClickHouse `query()` break. Harness also self-tested. |
+                      | 2 | Forged `x-tenant-id` vs verified claim | admin HTTP pipeline, real chain, multi mode | **fail → fixed (G-69)** | claim-less token + header returned 201 into tenant B; fixed by `publicHeaderTenantResolver`. |
+                      | 3 | Event under A not consumed into B's projection | security identity + consent consumers | **pass, as-is (class D, G-64)** | Pins current behaviour: consumers write to their construction-time tenant and ignore `event.tenantId`, so the event reaches neither B nor A. Making a consumer write to B, or honour the envelope, each turns it red; it must be flipped deliberately when G-64 lands. |
+                      | 4 | Storage key written by A unreachable from B | media | **FAIL — open (G-68)** | Reproduced: A registers B's key → 201 → receives a signed URL. Test held out of the tree (fails by design); not fixed — needs a key-minting design. |
+                      | 5 | Cache entry populated by A not served to B | response cache (shared with 6), entitlement cache + guard, kratos session cache, cart cache; **authz decision cache: FAIL — open (G-67)** | pass, except authz | Entitlement, kratos, cart and response-cache keys each mutated → red. A first draft of the guard-level entitlement case survived its own mutation (it used `can()`, which never writes the cache); it was rewritten on `evaluate()` and re-proven. |
+                      | 6 | A's idempotency key doesn't suppress B | admin HTTP, multi mode | **pass** | `${tenantId}` deleted from the idempotency/response-cache key in `packages/http/src/server.ts` → red; a same-tenant control proves dedup works at all. |
+                      | 7 | Rate-limit bucket not shared | admin HTTP (public route, same IP; authenticated, same principal id) | **pass** | `${tenantId}` deleted from each of the two key forms → red; a control proves the limiter bites. |
 
-              **Representative contexts, one line each:** *security* — its principals are the identity the authorization model stands on; *finance* — money, the only real count / pagination-total surface, and the only ClickHouse store; *orders* — money and PII, the largest aggregate; *media* — the only object-storage consumer; *entitlement / auth / cart* — each owns a Redis-backed cache keyed independently of the transport. Orders' Prisma repository is **not** in case 1: it reads through `include` relations the fake does not model, so its scoping is covered only by the `DATABASE_URL_TEST`-gated integration suite (which does not run here).
+                      **Representative contexts, one line each:** *security* — its principals are the identity the authorization model stands on; *finance* — money, the only real count / pagination-total surface, and the only ClickHouse store; *orders* — money and PII, the largest aggregate; *media* — the only object-storage consumer; *entitlement / auth / cart* — each owns a Redis-backed cache keyed independently of the transport. Orders' Prisma repository is **not** in case 1: it reads through `include` relations the fake does not model, so its scoping is covered only by the `DATABASE_URL_TEST`-gated integration suite (which does not run here).
 
-              **Decision — claim-then-header.** The header fallback for an authenticated principal does **not** survive. The header is client-controlled: if a verified token that merely lacks `tenant_id` may pick its tenant by header, any valid token can act inside any tenant by naming it — the claim would only rank first and protect nobody. A claim-less token is bound to no tenant → 403. The header remains valid where no identity exists to protect: public storefront routes. **Cost:** under multi every authenticated token must carry `tenant_id`.
+                      **Decision — claim-then-header.** The header fallback for an authenticated principal does **not** survive. The header is client-controlled: if a verified token that merely lacks `tenant_id` may pick its tenant by header, any valid token can act inside any tenant by naming it — the claim would only rank first and protect nobody. A claim-less token is bound to no tenant → 403. The header remains valid where no identity exists to protect: public storefront routes. **Cost:** under multi every authenticated token must carry `tenant_id`.
 
-              **Existing per-context files.** Folded: the hand-rolled two-tenant cases in `services/orders/src/infrastructure/tenant-isolation.test.ts` and `services/security/src/infrastructure/tenant-isolation.test.ts` were replaced by harness calls (the roles / audit-chain / projection cases and every `assertWriteTimeTenant` case stay — they test different properties). Finance's and cart's new cases sit in their existing files. Left separate and untouched: catalog, checkout, customer-360, fulfillment, identity, payments, returns — they cover write-time tenant or context-specific behaviour and adopt the harness with one call when wanted. `services/tenancy` stays a recorded exemption (ADR-0014 8f); its property — 403 for every tenant but the pinned one — is asserted in `apps/admin/src/http/server.multi-tenant.test.ts`.
+                      **Existing per-context files.** Folded: the hand-rolled two-tenant cases in `services/orders/src/infrastructure/tenant-isolation.test.ts` and `services/security/src/infrastructure/tenant-isolation.test.ts` were replaced by harness calls (the roles / audit-chain / projection cases and every `assertWriteTimeTenant` case stay — they test different properties). Finance's and cart's new cases sit in their existing files. Left separate and untouched: catalog, checkout, customer-360, fulfillment, identity, payments, returns — they cover write-time tenant or context-specific behaviour and adopt the harness with one call when wanted. `services/tenancy` stays a recorded exemption (ADR-0014 8f); its property — 403 for every tenant but the pinned one — is asserted in `apps/admin/src/http/server.multi-tenant.test.ts`.
 
-              **Multi mode is still not safe.** G-67 and G-68 must close first.
+                      **Multi mode is still not safe.** G-67 and G-68 must close first.
 
 - [ ] **T10.6 — Tenant lifecycle.**
       Provisioning a tenant (create the row, seed defaults, register the domain), suspending one,

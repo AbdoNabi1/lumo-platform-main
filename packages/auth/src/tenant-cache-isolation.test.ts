@@ -8,10 +8,11 @@ import { KratosSessionAuthenticator } from "./kratos";
  * keyspace, so what stops tenant A's session context reaching tenant B is that the key is the
  * (unguessable, per-session) token and the tenant travels INSIDE the cached context.
  *
- * The authorization-DECISION cache (`CachedAccessControl`) is deliberately absent from this file:
- * its key is `authz:<principalId>:<permission>` and the `AccessControl` port has no tenant at all,
- * so "A's decision is not served to B" cannot even be expressed against it. That is a finding, not a
- * test — see the T10.5 entry in docs/plans/phase-7/WP-10-multi-tenant-runtime.md and gap G-67.
+ * The authorization-DECISION cache (`CachedAccessControl`) is not in this file. When T10.5 wrote it, its
+ * key was `authz:<principalId>:<permission>` and the `AccessControl` port had no tenant, so "A's
+ * decision is not served to B" could not be expressed against it (gap G-67). That is fixed (ADR-0015)
+ * and covered where it can now be expressed: `keto-tenant-grants.test.ts` and, end to end,
+ * `apps/runtime/src/tenant-authorization.test.ts`.
  */
 function sharedKeyspace(): Cache {
   const store = new Map<string, unknown>();

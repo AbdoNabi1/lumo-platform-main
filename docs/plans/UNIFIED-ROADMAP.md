@@ -1,5 +1,9 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
+## Status — 2026-09-20 (G-67 cache and audit closed; multi mode is NOT closer to safe)
+
+`Principal` now carries the request's tenant (ADR-0015, shape B): the authorization decision cache is tenant-scoped and the audit record says which tenant a decision was for. **This does not make `TENANT_MODE=multi` safe, and it is not closer to safe in any way that matters for enabling it.** The Keto tuples still carry no tenant, so a grant is still global per principal (**G-70**, Critical under multi; fixing it rewrites tuples in the live Ory Network project — a production data migration, decided as dual-write, switch reads, delete bare, with a bare-vs-qualified count gate before the delete) and **G-68** (tenant A can register tenant B's storage key and get a signed URL) is open. Both are held executable as `it.fails()` tests. **`TENANT_MODE=multi` must not be enabled** until G-70 and G-68 close; the worker still refuses multi (G-64). Nothing enables it anywhere.
+
 ## Status — 2026-09-20 (T10.5 done: the adversarial suite exists — and multi mode is STILL NOT SAFE)
 
 T10.5's isolation suite is written (shared harness + per-context opt-ins) and it found two open cross-tenant gaps: **G-67** — authorization decisions are tenant-blind end to end (Keto check, the `authz:<principal>:<permission>` cache key, the audit record), so a decision made for tenant A is served to tenant B; and **G-68 / F-22** — tenant A can register tenant B's storage key and obtain a signed URL for it. Neither is fixed (both are design changes). One finding was fixed: a claim-less token could pick its tenant by `x-tenant-id` (G-69). **`TENANT_MODE=multi` must not be enabled** until G-67 and G-68 close; the worker still refuses multi (G-64). Nothing enables it anywhere.
