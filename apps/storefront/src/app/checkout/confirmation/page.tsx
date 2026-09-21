@@ -14,10 +14,12 @@ import { getCheckoutSession } from "@/lib/runtime-api";
  * session DTO returns (`orderRef` + `totals`) — never `GET /checkouts/:id/order-draft` (deliberately
  * not public, see `public-checkout-routes.ts`'s header comment) and never `GET /orders/:orderId`
  * (admin-guarded; a shopper has no token). See `docs/plans/BLOCKERS.md`'s T2.3 entry: completing a
- * checkout for a genuine guest session currently fails server-side (`OrderCreationAdapter` requires
- * a `customerRef`, which guest checkout never has) — so `orderRef` being absent here is a real,
- * currently-reachable state, not a hypothetical one, and is rendered as a recoverable "nothing to
- * confirm" panel rather than assumed away.
+ * checkout for a genuine guest session used to fail server-side (`OrderCreationAdapter` required
+ * a `customerRef`, which guest checkout never has). That was closed by WP-1 / G-52 — the session
+ * now carries a contact email and Identity resolves a guest customer from it — but `orderRef`
+ * being absent here (a cleared cookie, an expired session, a checkout that never completed) is
+ * still a real, reachable state and is rendered as a recoverable "nothing to confirm" panel
+ * rather than assumed away.
  *
  * Resolves the just-completed session from `CHECKOUT_SESSION_COOKIE` (kept alive by
  * `completeCheckout` on purpose — see that action's own comment) and clears it once rendered via

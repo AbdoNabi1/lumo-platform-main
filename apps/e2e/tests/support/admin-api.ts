@@ -22,6 +22,32 @@ export async function sessionTokenFrom(context: BrowserContext): Promise<string>
 }
 
 /**
+ * Reads one order back through the runtime API as the logged-in operator (`GET /orders/:orderId`,
+ * `apps/admin/src/http/admin-routes.ts`). The confirmation page only shows the order reference the
+ * public checkout session carries, which proves the SESSION was completed; this proves an `Order`
+ * actually exists behind it and is attached to a customer — the thing G-52 was about.
+ */
+export async function getOrderAsOperator(
+  request: APIRequestContext,
+  sessionToken: string,
+  orderId: string,
+): Promise<{ readonly customerRef: string }> {
+  const response = await request.get(`${RUNTIME_API_URL}/api/v1/orders/${orderId}`, {
+    headers: { authorization: `Bearer ${sessionToken}`, "x-tenant-id": TENANT_ID },
+  });
+  if (!response.ok()) {
+    throw new Error(
+      `fixture: GET /orders/${orderId} failed (${response.status()}): ${await response.text()}`,
+    );
+  }
+  const order = (await response.json()) as { readonly customerRef?: unknown };
+  if (typeof order.customerRef !== "string" || order.customerRef.length === 0) {
+    throw new Error(`fixture: order ${orderId} has no customerRef: ${JSON.stringify(order)}`);
+  }
+  return { customerRef: order.customerRef };
+}
+
+/**
  * Creates and publishes one product directly against the runtime API (`POST /products` then
  * `POST /products/:id/publish`, `apps/admin/src/http/admin-routes.ts`), using the real JWT a
  * logged-in operator session carries. Fixture setup for `guest-purchase.spec.ts` — that spec is

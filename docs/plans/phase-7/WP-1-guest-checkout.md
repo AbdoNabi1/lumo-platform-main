@@ -113,7 +113,7 @@ Three constraints on that decision, all non-negotiable:
       `apps/storefront/src/messages/en.ts` and `ar.ts`. If the customer is logged in
       (`apps/storefront/src/lib/customer-session.ts` knows), pre-fill and do not require re-entry.
 
-- [ ] **T1.7 — Un-fail the e2e spec.**
+- [x] **T1.7 — Un-fail the e2e spec.**
       `apps/e2e/tests/guest-purchase.spec.ts`: remove the `test.fail()` at line 44 and rewrite the
       module doc comment to describe what the flow now does. Extend the spec to assert the order
       was actually created and that the confirmation page shows it. **Read the doc comment before
