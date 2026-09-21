@@ -1,6 +1,7 @@
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, normalizePageSize } from "@platform/repository";
 import type { Paginated } from "@platform/types";
+import { ConflictError } from "@platform/utils";
 import type { Customer } from "../domain/customer";
 import type { CustomerListQuery, CustomerRepository } from "../domain/customer-repository";
 
@@ -31,6 +32,16 @@ export class InMemoryCustomerRepository implements CustomerRepository {
   }
 
   async save(customer: Customer, tenantId: string, tx?: unknown): Promise<void> {
+    // Mirrors the Postgres `@@unique([tenantId, email])` — see PrismaCustomerRepository.save.
+    for (const [id, entry] of this.store) {
+      if (
+        id !== customer.id.toString() &&
+        entry.tenantId === tenantId &&
+        entry.customer.email.value === customer.email.value
+      ) {
+        throw new ConflictError("A customer with this email already exists");
+      }
+    }
     this.store.set(customer.id.toString(), { tenantId, customer });
     await this.outbox.write(customer.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }

@@ -5,7 +5,7 @@ import { createTestPrismaClient } from "@platform/db/testing";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { OutboxWriter, rootEventContext } from "@platform/messaging";
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, ConflictError } from "@platform/utils";
 import { Address } from "../domain/address";
 import { Customer } from "../domain/customer";
 import { ConsentScope } from "../domain/value-objects/consent-scope";
@@ -299,6 +299,35 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
     expect(reloadedB?.addresses).toHaveLength(0);
     const reloadedA = await repository.findById(customerA.id.toString(), tenantId);
     expect(reloadedA?.addresses).toHaveLength(1);
+  });
+
+  it("translates the (tenant_id, email) unique violation into a ConflictError, and lets a fresh unit of work re-find the winner (WP-1 race)", async () => {
+    const { repository, tenantId, unitOfWork } = wire();
+    const em = email();
+    const winner = registerCustomer(em);
+    await unitOfWork.run((tx) => repository.save(winner, tenantId, tx));
+
+    await expect(
+      unitOfWork.run((tx) => repository.save(registerCustomer(em), tenantId, tx)),
+    ).rejects.toBeInstanceOf(ConflictError);
+
+    const found = await unitOfWork.run((tx) => repository.findByEmail(em.value, tenantId, tx));
+    expect(found?.id.toString()).toBe(winner.id.toString());
+  });
+
+  it("round-trips the guest marker", async () => {
+    const { repository, tenantId, unitOfWork } = wire();
+    const guest = Customer.registerGuest(
+      UniqueEntityId.from(ids.generate()),
+      email(),
+      "guest",
+      ids.generate(),
+      clock.now(),
+    );
+    await unitOfWork.run((tx) => repository.save(guest, tenantId, tx));
+
+    const loaded = await repository.findById(guest.id.toString(), tenantId);
+    expect(loaded?.isGuest).toBe(true);
   });
 
   it("rejects a stale write with ConcurrencyError — the losing writer's address is never persisted", async () => {

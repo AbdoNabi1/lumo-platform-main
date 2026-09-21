@@ -7,6 +7,7 @@ model Customer {
   tenantId  String    @map("tenant_id")
   email     String // stored trimmed + lower-cased (domain `Email` VO)
   name      String
+  isGuest   Boolean   @default(false) @map("is_guest") // created by guest checkout, not registration (WP-1, G-52)
   version   Int       @default(0)
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

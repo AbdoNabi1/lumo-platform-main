@@ -18,6 +18,7 @@ import { ListCustomers } from "./application/list-customers.use-case";
 import { AddMembership, ChangeMembershipRole } from "./application/membership.use-cases";
 import { ArchiveOrganization, CreateOrganization } from "./application/organization.use-cases";
 import { RegisterCustomer } from "./application/register-customer.use-case";
+import { ResolveGuestCustomer } from "./application/resolve-guest-customer.use-case";
 import { CreateUser, DeactivateUser, RenameUser } from "./application/user.use-cases";
 import type {
   MembershipRepository,
@@ -82,6 +83,12 @@ function buildControllers(
 
   const controller = new CustomerController({
     registerCustomer: new RegisterCustomer({
+      customers,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    }),
+    resolveGuestCustomer: new ResolveGuestCustomer({
       customers,
       unitOfWork,
       idGenerator: deps.idGenerator,

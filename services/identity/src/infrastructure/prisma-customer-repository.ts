@@ -2,10 +2,17 @@ import { runReadScoped, type Database, type TransactionClient } from "@platform/
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { Paginated } from "@platform/types";
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, ConflictError } from "@platform/utils";
 import type { Customer } from "../domain/customer";
 import type { CustomerListQuery, CustomerRepository } from "../domain/customer-repository";
 import { CustomerMapper } from "./customer.mapper";
+
+/** Duck-typed on Prisma's error code — this context does not depend on `@prisma/client`. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002"
+  );
+}
 
 export interface PrismaCustomerRepositoryDeps {
   readonly prisma: Database;
@@ -31,7 +38,17 @@ export class PrismaCustomerRepository implements CustomerRepository {
     const customerId = customer.id.toString();
 
     if (customer.version === 0) {
-      await client.customer.create({ data: CustomerMapper.toCustomerRow(customer, tenantId) });
+      try {
+        await client.customer.create({ data: CustomerMapper.toCustomerRow(customer, tenantId) });
+      } catch (error) {
+        // P2002 = unique violation. Here that is `@@unique([tenantId, email])`: another request
+        // created this email first. Translated so callers (ResolveGuestCustomer's race recovery)
+        // can react without knowing about Prisma. The surrounding transaction is already aborted.
+        if (isUniqueViolation(error)) {
+          throw new ConflictError("A customer with this email already exists", { cause: error });
+        }
+        throw error;
+      }
     } else {
       const updated = await client.customer.updateMany({
         where: { id: customerId, tenantId, version: customer.version },

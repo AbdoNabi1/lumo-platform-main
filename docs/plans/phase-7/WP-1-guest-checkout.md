@@ -78,7 +78,7 @@ Three constraints on that decision, all non-negotiable:
       — read how that route proves the caller owns the session and reuse it verbatim; same
       `idempotent` flag choice, same DTO mapping). Add its route test.
 
-- [ ] **T1.4 — Add find-or-create to Identity.**
+- [x] **T1.4 — Add find-or-create to Identity.**
       New use case `services/identity/src/application/resolve-guest-customer.use-case.ts`:
       given an email and a name, return the existing customer's id if one exists with that email,
       otherwise create one marked as a guest and return the new id. Model it on

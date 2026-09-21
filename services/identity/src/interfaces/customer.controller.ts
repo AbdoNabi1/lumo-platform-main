@@ -6,10 +6,15 @@ import type {
   RegisterCustomer,
   RegisterCustomerInput,
 } from "../application/register-customer.use-case";
+import type {
+  ResolveGuestCustomer,
+  ResolveGuestCustomerInput,
+} from "../application/resolve-guest-customer.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface CustomerControllerDeps {
   readonly registerCustomer: RegisterCustomer;
+  readonly resolveGuestCustomer: ResolveGuestCustomer;
   readonly addAddress: AddAddress;
   readonly changeConsent: ChangeConsent;
   readonly getCustomer: GetCustomer;
@@ -26,6 +31,11 @@ export class CustomerController {
 
   async register(input: RegisterCustomerInput): Promise<ControllerResponse> {
     return present(await this.deps.registerCustomer.execute(input), 201);
+  }
+
+  /** Find-or-create for guest checkout (WP-1). Never authenticates — see `ResolveGuestCustomer`. */
+  async resolveGuestCustomer(input: ResolveGuestCustomerInput): Promise<ControllerResponse> {
+    return present(await this.deps.resolveGuestCustomer.execute(input), 200);
   }
 
   async addAddress(input: AddAddressInput): Promise<ControllerResponse> {

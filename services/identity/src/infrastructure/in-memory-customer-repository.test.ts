@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
+import { ConflictError } from "@platform/utils";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
 import { assertWriteTimeTenant } from "@platform/messaging/testing";
@@ -172,5 +173,55 @@ describe("InMemoryCustomerRepository write-time tenant (ADR-0014 amendment 2026-
       );
       await repository.save(agg, tenantId);
     });
+  });
+});
+
+describe("InMemoryCustomerRepository — (tenantId, email) uniqueness (WP-1)", () => {
+  function wire() {
+    const nextId = monotonicIds();
+    const outbox = new OutboxWriter({
+      store: new InMemoryOutboxStore(),
+      translator: new IdentityEventTranslator(),
+      serializer: new InMemoryEventSerializer(),
+      clock: { now: () => new Date("2026-09-21T00:00:00.000Z") },
+      producer: "identity",
+    });
+    const repository = new InMemoryCustomerRepository({
+      outbox,
+      context: rootEventContext({ generate: nextId }),
+    });
+    const make = (email: string): Customer =>
+      Customer.register(
+        UniqueEntityId.from(nextId()),
+        must(Email.create(email)),
+        "n",
+        nextId(),
+        new Date(0),
+      );
+    return { repository, make };
+  }
+
+  it("rejects a second customer with the same email in the same tenant with a ConflictError", async () => {
+    const { repository, make } = wire();
+    await repository.save(make("dup@example.com"), "tenant-1");
+
+    await expect(repository.save(make("dup@example.com"), "tenant-1")).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+  });
+
+  it("allows the same email in a different tenant", async () => {
+    const { repository, make } = wire();
+    await repository.save(make("dup@example.com"), "tenant-1");
+
+    await expect(repository.save(make("dup@example.com"), "tenant-2")).resolves.toBeUndefined();
+  });
+
+  it("re-saving the same customer is not a conflict", async () => {
+    const { repository, make } = wire();
+    const customer = make("same@example.com");
+    await repository.save(customer, "tenant-1");
+
+    await expect(repository.save(customer, "tenant-1")).resolves.toBeUndefined();
   });
 });
