@@ -84,6 +84,36 @@ of these lands, `public-checkout-routes.test.ts` documents the current behavior 
 `complete` actually returns today (including surfacing the failure state) rather than assuming
 success.
 
+**2026-09-21 — CLOSED by WP-1 (G-52). Kept, not deleted; the text above is the record of the limitation.**
+Decision taken (the plan's, not re-opened): on completion of a guest checkout, find-or-create a
+customer in Identity from the session's contact email and place the order against it — neither of the
+options above exactly (Orders' `customerRef` stays required; the guest customer is created at
+completion, not before `startCheckout`). How:
+
+- `CheckoutSession` carries a `contactEmail` (T1.1/T1.2; `POST /public/checkouts/:id/contact`, T1.3).
+- `ResolveGuestCustomer` (`services/identity`, T1.4) finds the customer by `(tenantId, email)` or
+  creates one marked `isGuest` — no consent record, `customer.registered` only on the create branch.
+  A concurrent-create unique violation is recovered in a fresh unit of work.
+- `OrderCreationAdapter` (T1.5) calls it, scoped to the session's tenant, when `customerRef` is absent.
+  A guest session with no contact email now throws a `ValidationError` (422 over the wire), not the
+  plain `Error` described under "Found".
+- Resolving is not authenticating (T1.8): a guest checking out with a registered customer's email gets
+  an order attached to that customer and nothing else; `/public/auth/me` and the other
+  customer-scoped routes still answer 401.
+- `public-checkout-routes.test.ts` now asserts the success path instead of the rejection.
+
+**Did this widen the separate concurrent-capture / duplicate-order window** (the adapter's own doc
+comment; out of scope, untouched)? Not in kind: two concurrent `/complete` calls could already both
+reach `create()`, and still can. It does add one new side effect ahead of order creation — the guest
+customer is committed in its own unit of work — so an order-creation failure after it leaves a guest
+customer with no order. That is harmless and idempotent: the retry finds the same customer by
+`(tenantId, email)` rather than creating a second.
+
+Not verified end to end: the browser e2e (`apps/e2e/tests/guest-purchase.spec.ts`) needs the full
+stack and was **not run** — see the WP-1 report. Requires migrations
+`20260921000000_wp1_checkout_contact_email` and `20260921010000_wp1_identity_guest_marker` to be
+deployed before the runtime that contains this change serves guest checkouts.
+
 ## Environment note (Phase 2 addendum) — the `turbo` binary itself does not run in this session
 
 The previously-documented workaround (`pnpm exec turbo run <task> --concurrency=4`) does not work in
@@ -1159,6 +1189,10 @@ BLOCKERS.md`, "T2.3 — `POST /public/checkouts/:id/complete` throws for a genui
 **Suggested fix:** run the suite once on a host with Docker per `apps/e2e/README.md`, fix
 whatever `support/admin-login.ts` selector turns out wrong (most likely failure point), and
 re-confirm item 3 above before deciding whether `test.fail()` stays.
+
+**2026-09-21 (WP-1):** item 3 is resolved — the T2.3 gap is closed and `test.fail()` is removed from
+`guest-purchase.spec.ts` (the spec now also fills the new contact step and reads the order back).
+The suite has still never been run against a live stack, so items 1 and 2 stand.
 
 ## T6.5 — the "KMS / secrets provider" guard is not fail-closed anywhere, unlike the other four; found, not fixed
 
