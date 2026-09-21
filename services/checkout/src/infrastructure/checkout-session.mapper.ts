@@ -6,6 +6,7 @@ import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { CheckoutState, type CheckoutStateValue } from "../domain/value-objects/checkout-state";
 import { CheckoutTotals } from "../domain/value-objects/checkout-totals";
+import { ContactEmail } from "../domain/value-objects/contact-email";
 import { PaymentSelection, ShippingSelection } from "../domain/value-objects/selections";
 
 interface CheckoutItemJson {
@@ -44,6 +45,8 @@ export interface CheckoutSessionRow {
   readonly cartRef: string;
   readonly customerRef: string | null;
   readonly sessionRef: string;
+  /** Nullable: every session created before the WP-1 migration has none. */
+  readonly contactEmail: string | null;
   readonly currency: string;
   readonly state: string;
   readonly orderRef: string | null;
@@ -100,6 +103,10 @@ export class CheckoutSessionMapper {
         billingAddress: isSet(row.billingAddress)
           ? must(CheckoutAddress.create(row.billingAddress), "billing address")
           : undefined,
+        contactEmail:
+          row.contactEmail === null
+            ? undefined
+            : must(ContactEmail.create(row.contactEmail), "contact email"),
         shippingAddress: isSet(row.shippingAddress)
           ? must(CheckoutAddress.create(row.shippingAddress), "shipping address")
           : undefined,
@@ -144,6 +151,7 @@ export class CheckoutSessionMapper {
       cartRef: session.cartRef,
       customerRef: session.customerRef ?? null,
       sessionRef: session.sessionRef,
+      contactEmail: session.contactEmail?.value ?? null,
       currency: session.currency,
       state: session.state.value,
       orderRef: session.orderRef,

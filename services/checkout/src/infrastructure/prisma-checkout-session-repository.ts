@@ -34,6 +34,7 @@ export class PrismaCheckoutSessionRepository implements CheckoutSessionRepositor
         where: { id: session.id.toString(), tenantId, version: session.version },
         data: {
           customerRef: row.customerRef,
+          contactEmail: row.contactEmail,
           state: row.state,
           orderRef: row.orderRef,
           items: row.items,

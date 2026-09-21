@@ -51,7 +51,7 @@ Three constraints on that decision, all non-negotiable:
 
 ## Tasks
 
-- [ ] **T1.1 — Add a contact email to the checkout session.**
+- [x] **T1.1 — Add a contact email to the checkout session.**
       `services/checkout/src/domain/checkout-session.ts`: add `contactEmail?: string` to
       `CheckoutSessionProps` and a `setContactEmail(email, eventId, occurredAt)` method following
       the shape of the existing `setBillingAddress` / `setShippingAddress` methods exactly
@@ -63,7 +63,7 @@ Three constraints on that decision, all non-negotiable:
       correct trade here; the rule-of-three promotion to `@platform/domain` is a later call.
       Write the domain test alongside, in the style of `checkout-session.test.ts`.
 
-- [ ] **T1.2 — Persist it.**
+- [x] **T1.2 — Persist it.**
       Add the column to the checkout schema in `packages/db/prisma/schema/` (one file per context —
       find the checkout one), generate a migration under
       `packages/db/prisma/schema/migrations/` following the naming convention of the newest

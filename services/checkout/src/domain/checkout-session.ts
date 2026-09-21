@@ -5,6 +5,7 @@ import { CheckoutFailed } from "./events/checkout-failed.event";
 import { CheckoutLocked } from "./events/checkout-locked.event";
 import { CheckoutRecalculated } from "./events/checkout-recalculated.event";
 import type { CheckoutAddress } from "./value-objects/checkout-address";
+import type { ContactEmail } from "./value-objects/contact-email";
 import { CheckoutState } from "./value-objects/checkout-state";
 import type { CheckoutItem } from "./value-objects/checkout-item";
 import { CheckoutTotals } from "./value-objects/checkout-totals";
@@ -37,6 +38,8 @@ interface CheckoutSessionProps {
   items: readonly CheckoutItem[];
   billingAddress?: CheckoutAddress;
   shippingAddress?: CheckoutAddress;
+  /** Where a guest's receipt goes; Identity resolves a guest customer from it (WP-1, G-52). Absent on sessions created before it existed. */
+  contactEmail?: ContactEmail;
   shippingSelection?: ShippingSelection;
   paymentSelection?: PaymentSelection;
   taxMinor?: number;
@@ -92,6 +95,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     extra: {
       readonly billingAddress?: CheckoutAddress;
       readonly shippingAddress?: CheckoutAddress;
+      readonly contactEmail?: ContactEmail;
       readonly shippingSelection?: ShippingSelection;
       readonly paymentSelection?: PaymentSelection;
       readonly taxMinor?: number;
@@ -110,6 +114,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         items: [...items],
         billingAddress: extra.billingAddress,
         shippingAddress: extra.shippingAddress,
+        contactEmail: extra.contactEmail,
         shippingSelection: extra.shippingSelection,
         paymentSelection: extra.paymentSelection,
         taxMinor: extra.taxMinor,
@@ -134,6 +139,11 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
   setShippingAddress(address: CheckoutAddress): void {
     this.ensureOpen();
     this.props.shippingAddress = address;
+  }
+
+  setContactEmail(email: ContactEmail): void {
+    this.ensureOpen();
+    this.props.contactEmail = email;
   }
 
   selectShipping(selection: ShippingSelection): void {
@@ -319,6 +329,10 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
 
   get shippingAddress(): CheckoutAddress | undefined {
     return this.props.shippingAddress;
+  }
+
+  get contactEmail(): ContactEmail | undefined {
+    return this.props.contactEmail;
   }
 
   get shippingSelection(): ShippingSelection | undefined {

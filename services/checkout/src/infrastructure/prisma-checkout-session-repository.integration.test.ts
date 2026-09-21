@@ -7,6 +7,7 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { OutboxWriter, rootEventContext } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import { CheckoutSession } from "../domain/checkout-session";
+import { ContactEmail } from "../domain/value-objects/contact-email";
 import { CheckoutEventTranslator } from "./checkout-event-translator";
 import { PrismaCheckoutSessionRepository } from "./prisma-checkout-session-repository";
 
@@ -67,6 +68,24 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
     expect(loaded?.cartRef).toBe(cartRef);
     expect(loaded?.state.value).toBe("started");
     expect(loaded?.orderRef).toBeNull();
+    await prisma.$disconnect();
+  });
+
+  it("persists the contact email through an update (WP-1 guest checkout)", async () => {
+    const { prisma, repository, unitOfWork } = wire();
+    const session = startSession(`cart-${ids.generate()}`);
+    await unitOfWork.run((tx) => repository.save(session, tenantId, tx));
+
+    const loaded = await repository.findById(session.id.toString(), tenantId);
+    if (loaded === null) throw new Error("setup failed");
+    expect(loaded.contactEmail).toBeUndefined();
+    const email = ContactEmail.create("guest@example.com");
+    if (!email.ok) throw new Error("setup failed");
+    loaded.setContactEmail(email.value);
+    await unitOfWork.run((tx) => repository.save(loaded, tenantId, tx));
+
+    const final = await repository.findById(session.id.toString(), tenantId);
+    expect(final?.contactEmail?.value).toBe("guest@example.com");
     await prisma.$disconnect();
   });
 
