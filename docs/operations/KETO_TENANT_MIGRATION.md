@@ -142,6 +142,8 @@ and **write nothing**. That is a blocker on the Ory side (workspace key / OPL up
   legacy-storage-key count are separate. Update the register's G-70 row from "code-complete, migration
   pending" to closed only after step 3 has run and the post-delete gate is green — record the date and
   the gate output.
-- The seeds and the consumer still write the bare tuple as well (dual-write). Nothing reads it, so it
-  is harmless, but it keeps re-creating bare tuples; a follow-up commit removes the bare write from the
-  four writers. Until then, a later gate run will still pass (each grant is written as a pair).
+- **Contracted 2026-09-21.** The four writers (the three seeds and `relation-sync.consumer.ts`) now
+  write the tenant-qualified tuple only. A gate run from here on should report
+  `PASS (nothing at risk)` — "contracted": no bare tuples. A bare tuple reappearing means something
+  still writes the old shape. `seed-ory-network.mjs` paces and reads back every grant, for the same
+  silent-drop reason as the backfill.

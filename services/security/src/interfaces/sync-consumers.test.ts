@@ -69,19 +69,28 @@ function recordingSync(): RelationshipSyncPort & {
   };
 }
 
-function capturingLogger(): Logger & { warns: { message: string }[] } {
+function capturingLogger(): Logger & {
+  warns: { message: string }[];
+  errors: { message: string }[];
+} {
   const warns: { message: string }[] = [];
-  return { ...silent, warns, warn: (message: string) => void warns.push({ message }) };
+  const errors: { message: string }[] = [];
+  return {
+    ...silent,
+    warns,
+    errors,
+    warn: (message: string) => void warns.push({ message }),
+    error: (message: string) => void errors.push({ message }),
+  };
 }
 
 describe("relationship synchronization (H-2)", () => {
-  it("parses the tuple key and writes the bare tuple AND its tenant-qualified twin", async () => {
+  it("parses the tuple key and writes ONLY the tenant-qualified tuple (G-70, contracted)", async () => {
     const sync = recordingSync();
     await new RelationWrittenConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:doc:1#viewer@principal:a"),
     );
     expect(sync.writes).toEqual([
-      { namespace: "permissions", object: "doc:1", relation: "viewer", subject: "principal:a" },
       {
         namespace: "permissions",
         object: "tenant/tenant-a/doc:1",
@@ -91,23 +100,19 @@ describe("relationship synchronization (H-2)", () => {
     ]);
   });
 
-  it("round-trips a subject-set subject through the key, on both twins", async () => {
+  it("round-trips a subject-set subject through the key", async () => {
     const sync = recordingSync();
     await new RelationWrittenConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:doc:1#viewer@group:eng#member"),
     );
-    expect(sync.writes[0]).toEqual({
-      namespace: "permissions",
-      object: "doc:1",
-      relation: "viewer",
-      subject: "group:eng#member",
-    });
-    expect(sync.writes[1]).toEqual({
-      namespace: "permissions",
-      object: "tenant/tenant-a/doc:1",
-      relation: "viewer",
-      subject: "group:eng#member",
-    });
+    expect(sync.writes).toEqual([
+      {
+        namespace: "permissions",
+        object: "tenant/tenant-a/doc:1",
+        relation: "viewer",
+        subject: "group:eng#member",
+      },
+    ]);
   });
 
   it("qualifies with the ENVELOPE's tenant, not a fixed one", async () => {
@@ -115,18 +120,15 @@ describe("relationship synchronization (H-2)", () => {
     await new RelationWrittenConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:orders:refund#granted@user-1", "tenant-b"),
     );
-    expect(sync.writes.map((t) => t.object)).toEqual([
-      "orders:refund",
-      "tenant/tenant-b/orders:refund",
-    ]);
+    expect(sync.writes.map((t) => t.object)).toEqual(["tenant/tenant-b/orders:refund"]);
   });
 
-  it("deletes BOTH the bare tuple and the qualified twin on relation.deleted", async () => {
+  it("revokes the qualified tuple first, then sweeps any stray bare one", async () => {
     const sync = recordingSync();
     await new RelationDeletedConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:doc:1#viewer@principal:a"),
     );
-    expect(sync.deletes.map((t) => t.object)).toEqual(["doc:1", "tenant/tenant-a/doc:1"]);
+    expect(sync.deletes.map((t) => t.object)).toEqual(["tenant/tenant-a/doc:1", "doc:1"]);
   });
 
   it("skips (does not throw) on an unparseable key", async () => {
@@ -159,14 +161,27 @@ describe("relationship synchronization (H-2)", () => {
       expect(sync.writes).toEqual([]);
     });
 
-    it("delete: still removes the bare tuple, cannot name the twin, and warns that it was left", async () => {
+    it("delete: THROWS (to retry/DLQ) rather than acknowledge a revocation it cannot apply", async () => {
+      // A skipped write denies; a skipped delete ALLOWS. So this must not be a quiet warn-and-ack.
       const sync = recordingSync();
       const logger = capturingLogger();
-      await new RelationDeletedConsumer({ sync, logger }).handle(
-        relEvent("permissions:orders:refund#granted@user-1", null),
-      );
-      expect(sync.deletes.map((t) => t.object)).toEqual(["orders:refund"]);
-      expect(logger.warns[0]?.message).toMatch(/qualified twin NOT removed/);
+      await expect(
+        new RelationDeletedConsumer({ sync, logger }).handle(
+          relEvent("permissions:orders:refund#granted@user-1", null),
+        ),
+      ).rejects.toThrow(/cannot be revoked/);
+      expect(sync.deletes).toEqual([]);
+      expect(logger.errors[0]?.message).toMatch(/revocation was NOT applied/);
+    });
+
+    it("delete: an empty-string tenant is treated as absent too", async () => {
+      const sync = recordingSync();
+      await expect(
+        new RelationDeletedConsumer({ sync, logger: silent }).handle(
+          relEvent("permissions:orders:refund#granted@user-1", ""),
+        ),
+      ).rejects.toThrow(/cannot be revoked/);
+      expect(sync.deletes).toEqual([]);
     });
   });
 });

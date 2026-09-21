@@ -39,13 +39,12 @@ export function tenantQualifiedTuple(
  * Idempotency (ADR-0005): Keto `PUT` is an upsert, so a redelivered write re-applies the same tuple. A
  * malformed key (never produced by the domain's `key()`) is logged and skipped, not retried.
  *
- * **Tenant scoping (G-70, expand phase).** Each tuple is written TWICE: bare (what live reads still
- * checked until the switch) and tenant-qualified (`tenant/<tenantId>/<object>`), the tenant taken from
- * the event envelope (`event.tenantId`). The bare write is removed from this class in the contract
- * step, after the operator migration has run. `IntegrationEvent.tenantId` is optional on the type; when
- * it is absent NOTHING is written — not even the bare tuple — and a warning is logged. A silent bare
- * write is exactly the global grant G-70 is closing, so an untenanted event fails closed (a grant not
- * applied, never a grant applied to every tenant).
+ * **Tenant scoping (G-70, contracted 2026-09-21).** Only the tenant-qualified tuple
+ * (`tenant/<tenantId>/<object>`) is written, the tenant taken from the event envelope
+ * (`event.tenantId`). The bare twin was dropped once the live migration had run and been verified
+ * (docs/operations/KETO_TENANT_MIGRATION.md). `IntegrationEvent.tenantId` is optional on the type; when
+ * it is absent NOTHING is written and a warning is logged — a grant not applied, never a grant applied
+ * to every tenant.
  */
 export class RelationWrittenConsumer implements EventHandler<SecurityRelationPayload> {
   readonly eventType = "security.relation.written";
@@ -73,9 +72,6 @@ export class RelationWrittenConsumer implements EventHandler<SecurityRelationPay
       );
       return;
     }
-    // Bare first, then qualified. A failure between the two throws and the message is redelivered;
-    // both PUTs are upserts, so the retry converges.
-    await this.deps.sync.write(parsed);
     await this.deps.sync.write(tenantQualifiedTuple(parsed, tenantId));
   }
 }
@@ -85,10 +81,14 @@ export class RelationWrittenConsumer implements EventHandler<SecurityRelationPay
  * deletes its decision tuple (`security.relation.deleted`). Keto `DELETE` of an absent tuple is
  * idempotent success, so redelivery is safe.
  *
- * **Both twins are removed** (G-70): a delete that removed only the bare tuple would leave the
- * tenant-qualified grant live — a revocation that does not revoke. When the envelope carries no tenant
- * the qualified twin cannot be named: the bare tuple is still deleted (that only ever narrows access,
- * and is what this handler did before G-70) and a warning says the qualified twin was NOT removed.
+ * **The tenant-qualified tuple is the one removed** (G-70) — reads check only that object. The bare
+ * object is also deleted, as a sweep: none should exist after the migration, and deleting an absent
+ * tuple is idempotent success.
+ *
+ * **An envelope with no tenant THROWS.** The enforcement tuple cannot be named, so the revocation cannot
+ * be applied, and acknowledging the message would leave the grant live with only a log line to show for
+ * it. This is the opposite of the write path's skip: a skipped write denies, a skipped delete allows.
+ * Throwing hands the message to the retry/DLQ pipeline, where it stays visible until someone acts.
  */
 export class RelationDeletedConsumer implements EventHandler<SecurityRelationPayload> {
   readonly eventType = "security.relation.deleted";
@@ -108,15 +108,17 @@ export class RelationDeletedConsumer implements EventHandler<SecurityRelationPay
       });
       return;
     }
-    await this.deps.sync.delete(parsed);
     const tenantId = event.tenantId;
     if (tenantId === undefined || tenantId === "") {
-      this.deps.logger.warn(
-        "relation.deleted has no tenant on the envelope — bare tuple deleted, qualified twin NOT removed",
+      this.deps.logger.error(
+        "relation.deleted has no tenant on the envelope — the revocation was NOT applied",
         { messageId: event.messageId, key: event.payload.key },
       );
-      return;
+      throw new Error(
+        `relation.deleted ${event.messageId}: no tenant on the envelope, so the tenant-qualified grant cannot be revoked`,
+      );
     }
     await this.deps.sync.delete(tenantQualifiedTuple(parsed, tenantId));
+    await this.deps.sync.delete(parsed);
   }
 }

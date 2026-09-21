@@ -25,9 +25,9 @@ const REDIRECT_URI = process.env.ADMIN_WEB_CALLBACK_URL ?? "http://localhost:310
 const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
 const ADMIN_EMAIL = process.env.ADMIN_DEV_EMAIL ?? "admin@morbeh.local";
 const ADMIN_PASSWORD = process.env.ADMIN_DEV_PASSWORD;
-// G-70: every grant is written twice — the bare tuple (what reads still check until the switch) and
-// its tenant-qualified twin `tenant/<tenantId>/<permission>`. The tenant is named here, once, and
-// passed to the writer; the writer never reads a default of its own.
+// G-70: every grant is written tenant-qualified, `tenant/<tenantId>/<permission>` — the only object
+// reads check (the bare twin was dropped once the live migration ran, 2026-09-21). The tenant is named
+// here, once, and passed to the writer; the writer never reads a default of its own.
 const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 // Every :read permission the Admin Web screens built in Phase A.30/A.31 call through AdminGuard
@@ -131,7 +131,6 @@ async function putGrant(object, identityId) {
 
 async function ensurePermissionTuples(identityId, tenantId) {
   for (const permission of READ_PERMISSIONS) {
-    await putGrant(permission, identityId);
     await putGrant(`tenant/${tenantId}/${permission}`, identityId);
   }
 }
@@ -141,7 +140,7 @@ try {
   const identityId = await ensureAdminIdentity();
   await ensurePermissionTuples(identityId, TENANT_ID);
   console.error(
-    `Auth stack seeded: Hydra client "${CLIENT_ID}", Kratos identity ${identityId} (${ADMIN_EMAIL}), ${READ_PERMISSIONS.length} Keto grants (bare + tenant/${TENANT_ID}/ twin).`,
+    `Auth stack seeded: Hydra client "${CLIENT_ID}", Kratos identity ${identityId} (${ADMIN_EMAIL}), ${READ_PERMISSIONS.length} Keto grants (tenant/${TENANT_ID}/).`,
   );
 } catch (error) {
   console.error(

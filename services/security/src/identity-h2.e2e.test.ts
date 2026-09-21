@@ -149,7 +149,7 @@ describe("H-2 live identity binding (end to end)", () => {
     expect(sessionRevocation.revokedIdentities()).toContain("kratos-7");
   });
 
-  it("emits security.relation.written WITH the tenant and syncs both tuples to the enforcement point", async () => {
+  it("emits security.relation.written WITH the tenant and syncs the tenant-qualified tuple to the enforcement point", async () => {
     // Record every envelope the outbox serializes, so the consumer below is fed the REAL emitted event
     // (not a hand-built one) — that is what proves `event.tenantId` reaches the consumer (G-70).
     const inner = new InMemoryEventSerializer();
@@ -184,7 +184,6 @@ describe("H-2 live identity binding (end to end)", () => {
     };
     await new RelationWrittenConsumer({ sync, logger: silent }).handle(evt!);
     expect(writes).toEqual([
-      { namespace: "permissions", object: "doc:1", relation: "viewer", subject: "principal:a" },
       {
         namespace: "permissions",
         object: "tenant/tenant-a/doc:1",

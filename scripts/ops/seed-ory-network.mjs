@@ -12,9 +12,10 @@
 // ADMIN_WEB_ORIGIN from the environment. TENANT_DEFAULT_ID (default tenant-local) is the tenant every
 // grant is qualified with (G-70) — it must match the runtime's TENANT_DEFAULT_ID.
 //
-// G-70: each grant is written twice — the bare tuple and its `tenant/<tenantId>/<permission>` twin.
-// The migration scripts beside this one (ory-keto-backfill / -count-gate / -delete-bare) move the
-// EXISTING bare tuples; see docs/operations/KETO_TENANT_MIGRATION.md.
+// G-70: each grant is written tenant-qualified only, `tenant/<tenantId>/<permission>` — the object
+// reads check. The live bare tuples were migrated and deleted on 2026-09-21
+// (docs/operations/KETO_TENANT_MIGRATION.md). Ory Network acknowledged writes in a burst with 2xx and
+// persisted only a prefix of them, so every grant here is paced and read back (putVerified).
 
 function required(name) {
   const v = process.env[name];
@@ -195,7 +196,7 @@ async function ensureIdentity() {
 // subject_id. Must match keto.ts's `subjectSetNamespace` default exactly, or checks silently deny.
 const SUBJECT_SET_NAMESPACE = "User";
 
-/** `object` is the bare permission or its tenant-qualified twin (`tenant/<tenantId>/<permission>`). */
+/** `object` is the tenant-qualified permission (`tenant/<tenantId>/<permission>`). */
 function grantTupleBody(subjectId, object) {
   return {
     namespace: "permissions",
@@ -224,10 +225,46 @@ function grantTupleBody(subjectId, object) {
  * the client and identity above are still fully usable without Permissions, and `KetoAccessControl`
  * fails closed, so a half-granted store would be worse than none.
  */
+const GRANT_PACING_MS = 300;
+const GRANT_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Whether this exact grant tuple exists (a filtered list on object, relation and subject set). */
+async function grantExists(body) {
+  const params = new URLSearchParams({
+    namespace: body.namespace,
+    object: body.object,
+    relation: body.relation,
+    "subject_set.namespace": body.subject_set.namespace,
+    "subject_set.object": body.subject_set.object,
+    "subject_set.relation": body.subject_set.relation,
+  });
+  const res = await api(`/relation-tuples?${params.toString()}`);
+  if (res.status !== 200) {
+    throw new Error(`read back "${body.object}" failed: ${res.status} ${await res.text()}`);
+  }
+  return ((await res.json()).relation_tuples ?? []).length > 0;
+}
+
+/** PUT a grant and re-issue it with backoff until a read-back sees it; throw if it never lands. */
+async function putVerified(body) {
+  for (const delay of [0, ...GRANT_RETRY_DELAYS_MS]) {
+    if (delay > 0) await sleep(delay);
+    const res = await api("/admin/relation-tuples", { method: "PUT", body: JSON.stringify(body) });
+    if (!res.ok)
+      throw new Error(`grant "${body.object}" failed: ${res.status} ${await res.text()}`);
+    if (await grantExists(body)) return;
+  }
+  throw new Error(
+    `grant "${body.object}": Ory answered 2xx but the tuple never appeared ` +
+      "(see docs/operations/KETO_TENANT_MIGRATION.md). Re-run this script; grants are idempotent.",
+  );
+}
+
 async function grantAll(subjectId, tenantId) {
   const probe = await api("/admin/relation-tuples", {
     method: "PUT",
-    body: JSON.stringify(grantTupleBody(subjectId, PERMISSIONS[0])),
+    body: JSON.stringify(grantTupleBody(subjectId, `tenant/${tenantId}/${PERMISSIONS[0]}`)),
   });
 
   if (!probe.ok) {
@@ -249,23 +286,14 @@ async function grantAll(subjectId, tenantId) {
     return false;
   }
 
-  // The probe wrote PERMISSIONS[0] bare; write its twin, then both twins of every other permission.
-  const objects = [
-    `tenant/${tenantId}/${PERMISSIONS[0]}`,
-    ...PERMISSIONS.slice(1).flatMap((permission) => [
-      permission,
-      `tenant/${tenantId}/${permission}`,
-    ]),
-  ];
-  for (const object of objects) {
-    const res = await api("/admin/relation-tuples", {
-      method: "PUT",
-      body: JSON.stringify(grantTupleBody(subjectId, object)),
-    });
-    if (!res.ok) throw new Error(`grant "${object}" failed: ${res.status} ${await res.text()}`);
+  // The probe proved Permissions is usable. Now write (and read back) every grant, the probe's
+  // included: a 2xx from Ory Network is not proof that a tuple persisted.
+  for (const permission of PERMISSIONS) {
+    await putVerified(grantTupleBody(subjectId, `tenant/${tenantId}/${permission}`));
+    await sleep(GRANT_PACING_MS);
   }
   console.log(
-    `Granted all ${PERMISSIONS.length} permissions to ${subjectId} (bare + tenant/${tenantId}/ twin).`,
+    `Granted all ${PERMISSIONS.length} permissions to ${subjectId} (tenant/${tenantId}/, each read back).`,
   );
   return true;
 }

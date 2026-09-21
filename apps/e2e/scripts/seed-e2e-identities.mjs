@@ -30,7 +30,8 @@ const CLIENT_SECRET = process.env.AUTH_CLIENT_SECRET ?? "morbeh-admin-web-secret
 const REDIRECT_URI = process.env.ADMIN_WEB_CALLBACK_URL ?? "http://localhost:3100/auth/callback";
 const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
 const PASSWORD = process.env.E2E_PASSWORD;
-// G-70: each grant is written twice — bare, and tenant-qualified (`tenant/<tenantId>/<permission>`).
+// G-70: each grant is written tenant-qualified only (`tenant/<tenantId>/<permission>`), the object
+// reads check; the bare twin was dropped after the live migration (2026-09-21).
 // The tenant is named once here and passed to the writer; the writer reads no default of its own.
 const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
@@ -171,7 +172,7 @@ async function ensureIdentity(email, role) {
 
 /**
  * @param {string} identityId
- * @param {string} object the Keto object: a bare permission or its tenant-qualified twin
+ * @param {string} object the Keto object: the tenant-qualified permission (`tenant/<tenantId>/<permission>`)
  */
 async function putGrant(identityId, object) {
   const response = await fetch(`${KETO_WRITE_URL}/admin/relation-tuples`, {
@@ -195,7 +196,6 @@ async function putGrant(identityId, object) {
  * @param {string} tenantId
  */
 async function grantPermission(identityId, permission, tenantId) {
-  await putGrant(identityId, permission);
   await putGrant(identityId, `tenant/${tenantId}/${permission}`);
 }
 
@@ -209,7 +209,7 @@ try {
       await grantPermission(identityId, permission, TENANT_ID);
     }
     console.error(
-      `Seeded ${role}: ${email} (${identityId}), ${permissions.length} Keto grants (bare + tenant/${TENANT_ID}/ twin).`,
+      `Seeded ${role}: ${email} (${identityId}), ${permissions.length} Keto grants (tenant/${TENANT_ID}/).`,
     );
   }
 } catch (error) {
