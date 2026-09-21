@@ -9,6 +9,7 @@ export interface KetoListedTuple {
 }
 export interface KetoClient {
   list(namespace?: string): Promise<KetoListedTuple[]>;
+  exists(tuple: KetoListedTuple): Promise<boolean>;
   put(body: Record<string, unknown>): Promise<void>;
   remove(tuple: KetoListedTuple): Promise<void>;
 }
@@ -29,6 +30,8 @@ export interface RunOptions {
   tenantId: string;
   apply: boolean;
   out: (line: string) => void;
+  /** Injected so tests skip the pacing and retry waits; defaults to a real timer. */
+  sleep?: (ms: number) => Promise<void>;
 }
 export function qualify(tenantId: string, permission: string): string;
 export function assertTenantId(tenantId: unknown): void;

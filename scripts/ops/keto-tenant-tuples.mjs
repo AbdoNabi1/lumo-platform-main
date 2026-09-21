@@ -17,6 +17,33 @@ export const NAMESPACE = "permissions";
 const PREFIX = "tenant/";
 const PAGE_SIZE = 500;
 
+// Ory Network answered 2xx for EVERY write of a burst and persisted only a prefix of it (first live
+// run, 2026-09-21: 65 PUTs "succeeded", 19 landed; a re-run of the 46 left, 11 landed — each time the
+// first N in order). A 2xx is therefore not proof of a write. Every write and delete is re-read until
+// it is observed, retried with backoff, and paced; a write that never lands STOPS the run (exit 2).
+const PACING_MS = 300;
+const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Perform `action` until `observed()` is true, re-issuing it with backoff. Both PUT and DELETE are
+ * idempotent in Keto, so re-issuing is safe. Throws when the effect is never observed.
+ */
+async function untilObserved({ action, observed, label, sleep, out }) {
+  await action();
+  if (await observed()) return;
+  for (const delay of RETRY_DELAYS_MS) {
+    out(`    not observed yet, retrying in ${delay} ms: ${label}`);
+    await sleep(delay);
+    await action();
+    if (await observed()) return;
+  }
+  throw new Error(
+    `Ory accepted the request but its effect was never observed after ${RETRY_DELAYS_MS.length + 1} attempts: ${label}. ` +
+      "The run stopped here; everything before it is verified. Re-run the same command to continue.",
+  );
+}
+
 /** The qualified object. Same string as `objectFor` in packages/auth/src/keto.ts (a test pins them). */
 export function qualify(tenantId, permission) {
   assertTenantId(tenantId);
@@ -96,6 +123,15 @@ export function createKetoClient({ baseUrl, apiKey, fetch }) {
         token = page.next_page_token ?? "";
       } while (token !== "");
       return all;
+    },
+    /** Whether this exact tuple exists (a filtered list: namespace, object, relation, subject). */
+    async exists(tuple) {
+      const res = await fetch(`${root}/relation-tuples?${deleteParams(tuple).toString()}`, {
+        headers,
+      });
+      if (res.status !== 200) await fail("read back relation-tuple", res);
+      const page = await res.json();
+      return (page.relation_tuples ?? []).length > 0;
     },
     async put(body) {
       const res = await fetch(`${root}/admin/relation-tuples`, {
@@ -217,7 +253,7 @@ export async function runCountGate({ client, tenantId, out }) {
 }
 
 /** Backfill: a qualified twin for every bare tuple that lacks one. Idempotent (PUT is an upsert). */
-export async function runBackfill({ client, tenantId, apply, out }) {
+export async function runBackfill({ client, tenantId, apply, out, sleep = realSleep }) {
   const gate = computeGate(await client.list(), tenantId);
   out(
     `Backfill tenant "${tenantId}": ${gate.bare.length} bare tuple(s), ${gate.missingTwin.length} need a twin.`,
@@ -231,15 +267,28 @@ export async function runBackfill({ client, tenantId, apply, out }) {
     out("\nDRY RUN — nothing written. Re-run with --apply to write these tuples.");
     return 0;
   }
-  for (const m of gate.missingTwin) {
-    await client.put(bodyOf(m.tuple, qualify(tenantId, m.permission)));
+  out("");
+  for (const [i, m] of gate.missingTwin.entries()) {
+    const body = bodyOf(m.tuple, qualify(tenantId, m.permission));
+    const label = `${body.object}  ${body.relation}  ${m.subject}`;
+    await untilObserved({
+      action: () => client.put(body),
+      observed: () => client.exists(body),
+      label,
+      sleep,
+      out,
+    });
+    out(`  verified ${i + 1}/${gate.missingTwin.length}  ${label}`);
+    await sleep(PACING_MS);
   }
-  out(`\nWrote ${gate.missingTwin.length} qualified tuple(s). Now run the count gate.`);
+  out(
+    `\nWrote and read back ${gate.missingTwin.length} qualified tuple(s). Now run the count gate.`,
+  );
   return 0;
 }
 
 /** Delete the bare tuples — but ONLY after the gate, evaluated here on a fresh listing, passes. */
-export async function runDeleteBare({ client, tenantId, apply, out }) {
+export async function runDeleteBare({ client, tenantId, apply, out, sleep = realSleep }) {
   const gate = computeGate(await client.list(), tenantId);
   printGate(gate, out);
   if (gate.status === "contracted") {
@@ -262,8 +311,19 @@ export async function runDeleteBare({ client, tenantId, apply, out }) {
     );
     return 0;
   }
-  for (const b of gate.bare) await client.remove(b.tuple);
-  out(`\nDeleted ${gate.bare.length} bare tuple(s).`);
+  for (const [i, b] of gate.bare.entries()) {
+    const label = `${b.tuple.object}  ${b.tuple.relation}  ${b.subject}`;
+    await untilObserved({
+      action: () => client.remove(b.tuple),
+      observed: async () => !(await client.exists(b.tuple)),
+      label,
+      sleep,
+      out,
+    });
+    out(`  deleted and verified ${i + 1}/${gate.bare.length}  ${label}`);
+    await sleep(PACING_MS);
+  }
+  out(`\nDeleted and verified ${gate.bare.length} bare tuple(s).`);
   return 0;
 }
 

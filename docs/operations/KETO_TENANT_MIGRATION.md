@@ -112,6 +112,21 @@ have to be re-issued through it, because the consumer writes both twins from the
 holds the tuples (`security` relation-tuple table, tenant-scoped), that is the record of what to
 re-issue.
 
+## Ory Network drops writes it has acknowledged — the scripts now verify every one
+
+**Observed on the first live run (2026-09-21).** The backfill issued 65 PUTs; Ory answered 2xx to all
+65 and persisted only the first 19. A re-run of the 46 still missing persisted the first 11. A
+read-only diagnostic confirmed it was the writes, not the listing: both page sizes listed the same
+tuples, and a direct lookup of the 20th twin returned nothing. The count gate caught it both times and
+the delete refused, so nothing was lost.
+
+So a 2xx is not treated as proof. The backfill and delete-bare now read every tuple back after
+writing or deleting it, retry with backoff (1 s up to 16 s) until the effect is observed, and pause
+between tuples. A write that never lands **stops the run with exit 2**: everything before it is
+verified, and re-running the same command resumes, because both are idempotent. The output says
+`verified n/N` per tuple. If you see `not observed yet, retrying`, that is the protection working, not
+a failure.
+
 ## If the listing fails
 
 The scripts list tuples with `GET <ORY_SDK_URL>/relation-tuples?namespace=permissions`. The seed script's

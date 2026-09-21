@@ -32,8 +32,13 @@ const viaSet = (object: string, subject: string): KetoListedTuple => ({
   subject_set: { namespace: "User", object: subject, relation: "" },
 });
 
-/** In-memory Keto. Lists two-per-page so pagination is always exercised. */
-function fakeKeto(seed: KetoListedTuple[]) {
+/**
+ * In-memory Keto. Lists two-per-page so pagination is always exercised; a GET carrying `object` is a
+ * filtered read-back of one exact tuple. `drop(n)` makes the n-th PUT or DELETE (1-based) answer 2xx
+ * WITHOUT taking effect — what Ory Network did on the first live run (G-70, 2026-09-21).
+ */
+function fakeKeto(seed: KetoListedTuple[], drop: (n: number) => boolean = () => false) {
+  let mutationCount = 0;
   const tuples = new Map<string, KetoListedTuple>();
   const id = (t: KetoListedTuple) =>
     [
@@ -49,24 +54,7 @@ function fakeKeto(seed: KetoListedTuple[]) {
     const u = new URL(url);
     const method = init?.method ?? "GET";
     calls.push(`${method} ${u.pathname}`);
-    if (method === "GET") {
-      const all = [...tuples.values()];
-      const start = Number(u.searchParams.get("page_token") ?? "0");
-      const page = all.slice(start, start + 2);
-      const next = start + 2 < all.length ? String(start + 2) : "";
-      return {
-        status: 200,
-        json: async () => ({ relation_tuples: page, next_page_token: next }),
-        text: async () => "",
-      };
-    }
-    if (method === "PUT") {
-      const body = JSON.parse(init?.body ?? "{}") as KetoListedTuple;
-      tuples.set(id(body), body);
-      return { status: 201, json: async () => ({}), text: async () => "" };
-    }
-    const p = u.searchParams;
-    const gone: KetoListedTuple = {
+    const fromParams = (p: URLSearchParams): KetoListedTuple => ({
       namespace: p.get("namespace") ?? "",
       object: p.get("object") ?? "",
       relation: p.get("relation") ?? "",
@@ -79,8 +67,34 @@ function fakeKeto(seed: KetoListedTuple[]) {
               relation: p.get("subject_set.relation") ?? "",
             },
           }),
-    };
-    tuples.delete(id(gone));
+    });
+    if (method === "GET" && u.searchParams.has("object")) {
+      const hit = tuples.get(id(fromParams(u.searchParams)));
+      return {
+        status: 200,
+        json: async () => ({ relation_tuples: hit ? [hit] : [], next_page_token: "" }),
+        text: async () => "",
+      };
+    }
+    if (method === "GET") {
+      const all = [...tuples.values()];
+      const start = Number(u.searchParams.get("page_token") ?? "0");
+      const page = all.slice(start, start + 2);
+      const next = start + 2 < all.length ? String(start + 2) : "";
+      return {
+        status: 200,
+        json: async () => ({ relation_tuples: page, next_page_token: next }),
+        text: async () => "",
+      };
+    }
+    mutationCount += 1;
+    const dropped = drop(mutationCount);
+    if (method === "PUT") {
+      const body = JSON.parse(init?.body ?? "{}") as KetoListedTuple;
+      if (!dropped) tuples.set(id(body), body);
+      return { status: 201, json: async () => ({}), text: async () => "" };
+    }
+    if (!dropped) tuples.delete(id(fromParams(u.searchParams)));
     return { status: 204, json: async () => ({}), text: async () => "" };
   };
   const client = createKetoClient({ baseUrl: "https://ory.example", apiKey: "k", fetch });
@@ -88,6 +102,8 @@ function fakeKeto(seed: KetoListedTuple[]) {
   const mutations = () => calls.filter((c) => !c.startsWith("GET"));
   return { client, fetch, objects, mutations, tuples };
 }
+
+const noSleep = async (): Promise<void> => {};
 
 function capture() {
   const lines: string[] = [];
@@ -142,6 +158,42 @@ describe("backfill", () => {
     const after = keto.mutations().length;
     await runBackfill(args);
     expect(keto.mutations().length).toBe(after);
+  });
+
+  it("does not trust a 2xx: a silently dropped write is re-read, retried, and verified", async () => {
+    // Mutations 2 and 3 answer 201 but take no effect — the second twin needs a third attempt.
+    const keto = fakeKeto(twoBare, (n) => n === 2 || n === 3);
+    const o = capture();
+    const code = await runBackfill({
+      client: keto.client,
+      tenantId: TENANT,
+      apply: true,
+      out: o.out,
+      sleep: noSleep,
+    });
+    expect(code).toBe(0);
+    expect(keto.objects()).toContain(qualify(TENANT, "orders:read"));
+    expect(keto.objects()).toContain(qualify(TENANT, "orders:write"));
+    expect(o.text().match(/not observed yet/g)).toHaveLength(2);
+    expect(await runCountGate({ client: keto.client, tenantId: TENANT, out: capture().out })).toBe(
+      0,
+    );
+  });
+
+  it("STOPS (throws) when a write never lands, after verifying everything before it", async () => {
+    // Every mutation after the first is dropped: the first twin lands, the second never does.
+    const keto = fakeKeto(twoBare, (n) => n > 1);
+    await expect(
+      runBackfill({
+        client: keto.client,
+        tenantId: TENANT,
+        apply: true,
+        out: capture().out,
+        sleep: noSleep,
+      }),
+    ).rejects.toThrow(/never observed/);
+    const qualified = keto.objects().filter((o) => o.startsWith("tenant/"));
+    expect(qualified).toHaveLength(1);
   });
 });
 
@@ -286,6 +338,19 @@ describe("delete-bare", () => {
     const o = capture();
     expect(await runDeleteBare({ ...args, out: o.out })).toBe(0);
     expect(o.text()).toContain("Nothing to delete");
+  });
+
+  it("does not trust a 2xx on DELETE either: a dropped delete is retried until the tuple is gone", async () => {
+    const keto = fakeKeto(seededOperator, (n) => n === 1);
+    const code = await runDeleteBare({
+      client: keto.client,
+      tenantId: TENANT,
+      apply: true,
+      out: capture().out,
+      sleep: noSleep,
+    });
+    expect(code).toBe(0);
+    expect(keto.objects().every((o) => o.startsWith("tenant/"))).toBe(true);
   });
 });
 
