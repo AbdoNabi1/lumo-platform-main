@@ -161,6 +161,14 @@ function routesFor(admin: WiredAdmin) {
       context: publicContext(),
     } as never) as Promise<Response>;
 
+  const contact = (checkoutSessionId: string, body: unknown): Promise<Response> =>
+    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/contact").handle({
+      body,
+      params: { checkoutSessionId },
+      query: {},
+      context: publicContext(),
+    } as never) as Promise<Response>;
+
   const shippingQuote = (checkoutSessionId: string, body: unknown): Promise<Response> =>
     byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/shipping-quote").handle(
       {
@@ -244,6 +252,7 @@ function routesFor(admin: WiredAdmin) {
     items,
     billingAddress,
     shippingAddress,
+    contact,
     shippingQuote,
     shippingSelection,
     tax,
@@ -269,7 +278,7 @@ const address = {
 };
 
 describe("public checkout routes — route inventory", () => {
-  it("exposes exactly the 12 guest-completable routes, all public", () => {
+  it("exposes exactly the 13 guest-completable routes, all public", () => {
     const admin = routesFor(buildAdmin());
     const paths = admin.routes.map((r) => `${r.method} ${r.path}`).sort();
 
@@ -280,6 +289,7 @@ describe("public checkout routes — route inventory", () => {
         "POST /public/checkouts/:checkoutSessionId/items",
         "POST /public/checkouts/:checkoutSessionId/billing-address",
         "POST /public/checkouts/:checkoutSessionId/shipping-address",
+        "POST /public/checkouts/:checkoutSessionId/contact",
         "POST /public/checkouts/:checkoutSessionId/shipping-quote",
         "POST /public/checkouts/:checkoutSessionId/shipping-selection",
         "POST /public/checkouts/:checkoutSessionId/tax",
@@ -418,6 +428,72 @@ describe("public checkout routes — full guest lifecycle", () => {
   });
 });
 
+describe("public checkout routes — contact email (WP-1, T1.3)", () => {
+  async function startedGuest(rawAdmin: WiredAdmin, sessionRef: string): Promise<string> {
+    const routes = routesFor(rawAdmin);
+    const cart = unwrap<{ id: string }>(await routes.createCart(sessionRef), "create cart");
+    const started = unwrap<PublicCheckoutSessionDto>(
+      await routes.start({ sessionRef, cartRef: cart.id, currency: "USD" }),
+      "start checkout",
+    );
+    return started.id;
+  }
+
+  it("records the normalised email and reflects it in the DTO", async () => {
+    const rawAdmin = buildAdmin();
+    const id = await startedGuest(rawAdmin, "session-contact");
+    const admin = routesFor(rawAdmin);
+
+    const response = await admin.contact(id, {
+      sessionRef: "session-contact",
+      email: "  Guest@Example.COM ",
+    });
+
+    expect(response.status).toBe(200);
+    expect((response.body as PublicCheckoutSessionDto).contactEmail).toBe("guest@example.com");
+    const fetched = unwrap<PublicCheckoutSessionDto>(
+      await admin.get(id, "session-contact"),
+      "get checkout",
+    );
+    expect(fetched.contactEmail).toBe("guest@example.com");
+  });
+
+  it("is null until one is provided", async () => {
+    const rawAdmin = buildAdmin();
+    const id = await startedGuest(rawAdmin, "session-none");
+    const fetched = unwrap<PublicCheckoutSessionDto>(
+      await routesFor(rawAdmin).get(id, "session-none"),
+      "get checkout",
+    );
+    expect(fetched.contactEmail).toBeNull();
+  });
+
+  it("rejects a malformed email with a 4xx", async () => {
+    const rawAdmin = buildAdmin();
+    const id = await startedGuest(rawAdmin, "session-bad");
+
+    const response = await routesFor(rawAdmin).contact(id, {
+      sessionRef: "session-bad",
+      email: "not-an-email",
+    });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBeLessThan(500);
+  });
+
+  it("body schema requires sessionRef and rejects extra fields such as customerRef", () => {
+    const schema = routesFor(buildAdmin()).schemaOf(
+      "POST",
+      "/public/checkouts/:checkoutSessionId/contact",
+    ) as { safeParse: (v: unknown) => { success: boolean } };
+    expect(schema.safeParse({ email: "a@example.com" }).success).toBe(false);
+    expect(
+      schema.safeParse({ sessionRef: "s", email: "a@example.com", customerRef: "c-1" }).success,
+    ).toBe(false);
+    expect(schema.safeParse({ sessionRef: "s", email: "a@example.com" }).success).toBe(true);
+  });
+});
+
 describe("public checkout routes — ownership", () => {
   async function startedSession(admin: WiredAdmin, sessionRef: string): Promise<string> {
     const routes = routesFor(admin);
@@ -448,6 +524,7 @@ describe("public checkout routes — ownership", () => {
       admin.items(checkoutSessionId, { sessionRef: "session-b", cartId: "any" }),
       admin.billingAddress(checkoutSessionId, { sessionRef: "session-b", ...address }),
       admin.shippingAddress(checkoutSessionId, { sessionRef: "session-b", ...address }),
+      admin.contact(checkoutSessionId, { sessionRef: "session-b", email: "a@example.com" }),
       admin.shippingQuote(checkoutSessionId, { sessionRef: "session-b" }),
       admin.shippingSelection(checkoutSessionId, { sessionRef: "session-b", method: "standard" }),
       admin.tax(checkoutSessionId, { sessionRef: "session-b" }),

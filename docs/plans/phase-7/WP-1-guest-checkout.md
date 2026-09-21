@@ -71,7 +71,7 @@ Three constraints on that decision, all non-negotiable:
       `services/checkout/src/infrastructure/*mapper*` and the Prisma repository. The column is
       nullable — every session created before this migration has no contact email.
 
-- [ ] **T1.3 — Expose it publicly.**
+- [x] **T1.3 — Expose it publicly.**
       Add `POST /public/checkouts/:checkoutSessionId/contact` to
       `apps/admin/src/http/public-checkout-routes.ts`, copying the shape of the neighbouring
       `.../billing-address` route exactly (same zod body validation, same session-ownership check

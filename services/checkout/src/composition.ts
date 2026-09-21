@@ -16,6 +16,7 @@ import {
   SelectPayment,
   SelectShipping,
   SetBillingAddress,
+  SetContactEmail,
   SetShippingAddress,
 } from "./application/checkout-details.use-cases";
 import {
@@ -131,6 +132,7 @@ function buildController(
     loadItems: new LoadItems({ sessions, unitOfWork }),
     setBillingAddress: new SetBillingAddress({ sessions, unitOfWork }),
     setShippingAddress: new SetShippingAddress({ sessions, unitOfWork }),
+    setContactEmail: new SetContactEmail({ sessions, unitOfWork }),
     selectShipping: new SelectShipping({ sessions, unitOfWork, shippingCalculation }),
     selectPayment: new SelectPayment({ sessions, unitOfWork }),
     validateCheckout: new ValidateCheckout({ sessions, pricingValidation, inventoryValidation }),

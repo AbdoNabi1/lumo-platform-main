@@ -33,6 +33,12 @@ const addressBody = z.object({
   postalCode: z.string().min(1),
   country: z.string().min(1),
 });
+/**
+ * WP-1 (G-52): the guest's contact email. `.strict()` for the same reason `startCheckoutBody` is —
+ * a body carrying `customerRef` (or anything else) is a spoof attempt, not a typo. The email only
+ * ever feeds Identity's find-or-create at completion; it never confers access to a customer.
+ */
+const contactBody = z.object({ sessionRef: z.string().min(1), email: z.string().min(1) }).strict();
 /** Mirrors `checkout-routes.ts`'s Phase A.1 F-01 fix: the caller supplies only `method`, never a rate — `SelectShipping` re-derives the authoritative rate itself. */
 const shippingSelectionBody = z
   .object({ sessionRef: z.string().min(1), method: z.string().min(1) })
@@ -63,7 +69,7 @@ const completeBody = z.object({
  * `sessionRef` resolves to the SAME 404 an unknown id would — this surface never reveals whether a
  * session exists to a caller who cannot prove they own it.
  *
- * **Exposed surface** — exactly the 12 guest-completable routes below. Deliberately NOT exposed here,
+ * **Exposed surface** — exactly the 13 guest-completable routes below (the 13th, `/contact`, is WP-1 / G-52). Deliberately NOT exposed here,
  * left admin-only (`checkout-routes.ts`):
  * - `validate` / `promotion` — reachable through `recalculate` for the guest flow; a guest never
  *   needs to call them directly.
@@ -110,6 +116,8 @@ export interface PublicCheckoutSessionDto {
   readonly shippingAddress: PublicAddressDto | null;
   readonly billingAddress: PublicAddressDto | null;
   readonly selectedShippingMethod: string | null;
+  /** The caller's own receipt address (WP-1) — visible only to the session's owner, same as the addresses. */
+  readonly contactEmail: string | null;
   readonly orderRef: string | null;
 }
 
@@ -148,6 +156,7 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
     billingAddress:
       session.billingAddress === undefined ? null : toAddressDto(session.billingAddress),
     selectedShippingMethod: session.shippingSelection?.method ?? null,
+    contactEmail: session.contactEmail?.value ?? null,
     orderRef: session.orderRef,
   };
 }
@@ -340,6 +349,36 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           city: body.city,
           postalCode: body.postalCode,
           country: body.country,
+        });
+        if (result.status < 200 || result.status >= 300) return result;
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/checkouts/:checkoutSessionId/contact",
+      version: 1,
+      permission: "checkout:set_contact_email",
+      public: true,
+      idempotent: true,
+      summary:
+        "Public: set the caller's own checkout session's contact email (guest receipt address)",
+      schema: { params: checkoutSessionIdParams, body: contactBody },
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
+        if (!(owned instanceof CheckoutSession)) return owned;
+        const result = await admin.publicReads.checkout.setContactEmail({
+          tenantId: context.tenantId,
+          checkoutSessionId: params.checkoutSessionId,
+          email: body.email,
         });
         if (result.status < 200 || result.status >= 300) return result;
         return mapSession(

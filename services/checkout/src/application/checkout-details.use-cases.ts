@@ -15,6 +15,7 @@ import {
   type CheckoutAddressInput,
 } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
+import { ContactEmail } from "../domain/value-objects/contact-email";
 import { PaymentSelection, ShippingSelection } from "../domain/value-objects/selections";
 import type { ShippingCalculationPort } from "./ports";
 
@@ -145,6 +146,44 @@ export class SetShippingAddress implements UseCase<
     return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
       try {
         session.setShippingAddress(address.value);
+        return ok(undefined);
+      } catch (error) {
+        if (isDomainError(error)) return err(error);
+        throw error;
+      }
+    });
+  }
+}
+
+export interface SetContactEmailInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
+  readonly checkoutSessionId: string;
+  readonly email: string;
+}
+
+/**
+ * Sets the address a guest's receipt goes to (WP-1, G-52). At completion, Identity resolves (finds
+ * or creates) a guest customer from it so the order has a customer to attach to.
+ */
+export class SetContactEmail implements UseCase<
+  SetContactEmailInput,
+  CheckoutDetailsOutput,
+  DomainError
+> {
+  private readonly deps: CheckoutDetailsDeps;
+
+  constructor(deps: CheckoutDetailsDeps) {
+    this.deps = deps;
+  }
+
+  async execute(input: SetContactEmailInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
+    const email = ContactEmail.create(input.email);
+    if (!email.ok) return err(email.error);
+
+    return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
+      try {
+        session.setContactEmail(email.value);
         return ok(undefined);
       } catch (error) {
         if (isDomainError(error)) return err(error);

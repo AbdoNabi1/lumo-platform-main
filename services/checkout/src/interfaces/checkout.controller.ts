@@ -17,6 +17,8 @@ import type {
   SelectShippingInput,
   SetAddressInput,
   SetBillingAddress,
+  SetContactEmail,
+  SetContactEmailInput,
   SetShippingAddress,
 } from "../application/checkout-details.use-cases";
 import type {
@@ -44,6 +46,7 @@ export interface CheckoutControllerDeps {
   readonly loadItems: LoadItems;
   readonly setBillingAddress: SetBillingAddress;
   readonly setShippingAddress: SetShippingAddress;
+  readonly setContactEmail: SetContactEmail;
   readonly selectShipping: SelectShipping;
   readonly selectPayment: SelectPayment;
   readonly validateCheckout: ValidateCheckout;
@@ -91,6 +94,10 @@ export class CheckoutController {
 
   async setShippingAddress(input: SetAddressInput): Promise<ControllerResponse> {
     return present(await this.deps.setShippingAddress.execute(input), 200);
+  }
+
+  async setContactEmail(input: SetContactEmailInput): Promise<ControllerResponse> {
+    return present(await this.deps.setContactEmail.execute(input), 200);
   }
 
   async selectShipping(input: SelectShippingInput): Promise<ControllerResponse> {
