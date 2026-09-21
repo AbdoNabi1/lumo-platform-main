@@ -100,6 +100,11 @@ export interface OrderCreationPort {
     readonly tenantId: string;
     readonly checkoutSessionId: string;
     readonly customerRef: string | undefined;
+    /**
+     * A guest session's receipt address (WP-1, G-52). Only meaningful when `customerRef` is
+     * undefined: the implementation resolves a customer from it. Never proof of identity.
+     */
+    readonly contactEmail?: string;
     readonly currency: string;
     readonly items: readonly CheckoutItem[];
     readonly billingAddress: CheckoutAddress;

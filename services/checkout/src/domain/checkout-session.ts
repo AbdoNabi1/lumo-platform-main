@@ -14,6 +14,8 @@ import type { PaymentSelection, ShippingSelection } from "./value-objects/select
 export interface OrderDraft {
   readonly cartRef: string;
   readonly customerRef?: string;
+  /** The guest's receipt address, when set — what Identity resolves a guest customer from. */
+  readonly contactEmail?: string;
   readonly items: readonly CheckoutItem[];
   readonly billingAddress: CheckoutAddress;
   readonly shippingAddress: CheckoutAddress;
@@ -263,6 +265,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     return {
       cartRef: this.props.cartRef,
       customerRef: this.props.customerRef,
+      contactEmail: this.props.contactEmail?.value,
       items: this.props.items,
       billingAddress: this.props.billingAddress,
       shippingAddress: this.props.shippingAddress,

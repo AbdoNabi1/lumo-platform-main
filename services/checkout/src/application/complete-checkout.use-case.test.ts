@@ -5,6 +5,7 @@ import { CheckoutSession } from "../domain/checkout-session";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
 import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
+import { ContactEmail } from "../domain/value-objects/contact-email";
 import type { OrderCreationPort } from "./ports";
 import { CompleteCheckout } from "./complete-checkout.use-case";
 
@@ -275,5 +276,69 @@ describe("CompleteCheckout", () => {
     if (result.ok) throw new Error("expected err");
     expect(result.error.code).toBe("BUSINESS_RULE");
     expect(orderCreation.callCount).toBe(0);
+  });
+});
+
+describe("CompleteCheckout — guest contact email (WP-1)", () => {
+  type CreateInput = Parameters<OrderCreationPort["create"]>[0];
+
+  class CapturingOrderCreationPort implements OrderCreationPort {
+    readonly inputs: CreateInput[] = [];
+
+    async create(input: CreateInput): Promise<{ readonly orderRef: string }> {
+      this.inputs.push(input);
+      return { orderRef: "order-guest" };
+    }
+  }
+
+  function guestReadySession(email?: string): CheckoutSession {
+    const session = CheckoutSession.start(
+      UniqueEntityId.from("cs-guest"),
+      "cart-1",
+      undefined,
+      "session-1",
+      "USD",
+    );
+    session.loadItems([item()]);
+    session.setBillingAddress(address());
+    session.setShippingAddress(address());
+    if (email !== undefined) session.setContactEmail(must(ContactEmail.create(email)));
+    session.recalculateTotals("evt-totals", new Date(0));
+    session.pullDomainEvents();
+    return session;
+  }
+
+  async function complete(session: CheckoutSession, tenantId = "tenant-a") {
+    const sessions = new FakeSessionRepository();
+    sessions.seed(session);
+    const orderCreation = new CapturingOrderCreationPort();
+    const useCase = new CompleteCheckout({
+      sessions,
+      unitOfWork: new NoopUnitOfWork(),
+      idGenerator: sequentialIds(),
+      clock,
+      orderCreation,
+    });
+    await useCase.execute({
+      tenantId,
+      checkoutSessionId: session.id.toString(),
+      idempotencyKey: "idem-1",
+    });
+    return orderCreation.inputs;
+  }
+
+  it("hands the session's contact email and tenant to the order-creation port", async () => {
+    const inputs = await complete(guestReadySession("guest@example.com"), "tenant-b");
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]?.customerRef).toBeUndefined();
+    expect(inputs[0]?.contactEmail).toBe("guest@example.com");
+    expect(inputs[0]?.tenantId).toBe("tenant-b");
+  });
+
+  it("hands over no contact email when the session has none", async () => {
+    const inputs = await complete(guestReadySession());
+
+    expect(inputs[0]?.contactEmail).toBeUndefined();
   });
 });

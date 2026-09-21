@@ -651,7 +651,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     promotionValidation:
       deps.promotionValidation ??
       new PromotionValidationAdapter(catalog.products, promotions.promotions),
-    orderCreation: deps.orderCreation ?? new OrderCreationAdapter(orders.orders),
+    orderCreation:
+      deps.orderCreation ?? new OrderCreationAdapter(orders.orders, identity.customers),
   };
   const checkout = wireCheckout(checkoutDeps);
   // Phase 3 Task 13 (C-3): real `ordersPort`/`paymentsNotifications` adapters for Payments'

@@ -96,6 +96,7 @@ export class CompleteCheckout implements UseCase<
         tenantId: input.tenantId,
         checkoutSessionId: session.id.toString(),
         customerRef: draft.customerRef,
+        contactEmail: draft.contactEmail,
         currency: session.currency,
         items: draft.items,
         billingAddress: draft.billingAddress,

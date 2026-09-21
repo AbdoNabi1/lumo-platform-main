@@ -94,7 +94,7 @@ Three constraints on that decision, all non-negotiable:
       Write the use-case test, including the returning-guest case and the
       already-a-real-customer case.
 
-- [ ] **T1.5 — Wire it into order creation.**
+- [x] **T1.5 — Wire it into order creation.**
       `apps/admin/src/infrastructure/cross-context/order-creation.adapter.ts`: replace the throw.
       When `input.customerRef` is absent, call the new Identity use case with the session's contact
       email and use the returned id. The adapter currently takes only
@@ -120,7 +120,7 @@ Three constraints on that decision, all non-negotiable:
       deleting it** — it explains that `test.fail()` was a forcing function, and that explanation
       should be replaced with what closed it, not simply removed.
 
-- [ ] **T1.8 — Prove the guest cannot escalate.**
+- [x] **T1.8 — Prove the guest cannot escalate.**
       Add a test asserting that completing a guest checkout with the email of an existing,
       registered customer does **not** give the guest session any read access to that customer's
       data — the guest session still has no customer identity, and

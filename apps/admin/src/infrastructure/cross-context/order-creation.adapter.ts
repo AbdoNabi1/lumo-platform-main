@@ -1,5 +1,11 @@
 import type { OrderController } from "@platform/orders";
 import type { OrderCreationPort } from "@platform/checkout";
+import type { CustomerController } from "@platform/identity";
+import { ValidationError } from "@platform/utils";
+
+interface ResolveGuestCustomerBody {
+  readonly customerId: string;
+}
 
 interface CreateFromCheckoutBody {
   readonly orderId: string;
@@ -17,7 +23,14 @@ type OrderCreationInput = Parameters<OrderCreationPort["create"]>[0];
  *
  * Mapping gaps, documented rather than silently papered over:
  *
- * - `customerRef` undefined (guest checkout): `CreateOrderFromCheckout`'s input requires a
+ * - `customerRef` undefined (guest checkout) — **CLOSED by WP-1 / G-52 (2026-09-21)**: the adapter
+ *   now resolves (finds or creates) a guest customer in Identity from the session's contact email
+ *   (`ResolveGuestCustomer`, scoped to `input.tenantId`) and places the order against that id. A
+ *   session with no contact email throws a `ValidationError` (a 4xx — the caller can fix it by
+ *   supplying an email), not a plain `Error`. Resolving is not authenticating: the guest gets an
+ *   order attached to that customer, never a session as them. The paragraph below is kept as the
+ *   record of the original limitation and the decision that closed it.
+ * - (historical) `customerRef` undefined (guest checkout): `CreateOrderFromCheckout`'s input requires a
  *   non-optional `customerRef: string`, but `OrderCreationPort.create`'s `customerRef` is
  *   `string | undefined` because `CheckoutSession` supports guest checkout (`session.isGuest`).
  *   This adapter throws rather than fabricating a placeholder value like `"guest"` — guest
@@ -62,26 +75,24 @@ type OrderCreationInput = Parameters<OrderCreationPort["create"]>[0];
  */
 export class OrderCreationAdapter implements OrderCreationPort {
   private readonly orders: Pick<OrderController, "createFromCheckout">;
+  private readonly customers: Pick<CustomerController, "resolveGuestCustomer">;
 
   /** ADR-0014 (WP-10, T10.3): stateless per tenant — `OrderCreationPort.create`'s input carries `tenantId`. */
-  constructor(orders: Pick<OrderController, "createFromCheckout">) {
+  constructor(
+    orders: Pick<OrderController, "createFromCheckout">,
+    customers: Pick<CustomerController, "resolveGuestCustomer">,
+  ) {
     this.orders = orders;
+    this.customers = customers;
   }
 
   async create(input: OrderCreationInput): Promise<{ readonly orderRef: string }> {
-    if (input.customerRef === undefined) {
-      throw new Error(
-        `OrderCreationAdapter: cannot create an order for checkout session ` +
-          `"${input.checkoutSessionId}" — guest checkout has no customerRef and order creation ` +
-          `currently requires one (C-2 known limitation, needs product decision before guest ` +
-          `checkout can complete)`,
-      );
-    }
+    const customerRef = input.customerRef ?? (await this.resolveGuestCustomerRef(input));
 
     const response = await this.orders.createFromCheckout({
       tenantId: input.tenantId,
       checkoutRef: input.checkoutSessionId,
-      customerRef: input.customerRef,
+      customerRef,
       currency: input.currency,
       items: input.items.map((item) => ({
         productId: item.productRef,
@@ -122,5 +133,33 @@ export class OrderCreationAdapter implements OrderCreationPort {
 
     const { orderId } = response.body as CreateFromCheckoutBody;
     return { orderRef: orderId };
+  }
+
+  /**
+   * Guest checkout: find-or-create the customer for the session's contact email, in the session's
+   * own tenant (`input.tenantId` — never a default, never re-read from a request header).
+   */
+  private async resolveGuestCustomerRef(input: OrderCreationInput): Promise<string> {
+    if (input.contactEmail === undefined) {
+      throw new ValidationError(
+        `Checkout session "${input.checkoutSessionId}" has no customer and no contact email — ` +
+          `a guest must provide an email address before the order can be placed`,
+        [{ field: "email", message: "required to complete a guest checkout" }],
+      );
+    }
+    const response = await this.customers.resolveGuestCustomer({
+      email: input.contactEmail,
+      // The session carries no name; the local part is a display placeholder, never an identifier.
+      name: input.contactEmail.split("@")[0] ?? input.contactEmail,
+      tenantId: input.tenantId,
+    });
+    if (response.status !== 200) {
+      throw new Error(
+        `OrderCreationAdapter: could not resolve a guest customer for checkout session ` +
+          `"${input.checkoutSessionId}" (status ${response.status}): ` +
+          `${JSON.stringify(response.body)}`,
+      );
+    }
+    return (response.body as ResolveGuestCustomerBody).customerId;
   }
 }
