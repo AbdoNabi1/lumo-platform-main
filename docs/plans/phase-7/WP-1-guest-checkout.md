@@ -130,15 +130,15 @@ Three constraints on that decision, all non-negotiable:
 
 ## Definition of done
 
-- [ ] A guest can go cart → checkout → confirmation in the running app, and an order exists
+- [ ] (NOT VERIFIED - full stack unavailable; covered in-process by guest-checkout.e2e.test.ts) A guest can go cart → checkout → confirmation in the running app, and an order exists
       afterwards. This is a Phase-2 exit criterion that has never been met.
-- [ ] `apps/e2e/tests/guest-purchase.spec.ts` passes with no `test.fail()`.
-- [ ] A returning guest reusing the same email attaches to the same customer id.
-- [ ] T1.8's escalation test passes.
-- [ ] `docs/plans/BLOCKERS.md`'s "T2.3" entry is updated with a dated note saying the C-2 limitation
+- [ ] (written, NOT RUN) `apps/e2e/tests/guest-purchase.spec.ts` passes with no `test.fail()`.
+- [x] A returning guest reusing the same email attaches to the same customer id.
+- [x] T1.8's escalation test passes.
+- [x] `docs/plans/BLOCKERS.md`'s "T2.3" entry is updated with a dated note saying the C-2 limitation
       is closed and how. Do not delete it.
-- [ ] `docs/KNOWN_GAPS.md` and `docs/architecture/23-platform-gap-register.md`: G-52 closed.
-- [ ] Repo-wide gates green (`pnpm -r --workspace-concurrency=4 run typecheck` and `run test`,
+- [x] `docs/KNOWN_GAPS.md` and `docs/architecture/23-platform-gap-register.md`: G-52 closed.
+- [x] Repo-wide gates green (`pnpm -r --workspace-concurrency=4 run typecheck` and `run test`,
       plus `pnpm arch`).
 
 ## Known trap
