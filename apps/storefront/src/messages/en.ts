@@ -132,6 +132,7 @@ export const en = {
     title: "Checkout",
     backToCart: "Back to cart",
     step: {
+      contact: "Contact",
       shippingAddress: "Shipping address",
       shippingMethod: "Shipping method",
       billingAddress: "Billing address",
@@ -146,6 +147,10 @@ export const en = {
       country: "Country",
       continue: "Continue",
       saving: "Saving…",
+    },
+    contact: {
+      label: "Email address",
+      hint: "We'll send your order confirmation here.",
     },
     sameAsShipping: "Same as shipping address",
     shippingMethodLoading: "Loading shipping options…",

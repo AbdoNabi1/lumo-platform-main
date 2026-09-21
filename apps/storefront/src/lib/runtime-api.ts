@@ -691,6 +691,8 @@ export interface CheckoutSessionSummary {
   readonly totals: CheckoutTotalsSummary | null;
   readonly shippingAddress: CheckoutAddressInput | null;
   readonly billingAddress: CheckoutAddressInput | null;
+  /** The receipt address a guest gave (WP-1, G-52) — `null` until set. Completing needs it. */
+  readonly contactEmail: string | null;
   readonly selectedShippingMethod: string | null;
   readonly orderRef: string | null;
 }
@@ -757,6 +759,17 @@ export function setCheckoutBillingAddress(
   return postItem<CheckoutSessionSummary>(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/billing-address`,
     { sessionRef, ...address },
+  );
+}
+
+export function setCheckoutContact(
+  checkoutSessionId: string,
+  sessionRef: string,
+  email: string,
+): Promise<CheckoutResult> {
+  return postItem<CheckoutSessionSummary>(
+    `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/contact`,
+    { sessionRef, email },
   );
 }
 

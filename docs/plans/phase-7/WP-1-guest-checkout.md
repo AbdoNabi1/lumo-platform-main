@@ -106,7 +106,7 @@ Three constraints on that decision, all non-negotiable:
       instead of a 500. Check `packages/utils`' error taxonomy for the right one (`ValidationError`
       is likely correct: the caller can fix it by supplying an email).
 
-- [ ] **T1.6 — Make the storefront collect the email.**
+- [x] **T1.6 — Make the storefront collect the email.**
       `apps/storefront/src/app/checkout/page.tsx` and its `actions.ts`: add an email field to the
       checkout form and call the new contact route before completing. Follow the existing
       address-field pattern in that page exactly. Strings go in **both**

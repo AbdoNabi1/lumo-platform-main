@@ -1,8 +1,17 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from "@platform/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Input,
+  Label,
+} from "@platform/ui";
 import {
   completeCheckout,
   recalculate,
@@ -11,16 +20,22 @@ import {
   selectPayment,
   selectShipping,
   setBillingAddress,
+  setContactEmail,
   setShippingAddress,
   type CheckoutActionResult,
   type ShippingQuoteActionResult,
 } from "@/app/checkout/actions";
 import { formatCurrency } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
-import type { CheckoutAddressInput, CheckoutSessionSummary, ShippingQuoteSummary } from "@/lib/runtime-api";
+import type {
+  CheckoutAddressInput,
+  CheckoutSessionSummary,
+  ShippingQuoteSummary,
+} from "@/lib/runtime-api";
 import type { Dictionary } from "@/messages/en";
 
-type Step = "shipping-address" | "shipping-method" | "billing-address" | "payment" | "review";
+type Step =
+  "contact" | "shipping-address" | "shipping-method" | "billing-address" | "payment" | "review";
 
 type ErrorReason = "ownership" | "validation" | "unavailable" | "network";
 
@@ -59,6 +74,9 @@ function currentStep(
   hasQuotes: boolean,
   paymentSelected: boolean,
 ): Step {
+  // WP-1 (G-52): the contact email comes first — completing a guest checkout needs it, and asking
+  // last would put a validation failure at the worst possible moment.
+  if (session.contactEmail === null) return "contact";
   if (session.selectedShippingMethod !== null) {
     if (session.billingAddress !== null) {
       return paymentSelected ? "review" : "payment";
@@ -69,8 +87,8 @@ function currentStep(
 }
 
 /**
- * Renders the guest checkout stepper: shipping address → shipping method → billing address →
- * payment → review. One Client Component for the whole flow (every step is interactive) — same
+ * Renders the guest checkout stepper: contact email → shipping address → shipping method → billing
+ * address → payment → review. One Client Component for the whole flow (every step is interactive) — same
  * split as `cart-view.tsx`. `session` is a Server Component prop; every mutating action calls
  * `revalidatePath("/checkout")`, so `session` refreshes automatically after each successful step
  * (the same mechanism `cart-view.tsx` already relies on) — this component never recomputes a total
@@ -80,10 +98,17 @@ export function CheckoutView({
   session,
   t,
   locale,
+  accountEmail = null,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly t: Dictionary;
   readonly locale: Locale;
+  /**
+   * The signed-in customer's email, resolved SERVER-side from their session (never read from a
+   * cookie or typed). When present the contact step applies it once automatically — no re-entry —
+   * and only falls back to a pre-filled field if that call fails.
+   */
+  readonly accountEmail?: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -92,6 +117,9 @@ export function CheckoutView({
   const [quotes, setQuotes] = useState<readonly ShippingQuoteSummary[]>([]);
   const [paymentSelected, setPaymentSelected] = useState(false);
   const [recalculated, setRecalculated] = useState(false);
+
+  const [contactForm, setContactForm] = useState(session.contactEmail ?? accountEmail ?? "");
+  const accountEmailApplied = useRef(false);
 
   const [shippingForm, setShippingForm] = useState<CheckoutAddressInput>(
     addressFromDto(session.shippingAddress),
@@ -102,6 +130,17 @@ export function CheckoutView({
   const [sameAsShipping, setSameAsShipping] = useState(true);
 
   const step = currentStep(session, quotes.length > 0, paymentSelected);
+
+  // Signed-in customer: apply their account email once, so they never re-type it. A ref (not state)
+  // guards against a double run; a failure just leaves the pre-filled contact field to submit.
+  useEffect(() => {
+    if (step !== "contact" || accountEmail === null || accountEmailApplied.current) return;
+    accountEmailApplied.current = true;
+    startTransition(async () => {
+      const result = await setContactEmail(session.id, accountEmail);
+      if (!result.ok) setError(result.reason);
+    });
+  }, [step, accountEmail, session.id]);
 
   // Fetch totals once the review step is reached (Task 5: "Review → recalculate, show totals").
   useEffect(() => {
@@ -121,6 +160,13 @@ export function CheckoutView({
     }
     setError(null);
     return true;
+  }
+
+  function onContactSubmit(event: React.FormEvent): void {
+    event.preventDefault();
+    startTransition(async () => {
+      applyResult(await setContactEmail(session.id, contactForm));
+    });
   }
 
   function onShippingAddressSubmit(event: React.FormEvent): void {
@@ -199,7 +245,14 @@ export function CheckoutView({
         </h1>
         <div className="flex flex-wrap gap-1.5">
           {(
-            ["shipping-address", "shipping-method", "billing-address", "payment", "review"] as const
+            [
+              "contact",
+              "shipping-address",
+              "shipping-method",
+              "billing-address",
+              "payment",
+              "review",
+            ] as const
           ).map((candidate) => (
             <Badge key={candidate} variant={candidate === step ? "accent" : "neutral"}>
               {t.checkout.step[toStepKey(candidate)]}
@@ -215,6 +268,26 @@ export function CheckoutView({
           >
             {errorBody(error, t)}
           </div>
+        )}
+
+        {step === "contact" && (
+          <form onSubmit={onContactSubmit} className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="contact-email">{t.checkout.contact.label}</Label>
+              <Input
+                id="contact-email"
+                type="email"
+                autoComplete="email"
+                required
+                value={contactForm}
+                onChange={(event) => setContactForm(event.target.value)}
+              />
+              <p className="text-muted-foreground text-xs">{t.checkout.contact.hint}</p>
+            </div>
+            <Button type="submit" disabled={isPending} loading={isPending} className="self-start">
+              {isPending ? t.checkout.address.saving : t.checkout.address.continue}
+            </Button>
+          </form>
         )}
 
         {step === "shipping-address" && (
@@ -337,7 +410,7 @@ export function CheckoutView({
 
 function toStepKey(
   step: Step,
-): "shippingAddress" | "shippingMethod" | "billingAddress" | "payment" | "review" {
+): "contact" | "shippingAddress" | "shippingMethod" | "billingAddress" | "payment" | "review" {
   if (step === "shipping-address") return "shippingAddress";
   if (step === "shipping-method") return "shippingMethod";
   if (step === "billing-address") return "billingAddress";

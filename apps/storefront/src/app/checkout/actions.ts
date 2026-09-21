@@ -17,6 +17,7 @@ import {
   selectCheckoutPayment,
   selectCheckoutShipping,
   setCheckoutBillingAddress,
+  setCheckoutContact,
   setCheckoutShippingAddress,
   startCheckout as startCheckoutApi,
   type CheckoutAddressInput,
@@ -127,6 +128,21 @@ export async function startCheckout(cartId: string): Promise<CheckoutActionResul
   jar.set(CHECKOUT_SESSION_COOKIE, checkoutSessionId, CHECKOUT_SESSION_COOKIE_OPTIONS);
   revalidatePath("/checkout");
   return { ok: true, checkoutSessionId };
+}
+
+/**
+ * Records where a guest's receipt goes (WP-1, G-52). At completion the Runtime API resolves — finds
+ * or creates — a guest customer from it, so the order has a customer to attach to. Like every
+ * action here, the `sessionRef` is the server-held guest cookie, never a caller-supplied value; the
+ * email itself proves nothing about identity and never signs anyone in.
+ */
+export async function setContactEmail(
+  checkoutSessionId: string,
+  email: string,
+): Promise<CheckoutActionResult> {
+  return withSession(checkoutSessionId, (sessionRef) =>
+    setCheckoutContact(checkoutSessionId, sessionRef, email),
+  );
 }
 
 export async function setShippingAddress(

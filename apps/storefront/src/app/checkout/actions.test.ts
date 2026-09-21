@@ -10,6 +10,7 @@ const startCheckoutApi = vi.fn();
 const loadCheckoutItems = vi.fn();
 const setCheckoutShippingAddress = vi.fn();
 const setCheckoutBillingAddress = vi.fn();
+const setCheckoutContact = vi.fn();
 const requestCheckoutShippingQuote = vi.fn();
 const selectCheckoutShipping = vi.fn();
 const requestCheckoutTax = vi.fn();
@@ -23,6 +24,7 @@ vi.mock("@/lib/runtime-api", () => ({
   loadCheckoutItems: (...args: unknown[]) => loadCheckoutItems(...args),
   setCheckoutShippingAddress: (...args: unknown[]) => setCheckoutShippingAddress(...args),
   setCheckoutBillingAddress: (...args: unknown[]) => setCheckoutBillingAddress(...args),
+  setCheckoutContact: (...args: unknown[]) => setCheckoutContact(...args),
   requestCheckoutShippingQuote: (...args: unknown[]) => requestCheckoutShippingQuote(...args),
   selectCheckoutShipping: (...args: unknown[]) => selectCheckoutShipping(...args),
   requestCheckoutTax: (...args: unknown[]) => requestCheckoutTax(...args),
@@ -84,6 +86,7 @@ function session(overrides: Partial<CheckoutSessionSummary> = {}): CheckoutSessi
     totals: null,
     shippingAddress: null,
     billingAddress: null,
+    contactEmail: null,
     selectedShippingMethod: null,
     orderRef: null,
     ...overrides,
@@ -166,6 +169,7 @@ describe("every mutating action requires an existing guest session — none mint
   it.each([
     ["setShippingAddress", () => actions.setShippingAddress("checkout-1", address)],
     ["setBillingAddress", () => actions.setBillingAddress("checkout-1", address)],
+    ["setContactEmail", () => actions.setContactEmail("checkout-1", "guest@example.com")],
     ["requestShippingQuote", () => actions.requestShippingQuote("checkout-1")],
     ["selectShipping", () => actions.selectShipping("checkout-1", "standard")],
     ["requestTax", () => actions.requestTax("checkout-1")],
@@ -177,6 +181,29 @@ describe("every mutating action requires an existing guest session — none mint
 
     expect(result).toEqual({ ok: false, reason: "ownership" });
     expect(cookieSet).not.toHaveBeenCalled();
+  });
+});
+
+describe("setContactEmail (WP-1, G-52)", () => {
+  it("sends the email with the server-held guest sessionRef — never one the caller supplies — and revalidates", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    setCheckoutContact.mockResolvedValue({ status: 200, body: session() });
+
+    const result = await actions.setContactEmail("checkout-1", "guest@example.com");
+
+    expect(result).toEqual({ ok: true, checkoutSessionId: "checkout-1" });
+    expect(setCheckoutContact).toHaveBeenCalledWith("checkout-1", "session-a", "guest@example.com");
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
+  });
+
+  it("maps a 422 from the Runtime API to a validation error", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    setCheckoutContact.mockResolvedValue({ status: 422, body: null });
+
+    expect(await actions.setContactEmail("checkout-1", "nope")).toEqual({
+      ok: false,
+      reason: "validation",
+    });
   });
 });
 

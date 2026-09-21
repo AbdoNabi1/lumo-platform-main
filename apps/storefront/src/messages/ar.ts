@@ -136,6 +136,7 @@ export const ar: Dictionary = {
     title: "الدفع",
     backToCart: "العودة إلى السلة",
     step: {
+      contact: "التواصل",
       shippingAddress: "عنوان الشحن",
       shippingMethod: "طريقة الشحن",
       billingAddress: "عنوان الفوترة",
@@ -150,6 +151,10 @@ export const ar: Dictionary = {
       country: "الدولة",
       continue: "متابعة",
       saving: "جارٍ الحفظ…",
+    },
+    contact: {
+      label: "عنوان البريد الإلكتروني",
+      hint: "سنرسل تأكيد الطلب إلى هذا العنوان.",
     },
     sameAsShipping: "نفس عنوان الشحن",
     shippingMethodLoading: "جارٍ تحميل خيارات الشحن…",

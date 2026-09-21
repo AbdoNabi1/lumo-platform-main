@@ -5,6 +5,7 @@ import type { CheckoutSessionSummary } from "@/lib/runtime-api";
 import type { CheckoutActionResult, ShippingQuoteActionResult } from "@/app/checkout/actions";
 import { CheckoutView } from "./checkout-view";
 
+const setContactEmail = vi.fn<(id: string, email: string) => Promise<CheckoutActionResult>>();
 const setShippingAddress = vi.fn<(id: string, address: unknown) => Promise<CheckoutActionResult>>();
 const requestShippingQuote = vi.fn<(id: string) => Promise<ShippingQuoteActionResult>>();
 const selectShipping = vi.fn<(id: string, method: string) => Promise<CheckoutActionResult>>();
@@ -16,6 +17,7 @@ const requestTax = vi.fn<(id: string) => Promise<CheckoutActionResult>>();
 const completeCheckout = vi.fn<(id: string) => Promise<CheckoutActionResult>>();
 
 vi.mock("@/app/checkout/actions", () => ({
+  setContactEmail: (id: string, email: string) => setContactEmail(id, email),
   setShippingAddress: (id: string, address: unknown) => setShippingAddress(id, address),
   requestShippingQuote: (id: string) => requestShippingQuote(id),
   selectShipping: (id: string, method: string) => selectShipping(id, method),
@@ -42,6 +44,8 @@ function session(overrides: Partial<CheckoutSessionSummary> = {}): CheckoutSessi
     totals: null,
     shippingAddress: null,
     billingAddress: null,
+    // Most tests are about later steps, so the default session already has its contact email.
+    contactEmail: "guest@example.com",
     selectedShippingMethod: null,
     orderRef: null,
     ...overrides,
@@ -58,13 +62,7 @@ describe("CheckoutView — step derivation from the session (never skips a serve
   });
 
   it("resumes at the shipping-method step when the session already has a shipping address but no quotes loaded yet", () => {
-    render(
-      <CheckoutView
-        session={session({ shippingAddress: address })}
-        t={en}
-        locale="en"
-      />,
-    );
+    render(<CheckoutView session={session({ shippingAddress: address })} t={en} locale="en" />);
 
     // No local quotes yet (a fresh mount never re-derives past what the session can prove), so it
     // falls back to asking for the address again rather than fabricating a quote list.
@@ -97,6 +95,70 @@ describe("CheckoutView — step derivation from the session (never skips a serve
     );
 
     expect(screen.getByText(en.checkout.paymentCardOption)).toBeInTheDocument();
+  });
+});
+
+describe("CheckoutView — contact step (WP-1, G-52)", () => {
+  it("starts at the contact step when the session has no contact email — before any address", () => {
+    render(<CheckoutView session={session({ contactEmail: null })} t={en} locale="en" />);
+
+    expect(screen.getByLabelText(en.checkout.contact.label)).toBeInTheDocument();
+    expect(screen.queryByLabelText(en.checkout.address.line1)).not.toBeInTheDocument();
+  });
+
+  it("submits the email, and stays on the contact step with an alert when it is rejected", async () => {
+    setContactEmail.mockResolvedValue({ ok: false, reason: "validation" });
+    render(<CheckoutView session={session({ contactEmail: null })} t={en} locale="en" />);
+
+    fireEvent.change(screen.getByLabelText(en.checkout.contact.label), {
+      target: { value: "a@b" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: en.checkout.address.continue }));
+
+    await waitFor(() => expect(setContactEmail).toHaveBeenCalledWith("checkout-1", "a@b"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.validationErrorBody);
+    expect(screen.getByLabelText(en.checkout.contact.label)).toBeInTheDocument();
+  });
+
+  it("a signed-in customer's account email is applied once, with no re-entry", async () => {
+    setContactEmail.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
+    render(
+      <CheckoutView
+        session={session({ contactEmail: null })}
+        t={en}
+        locale="en"
+        accountEmail="member@example.com"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(setContactEmail).toHaveBeenCalledWith("checkout-1", "member@example.com"),
+    );
+    expect(setContactEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to a pre-filled field when applying the account email fails", async () => {
+    setContactEmail.mockResolvedValue({ ok: false, reason: "network" });
+    render(
+      <CheckoutView
+        session={session({ contactEmail: null })}
+        t={en}
+        locale="en"
+        accountEmail="member@example.com"
+      />,
+    );
+
+    await waitFor(() => expect(setContactEmail).toHaveBeenCalledTimes(1));
+    expect(screen.getByLabelText(en.checkout.contact.label)).toHaveValue("member@example.com");
+  });
+
+  it("does not re-apply anything once the session already has a contact email", () => {
+    render(
+      <CheckoutView session={session()} t={en} locale="en" accountEmail="member@example.com" />,
+    );
+
+    expect(setContactEmail).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(en.checkout.address.line1)).toBeInTheDocument();
   });
 });
 
