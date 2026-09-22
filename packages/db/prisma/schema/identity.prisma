@@ -22,6 +22,23 @@ model Customer {
   @@schema("identity")
 }
 
+// G-72 — single-use, hashed, tenant+customer-bound signup-completion tokens. Only the SHA-256
+// hash is ever stored (D3) — the raw token exists only in memory, for the outbound email.
+model SignupToken {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id")
+  customerId String    @map("customer_id") @db.Uuid
+  tokenHash  String    @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@unique([tenantId, tokenHash])
+  @@index([tenantId, customerId])
+  @@map("signup_tokens")
+  @@schema("identity")
+}
+
 model Address {
   id         String   @id @db.Uuid
   tenantId   String   @map("tenant_id")
