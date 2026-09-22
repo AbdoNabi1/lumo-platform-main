@@ -258,6 +258,17 @@ describe("count gate", () => {
     expect(code).toBe(0);
   });
 
+  it("after the contract step: PASS, and no row flagged MISMATCH or ORPHAN (the live 2026-09-21 output did both)", async () => {
+    const keto = fakeKeto([
+      direct(qualify(TENANT, "orders:read"), "u1"),
+      direct(qualify(TENANT, "orders:write"), "u1"),
+    ]);
+    const o = capture();
+    expect(await runCountGate({ client: keto.client, tenantId: TENANT, out: o.out })).toBe(0);
+    expect(o.text()).toContain("PASS (nothing at risk)");
+    expect(o.text()).not.toMatch(/MISMATCH|ORPHAN/);
+  });
+
   it("FAILS on an empty namespace (wrong project must not read as a pass)", async () => {
     expect(
       await runCountGate({ client: fakeKeto([]).client, tenantId: TENANT, out: capture().out }),

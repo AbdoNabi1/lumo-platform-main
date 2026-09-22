@@ -206,10 +206,14 @@ export function computeGate(tuples, tenantId) {
 }
 
 function printGate(gate, out) {
+  // After the contract step every qualified tuple has no bare twin BY DESIGN, so a bare-vs-qualified
+  // comparison would flag every row. In that state a row is only wrong if it still has a bare tuple.
+  const contracted = gate.status === "contracted";
   const table = (title, rows) => {
     out(`\n${title}`);
     for (const r of rows) {
-      const flag = r.bare === r.qualified ? "  ok" : "  MISMATCH";
+      const ok = contracted ? r.bare === 0 : r.bare === r.qualified;
+      const flag = ok ? "  ok" : "  MISMATCH";
       out(
         `  ${String(r.bare).padStart(4)} bare  ${String(r.qualified).padStart(4)} qualified  ${r.name}${flag}`,
       );
@@ -226,7 +230,7 @@ function printGate(gate, out) {
       `MISSING TWIN  ${m.tuple.object}  ${m.tuple.relation}  ${m.subject}  (a bare tuple with no qualified twin)`,
     );
   }
-  for (const o of gate.orphanQualified) {
+  for (const o of contracted ? [] : gate.orphanQualified) {
     out(
       `ORPHAN TWIN   ${o.tuple.object}  ${o.tuple.relation}  ${o.subject}  (a qualified tuple with no bare tuple)`,
     );
