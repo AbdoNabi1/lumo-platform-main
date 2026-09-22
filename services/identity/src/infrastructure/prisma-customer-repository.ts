@@ -52,7 +52,12 @@ export class PrismaCustomerRepository implements CustomerRepository {
     } else {
       const updated = await client.customer.updateMany({
         where: { id: customerId, tenantId, version: customer.version },
-        data: { name: customer.name, version: { increment: 1 } },
+        data: {
+          name: customer.name,
+          isGuest: customer.isGuest,
+          emailVerifiedAt: customer.emailVerifiedAt,
+          version: { increment: 1 },
+        },
       });
       if (updated.count === 0) {
         throw new ConcurrencyError(

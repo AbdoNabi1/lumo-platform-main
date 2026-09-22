@@ -82,5 +82,40 @@ describe("Customer", () => {
       expect(guest.isGuest).toBe(true);
       expect(real.isGuest).toBe(false);
     });
+
+    it("a fresh guest has no verified email", () => {
+      const c = Customer.registerGuest(
+        UniqueEntityId.from("cust-g2"),
+        email("guest2@example.com"),
+        "guest",
+        "evt-guest2",
+        new Date(0),
+      );
+      expect(c.emailVerifiedAt).toBeNull();
+    });
+  });
+
+  describe("upgradeFromGuest (G-72)", () => {
+    it("upgrades a guest to a real, verified account", () => {
+      const c = Customer.registerGuest(
+        UniqueEntityId.from("cust-g3"),
+        email("guest3@example.com"),
+        "Guest Name",
+        "evt-guest3",
+        new Date(0),
+      );
+      const now = new Date("2026-09-22T00:00:00.000Z");
+      c.upgradeFromGuest("Real Name", now);
+      expect(c.isGuest).toBe(false);
+      expect(c.emailVerifiedAt).toEqual(now);
+      expect(c.name).toBe("Real Name");
+    });
+
+    it("refuses to upgrade a customer that is not a guest", () => {
+      const c = customer();
+      expect(() => c.upgradeFromGuest("Someone Else", new Date(0))).toThrow(
+        "Only a guest customer can be upgraded",
+      );
+    });
   });
 });

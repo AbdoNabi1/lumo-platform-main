@@ -1,4 +1,5 @@
 import { AggregateRoot, type UniqueEntityId } from "@platform/domain";
+import { BusinessRuleError } from "@platform/utils";
 import type { Address } from "./address";
 import { ConsentRecord } from "./consent-record";
 import { ConsentChanged } from "./events/consent-changed.event";
@@ -8,15 +9,17 @@ import type { Email } from "./value-objects/email";
 
 interface CustomerProps {
   readonly email: Email;
-  readonly name: string;
+  name: string;
   readonly addresses: Address[];
   readonly consents: ConsentRecord[];
   /**
    * Created by guest checkout (WP-1, G-52) rather than by registering: no password, no verified
    * email, no consent given. Lets Customer 360 and Notifications tell the two apart, and a later
-   * registration upgrade it.
+   * registration upgrade it (G-72, {@link Customer.upgradeFromGuest}).
    */
-  readonly isGuest: boolean;
+  isGuest: boolean;
+  /** Set only by {@link upgradeFromGuest} — proof the shopper opened the emailed signup link (G-72). */
+  emailVerifiedAt: Date | null;
 }
 
 /**
@@ -58,7 +61,10 @@ export class Customer extends AggregateRoot<CustomerProps> {
     eventId: string,
     occurredAt: Date,
   ): Customer {
-    const customer = new Customer({ email, name, addresses: [], consents: [], isGuest }, id);
+    const customer = new Customer(
+      { email, name, addresses: [], consents: [], isGuest, emailVerifiedAt: null },
+      id,
+    );
     customer.addDomainEvent(
       new CustomerRegistered(
         { eventId, aggregateId: customer.id, occurredAt },
@@ -81,9 +87,10 @@ export class Customer extends AggregateRoot<CustomerProps> {
     consents: readonly ConsentRecord[],
     version: number,
     isGuest = false,
+    emailVerifiedAt: Date | null = null,
   ): Customer {
     return new Customer(
-      { email, name, addresses: [...addresses], consents: [...consents], isGuest },
+      { email, name, addresses: [...addresses], consents: [...consents], isGuest, emailVerifiedAt },
       id,
       version,
     );
@@ -91,6 +98,23 @@ export class Customer extends AggregateRoot<CustomerProps> {
 
   addAddress(address: Address): void {
     this.props.addresses.push(address);
+  }
+
+  /**
+   * Upgrades a guest-checkout customer to a real, login-capable account (G-72) — the shopper has
+   * just proven ownership of the email by opening a single-use signup-completion link
+   * (`CompleteSignup`). Sets `isGuest` false and `emailVerifiedAt`; also takes the name from the
+   * completion form (the guest's checkout name may not be what they want on the account). No
+   * domain event is raised: nothing downstream needs to react to this transition — the customer id
+   * is unchanged, which is what lets Customer 360 and every other reader keep stitching by id.
+   */
+  upgradeFromGuest(name: string, occurredAt: Date): void {
+    if (!this.props.isGuest) {
+      throw new BusinessRuleError("Only a guest customer can be upgraded");
+    }
+    this.props.isGuest = false;
+    this.props.emailVerifiedAt = occurredAt;
+    this.props.name = name;
   }
 
   changeConsent(
@@ -130,6 +154,10 @@ export class Customer extends AggregateRoot<CustomerProps> {
 
   get isGuest(): boolean {
     return this.props.isGuest;
+  }
+
+  get emailVerifiedAt(): Date | null {
+    return this.props.emailVerifiedAt;
   }
 
   get addresses(): readonly Address[] {

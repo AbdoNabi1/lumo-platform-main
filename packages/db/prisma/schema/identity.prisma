@@ -8,6 +8,7 @@ model Customer {
   email     String // stored trimmed + lower-cased (domain `Email` VO)
   name      String
   isGuest   Boolean   @default(false) @map("is_guest") // created by guest checkout, not registration (WP-1, G-52)
+  emailVerifiedAt DateTime? @map("email_verified_at") // set only on guest→account upgrade (G-72)
   version   Int       @default(0)
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
