@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { OrderDraft } from "@platform/checkout";
+import type { RateLimiter } from "@platform/contracts";
 import type { Brand, Category, Product } from "@platform/catalog";
 import type { Customer } from "@platform/identity";
 import type { InventoryItem } from "@platform/inventory";
@@ -738,7 +739,7 @@ function toBrandDto(brand: Brand): BrandDto {
  */
 export function adminRoutes(
   admin: WiredAdmin,
-  options: { readonly tenancyPinnedTo?: string } = {},
+  options: { readonly tenancyPinnedTo?: string; readonly rateLimiter?: RateLimiter } = {},
 ): readonly RouteDefinition[] {
   return [
     defineRoute({
@@ -1851,7 +1852,7 @@ export function adminRoutes(
     ...licensingRoutes(admin),
     ...platformConsoleRoutes(admin),
     ...promotionsRoutes(admin),
-    ...publicAuthRoutes(admin),
+    ...publicAuthRoutes(admin, options.rateLimiter),
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),
     ...publicCheckoutRoutes(admin),

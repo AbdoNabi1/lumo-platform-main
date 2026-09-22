@@ -94,11 +94,13 @@ import { PaymentsOrdersAdapter } from "./infrastructure/cross-context/payments-o
 import { PricingValidationAdapter } from "./infrastructure/cross-context/pricing-validation.adapter";
 import { PromotionValidationAdapter } from "./infrastructure/cross-context/promotion-validation.adapter";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
+import { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email-adapter";
 import { AccessAdminController } from "./interfaces/access.admin-controller";
 import { AdminGuard } from "./interfaces/admin-guard";
 import { CustomerAuthAdminController } from "./interfaces/customer-auth.admin-controller";
 import type { CustomerCredentialsPort } from "./interfaces/customer-credentials.port";
 import { CustomerGuard } from "./interfaces/customer-guard";
+import type { SignupEmailPort } from "./interfaces/signup-email.port";
 import { AnalyticsAdminController } from "./interfaces/analytics.admin-controller";
 import { AutomationAdminController } from "./interfaces/automation.admin-controller";
 import { CartAdminController } from "./interfaces/cart.admin-controller";
@@ -288,6 +290,20 @@ export interface AdminWiringDeps {
   readonly ordersPort?: PaymentsOrdersPort;
   readonly financePort?: PaymentsFinancePort;
   readonly paymentsNotifications?: PaymentsNotificationPort;
+  /**
+   * G-72: dispatches the "complete your account" / "you already have an account" signup emails.
+   * Absent ⇒ `LoggingSignupEmailAdapter` (logs instead of sending), same as before this field
+   * existed. `apps/runtime/src/api.ts` refuses to boot outside `local` while the resolved adapter
+   * is still that logging one — see `assertProductionSignupEmailConfigured`. A real provider
+   * (Resend/SendGrid/SES/...) is deliberately out of scope (D4); this is the seam for one.
+   */
+  readonly signupEmail?: SignupEmailPort;
+  /**
+   * G-72: the storefront's public origin, used to build the signup-completion link
+   * (`${storefrontPublicUrl}/account/signup/complete?token=...`). Absent ⇒ `http://localhost:3000`
+   * (matches the storefront's own `RUNTIME_API_URL` local-default convention).
+   */
+  readonly storefrontPublicUrl?: string;
 }
 
 export interface WiredAdmin {
@@ -761,6 +777,10 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       security.passwordProvider.register(identifier, password, principalExternalId);
     },
   };
+  // G-72: absent ⇒ the logging dev adapter, guarded out of production by
+  // `apps/runtime/src/api.ts`'s `assertProductionSignupEmailConfigured`.
+  const signupEmail: SignupEmailPort = deps.signupEmail ?? new LoggingSignupEmailAdapter();
+  const signupCompletionUrlBase = `${deps.storefrontPublicUrl ?? "http://localhost:3000"}/account/signup/complete`;
 
   const contexts: readonly DrainableContext[] = [
     catalog,
@@ -916,6 +936,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard: customerGuard,
       idGenerator: deps.idGenerator,
       sessionTtlSeconds: CUSTOMER_SESSION_TTL_SECONDS,
+      signupEmail,
+      signupCompletionUrlBase,
     }),
     drainOutbox: async () => {
       let total = 0;

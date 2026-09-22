@@ -119,10 +119,10 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
   await registerRoutes(
     app,
     httpDeps,
-    adminRoutes(
-      admin,
-      multi && deps.tenantId !== undefined ? { tenancyPinnedTo: deps.tenantId } : {},
-    ),
+    adminRoutes(admin, {
+      ...(multi && deps.tenantId !== undefined ? { tenancyPinnedTo: deps.tenantId } : {}),
+      rateLimiter: deps.rateLimiter,
+    }),
   );
   await app.ready();
   return app;

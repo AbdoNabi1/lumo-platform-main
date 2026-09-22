@@ -10,6 +10,7 @@ import type { WiredAdmin } from "../composition";
 import { CustomerAuthAdminController } from "../interfaces/customer-auth.admin-controller";
 import type { CustomerCredentialsPort } from "../interfaces/customer-credentials.port";
 import { CustomerGuard } from "../interfaces/customer-guard";
+import { LoggingSignupEmailAdapter } from "../infrastructure/logging-signup-email-adapter";
 import { publicAuthRoutes } from "./public-auth-routes";
 import { publicWishlistRoutes, type PublicWishlistDto } from "./public-wishlist-routes";
 
@@ -64,6 +65,8 @@ function harness(): Harness {
     guard: new CustomerGuard({ security: security.security, customers: identity.customers }),
     idGenerator: sequentialIds("refresh"),
     sessionTtlSeconds: 3600,
+    signupEmail: new LoggingSignupEmailAdapter(),
+    signupCompletionUrlBase: "http://localhost:3000/account/signup/complete",
   });
 
   const admin = {
