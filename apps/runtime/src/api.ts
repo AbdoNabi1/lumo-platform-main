@@ -1,4 +1,8 @@
-import { createAdminHttpApi } from "@platform/admin";
+import {
+  createAdminHttpApi,
+  LoggingSignupEmailAdapter,
+  type SignupEmailPort,
+} from "@platform/admin";
 import { PrismaAuditTrail } from "@platform/db";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
 import { InMemoryTotpMfaProvider, type MfaProviderResolver } from "@platform/security";
@@ -138,6 +142,34 @@ export function assertProductionObjectStorageConfigured(
         "stub (exists() always true, getDownloadUrl() a URL template that never points at real " +
         "storage) must never back Media outside APP_ENV=local. Set S3_ENDPOINT, S3_ACCESS_KEY_ID, " +
         "and S3_SECRET_ACCESS_KEY to configure the real MinIO/S3 adapter.",
+    );
+  }
+}
+
+/**
+ * G-72: no real `SignupEmailPort` provider is wired anywhere in this codebase (D4 — "the user's
+ * choice", deliberately out of scope) — `buildRuntimeCore` always resolves `LoggingSignupEmailAdapter`
+ * (logs the signup-completion link instead of emailing it). This guard fails closed outside `local`
+ * while that is still the resolved adapter, same `instanceof`-based shape as
+ * `assertProductionMfaConfigured`/`assertProductionObjectStorageConfigured` above. Once a real
+ * provider (Resend/SendGrid/SES/...) is chosen and wired through `AdminWiringDeps.signupEmail`, this
+ * guard passes without any change to it.
+ */
+export function assertProductionSignupEmailConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+  signupEmail: SignupEmailPort,
+): void {
+  if (!(signupEmail instanceof LoggingSignupEmailAdapter)) return;
+  if (appEnv === "local") {
+    logger.warn(
+      "Signup verification email is permissive: no production SignupEmailPort configured, APP_ENV=local",
+    );
+  } else {
+    throw new Error(
+      "api: no production SignupEmailPort is configured (G-72). The logging dev adapter (writes " +
+        "the signup-completion link to the log instead of emailing it) must never back account " +
+        "verification outside APP_ENV=local. Pass signupEmail in createAdminHttpApi's deps once a " +
+        "real provider (Resend/SendGrid/SES/...) is chosen and wired.",
     );
   }
 }
@@ -337,6 +369,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     collectGuardFailure(() =>
       assertProductionIntegrationPortsConfigured(config.APP_ENV, integrationPorts),
     ),
+    collectGuardFailure(() =>
+      assertProductionSignupEmailConfigured(config.APP_ENV, runtime.signupEmail),
+    ),
   ].filter((message): message is string => message !== undefined);
 
   if (guardFailures.length > 0) {
@@ -389,6 +424,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // memory limit). The durable adapter, the `platform.audit_events` table, and the 7-year-retention
     // `platform.audit.entry_recorded.v1` topic all already existed — only this wiring was missing.
     auditTrail: new PrismaAuditTrail(runtime.prisma, runtime.idGenerator),
+    // G-72: guarded above by assertProductionSignupEmailConfigured.
+    signupEmail: runtime.signupEmail,
+    storefrontPublicUrl: config.STOREFRONT_PUBLIC_URL,
     // H-04 (audit): /docs, /openapi.json, and /readyz's full dependency-error detail are verified
     // publicly reachable, unauthenticated, on a hosted deployment — the composition root (here,
     // not the transport) is what actually knows whether this process is `local` dev or a

@@ -7,3 +7,5 @@ export { OrdersAdminController } from "./interfaces/orders.admin-controller";
 export { CustomersAdminController } from "./interfaces/customers.admin-controller";
 export { PricingAdminController } from "./interfaces/pricing.admin-controller";
 export { createAdminHttpApi, type AdminHttpDeps } from "./http/server";
+export type { SignupEmailPort } from "./interfaces/signup-email.port";
+export { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email-adapter";

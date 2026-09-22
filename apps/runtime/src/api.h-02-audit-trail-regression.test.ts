@@ -22,6 +22,14 @@ const { mockCreateAdminHttpApi } = vi.hoisted(() => ({
 
 vi.mock("@platform/admin", () => ({
   createAdminHttpApi: mockCreateAdminHttpApi,
+  LoggingSignupEmailAdapter: class {
+    async sendCompleteAccountEmail() {
+      return undefined;
+    }
+    async sendAlreadyRegisteredEmail() {
+      return undefined;
+    }
+  },
 }));
 
 const validEnv = {

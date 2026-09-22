@@ -40,6 +40,7 @@ import {
   type PaymentVerificationPort,
 } from "@platform/orders";
 import { wirePayments, type PaymentController } from "@platform/payments";
+import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import {
   NodeCrypto,
@@ -128,6 +129,13 @@ export interface RuntimeCore {
    * provider is still the in-memory reference stub, which this composition never produces.
    */
   readonly mfaProviders: MfaProviderResolver;
+  /**
+   * G-72: dispatches the two signup-related emails (complete-account / already-registered). Always
+   * `LoggingSignupEmailAdapter` today — no real provider is wired anywhere in this composition (D4:
+   * "the user's choice", not in scope). `apps/runtime/src/api.ts` refuses to boot outside `local`
+   * while this is still that logging adapter.
+   */
+  readonly signupEmail: SignupEmailPort;
 }
 
 export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
@@ -283,6 +291,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     objectStorage,
     paymentProvider,
     mfaProviders,
+    signupEmail: new LoggingSignupEmailAdapter(),
   };
 }
 

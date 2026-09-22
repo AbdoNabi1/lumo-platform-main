@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
 import type { Database } from "@platform/db";
 import type { PaymentController } from "@platform/payments";
 import { loadRuntimeConfig } from "./config";
@@ -15,6 +16,7 @@ import {
   assertProductionLicensingBillingConfigured,
   assertProductionObjectStorageConfigured,
   assertProductionPaymentProviderConfigured,
+  assertProductionSignupEmailConfigured,
   startApi,
 } from "./api";
 import { InMemoryObjectStorage, StorageServiceObjectStorage } from "@platform/media";
@@ -195,26 +197,28 @@ describe("api entrypoint", () => {
       APP_ENV: "production",
       KETO_READ_URL: "https://keto.morbeh.local",
     });
-    // The remaining 4 guards (no Stripe/Licensing/S3/tax-shipping adapters wired) still reject —
-    // this proves specifically that MFA is no longer among the reasons, not that boot succeeds.
+    // The remaining 5 guards (no Stripe/Licensing/S3/tax-shipping/SignupEmail adapters wired)
+    // still reject — this proves specifically that MFA is no longer among the reasons, not that
+    // boot succeeds.
     await expect(startApi(prodConfig, core)).rejects.not.toThrow(/MfaProviderResolver/);
   });
 
   it("G0-4 (launch-readiness review): a fresh non-local boot names EVERY failed guard in one error, not just the first", async () => {
     // The default local composition core has no production PSP/Licensing/ObjectStorage/
-    // integration-port adapters wired at all — every one of the 4 still-open guards should fail
-    // together. MFA (C2-4) is deliberately absent from this list — closed above.
+    // integration-port/SignupEmail adapters wired at all — every one of the 5 still-open guards
+    // should fail together. MFA (C2-4) is deliberately absent from this list — closed above.
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     const prodConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
       KETO_READ_URL: "https://keto.morbeh.local",
     });
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/4 production guards failed/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/5 production guards failed/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/PaymentProvider/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/Licensing/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/object-storage/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/still offline in-memory/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/SignupEmailPort/);
   });
 
   it("FAILS CLOSED outside local without a production PaymentProvider (V-1) — same shape as the MFA guard, checked independently of it", () => {
@@ -277,6 +281,31 @@ describe("api entrypoint", () => {
     expect(() =>
       assertProductionObjectStorageConfigured("production", core.objectStorage),
     ).not.toThrow();
+  });
+
+  it("G-72: FAILS CLOSED outside local while the resolved SignupEmailPort is still the logging adapter", () => {
+    expect(() =>
+      assertProductionSignupEmailConfigured("production", new LoggingSignupEmailAdapter()),
+    ).toThrow(/SignupEmailPort/);
+  });
+
+  it("G-72: stays permissive in local while still the logging adapter", () => {
+    expect(() =>
+      assertProductionSignupEmailConfigured("local", new LoggingSignupEmailAdapter()),
+    ).not.toThrow();
+  });
+
+  it("G-72: does NOT throw outside local once a non-logging adapter is resolved", () => {
+    const realish: SignupEmailPort = {
+      sendCompleteAccountEmail: async () => undefined,
+      sendAlreadyRegisteredEmail: async () => undefined,
+    };
+    expect(() => assertProductionSignupEmailConfigured("production", realish)).not.toThrow();
+  });
+
+  it("G-72: buildRuntimeCore always resolves the logging adapter (no real provider is wired anywhere — D4, out of scope)", () => {
+    const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(core.signupEmail).toBeInstanceOf(LoggingSignupEmailAdapter);
   });
 
   it("FAILS CLOSED outside local while any integration port is still an offline stub (Phase 3, C-03) — names every stubbed port in one error, matching the real production literal (api.ts's `integrationPorts`) which lists exactly these 4 after Tasks 9-13 wired real adapters over 8 of the original 12 and Task 17a wired the 9th, orderCreation (C-2)", () => {

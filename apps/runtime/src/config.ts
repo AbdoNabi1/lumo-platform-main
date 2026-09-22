@@ -63,6 +63,13 @@ const schema = z
     /** Ory Kratos admin-API base (identity lookup + session revocation); required outside `local` (H-2). */
     KRATOS_ADMIN_URL: z.string().url().optional(),
     /**
+     * The storefront's public origin (G-72) — used to build the signup-completion link
+     * (`${STOREFRONT_PUBLIC_URL}/account/signup/complete?token=...`). Absent ⇒
+     * `http://localhost:3000`, matching the storefront's own `RUNTIME_API_URL` local-default
+     * convention (`apps/storefront/src/lib/runtime-api.ts`).
+     */
+    STOREFRONT_PUBLIC_URL: z.string().url().optional(),
+    /**
      * Ory Network project API key (`ory_pat_...`), attached to Ory's permission/identity APIs by
      * `createOryFetch` (`./ory-fetch.ts`). Absent ⇒ the self-hosted Hydra/Kratos/Keto topology in
      * `infrastructure/docker/docker-compose.yml`, which authenticates none of these calls. Same
