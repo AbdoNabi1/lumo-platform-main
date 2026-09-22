@@ -9,6 +9,26 @@ export {
   type PrismaCustomerRepositoryDeps,
 } from "./infrastructure/prisma-customer-repository";
 
+// G-72: guest-to-account upgrade (verification-gated signup completion).
+export { RequestSignupLink } from "./application/request-signup-link.use-case";
+export type {
+  RequestSignupLinkInput,
+  RequestSignupLinkOutput,
+} from "./application/request-signup-link.use-case";
+export { CompleteSignup } from "./application/complete-signup.use-case";
+export type {
+  CompleteSignupInput,
+  CompleteSignupOutput,
+} from "./application/complete-signup.use-case";
+export type { TokenPort } from "./application/token-port";
+export { NodeTokenPort } from "./infrastructure/node-token-port";
+export { SignupToken } from "./domain/signup-token";
+export type { SignupTokenRepository } from "./domain/signup-token-repository";
+export {
+  PrismaSignupTokenRepository,
+  type PrismaSignupTokenRepositoryDeps,
+} from "./infrastructure/prisma-signup-token-repository";
+
 export { AccessController } from "./interfaces/access.controller";
 export { User } from "./domain/user";
 export type { UserStatus } from "./domain/user";
