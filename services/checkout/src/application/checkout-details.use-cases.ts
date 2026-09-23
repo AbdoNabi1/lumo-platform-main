@@ -17,7 +17,7 @@ import {
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
 import { PaymentSelection, ShippingSelection } from "../domain/value-objects/selections";
-import type { ShippingCalculationPort } from "./ports";
+import type { PaymentMethodPort, ShippingCalculationPort } from "./ports";
 
 export interface CheckoutDetailsDeps {
   readonly sessions: CheckoutSessionRepository;
@@ -278,21 +278,39 @@ export interface SelectPaymentInput {
   readonly provider: string;
 }
 
-/** Records the payment method reference the customer chose (never a captured instrument). */
+export interface SelectPaymentDeps extends CheckoutDetailsDeps {
+  readonly paymentMethods: PaymentMethodPort;
+}
+
+/**
+ * Records the payment method the SHOPPER chose (never a captured instrument). WP-13: the choice is
+ * validated against the methods the merchant currently offers — an unoffered method is refused, and
+ * nothing is chosen in its place. This is the one place a method enters the session; every later
+ * step (initiating payment) reads it back verbatim.
+ */
 export class SelectPayment implements UseCase<
   SelectPaymentInput,
   CheckoutDetailsOutput,
   DomainError
 > {
-  private readonly deps: CheckoutDetailsDeps;
+  private readonly deps: SelectPaymentDeps;
 
-  constructor(deps: CheckoutDetailsDeps) {
+  constructor(deps: SelectPaymentDeps) {
     this.deps = deps;
   }
 
   async execute(input: SelectPaymentInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
     const selection = PaymentSelection.create(input.paymentMethodRef, input.provider);
     if (!selection.ok) return err(selection.error);
+
+    const offered = await this.deps.paymentMethods.enabledMethods(input.tenantId);
+    if (!offered.includes(input.provider)) {
+      return err(
+        new ValidationError("Payment method is not available", [
+          { field: "provider", message: "is not offered by this merchant" },
+        ]),
+      );
+    }
 
     return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
       try {

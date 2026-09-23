@@ -35,11 +35,14 @@ import {
 import { CompleteCheckout } from "./application/complete-checkout.use-case";
 import { FailCheckout } from "./application/fail-checkout.use-case";
 import { GetCheckoutSession } from "./application/get-checkout-session.use-case";
+import { InitiatePayment, ListPaymentMethods } from "./application/payment-initiation.use-cases";
 import { StartCheckout } from "./application/start-checkout.use-case";
 import type { CheckoutSessionRepository } from "./domain/checkout-session-repository";
 import type {
   InventoryValidationPort,
   OrderCreationPort,
+  PaymentInitiationPort,
+  PaymentMethodPort,
   PricingValidationPort,
   PromotionValidationPort,
   ShippingCalculationPort,
@@ -56,6 +59,10 @@ import {
   InMemoryTaxCalculationAdapter,
 } from "./infrastructure/in-memory-orchestration-adapters";
 import { InMemoryOrderCreationAdapter } from "./infrastructure/in-memory-order-creation-adapter";
+import {
+  InMemoryPaymentInitiationAdapter,
+  InMemoryPaymentMethodAdapter,
+} from "./infrastructure/in-memory-payment-adapters";
 import { PrismaCheckoutSessionRepository } from "./infrastructure/prisma-checkout-session-repository";
 import { CheckoutController } from "./interfaces/checkout.controller";
 
@@ -85,6 +92,13 @@ export interface CheckoutWiringDeps {
    */
   readonly orderCreation?: OrderCreationPort;
   /**
+   * WP-13: the two seams to Payments — which methods the merchant offers, and opening the payment
+   * for the shopper's selected method. Same `deps.X ?? new InMemoryXAdapter()` convention; `wireAdmin`
+   * unconditionally supplies the real adapters over Payments.
+   */
+  readonly paymentMethods?: PaymentMethodPort;
+  readonly paymentInitiation?: PaymentInitiationPort;
+  /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaCheckoutSessionRepository` +
    * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. The 5 orchestration ports stay in-memory
    * in both branches — reference-only stubs, not persistence, out of scope for C-01. ADR-0014
@@ -112,6 +126,8 @@ function buildController(
   const shippingCalculation = deps.shippingCalculation ?? new InMemoryShippingCalculationAdapter();
   const promotionValidation = deps.promotionValidation ?? new InMemoryPromotionValidationAdapter();
   const orderCreation = deps.orderCreation ?? new InMemoryOrderCreationAdapter();
+  const paymentMethods = deps.paymentMethods ?? new InMemoryPaymentMethodAdapter();
+  const paymentInitiation = deps.paymentInitiation ?? new InMemoryPaymentInitiationAdapter();
 
   return new CheckoutController({
     startCheckout: new StartCheckout({ sessions, unitOfWork, idGenerator: deps.idGenerator }),
@@ -134,7 +150,9 @@ function buildController(
     setShippingAddress: new SetShippingAddress({ sessions, unitOfWork }),
     setContactEmail: new SetContactEmail({ sessions, unitOfWork }),
     selectShipping: new SelectShipping({ sessions, unitOfWork, shippingCalculation }),
-    selectPayment: new SelectPayment({ sessions, unitOfWork }),
+    selectPayment: new SelectPayment({ sessions, unitOfWork, paymentMethods }),
+    listPaymentMethods: new ListPaymentMethods({ paymentMethods }),
+    initiatePayment: new InitiatePayment({ sessions, unitOfWork, paymentInitiation }),
     validateCheckout: new ValidateCheckout({ sessions, pricingValidation, inventoryValidation }),
     requestTaxCalculation: new RequestTaxCalculation({
       sessions,

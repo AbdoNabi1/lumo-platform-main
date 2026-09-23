@@ -49,6 +49,13 @@ const paymentSelectionBody = z.object({
   provider: z.string().min(1),
 });
 const sessionRefOnlyBody = z.object({ sessionRef: z.string().min(1) });
+/**
+ * WP-13: `.strict()` on purpose. Initiating payment takes NO payment method — it reads the one the
+ * shopper already selected on the session (`payment-selection`, validated against what the merchant
+ * offers). A body carrying `provider` (or an amount) is rejected outright, so there is no second
+ * place a method — or a price — could be supplied at the moment money is about to move.
+ */
+const initiatePaymentBody = z.object({ sessionRef: z.string().min(1) }).strict();
 /** See the C-2 note on `completeBody` in `checkout-routes.ts` — the same field, same caveat. */
 const completeBody = z.object({
   sessionRef: z.string().min(1),
@@ -69,7 +76,7 @@ const completeBody = z.object({
  * `sessionRef` resolves to the SAME 404 an unknown id would — this surface never reveals whether a
  * session exists to a caller who cannot prove they own it.
  *
- * **Exposed surface** — exactly the 13 guest-completable routes below (the 13th, `/contact`, is WP-1 / G-52). Deliberately NOT exposed here,
+ * **Exposed surface** — the guest-completable routes below (`/contact` is WP-1 / G-52; `/payment` and `GET /public/payment-methods` are WP-13). Deliberately NOT exposed here,
  * left admin-only (`checkout-routes.ts`):
  * - `validate` / `promotion` — reachable through `recalculate` for the guest flow; a guest never
  *   needs to call them directly.
@@ -116,6 +123,8 @@ export interface PublicCheckoutSessionDto {
   readonly shippingAddress: PublicAddressDto | null;
   readonly billingAddress: PublicAddressDto | null;
   readonly selectedShippingMethod: string | null;
+  /** The payment method the shopper selected ("stripe" | "paymob" | "cod"), or null before they choose. */
+  readonly selectedPaymentMethod: string | null;
   /** The caller's own receipt address (WP-1) — visible only to the session's owner, same as the addresses. */
   readonly contactEmail: string | null;
   readonly orderRef: string | null;
@@ -156,6 +165,7 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
     billingAddress:
       session.billingAddress === undefined ? null : toAddressDto(session.billingAddress),
     selectedShippingMethod: session.shippingSelection?.method ?? null,
+    selectedPaymentMethod: session.paymentSelection?.provider ?? null,
     contactEmail: session.contactEmail?.value ?? null,
     orderRef: session.orderRef,
   };
@@ -225,6 +235,17 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         );
         return projected.status === 200 ? { status: 201, body: projected.body } : projected;
       },
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/public/payment-methods",
+      version: 1,
+      permission: "checkout:read",
+      public: true,
+      summary: "Public: the payment methods this merchant currently offers (no priority order)",
+      schema: {},
+      handle: ({ context }) =>
+        admin.publicReads.checkout.listPaymentMethods({ tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -547,6 +568,30 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
           toPublicCheckoutSessionDto,
         );
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/checkouts/:checkoutSessionId/payment",
+      version: 1,
+      permission: "checkout:initiate_payment",
+      public: true,
+      idempotent: true,
+      summary:
+        "Public: open the payment for the caller's completed checkout, using the method they selected",
+      schema: { params: checkoutSessionIdParams, body: initiatePaymentBody },
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
+        if (!(owned instanceof CheckoutSession)) return owned;
+        return admin.publicReads.checkout.initiatePayment({
+          tenantId: context.tenantId,
+          checkoutSessionId: params.checkoutSessionId,
+        });
       },
     }),
     defineRoute({

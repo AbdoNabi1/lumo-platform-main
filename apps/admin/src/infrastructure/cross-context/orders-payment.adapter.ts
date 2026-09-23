@@ -1,6 +1,12 @@
 import type { PaymentController } from "@platform/payments";
 import type { PaymentPort } from "@platform/orders";
 
+/** The payment method the shopper selected for an order, or `undefined` if none can be established. */
+export type SelectedProviderLookup = (
+  orderId: string,
+  tenantId: string,
+) => Promise<string | undefined>;
+
 interface CreateIntentBody {
   readonly paymentIntentId: string;
 }
@@ -53,10 +59,22 @@ interface CaptureBody {
  */
 export class OrdersPaymentAdapter implements PaymentPort {
   private readonly payments: Pick<PaymentController, "createIntentLifecycle" | "captureLifecycle">;
+  private readonly selectedProvider: SelectedProviderLookup;
 
-  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `PaymentPort.requestCapture` carries `tenantId` per call. */
-  constructor(payments: Pick<PaymentController, "createIntentLifecycle" | "captureLifecycle">) {
+  /**
+   * ADR-0014 (WP-10, T10.3): stateless per tenant — `PaymentPort.requestCapture` carries `tenantId` per call.
+   *
+   * WP-13: `selectedProvider` answers "which payment method did the SHOPPER choose for this order?"
+   * (from the order's checkout session). `PaymentPort` carries no method and is not widened; this
+   * adapter therefore refuses to open an intent for an order whose method it cannot establish,
+   * rather than choosing one.
+   */
+  constructor(
+    payments: Pick<PaymentController, "createIntentLifecycle" | "captureLifecycle">,
+    selectedProvider: SelectedProviderLookup,
+  ) {
     this.payments = payments;
+    this.selectedProvider = selectedProvider;
   }
 
   async requestCapture(
@@ -65,9 +83,17 @@ export class OrdersPaymentAdapter implements PaymentPort {
     currency: string,
     tenantId: string,
   ): Promise<{ readonly paymentRef: string }> {
+    const provider = await this.selectedProvider(orderId, tenantId);
+    if (provider === undefined) {
+      throw new Error(
+        `OrdersPaymentAdapter: order "${orderId}" has no payment method selected by the shopper — ` +
+          "refusing to choose one",
+      );
+    }
     const createResponse = await this.payments.createIntentLifecycle({
       tenantId,
       orderRef: orderId,
+      provider,
       amountMinor,
       currency,
     });

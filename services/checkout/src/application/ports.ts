@@ -113,3 +113,35 @@ export interface OrderCreationPort {
     readonly idempotencyKey: string;
   }): Promise<{ readonly orderRef: string }>;
 }
+
+/**
+ * Which payment methods this merchant currently offers (WP-13). Checkout never decides this — it
+ * asks the owning context (Payments) and only ever validates the shopper's choice against the
+ * answer. The list carries no priority: nothing here, or downstream, picks its first entry.
+ * ADR-0014: `tenantId` is an explicit per-call parameter.
+ */
+export interface PaymentMethodPort {
+  enabledMethods(tenantId: string): Promise<readonly string[]>;
+}
+
+/**
+ * Opens the payment for a completed checkout's order, using EXACTLY the method the shopper selected
+ * (WP-13, decision 3) — `provider` is an input the caller passes through from the session's own
+ * selection; no implementation may substitute, default or prefer another. Amount and currency come
+ * from the session's server-derived totals, never from a client. ADR-0014: tenant per call.
+ */
+export interface PaymentInitiationPort {
+  initiate(input: {
+    readonly tenantId: string;
+    readonly orderRef: string;
+    readonly provider: string;
+    readonly amountMinor: number;
+    readonly currency: string;
+  }): Promise<{
+    readonly paymentIntentId: string;
+    readonly status: string;
+    readonly provider: string;
+    /** Where the shopper completes an online payment (a hosted-checkout URL / client secret). Absent for cash on delivery. */
+    readonly clientHandle?: string;
+  }>;
+}

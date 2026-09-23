@@ -18,6 +18,8 @@ export type {
   InventoryValidationPort,
   InventoryValidationResult,
   OrderCreationPort,
+  PaymentInitiationPort,
+  PaymentMethodPort,
   PricingValidationPort,
   PricingValidationResult,
   PromotionValidationPort,

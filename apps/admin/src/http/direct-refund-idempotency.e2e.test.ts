@@ -157,6 +157,7 @@ async function seedCapturedPaymentIntent(
     await admin.payments.createIntent(staff, {
       tenantId: "tenant-local",
       orderRef,
+      provider: "stripe",
       amountMinor,
       currency: "USD",
     }),

@@ -36,6 +36,12 @@ import type {
   GenerateOrderDraft,
   GeneratePaymentIntentRequest,
 } from "../application/checkout-handoff.use-cases";
+import type {
+  InitiatePayment,
+  InitiatePaymentInput,
+  ListPaymentMethods,
+  ListPaymentMethodsInput,
+} from "../application/payment-initiation.use-cases";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface CheckoutControllerDeps {
@@ -49,6 +55,8 @@ export interface CheckoutControllerDeps {
   readonly setContactEmail: SetContactEmail;
   readonly selectShipping: SelectShipping;
   readonly selectPayment: SelectPayment;
+  readonly listPaymentMethods: ListPaymentMethods;
+  readonly initiatePayment: InitiatePayment;
   readonly validateCheckout: ValidateCheckout;
   readonly requestTaxCalculation: RequestTaxCalculation;
   readonly requestShippingQuote: RequestShippingQuote;
@@ -106,6 +114,15 @@ export class CheckoutController {
 
   async selectPayment(input: SelectPaymentInput): Promise<ControllerResponse> {
     return present(await this.deps.selectPayment.execute(input), 200);
+  }
+
+  async listPaymentMethods(input: ListPaymentMethodsInput): Promise<ControllerResponse> {
+    return present(await this.deps.listPaymentMethods.execute(input), 200);
+  }
+
+  /** Opens the payment for a completed checkout using the shopper's own selected method (WP-13). */
+  async initiatePayment(input: InitiatePaymentInput): Promise<ControllerResponse> {
+    return present(await this.deps.initiatePayment.execute(input), 201);
   }
 
   async validateCheckout(input: CheckoutSessionIdInput): Promise<ControllerResponse> {

@@ -208,3 +208,31 @@ describe("PaymobPaymentProvider.verifyWebhook", () => {
     expect(await p.verifyWebhook(body, other)).toBe(false);
   });
 });
+
+describe("PaymobPaymentProvider never logs a credential", () => {
+  it("across success, API failure, refund failure and a rejected webhook", async () => {
+    const lines: string[] = [];
+    const recording: Logger = {
+      debug: (m, c) => void lines.push(`${m} ${JSON.stringify(c ?? {})}`),
+      info: (m, c) => void lines.push(`${m} ${JSON.stringify(c ?? {})}`),
+      warn: (m, c) => void lines.push(`${m} ${JSON.stringify(c ?? {})}`),
+      error: (m, c) => void lines.push(`${m} ${JSON.stringify(c ?? {})}`),
+      child: () => recording,
+    };
+    const fetchOk = vi.fn<HttpFetch>().mockResolvedValue(json(201, createIntentResponse));
+    const fetchBad = vi.fn<HttpFetch>().mockResolvedValue(json(400, { detail: "nope" }));
+    const ok = provider(fetchOk, { logger: recording });
+    const bad = provider(fetchBad, { logger: recording });
+
+    await ok.createIntent(request);
+    await bad.createIntent(request).catch(() => undefined);
+    await bad.refund("192036465", 100, "k").catch(() => undefined);
+    await ok.verifyWebhook(new TextEncoder().encode("{}"), "0".repeat(128));
+
+    const output = lines.join("\n");
+    for (const secret of ["egy_sk_test_secret", "hmac-secret", "egy_pk_test_public"]) {
+      expect(output).not.toContain(secret);
+    }
+    expect(output).toContain("paymob webhook signature verification failed");
+  });
+});

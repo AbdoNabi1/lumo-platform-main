@@ -10,8 +10,11 @@ import {
 import {
   wireCheckout,
   type CheckoutController,
+  type CheckoutSession,
   type InventoryValidationPort,
   type OrderCreationPort,
+  type PaymentInitiationPort,
+  type PaymentMethodPort,
   type PricingValidationPort,
   type PromotionValidationPort,
   type ShippingCalculationPort,
@@ -60,6 +63,9 @@ import {
   type NotificationPort as PaymentsNotificationPort,
   type OrdersPort as PaymentsOrdersPort,
   type PaymentController,
+  type PaymentCredentialVault,
+  type PaymentProviderResolver,
+  type PaymobProviderFactory,
 } from "@platform/payments";
 import { wirePlatformConsole } from "@platform/platform-console";
 import { wirePricing, type PriceController } from "@platform/pricing";
@@ -89,6 +95,10 @@ import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-in
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
+import {
+  CheckoutPaymentInitiationAdapter,
+  CheckoutPaymentMethodsAdapter,
+} from "./infrastructure/cross-context/checkout-payment.adapters";
 import { PaymentsNotificationAdapter } from "./infrastructure/cross-context/payments-notification.adapter";
 import { PaymentsOrdersAdapter } from "./infrastructure/cross-context/payments-orders.adapter";
 import { PricingValidationAdapter } from "./infrastructure/cross-context/pricing-validation.adapter";
@@ -249,6 +259,13 @@ export interface AdminWiringDeps {
    */
   readonly paymentProvider?: PaymentProvider;
   /**
+   * WP-13: builds a merchant's Paymob provider from that merchant's own opened credentials, and the
+   * vault their secrets are sealed with. Both pass straight through to `wirePayments(deps)`; absent
+   * ⇒ Paymob is unavailable / an in-memory STUB vault that `apps/runtime` refuses outside `local`.
+   */
+  readonly paymobProviderFactory?: PaymobProviderFactory;
+  readonly paymentCredentialVault?: PaymentCredentialVault;
+  /**
    * Stage 5 (audit remediation, C-03 partial): the 4 outbound ports Orders' `RequestPaymentCapture`/
    * `RequestFulfillment` use-cases call. Passed straight through to `wireOrders(deps)` below;
    * absent ⇒ Orders' own offline in-memory stubs, no behavior change for existing callers/tests.
@@ -279,6 +296,9 @@ export interface AdminWiringDeps {
    * 5 orchestration ports above do.
    */
   readonly orderCreation?: OrderCreationPort;
+  /** WP-13: overrides for the checkout-to-Payments seams (tests). Absent ⇒ the real adapters over Payments. */
+  readonly paymentMethods?: PaymentMethodPort;
+  readonly paymentInitiation?: PaymentInitiationPort;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 3 outbound reference-only ports Payments'
    * lifecycle use-cases call. Passed straight through to `wirePayments(deps)` below; absent ⇒
@@ -523,8 +543,17 @@ export interface WiredAdmin {
    */
   readonly paymentsWebhook: {
     readonly recordWebhook: PaymentController["recordWebhook"];
-    readonly verifyWebhook: PaymentProvider["verifyWebhook"];
+    /**
+     * WP-13 (ADR-0014): verified against the RECEIVING TENANT's own provider credentials, resolved
+     * per request — not a process-wide provider. `false` for anything unauthenticated.
+     */
+    readonly verifyWebhook: PaymentController["verifyWebhook"];
   };
+  /**
+   * The per-request payment-provider resolver, exposed ONLY so `apps/runtime`'s production boot guard
+   * can ask what really backs each method. Nothing at request time reaches a provider through this.
+   */
+  readonly paymentProviders: PaymentProviderResolver;
 }
 
 interface DrainableContext {
@@ -565,6 +594,9 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // inbound port needing Orders' own outbound read surface, resolved entirely inside this single
   // `wireOrders` call.
   const ordersControllerCell: { controller?: Pick<OrderController, "getOrder"> } = {};
+  // WP-13: Orders' payment adapter needs the order's checkout session to learn which method the
+  // shopper selected. Checkout is wired AFTER Orders, so it is reached through the same lazy-cell idiom.
+  const checkoutControllerCell: { controller?: Pick<CheckoutController, "get"> } = {};
   const lazyOrdersController: Pick<OrderController, "getOrder"> = {
     getOrder: (input) => {
       if (ordersControllerCell.controller === undefined) {
@@ -590,12 +622,21 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // `wireOrders` and `wirePayments` have completed, so the cell is always populated by the time it
   // matters.
   const paymentsControllerCell: {
-    controller?: Pick<PaymentController, "createIntentLifecycle" | "captureLifecycle">;
+    controller?: Pick<
+      PaymentController,
+      "createIntentLifecycle" | "captureLifecycle" | "getMerchantPaymentSettings"
+    >;
   } = {};
   const lazyPaymentsController: Pick<
     PaymentController,
-    "createIntentLifecycle" | "captureLifecycle"
+    "createIntentLifecycle" | "captureLifecycle" | "getMerchantPaymentSettings"
   > = {
+    getMerchantPaymentSettings: (input) => {
+      if (paymentsControllerCell.controller === undefined) {
+        throw new Error("PaymentController requested before wirePayments() completed");
+      }
+      return paymentsControllerCell.controller.getMerchantPaymentSettings(input);
+    },
     createIntentLifecycle: (input) => {
       if (paymentsControllerCell.controller === undefined) {
         throw new Error(
@@ -624,7 +665,31 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
         lazyOrdersController,
       ),
     notifications: deps.notifications ?? new OrdersNotificationAdapter(notifications.notifications),
-    paymentPort: deps.paymentPort ?? new OrdersPaymentAdapter(lazyPaymentsController),
+    paymentPort:
+      deps.paymentPort ??
+      new OrdersPaymentAdapter(lazyPaymentsController, async (orderId, tenantId) => {
+        // WP-13: the method comes from the shopper's own selection on the order's checkout session —
+        // never a default. An order with no such selection (e.g. created by an operator, not through
+        // checkout) has no method to charge through, so this refuses instead of choosing one.
+        const orderResponse = await ordersControllerCell.controller?.getOrder({
+          tenantId,
+          orderId,
+        });
+        const checkoutRef =
+          orderResponse !== undefined && orderResponse.status === 200
+            ? (orderResponse.body as { checkoutRef?: string }).checkoutRef
+            : undefined;
+        if (checkoutRef === undefined || checkoutControllerCell.controller === undefined) {
+          return undefined;
+        }
+        const sessionResponse = await checkoutControllerCell.controller.get({
+          tenantId,
+          checkoutSessionId: checkoutRef,
+        });
+        return sessionResponse.status === 200
+          ? (sessionResponse.body as CheckoutSession).paymentSelection?.provider
+          : undefined;
+      }),
   };
   const orders = wireOrders(ordersDeps);
   ordersControllerCell.controller = orders.orders;
@@ -670,7 +735,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     orderCreation:
       deps.orderCreation ?? new OrderCreationAdapter(orders.orders, identity.customers),
   };
-  const checkout = wireCheckout(checkoutDeps);
+  const checkout = wireCheckout({
+    ...checkoutDeps,
+    paymentMethods:
+      deps.paymentMethods ?? new CheckoutPaymentMethodsAdapter(lazyPaymentsController),
+    paymentInitiation:
+      deps.paymentInitiation ?? new CheckoutPaymentInitiationAdapter(lazyPaymentsController),
+  });
+  checkoutControllerCell.controller = checkout.checkout;
   // Phase 3 Task 13 (C-3): real `ordersPort`/`paymentsNotifications` adapters for Payments'
   // outbound `notifyBestEffort` calls (`reportPaymentOutcome`/`notify`), wired here rather than
   // left to `wirePayments`'s own `deps.ordersPort ?? new InMemoryOrdersAdapter()` /
@@ -965,8 +1037,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     },
     paymentsWebhook: {
       recordWebhook: (input) => payments.payments.recordWebhook(input),
-      verifyWebhook: (payload, signature) =>
-        payments.paymentProvider.verifyWebhook(payload, signature),
+      verifyWebhook: (input) => payments.payments.verifyWebhook(input),
     },
+    paymentProviders: payments.providers,
   };
 }

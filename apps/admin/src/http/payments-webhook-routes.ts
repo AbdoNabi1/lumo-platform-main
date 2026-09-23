@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
+import { extractSignedTransaction, type SignedTransaction } from "@platform/psp-paymob";
 import type { WiredAdmin } from "../composition";
 
 /**
@@ -65,10 +66,12 @@ export function paymentsWebhookRoutes(admin: WiredAdmin): readonly RouteDefiniti
           };
         }
 
-        const verified = await admin.paymentsWebhook.verifyWebhook(
-          context.rawBody,
-          signatureHeader,
-        );
+        const verified = await admin.paymentsWebhook.verifyWebhook({
+          tenantId: context.tenantId,
+          provider: "stripe",
+          payload: context.rawBody,
+          signature: signatureHeader,
+        });
         if (!verified) {
           return {
             status: 401,
@@ -85,7 +88,87 @@ export function paymentsWebhookRoutes(admin: WiredAdmin): readonly RouteDefiniti
         });
       },
     }),
+    defineRoute({
+      method: "POST",
+      path: "/payments/webhook/paymob",
+      version: 1,
+      permission: "payments:record_webhook",
+      public: true,
+      summary:
+        "Paymob transaction-processed callback (signature-verified via the `hmac` query parameter against the receiving merchant's own HMAC secret, not staff-authenticated)",
+      schema: { body: paymobCallbackBody, querystring: paymobCallbackQuery },
+      handle: async ({ query, context }) => {
+        if (context.rawBody === undefined) {
+          return {
+            status: 401,
+            body: { code: "UNAUTHORIZED", message: "Missing request body" },
+          };
+        }
+        // Verified against the RECEIVING TENANT's own HMAC secret. A callback signed for merchant A
+        // and replayed at merchant B's endpoint fails here: B's secret is different.
+        const verified = await admin.paymentsWebhook.verifyWebhook({
+          tenantId: context.tenantId,
+          provider: "paymob",
+          payload: context.rawBody,
+          signature: query.hmac,
+        });
+        if (!verified) {
+          return {
+            status: 401,
+            body: { code: "UNAUTHORIZED", message: "Webhook signature verification failed" },
+          };
+        }
+
+        // Everything below reads SIGNED fields only. The HMAC does not cover `merchant_order_id`
+        // or `extra`, so those are attacker-controlled even on a genuine callback.
+        const transaction = extractSignedTransaction(context.rawBody);
+        if (transaction === null) {
+          return {
+            status: 422,
+            body: { code: "VALIDATION", message: "Not a Paymob transaction callback" },
+          };
+        }
+        const kind = paymobKind(transaction);
+        return admin.paymentsWebhook.recordWebhook({
+          tenantId: context.tenantId,
+          // Paymob's order id = the `intention_order_id` we stored as the intent's PSP reference.
+          paymentIntentId: transaction.orderId,
+          provider: "paymob",
+          // Paymob sends no event id; a transaction's outcome is unique per (transaction, kind).
+          eventId: `${transaction.transactionId}:${kind}`,
+          kind,
+          providerTransactionRef: transaction.transactionId,
+          amountMinor: transaction.amountCents,
+          currency: transaction.currency,
+        });
+      },
+    }),
   ] as readonly RouteDefinition[];
+}
+
+/** Paymob's callback carries no fields we read beyond the signed ones; the body is validated as JSON only. */
+const paymobCallbackBody = z.object({}).passthrough();
+const paymobCallbackQuery = z.object({ hmac: z.string().min(1) });
+
+/**
+ * Maps a VERIFIED Paymob transaction to Payments' webhook `kind` vocabulary, from signed fields only.
+ * Only a plain successful sale drives a transition (`captured`). Everything else is recorded for
+ * audit but does not move the intent:
+ *  - a failed attempt leaves the intent `created` — Paymob lets the customer retry on the same
+ *    intention, so a failure is not terminal;
+ *  - voids, refunds and child transactions (a refund/void/capture is its own transaction with a
+ *    parent) are recorded, not applied: dashboard-initiated reversals are not reconciled here (see
+ *    the WP-13 decision entry) — refunds we initiate are already recorded by `RefundPaymentLifecycle`;
+ *  - an auth-only transaction is recorded: this adapter supports Paymob sale integrations only.
+ */
+function paymobKind(t: SignedTransaction): string {
+  if (t.pending) return "pending";
+  if (t.isVoided) return "voided";
+  if (t.isRefunded) return "refunded";
+  if (t.hasParentTransaction) return "child_transaction";
+  if (!t.success) return "attempt_failed";
+  if (t.isAuth && !t.isCapture) return "auth_only";
+  return "captured";
 }
 
 function firstHeader(value: string | readonly string[] | undefined): string | undefined {

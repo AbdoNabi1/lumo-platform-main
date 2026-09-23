@@ -49,6 +49,7 @@
     "@platform/platform-console": "workspace:*",
     "@platform/pricing": "workspace:*",
     "@platform/promotions": "workspace:*",
+    "@platform/psp-paymob": "workspace:*",
     "@platform/recommendations": "workspace:*",
     "@platform/reporting": "workspace:*",
     "@platform/returns": "workspace:*",

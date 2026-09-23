@@ -163,6 +163,9 @@ importers:
       '@platform/promotions':
         specifier: workspace:*
         version: link:../../services/promotions
+      '@platform/psp-paymob':
+        specifier: workspace:*
+        version: link:../../packages/psp-paymob
       '@platform/recommendations':
         specifier: workspace:*
         version: link:../../services/recommendations
@@ -481,6 +484,9 @@ importers:
       '@platform/promotions':
         specifier: workspace:*
         version: link:../../services/promotions
+      '@platform/psp-paymob':
+        specifier: workspace:*
+        version: link:../../packages/psp-paymob
       '@platform/psp-stripe':
         specifier: workspace:*
         version: link:../../packages/psp-stripe

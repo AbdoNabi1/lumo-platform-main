@@ -30,6 +30,8 @@ interface ShippingSelectionJson {
 interface PaymentSelectionJson {
   readonly paymentMethodRef: string;
   readonly provider: string;
+  /** WP-13: the payment intent opened for the order. Lives in this JSON (no new column). */
+  readonly paymentIntentRef?: string;
 }
 interface CheckoutTotalsJson {
   readonly subtotalMinor: number;
@@ -129,6 +131,9 @@ export class CheckoutSessionMapper {
               "payment selection",
             )
           : undefined,
+        paymentIntentRef: isSet(row.paymentSelection)
+          ? row.paymentSelection.paymentIntentRef
+          : undefined,
         taxMinor: row.taxMinor ?? undefined,
         discountMinor: row.discountMinor ?? undefined,
         totals: isSet(row.totals)
@@ -179,6 +184,9 @@ export class CheckoutSessionMapper {
           : {
               paymentMethodRef: session.paymentSelection.paymentMethodRef,
               provider: session.paymentSelection.provider,
+              ...(session.paymentIntentRef !== undefined
+                ? { paymentIntentRef: session.paymentIntentRef }
+                : {}),
             },
       taxMinor: session.taxMinor ?? null,
       discountMinor: session.discountMinor ?? null,

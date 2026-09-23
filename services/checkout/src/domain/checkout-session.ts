@@ -44,6 +44,8 @@ interface CheckoutSessionProps {
   contactEmail?: ContactEmail;
   shippingSelection?: ShippingSelection;
   paymentSelection?: PaymentSelection;
+  /** The payment intent opened for this session's order once the shopper paid/committed (WP-13). Set once. */
+  paymentIntentRef?: string;
   taxMinor?: number;
   discountMinor?: number;
   totals?: CheckoutTotals;
@@ -100,6 +102,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
       readonly contactEmail?: ContactEmail;
       readonly shippingSelection?: ShippingSelection;
       readonly paymentSelection?: PaymentSelection;
+      readonly paymentIntentRef?: string;
       readonly taxMinor?: number;
       readonly discountMinor?: number;
       readonly totals?: CheckoutTotals;
@@ -119,6 +122,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         contactEmail: extra.contactEmail,
         shippingSelection: extra.shippingSelection,
         paymentSelection: extra.paymentSelection,
+        paymentIntentRef: extra.paymentIntentRef,
         taxMinor: extra.taxMinor,
         discountMinor: extra.discountMinor,
         totals: extra.totals,
@@ -156,6 +160,31 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
   selectPayment(selection: PaymentSelection): void {
     this.ensureOpen();
     this.props.paymentSelection = selection;
+  }
+
+  /**
+   * Records the payment intent opened for this session's order (WP-13). Deliberately NOT gated by
+   * `ensureOpen`: payment is initiated AFTER `complete()` has created the order, when the session
+   * is no longer open. Requires the order to exist and the shopper's method to have been chosen —
+   * the intent is opened for exactly what they selected, never a default — and is set at most once,
+   * so a repeat initiation resumes the same intent instead of opening a second charge.
+   */
+  attachPaymentIntent(paymentIntentRef: string): void {
+    if (this.props.orderRef === null) {
+      throw new BusinessRuleError("Payment can only be initiated for a completed checkout");
+    }
+    if (this.props.paymentSelection === undefined) {
+      throw new BusinessRuleError(
+        "Payment cannot be initiated before a payment method is selected",
+      );
+    }
+    if (
+      this.props.paymentIntentRef !== undefined &&
+      this.props.paymentIntentRef !== paymentIntentRef
+    ) {
+      throw new BusinessRuleError("This checkout already has a payment intent");
+    }
+    this.props.paymentIntentRef = paymentIntentRef;
   }
 
   /** Stores the tax snapshot requested from Finance via `TaxCalculationPort` — never computed here. */
@@ -344,6 +373,10 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
 
   get paymentSelection(): PaymentSelection | undefined {
     return this.props.paymentSelection;
+  }
+
+  get paymentIntentRef(): string | undefined {
+    return this.props.paymentIntentRef;
   }
 
   get taxMinor(): number | undefined {

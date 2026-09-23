@@ -62,9 +62,12 @@ describe("payments webhook route (C2-2/C2-6)", () => {
     });
 
     expect(verifyWebhook).toHaveBeenCalledTimes(1);
-    const [payloadArg, signatureArg] = verifyWebhook.mock.calls[0]!;
-    expect(signatureArg).toBe("t=1,v1=sig-abc");
-    expect(payloadArg).toBe(rawBody); // the EXACT raw bytes, not a reconstruction
+    const [verifyInput] = verifyWebhook.mock.calls[0]!;
+    expect(verifyInput.signature).toBe("t=1,v1=sig-abc");
+    expect(verifyInput.payload).toBe(rawBody); // the EXACT raw bytes, not a reconstruction
+    // WP-13 (ADR-0014): verified against the RECEIVING tenant's own provider, not a global one.
+    expect(verifyInput.tenantId).toBe("t-1");
+    expect(verifyInput.provider).toBe("stripe");
 
     expect(recordWebhook).toHaveBeenCalledWith({
       tenantId: "t-1",

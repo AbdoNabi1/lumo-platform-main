@@ -146,7 +146,7 @@ describe("PSP webhook ingress, end to end (C2-2/C2-6)", () => {
         "x-tenant-id": "t-1",
         "content-type": "application/json",
       },
-      payload: { orderRef: orderId },
+      payload: { orderRef: orderId, provider: "stripe" },
     });
     expect(created.statusCode).toBe(201);
     const paymentIntentId = created.json().paymentIntentId as string;

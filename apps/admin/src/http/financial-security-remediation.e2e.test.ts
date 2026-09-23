@@ -440,7 +440,7 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
     const createIntent = byPathAndMethod(paymentsRoutes(admin), "POST", "/payment-intents");
 
     const opened = unwrap<{ paymentIntentId: string }>(
-      await call(createIntent, customer, {}, { orderRef: orderId }),
+      await call(createIntent, customer, {}, { orderRef: orderId, provider: "stripe" }),
       "create intent",
     );
     const fetched = unwrap<{ amount: { amountMinor: number; currency: string } }>(
@@ -468,6 +468,7 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
       {},
       {
         orderRef: orderId,
+        provider: "stripe",
         amountMinor: 1,
         currency: "EUR",
       },
@@ -492,9 +493,17 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
     const routes = paymentsRoutes(buildAdmin());
     const schema = byPathAndMethod(routes, "POST", "/payment-intents").schema?.body;
     expect(
-      schema?.safeParse({ orderRef: "order-1", amountMinor: 1, currency: "USD" }).success,
+      schema?.safeParse({
+        orderRef: "order-1",
+        provider: "stripe",
+        amountMinor: 1,
+        currency: "USD",
+      }).success,
     ).toBe(false);
-    expect(schema?.safeParse({ orderRef: "order-1" }).success).toBe(true);
+    expect(schema?.safeParse({ orderRef: "order-1", provider: "stripe" }).success).toBe(true);
+    // WP-13 decision 3: the method is REQUIRED — a body without one is not defaulted, it is rejected.
+    expect(schema?.safeParse({ orderRef: "order-1" }).success).toBe(false);
+    expect(schema?.safeParse({ orderRef: "order-1", provider: "bitcoin" }).success).toBe(false);
   });
 });
 

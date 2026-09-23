@@ -361,7 +361,7 @@ function callAuth(
 }
 
 describe("public checkout routes — route inventory", () => {
-  it("exposes exactly the 13 guest-completable routes, all public", () => {
+  it("exposes exactly the 15 guest-completable routes, all public", () => {
     const admin = routesFor(buildAdmin());
     const paths = admin.routes.map((r) => `${r.method} ${r.path}`).sort();
 
@@ -380,6 +380,9 @@ describe("public checkout routes — route inventory", () => {
         "POST /public/checkouts/:checkoutSessionId/recalculate",
         "POST /public/checkouts/:checkoutSessionId/complete",
         "GET /public/checkouts/:checkoutSessionId/payment-intent-request",
+        // WP-13: which methods the merchant offers, and opening payment for the selected one.
+        "GET /public/payment-methods",
+        "POST /public/checkouts/:checkoutSessionId/payment",
       ].sort(),
     );
     expect(admin.routes.every((r) => r.public === true)).toBe(true);

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { Order } from "@platform/orders";
-import type { PaymentIntent } from "@platform/payments";
+import { PAYMENT_PROVIDER_KEYS, type PaymentIntent } from "@platform/payments";
 import { ValidationError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
@@ -13,7 +13,38 @@ import type { AdminResponse } from "../interfaces/admin-response";
  * re-derives them from the authoritative `Order` (`orders:read`'s own `getOrder`, already wired on
  * this same admin composition) named by `orderRef`.
  */
-const createIntentBody = z.object({ orderRef: z.string().min(1) }).strict();
+const createIntentBody = z
+  .object({
+    orderRef: z.string().min(1),
+    /**
+     * WP-13 decision 3: the payment method is stated by the caller and never inferred. A staff
+     * member opening an intent names the method the customer chose.
+     */
+    provider: z.enum(PAYMENT_PROVIDER_KEYS),
+  })
+  .strict();
+const codCollectionBody = z
+  .object({ collectedAmountMinor: z.number().int().positive(), currency: z.string().length(3) })
+  .strict();
+/**
+ * WRITE-ONLY credentials: accepted here, sealed by the vault before storage, never echoed back by
+ * any response (see `MerchantPaymentSettingsDto`, which has no field a secret could occupy).
+ */
+const settingsBody = z
+  .object({
+    enabledMethods: z.array(z.enum(PAYMENT_PROVIDER_KEYS)).min(1).optional(),
+    paymob: z
+      .object({
+        region: z.string().min(1),
+        integrationId: z.number().int().positive(),
+        secretKey: z.string().min(1).max(512),
+        hmacSecret: z.string().min(1).max(512),
+        publicKey: z.string().min(1).max(512),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 const paymentIntentIdParams = z.object({ paymentIntentId: z.string().min(1) });
 const authorizeBody = z.object({
   pspReference: z.string().min(1),
@@ -36,6 +67,8 @@ const refundBody = z.object({
 export interface PaymentIntentDto {
   readonly id: string;
   readonly orderRef: string;
+  /** The method the shopper selected ("stripe" | "paymob" | "cod"). */
+  readonly provider: string;
   readonly status: string;
   readonly currency: string;
   readonly amountMinor: number;
@@ -56,6 +89,7 @@ function toPaymentIntentDto(intent: PaymentIntent): PaymentIntentDto {
   return {
     id: intent.id.toString(),
     orderRef: intent.orderRef,
+    provider: intent.provider,
     status: intent.status.value,
     currency: intent.amount.currency,
     amountMinor: intent.amount.amountMinor,
@@ -95,11 +129,52 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         const order = orderResponse.body as Order;
         return admin.payments.createIntent(context.principal, {
           orderRef: body.orderRef,
+          provider: body.provider,
           amountMinor: order.totalAmount().amountMinor,
           currency: order.currency,
           tenantId: context.tenantId,
         });
       },
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/payments/settings",
+      version: 1,
+      permission: "payments:read_settings",
+      summary: "The merchant's payment settings: which methods are offered (never any credential)",
+      schema: {},
+      handle: ({ context }) =>
+        admin.payments.getSettings(context.principal, { tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "PUT",
+      path: "/payments/settings",
+      version: 1,
+      permission: "payments:update_settings",
+      summary:
+        "Enable/disable payment methods and set Paymob credentials (write-only; sealed before storage)",
+      schema: { body: settingsBody },
+      handle: ({ body, context }) =>
+        admin.payments.updateSettings(context.principal, {
+          tenantId: context.tenantId,
+          ...body,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/payment-intents/:paymentIntentId/cod-collection",
+      version: 1,
+      permission: "payments:confirm_cod_collection",
+      idempotent: true,
+      summary:
+        "Confirm that cash was collected on delivery — the ONLY action that marks a cash-on-delivery payment paid",
+      schema: { params: paymentIntentIdParams, body: codCollectionBody },
+      handle: ({ params, body, context }) =>
+        admin.payments.confirmCodCollection(context.principal, {
+          tenantId: context.tenantId,
+          paymentIntentId: params.paymentIntentId,
+          ...body,
+        }),
     }),
     defineRoute({
       method: "POST",
