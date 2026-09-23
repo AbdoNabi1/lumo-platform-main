@@ -40,22 +40,22 @@ payment-lifecycle.use-cases.ts` and `create-payment-intent.use-case.ts` to find 
 
 ## Tasks
 
-- [ ] **T13.1 — Read the existing contract and orchestrator.**
+- [x] **T13.1 — Read the existing contract and orchestrator.**
       `@platform/contracts`' `PaymentProvider` port definition; `packages/psp-stripe/src/
-  stripe-payment-provider.ts` and `webhook-signature.ts` in full; `services/payments/src/
-  application/{create-payment-intent,capture-payment,refund-payment,fail-payment,
-  record-webhook}.use-case.ts`; `services/payments/src/application/ports.ts`. Identify exactly
+stripe-payment-provider.ts` and `webhook-signature.ts` in full; `services/payments/src/
+application/{create-payment-intent,capture-payment,refund-payment,fail-payment,
+record-webhook}.use-case.ts`; `services/payments/src/application/ports.ts`. Identify exactly
       where a provider is selected today (it is presumably hardcoded to Stripe, since it is the
       only implementation) and what has to change for that to be a real choice.
 
-- [ ] **T13.2 — Merchant payment settings.**
+- [x] **T13.2 — Merchant payment settings.**
       A place for a merchant to configure which providers are enabled and store their provider
       credentials. Model it in `services/payments` (or wherever the existing settings-style
       aggregates for this context live — check for a `*-settings.ts` or `*-configuration.ts`
       pattern in a neighbouring context, e.g. `services/shipping` or `services/tax`, before
       inventing a new shape). Credentials through `packages/secrets`, never plaintext.
 
-- [ ] **T13.3 — The Paymob adapter.**
+- [x] **T13.3 — The Paymob adapter.**
       New package `packages/psp-paymob`, mirroring `packages/psp-stripe`'s file layout exactly:
       an adapter implementing `PaymentProvider` (create, capture, refund, verify), a
       `webhook-signature.ts` doing Paymob's actual signature scheme (not Stripe's — read Paymob's
@@ -63,7 +63,7 @@ payment-lifecycle.use-cases.ts` and `create-payment-intent.use-case.ts` to find 
       `index.ts`. Register the package in `.dependency-cruiser.cjs`'s layer rules the way an
       existing `packages/*` addition was registered — find the most recent example and copy it.
 
-- [ ] **T13.4 — Cash on delivery as a payment method.**
+- [x] **T13.4 — Cash on delivery as a payment method.**
       A `CashOnDeliveryProvider` (or equivalent) satisfying the same `PaymentProvider` port where
       that makes sense, or a documented, deliberate exception where COD's semantics genuinely don't
       map onto "create/capture/refund/verify" (e.g. there is no "capture" — say so, in a comment,
@@ -72,7 +72,7 @@ payment-lifecycle.use-cases.ts` and `create-payment-intent.use-case.ts` to find 
       following the shape of `capture-payment.use-case.ts` but sourced from a collection
       confirmation, not a provider webhook.
 
-- [ ] **T13.5 — Wire provider selection through checkout.**
+- [x] **T13.5 — Wire provider selection through checkout.**
       The shopper's explicit choice (from `services/checkout`'s session, extended with a payment
       method field the way `WP-1`'s `contactEmail` addition modelled adding a field) selects which
       provider the orchestrator invokes. `apps/admin/src/http/public-checkout-routes.ts` and its
@@ -85,12 +85,12 @@ payment-lifecycle.use-cases.ts` and `create-payment-intent.use-case.ts` to find 
       for the merchant, let the shopper choose, call the new selection route. Strings in both
       `apps/storefront/src/messages/en.ts` and `ar.ts`.
 
-- [ ] **T13.7 — Webhook idempotency and signature verification for Paymob.**
+- [x] **T13.7 — Webhook idempotency and signature verification for Paymob.**
       Every provider webhook is signature-verified and idempotent, matching the existing Stripe
       webhook's guarantees — reuse `record-webhook.use-case.ts`'s idempotency mechanism, do not
       write a second one.
 
-- [ ] **T13.8 — Tests.**
+- [x] **T13.8 — Tests.**
       Adapter tests against a recorded Paymob response shape (never a live call). A test proving a
       COD order is never marked paid before an explicit collection confirmation. A test proving the
       shopper's selected method determines the adapter invoked (not, e.g., merchant configuration
@@ -98,16 +98,24 @@ payment-lifecycle.use-cases.ts` and `create-payment-intent.use-case.ts` to find 
 
 ## Definition of done
 
-- [ ] A shopper's explicit choice at checkout determines the payment adapter executed.
-- [ ] A COD order is created unpaid and only marked paid by an explicit confirmed-collection
-      action — never by order creation itself.
-- [ ] Every provider webhook (Stripe and Paymob) is signature-verified and idempotent.
-- [ ] Merchant payment credentials are never in a Postgres column, a log, or a DTO — prove it with a
+- [x] A shopper's explicit choice at checkout determines the payment adapter executed. _(through the checkout API: `apps/admin/src/http/merchant-payments.e2e.test.ts`; mutation-checked. The storefront UI that sends the choice is T13.6.)_
+- [x] A COD order is created unpaid and only marked paid by an explicit confirmed-collection
+      action — never by order creation itself. _(D-060; `ConfirmCodCollection`; two mutations checked.)_
+- [x] Every provider webhook (Stripe and Paymob) is signature-verified and idempotent. _(Both go through `verifyWebhook` against the receiving tenant's credentials and `RecordWebhook`'s existing processed-event store.)_
+- [x] Merchant payment credentials are never in a Postgres column, a log, or a DTO — prove it with a
       test, the same way `WP-9`'s T9 tasks (a different WP, same standard) require for ad-platform
-      credentials.
+      credentials. _(`services/payments/src/merchant-credentials-never-leak.test.ts` — DTO, persisted row, error messages, resolver graph; the HTTP suite and `psp-paymob` tests cover log lines. WP-9 has not landed, so this is the reference rather than a mirror.)_
 - [ ] Morbeh F-19 closed in `docs/architecture/23-platform-gap-register.md` and
-      `docs/KNOWN_GAPS.md`.
+      `docs/KNOWN_GAPS.md`. _(NOT closed: recorded as **G-73**, open — part 1 delivered, T13.6 remains.)_
 - [ ] Repo-wide gates green per `../UNIFIED-ROADMAP.md` §3, plus `pnpm arch`.
+
+## Status — part 1 (backend) landed 2026-09-23
+
+T13.1-T13.5, T13.7 and the backend half of T13.8 are done. **T13.6 (the storefront UI) is not started** and
+the Definition of Done's F-19 line stays open until it is. Design and findings: **D-059**, **D-060**, and the
+gap register's **G-73** (which also lists the five follow-ups part 1 found). Migration
+`20260923000000_wp13_merchant_payments` is created and **not applied** — deploying it is the operator's step.
+New runtime env var: `PAYMENT_CREDENTIALS_KEK_REF` (absent ⇒ Paymob unavailable, never stubbed).
 
 ## Known traps
 
