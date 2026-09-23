@@ -21,7 +21,14 @@ import {
 } from "./api";
 import { InMemoryObjectStorage, StorageServiceObjectStorage } from "@platform/media";
 import { TotpMfaProvider } from "@platform/security";
+import { isPaymobRegion, PaymobPaymentProvider } from "@platform/psp-paymob";
 import { StripePaymentProvider } from "@platform/psp-stripe";
+import type { PaymentProvider } from "@platform/contracts";
+import {
+  PAYMOB_REGIONS,
+  type PaymentCredentialVault,
+  type PaymobProviderFactory,
+} from "@platform/payments";
 import type { Logger } from "@platform/utils";
 
 const validEnv = {
@@ -221,26 +228,111 @@ describe("api entrypoint", () => {
     await expect(startApi(prodConfig, core)).rejects.toThrow(/SignupEmailPort/);
   });
 
+  const noPayments = {
+    paymentProvider: undefined,
+    paymobProviderFactory: undefined,
+    paymentCredentialVault: undefined,
+  };
+  const realStripe = { createIntent: vi.fn() } as unknown as PaymentProvider;
+  const realVault = { backing: "real" } as unknown as PaymentCredentialVault;
+  const stubVault = { backing: "stub" } as unknown as PaymentCredentialVault;
+  const paymobFactory: PaymobProviderFactory = () => realStripe;
+
   it("FAILS CLOSED outside local without a production PaymentProvider (V-1) — same shape as the MFA guard, checked independently of it", () => {
-    expect(() => assertProductionPaymentProviderConfigured("production", undefined)).toThrow(
+    expect(() => assertProductionPaymentProviderConfigured("production", noPayments)).toThrow(
       /PaymentProvider/,
     );
-    expect(() => assertProductionPaymentProviderConfigured("production", undefined)).toThrow(
+    expect(() => assertProductionPaymentProviderConfigured("production", noPayments)).toThrow(
       /payments\/webhook/,
     );
   });
 
   it("stays permissive in local (matches the MFA guard's dev-mode behavior)", () => {
-    expect(() => assertProductionPaymentProviderConfigured("local", undefined)).not.toThrow();
+    expect(() => assertProductionPaymentProviderConfigured("local", noPayments)).not.toThrow();
   });
 
   it("stays permissive outside local once a real PaymentProvider is resolved (C2-2)", () => {
-    const fakeProvider = { createIntent: vi.fn() } as unknown as Parameters<
-      typeof assertProductionPaymentProviderConfigured
-    >[1];
     expect(() =>
-      assertProductionPaymentProviderConfigured("production", fakeProvider),
+      assertProductionPaymentProviderConfigured("production", {
+        ...noPayments,
+        paymentProvider: realStripe,
+      }),
     ).not.toThrow();
+  });
+
+  it("WP-13: FAILS CLOSED outside local when Paymob is composed without a REAL credential vault — absent or stub", () => {
+    for (const vault of [undefined, stubVault]) {
+      expect(() =>
+        assertProductionPaymentProviderConfigured("production", {
+          paymentProvider: realStripe,
+          paymobProviderFactory: paymobFactory,
+          paymentCredentialVault: vault,
+        }),
+      ).toThrow(/credential vault/);
+    }
+  });
+
+  it("WP-13: names BOTH failures at once when Stripe and the Paymob vault are each missing (same aggregated report)", () => {
+    const failure = () =>
+      assertProductionPaymentProviderConfigured("production", {
+        ...noPayments,
+        paymobProviderFactory: paymobFactory,
+      });
+    expect(failure).toThrow(/PaymentProvider/);
+    expect(failure).toThrow(/credential vault/);
+  });
+
+  it("WP-13: permits Paymob outside local only with a real vault; Paymob absent needs nothing extra", () => {
+    expect(() =>
+      assertProductionPaymentProviderConfigured("production", {
+        paymentProvider: realStripe,
+        paymobProviderFactory: paymobFactory,
+        paymentCredentialVault: realVault,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertProductionPaymentProviderConfigured("production", {
+        ...noPayments,
+        paymentProvider: realStripe,
+        paymentCredentialVault: stubVault, // irrelevant while Paymob is not composed
+      }),
+    ).not.toThrow();
+  });
+
+  it("WP-13: a merchant cannot enable a method nothing real backs — the settings use case refuses, so no stub is ever reachable", () => {
+    // Proven end to end in apps/admin/src/http/merchant-payments.e2e.test.ts and
+    // services/payments (UpdateMerchantPaymentSettings); here we pin the composition side: without
+    // PAYMENT_CREDENTIALS_KEK_REF there is no factory at all, so nothing can back Paymob.
+    const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(core.paymobProviderFactory).toBeUndefined();
+    expect(core.paymentCredentialVault).toBeUndefined();
+  });
+
+  it("WP-13: with PAYMENT_CREDENTIALS_KEK_REF the factory and a REAL vault are composed together, and the factory builds a per-merchant PaymobPaymentProvider", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: "k".repeat(40) }),
+    );
+    expect(core.paymentCredentialVault?.backing).toBe("real");
+    const merchant = {
+      region: "egy",
+      integrationId: 1,
+      secretKey: "sk",
+      hmacSecret: "hs",
+      publicKey: "pk",
+    };
+    const a = core.paymobProviderFactory?.(merchant);
+    const b = core.paymobProviderFactory?.(merchant);
+    expect(a).toBeInstanceOf(PaymobPaymentProvider);
+    expect(a).not.toBe(b); // one provider per resolution — never a shared instance
+    expect(() => core.paymobProviderFactory?.({ ...merchant, region: "atlantis" })).toThrow(
+      /region/,
+    );
+  });
+
+  it("WP-13: the payments domain's Paymob region list is exactly the adapter's", () => {
+    expect([...PAYMOB_REGIONS].sort()).toEqual(
+      ["egy", "ksa", "uae", "oman", "atlantis"].filter((region) => isPaymobRegion(region)).sort(),
+    );
   });
 
   it("FAILS CLOSED outside local without a production Licensing billing adapter (M2-3) — same shape as the PaymentProvider guard, checked independently of it", () => {

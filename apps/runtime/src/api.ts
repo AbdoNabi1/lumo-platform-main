@@ -57,21 +57,44 @@ export function assertProductionMfaConfigured(
  */
 export function assertProductionPaymentProviderConfigured(
   appEnv: RuntimeConfig["APP_ENV"],
-  paymentProvider: RuntimeCore["paymentProvider"],
+  payments: Pick<
+    RuntimeCore,
+    "paymentProvider" | "paymobProviderFactory" | "paymentCredentialVault"
+  >,
 ): void {
-  if (paymentProvider !== undefined) return;
-  if (appEnv === "local") {
-    logger.warn(
-      "Payments webhook verification is permissive: no production PaymentProvider configured, " +
-        "APP_ENV=local",
-    );
-  } else {
-    throw new Error(
-      "api: no production PaymentProvider is configured. The in-memory stub provider " +
+  const problems: string[] = [];
+  if (payments.paymentProvider === undefined) {
+    problems.push(
+      "no production PaymentProvider is configured. The in-memory stub provider " +
         "(verifyWebhook always returns true) must never accept POST /payments/webhook outside " +
         "APP_ENV=local (V-1). Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET to configure the " +
         "real StripePaymentProvider (C2-2).",
     );
+  }
+  // WP-13: the same class of failure for the merchant-configured methods. A Paymob adapter composed
+  // WITHOUT a real credential vault would seal every merchant's secrets with a stand-in that is not
+  // encryption (`InMemoryPaymentCredentialVault` — base64 in a column). `buildRuntimeCore` only ever
+  // composes the factory together with a real vault, so this is a tripwire on that invariant, not a
+  // reachable state today. (Paymob absent is fine: `UpdateMerchantPaymentSettings` refuses to let a
+  // merchant enable a method nothing real backs, and `TenantPaymentProviderResolver` has no stub to
+  // fall back to — Paymob unavailable is a refusal, never a silent downgrade.)
+  if (
+    payments.paymobProviderFactory !== undefined &&
+    (payments.paymentCredentialVault === undefined ||
+      payments.paymentCredentialVault.backing !== "real")
+  ) {
+    problems.push(
+      "Paymob is composed without a real payment credential vault: merchants' PSP secrets " +
+        "would not be encrypted at rest (WP-13). Set PAYMENT_CREDENTIALS_KEK_REF.",
+    );
+  }
+  if (problems.length === 0) return;
+  if (appEnv === "local") {
+    for (const problem of problems) {
+      logger.warn(`Payments provider guard (APP_ENV=local, not enforced): ${problem}`);
+    }
+  } else {
+    throw new Error(`api: ${problems.join(" Also: ")}`);
   }
 }
 
@@ -359,9 +382,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   // single boot attempt on a fresh environment reveals everything still missing at once.
   const guardFailures = [
     collectGuardFailure(() => assertProductionMfaConfigured(config.APP_ENV, runtime.mfaProviders)),
-    collectGuardFailure(() =>
-      assertProductionPaymentProviderConfigured(config.APP_ENV, runtime.paymentProvider),
-    ),
+    collectGuardFailure(() => assertProductionPaymentProviderConfigured(config.APP_ENV, runtime)),
     collectGuardFailure(() => assertProductionLicensingBillingConfigured(config.APP_ENV)),
     collectGuardFailure(() =>
       assertProductionObjectStorageConfigured(config.APP_ENV, runtime.objectStorage),
@@ -419,6 +440,10 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     paymentsPort: buildReturnsPaymentsPortAdapter(runtime),
     objectStorage: runtime.objectStorage,
     paymentProvider: runtime.paymentProvider,
+    // WP-13: per-merchant Paymob (built per request from the tenant's own sealed credentials) and
+    // the vault that seals them. Neither is a process-wide provider.
+    paymobProviderFactory: runtime.paymobProviderFactory,
+    paymentCredentialVault: runtime.paymentCredentialVault,
     // H-02: every authorization decision on every admin action was recorded to a process-local,
     // never-pruned in-memory array (destroyed on restart, unbounded growth against the container
     // memory limit). The durable adapter, the `platform.audit_events` table, and the 7-year-retention

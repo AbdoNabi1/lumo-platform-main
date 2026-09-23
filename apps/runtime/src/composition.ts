@@ -39,8 +39,15 @@ import {
   type PaymentCapturedPayload,
   type PaymentVerificationPort,
 } from "@platform/orders";
-import { wirePayments, type PaymentController } from "@platform/payments";
+import {
+  EnvelopePaymentCredentialVault,
+  wirePayments,
+  type PaymentController,
+  type PaymentCredentialVault,
+  type PaymobProviderFactory,
+} from "@platform/payments";
 import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
+import { isPaymobRegion, PaymobPaymentProvider } from "@platform/psp-paymob";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import {
   NodeCrypto,
@@ -60,7 +67,7 @@ import {
   type RedisHandle,
 } from "@platform/redis";
 import { CachedAccessControl, JwtVerifier, KetoAccessControl } from "@platform/auth";
-import { createSecretProvider } from "@platform/secrets";
+import { EnvelopeCipher, KeyAliasRegistry, createSecretProvider } from "@platform/secrets";
 import { createS3Client, S3StorageService } from "@platform/storage";
 import { logger, type Logger } from "@platform/utils";
 import type { RuntimeConfig } from "./config";
@@ -121,6 +128,14 @@ export interface RuntimeCore {
    * this field existed. `apps/runtime/src/api.ts` refuses to boot outside `local` while absent.
    */
   readonly paymentProvider: PaymentProvider | undefined;
+  /**
+   * WP-13: how a merchant's Paymob provider is built from that merchant's own opened credentials
+   * (`@platform/psp-paymob`), and the envelope vault their secrets are sealed with. Both exist only
+   * when `PAYMENT_CREDENTIALS_KEK_REF` is configured — otherwise Paymob is unavailable, never stubbed.
+   * Nothing here holds a merchant credential: the factory receives it per call.
+   */
+  readonly paymobProviderFactory: PaymobProviderFactory | undefined;
+  readonly paymentCredentialVault: PaymentCredentialVault | undefined;
   /**
    * Production MFA provider resolver (C2-4). Real RFC 6238 `TotpMfaProvider` over `NodeCrypto`,
    * built unconditionally — unlike `objectStorage`/`paymentProvider`, this needs no external
@@ -272,6 +287,30 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
         })
       : undefined;
 
+  // WP-13: merchant PSP credentials. The vault and the Paymob factory come together or not at all,
+  // so a merchant can never be handed a Paymob provider whose secrets were sealed by a stub.
+  const paymentCredentialVault: PaymentCredentialVault | undefined =
+    config.PAYMENT_CREDENTIALS_KEK_REF !== undefined
+      ? buildPaymentCredentialVault(config.PAYMENT_CREDENTIALS_KEK_REF)
+      : undefined;
+  const paymobProviderFactory: PaymobProviderFactory | undefined =
+    paymentCredentialVault !== undefined
+      ? (merchant) => {
+          if (!isPaymobRegion(merchant.region)) {
+            throw new Error(`Unsupported Paymob region "${merchant.region}"`);
+          }
+          return new PaymobPaymentProvider({
+            secretKey: merchant.secretKey,
+            hmacSecret: merchant.hmacSecret,
+            publicKey: merchant.publicKey,
+            integrationId: merchant.integrationId,
+            region: merchant.region,
+            fetch: async (url, init) => fetch(url, init),
+            logger,
+          });
+        }
+      : undefined;
+
   return {
     config,
     logger,
@@ -290,9 +329,26 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     metrics: new RuntimeMetrics(),
     objectStorage,
     paymentProvider,
+    paymobProviderFactory,
+    paymentCredentialVault,
     mfaProviders,
     signupEmail: new LoggingSignupEmailAdapter(),
   };
+}
+
+/**
+ * The real credential vault (WP-13): `@platform/secrets`' envelope encryption over
+ * `@platform/security`'s `NodeCrypto` (AES-256-GCM; the data key is wrapped under a KEK derived from
+ * `kekRef`). A KMS-backed `CryptoPort` satisfies the same `KeyWrapCipher` shape and can replace
+ * `NodeCrypto` here without touching Payments.
+ */
+function buildPaymentCredentialVault(kekRef: string): PaymentCredentialVault {
+  const aliases = new KeyAliasRegistry();
+  aliases.set("payments-credentials", kekRef);
+  return new EnvelopePaymentCredentialVault(
+    new EnvelopeCipher(new NodeCrypto(), aliases),
+    "payments-credentials",
+  );
 }
 
 /**
@@ -496,6 +552,9 @@ export function buildReturnsPaymentsPortAdapter(core: RuntimeCore): PrismaPaymen
     clock: core.clock,
     prisma: core.prisma,
     paymentProvider: core.paymentProvider,
+    // WP-13: a Returns refund of a Paymob payment goes out through the same per-merchant provider.
+    paymobProviderFactory: core.paymobProviderFactory,
+    paymentCredentialVault: core.paymentCredentialVault,
   });
   return new PrismaPaymentsPortAdapter(core.prisma, payments);
 }

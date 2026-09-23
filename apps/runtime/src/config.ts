@@ -117,6 +117,14 @@ const schema = z
     /** Override for sandbox/testing; defaults to Stripe's production API. */
     STRIPE_API_BASE: z.string().url().default("https://api.stripe.com"),
 
+    // ── Merchant payment credentials (WP-13). Merchants' Paymob secrets are sealed with
+    // `@platform/secrets`' envelope encryption before they reach Postgres; this is the key-encryption
+    // key reference they are sealed under. Absent ⇒ Paymob is UNAVAILABLE (no vault, no adapter is
+    // composed, and a merchant cannot enable it) — never a stub. With the local `NodeCrypto` backend
+    // the ref IS the key material (an AES key is derived from it), so treat it like STRIPE_SECRET_KEY;
+    // with a KMS backend it is that KMS's key reference.
+    PAYMENT_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+
     // ── Tracking ingest (P1.3 / C-07) ──
     /**
      * Mounts the `tracking.event.captured.v1` consumer in the worker. Default `off`: the collector
