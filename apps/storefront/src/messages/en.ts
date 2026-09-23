@@ -226,6 +226,22 @@ export const en = {
       validation: "Check the details you entered and try again.",
       mfa: "This account needs an extra verification step, which isn't available here yet.",
       network: "Couldn't reach the account service. Try again.",
+      /** G-72: a signup-completion link that's unknown, expired, already used, or tampered with — all indistinguishable, deliberately. */
+      invalidToken: "This link is invalid or has expired.",
+    },
+    /** G-72: guest-to-account upgrade — the "check your email" outcome and the completion page. */
+    signup: {
+      checkEmailTitle: "Check your email",
+      checkEmailBody:
+        "If that email can be used, we've sent a link to finish setting up your account.",
+      completeTitle: "Finish creating your account",
+      completeSubtitle: "Set a password to complete your account.",
+      nameLabel: "Name",
+      passwordLabel: "Password",
+      passwordHint: "At least 8 characters.",
+      submit: "Complete account",
+      submitting: "Completing…",
+      invalidLink: "This link is invalid or has expired. Request a new one from the sign-up page.",
     },
   },
   wishlist: {

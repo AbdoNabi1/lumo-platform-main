@@ -427,15 +427,46 @@ export interface CustomerProfile {
  * Sending one would be meaningless at best (the routes have no field for it) and an attempt to act
  * as another customer at worst.
  */
+/**
+ * G-72: the response body now depends on which of the request-signup outcomes the Runtime API
+ * chose — `{customerRef}` for a brand-new email (unchanged, immediate registration) or
+ * `{outcome: "link-sent"}` for an email that's already known (guest or registered; D2: the two
+ * are byte-identical, so this storefront call site cannot and must not try to tell them apart).
+ */
 export function registerCustomer(
   email: string,
   name: string,
   password: string,
   idempotencyKey: string,
-): Promise<{ readonly status: number; readonly body: { readonly customerRef: string } | null }> {
-  return postItem<{ readonly customerRef: string }>(
+): Promise<{
+  readonly status: number;
+  readonly body: { readonly customerRef: string } | { readonly outcome: "link-sent" } | null;
+}> {
+  return postItem<{ readonly customerRef: string } | { readonly outcome: "link-sent" }>(
     "/api/v1/public/auth/register",
     { email, name, password },
+    { "Idempotency-Key": idempotencyKey },
+  );
+}
+
+/**
+ * G-72: completes a guest-to-account upgrade using the token from the emailed signup-completion
+ * link. Idempotency-Key is still sent (the route is a POST write like `registerCustomer`), but the
+ * route itself is NOT declared idempotent — replaying it would try to consume an already-consumed
+ * token, which correctly fails rather than replaying a cached success.
+ */
+export function completeSignup(
+  token: string,
+  name: string,
+  password: string,
+  idempotencyKey: string,
+): Promise<{
+  readonly status: number;
+  readonly body: { readonly customerRef: string; readonly email: string } | null;
+}> {
+  return postItem<{ readonly customerRef: string; readonly email: string }>(
+    "/api/v1/public/auth/signup/complete",
+    { token, name, password },
     { "Idempotency-Key": idempotencyKey },
   );
 }

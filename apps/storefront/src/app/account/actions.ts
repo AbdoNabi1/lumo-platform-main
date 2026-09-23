@@ -10,6 +10,7 @@ import {
 } from "@/lib/customer-session";
 import {
   claimGuestCart,
+  completeSignup,
   getCurrentCart,
   loginCustomer,
   logoutCustomer,
@@ -42,10 +43,46 @@ export type AuthActionResult =
       readonly reason: "credentials" | "conflict" | "validation" | "mfa" | "network";
     };
 
+/**
+ * G-72: `registerAccount`'s own result type — a `checkEmail` outcome alongside `AuthActionResult`'s
+ * usual `ok`/failure shape, for the D2 "check your email" response (an email the Runtime API
+ * already knows, guest or registered — this action cannot and must not tell which).
+ */
+export type RegisterActionResult =
+  | { readonly ok: true; readonly checkEmail?: false }
+  | { readonly ok: true; readonly checkEmail: true }
+  | {
+      readonly ok: false;
+      readonly reason: "credentials" | "conflict" | "validation" | "mfa" | "network";
+    };
+
+/**
+ * G-72: `completeAccountSignup`'s own failure reasons — `"invalid-token"` is distinct from every
+ * `AuthActionResult` reason (an expired/reused/unknown/tampered link, all indistinguishable per the
+ * backend). Includes every `AuthActionResult` reason too (even `"conflict"`, which the `/login` call
+ * this function makes on success can never actually produce) so the two result types compose
+ * without a runtime remap that would just be re-deriving what TypeScript already proves is unreachable.
+ */
+export type CompleteSignupActionResult =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason:
+        "invalid-token" | "credentials" | "conflict" | "validation" | "mfa" | "network";
+    };
+
 function mapAuthFailure(status: number): AuthActionResult {
   if (status === 401) return { ok: false, reason: "credentials" };
   if (status === 403) return { ok: false, reason: "mfa" };
   if (status === 409) return { ok: false, reason: "conflict" };
+  if (status === 422) return { ok: false, reason: "validation" };
+  return { ok: false, reason: "network" };
+}
+
+/** G-72: `completeAccountSignup`'s status set differs from `mapAuthFailure`'s — 404 means "this link doesn't work anymore" (Identity's own indistinguishable rejection for unknown/expired/reused/wrong-tenant/tampered tokens), not "not found" in the generic sense. */
+function mapCompleteSignupFailure(status: number): CompleteSignupActionResult {
+  if (status === 404) return { ok: false, reason: "invalid-token" };
+  if (status === 403) return { ok: false, reason: "mfa" };
   if (status === 422) return { ok: false, reason: "validation" };
   return { ok: false, reason: "network" };
 }
@@ -86,7 +123,11 @@ async function claimGuestCartIfAny(sessionId: string): Promise<void> {
 }
 
 /**
- * Registers an account and signs the new customer straight in.
+ * Registers an account and signs the new customer straight in — for a brand-new email. For an
+ * email the Runtime API already knows (guest or registered), G-72's `requestSignup` sends a link
+ * instead and this returns `{ok: true, checkEmail: true}`, deliberately identical for both cases
+ * (D2: no purchase/account oracle) and WITHOUT attempting a login (there is no session to sign
+ * into yet — completing the emailed link is what creates one).
  *
  * Registration and login are two calls rather than one because each route does one thing (and
  * `/login` must not be idempotent while `/register` must be). The login here is a REAL
@@ -98,12 +139,34 @@ export async function registerAccount(
   email: string,
   name: string,
   password: string,
-): Promise<AuthActionResult> {
+): Promise<RegisterActionResult> {
   const registered = await registerCustomer(email, name, password, crypto.randomUUID());
+  if (registered.status === 202) {
+    return { ok: true, checkEmail: true };
+  }
   if (registered.status < 200 || registered.status >= 300) {
     return mapAuthFailure(registered.status);
   }
   return signIn(email, password);
+}
+
+/**
+ * G-72: completes a guest-to-account upgrade using the token from the emailed signup-completion
+ * link, then signs the shopper in with the password just submitted here — a REAL authentication
+ * round trip, same reasoning as `registerAccount`'s own login step. The email used to sign in
+ * comes back from the completion response itself (Identity's own record), never from anything
+ * this action was handed — the completion form only ever collects a name and a password.
+ */
+export async function completeAccountSignup(
+  token: string,
+  name: string,
+  password: string,
+): Promise<AuthActionResult | CompleteSignupActionResult> {
+  const completed = await completeSignup(token, name, password, crypto.randomUUID());
+  if (completed.status < 200 || completed.status >= 300 || completed.body === null) {
+    return mapCompleteSignupFailure(completed.status);
+  }
+  return signIn(completed.body.email, password);
 }
 
 /** Authenticates, persists the session cookie, and folds the guest cart into the account. */
