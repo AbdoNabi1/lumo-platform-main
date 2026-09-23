@@ -127,6 +127,7 @@ function seedAuthorizedStripeIntent(
     UniqueEntityId.from(domainId),
     `order-${domainId}`,
     usd(amountMinor),
+    "stripe",
   );
   pi.markProcessing("seed-1", new Date(0));
   const pspRef = PspReference.create(stripePaymentIntentId);

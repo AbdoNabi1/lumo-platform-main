@@ -49,7 +49,7 @@ describe("payments tenant isolation (ADR-0014)", () => {
   it("two tenants sharing one repository and an identical intent id never see each other's rows", async () => {
     const repo = repository();
     await repo.save(
-      PaymentIntent.create(UniqueEntityId.from("intent-1"), "order-1", usd(1000)),
+      PaymentIntent.create(UniqueEntityId.from("intent-1"), "order-1", usd(1000), "stripe"),
       "tenant-a",
     );
 
@@ -75,12 +75,14 @@ describe("payments tenant isolation (ADR-0014)", () => {
     const a = await app.payments.createIntentLifecycle({
       tenantId: "tenant-a",
       orderRef: "order-a",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });
     const b = await app.payments.createIntentLifecycle({
       tenantId: "tenant-b",
       orderRef: "order-b",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });
@@ -116,6 +118,7 @@ describe("payments tenant isolation (ADR-0014)", () => {
     const created = await app.payments.createIntentLifecycle({
       tenantId: "tenant-a",
       orderRef: "order-a",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });
@@ -145,6 +148,7 @@ describe("payments tenant isolation (ADR-0014)", () => {
     await app.payments.createIntentLifecycle({
       tenantId: "tenant-b",
       orderRef: "order-b",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });
@@ -162,6 +166,7 @@ describe("payments tenant isolation (ADR-0014)", () => {
         UniqueEntityId.from("intent-1"),
         "order-1",
         usd(1000),
+        "stripe",
       );
       intent.transition("cancelled", "evt-1", new Date(0));
       await repo.save(intent, tenantId);

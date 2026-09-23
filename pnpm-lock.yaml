@@ -3079,6 +3079,9 @@ importers:
       '@platform/repository':
         specifier: workspace:*
         version: link:../../packages/repository
+      '@platform/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
       '@platform/types':
         specifier: workspace:*
         version: link:../../packages/types

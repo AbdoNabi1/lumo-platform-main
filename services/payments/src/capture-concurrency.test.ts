@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { staticProviders } from "./test-support/static-provider-resolver";
 import type { Clock, IdGenerator, PaymentProvider, ProviderIntent } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
@@ -197,7 +198,12 @@ function seedAuthorizedIntent(
   id: string,
   amountMinor: number,
 ): void {
-  const pi = PaymentIntent.createIntent(UniqueEntityId.from(id), `order-${id}`, usd(amountMinor));
+  const pi = PaymentIntent.createIntent(
+    UniqueEntityId.from(id),
+    `order-${id}`,
+    usd(amountMinor),
+    "stripe",
+  );
   pi.markProcessing("seed-1", new Date(0));
   const pspRef = PspReference.create(`psp-ref-${id}`);
   const method = PaymentMethod.create("tok_seed", "visa");
@@ -217,7 +223,7 @@ function buildDeps(
     unitOfWork,
     idGenerator: sequentialIds("evt"),
     clock,
-    paymentProvider,
+    providers: staticProviders(paymentProvider),
   };
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { staticProviders } from "./test-support/static-provider-resolver";
 import type {
   Clock,
   IdGenerator,
@@ -160,7 +161,7 @@ function buildDeps(
     unitOfWork,
     idGenerator: sequentialIds("evt"),
     clock,
-    paymentProvider,
+    providers: staticProviders(paymentProvider),
   };
 }
 
@@ -174,6 +175,7 @@ describe("Task 4/5 — exploit proof: PSP createIntent() call happens while a DB
     const result = await lifecycle.execute({
       tenantId: "tenant-a",
       orderRef: "order-1",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });
@@ -206,6 +208,7 @@ describe("Task 4/5 — exploit proof: PSP createIntent() call happens while a DB
     await lifecycle.execute({
       tenantId: "tenant-a",
       orderRef: "order-2",
+      provider: "stripe",
       amountMinor: 500,
       currency: "USD",
     });
@@ -225,6 +228,7 @@ describe("Task 5 — PSP failure recovery on create", () => {
       lifecycle.execute({
         tenantId: "tenant-a",
         orderRef: "order-fail",
+        provider: "stripe",
         amountMinor: 1000,
         currency: "USD",
       }),
@@ -246,6 +250,7 @@ describe("Task 5 — PSP failure recovery on create", () => {
       failingLifecycle.execute({
         tenantId: "tenant-a",
         orderRef: "order-retry",
+        provider: "stripe",
         amountMinor: 1000,
         currency: "USD",
       }),
@@ -256,6 +261,7 @@ describe("Task 5 — PSP failure recovery on create", () => {
     const retried = await retryLifecycle.execute({
       tenantId: "tenant-a",
       orderRef: "order-retry",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });
@@ -278,12 +284,14 @@ describe("Task 4 — concurrent create requests never race on shared state", () 
       lifecycle.execute({
         tenantId: "tenant-a",
         orderRef: "order-a",
+        provider: "stripe",
         amountMinor: 100,
         currency: "USD",
       }),
       lifecycle.execute({
         tenantId: "tenant-a",
         orderRef: "order-b",
+        provider: "stripe",
         amountMinor: 200,
         currency: "USD",
       }),

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { staticProviders } from "./test-support/static-provider-resolver";
 import type { Clock, IdGenerator, PaymentProvider, ProviderIntent } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
@@ -168,6 +169,7 @@ function seedCapturedIntent(
     UniqueEntityId.from(id),
     `order-${id}`,
     usd(capturedAmountMinor),
+    "stripe",
   );
   pi.markProcessing("seed-1", new Date(0));
   const pspRef = PspReference.create(`psp-ref-${id}`);
@@ -189,7 +191,7 @@ function buildDeps(
     unitOfWork: new PassthroughUnitOfWork(),
     idGenerator: sequentialIds("evt"),
     clock,
-    paymentProvider,
+    providers: staticProviders(paymentProvider),
   };
 }
 

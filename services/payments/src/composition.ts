@@ -12,6 +12,12 @@ import {
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { CapturePayment } from "./application/capture-payment.use-case";
+import { ConfirmCodCollection } from "./application/confirm-cod-collection.use-case";
+import {
+  GetMerchantPaymentSettings,
+  UpdateMerchantPaymentSettings,
+} from "./application/merchant-payment-settings.use-cases";
+import { VerifyPaymentWebhook } from "./application/verify-payment-webhook";
 import { CreatePaymentIntent } from "./application/create-payment-intent.use-case";
 import { FailPayment } from "./application/fail-payment.use-case";
 import { GetPaymentIntent } from "./application/get-payment-intent.use-case";
@@ -28,9 +34,18 @@ import type {
   FinancePort,
   NotificationPort,
   OrdersPort,
+  PaymentCredentialVault,
+  PaymentProviderResolver,
+  PaymobProviderFactory,
   ProcessedWebhookStore,
 } from "./application/ports";
+import type { MerchantPaymentSettingsRepository } from "./domain/merchant-payment-settings-repository";
 import type { PaymentIntentRepository } from "./domain/payment-intent-repository";
+import { CashOnDeliveryProvider } from "./infrastructure/cash-on-delivery-provider";
+import { InMemoryPaymentCredentialVault } from "./infrastructure/envelope-payment-credential-vault";
+import { InMemoryMerchantPaymentSettingsRepository } from "./infrastructure/in-memory-merchant-payment-settings-repository";
+import { PrismaMerchantPaymentSettingsRepository } from "./infrastructure/prisma-merchant-payment-settings-repository";
+import { TenantPaymentProviderResolver } from "./infrastructure/tenant-payment-provider-resolver";
 import { InMemoryPaymentIntentRepository } from "./infrastructure/in-memory-payment-intent-repository";
 import {
   InMemoryFinanceAdapter,
@@ -62,12 +77,22 @@ export interface PaymentsWiringDeps {
    */
   readonly prisma?: Database;
   /**
-   * Production PSP adapter (C2-2). Absent ⇒ `InMemoryPaymentProvider` — the offline stub whose
-   * `verifyWebhook()` always returns `true` and whose money operations no-op. Same `deps.X ?? default`
-   * convention as `payments`/`financeLedger` in Licensing's composition root; `apps/runtime` refuses
-   * to boot outside `local` without a real one injected here.
+   * The PLATFORM's Stripe adapter (C2-2) — one Stripe account for the whole platform, injected as
+   * before. Absent ⇒ `InMemoryPaymentProvider`, the offline stub whose `verifyWebhook()` always
+   * returns `true` and whose money operations no-op; `apps/runtime` refuses to boot outside `local`
+   * with that stub backing Stripe. Since WP-13 this is only ONE input to the per-request provider
+   * resolver below — it is no longer what every payment goes through.
    */
   readonly paymentProvider?: PaymentProvider;
+  /**
+   * Builds a merchant's Paymob provider from that merchant's own (opened) credentials. Supplied by
+   * the composition root, which owns `@platform/psp-paymob`. Absent ⇒ Paymob is unavailable.
+   */
+  readonly paymobProviderFactory?: PaymobProviderFactory;
+  /** Seals merchant PSP secrets (`@platform/secrets` envelope). Absent ⇒ an in-memory STUB the boot guard refuses outside `local`. */
+  readonly paymentCredentialVault?: PaymentCredentialVault;
+  /** Full override of the per-request provider resolver (tests). Absent ⇒ built from the inputs above. */
+  readonly paymentProviders?: PaymentProviderResolver;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 3 outbound reference-only ports the payment
    * lifecycle use-cases call. Same `deps.X ?? new InMemoryXAdapter()` convention as
@@ -88,13 +113,12 @@ export interface PaymentsWiringDeps {
 export interface WiredPayments {
   readonly payments: PaymentController;
   /**
-   * The PSP port (C2-2/C2-6). Exposed so the webhook HTTP ingress (`payments-webhook-routes.ts`) can
-   * call `verifyWebhook` itself — a webhook has no admin Bearer token to check via `AdminGuard`, its
-   * verification IS the PSP signature check, so it cannot go through the guarded `PaymentController`
-   * facade the same way `payments:capture` etc. do. `deps.paymentProvider` when injected (production:
-   * `StripePaymentProvider`, `@platform/psp-stripe`), else the offline `InMemoryPaymentProvider` stub.
+   * The per-request provider resolver (ADR-0014). Exposed for the production boot guard
+   * (`assertProductionPaymentProviderConfigured`), which asks it what really backs each method.
+   * The webhook ingress verifies through `payments.verifyWebhook`, which resolves the TENANT's own
+   * provider — there is deliberately no process-wide provider left to hand out.
    */
-  readonly paymentProvider: PaymentProvider;
+  readonly providers: PaymentProviderResolver;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
 }
@@ -104,9 +128,19 @@ function buildController(
   intents: PaymentIntentRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   processedWebhooks: ProcessedWebhookStore,
+  settings: MerchantPaymentSettingsRepository,
   deps: PaymentsWiringDeps,
-): { readonly controller: PaymentController; readonly paymentProvider: PaymentProvider } {
-  const paymentProvider = deps.paymentProvider ?? new InMemoryPaymentProvider();
+): { readonly controller: PaymentController; readonly providers: PaymentProviderResolver } {
+  const credentialVault = deps.paymentCredentialVault ?? new InMemoryPaymentCredentialVault();
+  const providers =
+    deps.paymentProviders ??
+    new TenantPaymentProviderResolver({
+      settings,
+      stripe: deps.paymentProvider ?? new InMemoryPaymentProvider(),
+      cashOnDelivery: new CashOnDeliveryProvider(),
+      paymobFactory: deps.paymobProviderFactory,
+      vault: credentialVault,
+    });
   const ordersPort = deps.ordersPort ?? new InMemoryOrdersAdapter();
   const financePort = deps.financePort ?? new InMemoryFinanceAdapter();
   const notifications = deps.paymentsNotifications ?? new InMemoryNotificationAdapter();
@@ -116,7 +150,7 @@ function buildController(
     unitOfWork,
     idGenerator: deps.idGenerator,
     clock: deps.clock,
-    paymentProvider,
+    providers,
     ordersPort,
     financePort,
     notifications,
@@ -164,8 +198,23 @@ function buildController(
       captureSettlement: capturePaymentLifecycle,
     }),
     getPaymentIntent: new GetPaymentIntent({ intents }),
+    confirmCodCollection: new ConfirmCodCollection({
+      intents,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      captureSettlement: capturePaymentLifecycle,
+    }),
+    getMerchantPaymentSettings: new GetMerchantPaymentSettings({ settings, providers }),
+    updateMerchantPaymentSettings: new UpdateMerchantPaymentSettings({
+      settings,
+      providers,
+      vault: credentialVault,
+      unitOfWork,
+    }),
+    verifyPaymentWebhook: new VerifyPaymentWebhook(providers),
   });
-  return { controller, paymentProvider };
+  return { controller, providers };
 }
 
 /**
@@ -190,11 +239,17 @@ export function wirePayments(deps: PaymentsWiringDeps): WiredPayments {
     const intents = new PrismaPaymentIntentRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
     const processedWebhooks = new PrismaProcessedWebhookStore(deps.prisma);
-    const built = buildController(intents, unitOfWork, processedWebhooks, deps);
+    const built = buildController(
+      intents,
+      unitOfWork,
+      processedWebhooks,
+      new PrismaMerchantPaymentSettingsRepository(deps.prisma),
+      deps,
+    );
 
     return {
       payments: built.controller,
-      paymentProvider: built.paymentProvider,
+      providers: built.providers,
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -213,7 +268,13 @@ export function wirePayments(deps: PaymentsWiringDeps): WiredPayments {
   const intents = new InMemoryPaymentIntentRepository({ outbox: outboxWriter, context });
   const unitOfWork = new InMemoryUnitOfWork();
   const processedWebhooks = new InMemoryProcessedWebhookStore();
-  const built = buildController(intents, unitOfWork, processedWebhooks, deps);
+  const built = buildController(
+    intents,
+    unitOfWork,
+    processedWebhooks,
+    new InMemoryMerchantPaymentSettingsRepository(),
+    deps,
+  );
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];
@@ -232,7 +293,7 @@ export function wirePayments(deps: PaymentsWiringDeps): WiredPayments {
 
   return {
     payments: built.controller,
-    paymentProvider: built.paymentProvider,
+    providers: built.providers,
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

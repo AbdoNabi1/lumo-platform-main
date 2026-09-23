@@ -22,6 +22,7 @@ async function newIntentId(app: ReturnType<typeof wire>): Promise<string> {
   const created = await app.payments.createIntent({
     tenantId: "tenant-a",
     orderRef: "order-1",
+    provider: "stripe",
     amountMinor: 3500,
     currency: "USD",
   });
@@ -100,6 +101,7 @@ describe("payments (end to end)", () => {
     const response = await app.payments.createIntent({
       tenantId: "tenant-a",
       orderRef: "order-1",
+      provider: "stripe",
       amountMinor: -1,
       currency: "USD",
     });
@@ -112,6 +114,7 @@ describe("payments (end to end)", () => {
     const created = await app.payments.createIntentLifecycle({
       tenantId: "tenant-a",
       orderRef: "order-2",
+      provider: "stripe",
       amountMinor: 5000,
       currency: "USD",
     });
@@ -170,6 +173,7 @@ describe("payments (end to end)", () => {
     const created = await app.payments.createIntentLifecycle({
       tenantId: "tenant-a",
       orderRef: "order-3",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });
@@ -242,6 +246,7 @@ describe("payments (end to end)", () => {
     const created = await app.payments.createIntentLifecycle({
       tenantId: "tenant-a",
       orderRef: "order-race-2",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });

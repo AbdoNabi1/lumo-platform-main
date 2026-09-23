@@ -1,10 +1,11 @@
 import type { UseCase } from "@platform/application";
 import type { Clock, IdGenerator } from "@platform/contracts";
-import { Guard, isDomainError } from "@platform/domain";
+import { BusinessRuleError, Guard, isDomainError } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { PaymentIntentRepository } from "../domain/payment-intent-repository";
+import { hasProviderWebhooks } from "../domain/value-objects/payment-provider-key";
 import type { PaymentStatusValue } from "../domain/value-objects/payment-status";
 import type { ProcessedWebhookStore } from "./ports";
 
@@ -15,6 +16,18 @@ export interface RecordWebhookInput {
   readonly provider: string;
   readonly eventId: string;
   readonly kind: string;
+  /**
+   * WP-13: the provider's own id for the charge (Paymob's transaction id, from the SIGNED callback).
+   * Recorded on a direct-capture settlement so a later refund can address it.
+   */
+  readonly providerTransactionRef?: string;
+  /**
+   * WP-13: the amount/currency the provider's SIGNED callback reports. When supplied, a mismatch
+   * with the intent rejects the webhook — a valid signature proves the callback is Paymob's, not
+   * that it describes THIS intent's money.
+   */
+  readonly amountMinor?: number;
+  readonly currency?: string;
 }
 
 export interface RecordWebhookOutput {
@@ -119,6 +132,29 @@ export class RecordWebhook implements UseCase<
         return ok({ paymentIntentId, duplicate: true, status: intent.status.value });
       }
 
+      // A webhook may only speak for the provider the shopper chose for THIS intent. Without this a
+      // verified callback from one provider could drive an intent that was opened for another.
+      // Cash on delivery has no PSP to call us. A webhook claiming to settle it is forged by
+      // definition — only `ConfirmCodCollection` (an operator's explicit action) marks it paid.
+      if (!hasProviderWebhooks(intent.provider)) {
+        return err(
+          new BusinessRuleError(
+            "This payment method has no provider webhooks; a cash-on-delivery payment is settled by confirming the collection",
+          ),
+        );
+      }
+      if (input.provider !== intent.provider) {
+        return err(
+          new BusinessRuleError("Webhook provider does not match the payment intent's provider"),
+        );
+      }
+      if (
+        (input.amountMinor !== undefined && input.amountMinor !== intent.amount.amountMinor) ||
+        (input.currency !== undefined && input.currency.toUpperCase() !== intent.amount.currency)
+      ) {
+        return err(new BusinessRuleError("Webhook amount does not match the payment intent"));
+      }
+
       try {
         intent.recordWebhook(
           input.provider,
@@ -138,6 +174,15 @@ export class RecordWebhook implements UseCase<
         // production (`deferToCaptureSettlement` is always wired), but `authorized`/`failed`/
         // `cancelled`/`expired` do. A genuinely illegal cross-status webhook (current status differs
         // from `toStatus` and the transition table forbids it) is unaffected and still rejected below.
+        if (deferToCaptureSettlement && intent.isDirectCapture) {
+          // Paymob (WP-13): the signed callback IS the capture — there was no capture request. Bring
+          // the intent to the one status `settle()` may follow, in this same transaction.
+          intent.prepareDirectCapture(
+            () => this.deps.idGenerator.generate(),
+            this.deps.clock.now(),
+            input.providerTransactionRef,
+          );
+        }
         if (
           toStatus !== undefined &&
           !deferToCaptureSettlement &&

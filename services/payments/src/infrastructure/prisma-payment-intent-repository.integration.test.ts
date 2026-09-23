@@ -48,7 +48,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
 
   function newIntent(orderRef = crypto.randomUUID()): PaymentIntent {
     const amount = unwrap(Money.create(5000, "USD"));
-    return PaymentIntent.create(UniqueEntityId.from(ids.generate()), orderRef, amount);
+    return PaymentIntent.create(UniqueEntityId.from(ids.generate()), orderRef, amount, "stripe");
   }
 
   it("round-trips the aggregate exactly: amount, status, version", async () => {
@@ -120,6 +120,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
 
     await prisma.paymentIntent.create({
       data: {
+        provider: "stripe",
         id: crypto.randomUUID(),
         tenantId,
         orderRef,
@@ -134,6 +135,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
     await expect(
       prisma.paymentIntent.create({
         data: {
+          provider: "stripe",
           id: crypto.randomUUID(),
           tenantId,
           orderRef: crypto.randomUUID(),
@@ -195,6 +197,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
       prisma.$transaction(async (tx) => {
         await tx.paymentIntent.create({
           data: {
+            provider: "stripe",
             id: intentId,
             tenantId,
             orderRef,
@@ -208,6 +211,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
         // fail here; instead force a genuine constraint failure — duplicate PK on a second insert).
         await tx.paymentIntent.create({
           data: {
+            provider: "stripe",
             id: intentId, // same PK -> unique violation
             tenantId,
             orderRef,
@@ -268,6 +272,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
         const attempt = (client: typeof sessionA, orderRef: string) =>
           client.paymentIntent.create({
             data: {
+              provider: "stripe",
               id: crypto.randomUUID(),
               tenantId,
               orderRef,

@@ -17,7 +17,11 @@ import {
   PaymentStatus,
   type PaymentStatusValue,
 } from "./value-objects/payment-status";
-import type { PaymentMethod, PspReference } from "./value-objects/payment-references";
+import { PspReference, type PaymentMethod } from "./value-objects/payment-references";
+import {
+  isDirectCaptureProvider,
+  type PaymentProviderKey,
+} from "./value-objects/payment-provider-key";
 import { PspToken } from "./value-objects/psp-token";
 import type { Result } from "@platform/types";
 
@@ -31,6 +35,10 @@ function must<T>(result: Result<T, { message: string }>): T {
 interface PaymentIntentProps {
   readonly orderRef: string;
   readonly amount: Money;
+  /** The method the shopper selected — fixed at creation; selects the adapter for every later call. */
+  readonly provider: PaymentProviderKey;
+  /** The provider's id for the charge itself when it differs from `pspReference` (Paymob: the transaction id, learned from the signed callback). */
+  providerTransactionRef?: string;
   status: PaymentStatus;
   readonly charges: Charge[];
   readonly refunds: Refund[];
@@ -50,11 +58,17 @@ interface PaymentIntentProps {
  * aggregate (only a {@link PspToken}/{@link PaymentMethod} token).
  */
 export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
-  static create(id: UniqueEntityId, orderRef: string, amount: Money): PaymentIntent {
+  static create(
+    id: UniqueEntityId,
+    orderRef: string,
+    amount: Money,
+    provider: PaymentProviderKey,
+  ): PaymentIntent {
     return new PaymentIntent(
       {
         orderRef,
         amount,
+        provider,
         status: PaymentStatus.requiresPayment(),
         charges: [],
         refunds: [],
@@ -65,11 +79,17 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
   }
 
   /** Opens an intent on the full Sprint 4.8 lifecycle — starts at `created`, distinct from the legacy `create()`'s `requires_payment`. */
-  static createIntent(id: UniqueEntityId, orderRef: string, amount: Money): PaymentIntent {
+  static createIntent(
+    id: UniqueEntityId,
+    orderRef: string,
+    amount: Money,
+    provider: PaymentProviderKey,
+  ): PaymentIntent {
     return new PaymentIntent(
       {
         orderRef,
         amount,
+        provider,
         status: PaymentStatus.created(),
         charges: [],
         refunds: [],
@@ -92,16 +112,20 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
     refunds: readonly Refund[],
     version: number,
     extra: {
+      readonly provider: PaymentProviderKey;
+      readonly providerTransactionRef?: string;
       readonly attempts?: readonly PaymentAttempt[];
       readonly pspReference?: PspReference;
       readonly paymentMethod?: PaymentMethod;
       readonly authorizedAmount?: Money;
-    } = {},
+    },
   ): PaymentIntent {
     return new PaymentIntent(
       {
         orderRef,
         amount,
+        provider: extra.provider,
+        providerTransactionRef: extra.providerTransactionRef,
         status,
         charges: [...charges],
         refunds: [...refunds],
@@ -214,8 +238,19 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
     this.transition("capture_requested", eventId, occurredAt);
   }
 
-  /** Records the captured {@link Charge} (reusing the legacy charge/refund bookkeeping `remaining()` depends on) and transitions to `captured`. */
-  markCaptured(eventId: string, occurredAt: Date): void {
+  /**
+   * Records the captured {@link Charge} (reusing the legacy charge/refund bookkeeping `remaining()` depends on) and transitions to `captured`.
+   *
+   * For a direct-capture provider (Paymob, cash-on-delivery) it ALSO raises the legacy
+   * `PaymentCaptured` event (`payments.payment_intent.captured`) — the only event Orders'
+   * `PaymentCapturedConsumer` and Finance's captured consumer subscribe to, and so the only thing
+   * that ever drives an order to paid. The lifecycle transition alone raises
+   * `payments.intent.captured`, a different wire type nothing subscribes to (see
+   * `finance-settlement-backfill.ts`); for Stripe that pre-existing gap is left as it is, but a
+   * provider whose ONLY capture signal is this method must not settle silently. `integrationEventId`
+   * is the second, distinct event id that needs.
+   */
+  markCaptured(eventId: string, occurredAt: Date, integrationEventId?: string): void {
     const capturedAmount = this.props.authorizedAmount ?? this.props.amount;
     const tokenValue = this.props.paymentMethod?.token ?? this.props.pspReference?.value ?? eventId;
     const token = must(PspToken.create(tokenValue));
@@ -224,6 +259,74 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
     );
     this.transition("captured", eventId, occurredAt);
     this.recordAttempt("capture", "succeeded", occurredAt);
+    if (this.isDirectCapture) {
+      if (integrationEventId === undefined) {
+        throw new BusinessRuleError(
+          "A direct-capture settlement needs its own integration event id",
+        );
+      }
+      this.addDomainEvent(
+        new PaymentCaptured(
+          { eventId: integrationEventId, aggregateId: this.id, occurredAt },
+          {
+            orderRef: this.props.orderRef,
+            amountMinor: capturedAmount.amountMinor,
+            currency: capturedAmount.currency,
+          },
+        ),
+      );
+    }
+  }
+
+  /**
+   * Records the provider's own id for the payment it just created (Paymob: the order id every signed
+   * callback carries; Stripe: the `pi_…` id). Set once — a provider id never silently changes.
+   */
+  recordProviderIntent(providerIntentId: string): void {
+    const reference = PspReference.create(providerIntentId);
+    if (!reference.ok) {
+      throw new BusinessRuleError("Provider returned an empty intent reference");
+    }
+    if (this.props.pspReference !== undefined) {
+      if (this.props.pspReference.value === providerIntentId) return;
+      throw new BusinessRuleError("Payment intent already has a different provider reference");
+    }
+    this.props.pspReference = reference.value;
+  }
+
+  /**
+   * Walks a direct-capture intent to `capture_requested`, the only status `markCaptured` may follow,
+   * for a provider that has no authorize/capture-request phase of its own (see
+   * {@link isDirectCaptureProvider}). The intermediate `processing`/`authorized` statuses are
+   * bookkeeping so the existing transition table is respected, not claims about the money: the
+   * caller runs this in the SAME transaction that settles the capture, on the strength of a
+   * verified signal (a signature-checked callback, or an operator's confirmed cash collection) —
+   * never on order or intent creation. A no-op if already at/after `capture_requested`.
+   *
+   * `providerTransactionRef` (Paymob's transaction id) is recorded for later refunds.
+   */
+  prepareDirectCapture(
+    nextEventId: () => string,
+    occurredAt: Date,
+    providerTransactionRef?: string,
+  ): void {
+    if (!this.isDirectCapture) {
+      throw new BusinessRuleError(
+        `Provider "${this.props.provider}" captures through the authorize/capture lifecycle, not directly`,
+      );
+    }
+    if (providerTransactionRef !== undefined && this.props.providerTransactionRef === undefined) {
+      this.props.providerTransactionRef = providerTransactionRef;
+    }
+    const status = this.props.status.value;
+    if (status === "capture_requested" || status === "captured") return;
+    if (status === "created") this.transition("processing", nextEventId(), occurredAt);
+    if (this.props.status.value === "processing") {
+      this.transition("authorized", nextEventId(), occurredAt);
+    }
+    // Any other starting status (failed, cancelled, expired, refunded, closed…) has no legal path
+    // to capture_requested and is rejected by the transition table here.
+    this.transition("capture_requested", nextEventId(), occurredAt);
   }
 
   markFailed(reason: string, eventId: string, occurredAt: Date): void {
@@ -438,6 +541,19 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
   /** The append-only lifecycle-attempt log (persisted verbatim). */
   get attempts(): readonly PaymentAttempt[] {
     return this.props.attempts;
+  }
+
+  get provider(): PaymentProviderKey {
+    return this.props.provider;
+  }
+
+  get providerTransactionRef(): string | undefined {
+    return this.props.providerTransactionRef;
+  }
+
+  /** True for providers with no authorize/capture-request phase (Paymob, cash-on-delivery). */
+  get isDirectCapture(): boolean {
+    return isDirectCaptureProvider(this.props.provider);
   }
 
   get pspReference(): PspReference | undefined {

@@ -43,6 +43,7 @@ export class PrismaPaymentIntentRepository implements PaymentIntentRepository {
         data: {
           status: row.status,
           pspReference: row.pspReference,
+          providerTransactionRef: row.providerTransactionRef,
           paymentMethod: row.paymentMethod,
           authorizedAmountMinor: row.authorizedAmountMinor,
           version: { increment: 1 },

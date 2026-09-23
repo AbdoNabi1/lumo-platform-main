@@ -8,6 +8,7 @@ import {
   type PaymentAttemptOutcome,
 } from "../domain/payment-attempt";
 import { PaymentIntent } from "../domain/payment-intent";
+import { isPaymentProviderKey } from "../domain/value-objects/payment-provider-key";
 import { PaymentMethod, PspReference } from "../domain/value-objects/payment-references";
 import { PaymentStatus, type PaymentStatusValue } from "../domain/value-objects/payment-status";
 import { PspToken } from "../domain/value-objects/psp-token";
@@ -20,6 +21,8 @@ export interface PaymentIntentRow {
   readonly currency: string;
   readonly status: string;
   readonly pspReference: string | null;
+  readonly provider: string;
+  readonly providerTransactionRef: string | null;
   readonly paymentMethod: PaymentMethodJson | Record<string, never>;
   readonly authorizedAmountMinor: number | null;
   readonly version: number;
@@ -68,6 +71,9 @@ export class PaymentIntentMapper {
     refunds: readonly RefundRow[],
     attempts: readonly AttemptRow[] = [],
   ): PaymentIntent {
+    if (!isPaymentProviderKey(row.provider)) {
+      throw new UnexpectedError(`Corrupt payments row: unknown provider "${row.provider}"`);
+    }
     return PaymentIntent.reconstitute(
       UniqueEntityId.from(row.id),
       row.orderRef,
@@ -92,6 +98,8 @@ export class PaymentIntentMapper {
       ),
       row.version,
       {
+        provider: row.provider,
+        providerTransactionRef: row.providerTransactionRef ?? undefined,
         attempts: attempts.map((a) =>
           PaymentAttempt.create(
             UniqueEntityId.from(a.id),
@@ -128,6 +136,8 @@ export class PaymentIntentMapper {
       currency: intent.amount.currency,
       status: intent.status.value,
       pspReference: intent.pspReference?.value ?? null,
+      provider: intent.provider,
+      providerTransactionRef: intent.providerTransactionRef ?? null,
       paymentMethod:
         intent.paymentMethod === undefined
           ? {}

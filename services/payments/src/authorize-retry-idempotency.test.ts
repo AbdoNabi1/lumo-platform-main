@@ -1,3 +1,4 @@
+import { staticProviders } from "./test-support/static-provider-resolver";
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
@@ -123,7 +124,12 @@ function seedProcessingIntent(
   id: string,
   amountMinor: number,
 ): void {
-  const pi = PaymentIntent.createIntent(UniqueEntityId.from(id), `order-${id}`, usd(amountMinor));
+  const pi = PaymentIntent.createIntent(
+    UniqueEntityId.from(id),
+    `order-${id}`,
+    usd(amountMinor),
+    "stripe",
+  );
   pi.markProcessing("seed-1", new Date(0));
   pi.pullDomainEvents();
   repo.seed(pi);
@@ -136,7 +142,7 @@ function buildDeps(repo: PostgresLikePaymentIntentRepository): PaymentLifecycleD
     idGenerator: sequentialIds("evt"),
     clock,
     // Not used by AuthorizePayment; provided to satisfy the shared deps shape.
-    paymentProvider: {
+    providers: staticProviders({
       createIntent: () => {
         throw new Error("not used");
       },
@@ -144,7 +150,7 @@ function buildDeps(repo: PostgresLikePaymentIntentRepository): PaymentLifecycleD
       cancel: async () => {},
       refund: async () => {},
       verifyWebhook: async () => true,
-    },
+    }),
   };
 }
 

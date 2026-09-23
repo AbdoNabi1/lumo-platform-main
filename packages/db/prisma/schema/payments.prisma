@@ -16,6 +16,13 @@ model PaymentIntent {
   /// as distinct in a unique index).
   idempotencyKey        String?  @map("idempotency_key")
   pspReference          String?  @map("psp_reference")
+  /// WP-13: the payment method the shopper selected ("stripe" | "paymob" | "cod"), fixed at
+  /// creation. Selects the adapter for every later call. No default — the migration backfills rows
+  /// that pre-date it to "stripe" (the only provider that existed) and then drops its own default.
+  provider              String
+  /// WP-13: the provider's id for the charge itself when it differs from psp_reference (Paymob:
+  /// the transaction id from the signed callback, which refunds address).
+  providerTransactionRef String? @map("provider_transaction_ref")
   paymentMethod         Json     @default("{}") @map("payment_method")
   authorizedAmountMinor Int?     @map("authorized_amount_minor")
   version               Int      @default(0)
@@ -107,5 +114,24 @@ model Refund {
   @@unique([intentId, idempotencyKey])
   @@index([intentId])
   @@map("refunds")
+  @@schema("payments")
+}
+
+/// WP-13 T13.2 — one row per merchant (tenant): which payment methods it offers, and how to reach
+/// the ones that need credentials. `paymob_credentials` holds ONLY a sealed `@platform/secrets`
+/// envelope (secret key, HMAC secret, public key) — never plaintext; `region`/`integration_id` are
+/// non-secret routing data and stay in the clear. Tenant-scoped like every business table: the
+/// migration adds its own RLS policy (the loop-based RLS migration does not cover new tables).
+model MerchantPaymentSettings {
+  tenantId            String   @id @map("tenant_id")
+  enabledMethods      String[] @map("enabled_methods")
+  paymobRegion        String?  @map("paymob_region")
+  paymobIntegrationId Int?     @map("paymob_integration_id")
+  /// Sealed envelope JSON. NEVER plaintext, never returned by any read DTO.
+  paymobCredentials   String?  @map("paymob_credentials")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("merchant_payment_settings")
   @@schema("payments")
 }
