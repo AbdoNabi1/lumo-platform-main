@@ -160,7 +160,20 @@ export const ar: Dictionary = {
     shippingMethodLoading: "جارٍ تحميل خيارات الشحن…",
     shippingMethodContinue: "متابعة",
     shippingMethodSelecting: "جارٍ الاختيار…",
-    paymentCardOption: "بطاقة (عبر Stripe)",
+    paymentMethod: {
+      stripe: "بطاقة (عبر Stripe)",
+      paymob: "بطاقة أو محفظة إلكترونية (عبر Paymob)",
+      cod: "الدفع عند الاستلام",
+    },
+    paymentMethodsLegend: "طريقة الدفع",
+    paymentNoMethods:
+      "هذا المتجر لا يقبل المدفوعات حاليًا، لذلك لا يمكنك إتمام الطلب الآن. يُرجى التواصل مع المتجر.",
+    paymentMethodsUnavailable: "تعذّر تحميل خيارات الدفع. حدّث الصفحة وحاول مرة أخرى.",
+    paymentPayNow: "ادفع الآن",
+    paymentRedirecting: "جارٍ نقلك إلى صفحة الدفع…",
+    paymentOpenError: "تم تسجيل طلبك، لكن تعذّر فتح صفحة الدفع. حاول مرة أخرى.",
+    paymentHandoffError:
+      "تم تسجيل طلبك، لكن لا يمكن إتمام الدفع بهذه الطريقة عبر الإنترنت من هنا. يُرجى التواصل مع المتجر لترتيب الدفع.",
     paymentContinue: "متابعة",
     paymentSelecting: "جارٍ الاختيار…",
     review: {

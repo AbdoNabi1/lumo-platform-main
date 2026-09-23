@@ -896,3 +896,42 @@ export function generateCheckoutPaymentIntentRequest(
     { "x-cart-session": sessionRef },
   );
 }
+
+/**
+ * The payment methods this merchant offers (`GET /public/payment-methods`, WP-13). The API returns
+ * provider keys only — no display name and, by design, no priority — so the storefront renders
+ * them in the order given and never invents, orders or defaults one. `null` means the list could
+ * not be loaded (distinct from `[]`: the merchant enabled nothing).
+ */
+export async function getPaymentMethods(): Promise<readonly string[] | null> {
+  const response = await fetchItem<{ readonly methods?: readonly string[] }>(
+    "/api/v1/public/payment-methods",
+  );
+  if (response.status < 200 || response.status >= 300 || response.body === null) return null;
+  return response.body.methods ?? null;
+}
+
+export interface InitiatedPaymentSummary {
+  readonly checkoutSessionId: string;
+  /** The method the shopper selected — echoed by the API, never chosen by the storefront. */
+  readonly provider: string;
+  readonly paymentIntentId: string;
+  readonly status: string;
+  /** Present only on the call that opened the intent (a repeat call resumes it without one). */
+  readonly clientHandle?: string;
+}
+
+/**
+ * Opens the payment for the caller's COMPLETED checkout (`POST .../payment`). The body is the
+ * `sessionRef` alone — the route is `.strict()` and reads the shopper's selection off the session,
+ * so this function has no provider, amount or currency to send.
+ */
+export function initiateCheckoutPayment(
+  checkoutSessionId: string,
+  sessionRef: string,
+): Promise<{ readonly status: number; readonly body: InitiatedPaymentSummary | null }> {
+  return postItem<InitiatedPaymentSummary>(
+    `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/payment`,
+    { sessionRef },
+  );
+}

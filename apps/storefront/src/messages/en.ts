@@ -156,7 +156,20 @@ export const en = {
     shippingMethodLoading: "Loading shipping options…",
     shippingMethodContinue: "Continue",
     shippingMethodSelecting: "Selecting…",
-    paymentCardOption: "Card (via Stripe)",
+    paymentMethod: {
+      stripe: "Card (via Stripe)",
+      paymob: "Card or mobile wallet (via Paymob)",
+      cod: "Cash on delivery",
+    },
+    paymentMethodsLegend: "Payment method",
+    paymentNoMethods:
+      "This store isn't accepting payments right now, so you can't place an order yet. Please contact the store.",
+    paymentMethodsUnavailable: "Couldn't load the payment options. Refresh the page to try again.",
+    paymentPayNow: "Pay now",
+    paymentRedirecting: "Taking you to the payment page…",
+    paymentOpenError: "Your order was placed, but the payment page couldn't be opened. Try again.",
+    paymentHandoffError:
+      "Your order was placed, but this payment method can't be completed online from here. Please contact the store to arrange payment.",
     paymentContinue: "Continue",
     paymentSelecting: "Selecting…",
     review: {

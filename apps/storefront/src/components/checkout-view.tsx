@@ -14,6 +14,7 @@ import {
 } from "@platform/ui";
 import {
   completeCheckout,
+  initiatePayment,
   recalculate,
   requestShippingQuote,
   requestTax,
@@ -35,9 +36,17 @@ import type {
 import type { Dictionary } from "@/messages/en";
 
 type Step =
-  "contact" | "shipping-address" | "shipping-method" | "billing-address" | "payment" | "review";
+  | "contact"
+  | "shipping-address"
+  | "shipping-method"
+  | "billing-address"
+  | "payment"
+  | "review"
+  | "pay";
 
-type ErrorReason = "ownership" | "validation" | "unavailable" | "network";
+/** `"paymentOpen"` / `"handoff"` only ever follow a PLACED order — see `openPayment`. */
+type ErrorReason =
+  "ownership" | "validation" | "unavailable" | "network" | "paymentOpen" | "handoff";
 
 const EMPTY_ADDRESS: CheckoutAddressInput = {
   line1: "",
@@ -47,9 +56,6 @@ const EMPTY_ADDRESS: CheckoutAddressInput = {
   country: "",
 };
 
-/** Only Stripe is configured on the backend today (see the deployment note in `docs/plans/PHASE-2-public-checkout.md`) — a single, real option, not a fabricated multi-provider picker. */
-const PAYMENT_METHOD = { paymentMethodRef: "card", provider: "stripe" } as const;
-
 function addressFromDto(address: CheckoutSessionSummary["shippingAddress"]): CheckoutAddressInput {
   return address ?? EMPTY_ADDRESS;
 }
@@ -58,6 +64,8 @@ function errorBody(reason: ErrorReason, t: Dictionary): string {
   if (reason === "ownership") return t.checkout.ownershipErrorBody;
   if (reason === "validation") return t.checkout.validationErrorBody;
   if (reason === "unavailable") return t.checkout.unavailableErrorBody;
+  if (reason === "paymentOpen") return t.checkout.paymentOpenError;
+  if (reason === "handoff") return t.checkout.paymentHandoffError;
   return t.checkout.networkErrorBody;
 }
 
@@ -74,6 +82,9 @@ function currentStep(
   hasQuotes: boolean,
   paymentSelected: boolean,
 ): Step {
+  // A placed order can never go back to method selection or be completed again: all that is left
+  // is opening its payment (a failed initiation, or a reload after completion, lands here).
+  if (session.orderRef !== null) return "pay";
   // WP-1 (G-52): the contact email comes first — completing a guest checkout needs it, and asking
   // last would put a validation failure at the worst possible moment.
   if (session.contactEmail === null) return "contact";
@@ -99,6 +110,7 @@ export function CheckoutView({
   t,
   locale,
   accountEmail = null,
+  paymentMethods,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly t: Dictionary;
@@ -109,6 +121,12 @@ export function CheckoutView({
    * and only falls back to a pre-filled field if that call fails.
    */
   readonly accountEmail?: string | null;
+  /**
+   * The provider keys the merchant offers (`GET /public/payment-methods`), in the order the API
+   * returned them, which carries no priority. `null` means the list could not be loaded, `[]` that
+   * the merchant enabled nothing; both fail closed at the payment step.
+   */
+  readonly paymentMethods: readonly string[] | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -116,6 +134,8 @@ export function CheckoutView({
 
   const [quotes, setQuotes] = useState<readonly ShippingQuoteSummary[]>([]);
   const [paymentSelected, setPaymentSelected] = useState(false);
+  const [chosenMethod, setChosenMethod] = useState<string | null>(null);
+  const [redirecting, setRedirecting] = useState(false);
   const [recalculated, setRecalculated] = useState(false);
 
   const [contactForm, setContactForm] = useState(session.contactEmail ?? accountEmail ?? "");
@@ -198,18 +218,45 @@ export function CheckoutView({
   }
 
   function onSelectPayment(): void {
+    // The button is disabled until a method is chosen; this guard keeps that a type-level fact.
+    if (chosenMethod === null) return;
     startTransition(async () => {
-      const result = await selectPayment(
-        session.id,
-        PAYMENT_METHOD.paymentMethodRef,
-        PAYMENT_METHOD.provider,
-      );
+      // No stored instrument exists at this point, so the ref is the provider key itself.
+      const result = await selectPayment(session.id, chosenMethod, chosenMethod);
       if (!result.ok) {
         setError(result.reason);
         return;
       }
       setError(null);
       setPaymentSelected(true);
+    });
+  }
+
+  /**
+   * Opens the payment for a COMPLETED checkout and follows the outcome the action names. The two
+   * success shapes are handled separately on purpose: "confirmation" (offline, i.e. COD) is the
+   * order confirmation page, "redirect" is the hosted checkout the shopper must be sent to. A
+   * failure here is never "the order failed": the order exists, so the copy says so, and the
+   * retry (the "pay" step) opens the payment without completing anything again.
+   */
+  async function openPayment(): Promise<void> {
+    const opened = await initiatePayment(session.id);
+    if (!opened.ok) {
+      setError(opened.reason === "handoff" ? "handoff" : "paymentOpen");
+      return;
+    }
+    setError(null);
+    if (opened.next === "redirect") {
+      setRedirecting(true);
+      window.location.assign(opened.url);
+      return;
+    }
+    router.push("/checkout/confirmation");
+  }
+
+  function onPayNow(): void {
+    startTransition(async () => {
+      await openPayment();
     });
   }
 
@@ -232,8 +279,8 @@ export function CheckoutView({
         setError(completed.reason);
         return;
       }
-      setError(null);
-      router.push("/checkout/confirmation");
+      // Strictly after completion: the API only opens a payment for a completed checkout.
+      await openPayment();
     });
   }
 
@@ -254,8 +301,8 @@ export function CheckoutView({
               "review",
             ] as const
           ).map((candidate) => (
-            <Badge key={candidate} variant={candidate === step ? "accent" : "neutral"}>
-              {t.checkout.step[toStepKey(candidate)]}
+            <Badge key={candidate} variant={candidate === toStepKey(step) ? "accent" : "neutral"}>
+              {t.checkout.step[stepLabelKey(candidate)]}
             </Badge>
           ))}
         </div>
@@ -349,21 +396,62 @@ export function CheckoutView({
           </form>
         )}
 
-        {step === "payment" && (
-          <div className="flex flex-col gap-3">
-            <label className="border-border flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-              <input type="radio" name="payment-method" checked readOnly />
-              {t.checkout.paymentCardOption}
-            </label>
-            <Button
-              type="button"
-              disabled={isPending}
-              loading={isPending}
-              className="self-start"
-              onClick={onSelectPayment}
+        {step === "payment" &&
+          (paymentMethods === null || paymentMethods.length === 0 ? (
+            <div
+              role="alert"
+              className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
             >
-              {isPending ? t.checkout.paymentSelecting : t.checkout.paymentContinue}
-            </Button>
+              {paymentMethods === null
+                ? t.checkout.paymentMethodsUnavailable
+                : t.checkout.paymentNoMethods}
+            </div>
+          ) : (
+            <fieldset className="flex flex-col gap-3">
+              <legend className="sr-only">{t.checkout.paymentMethodsLegend}</legend>
+              {paymentMethods.map((method) => (
+                <label
+                  key={method}
+                  className="border-border flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                >
+                  <input
+                    type="radio"
+                    name="payment-method"
+                    value={method}
+                    disabled={isPending}
+                    checked={chosenMethod === method}
+                    onChange={() => setChosenMethod(method)}
+                  />
+                  {methodLabel(method, t)}
+                </label>
+              ))}
+              <Button
+                type="button"
+                disabled={isPending || chosenMethod === null}
+                loading={isPending}
+                className="self-start"
+                onClick={onSelectPayment}
+              >
+                {isPending ? t.checkout.paymentSelecting : t.checkout.paymentContinue}
+              </Button>
+            </fieldset>
+          ))}
+
+        {step === "pay" && (
+          <div className="flex flex-col gap-3">
+            {redirecting ? (
+              <p className="text-muted-foreground text-sm">{t.checkout.paymentRedirecting}</p>
+            ) : (
+              <Button
+                type="button"
+                disabled={isPending}
+                loading={isPending}
+                className="self-start"
+                onClick={onPayNow}
+              >
+                {t.checkout.paymentPayNow}
+              </Button>
+            )}
           </div>
         )}
 
@@ -408,13 +496,30 @@ export function CheckoutView({
   );
 }
 
-function toStepKey(
-  step: Step,
+/** The stepper badge a step lights up — the retry step belongs to the payment badge. */
+function toStepKey(step: Step): Exclude<Step, "pay"> {
+  return step === "pay" ? "payment" : step;
+}
+
+function stepLabelKey(
+  step: Exclude<Step, "pay">,
 ): "contact" | "shippingAddress" | "shippingMethod" | "billingAddress" | "payment" | "review" {
   if (step === "shipping-address") return "shippingAddress";
   if (step === "shipping-method") return "shippingMethod";
   if (step === "billing-address") return "billingAddress";
   return step;
+}
+
+/**
+ * The shopper-facing name of a provider key. The API returns keys only (no display name), so this
+ * is the one place a label is chosen; a key this build has no label for renders as-is rather than
+ * being dropped or guessed at.
+ */
+function methodLabel(method: string, t: Dictionary): string {
+  if (method === "stripe" || method === "paymob" || method === "cod") {
+    return t.checkout.paymentMethod[method];
+  }
+  return method;
 }
 
 function ReviewRow({

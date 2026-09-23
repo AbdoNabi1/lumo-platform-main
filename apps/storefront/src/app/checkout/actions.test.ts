@@ -17,6 +17,7 @@ const requestCheckoutTax = vi.fn();
 const selectCheckoutPayment = vi.fn();
 const recalculateCheckoutApi = vi.fn();
 const completeCheckoutApi = vi.fn();
+const initiateCheckoutPayment = vi.fn();
 
 vi.mock("@/lib/runtime-api", () => ({
   getCurrentCart: (...args: unknown[]) => getCurrentCart(...args),
@@ -31,6 +32,7 @@ vi.mock("@/lib/runtime-api", () => ({
   selectCheckoutPayment: (...args: unknown[]) => selectCheckoutPayment(...args),
   recalculateCheckout: (...args: unknown[]) => recalculateCheckoutApi(...args),
   completeCheckout: (...args: unknown[]) => completeCheckoutApi(...args),
+  initiateCheckoutPayment: (...args: unknown[]) => initiateCheckoutPayment(...args),
 }));
 
 const revalidatePath = vi.fn();
@@ -176,6 +178,7 @@ describe("every mutating action requires an existing guest session — none mint
     ["selectPayment", () => actions.selectPayment("checkout-1", "pm_1", "stripe")],
     ["recalculate", () => actions.recalculate("checkout-1")],
     ["completeCheckout", () => actions.completeCheckout("checkout-1")],
+    ["initiatePayment", () => actions.initiatePayment("checkout-1")],
   ] as const)("%s returns an ownership error with no guest session cookie", async (_name, call) => {
     const result = await call();
 
@@ -244,5 +247,83 @@ describe("clearCheckoutSession", () => {
     await actions.clearCheckoutSession();
 
     expect(cookieDelete).toHaveBeenCalledWith("morbeh_checkout_session");
+  });
+});
+
+describe("initiatePayment (WP-13 T13.6) — the COD / hosted-checkout divergence", () => {
+  function opened(provider: string, clientHandle?: string, status = 201) {
+    return {
+      status,
+      body: {
+        checkoutSessionId: "checkout-1",
+        provider,
+        paymentIntentId: "pi-1",
+        status: "created",
+        ...(clientHandle !== undefined ? { clientHandle } : {}),
+      },
+    };
+  }
+
+  beforeEach(() => cookieStore.set("morbeh-storefront-guest-session", "session-a"));
+
+  it("sends only the server-held sessionRef — never a provider or an amount", async () => {
+    initiateCheckoutPayment.mockResolvedValue(opened("cod"));
+
+    await actions.initiatePayment("checkout-1");
+
+    expect(initiateCheckoutPayment).toHaveBeenCalledWith("checkout-1", "session-a");
+  });
+
+  it("cash on delivery has no hosted page: it goes to confirmation", async () => {
+    initiateCheckoutPayment.mockResolvedValue(opened("cod"));
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({ ok: true, next: "confirmation" });
+  });
+
+  it("a hosted-checkout method with an https handle redirects to exactly that handle", async () => {
+    initiateCheckoutPayment.mockResolvedValue(
+      opened("paymob", "https://accept.paymob.example/pay?token=t1"),
+    );
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({
+      ok: true,
+      next: "redirect",
+      url: "https://accept.paymob.example/pay?token=t1",
+    });
+  });
+
+  it.each([
+    [
+      "no handle at all (a repeat call: the handle is returned once)",
+      opened("paymob", undefined, 201),
+    ],
+    [
+      "a handle that is not a URL (a Stripe client secret needs Stripe.js)",
+      opened("stripe", "cs_test_123"),
+    ],
+    ["a non-https handle", opened("paymob", "javascript:alert(1)")],
+    ["a plain http handle", opened("paymob", "http://accept.paymob.example/pay")],
+  ])("fails closed when a redirect was required but there is %s", async (_label, response) => {
+    initiateCheckoutPayment.mockResolvedValue(response);
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({ ok: false, reason: "handoff" });
+  });
+
+  it("does not treat an unknown provider as offline — it needs a handle like any hosted method", async () => {
+    initiateCheckoutPayment.mockResolvedValue(opened("mystery-pay"));
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({ ok: false, reason: "handoff" });
+  });
+
+  it.each([
+    [404, "ownership"],
+    [409, "unavailable"],
+    [422, "validation"],
+    [500, "network"],
+    [0, "network"],
+  ] as const)("maps a %s from the Runtime API to %s", async (status, reason) => {
+    initiateCheckoutPayment.mockResolvedValue({ status, body: null });
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({ ok: false, reason });
   });
 });

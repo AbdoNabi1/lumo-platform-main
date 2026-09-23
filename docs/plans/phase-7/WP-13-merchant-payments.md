@@ -80,7 +80,7 @@ record-webhook}.use-case.ts`; `services/payments/src/application/ports.ts`. Iden
       exactly (session-ownership check, zod validation, idempotency flag) per `../README.md`'s
       "conventions to copy" table.
 
-- [ ] **T13.6 — Storefront payment method selection.**
+- [x] **T13.6 — Storefront payment method selection.**
       `apps/storefront/src/app/checkout/page.tsx` and its `actions.ts`: render the enabled methods
       for the merchant, let the shopper choose, call the new selection route. Strings in both
       `apps/storefront/src/messages/en.ts` and `ar.ts`.
@@ -98,7 +98,7 @@ record-webhook}.use-case.ts`; `services/payments/src/application/ports.ts`. Iden
 
 ## Definition of done
 
-- [x] A shopper's explicit choice at checkout determines the payment adapter executed. _(through the checkout API: `apps/admin/src/http/merchant-payments.e2e.test.ts`; mutation-checked. The storefront UI that sends the choice is T13.6.)_
+- [x] A shopper's explicit choice at checkout determines the payment adapter executed. _(through the checkout API: `apps/admin/src/http/merchant-payments.e2e.test.ts`; mutation-checked. The storefront UI that sends the choice is T13.6, landed: `checkout-view.test.tsx`, mutation-checked.)_
 - [x] A COD order is created unpaid and only marked paid by an explicit confirmed-collection
       action — never by order creation itself. _(D-060; `ConfirmCodCollection`; two mutations checked.)_
 - [x] Every provider webhook (Stripe and Paymob) is signature-verified and idempotent. _(Both go through `verifyWebhook` against the receiving tenant's credentials and `RecordWebhook`'s existing processed-event store.)_
@@ -111,8 +111,7 @@ record-webhook}.use-case.ts`; `services/payments/src/application/ports.ts`. Iden
 
 ## Status — part 1 (backend) landed 2026-09-23
 
-T13.1-T13.5, T13.7 and the backend half of T13.8 are done. **T13.6 (the storefront UI) is not started** and
-the Definition of Done's F-19 line stays open until it is. Design and findings: **D-059**, **D-060**, and the
+T13.1-T13.5, T13.7 and the backend half of T13.8 are done. **T13.6 (the storefront UI) landed 2026-09-23 (part 2)**; the Definition of Done's F-19 line stays open on G-73's follow-ups, including Stripe, whose non-URL client handle the storefront cannot complete. Design and findings: **D-059**, **D-060**, and the
 gap register's **G-73** (which also lists the five follow-ups part 1 found). Migration
 `20260923000000_wp13_merchant_payments` is created and **not applied** — deploying it is the operator's step.
 New runtime env var: `PAYMENT_CREDENTIALS_KEK_REF` (absent ⇒ Paymob unavailable, never stubbed).

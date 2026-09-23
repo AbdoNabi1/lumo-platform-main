@@ -10,6 +10,7 @@ import {
 import {
   completeCheckout as completeCheckoutApi,
   getCurrentCart,
+  initiateCheckoutPayment,
   loadCheckoutItems,
   recalculateCheckout as recalculateCheckoutApi,
   requestCheckoutShippingQuote,
@@ -57,6 +58,38 @@ export type ShippingQuoteActionResult =
       readonly quotes: readonly ShippingQuoteSummary[];
     }
   | { readonly ok: false; readonly reason: "ownership" | "validation" | "unavailable" | "network" };
+
+/**
+ * What happens after `initiatePayment`. The outcomes are explicit so the caller can never mistake
+ * "nothing to redirect to" for "nothing to do": `"confirmation"` (an offline method — the order
+ * stands and is paid out of band) or `"redirect"` (a hosted checkout the shopper MUST be sent to).
+ * `"handoff"` is the failure where a redirect was required and could not be produced.
+ */
+export type PaymentInitiationResult =
+  | { readonly ok: true; readonly next: "confirmation" }
+  | { readonly ok: true; readonly next: "redirect"; readonly url: string }
+  | {
+      readonly ok: false;
+      readonly reason: "ownership" | "validation" | "unavailable" | "network" | "handoff";
+    };
+
+/**
+ * Providers with no hosted page and no client handle: the shopper pays offline. Everything NOT in
+ * this set — including a provider this file has never heard of — must return a usable https handle
+ * or the result is `"handoff"`, so a new hosted method can never silently fall through to
+ * "confirmation" as if it were paid.
+ */
+const OFFLINE_PROVIDERS: ReadonlySet<string> = new Set(["cod"]);
+
+function hostedCheckoutUrl(clientHandle: string | undefined): string | null {
+  if (clientHandle === undefined) return null;
+  try {
+    const url = new URL(clientHandle);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 function mapFailureStatus(status: number): "ownership" | "validation" | "unavailable" | "network" {
   if (status === 404) return "ownership";
@@ -228,6 +261,27 @@ export async function completeCheckout(checkoutSessionId: string): Promise<Check
   }
   revalidatePath("/checkout");
   return { ok: true, checkoutSessionId };
+}
+
+/**
+ * Opens the payment for the checkout `completeCheckout` just completed — it MUST run after it (the
+ * API refuses an uncompleted session: `InitiatePayment` requires `orderRef`). Sends no provider:
+ * the API reads the selection the shopper made off the session. Never re-completes the order, so a
+ * failed initiation is retried by calling only this.
+ */
+export async function initiatePayment(checkoutSessionId: string): Promise<PaymentInitiationResult> {
+  const sessionRef = await existingSessionRef();
+  if (sessionRef === undefined) return { ok: false, reason: "ownership" };
+
+  const response = await initiateCheckoutPayment(checkoutSessionId, sessionRef);
+  if (response.status < 200 || response.status >= 300 || response.body === null) {
+    return { ok: false, reason: mapFailureStatus(response.status) };
+  }
+
+  if (OFFLINE_PROVIDERS.has(response.body.provider)) return { ok: true, next: "confirmation" };
+  const url = hostedCheckoutUrl(response.body.clientHandle);
+  if (url === null) return { ok: false, reason: "handoff" };
+  return { ok: true, next: "redirect", url };
 }
 
 /** Clears the checkout-session cookie — called once by `/checkout/confirmation` after it renders. */
