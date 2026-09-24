@@ -41,8 +41,15 @@ import {
   SchedulePlanVersion,
   SetMerchantFeatureOverride,
 } from "./application/licensing.use-cases";
+import {
+  BeginCardEnrolment,
+  RecordCardToken,
+  RevokeBillingPaymentMethod,
+} from "./application/payment-method.use-cases";
 import { BillSubscriptionRenewal } from "./application/renewal.use-cases";
+import type { OffSessionCharger } from "@platform/contracts";
 import type {
+  BillingPaymentMethodRepository,
   CreditRepository,
   InvoiceRepository,
   MerchantCapabilitiesRepository,
@@ -51,12 +58,20 @@ import type {
   SubscriptionRepository,
   UsageCounterRepository,
 } from "./domain/repositories";
-import type { FinanceLedgerPort, PaymentsPort } from "./application/ports";
+import type {
+  BillingTokenSealer,
+  CardEnrolmentPort,
+  CardTokenCallbackVerifier,
+  FinanceLedgerPort,
+  PaymentsPort,
+} from "./application/ports";
+import { StoredMethodBillingPaymentsAdapter } from "./infrastructure/stored-method-billing-payments-adapter";
 import {
   InMemoryFinanceLedgerAdapter,
   InMemoryPaymentsAdapter,
 } from "./infrastructure/deferred-billing-adapters";
 import {
+  InMemoryBillingPaymentMethodRepository,
   InMemoryCreditRepository,
   InMemoryInvoiceRepository,
   InMemoryMerchantCapabilitiesRepository,
@@ -72,6 +87,7 @@ import {
   LicensingEventTranslator,
 } from "./infrastructure/licensing-event-translator";
 import {
+  PrismaBillingPaymentMethodRepository,
   PrismaCreditRepository,
   PrismaInvoiceRepository,
   PrismaMerchantCapabilitiesRepository,
@@ -81,6 +97,19 @@ import {
   PrismaUsageCounterRepository,
 } from "./infrastructure/prisma-repositories";
 import { LicensingController } from "./interfaces/licensing.controller";
+
+/**
+ * Everything renewals need to charge a merchant's SAVED card with no payer present (G-74 (1)), all of
+ * it on MORBEH'S OWN PSP account: the narrow off-session port, the card-token callback verifier, the
+ * interactive first-payment starter, and the sealer for the stored token.
+ */
+export interface StoredMethodBillingDeps {
+  readonly sealer: BillingTokenSealer;
+  /** The narrow port: a provider that cannot charge off-session is not assignable here. */
+  readonly charger: OffSessionCharger;
+  readonly enrolment: CardEnrolmentPort;
+  readonly cardTokenVerifier: CardTokenCallbackVerifier;
+}
 
 export interface LicensingWiringDeps {
   readonly serializer: EventSerializer;
@@ -103,6 +132,14 @@ export interface LicensingWiringDeps {
    */
   readonly payments?: PaymentsPort;
   /**
+   * Charging a merchant's saved card off-session (G-74 (1)). Present ⇒ renewals collect through
+   * `StoredMethodBillingPaymentsAdapter` — the only real path that can actually move money, since the
+   * on-session `payments` adapter can never complete without a payer — and it takes precedence over
+   * `payments`. Absent ⇒ unchanged: `payments`, else the in-memory stub. The card-enrolment and
+   * token-callback use cases exist only when this is present.
+   */
+  readonly storedMethodBilling?: StoredMethodBillingDeps;
+  /**
    * Production Finance-ledger settlement posting (M2-3). Absent ⇒ `InMemoryFinanceLedgerAdapter`
    * — a no-op stub whose `postSettlement()` never posts to the ledger. Same convention and boot
    * guard as `payments` above.
@@ -119,6 +156,8 @@ export interface LicensingWiringDeps {
 
 export interface WiredLicensing {
   readonly licensing: LicensingController;
+  /** The platform-scoped saved-card store: exposed for the composition root and for isolation tests. */
+  readonly billingPaymentMethods: BillingPaymentMethodRepository;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
 }
@@ -131,6 +170,7 @@ interface LicensingRepos {
   readonly usageCounters: UsageCounterRepository;
   readonly credits: CreditRepository;
   readonly invoices: InvoiceRepository;
+  readonly billingPaymentMethods: BillingPaymentMethodRepository;
 }
 
 /** Builds the `LicensingController` from an already-wired repo set — shared by both branches so the use-case wiring is written exactly once. */
@@ -140,7 +180,15 @@ function buildController(
   deps: LicensingWiringDeps,
 ): LicensingController {
   const processedUsageRecords = new InMemoryProcessedUsageRecordStore();
-  const payments = deps.payments ?? new InMemoryPaymentsAdapter();
+  const stored = deps.storedMethodBilling;
+  const payments: PaymentsPort =
+    stored === undefined
+      ? (deps.payments ?? new InMemoryPaymentsAdapter())
+      : new StoredMethodBillingPaymentsAdapter({
+          methods: repos.billingPaymentMethods,
+          sealer: stored.sealer,
+          charger: stored.charger,
+        });
   const financeLedger = deps.financeLedger ?? new InMemoryFinanceLedgerAdapter();
 
   const licensingDeps = {
@@ -165,9 +213,29 @@ function buildController(
   };
 
   const collectInvoice = new CollectInvoice(billingDeps);
+  const paymentMethodDeps =
+    stored === undefined
+      ? undefined
+      : {
+          methods: repos.billingPaymentMethods,
+          invoices: repos.invoices,
+          sealer: stored.sealer,
+          enrolment: stored.enrolment,
+          cardTokenVerifier: stored.cardTokenVerifier,
+          unitOfWork,
+          idGenerator: deps.idGenerator,
+          clock: deps.clock,
+        };
 
   return new LicensingController({
     platformTenantId: deps.platformTenantId,
+    ...(paymentMethodDeps === undefined
+      ? {}
+      : {
+          beginCardEnrolment: new BeginCardEnrolment(paymentMethodDeps),
+          recordCardToken: new RecordCardToken(paymentMethodDeps),
+          revokeBillingPaymentMethod: new RevokeBillingPaymentMethod(paymentMethodDeps),
+        }),
     billSubscriptionRenewal: new BillSubscriptionRenewal({
       subscriptions: repos.subscriptions,
       plans: repos.plans,
@@ -229,11 +297,13 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
       usageCounters: new PrismaUsageCounterRepository(licensingDeps),
       credits: new PrismaCreditRepository(licensingDeps),
       invoices: new PrismaInvoiceRepository(licensingDeps),
+      billingPaymentMethods: new PrismaBillingPaymentMethodRepository(licensingDeps),
     };
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {
       licensing: buildController(repos, unitOfWork, deps),
+      billingPaymentMethods: repos.billingPaymentMethods,
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -263,6 +333,7 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
     usageCounters: new InMemoryUsageCounterRepository({ outbox: outboxWriter, context }),
     credits: new InMemoryCreditRepository({ outbox: outboxWriter, context }),
     invoices: new InMemoryInvoiceRepository({ outbox: outboxWriter, context }),
+    billingPaymentMethods: new InMemoryBillingPaymentMethodRepository(),
   };
   const unitOfWork = new InMemoryUnitOfWork();
   const controller = buildController(repos, unitOfWork, deps);
@@ -284,6 +355,7 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
 
   return {
     licensing: controller,
+    billingPaymentMethods: repos.billingPaymentMethods,
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

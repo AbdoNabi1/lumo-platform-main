@@ -43,3 +43,19 @@ export { PlatformBillingPaymentsAdapter } from "./infrastructure/platform-billin
 export type { PlatformBillingPaymentsAdapterDeps } from "./infrastructure/platform-billing-payments-adapter";
 export type { FinanceLedgerPort, PaymentsPort } from "./application/ports";
 export { LICENSING_PUBLISHED_EVENTS } from "./infrastructure/licensing-event-translator";
+export { BillingPaymentMethod } from "./domain/billing-payment-method";
+export type { BillingPaymentMethodStatus } from "./domain/billing-payment-method";
+export type { BillingPaymentMethodRepository } from "./domain/repositories";
+export { PrismaBillingPaymentMethodRepository } from "./infrastructure/prisma-repositories";
+export {
+  NoStoredPaymentMethodError,
+  StoredMethodBillingPaymentsAdapter,
+  type StoredMethodBillingPaymentsAdapterDeps,
+} from "./infrastructure/stored-method-billing-payments-adapter";
+export type {
+  BillingTokenSealer,
+  CardEnrolmentPort,
+  CardTokenCallbackVerifier,
+  VerifiedCardToken,
+} from "./application/ports";
+export type { StoredMethodBillingDeps } from "./composition";

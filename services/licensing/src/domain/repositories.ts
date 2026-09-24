@@ -1,3 +1,4 @@
+import type { BillingPaymentMethod } from "./billing-payment-method";
 import type { Credit } from "./credit";
 import type { Invoice } from "./invoice";
 import type { MerchantCapabilities } from "./merchant-capabilities";
@@ -67,6 +68,26 @@ export interface UsageCounterRepository {
 export interface CreditRepository {
   save(credit: Credit, tenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tenantId: string, tx?: unknown): Promise<Credit | null>;
+}
+
+/**
+ * The saved cards Morbeh charges to renew merchants (G-74 (1)). Scoped to the PLATFORM tenant like
+ * `SubscriptionRepository`: every lookup takes the tenant, and a merchant tenant's scope finds
+ * nothing of the token that bills it.
+ */
+export interface BillingPaymentMethodRepository {
+  save(method: BillingPaymentMethod, tenantId: string, tx?: unknown): Promise<void>;
+  findByProviderOrder(
+    provider: string,
+    providerOrderId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<BillingPaymentMethod | null>;
+  findActiveByTenantRef(
+    tenantRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<BillingPaymentMethod | null>;
 }
 
 export interface InvoiceRepository {

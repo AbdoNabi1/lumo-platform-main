@@ -141,11 +141,22 @@ function collectGuardFailure(guard: () => void): string | undefined {
  */
 export function assertProductionLicensingBillingConfigured(
   appEnv: RuntimeConfig["APP_ENV"],
-  billing: Pick<RuntimeCore, "platformBillingPayments">,
+  billing: Pick<RuntimeCore, "platformBillingPayments"> &
+    Partial<Pick<RuntimeCore, "platformBillingStoredMethod">>,
 ): void {
   const payments = billing.platformBillingPayments;
+  const stored = billing.platformBillingStoredMethod;
   const problems: string[] = [];
-  if (payments === undefined) {
+  if (stored !== undefined) {
+    // Saved-card billing (G-74 (1)) is real billing on its own: the card token is sealed with the
+    // credential vault, so what must be real is that vault — a stub would "seal" it in the clear.
+    if (stored.sealer.backing !== "real") {
+      problems.push(
+        "the stored-method billing token sealer is a stub: the merchant's card token would not be " +
+          "encrypted at rest. It must never back billing outside APP_ENV=local.",
+      );
+    }
+  } else if (payments === undefined) {
     problems.push(
       "no production Licensing billing payments adapter is configured. Morbeh's own PSP account is " +
         "not set: the in-memory stub (collect() always succeeds, no money moves) must never back " +
@@ -478,6 +489,11 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     ...(runtime.platformBillingPayments === undefined
       ? {}
       : { payments: runtime.platformBillingPayments }),
+    // G-74 (1): charging a merchant's SAVED card off-session on Morbeh's own Paymob account. When
+    // present it takes precedence over `payments` above inside Licensing (only it can complete).
+    ...(runtime.platformBillingStoredMethod === undefined
+      ? {}
+      : { storedMethodBilling: runtime.platformBillingStoredMethod }),
     // H-02: every authorization decision on every admin action was recorded to a process-local,
     // never-pruned in-memory array (destroyed on restart, unbounded growth against the container
     // memory limit). The durable adapter, the `platform.audit_events` table, and the 7-year-retention

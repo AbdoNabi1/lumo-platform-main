@@ -135,3 +135,33 @@ model Invoice {
   @@map("invoices")
   @@schema("licensing")
 }
+
+/// G-74 (1): the saved card Morbeh charges to renew a MERCHANT's subscription. Morbeh's record about
+/// a customer of the platform, so it is scoped to the PLATFORM tenant (`tenant_id`, like
+/// `subscriptions`/`invoices`, under `tenant_isolation` RLS) and NEVER to the merchant's own tenant: a
+/// merchant that could read, edit or delete the token that bills it would control whether it gets
+/// billed. `tenant_ref` is the merchant being billed. `sealed_token` is the card token SEALED with the
+/// payments credential vault envelope, bound to `tenant_ref` — never plaintext. One `active` row per
+/// merchant is enforced by a partial unique index that only the migration can express. See migration
+/// `20260924020000_billing_payment_methods`.
+model BillingPaymentMethod {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id")
+  tenantRef       String   @map("tenant_ref")
+  provider        String
+  /// The PSP order id of the interactive first payment: how its token callback is correlated.
+  providerOrderId String   @map("provider_order_id")
+  status          String // pending | active | revoked
+  tokenId         String?  @map("token_id")
+  sealedToken     String?  @map("sealed_token")
+  maskedPan       String?  @map("masked_pan")
+  cardSubtype     String?  @map("card_subtype")
+  version         Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, provider, providerOrderId])
+  @@index([tenantId, tenantRef, status])
+  @@map("billing_payment_methods")
+  @@schema("licensing")
+}

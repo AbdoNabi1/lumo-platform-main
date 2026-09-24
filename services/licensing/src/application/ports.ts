@@ -21,7 +21,55 @@ export interface PaymentsPort {
     amountMinor: number,
     currency: string,
     idempotencyKey?: string,
+    /**
+     * The platform tenant scope the invoice was read under (ADR-0014). Additive and optional like
+     * `idempotencyKey`: an adapter that keeps its own platform-scoped state (the stored payment
+     * method) needs it, and every other implementer ignores it.
+     */
+    scopeTenantId?: string,
   ): Promise<{ reference: string }>;
+}
+
+/**
+ * Seals and opens the merchant's card token (an envelope, bound to the payer so a blob copied to
+ * another merchant's row does not open). Licensing depends on this port, never on a vault package.
+ */
+export interface BillingTokenSealer {
+  readonly backing: "real" | "stub";
+  seal(tenantRef: string, token: string): Promise<string>;
+  open(tenantRef: string, sealed: string): Promise<string>;
+}
+
+/** A card-token callback whose signature was verified; only SIGNED values. `token` is a secret. */
+export interface VerifiedCardToken {
+  readonly tokenId: string;
+  readonly token: string;
+  /** The PSP order id the token was issued for — correlates it to a pending enrolment. */
+  readonly providerOrderId: string;
+  readonly maskedPan: string;
+  readonly cardSubtype: string;
+}
+
+/**
+ * Verifies the PSP's card-token callback against MORBEH'S billing account's secret and yields its
+ * signed fields, or `null` when the signature or shape is wrong. The one place the signing scheme lives.
+ */
+export interface CardTokenCallbackVerifier {
+  verify(rawBody: Uint8Array, signature: string): VerifiedCardToken | null;
+}
+
+/**
+ * Starts the merchant's interactive first payment on Morbeh's own PSP account (a normal 3DS
+ * checkout, which is what makes the PSP issue a token at all). Returns where to send the merchant
+ * and the PSP's order id, under which the token callback will arrive.
+ */
+export interface CardEnrolmentPort {
+  startCheckout(request: {
+    readonly tenantRef: string;
+    readonly amountMinor: number;
+    readonly currency: string;
+    readonly idempotencyKey: string;
+  }): Promise<{ readonly providerOrderId: string; readonly checkoutUrl: string }>;
 }
 
 /** Outbound seam onto Finance's ledger (ADR-0024) — posts a settled amount, never mutates Finance directly. */

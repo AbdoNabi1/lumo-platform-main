@@ -129,6 +129,27 @@ const schema = z
     /** Signing secret (`whsec_...`) of the Stripe endpoint dedicated to Morbeh's billing events. */
     PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET: z.string().optional(),
 
+    // ── MORBEH'S OWN billing account on PAYMOB (G-74 (1)) — charging a merchant's SAVED card with no
+    // payer present (tokenization + MIT). Same rule as the Stripe pair above: these are Morbeh's
+    // credentials, never a merchant's and never the store's. Secret, HMAC secret, public key and the
+    // card integration id are all required to enable it (a partial group refuses to boot); it also
+    // needs PAYMENT_CREDENTIALS_KEK_REF, because the card token is sealed with the credential vault.
+    /** Morbeh's Paymob secret key (`egy_sk_…`). */
+    PLATFORM_BILLING_PAYMOB_SECRET_KEY: z.string().optional(),
+    /** Morbeh's Paymob HMAC secret — verifies the card-token callback. */
+    PLATFORM_BILLING_PAYMOB_HMAC_SECRET: z.string().optional(),
+    /** Morbeh's Paymob public key (`egy_pk_…`) — half of the Unified Checkout URL. */
+    PLATFORM_BILLING_PAYMOB_PUBLIC_KEY: z.string().optional(),
+    /** The card integration id the interactive first payment (which saves the card) is created against. */
+    PLATFORM_BILLING_PAYMOB_INTEGRATION_ID: z.coerce.number().int().positive().optional(),
+    /**
+     * The MOTO integration id merchant-initiated renewals are charged against. NOT on by default:
+     * Paymob must enable a MOTO-type integration on the account. Absent ⇒ no renewal is ever charged
+     * (each fails visibly, nothing is sent) — never a fallback to the card integration.
+     */
+    PLATFORM_BILLING_PAYMOB_MOTO_INTEGRATION_ID: z.coerce.number().int().positive().optional(),
+    PLATFORM_BILLING_PAYMOB_REGION: z.enum(["egy", "ksa", "uae"]).default("egy"),
+
     // ── Merchant payment credentials (WP-13). Merchants' Paymob secrets are sealed with
     // `@platform/secrets`' envelope encryption before they reach Postgres; this is the key-encryption
     // key reference they are sealed under. Absent ⇒ Paymob is UNAVAILABLE (no vault, no adapter is

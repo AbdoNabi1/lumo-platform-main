@@ -2,12 +2,14 @@ import { runReadScoped, type Database, type TransactionClient } from "@platform/
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { Prisma } from "@prisma/client";
+import { BillingPaymentMethod } from "../domain/billing-payment-method";
 import type { Credit } from "../domain/credit";
 import type { Invoice } from "../domain/invoice";
 import type { MerchantCapabilities } from "../domain/merchant-capabilities";
 import type { MerchantFeatureOverride } from "../domain/merchant-feature-override";
 import type { Plan } from "../domain/plan";
 import type {
+  BillingPaymentMethodRepository,
   CreditRepository,
   InvoiceRepository,
   MerchantCapabilitiesRepository,
@@ -447,4 +449,117 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
     // `readonly InvoiceLineItem[]` (comparability fails).
     return row === null ? null : InvoiceMapper.toDomain(row as unknown as InvoiceRow);
   }
+}
+
+/**
+ * G-74 (1): the saved card Morbeh charges to renew a merchant. TENANT-SCOPED to the PLATFORM tenant
+ * (`tenant_id` = the platform tenant, `tenant_isolation` RLS forced), never to the merchant's own
+ * tenant — every read and write below carries `tenantId`, so a merchant-scoped call matches no row.
+ * No outbox events: this is a credential record, not a domain fact other contexts consume. The
+ * sealed token is written to and read from `sealed_token` only through `toPersistence()`/`rehydrate`.
+ */
+export class PrismaBillingPaymentMethodRepository implements BillingPaymentMethodRepository {
+  private readonly deps: PrismaLicensingRepositoriesDeps;
+
+  constructor(deps: PrismaLicensingRepositoriesDeps) {
+    this.deps = deps;
+  }
+
+  async save(method: BillingPaymentMethod, tenantId: string, tx?: unknown): Promise<void> {
+    const client = requireTx(tx);
+    const state = method.toPersistence();
+    const columns = {
+      tenantRef: state.tenantRef,
+      provider: state.provider,
+      providerOrderId: state.providerOrderId,
+      status: state.status,
+      tokenId: state.tokenId ?? null,
+      sealedToken: state.sealedToken ?? null,
+      maskedPan: state.maskedPan ?? null,
+      cardSubtype: state.cardSubtype ?? null,
+    };
+    if (state.version === 0) {
+      await client.billingPaymentMethod.create({
+        data: { id: state.id, tenantId, ...columns, createdAt: state.createdAt },
+      });
+      return;
+    }
+    const updated = await client.billingPaymentMethod.updateMany({
+      where: { id: state.id, tenantId, version: state.version },
+      data: { ...columns, version: { increment: 1 } },
+    });
+    if (updated.count === 0) {
+      throw new ConcurrencyError(`BillingPaymentMethod ${state.id} was modified concurrently`);
+    }
+  }
+
+  async findByProviderOrder(
+    provider: string,
+    providerOrderId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<BillingPaymentMethod | null> {
+    return this.read(tenantId, tx, (client) =>
+      client.billingPaymentMethod.findFirst({ where: { tenantId, provider, providerOrderId } }),
+    );
+  }
+
+  async findActiveByTenantRef(
+    tenantRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<BillingPaymentMethod | null> {
+    return this.read(tenantId, tx, (client) =>
+      client.billingPaymentMethod.findFirst({
+        where: { tenantId, tenantRef, status: "active" },
+      }),
+    );
+  }
+
+  private async read(
+    tenantId: string,
+    tx: unknown,
+    run: (client: TransactionClient) => Promise<BillingPaymentMethodRow | null>,
+  ): Promise<BillingPaymentMethod | null> {
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : toBillingPaymentMethod(row);
+  }
+}
+
+interface BillingPaymentMethodRow {
+  readonly id: string;
+  readonly tenantRef: string;
+  readonly provider: string;
+  readonly providerOrderId: string;
+  readonly status: string;
+  readonly tokenId: string | null;
+  readonly sealedToken: string | null;
+  readonly maskedPan: string | null;
+  readonly cardSubtype: string | null;
+  readonly version: number;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+function toBillingPaymentMethod(row: BillingPaymentMethodRow): BillingPaymentMethod {
+  if (row.status !== "pending" && row.status !== "active" && row.status !== "revoked") {
+    throw new Error(`billing_payment_methods row ${row.id} has an unknown status`);
+  }
+  return BillingPaymentMethod.rehydrate({
+    id: row.id,
+    tenantRef: row.tenantRef,
+    provider: row.provider,
+    providerOrderId: row.providerOrderId,
+    status: row.status,
+    ...(row.tokenId === null ? {} : { tokenId: row.tokenId }),
+    ...(row.sealedToken === null ? {} : { sealedToken: row.sealedToken }),
+    ...(row.maskedPan === null ? {} : { maskedPan: row.maskedPan }),
+    ...(row.cardSubtype === null ? {} : { cardSubtype: row.cardSubtype }),
+    version: row.version,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
 }

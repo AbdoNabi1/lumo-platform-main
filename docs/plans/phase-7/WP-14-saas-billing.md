@@ -109,6 +109,15 @@ never a stub; the boot guard refuses that outside `local`). The DoD's price-chan
 until a stored-payment-method / off-session path exists a real renewal capture fails closed (invoice `failed`,
 money unmoved) — G-74 (1).
 
+**Update 2026-09-24 — the known limit above is closed for Paymob (G-74 (1), D-065/D-066).** With
+`PLATFORM_BILLING_PAYMOB_*` configured, a renewal charges the merchant's SAVED card with no payer present:
+Paymob's card-token callback (its own scheme, verified separately) stores a sealed, platform-scoped token
+in `licensing.billing_payment_methods` (migration `20260924020000_billing_payment_methods`, created, NOT
+applied), and `StoredMethodBillingPaymentsAdapter` charges it MIT through the new narrow `OffSessionCharger`
+port into the unchanged `CollectInvoice`. No stored card ⇒ the invoice fails visibly, no charge attempted.
+Still open and NOT closed here: nothing schedules renewals (G-74 (7)); the first interactive invoice is not
+settled by a PSP callback (G-74 (8)); Stripe billing is still on-session. Operator steps are in D-066.
+
 ## Definition of done
 
 - [ ] Changing a plan's price leaves every existing subscription on its pinned version — prove it

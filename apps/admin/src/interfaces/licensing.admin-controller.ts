@@ -126,6 +126,38 @@ export class LicensingAdminController {
     return this.licensing.billSubscriptionRenewal(input);
   }
 
+  /** G-74 (1) step 1: start the merchant's interactive first payment (which saves their card). */
+  async beginCardEnrolment(
+    principal: Principal,
+    input: Parameters<LicensingController["beginCardEnrolment"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.beginCardEnrolment(input);
+  }
+
+  /** Removes a merchant's saved card; the next renewal then fails visibly. */
+  async revokeBillingPaymentMethod(
+    principal: Principal,
+    input: Parameters<LicensingController["revokeBillingPaymentMethod"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.revokeBillingPaymentMethod(input);
+  }
+
+  /**
+   * G-74 (1) step 2: the PSP's card-token callback. Deliberately NOT behind the staff guard — the
+   * caller is the PSP, which presents no Bearer token; its authentication is the callback HMAC, which
+   * the use case verifies before anything is stored, and the scope it writes under is pinned to the
+   * platform tenant inside the controller.
+   */
+  recordCardToken(
+    input: Parameters<LicensingController["recordCardToken"]>[0],
+  ): Promise<AdminResponse> {
+    return this.licensing.recordCardToken(input);
+  }
+
   async collectInvoice(
     principal: Principal,
     input: Parameters<LicensingController["collectInvoice"]>[0],

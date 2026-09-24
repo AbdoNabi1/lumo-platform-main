@@ -42,7 +42,12 @@ import type { PostingAccounts } from "@platform/finance";
 import { wireFulfillment } from "@platform/fulfillment";
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
-import { wireLicensing, type FinanceLedgerPort, type PaymentsPort } from "@platform/licensing";
+import {
+  wireLicensing,
+  type FinanceLedgerPort,
+  type PaymentsPort,
+  type StoredMethodBillingDeps,
+} from "@platform/licensing";
 import { wireLocalization } from "@platform/localization";
 import { wireLoyalty, type LoyaltyController } from "@platform/loyalty";
 import { wireMediaLibrary, type LegacyStorageKeys, type ObjectStoragePort } from "@platform/media";
@@ -237,6 +242,12 @@ export interface AdminWiringDeps {
    * real one.
    */
   readonly payments?: PaymentsPort;
+  /**
+   * Charging a merchant's saved card off-session on Morbeh's own PSP account (G-74 (1)). Passed
+   * straight through to `wireLicensing(deps)`; present ⇒ renewals collect through the stored card and
+   * the card-enrolment / token-callback use cases exist. Absent ⇒ unchanged.
+   */
+  readonly storedMethodBilling?: StoredMethodBillingDeps;
   /**
    * Production Finance-ledger settlement posting for Licensing (M2-3). Passed straight through to
    * `wireLicensing(deps)` below; absent ⇒ Licensing's own no-op in-memory stub. Same boot guard as

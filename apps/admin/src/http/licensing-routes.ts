@@ -253,6 +253,36 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
     }),
     defineRoute({
       method: "POST",
+      path: "/invoices/:invoiceId/card-enrolment",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary:
+        "Start the merchant's interactive first payment for an issued invoice (a 3DS checkout that also saves their card for renewals)",
+      schema: { params: invoiceIdParams },
+      handle: ({ params, context }) =>
+        admin.licensing.beginCardEnrolment(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/billing/payment-methods/:tenantRef/revoke",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary:
+        "Remove a merchant's saved card (platform operator); their next renewal fails visibly",
+      schema: { params: z.object({ tenantRef: z.string().min(1) }) },
+      handle: ({ params, context }) =>
+        admin.licensing.revokeBillingPaymentMethod(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
       path: "/credits",
       version: 1,
       permission: "licensing:billing:manage",

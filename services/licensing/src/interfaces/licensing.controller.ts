@@ -1,5 +1,5 @@
 import { err } from "@platform/types";
-import { AuthorizationError } from "@platform/utils";
+import { AuthorizationError, NotFoundError } from "@platform/utils";
 import type {
   ActivateSubscription,
   ArchivePlanVersion,
@@ -51,6 +51,14 @@ import type {
   IssueInvoice,
 } from "../application/billing.use-cases";
 import type {
+  BeginCardEnrolment,
+  BeginCardEnrolmentInput,
+  RecordCardToken,
+  RecordCardTokenInput,
+  RevokeBillingPaymentMethod,
+  RevokeBillingPaymentMethodInput,
+} from "../application/payment-method.use-cases";
+import type {
   BillSubscriptionRenewal,
   BillSubscriptionRenewalInput,
 } from "../application/renewal.use-cases";
@@ -84,6 +92,13 @@ export interface LicensingControllerDeps {
   readonly grantCredit: GrantCredit;
   readonly consumeCredit: ConsumeCredit;
   readonly expireCredit: ExpireCredit;
+  /**
+   * Saved-card use cases (G-74 (1)). Present only when the deployment composes stored-method billing;
+   * absent ⇒ the operations answer 404, never a silent success.
+   */
+  readonly beginCardEnrolment?: BeginCardEnrolment;
+  readonly recordCardToken?: RecordCardToken;
+  readonly revokeBillingPaymentMethod?: RevokeBillingPaymentMethod;
   /**
    * The platform-operator tenant (WP-14, T14.2). Present ⇒ every operation that PRICES or GRANTS a
    * subscription (plans, subscriptions, overrides, capabilities, invoices, credits, renewal billing)
@@ -219,6 +234,39 @@ export class LicensingController {
     );
   }
 
+  /**
+   * G-74 (1) step 1: starts the merchant's interactive first payment for an issued invoice (a normal
+   * 3DS checkout on Morbeh's own PSP account, which is what makes the PSP issue a card token).
+   * Platform-only: a merchant tenant may not start, and cannot see, the flow that stores its card.
+   */
+  async beginCardEnrolment(input: BeginCardEnrolmentInput): Promise<ControllerResponse> {
+    const useCase = this.deps.beginCardEnrolment;
+    if (useCase === undefined) return notConfigured();
+    return this.platformOnly(input, async () => present(await useCase.execute(input), 200));
+  }
+
+  /**
+   * G-74 (1) step 2: the PSP's card-token callback. NOT `platformOnly`: the caller is the PSP, whose
+   * only credential is the callback's HMAC (verified inside the use case), not a tenant. The scope it
+   * writes under is therefore PINNED to the platform tenant, whatever `input.tenantId` says — a caller
+   * cannot make a token land in (or be read from) a merchant's own tenant scope.
+   */
+  async recordCardToken(input: RecordCardTokenInput): Promise<ControllerResponse> {
+    const useCase = this.deps.recordCardToken;
+    if (useCase === undefined) return notConfigured();
+    const tenantId = this.deps.platformTenantId ?? input.tenantId;
+    return present(await useCase.execute({ ...input, tenantId }), 200);
+  }
+
+  /** Removes the merchant's active card: the next renewal then fails visibly. Platform-only. */
+  async revokeBillingPaymentMethod(
+    input: RevokeBillingPaymentMethodInput,
+  ): Promise<ControllerResponse> {
+    const useCase = this.deps.revokeBillingPaymentMethod;
+    if (useCase === undefined) return notConfigured();
+    return this.platformOnly(input, async () => present(await useCase.execute(input), 200));
+  }
+
   async setMerchantFeatureOverride(
     input: SetMerchantFeatureOverrideInput,
   ): Promise<ControllerResponse> {
@@ -284,4 +332,8 @@ export class LicensingController {
       present(await this.deps.expireCredit.execute(input), 200),
     );
   }
+}
+
+function notConfigured(): ControllerResponse {
+  return present(err(new NotFoundError("Stored-method billing is not configured")), 200);
 }

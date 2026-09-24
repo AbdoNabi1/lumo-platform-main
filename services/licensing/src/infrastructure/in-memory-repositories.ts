@@ -1,10 +1,12 @@
 import type { EventContext, OutboxWriter } from "@platform/messaging";
+import type { BillingPaymentMethod } from "../domain/billing-payment-method";
 import type { Credit } from "../domain/credit";
 import type { Invoice } from "../domain/invoice";
 import type { MerchantCapabilities } from "../domain/merchant-capabilities";
 import type { MerchantFeatureOverride } from "../domain/merchant-feature-override";
 import type { Plan } from "../domain/plan";
 import type {
+  BillingPaymentMethodRepository,
   CreditRepository,
   InvoiceRepository,
   MerchantCapabilitiesRepository,
@@ -252,6 +254,51 @@ export class InMemoryInvoiceRepository implements InvoiceRepository {
   async findById(id: string, tenantId: string): Promise<Invoice | null> {
     const entry = this.store.get(id);
     return entry !== undefined && entry.tenantId === tenantId ? entry.invoice : null;
+  }
+}
+
+/** Platform-scoped like every repository here: a lookup under another tenant finds nothing. */
+export class InMemoryBillingPaymentMethodRepository implements BillingPaymentMethodRepository {
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly method: BillingPaymentMethod }
+  >();
+
+  async save(method: BillingPaymentMethod, tenantId: string): Promise<void> {
+    this.store.set(method.id, { tenantId, method });
+  }
+
+  async findByProviderOrder(
+    provider: string,
+    providerOrderId: string,
+    tenantId: string,
+  ): Promise<BillingPaymentMethod | null> {
+    for (const entry of this.store.values()) {
+      if (
+        entry.tenantId === tenantId &&
+        entry.method.provider === provider &&
+        entry.method.providerOrderId === providerOrderId
+      ) {
+        return entry.method;
+      }
+    }
+    return null;
+  }
+
+  async findActiveByTenantRef(
+    tenantRef: string,
+    tenantId: string,
+  ): Promise<BillingPaymentMethod | null> {
+    for (const entry of this.store.values()) {
+      if (
+        entry.tenantId === tenantId &&
+        entry.method.tenantRef === tenantRef &&
+        entry.method.status === "active"
+      ) {
+        return entry.method;
+      }
+    }
+    return null;
   }
 }
 

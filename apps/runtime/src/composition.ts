@@ -49,7 +49,12 @@ import {
 import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
 import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
-import { PlatformBillingPaymentsAdapter, type PaymentsPort } from "@platform/licensing";
+import {
+  PlatformBillingPaymentsAdapter,
+  type PaymentsPort,
+  type StoredMethodBillingDeps,
+} from "@platform/licensing";
+import { buildPlatformBillingStoredMethod } from "./platform-billing-stored-method";
 import {
   NodeCrypto,
   TotpMfaProvider,
@@ -149,6 +154,13 @@ export interface RuntimeCore {
    * per-tenant resolvers use.
    */
   readonly platformBillingPayments: PaymentsPort | undefined;
+  /**
+   * G-74 (1): Morbeh charging a merchant's SAVED card off-session on MORBEH'S OWN Paymob account
+   * (`PLATFORM_BILLING_PAYMOB_*`) — the only path that can actually collect a renewal, since the
+   * on-session `platformBillingPayments` can never complete without a payer. `undefined` ⇒ not
+   * configured. Holds no merchant credential; the card token it stores is sealed with the real vault.
+   */
+  readonly platformBillingStoredMethod: StoredMethodBillingDeps | undefined;
   /**
    * Production MFA provider resolver (C2-4). Real RFC 6238 `TotpMfaProvider` over `NodeCrypto`,
    * built unconditionally — unlike `objectStorage`/`paymentProvider`, this needs no external
@@ -310,6 +322,11 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     paymentCredentialVault !== undefined ? [paymobRegistration(logger)] : [];
 
   const platformBillingPayments = buildPlatformBillingPayments(config);
+  const platformBillingStoredMethod = buildPlatformBillingStoredMethod(
+    config,
+    paymentCredentialVault,
+    logger,
+  );
 
   return {
     config,
@@ -332,6 +349,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     providerRegistrations,
     paymentCredentialVault,
     platformBillingPayments,
+    platformBillingStoredMethod,
     mfaProviders,
     signupEmail: new LoggingSignupEmailAdapter(),
   };

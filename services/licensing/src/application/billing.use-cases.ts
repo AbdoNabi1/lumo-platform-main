@@ -209,7 +209,13 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
 
     let collected: { reference: string };
     try {
-      collected = await this.deps.payments.collect(tenantRef, totalMinor, currency, idempotencyKey);
+      collected = await this.deps.payments.collect(
+        tenantRef,
+        totalMinor,
+        currency,
+        idempotencyKey,
+        input.tenantId,
+      );
     } catch (error) {
       await this.settleFailure(input.invoiceId, input.tenantId);
       throw error;
