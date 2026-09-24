@@ -1,4 +1,4 @@
-import type { PaymentProvider } from "@platform/contracts";
+import type { OffSessionPaymentProvider, PaymentProvider } from "@platform/contracts";
 import { BusinessRuleError } from "@platform/domain";
 import { err, ok, type Result } from "@platform/types";
 import type { DomainError } from "@platform/utils";
@@ -80,10 +80,15 @@ export interface PaymentProviderResolver {
   /**
    * For recurring billing: a payment with no payer present. Refuses — with
    * {@link PaymentProviderUnavailableError} — any provider that does not declare
-   * `chargesOffSession`, and one the merchant has not enabled. As everywhere, the caller names the
-   * provider; nothing here chooses one.
+   * `chargesOffSession`, one the merchant has not enabled, and one that declares the capability but
+   * builds a provider with no off-session port. As everywhere, the caller names the provider;
+   * nothing here chooses one. The result is the narrow {@link OffSessionPaymentProvider}, so a caller
+   * that needs an off-session charge cannot be handed one that lacks it.
    */
-  resolveForOffSession(tenantId: string, provider: PaymentProviderKey): Promise<PaymentProvider>;
+  resolveForOffSession(
+    tenantId: string,
+    provider: PaymentProviderKey,
+  ): Promise<OffSessionPaymentProvider>;
   /** What a provider declares; `undefined` if nothing registered that key. Holds no tenant. */
   capabilitiesOf(provider: PaymentProviderKey): ProviderCapabilities | undefined;
   describe(): ProviderAvailability;

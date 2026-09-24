@@ -1,13 +1,15 @@
-import type { PaymentProvider } from "@platform/contracts";
+import type { OffSessionPaymentProvider, PaymentProvider } from "@platform/contracts";
 import type {
   PaymentCredentialVault,
   PaymentProviderResolver,
   ProviderAvailability,
 } from "../application/ports";
 import { PaymentProviderUnavailableError } from "../application/ports";
-import type {
-  PaymentProviderRegistry,
-  ProviderRegistration,
+import {
+  isOffSessionRegistration,
+  type PaymentProviderRegistry,
+  type ProviderBuildContext,
+  type ProviderRegistration,
 } from "../application/provider-registry";
 import { MerchantPaymentSettings } from "../domain/merchant-payment-settings";
 import type { MerchantPaymentSettingsRepository } from "../domain/merchant-payment-settings-repository";
@@ -55,7 +57,7 @@ export class TenantPaymentProviderResolver implements PaymentProviderResolver {
     if (!settings.isEnabled(provider)) {
       throw new PaymentProviderUnavailableError(provider, "the merchant has not enabled it");
     }
-    return this.build(tenantId, registration, settings);
+    return registration.create(await this.contextFor(tenantId, registration, settings));
   }
 
   async resolveForExisting(
@@ -63,15 +65,17 @@ export class TenantPaymentProviderResolver implements PaymentProviderResolver {
     provider: PaymentProviderKey,
   ): Promise<PaymentProvider> {
     const registration = this.registered(provider);
-    return this.build(tenantId, registration, await this.settingsOf(tenantId));
+    return registration.create(
+      await this.contextFor(tenantId, registration, await this.settingsOf(tenantId)),
+    );
   }
 
   async resolveForOffSession(
     tenantId: string,
     provider: PaymentProviderKey,
-  ): Promise<PaymentProvider> {
+  ): Promise<OffSessionPaymentProvider> {
     const registration = this.registered(provider);
-    if (!registration.capabilities.chargesOffSession) {
+    if (!isOffSessionRegistration(registration)) {
       throw new PaymentProviderUnavailableError(
         provider,
         "it cannot charge off-session, so it is not available for recurring billing",
@@ -81,7 +85,17 @@ export class TenantPaymentProviderResolver implements PaymentProviderResolver {
     if (!settings.isEnabled(provider)) {
       throw new PaymentProviderUnavailableError(provider, "the merchant has not enabled it");
     }
-    return this.build(tenantId, registration, settings);
+    const built = registration.create(await this.contextFor(tenantId, registration, settings));
+    // The registration TYPE already forbids declaring the capability without the port; this is the
+    // backstop for what a cast, plain JS or a stale build can still do. A declaration with nothing
+    // behind it is refused here rather than discovered as a `TypeError` mid-renewal.
+    if (typeof (built as Partial<OffSessionPaymentProvider>).chargeStoredMethod !== "function") {
+      throw new PaymentProviderUnavailableError(
+        provider,
+        "it declares off-session charging but implements no off-session port",
+      );
+    }
+    return built;
   }
 
   capabilitiesOf(provider: PaymentProviderKey): ProviderCapabilities | undefined {
@@ -117,14 +131,15 @@ export class TenantPaymentProviderResolver implements PaymentProviderResolver {
     );
   }
 
-  private async build(
+  /** What `registration.create` is built from for ONE resolution: the merchant's opened credentials and config. */
+  private async contextFor(
     tenantId: string,
     registration: ProviderRegistration,
     settings: MerchantPaymentSettings,
-  ): Promise<PaymentProvider> {
+  ): Promise<ProviderBuildContext> {
     const provider = registration.key;
     if (!registration.capabilities.requiresMerchantCredentials) {
-      return registration.create({ config: {}, credentials: {} });
+      return { config: {}, credentials: {} };
     }
     const stored = settings.providerSettings(provider);
     if (stored === undefined) {
@@ -145,6 +160,6 @@ export class TenantPaymentProviderResolver implements PaymentProviderResolver {
       }
       credentials[field] = value;
     }
-    return registration.create({ config: stored.config, credentials });
+    return { config: stored.config, credentials };
   }
 }

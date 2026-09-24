@@ -393,12 +393,13 @@ describe("api entrypoint", () => {
       );
     }
     // Declared capabilities: Paymob settles when the customer pays, calls back, needs the
-    // merchant's own credentials, and cannot charge off-session (tokenization is a later task).
+    // merchant's own credentials, and can charge a saved token off-session (the MOTO integration id
+    // that needs is per-merchant config, optional; without it a charge is refused before any request).
     expect(registration?.capabilities).toEqual({
       settlesAtPayTime: true,
       deliversWebhooks: true,
       requiresMerchantCredentials: true,
-      chargesOffSession: false,
+      chargesOffSession: true,
     });
     expect(registration?.credentialFields).toEqual(["secretKey", "hmacSecret", "publicKey"]);
   });

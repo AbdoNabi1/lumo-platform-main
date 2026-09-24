@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { PaymentProvider } from "@platform/contracts";
 import {
   PaymentProviderRegistry,
-  type ProviderCapabilities,
+  type OnSessionOnlyRegistration,
   type ProviderRegistration,
 } from "./provider-registry";
 
-const CAPS: ProviderCapabilities = {
+const CAPS: OnSessionOnlyRegistration["capabilities"] = {
   settlesAtPayTime: false,
   deliversWebhooks: true,
   requiresMerchantCredentials: false,
@@ -15,7 +15,9 @@ const CAPS: ProviderCapabilities = {
 
 const noop = {} as PaymentProvider;
 
-function reg(overrides: Partial<ProviderRegistration> & { key: string }): ProviderRegistration {
+function reg(
+  overrides: Partial<OnSessionOnlyRegistration> & { key: string },
+): ProviderRegistration {
   return { capabilities: CAPS, backing: "real", create: () => noop, ...overrides };
 }
 

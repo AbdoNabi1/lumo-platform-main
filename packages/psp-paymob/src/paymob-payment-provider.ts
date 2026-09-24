@@ -1,4 +1,11 @@
-import type { PaymentIntentRequest, PaymentProvider, ProviderIntent } from "@platform/contracts";
+import type {
+  OffSessionCharge,
+  OffSessionChargeRequest,
+  OffSessionCharger,
+  PaymentIntentRequest,
+  PaymentProvider,
+  ProviderIntent,
+} from "@platform/contracts";
 import type { Logger } from "@platform/utils";
 import { verifyPaymobSignature } from "./webhook-signature";
 
@@ -41,6 +48,12 @@ export interface PaymobPaymentProviderOptions {
   readonly publicKey: string;
   /** The card (or wallet) integration id payments are created against. */
   readonly integrationId: number;
+  /**
+   * The MOTO integration id merchant-initiated charges are created against. NOT on by default: Paymob
+   * must enable a MOTO-type integration on the account. Absent ⇒ `chargeStoredMethod` refuses before
+   * sending anything — it never falls back to the card integration above.
+   */
+  readonly motoIntegrationId?: number;
   readonly region: PaymobRegion;
   readonly fetch: HttpFetch;
   readonly logger: Logger;
@@ -76,7 +89,42 @@ export class PaymobUnsupportedOperationError extends Error {
   }
 }
 
+/**
+ * Raised when a merchant-initiated charge is requested but no MOTO integration id is configured.
+ * Thrown before any request: the alternative (a normal sale on the card integration) needs a payer to
+ * confirm, and would present an on-session payment as a charge that merely failed.
+ */
+export class PaymobMitNotConfiguredError extends Error {
+  constructor() {
+    super(
+      "Paymob merchant-initiated charging needs a MOTO integration id (Paymob must enable one on the account); none is configured",
+    );
+    this.name = "PaymobMitNotConfiguredError";
+  }
+}
+
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+/**
+ * The API rejects an intention without billing_data (documented 400: `phone_number` "This field is
+ * required."), but the shared port carries no customer identity and is not widened for Paymob. The
+ * fields are filled with Paymob's own placeholder convention ("NA", as in its published samples); a
+ * payer supplies real details on the hosted page, and a merchant-initiated charge has none to give.
+ */
+const PLACEHOLDER_BILLING_DATA = {
+  first_name: "NA",
+  last_name: "NA",
+  email: "na@example.invalid",
+  phone_number: "NA",
+  apartment: "NA",
+  floor: "NA",
+  street: "NA",
+  building: "NA",
+  city: "NA",
+  state: "NA",
+  country: "NA",
+  postal_code: "NA",
+} as const;
 
 /**
  * Production `PaymentProvider` for Paymob (raw REST, no SDK — D-048), created per request from a
@@ -98,7 +146,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  *    provider; the payments domain's own durable refund reservation is the only double-refund
  *    guard, and this adapter — like the Stripe one — does not retry internally.
  */
-export class PaymobPaymentProvider implements PaymentProvider {
+export class PaymobPaymentProvider implements PaymentProvider, OffSessionCharger {
   private readonly options: PaymobPaymentProviderOptions;
 
   constructor(options: PaymobPaymentProviderOptions) {
@@ -121,24 +169,8 @@ export class PaymobPaymentProvider implements PaymentProvider {
           quantity: 1,
         },
       ],
-      // The API rejects an intention without billing_data (documented 400: `phone_number` "This
-      // field is required."), but `PaymentIntentRequest` carries no customer identity and the port
-      // is not widened for Paymob. The fields are filled with Paymob's own placeholder convention
-      // ("NA", as in its published samples); the customer supplies real details on the hosted page.
-      billing_data: {
-        first_name: "NA",
-        last_name: "NA",
-        email: "na@example.invalid",
-        phone_number: "NA",
-        apartment: "NA",
-        floor: "NA",
-        street: "NA",
-        building: "NA",
-        city: "NA",
-        state: "NA",
-        country: "NA",
-        postal_code: "NA",
-      },
+      // See PLACEHOLDER_BILLING_DATA: the customer supplies real details on the hosted page.
+      billing_data: PLACEHOLDER_BILLING_DATA,
       // Echoed back as `order.merchant_order_id` — useful for support, but UNSIGNED, so nothing
       // in this codebase correlates on it (see webhook-signature.ts).
       special_reference: request.idempotencyKey,
@@ -217,6 +249,91 @@ export class PaymobPaymentProvider implements PaymentProvider {
     }
   }
 
+  /**
+   * MIT — a merchant-initiated charge of a saved card token, no payer present. The flow and shapes are
+   * Paymob's own (official Postman collection, "Pay with saved card" → MIT): create an intention on
+   * the MOTO integration, then POST `/api/acceptance/payments/pay` with the token as a `TOKEN` source
+   * and the intention's payment key. Resolves only for an APPROVED, non-pending transaction for
+   * exactly the requested amount; anything else throws, so the caller can never record a collection
+   * that did not happen. The token is never logged and never appears in an error message.
+   *
+   * Idempotency: Paymob's API takes no idempotency key. `special_reference` carries the caller's key
+   * and the docs call it "unique per transaction" — the only dedupe lever the intention offers. The
+   * durable guard against a double charge is the caller's (`CollectInvoice`'s deterministic key and
+   * its invoice state machine), not this adapter's.
+   */
+  async chargeStoredMethod(request: OffSessionChargeRequest): Promise<OffSessionCharge> {
+    const motoIntegrationId = this.options.motoIntegrationId;
+    if (motoIntegrationId === undefined) throw new PaymobMitNotConfiguredError();
+    if (!Number.isSafeInteger(request.amountMinor) || request.amountMinor <= 0) {
+      throw new Error("Paymob chargeStoredMethod: amountMinor must be a positive integer");
+    }
+    if (request.storedMethodToken.length === 0) {
+      throw new Error("Paymob chargeStoredMethod: no stored method token");
+    }
+    if (request.idempotencyKey.length === 0) {
+      throw new Error("Paymob chargeStoredMethod: an idempotency key is required");
+    }
+
+    const intention = await this.post("/v1/intention/", {
+      amount: request.amountMinor,
+      currency: request.currency.toUpperCase(),
+      payment_methods: [motoIntegrationId],
+      items: [
+        {
+          name: `Order ${request.orderRef}`,
+          amount: request.amountMinor,
+          description: `Order ${request.orderRef}`,
+          quantity: 1,
+        },
+      ],
+      billing_data: PLACEHOLDER_BILLING_DATA,
+      special_reference: request.idempotencyKey,
+    });
+    const orderId = (intention as { intention_order_id?: unknown }).intention_order_id;
+    const keys = (intention as { payment_keys?: unknown }).payment_keys;
+    const paymentKey = Array.isArray(keys)
+      ? (keys as readonly { integration?: unknown; key?: unknown }[]).find(
+          (entry) => entry.integration === motoIntegrationId,
+        )?.key
+      : undefined;
+    if (
+      (typeof orderId !== "number" && typeof orderId !== "string") ||
+      typeof paymentKey !== "string" ||
+      paymentKey.length === 0
+    ) {
+      throw new PaymobApiError(
+        201,
+        "Paymob MOTO intention response lacked intention_order_id or a payment key for the MOTO integration",
+      );
+    }
+
+    // Paymob's collection sends no Authorization header on this call: the payment key is its credential.
+    const paid = (await this.post(
+      "/api/acceptance/payments/pay",
+      {
+        source: { identifier: request.storedMethodToken, subtype: "TOKEN" },
+        payment_token: paymentKey,
+      },
+      { authorize: false },
+    )) as Record<string, unknown>;
+    if (
+      paid["success"] !== true ||
+      paid["pending"] === true ||
+      paid["error_occured"] === true ||
+      paid["txn_response_code"] !== "APPROVED" ||
+      paid["amount_cents"] !== request.amountMinor
+    ) {
+      // Nothing from the response is echoed: the charge was not collected, and that is all a caller
+      // may act on. (`data.message` is a human string, kept out of exceptions and logs.)
+      throw new PaymobApiError(
+        200,
+        "Paymob merchant-initiated charge was not approved (declined, pending or mismatched)",
+      );
+    }
+    return { providerReference: String(orderId) };
+  }
+
   verifyWebhook(payload: Uint8Array, signature: string): Promise<boolean> {
     const valid = verifyPaymobSignature({
       payload,
@@ -229,7 +346,11 @@ export class PaymobPaymentProvider implements PaymentProvider {
     return Promise.resolve(valid);
   }
 
-  private async post(path: string, body: unknown): Promise<unknown> {
+  private async post(
+    path: string,
+    body: unknown,
+    { authorize = true }: { readonly authorize?: boolean } = {},
+  ): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
@@ -239,7 +360,7 @@ export class PaymobPaymentProvider implements PaymentProvider {
       const response = await this.options.fetch(`${REGIONS[this.options.region].api}${path}`, {
         method: "POST",
         headers: {
-          Authorization: `Token ${this.options.secretKey}`,
+          ...(authorize ? { Authorization: `Token ${this.options.secretKey}` } : {}),
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),

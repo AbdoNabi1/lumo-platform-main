@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "pending": false,
+  "error_occured": false,
+  "amount_cents": 149900,
+  "txn_response_code": "APPROVED",
+  "data": { "message": "Approved" },
+  "source_data": { "pan": "2346", "sub_type": "MasterCard", "type": "card" }
+}

@@ -1,4 +1,4 @@
-import type { PaymentProvider } from "@platform/contracts";
+import type { OffSessionPaymentProvider, PaymentProvider } from "@platform/contracts";
 import type { ProviderCapabilities } from "../domain/value-objects/provider-capabilities";
 import {
   isWellFormedProviderKey,
@@ -33,10 +33,9 @@ export interface ProviderBuildContext {
  * provider instance for a merchant — `create` is called afresh for every resolution and its result
  * is never cached here.
  */
-export interface ProviderRegistration {
+interface ProviderRegistrationBase {
   /** Lower-case key the shopper selects and that is persisted on the intent (`stripe`, `acme-pay`…). */
   readonly key: PaymentProviderKey;
-  readonly capabilities: ProviderCapabilities;
   /**
    * `real` if a genuine PSP (or genuinely PSP-free method) backs it, `stub` for an in-memory
    * stand-in. A registration with no real backing must be left OUT — a provider that cannot be
@@ -58,7 +57,34 @@ export interface ProviderRegistration {
   readonly parseConfig?: (raw: unknown) => ConfigParseResult;
   /** Operator-facing hint for the production guard when this provider is not really backed. */
   readonly configurationHint?: string;
+}
+
+/**
+ * A provider that takes payments only with a payer present. `chargesOffSession` is the literal `false`,
+ * so `create` may return a plain {@link PaymentProvider}.
+ */
+export interface OnSessionOnlyRegistration extends ProviderRegistrationBase {
+  readonly capabilities: ProviderCapabilities & { readonly chargesOffSession: false };
   readonly create: (context: ProviderBuildContext) => PaymentProvider;
+}
+
+/**
+ * A provider that can also charge with no payer present. Declaring `chargesOffSession: true` is only
+ * expressible if `create` returns an {@link OffSessionPaymentProvider} — the capability and the port
+ * behind it cannot be separated by the compiler, so a declaration with nothing behind it does not
+ * type-check. (`TenantPaymentProviderResolver` re-checks at runtime for what a cast could bypass.)
+ */
+export interface OffSessionRegistration extends ProviderRegistrationBase {
+  readonly capabilities: ProviderCapabilities & { readonly chargesOffSession: true };
+  readonly create: (context: ProviderBuildContext) => OffSessionPaymentProvider;
+}
+
+export type ProviderRegistration = OnSessionOnlyRegistration | OffSessionRegistration;
+
+export function isOffSessionRegistration(
+  registration: ProviderRegistration,
+): registration is OffSessionRegistration {
+  return registration.capabilities.chargesOffSession;
 }
 
 /**

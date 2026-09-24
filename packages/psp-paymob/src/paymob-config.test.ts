@@ -9,6 +9,19 @@ describe("parsePaymobConfig — Paymob's own non-secret routing data, validated 
     });
   });
 
+  it("keeps an optional MOTO integration id (needed for merchant-initiated charges) and drops it when absent", () => {
+    expect(
+      parsePaymobConfig({ region: "egy", integrationId: 158, motoIntegrationId: 777 }),
+    ).toEqual({ ok: true, value: { region: "egy", integrationId: 158, motoIntegrationId: 777 } });
+    const without = parsePaymobConfig({ region: "egy", integrationId: 158 });
+    expect(without.ok && "motoIntegrationId" in without.value).toBe(false);
+    for (const bad of [0, -1, 1.5, "777", null]) {
+      expect(
+        parsePaymobConfig({ region: "egy", integrationId: 158, motoIntegrationId: bad }).ok,
+      ).toBe(false);
+    }
+  });
+
   it("accepts EXACTLY the regions the adapter supports — one source of truth, not a mirrored list", () => {
     for (const region of [
       "egy",

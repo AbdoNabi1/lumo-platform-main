@@ -160,6 +160,8 @@ const acmeRegistration: ProviderRegistration = {
     cancel: () => Promise.resolve(),
     refund: () => Promise.resolve(),
     verifyWebhook: () => Promise.resolve(true),
+    // Declared off-session above, so it must implement the port (the registration type requires it).
+    chargeStoredMethod: () => Promise.resolve({ providerReference: "acme-charge" }),
   }),
 };
 

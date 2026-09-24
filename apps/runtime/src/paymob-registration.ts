@@ -9,8 +9,12 @@ import type { Logger } from "@platform/utils";
  *
  *  - capabilities: a Paymob sale settles when the customer pays (its signed callback IS the capture,
  *    so no separate capture request), it calls back, it needs each merchant's own credentials, and
- *    it cannot yet charge with no payer present — tokenization is the next task, and until it lands
- *    Paymob is refused for recurring billing.
+ *    it can charge a saved card token with no payer present (`PaymobPaymentProvider` implements the
+ *    narrow `OffSessionCharger` port — the registration TYPE requires that for this declaration, and
+ *    `paymob-registration.test.ts` fails if the flag and the port drift apart). That needs the
+ *    account's MOTO integration id (`config.motoIntegrationId`, optional): absent, a charge is
+ *    refused before any request is sent. This registration is the MERCHANT-STORE seam; Morbeh's own
+ *    billing builds the same class from its own account (`composition.ts`, `PLATFORM_BILLING_PAYMOB_*`).
  *  - config: `region` and `integrationId` are Paymob's own routing data, validated by
  *    `@platform/psp-paymob` (`parsePaymobConfig` shares `isPaymobRegion` with the adapter, so the
  *    two cannot drift).
@@ -24,7 +28,7 @@ export function paymobRegistration(logger: Logger): ProviderRegistration {
       settlesAtPayTime: true,
       deliversWebhooks: true,
       requiresMerchantCredentials: true,
-      chargesOffSession: false,
+      chargesOffSession: true,
     },
     backing: "real",
     credentialFields: ["secretKey", "hmacSecret", "publicKey"],
@@ -42,6 +46,9 @@ export function paymobRegistration(logger: Logger): ProviderRegistration {
         hmacSecret: credentials.hmacSecret ?? "",
         publicKey: credentials.publicKey ?? "",
         integrationId: parsed.value.integrationId,
+        ...(parsed.value.motoIntegrationId === undefined
+          ? {}
+          : { motoIntegrationId: parsed.value.motoIntegrationId }),
         region: parsed.value.region,
         fetch: async (url, init) => fetch(url, init),
         logger,

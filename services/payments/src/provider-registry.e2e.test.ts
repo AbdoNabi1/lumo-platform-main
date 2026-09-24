@@ -84,11 +84,14 @@ function acmeRegistration(calls: Call[]): ProviderRegistration {
         ? { ok: true, value: { merchantCode: code } }
         : { ok: false, reason: "merchantCode must look like M123" };
     },
-    create: ({ config, credentials }) =>
-      recordingProvider("acme-pay", calls, {
+    create: ({ config, credentials }) => ({
+      ...recordingProvider("acme-pay", calls, {
         apiKey: credentials.apiKey ?? "",
         merchantCode: String(config.merchantCode),
       }),
+      // Declared off-session, so it must implement the port (the type requires it).
+      chargeStoredMethod: () => Promise.resolve({ providerReference: "acme-charge" }),
+    }),
   };
 }
 

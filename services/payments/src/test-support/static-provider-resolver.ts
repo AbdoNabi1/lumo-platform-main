@@ -24,7 +24,9 @@ export function staticProviders(
   return {
     resolveForNewPayment: () => Promise.resolve(provider),
     resolveForExisting: () => Promise.resolve(provider),
-    resolveForOffSession: () => Promise.resolve(provider),
+    // A shared fake cannot honestly charge off-session; a test that needs one builds its own.
+    resolveForOffSession: () =>
+      Promise.reject(new Error("staticProviders cannot charge off-session")),
     capabilitiesOf: () => capabilities,
     describe: () => ({
       providers: [{ key: "static", capabilities, backing: "stub" }],

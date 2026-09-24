@@ -26,4 +26,12 @@ export type {
   ImageTransformSpec,
   ScanVerdict,
 } from "./content-safety";
-export type { PaymentIntentRequest, PaymentProvider, ProviderIntent } from "./payment-provider";
+export type {
+  OffSessionCharge,
+  OffSessionChargeRequest,
+  OffSessionCharger,
+  OffSessionPaymentProvider,
+  PaymentIntentRequest,
+  PaymentProvider,
+  ProviderIntent,
+} from "./payment-provider";

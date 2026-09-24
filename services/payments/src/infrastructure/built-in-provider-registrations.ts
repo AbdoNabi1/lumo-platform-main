@@ -33,7 +33,9 @@ export function cashOnDeliveryRegistration(): ProviderRegistration {
 /**
  * The PLATFORM's own Stripe adapter (C2-2): one Stripe account for the whole platform, so it takes
  * no per-merchant credentials. It authorizes then captures (`!settlesAtPayTime`), calls back
- * through signed webhooks and can charge a saved method with no payer present. Absent ⇒ the
+ * through signed webhooks. It does NOT declare `chargesOffSession`: `StripePaymentProvider` is an
+ * on-session contract (create → the payer confirms → capture) with no stored-method charge behind it,
+ * so declaring it would advertise a capability nothing implements (the previous release did). Absent ⇒ the
  * offline in-memory stub, registered as `stub` — `verifyWebhook()` always true, money operations
  * no-ops — which the production boot guard refuses outside `local`. Enabled by default: the one
  * provider that existed before merchant configuration did.
@@ -48,7 +50,7 @@ export function stripeRegistration(
       settlesAtPayTime: false,
       deliversWebhooks: true,
       requiresMerchantCredentials: false,
-      chargesOffSession: true,
+      chargesOffSession: false,
     },
     backing: provider instanceof InMemoryPaymentProvider ? "stub" : "real",
     enabledByDefault: true,

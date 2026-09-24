@@ -4,6 +4,8 @@ import { isPaymobRegion, type PaymobRegion } from "./paymob-payment-provider";
 export interface PaymobConfig {
   readonly region: PaymobRegion;
   readonly integrationId: number;
+  /** The MOTO integration id merchant-initiated charges use; absent until Paymob enables one. */
+  readonly motoIntegrationId?: number;
 }
 
 export type ParsePaymobConfigResult =
@@ -20,7 +22,11 @@ export function parsePaymobConfig(raw: unknown): ParsePaymobConfigResult {
   if (typeof raw !== "object" || raw === null) {
     return { ok: false, reason: "expected an object with region and integrationId" };
   }
-  const { region, integrationId } = raw as { region?: unknown; integrationId?: unknown };
+  const { region, integrationId, motoIntegrationId } = raw as {
+    region?: unknown;
+    integrationId?: unknown;
+    motoIntegrationId?: unknown;
+  };
   if (typeof region !== "string" || !isPaymobRegion(region)) {
     return { ok: false, reason: "unsupported Paymob region" };
   }
@@ -31,5 +37,13 @@ export function parsePaymobConfig(raw: unknown): ParsePaymobConfigResult {
   ) {
     return { ok: false, reason: "integrationId must be a positive integer" };
   }
-  return { ok: true, value: { region, integrationId } };
+  if (motoIntegrationId === undefined) return { ok: true, value: { region, integrationId } };
+  if (
+    typeof motoIntegrationId !== "number" ||
+    !Number.isSafeInteger(motoIntegrationId) ||
+    motoIntegrationId <= 0
+  ) {
+    return { ok: false, reason: "motoIntegrationId must be a positive integer" };
+  }
+  return { ok: true, value: { region, integrationId, motoIntegrationId } };
 }

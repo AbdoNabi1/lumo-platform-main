@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type {
   Clock,
   IdGenerator,
+  OffSessionPaymentProvider,
   PaymentIntentRequest,
-  PaymentProvider,
   ProviderIntent,
 } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
@@ -37,8 +37,12 @@ interface Ledger {
 }
 
 /** A provider that says yes to everything — so any refusal in a test comes from CAPABILITIES, not from the provider. */
-function permissiveProvider(tag: string, ledger: Ledger): PaymentProvider {
+function permissiveProvider(tag: string, ledger: Ledger): OffSessionPaymentProvider {
   return {
+    chargeStoredMethod: () => {
+      ledger.ops.push(`${tag}:chargeStoredMethod`);
+      return Promise.resolve({ providerReference: `${tag}-charge` });
+    },
     createIntent: (_r: PaymentIntentRequest): Promise<ProviderIntent> => {
       ledger.ops.push(`${tag}:createIntent`);
       return Promise.resolve({ providerIntentId: `${tag}-ref` });
@@ -65,6 +69,7 @@ function registration(
   capabilities: Partial<ProviderCapabilities> = {},
   extra: Partial<ProviderRegistration> = {},
 ): ProviderRegistration {
+  // `permissiveProvider` implements the off-session port, so it backs either declaration honestly.
   return {
     key,
     capabilities: { ...ALL_OFF, ...capabilities },
@@ -74,7 +79,7 @@ function registration(
       return permissiveProvider(key, ledger);
     },
     ...extra,
-  };
+  } as ProviderRegistration;
 }
 
 function wire(registrations: readonly ProviderRegistration[], ledger: Ledger) {
