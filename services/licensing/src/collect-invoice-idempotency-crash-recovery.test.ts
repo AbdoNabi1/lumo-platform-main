@@ -136,7 +136,7 @@ async function seedIssuedInvoice(
     "tenant-a",
     "sub-1",
     "USD",
-    [{ description: "seat", amount: 5000 }],
+    [{ description: "seat", amountMinor: 5000 }],
     "evt-seed-1",
     clock.now(),
   );
@@ -328,7 +328,7 @@ describe("Task 1 Scenario 6 — conflicting collection request", () => {
       "tenant-a",
       "sub-1",
       "USD",
-      [{ description: "seat", amount: 5000 }],
+      [{ description: "seat", amountMinor: 5000 }],
       "evt-1",
       clock.now(),
     );

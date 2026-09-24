@@ -43,7 +43,7 @@ function wire() {
 }
 
 describe("Licensing in-memory repositories tenant isolation (ADR-0014, WP-10 T10.5)", () => {
-  it("InMemoryPlanRepository: a single instance cannot leak a plan across tenants", async () => {
+  it("InMemoryPlanRepository: a plan is PLATFORM-global (WP-14) — one row, visible to every tenant's reads", async () => {
     const { outbox, context, nextId } = wire();
     const repo = new InMemoryPlanRepository({ outbox, context });
     const plan = Plan.create(
@@ -54,12 +54,11 @@ describe("Licensing in-memory repositories tenant isolation (ADR-0014, WP-10 T10
       nextId(),
       clock.now(),
     );
-    await repo.save(plan, "tenant-a");
+    await repo.save(plan, "platform");
 
-    expect(await repo.findById(plan.id.toString(), "tenant-a")).not.toBeNull();
-    expect(await repo.findById(plan.id.toString(), "tenant-b")).toBeNull();
-    expect(await repo.findByKey("growth", "tenant-a")).not.toBeNull();
-    expect(await repo.findByKey("growth", "tenant-b")).toBeNull();
+    // No tenant argument exists on the reads any more: a plan is not a merchant's data.
+    expect(await repo.findById(plan.id.toString())).not.toBeNull();
+    expect(await repo.findByKey("growth")).not.toBeNull();
   });
 
   it("InMemorySubscriptionRepository: a single instance cannot leak a subscription across tenants", async () => {
@@ -165,7 +164,7 @@ describe("Licensing in-memory repositories tenant isolation (ADR-0014, WP-10 T10
       "merchant-1",
       "sub-1",
       "USD",
-      [{ description: "seat", amount: 2900 }],
+      [{ description: "seat", amountMinor: 2900 }],
       nextId(),
       clock.now(),
     );

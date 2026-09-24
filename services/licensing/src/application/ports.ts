@@ -9,9 +9,16 @@
  * already durable" approach Payments' `<intentId>:capture` key used (Phase A.8).
  */
 export interface PaymentsPort {
+  /**
+   * What stands behind `collect`: `"real"` moves money through a PSP; `"stub"` never does. Read by
+   * `assertProductionLicensingBillingConfigured` so a stub that "collects" successfully is impossible
+   * outside `local` (WP-14). Absent is treated as not-real.
+   */
+  readonly backing?: "real" | "stub";
+  /** `amountMinor` is an INTEGER of `currency`'s minor units (WP-14 money unit convention). */
   collect(
     tenantRef: string,
-    amount: number,
+    amountMinor: number,
     currency: string,
     idempotencyKey?: string,
   ): Promise<{ reference: string }>;
@@ -21,7 +28,7 @@ export interface PaymentsPort {
 export interface FinanceLedgerPort {
   postSettlement(
     tenantRef: string,
-    amount: number,
+    amountMinor: number,
     currency: string,
     reference: string,
   ): Promise<void>;

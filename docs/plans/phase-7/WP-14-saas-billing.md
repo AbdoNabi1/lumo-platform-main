@@ -42,13 +42,13 @@ platform-global.
 
 ## Tasks
 
-- [ ] **T14.1 — Read the existing licensing layer in full.**
+- [x] **T14.1 — Read the existing licensing layer in full.**
       `packages/db/prisma/schema/licensing.prisma` (all seven models listed above);
       `services/licensing/src/domain/` and `application/` for the use cases already built over
       them. Confirm which parts of the existing model already work per-merchant (Subscription,
       UsageCounter, Credit, Invoice) and touch only what genuinely needs to change (`Plan`).
 
-- [ ] **T14.2 — Make `Plan` platform-global with immutable versions.**
+- [x] **T14.2 — Make `Plan` platform-global with immutable versions.**
       Add a `PlanVersion` (or equivalent — check whether `services/licensing`'s existing code
       already has a versioning convention from a neighbouring aggregate, e.g. the pattern
       `WP-6`'s T6.2 points to for automation workflow versions, and reuse it rather than inventing
@@ -64,10 +64,10 @@ platform-global.
       with `MerchantFeatureOverride`/`MerchantCapabilities` and the existing `Credit` model, rather
       than a parallel entitlement mechanism — `packages/entitlement` already exists per Phase 7's
       `WP-5` citation (`the runtime PEP that already gates every protected command/API/admin
-  action/job/AI request`); check whether billing entitlements should flow through it before
+action/job/AI request`); check whether billing entitlements should flow through it before
       adding a second entitlement check path.
 
-- [ ] **T14.4 — Payment orchestration through `WP-13`'s contract.**
+- [x] **T14.4 — Payment orchestration through `WP-13`'s contract.**
       Morbeh's own billing charges (subscription renewal, usage overage) go through the same
       `PaymentProvider` port `WP-13` wires Stripe and Paymob behind. Do not add a second Stripe
       client or a second webhook handler — reuse `packages/psp-stripe` and (once `WP-13` lands)
@@ -95,6 +95,19 @@ platform-global.
       scope before building the screen here, and if `WP-15` has not landed yet, build the screen in
       `apps/admin-web` gated to a platform-only role, with a note in this WP's commit that it should
       migrate to the platform-admin app once `WP-15` exists.
+
+## Status — part 1 landed 2026-09-24 (T14.1, T14.2, T14.4)
+
+T14.3 (coupons), T14.5 (dunning), T14.6 (analytics) and T14.7 (screens) are NOT started, so the Definition of Done
+below stays open and Morbeh F-16 is recorded as **G-74**, open, with the follow-ups part 1 found. Design and
+findings: **D-061** (Morbeh's own PSP account; no `PaymentIntent` row), **D-062** (platform-global plans,
+pinned immutable versions, platform-only surface, row mapping), **D-063** (integer minor-unit money). Migration
+`20260924000000_wp14_platform_plans` is created and **not applied**. New runtime env vars:
+`PLATFORM_BILLING_STRIPE_SECRET_KEY` and `PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET` (absent ⇒ no billing adapter,
+never a stub; the boot guard refuses that outside `local`). The DoD's price-change test is
+`services/licensing/src/platform-billing.test.ts`. **Known limit:** the `PaymentProvider` port is on-session, so
+until a stored-payment-method / off-session path exists a real renewal capture fails closed (invoice `failed`,
+money unmoved) — G-74 (1).
 
 ## Definition of done
 

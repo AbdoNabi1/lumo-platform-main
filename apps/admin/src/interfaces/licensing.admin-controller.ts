@@ -117,6 +117,15 @@ export class LicensingAdminController {
     return this.licensing.createInvoice(input);
   }
 
+  async billSubscriptionRenewal(
+    principal: Principal,
+    input: Parameters<LicensingController["billSubscriptionRenewal"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.billSubscriptionRenewal(input);
+  }
+
   async collectInvoice(
     principal: Principal,
     input: Parameters<LicensingController["collectInvoice"]>[0],

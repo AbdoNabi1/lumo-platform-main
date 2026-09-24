@@ -79,7 +79,7 @@ async function seedIssuedInvoice(invoices: InvoiceRepository, id: string): Promi
     "tenant-a",
     "sub-1",
     "USD",
-    [{ description: "seat", amount: 5000 }],
+    [{ description: "seat", amountMinor: 5000 }],
     "evt-seed-1",
     clock.now(),
   );

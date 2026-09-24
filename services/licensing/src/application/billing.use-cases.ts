@@ -62,17 +62,22 @@ export class CreateInvoice implements UseCase<CreateInvoiceInput, IdOutput, Doma
   async execute(input: CreateInvoiceInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
-      const invoice = Invoice.createDraft(
-        id,
-        input.tenantRef,
-        input.subscriptionRef,
-        input.currency,
-        input.lineItems,
-        this.deps.idGenerator.generate(),
-        this.deps.clock.now(),
-      );
-      await this.deps.invoices.save(invoice, input.tenantId, tx);
-      return ok({ id: id.toString() });
+      try {
+        const invoice = Invoice.createDraft(
+          id,
+          input.tenantRef,
+          input.subscriptionRef,
+          input.currency,
+          input.lineItems,
+          this.deps.idGenerator.generate(),
+          this.deps.clock.now(),
+        );
+        await this.deps.invoices.save(invoice, input.tenantId, tx);
+        return ok({ id: id.toString() });
+      } catch (error) {
+        if (isDomainError(error)) return err(error);
+        throw error;
+      }
     });
   }
 }
@@ -110,7 +115,8 @@ interface CollectPrecheck {
   /** Invoice is already `paid` (idempotent resume) — skip the PSP call and return success as-is. */
   readonly alreadyPaid: boolean;
   readonly tenantRef: string;
-  readonly total: number;
+  /** INTEGER minor units of `currency` (WP-14 money unit convention). */
+  readonly totalMinor: number;
   readonly currency: string;
   /**
    * Optimistic-lock version at precheck time (Phase A.16 Task 1/2) — the durable correlation point
@@ -198,12 +204,12 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
     const precheck = await this.precheck(input.invoiceId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     if (precheck.value.alreadyPaid) return ok({ id: input.invoiceId });
-    const { tenantRef, total, currency, version } = precheck.value;
+    const { tenantRef, totalMinor, currency, version } = precheck.value;
     const idempotencyKey = `${input.invoiceId}:${version}:collect`;
 
     let collected: { reference: string };
     try {
-      collected = await this.deps.payments.collect(tenantRef, total, currency, idempotencyKey);
+      collected = await this.deps.payments.collect(tenantRef, totalMinor, currency, idempotencyKey);
     } catch (error) {
       await this.settleFailure(input.invoiceId, input.tenantId);
       throw error;
@@ -223,7 +229,7 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
       try {
         await this.deps.financeLedger.postSettlement(
           tenantRef,
-          total,
+          totalMinor,
           currency,
           collected.reference,
         );
@@ -246,7 +252,7 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
 
       const context = {
         tenantRef: invoice.tenantRef,
-        total: invoice.total,
+        totalMinor: invoice.totalMinor,
         currency: invoice.currency,
         version: invoice.version,
       };
@@ -257,6 +263,11 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
         return err(
           new BusinessRuleError(`Cannot transition invoice from ${invoice.status} to paid`),
         );
+      }
+      // WP-14: a zero-total invoice has nothing to collect, and a PSP rejects a zero amount — refuse
+      // here rather than send it (and, on the failure path, wrongly mark the invoice `failed`).
+      if (invoice.totalMinor === 0) {
+        return err(new BusinessRuleError("Cannot collect an invoice with a zero total"));
       }
       return ok({ alreadyPaid: false, ...context });
     });

@@ -199,6 +199,12 @@ export interface AdminWiringDeps {
   /** Required alongside `prisma` (ADR-0008) by every context that reads it. */
   readonly tenantId?: string;
   /**
+   * WP-14 (T14.2): the platform-operator tenant. Passed straight through to `wireLicensing(deps)`,
+   * whose controller refuses plan/subscription/billing writes from any other tenant. Absent ⇒ single
+   * tenant deployment. `createAdminHttpApi` sets it under `TENANT_MODE=multi` (fail-closed).
+   */
+  readonly platformTenantId?: string;
+  /**
    * Gates Orders' admin backoffice `markOrderPaid` action against Payments (Sprint A1 Task 5).
    * Passed straight through to `wireOrders(deps)` below; defaults to Orders' own always-verify
    * in-memory stub when absent — no behavior change for existing callers/tests.

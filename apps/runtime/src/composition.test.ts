@@ -23,6 +23,7 @@ import { InMemoryObjectStorage, StorageServiceObjectStorage } from "@platform/me
 import { TotpMfaProvider } from "@platform/security";
 import { isPaymobRegion, PaymobPaymentProvider } from "@platform/psp-paymob";
 import { StripePaymentProvider } from "@platform/psp-stripe";
+import { InMemoryPaymentsAdapter, PlatformBillingPaymentsAdapter } from "@platform/licensing";
 import type { PaymentProvider } from "@platform/contracts";
 import {
   PAYMOB_REGIONS,
@@ -335,15 +336,87 @@ describe("api entrypoint", () => {
     );
   });
 
-  it("FAILS CLOSED outside local without a production Licensing billing adapter (M2-3) — same shape as the PaymentProvider guard, checked independently of it", () => {
-    expect(() => assertProductionLicensingBillingConfigured("production")).toThrow(/Licensing/);
-    expect(() => assertProductionLicensingBillingConfigured("production")).toThrow(
-      /payments\/financeLedger/,
+  // WP-14: the guard used to assert "always missing" (no real adapter existed). A real
+  // `PlatformBillingPaymentsAdapter` now can exist, so — exactly like
+  // `assertProductionPaymentProviderConfigured` — "configured" must be told apart from "not".
+  const noBilling = { platformBillingPayments: undefined };
+  const realBilling = {
+    platformBillingPayments: new PlatformBillingPaymentsAdapter({ provider: realStripe }),
+  };
+  const stubBilling = { platformBillingPayments: new InMemoryPaymentsAdapter() };
+
+  it("FAILS CLOSED outside local without a platform billing PSP (M2-3 / WP-14)", () => {
+    expect(() => assertProductionLicensingBillingConfigured("production", noBilling)).toThrow(
+      /Licensing/,
+    );
+    expect(() => assertProductionLicensingBillingConfigured("production", noBilling)).toThrow(
+      /PLATFORM_BILLING_STRIPE_SECRET_KEY/,
     );
   });
 
+  it("FAILS CLOSED outside local when the payments adapter is the always-collects stub — a stub that 'collects' must be impossible", () => {
+    expect(() => assertProductionLicensingBillingConfigured("production", stubBilling)).toThrow(
+      /not a real/,
+    );
+    expect(() => assertProductionLicensingBillingConfigured("staging", stubBilling)).toThrow(
+      /Licensing/,
+    );
+  });
+
+  it("passes outside local once the real platform billing adapter is composed", () => {
+    expect(() =>
+      assertProductionLicensingBillingConfigured("production", realBilling),
+    ).not.toThrow();
+  });
+
   it("stays permissive in local (matches the PaymentProvider guard's dev-mode behavior)", () => {
-    expect(() => assertProductionLicensingBillingConfigured("local")).not.toThrow();
+    expect(() => assertProductionLicensingBillingConfigured("local", noBilling)).not.toThrow();
+    expect(() => assertProductionLicensingBillingConfigured("local", stubBilling)).not.toThrow();
+  });
+
+  it("composes NO platform billing adapter without dedicated billing credentials — the store's Stripe key never doubles as Morbeh's", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        STRIPE_SECRET_KEY: "sk_test_store",
+        STRIPE_WEBHOOK_SECRET: "whsec_store",
+      }),
+    );
+    expect(core.paymentProvider).toBeInstanceOf(StripePaymentProvider);
+    expect(core.platformBillingPayments).toBeUndefined();
+  });
+
+  it("composes the real platform billing adapter once dedicated billing credentials are configured", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        PLATFORM_BILLING_STRIPE_SECRET_KEY: "sk_test_billing",
+        PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET: "whsec_billing",
+      }),
+    );
+    expect(core.platformBillingPayments).toBeInstanceOf(PlatformBillingPaymentsAdapter);
+    expect(core.platformBillingPayments?.backing).toBe("real");
+  });
+
+  it("refuses to compose billing on the store's webhook endpoint secret — billing events must not reach the store handler", () => {
+    expect(() =>
+      buildRuntimeCore(
+        loadRuntimeConfig({
+          ...validEnv,
+          STRIPE_SECRET_KEY: "sk_test_store",
+          STRIPE_WEBHOOK_SECRET: "whsec_same",
+          PLATFORM_BILLING_STRIPE_SECRET_KEY: "sk_test_billing",
+          PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET: "whsec_same",
+        }),
+      ),
+    ).toThrow(/PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET/);
+  });
+
+  it("a half-configured billing PSP composes nothing (the guard then names what is missing)", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PLATFORM_BILLING_STRIPE_SECRET_KEY: "sk_test_billing" }),
+    );
+    expect(core.platformBillingPayments).toBeUndefined();
   });
 
   it("FAILS CLOSED outside local while the resolved object-storage adapter is still the in-memory stub (M2-2)", () => {

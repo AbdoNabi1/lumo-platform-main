@@ -117,6 +117,18 @@ const schema = z
     /** Override for sandbox/testing; defaults to Stripe's production API. */
     STRIPE_API_BASE: z.string().url().default("https://api.stripe.com"),
 
+    // ── MORBEH'S OWN billing PSP account (WP-14, T14.4) — the account a MERCHANT PAYS INTO for their
+    // subscription. Deliberately separate from the STRIPE_* pair above (the account shoppers pay into
+    // for a merchant's store) and from every merchant's own credentials: money moves from the merchant
+    // to Morbeh, so Morbeh's credentials are the ones on the wire. Both required to enable billing;
+    // either absent ⇒ no platform billing adapter (never a stub). The webhook secret must be a
+    // DIFFERENT Stripe endpoint from STRIPE_WEBHOOK_SECRET so billing events cannot reach the store's
+    // webhook handler (enforced when the runtime composes billing).
+    /** Morbeh's billing Stripe secret key (`sk_test_...` / `sk_live_...`). */
+    PLATFORM_BILLING_STRIPE_SECRET_KEY: z.string().optional(),
+    /** Signing secret (`whsec_...`) of the Stripe endpoint dedicated to Morbeh's billing events. */
+    PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET: z.string().optional(),
+
     // ── Merchant payment credentials (WP-13). Merchants' Paymob secrets are sealed with
     // `@platform/secrets`' envelope encryption before they reach Postgres; this is the key-encryption
     // key reference they are sealed under. Absent ⇒ Paymob is UNAVAILABLE (no vault, no adapter is

@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
 import { Credit } from "../domain/credit";
 import { UsageCounter } from "../domain/usage-counter";
-import { CreditMapper, UsageCounterMapper } from "./mappers";
+import { CreditMapper, InvoiceMapper, SubscriptionMapper, UsageCounterMapper } from "./mappers";
 
 const ID = UniqueEntityId.from("row-1");
 
@@ -58,5 +58,59 @@ describe("CreditMapper (WP-11, F-07)", () => {
 
     expect(credit.amount).toBe(19.9999);
     expect(credit.amountDecimalString).toBe("19.9999");
+  });
+});
+
+describe("InvoiceMapper (WP-14, Trap 3)", () => {
+  const row = (lineItems: unknown) => ({
+    id: "inv-1",
+    tenantRef: "merchant-1",
+    subscriptionRef: "sub-1",
+    currency: "EGP",
+    lineItems: lineItems as never,
+    status: "issued" as const,
+    paymentReference: null,
+    version: 1,
+  });
+
+  it("round-trips integer minor-unit line items exactly", () => {
+    const invoice = InvoiceMapper.toDomain(row([{ description: "plan", amountMinor: 2900 }]));
+    expect(invoice.totalMinor).toBe(2900);
+    expect(InvoiceMapper.toRow(invoice, "platform").lineItems).toEqual([
+      { description: "plan", amountMinor: 2900 },
+    ]);
+  });
+
+  it("refuses a pre-convention row (`amount`, unit unknown) instead of guessing its unit", () => {
+    expect(() => InvoiceMapper.toDomain(row([{ description: "plan", amount: 29 }]))).toThrow(
+      /amountMinor/,
+    );
+  });
+
+  it("refuses a fractional amountMinor", () => {
+    expect(() => InvoiceMapper.toDomain(row([{ description: "plan", amountMinor: 29.5 }]))).toThrow(
+      /amountMinor/,
+    );
+  });
+});
+
+describe("SubscriptionMapper (WP-14)", () => {
+  it("revives the JSONB renewal schedule's date — JSON hands back a string, the domain needs a Date", () => {
+    const subscription = SubscriptionMapper.toDomain({
+      id: "sub-1",
+      tenantRef: "merchant-1",
+      planVersionRef: "plan-1-v1",
+      status: "active",
+      renewalSchedule: { cycleDays: 30, nextRenewalAt: "2026-10-01T00:00:00.000Z" as never },
+      gracePeriodDays: null,
+      retryPolicy: null,
+      cancellationReason: null,
+      pausedUntil: null,
+      version: 1,
+    });
+    expect(subscription.renewalSchedule?.nextRenewalAt).toBeInstanceOf(Date);
+    expect(subscription.renewalSchedule?.nextRenewalAt.toISOString()).toBe(
+      "2026-10-01T00:00:00.000Z",
+    );
   });
 });

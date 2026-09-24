@@ -41,6 +41,7 @@ import {
   SchedulePlanVersion,
   SetMerchantFeatureOverride,
 } from "./application/licensing.use-cases";
+import { BillSubscriptionRenewal } from "./application/renewal.use-cases";
 import type {
   CreditRepository,
   InvoiceRepository,
@@ -107,6 +108,13 @@ export interface LicensingWiringDeps {
    * guard as `payments` above.
    */
   readonly financeLedger?: FinanceLedgerPort;
+  /**
+   * The platform-operator tenant (WP-14, T14.2): plans, subscriptions, invoices, credits and
+   * renewal billing are PLATFORM-owned, and a caller from any other tenant is refused with a 403 at
+   * `LicensingController`. Absent ⇒ single-tenant deployment (the one tenant is the platform).
+   * `apps/admin`'s composition passes the deployment tenant under `TENANT_MODE=multi` (ADR-0014 8f).
+   */
+  readonly platformTenantId?: string;
 }
 
 export interface WiredLicensing {
@@ -156,7 +164,19 @@ function buildController(
     clock: deps.clock,
   };
 
+  const collectInvoice = new CollectInvoice(billingDeps);
+
   return new LicensingController({
+    platformTenantId: deps.platformTenantId,
+    billSubscriptionRenewal: new BillSubscriptionRenewal({
+      subscriptions: repos.subscriptions,
+      plans: repos.plans,
+      invoices: repos.invoices,
+      collectInvoice,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    }),
     createPlan: new CreatePlan(licensingDeps),
     createPlanDraft: new CreatePlanDraft(licensingDeps),
     schedulePlanVersion: new SchedulePlanVersion(licensingDeps),
@@ -179,7 +199,7 @@ function buildController(
     getUsageCounter: new GetUsageCounter(licensingDeps),
     createInvoice: new CreateInvoice(billingDeps),
     issueInvoice: new IssueInvoice(billingDeps),
-    collectInvoice: new CollectInvoice(billingDeps),
+    collectInvoice,
     grantCredit: new GrantCredit(billingDeps),
     consumeCredit: new ConsumeCredit(billingDeps),
     expireCredit: new ExpireCredit(billingDeps),

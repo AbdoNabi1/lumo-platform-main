@@ -125,10 +125,10 @@ export class PlanMapper {
     );
   }
 
-  static toRow(plan: Plan, tenantId: string) {
+  /** WP-14: platform-global — no tenant on the row. `originTenantId` is migration provenance only. */
+  static toRow(plan: Plan) {
     return {
       id: plan.id.toString(),
-      tenantId,
       key: plan.key,
       name: plan.name,
       tier: plan.tier,
@@ -153,7 +153,14 @@ export class SubscriptionMapper {
       row.status,
       row.version,
       {
-        renewalSchedule: row.renewalSchedule ?? undefined,
+        // JSONB hands the date back as an ISO string; the domain type is `Date`.
+        renewalSchedule:
+          row.renewalSchedule === null
+            ? undefined
+            : {
+                cycleDays: row.renewalSchedule.cycleDays,
+                nextRenewalAt: new Date(row.renewalSchedule.nextRenewalAt),
+              },
         gracePeriodDays: row.gracePeriodDays ?? undefined,
         retryPolicy: row.retryPolicy ?? undefined,
         cancellationReason: row.cancellationReason ?? undefined,
@@ -288,11 +295,31 @@ export class InvoiceMapper {
       row.tenantRef,
       row.subscriptionRef,
       row.currency,
-      row.lineItems,
+      InvoiceMapper.assertMinorUnitLines(row.id, row.lineItems),
       row.status,
       row.version,
       row.paymentReference ?? undefined,
     );
+  }
+
+  /**
+   * WP-14 (Trap 3): every persisted line must carry an INTEGER `amountMinor`. A pre-convention row
+   * (`{ amount }`, unit never recorded) is refused loudly rather than read as minor units — the
+   * migration `20260924000000_wp14_platform_plans` converts such rows; one that survives is a defect
+   * to surface, not a number to charge.
+   */
+  private static assertMinorUnitLines(
+    invoiceId: string,
+    lineItems: readonly InvoiceLineItem[],
+  ): readonly InvoiceLineItem[] {
+    for (const item of lineItems) {
+      if (!Number.isSafeInteger(item.amountMinor)) {
+        throw new Error(
+          `Invoice ${invoiceId} has a line without an integer amountMinor (pre-WP-14 row?); refusing to read it as money`,
+        );
+      }
+    }
+    return lineItems;
   }
 
   static toRow(invoice: Invoice, tenantId: string) {

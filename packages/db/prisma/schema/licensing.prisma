@@ -1,9 +1,16 @@
 // `licensing` schema — Plan, Subscription, MerchantFeatureOverride, MerchantCapabilities,
 // UsageCounter, Credit, Invoice (services/licensing). ADR-0018 Sprint 5.5/5.6 addenda.
 
+/// WP-14 (T14.2, Morbeh F-16): PLATFORM-GLOBAL. A plan is defined once by Morbeh and sold to many
+/// merchants, so it carries NO `tenant_id` and — deliberately — NO `tenant_isolation` RLS policy: a
+/// tenant-scoped policy would hide the catalogue from every merchant's read scope. What protects it
+/// instead: writes are reachable only through the platform-only guard in `LicensingController`
+/// (`platformTenantId`), and a published `versions[]` entry is an immutable, deep-frozen snapshot that
+/// a `Subscription` pins by id (`planVersionRef`). See migration `20260924000000_wp14_platform_plans`.
 model Plan {
   id                 String   @id @db.Uuid
-  tenantId           String   @map("tenant_id")
+  /// Provenance only: the tenant this row belonged to before it became platform-global. NEVER a scope.
+  originTenantId     String?  @map("origin_tenant_id")
   key                String
   name               String
   tier               String // free | starter | growth | pro | enterprise | custom
@@ -14,7 +21,7 @@ model Plan {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  @@unique([tenantId, key])
+  @@unique([key])
   @@map("plans")
   @@schema("licensing")
 }
@@ -117,6 +124,7 @@ model Invoice {
   tenantRef         String   @map("tenant_ref")
   subscriptionRef    String   @map("subscription_ref")
   currency          String
+  /// WP-14: `[{ description, amountMinor }]` — `amountMinor` an INTEGER of the currency's minor units.
   lineItems         Json     @default("[]") @map("line_items")
   status            String // draft | issued | paid | failed | voided
   paymentReference  String?  @map("payment_reference")

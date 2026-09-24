@@ -112,31 +112,48 @@ function collectGuardFailure(guard: () => void): string | undefined {
 }
 
 /**
- * M2-3: services/licensing wires PaymentsPort/FinanceLedgerPort unconditionally to
- * InMemoryPaymentsAdapter/InMemoryFinanceLedgerAdapter (services/licensing/src/infrastructure/
- * deferred-billing-adapters.ts) in every environment — collect() always "succeeds" and
- * postSettlement() is a no-op, so a merchant can hold an active paid subscription and consume
- * licensed capability while zero money has ever actually been collected or posted to the Finance
- * ledger. No real PSP-backed adapter is wired anywhere in this codebase yet (building one is out
- * of scope here — same class of work as the still-open C2-2 real-PSP-adapter long pole, see
- * MEDIUM_REMEDIATION_PLAN.md). Fail closed outside `local`, mirroring the MFA (C2-4) and
- * PaymentProvider (V-1) guards above; `local` gets a warning so the gap stays visible during
- * development. Extracted the same way as `assertProductionPaymentProviderConfigured` so it can be
- * exercised directly in tests.
+ * M2-3 (reshaped by WP-14): services/licensing wired PaymentsPort/FinanceLedgerPort unconditionally to
+ * InMemoryPaymentsAdapter/InMemoryFinanceLedgerAdapter in every environment — collect() always
+ * "succeeded" and no money moved, so a merchant could hold an active paid subscription while zero
+ * money was collected. This guard used to assert "always missing", because no real adapter existed.
+ * One now can (`PlatformBillingPaymentsAdapter`, Morbeh's OWN PSP account, composed by
+ * `buildRuntimeCore` from `PLATFORM_BILLING_STRIPE_*`), so — exactly like
+ * `assertProductionPaymentProviderConfigured` — "configured" must be told apart from "not". It takes the
+ * already-resolved adapter and fails closed outside `local` when it is absent, OR present but not
+ * `backing: "real"`: a stub that "collects" successfully must be impossible outside `local`.
+ * `local` gets a warning so the gap stays visible.
+ *
+ * Deliberately NOT asserted here: the Finance-ledger settlement post (`FinanceLedgerPort`). It is a
+ * best-effort mirror of an invoice that is already durably `paid`, no real adapter exists yet, and
+ * demanding one would keep this guard failing forever — tracked as an open gap, not hidden.
  */
-export function assertProductionLicensingBillingConfigured(appEnv: RuntimeConfig["APP_ENV"]): void {
+export function assertProductionLicensingBillingConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+  billing: Pick<RuntimeCore, "platformBillingPayments">,
+): void {
+  const payments = billing.platformBillingPayments;
+  const problems: string[] = [];
+  if (payments === undefined) {
+    problems.push(
+      "no production Licensing billing payments adapter is configured. Morbeh's own PSP account is " +
+        "not set: the in-memory stub (collect() always succeeds, no money moves) must never back " +
+        "billing outside APP_ENV=local (M2-3). Set PLATFORM_BILLING_STRIPE_SECRET_KEY and " +
+        "PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET (a dedicated billing endpoint, not the store's).",
+    );
+  } else if (payments.backing !== "real") {
+    problems.push(
+      "the Licensing billing payments adapter is not a real PSP-backed adapter (its backing is " +
+        `"${payments.backing ?? "unknown"}"): a stub that "collects" without moving money must never ` +
+        "back billing outside APP_ENV=local (M2-3).",
+    );
+  }
+  if (problems.length === 0) return;
   if (appEnv === "local") {
-    logger.warn(
-      "Licensing billing is permissive: no production payments/financeLedger adapter configured, " +
-        "APP_ENV=local",
-    );
+    for (const problem of problems) {
+      logger.warn(`Licensing billing guard (APP_ENV=local, not enforced): ${problem}`);
+    }
   } else {
-    throw new Error(
-      "api: no production Licensing payments/financeLedger adapter is configured. The in-memory " +
-        "stubs (collect() always succeeds, postSettlement() is a no-op) must never back billing " +
-        "outside APP_ENV=local (M2-3). Pass payments/financeLedger in createAdminHttpApi's deps " +
-        "once real adapters exist.",
-    );
+    throw new Error(`api: ${problems.join(" Also: ")}`);
   }
 }
 
@@ -383,7 +400,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   const guardFailures = [
     collectGuardFailure(() => assertProductionMfaConfigured(config.APP_ENV, runtime.mfaProviders)),
     collectGuardFailure(() => assertProductionPaymentProviderConfigured(config.APP_ENV, runtime)),
-    collectGuardFailure(() => assertProductionLicensingBillingConfigured(config.APP_ENV)),
+    collectGuardFailure(() => assertProductionLicensingBillingConfigured(config.APP_ENV, runtime)),
     collectGuardFailure(() =>
       assertProductionObjectStorageConfigured(config.APP_ENV, runtime.objectStorage),
     ),
@@ -444,6 +461,11 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // the vault that seals them. Neither is a process-wide provider.
     paymobProviderFactory: runtime.paymobProviderFactory,
     paymentCredentialVault: runtime.paymentCredentialVault,
+    // WP-14 T14.4: Licensing's REAL collection, through Morbeh's own PSP account. Absent ⇒ Licensing
+    // keeps its in-memory stub, which assertProductionLicensingBillingConfigured refuses outside local.
+    ...(runtime.platformBillingPayments === undefined
+      ? {}
+      : { payments: runtime.platformBillingPayments }),
     // H-02: every authorization decision on every admin action was recorded to a process-local,
     // never-pruned in-memory array (destroyed on restart, unbounded growth against the container
     // memory limit). The durable adapter, the `platform.audit_events` table, and the 7-year-retention

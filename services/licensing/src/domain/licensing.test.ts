@@ -14,7 +14,12 @@ function spec(overrides: Partial<PlanSpec> = {}): PlanSpec {
   return {
     limits: { maxProducts: 100 },
     featureEntitlements: ["basic_reports"],
-    pricing: { basePrice: 2900, billingCycle: "monthly", creditAllowances: {} },
+    pricing: {
+      basePriceMinor: 2900,
+      currency: "USD",
+      billingCycle: "monthly",
+      creditAllowances: {},
+    },
     ...overrides,
   };
 }
@@ -65,7 +70,7 @@ describe("Plan / PlanVersion", () => {
     const v1 = plan.createDraft(spec(), "evt-2", new Date(0));
     plan.publish(v1.id.toString(), "evt-3", new Date(0));
     const v2 = plan.createDraft(
-      spec({ pricing: { ...spec().pricing, basePrice: 3900 } }),
+      spec({ pricing: { ...spec().pricing, basePriceMinor: 3900 } }),
       "evt-4",
       new Date(0),
     );
@@ -210,11 +215,11 @@ describe("UsageCounter / Credit / Invoice", () => {
       "tenant-1",
       "sub-1",
       "USD",
-      [{ description: "Growth plan", amount: 2900 }],
+      [{ description: "Growth plan", amountMinor: 2900 }],
       "evt-1",
       new Date(0),
     );
-    expect(invoice.total).toBe(2900);
+    expect(invoice.totalMinor).toBe(2900);
     invoice.issue("evt-2", new Date(0));
     invoice.markPaid("psp-ref-1", "evt-3", new Date(0));
     expect(invoice.status).toBe("paid");

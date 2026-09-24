@@ -23,7 +23,12 @@ function spec(): PlanSpec {
   return {
     limits: { maxProducts: 100 },
     featureEntitlements: ["basic_reports"],
-    pricing: { basePrice: 2900, billingCycle: "monthly", creditAllowances: {} },
+    pricing: {
+      basePriceMinor: 2900,
+      currency: "USD",
+      billingCycle: "monthly",
+      creditAllowances: {},
+    },
   };
 }
 
@@ -113,7 +118,7 @@ describe("licensing (end to end)", () => {
       tenantRef: "tenant-1",
       subscriptionRef: "sub-1",
       currency: "USD",
-      lineItems: [{ description: "Growth plan", amount: 2900 }],
+      lineItems: [{ description: "Growth plan", amountMinor: 2900 }],
       tenantId: "tenant-local",
     });
     expect(invoice.status).toBe(201);

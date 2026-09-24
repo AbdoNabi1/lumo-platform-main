@@ -46,6 +46,13 @@ function requireTx(tx: unknown): TransactionClient {
   return tx as TransactionClient;
 }
 
+/**
+ * WP-14 (T14.2): `licensing.plans` is PLATFORM-GLOBAL — no `tenant_id` column and therefore no
+ * `tenant_isolation` RLS policy (see migration `20260924000000_wp14_platform_plans`). Reads need no
+ * tenant scope; `save`'s `actingTenantId` only stamps the outbox envelope. What protects the table
+ * instead of RLS: writes are reachable only through `LicensingController`'s platform-only guard, and a
+ * published `PlanVersion` is an immutable, deep-frozen snapshot.
+ */
 export class PrismaPlanRepository implements PlanRepository {
   private readonly deps: PrismaLicensingRepositoriesDeps;
 
@@ -53,10 +60,10 @@ export class PrismaPlanRepository implements PlanRepository {
     this.deps = deps;
   }
 
-  async save(plan: Plan, tenantId: string, tx?: unknown): Promise<void> {
+  async save(plan: Plan, actingTenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = plan.id.toString();
-    const row = PlanMapper.toRow(plan, tenantId);
+    const row = PlanMapper.toRow(plan);
     // `PlanVersionRow[]` has no index signature, so it has no structural overlap with
     // `InputJsonValue`'s `InputJsonObject` (comparability fails, not just assignability).
     const versions = row.versions as unknown as Prisma.InputJsonValue;
@@ -64,7 +71,7 @@ export class PrismaPlanRepository implements PlanRepository {
       await client.plan.create({ data: { ...row, versions } });
     } else {
       const updated = await client.plan.updateMany({
-        where: { id, tenantId, version: plan.version },
+        where: { id, version: plan.version },
         data: {
           name: row.name,
           versions,
@@ -76,31 +83,22 @@ export class PrismaPlanRepository implements PlanRepository {
     }
     await this.deps.outbox.write(
       plan.pullDomainEvents(),
-      { ...this.deps.context, tenantId },
+      { ...this.deps.context, tenantId: actingTenantId },
       client,
     );
   }
 
-  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
-  async findById(id: string, tenantId: string, tx?: unknown): Promise<Plan | null> {
-    const run = (client: TransactionClient) => client.plan.findFirst({ where: { id, tenantId } });
-    const row =
-      tx !== undefined && tx !== null
-        ? await run(tx as TransactionClient)
-        : await runReadScoped(this.deps.prisma, tenantId, run);
+  async findById(id: string, tx?: unknown): Promise<Plan | null> {
+    const client = tx !== undefined && tx !== null ? (tx as TransactionClient) : this.deps.prisma;
+    const row = await client.plan.findFirst({ where: { id } });
     // Prisma row's `versions: JsonValue` has no structural overlap with `PlanRow`'s
     // `readonly PlanVersionRow[]` (comparability fails).
     return row === null ? null : PlanMapper.toDomain(row as unknown as PlanRow);
   }
 
-  async findByKey(key: string, tenantId: string, tx?: unknown): Promise<Plan | null> {
-    const run = (client: TransactionClient) => client.plan.findFirst({ where: { key, tenantId } });
-    const row =
-      tx !== undefined && tx !== null
-        ? await run(tx as TransactionClient)
-        : await runReadScoped(this.deps.prisma, tenantId, run);
-    // Prisma row's `versions: JsonValue` has no structural overlap with `PlanRow`'s
-    // `readonly PlanVersionRow[]` (comparability fails).
+  async findByKey(key: string, tx?: unknown): Promise<Plan | null> {
+    const client = tx !== undefined && tx !== null ? (tx as TransactionClient) : this.deps.prisma;
+    const row = await client.plan.findFirst({ where: { key } });
     return row === null ? null : PlanMapper.toDomain(row as unknown as PlanRow);
   }
 }

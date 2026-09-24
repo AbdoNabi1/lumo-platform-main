@@ -37,6 +37,9 @@ export {
 export {
   DeferredFinanceLedgerAdapter,
   DeferredPaymentsAdapter,
+  InMemoryPaymentsAdapter,
 } from "./infrastructure/deferred-billing-adapters";
+export { PlatformBillingPaymentsAdapter } from "./infrastructure/platform-billing-payments-adapter";
+export type { PlatformBillingPaymentsAdapterDeps } from "./infrastructure/platform-billing-payments-adapter";
 export type { FinanceLedgerPort, PaymentsPort } from "./application/ports";
 export { LICENSING_PUBLISHED_EVENTS } from "./infrastructure/licensing-event-translator";

@@ -80,6 +80,10 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
   const admin = wireAdmin({
     ...deps,
     legacyStorageKeys: deps.legacyStorageKeys ?? (deps.tenantMode === "multi" ? "refuse" : "allow"),
+    // WP-14: under multi the platform-operator tenant is the deployment tenant (ADR-0014 8f, the same
+    // scope the tenancy routes are pinned to). Missing there ⇒ "" ⇒ no tenant qualifies: fail closed.
+    platformTenantId:
+      deps.platformTenantId ?? (deps.tenantMode === "multi" ? (deps.tenantId ?? "") : undefined),
   });
   const guard = new AdminGuard({
     accessControl: deps.accessControl ?? new AllowAllAccessControl(),

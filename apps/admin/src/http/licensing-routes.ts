@@ -13,7 +13,9 @@ const createPlanDraftBody = z.object({
     limits: z.record(z.string(), z.number()),
     featureEntitlements: z.array(z.string()),
     pricing: z.object({
-      basePrice: z.number(),
+      // WP-14: an INTEGER of `currency`'s minor units, and the currency it is in.
+      basePriceMinor: z.number().int().nonnegative(),
+      currency: z.string().regex(/^[A-Z]{3}$/),
       billingCycle: z.enum(["monthly", "annual"]),
       trialDays: z.number().optional(),
       creditAllowances: z.record(z.string(), z.number()),
@@ -49,7 +51,9 @@ const createInvoiceBody = z.object({
   tenantRef: z.string().min(1),
   subscriptionRef: z.string().min(1),
   currency: z.string().min(1),
-  lineItems: z.array(z.object({ description: z.string().min(1), amount: z.number() })),
+  lineItems: z.array(
+    z.object({ description: z.string().min(1), amountMinor: z.number().int().nonnegative() }),
+  ),
 });
 const invoiceIdParams = z.object({ invoiceId: z.string().min(1) });
 const grantCreditBody = z.object({
@@ -58,7 +62,14 @@ const grantCreditBody = z.object({
   reason: z.string().min(1),
 });
 
-/** The Licensing admin HTTP surface (Sprint 5.5/5.6). Pure delegation. */
+/**
+ * The Licensing admin HTTP surface (Sprint 5.5/5.6). Pure delegation.
+ *
+ * WP-14 (T14.2): every write here is PLATFORM-owned — `LicensingController` refuses (403) any caller
+ * whose tenant is not the platform-operator tenant, so a merchant tenant granted a `licensing:*`
+ * permission still cannot price or grant its own subscription. The permission strings below gate
+ * WHO within the platform may act; the tenant guard gates WHICH tenant may.
+ */
 export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
   return [
     defineRoute({
@@ -141,6 +152,20 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.licensing.repinSubscription(context.principal, {
           ...params,
           ...body,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/subscriptions/:subscriptionId/renew",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary: "Bill one renewal period at the subscription's pinned plan-version price",
+      schema: { params: subscriptionIdParams },
+      handle: ({ params, context }) =>
+        admin.licensing.billSubscriptionRenewal(context.principal, {
+          ...params,
           tenantId: context.tenantId,
         }),
     }),

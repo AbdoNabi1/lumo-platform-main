@@ -24,7 +24,7 @@ async function createIssuedInvoice(app: ReturnType<typeof wireLicensing>): Promi
     tenantRef: "tenant-1",
     subscriptionRef: "sub-1",
     currency: "USD",
-    lineItems: [{ description: "Growth plan", amount: 2900 }],
+    lineItems: [{ description: "Growth plan", amountMinor: 2900 }],
     tenantId: "tenant-local",
   });
   const invoiceId = (invoice.body as { id: string }).id;

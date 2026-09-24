@@ -49,6 +49,7 @@ import {
 import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
 import { isPaymobRegion, PaymobPaymentProvider } from "@platform/psp-paymob";
 import { StripePaymentProvider } from "@platform/psp-stripe";
+import { PlatformBillingPaymentsAdapter, type PaymentsPort } from "@platform/licensing";
 import {
   NodeCrypto,
   TotpMfaProvider,
@@ -136,6 +137,15 @@ export interface RuntimeCore {
    */
   readonly paymobProviderFactory: PaymobProviderFactory | undefined;
   readonly paymentCredentialVault: PaymentCredentialVault | undefined;
+  /**
+   * WP-14 T14.4: Licensing's REAL `PaymentsPort` — Morbeh charging a merchant through MORBEH'S OWN
+   * PSP account (`PLATFORM_BILLING_STRIPE_*`), as a caller of the same `PaymentProvider` port
+   * (`buildPlatformBillingPayments`). `undefined` ⇒ not configured: Licensing then keeps its
+   * always-succeeds in-memory stub, which `assertProductionLicensingBillingConfigured` refuses
+   * outside `local`. Holds no tenant and no merchant credential, and is built from nothing the
+   * per-tenant resolvers use.
+   */
+  readonly platformBillingPayments: PaymentsPort | undefined;
   /**
    * Production MFA provider resolver (C2-4). Real RFC 6238 `TotpMfaProvider` over `NodeCrypto`,
    * built unconditionally — unlike `objectStorage`/`paymentProvider`, this needs no external
@@ -311,6 +321,8 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
         }
       : undefined;
 
+  const platformBillingPayments = buildPlatformBillingPayments(config);
+
   return {
     config,
     logger,
@@ -331,9 +343,49 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     paymentProvider,
     paymobProviderFactory,
     paymentCredentialVault,
+    platformBillingPayments,
     mfaProviders,
     signupEmail: new LoggingSignupEmailAdapter(),
   };
+}
+
+/**
+ * Morbeh's own billing PSP as Licensing's `PaymentsPort` (WP-14 T14.4). Reads ONLY the dedicated
+ * `PLATFORM_BILLING_STRIPE_*` pair — never `STRIPE_*` (the store's account) and never anything a
+ * merchant configured — and takes no tenant, so it cannot resolve a provider from one. The adapter is
+ * handed a bare `PaymentProvider`, not a resolver: see `PlatformBillingPaymentsAdapter`.
+ *
+ * Half-configured (one of the two set) ⇒ `undefined` and the boot guard names what is missing.
+ * The billing webhook secret equal to the store's ⇒ throws: the same Stripe endpoint would deliver
+ * billing events to the store's webhook handler.
+ */
+export function buildPlatformBillingPayments(
+  config: Pick<
+    RuntimeConfig,
+    | "PLATFORM_BILLING_STRIPE_SECRET_KEY"
+    | "PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET"
+    | "STRIPE_WEBHOOK_SECRET"
+    | "STRIPE_API_BASE"
+  >,
+): PaymentsPort | undefined {
+  const secretKey = config.PLATFORM_BILLING_STRIPE_SECRET_KEY;
+  const webhookSecret = config.PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET;
+  if (secretKey === undefined || webhookSecret === undefined) return undefined;
+  if (webhookSecret === config.STRIPE_WEBHOOK_SECRET) {
+    throw new Error(
+      "PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET must not equal STRIPE_WEBHOOK_SECRET: billing needs its own " +
+        "Stripe webhook endpoint, or its events would be delivered to the merchant-store webhook handler (WP-14).",
+    );
+  }
+  return new PlatformBillingPaymentsAdapter({
+    provider: new StripePaymentProvider({
+      secretKey,
+      webhookSecret,
+      apiBase: config.STRIPE_API_BASE,
+      fetch: async (url, init) => fetch(url, init),
+      logger,
+    }),
+  });
 }
 
 /**

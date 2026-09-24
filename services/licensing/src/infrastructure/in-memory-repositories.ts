@@ -22,12 +22,14 @@ export interface InMemoryLicensingRepositoriesDeps {
 }
 
 /**
- * ADR-0014 (WP-10, T10.5): every in-memory repository below is keyed by `(tenantId, id)` — none
+ * ADR-0014 (WP-10, T10.5): every in-memory repository below EXCEPT the platform-global plan
+ * repository is keyed by `(tenantId, id)` — none
  * of these aggregates carry the platform `tenantId` of their own, so the store must key on it
  * explicitly or a cross-tenant leak here would be invisible to every isolation test.
  */
 export class InMemoryPlanRepository implements PlanRepository {
-  private readonly store = new Map<string, { readonly tenantId: string; readonly plan: Plan }>();
+  /** WP-14: platform-global — keyed by plan id alone, no tenant. */
+  private readonly store = new Map<string, Plan>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -36,19 +38,22 @@ export class InMemoryPlanRepository implements PlanRepository {
     this.context = deps.context;
   }
 
-  async save(plan: Plan, tenantId: string, tx?: unknown): Promise<void> {
-    this.store.set(plan.id.toString(), { tenantId, plan });
-    await this.outbox.write(plan.pullDomainEvents(), { ...this.context, tenantId }, tx);
+  async save(plan: Plan, actingTenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(plan.id.toString(), plan);
+    await this.outbox.write(
+      plan.pullDomainEvents(),
+      { ...this.context, tenantId: actingTenantId },
+      tx,
+    );
   }
 
-  async findById(id: string, tenantId: string): Promise<Plan | null> {
-    const entry = this.store.get(id);
-    return entry !== undefined && entry.tenantId === tenantId ? entry.plan : null;
+  async findById(id: string): Promise<Plan | null> {
+    return this.store.get(id) ?? null;
   }
 
-  async findByKey(key: string, tenantId: string): Promise<Plan | null> {
-    for (const entry of this.store.values()) {
-      if (entry.tenantId === tenantId && entry.plan.key === key) return entry.plan;
+  async findByKey(key: string): Promise<Plan | null> {
+    for (const plan of this.store.values()) {
+      if (plan.key === key) return plan;
     }
     return null;
   }

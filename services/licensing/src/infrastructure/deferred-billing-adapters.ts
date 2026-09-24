@@ -2,6 +2,7 @@ import type { FinanceLedgerPort, PaymentsPort } from "../application/ports";
 
 /** Offline in-memory stub — always succeeds. Production swaps this for the deferred adapters below. */
 export class InMemoryPaymentsAdapter implements PaymentsPort {
+  readonly backing = "stub" as const;
   private counter = 0;
 
   async collect(): Promise<{ reference: string }> {
@@ -18,11 +19,12 @@ export class InMemoryFinanceLedgerAdapter implements FinanceLedgerPort {
 }
 
 /**
- * Production adapter onto the Payments PSP port (ADR-0012). Wiring the real collection call is a
- * later runtime milestone — deferred stub, mirroring every other cross-context provider adapter
- * this recovery (e.g. Media's `StorageServiceObjectStorage`).
+ * Superseded for billing by `PlatformBillingPaymentsAdapter` (WP-14, T14.4) — the real collection
+ * through Morbeh's own PSP account. Kept because it fails loudly where a real adapter is absent.
  */
 export class DeferredPaymentsAdapter implements PaymentsPort {
+  readonly backing = "stub" as const;
+
   async collect(): Promise<{ reference: string }> {
     throw new Error("DeferredPaymentsAdapter is not wired in this environment yet");
   }

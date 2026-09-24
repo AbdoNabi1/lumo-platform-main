@@ -1,6 +1,6 @@
 import type { UseCase } from "@platform/application";
 import type { Clock, IdGenerator } from "@platform/contracts";
-import { UniqueEntityId } from "@platform/domain";
+import { BusinessRuleError, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, ConflictError, NotFoundError, isDomainError } from "@platform/utils";
@@ -10,7 +10,8 @@ import {
   MerchantFeatureOverride,
   type MerchantOverrideState,
 } from "../domain/merchant-feature-override";
-import { Plan, type PlanTier } from "../domain/plan";
+import { Plan, planIdOfVersionRef, type PlanTier } from "../domain/plan";
+import type { PlanVersion } from "../domain/plan-version";
 import type {
   MerchantCapabilitiesRepository,
   MerchantFeatureOverrideRepository,
@@ -35,8 +36,45 @@ export interface LicensingDeps {
   readonly clock: Clock;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export interface IdOutput {
   readonly id: string;
+}
+
+/**
+ * WP-14 (T14.2): the version a subscription may be pinned to — it must name a REAL version of a
+ * platform plan and be `published`. Before this a `planVersionRef` was an unchecked string, so a
+ * subscription could pin a draft, or nothing at all, and the price it "carried" was whatever a
+ * caller said.
+ */
+export async function resolvePinnableVersion(
+  plans: PlanRepository,
+  planVersionRef: string,
+  tx?: unknown,
+): Promise<Result<PlanVersion, DomainError>> {
+  const version = await findPinnedVersion(plans, planVersionRef, tx);
+  if (version === undefined) {
+    return err(new NotFoundError(`Plan version "${planVersionRef}" not found`));
+  }
+  if (version.status !== "published") {
+    return err(
+      new BusinessRuleError(`Plan version "${planVersionRef}" is ${version.status}, not published`),
+    );
+  }
+  return ok(version);
+}
+
+/** The version a pinned ref names, whatever its status (an archived version still bills its old subscribers). */
+export async function findPinnedVersion(
+  plans: PlanRepository,
+  planVersionRef: string,
+  tx?: unknown,
+): Promise<PlanVersion | undefined> {
+  const planId = planIdOfVersionRef(planVersionRef);
+  if (planId === null) return undefined;
+  const plan = await plans.findById(planId, tx);
+  return plan?.versionById(planVersionRef);
 }
 
 export interface CreatePlanInput {
@@ -56,7 +94,7 @@ export class CreatePlan implements UseCase<CreatePlanInput, IdOutput, DomainErro
 
   async execute(input: CreatePlanInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.plans.findByKey(input.key, input.tenantId, tx);
+      const existing = await this.deps.plans.findByKey(input.key, tx);
       if (existing !== null) return err(new ConflictError(`Plan "${input.key}" already exists`));
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const plan = Plan.create(
@@ -97,15 +135,20 @@ export class CreatePlanDraft implements UseCase<
 
   async execute(input: CreatePlanDraftInput): Promise<Result<PlanVersionIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PlanVersionIdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
+      const plan = await this.deps.plans.findById(input.planId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
-      const draft = plan.createDraft(
-        input.spec,
-        this.deps.idGenerator.generate(),
-        this.deps.clock.now(),
-      );
-      await this.deps.plans.save(plan, input.tenantId, tx);
-      return ok({ planVersionId: draft.id.toString() });
+      try {
+        const draft = plan.createDraft(
+          input.spec,
+          this.deps.idGenerator.generate(),
+          this.deps.clock.now(),
+        );
+        await this.deps.plans.save(plan, input.tenantId, tx);
+        return ok({ planVersionId: draft.id.toString() });
+      } catch (error) {
+        if (isDomainError(error)) return err(error);
+        throw error;
+      }
     });
   }
 }
@@ -134,7 +177,7 @@ export class SchedulePlanVersion implements UseCase<
 
   async execute(input: SchedulePlanVersionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
+      const plan = await this.deps.plans.findById(input.planId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       try {
         plan.schedule(
@@ -163,7 +206,7 @@ export class PublishPlanVersion implements UseCase<PlanVersionActionInput, IdOut
 
   async execute(input: PlanVersionActionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
+      const plan = await this.deps.plans.findById(input.planId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       try {
         plan.publish(input.planVersionId, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -187,7 +230,7 @@ export class RollbackPlan implements UseCase<PlanVersionActionInput, IdOutput, D
 
   async execute(input: PlanVersionActionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
+      const plan = await this.deps.plans.findById(input.planId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       try {
         plan.rollback(input.planVersionId, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -215,7 +258,7 @@ export class ClonePlanVersion implements UseCase<
 
   async execute(input: PlanVersionActionInput): Promise<Result<PlanVersionIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<PlanVersionIdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
+      const plan = await this.deps.plans.findById(input.planId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       const clone = plan.clone(
         input.planVersionId,
@@ -238,7 +281,7 @@ export class ArchivePlanVersion implements UseCase<PlanVersionActionInput, IdOut
 
   async execute(input: PlanVersionActionInput): Promise<Result<IdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IdOutput, DomainError>>(async (tx) => {
-      const plan = await this.deps.plans.findById(input.planId, input.tenantId, tx);
+      const plan = await this.deps.plans.findById(input.planId, tx);
       if (plan === null) return err(new NotFoundError("Plan not found"));
       try {
         plan.archive(input.planVersionId, this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -278,7 +321,7 @@ export class ComparePlanVersions implements UseCase<
   async execute(
     input: ComparePlanVersionsInput,
   ): Promise<Result<ComparePlanVersionsOutput, DomainError>> {
-    const plan = await this.deps.plans.findById(input.planId, input.tenantId);
+    const plan = await this.deps.plans.findById(input.planId);
     if (plan === null) return err(new NotFoundError("Plan not found"));
     try {
       const diff = plan.compare(input.planVersionAId, input.planVersionBId);
@@ -314,6 +357,8 @@ export class CreateSubscription implements UseCase<CreateSubscriptionInput, IdOu
       if (existing !== null) {
         return err(new ConflictError(`Tenant "${input.tenantRef}" already has a subscription`));
       }
+      const pinnable = await resolvePinnableVersion(this.deps.plans, input.planVersionRef, tx);
+      if (!pinnable.ok) return err(pinnable.error);
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const subscription = Subscription.startTrial(
         id,
@@ -353,6 +398,8 @@ export class RepinSubscription implements UseCase<RepinSubscriptionInput, IdOutp
         tx,
       );
       if (subscription === null) return err(new NotFoundError("Subscription not found"));
+      const pinnable = await resolvePinnableVersion(this.deps.plans, input.newPlanVersionRef, tx);
+      if (!pinnable.ok) return err(pinnable.error);
       subscription.repin(
         input.newPlanVersionRef,
         this.deps.idGenerator.generate(),
@@ -380,11 +427,29 @@ export class ActivateSubscription implements UseCase<SubscriptionIdInput, IdOutp
         tx,
       );
       if (subscription === null) return err(new NotFoundError("Subscription not found"));
+      const wasTrial = subscription.status === "trial";
       try {
         subscription.activate(this.deps.idGenerator.generate(), this.deps.clock.now());
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;
+      }
+      // WP-14: a paying subscription needs a renewal schedule, and nothing else ever set one. It is
+      // derived from the PINNED version (never a live plan): cycle length from its billing cycle, and
+      // the first charge falling due after the trial when activating out of one. Only when absent —
+      // a re-activation (grace/suspended -> active) keeps the schedule it already has. A ref that no
+      // longer resolves leaves no schedule, and `BillSubscriptionRenewal` refuses that, never guesses.
+      if (subscription.renewalSchedule === undefined) {
+        const pinned = await findPinnedVersion(this.deps.plans, subscription.planVersionRef, tx);
+        if (pinned !== undefined) {
+          const { billingCycle, trialDays } = pinned.spec.pricing;
+          const now = this.deps.clock.now();
+          const firstDueInDays = wasTrial ? (trialDays ?? 0) : 0;
+          subscription.setRenewalSchedule({
+            cycleDays: billingCycle === "annual" ? 365 : 30,
+            nextRenewalAt: new Date(now.getTime() + firstDueInDays * DAY_MS),
+          });
+        }
       }
       await this.deps.subscriptions.save(subscription, input.tenantId, tx);
       return ok({ id: subscription.id.toString() });
