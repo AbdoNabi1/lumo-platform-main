@@ -14,7 +14,12 @@ import type {
   RateLimiter,
 } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import { concatenateSignedFields, verifyPaymobSignature } from "@platform/psp-paymob";
+import type { ProviderRegistration } from "@platform/payments";
+import {
+  concatenateSignedFields,
+  parsePaymobConfig,
+  verifyPaymobSignature,
+} from "@platform/psp-paymob";
 import { logger } from "@platform/utils";
 import { createAdminHttpApi } from "./server";
 
@@ -34,7 +39,7 @@ const sessions: Record<string, AuthenticatedContext> = {
 };
 
 interface Call {
-  readonly provider: "stripe" | "paymob";
+  readonly provider: string;
   readonly op: "createIntent" | "refund" | "capture";
   readonly tenantId?: string;
   readonly secretKey?: string;
@@ -93,6 +98,70 @@ function paymobDouble(config: {
       Promise.resolve(verifyPaymobSignature({ payload, signature, secret: config.hmacSecret })),
   };
 }
+
+/** Paymob as the runtime registers it (same declarations, real config parser) over the doubled PSP. */
+const paymobRegistration: ProviderRegistration = {
+  key: "paymob",
+  capabilities: {
+    settlesAtPayTime: true,
+    deliversWebhooks: true,
+    requiresMerchantCredentials: true,
+    chargesOffSession: false,
+  },
+  backing: "real",
+  credentialFields: ["secretKey", "hmacSecret", "publicKey"],
+  parseConfig: (raw) => {
+    const parsed = parsePaymobConfig(raw);
+    return parsed.ok ? { ok: true, value: { ...parsed.value } } : parsed;
+  },
+  create: ({ credentials }) =>
+    paymobDouble({
+      secretKey: credentials.secretKey ?? "",
+      hmacSecret: credentials.hmacSecret ?? "",
+      publicKey: credentials.publicKey ?? "",
+    }),
+};
+
+/**
+ * A provider that exists nowhere in this repository outside this test: its own key, credentials,
+ * routing config and capabilities. Registered exactly the way Paymob is — that is the point.
+ */
+const ACME_KEY = "acme-pay";
+const acmeRegistration: ProviderRegistration = {
+  key: ACME_KEY,
+  capabilities: {
+    settlesAtPayTime: false,
+    deliversWebhooks: true,
+    requiresMerchantCredentials: true,
+    chargesOffSession: true,
+  },
+  backing: "real",
+  credentialFields: ["apiKey"],
+  parseConfig: (raw) => {
+    const code = (raw as { merchantCode?: unknown } | null)?.merchantCode;
+    return typeof code === "string" && /^M\d+$/.test(code)
+      ? { ok: true, value: { merchantCode: code } }
+      : { ok: false, reason: "merchantCode must look like M123" };
+  },
+  create: ({ config, credentials }) => ({
+    createIntent: (request: PaymentIntentRequest) => {
+      calls.push({
+        provider: ACME_KEY,
+        op: "createIntent",
+        tenantId: request.tenantId,
+        secretKey: credentials.apiKey,
+      });
+      return Promise.resolve({
+        providerIntentId: `acme_${String(config.merchantCode)}_${request.orderRef}`,
+        clientHandle: `https://pay.acme.example.test/${String(config.merchantCode)}`,
+      });
+    },
+    capture: () => Promise.resolve(),
+    cancel: () => Promise.resolve(),
+    refund: () => Promise.resolve(),
+    verifyWebhook: () => Promise.resolve(true),
+  }),
+};
 
 function infra() {
   const kv = new Map<string, unknown>();
@@ -153,7 +222,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
       idempotencyKeys: fx.idempotencyKeys,
       responseCache: fx.cache,
       paymentProvider: stripeDouble(),
-      paymobProviderFactory: (config) => paymobDouble(config),
+      providerRegistrations: [paymobRegistration, acmeRegistration],
     });
   });
   afterEach(async () => {
@@ -333,7 +402,9 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
     configureMerchant(token, {
       // Listed with the shopper's likely pick LAST on purpose — order is not a priority.
       enabledMethods: ["stripe", "cod", "paymob"],
-      paymob: { region: "egy", integrationId: 4097558, ...creds },
+      providerSettings: {
+        paymob: { config: { region: "egy", integrationId: 4097558 }, credentials: creds },
+      },
     });
 
   // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -355,7 +426,9 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
       expect(settings.body).not.toContain(secret);
     }
     expect(JSON.parse(settings.body)).toMatchObject({
-      methods: { paymob: { configured: true, region: "egy", integrationId: 4097558 } },
+      methods: {
+        paymob: { configured: true, config: { region: "egy", integrationId: 4097558 } },
+      },
     });
   });
 
@@ -378,6 +451,51 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
       expect(intent.status).toBe("created");
     },
   );
+
+  it("a provider registered at composition time with NO core edit reaches the shopper end to end — configured, offered, selected, paid through, with that merchant's own credential", async () => {
+    await seedPrice("tok-a");
+    const configured = await configureMerchant("tok-a", {
+      enabledMethods: ["stripe", ACME_KEY],
+      providerSettings: {
+        [ACME_KEY]: { config: { merchantCode: "M42" }, credentials: { apiKey: "ACME-KEY-OF-A" } },
+      },
+    });
+    expect(configured.statusCode).toBe(200);
+    expect(configured.body).not.toContain("ACME-KEY-OF-A");
+
+    const offered = ok<{ methods: string[] }>(
+      await get("/public/payment-methods", storefront("tenant-a")),
+      "list methods",
+    );
+    expect([...offered.methods].sort()).toEqual([ACME_KEY, "stripe"]);
+
+    const { opened } = await paid("tenant-a", "sess-acme", ACME_KEY);
+
+    expect(opened.provider).toBe(ACME_KEY);
+    expect(opened.clientHandle).toBe("https://pay.acme.example.test/M42");
+    expect((await intentOf("tok-a", opened.paymentIntentId)).provider).toBe(ACME_KEY);
+    expect(calls.filter((c) => c.op === "createIntent")).toEqual([
+      { provider: ACME_KEY, op: "createIntent", tenantId: "tenant-a", secretKey: "ACME-KEY-OF-A" },
+    ]);
+    const settings = await get("/payments/settings", admin("tok-a"));
+    expect(settings.body).not.toContain("ACME-KEY-OF-A");
+    expect(JSON.parse(settings.body)).toMatchObject({
+      methods: { [ACME_KEY]: { configured: true, config: { merchantCode: "M42" } } },
+    });
+  });
+
+  it("a merchant cannot enable a method nobody registered, and the provider's own validation rules apply at the route", async () => {
+    const unknown = await configureMerchant("tok-a", { enabledMethods: ["never-registered"] });
+    const badConfig = await configureMerchant("tok-a", {
+      enabledMethods: [ACME_KEY],
+      providerSettings: {
+        [ACME_KEY]: { config: { merchantCode: "nope" }, credentials: { apiKey: "k" } },
+      },
+    });
+
+    expect(unknown.statusCode).toBe(422);
+    expect(badConfig.statusCode).toBe(422);
+  });
 
   it("a method the merchant has not enabled cannot be selected — and nothing is chosen in its place", async () => {
     await seedPrice("tok-a");
@@ -696,7 +814,9 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
     await seedPrice("tok-a");
     await enableAll("tok-a");
     await configureMerchant("tok-a", {
-      paymob: { region: "atlantis", integrationId: 1, ...CREDS.a },
+      providerSettings: {
+        paymob: { config: { region: "atlantis", integrationId: 1 }, credentials: CREDS.a },
+      },
     });
     await paid("tenant-a", "sess-logs", "paymob");
     await deliver(

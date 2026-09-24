@@ -32,7 +32,7 @@ export class CheckoutPaymentMethodsAdapter implements PaymentMethodPort {
       );
     }
     const settings = response.body as MerchantPaymentSettingsDto;
-    return settings.enabledMethods.filter((method) => settings.methods[method].available);
+    return settings.enabledMethods.filter((method) => settings.methods[method]?.available === true);
   }
 }
 

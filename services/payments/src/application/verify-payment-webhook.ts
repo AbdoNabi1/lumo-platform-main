@@ -1,4 +1,4 @@
-import { isPaymentProviderKey } from "../domain/value-objects/payment-provider-key";
+import { isWellFormedProviderKey } from "../domain/value-objects/payment-provider-key";
 import { PaymentProviderUnavailableError, type PaymentProviderResolver } from "./ports";
 
 export interface VerifyPaymentWebhookInput {
@@ -27,7 +27,10 @@ export class VerifyPaymentWebhook {
   }
 
   async execute(input: VerifyPaymentWebhookInput): Promise<boolean> {
-    if (!isPaymentProviderKey(input.provider)) return false;
+    if (!isWellFormedProviderKey(input.provider)) return false;
+    // A provider that does not declare it delivers webhooks cannot have authentic ones: refuse
+    // BEFORE asking it, so a lax `verifyWebhook` cannot turn a forged request into an accepted one.
+    if (this.providers.capabilitiesOf(input.provider)?.deliversWebhooks !== true) return false;
     try {
       const provider = await this.providers.resolveForExisting(input.tenantId, input.provider);
       return await provider.verifyWebhook(input.payload, input.signature);

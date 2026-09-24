@@ -8,6 +8,11 @@ export {
   type PaymobRegion,
 } from "./paymob-payment-provider";
 export {
+  parsePaymobConfig,
+  type ParsePaymobConfigResult,
+  type PaymobConfig,
+} from "./paymob-config";
+export {
   PAYMOB_HMAC_FIELDS,
   concatenateSignedFields,
   extractSignedTransaction,

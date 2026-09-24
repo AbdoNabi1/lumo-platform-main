@@ -18,10 +18,7 @@ import {
   type PaymentStatusValue,
 } from "./value-objects/payment-status";
 import { PspReference, type PaymentMethod } from "./value-objects/payment-references";
-import {
-  isDirectCaptureProvider,
-  type PaymentProviderKey,
-} from "./value-objects/payment-provider-key";
+import type { PaymentProviderKey } from "./value-objects/payment-provider-key";
 import { PspToken } from "./value-objects/psp-token";
 import type { Result } from "@platform/types";
 
@@ -241,7 +238,8 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
   /**
    * Records the captured {@link Charge} (reusing the legacy charge/refund bookkeeping `remaining()` depends on) and transitions to `captured`.
    *
-   * For a direct-capture provider (Paymob, cash-on-delivery) it ALSO raises the legacy
+   * For a provider that settles at pay time (`settlesAtPayTime`; the caller passes
+   * `integrationEventId` for exactly those) it ALSO raises the legacy
    * `PaymentCaptured` event (`payments.payment_intent.captured`) — the only event Orders'
    * `PaymentCapturedConsumer` and Finance's captured consumer subscribe to, and so the only thing
    * that ever drives an order to paid. The lifecycle transition alone raises
@@ -259,12 +257,7 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
     );
     this.transition("captured", eventId, occurredAt);
     this.recordAttempt("capture", "succeeded", occurredAt);
-    if (this.isDirectCapture) {
-      if (integrationEventId === undefined) {
-        throw new BusinessRuleError(
-          "A direct-capture settlement needs its own integration event id",
-        );
-      }
+    if (integrationEventId !== undefined) {
       this.addDomainEvent(
         new PaymentCaptured(
           { eventId: integrationEventId, aggregateId: this.id, occurredAt },
@@ -296,8 +289,9 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
 
   /**
    * Walks a direct-capture intent to `capture_requested`, the only status `markCaptured` may follow,
-   * for a provider that has no authorize/capture-request phase of its own (see
-   * {@link isDirectCaptureProvider}). The intermediate `processing`/`authorized` statuses are
+   * for a provider that has no authorize/capture-request phase of its own (one whose declared
+   * capabilities say `settlesAtPayTime` — the CALLER checks that; the aggregate holds no
+   * capability and knows no provider name). The intermediate `processing`/`authorized` statuses are
    * bookkeeping so the existing transition table is respected, not claims about the money: the
    * caller runs this in the SAME transaction that settles the capture, on the strength of a
    * verified signal (a signature-checked callback, or an operator's confirmed cash collection) —
@@ -310,11 +304,6 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
     occurredAt: Date,
     providerTransactionRef?: string,
   ): void {
-    if (!this.isDirectCapture) {
-      throw new BusinessRuleError(
-        `Provider "${this.props.provider}" captures through the authorize/capture lifecycle, not directly`,
-      );
-    }
     if (providerTransactionRef !== undefined && this.props.providerTransactionRef === undefined) {
       this.props.providerTransactionRef = providerTransactionRef;
     }
@@ -549,11 +538,6 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
 
   get providerTransactionRef(): string | undefined {
     return this.props.providerTransactionRef;
-  }
-
-  /** True for providers with no authorize/capture-request phase (Paymob, cash-on-delivery). */
-  get isDirectCapture(): boolean {
-    return isDirectCaptureProvider(this.props.provider);
   }
 
   get pspReference(): PspReference | undefined {

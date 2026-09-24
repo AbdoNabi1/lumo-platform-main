@@ -1,32 +1,29 @@
 import { BusinessRuleError } from "@platform/domain";
+import type { ProviderCapabilities } from "./value-objects/provider-capabilities";
 import {
-  PAYMENT_PROVIDER_KEYS,
+  isWellFormedProviderKey,
   type PaymentProviderKey,
 } from "./value-objects/payment-provider-key";
 
 /**
- * The Paymob regions the adapter supports (`@platform/psp-paymob`'s `isPaymobRegion` is the source
- * of truth; a test in `apps/runtime` pins this list to it). Mirrored here because the domain may
- * depend on nothing but the kernel.
+ * One provider's per-merchant configuration. `config` is opaque to this domain: the provider's own
+ * NON-secret routing data (a region, an integration id, …), shaped and validated by that provider's
+ * registration at the boundary — never here. `sealedCredentials` is the opaque, already-encrypted
+ * envelope produced by `PaymentCredentialVault.seal`; the aggregate never sees, holds or logs
+ * plaintext.
  */
-export const PAYMOB_REGIONS = ["egy", "ksa", "uae"] as const;
-export type PaymobRegionKey = (typeof PAYMOB_REGIONS)[number];
-
-/**
- * A merchant's Paymob configuration. `sealedCredentials` is the opaque, already-encrypted envelope
- * (secret key, HMAC secret, public key) produced by `PaymentCredentialVault.seal` — the aggregate
- * never sees, holds or logs plaintext. `region` and `integrationId` are non-secret routing data.
- */
-export interface PaymobSettings {
-  readonly region: PaymobRegionKey;
-  readonly integrationId: number;
+export interface ProviderSettings {
+  readonly config: Readonly<Record<string, unknown>>;
   readonly sealedCredentials: string;
 }
 
 interface MerchantPaymentSettingsProps {
   readonly enabledMethods: readonly PaymentProviderKey[];
-  readonly paymob: PaymobSettings | undefined;
+  readonly providers: Readonly<Record<PaymentProviderKey, ProviderSettings>>;
 }
+
+/** Looks up what a provider declares; `undefined` for a key nothing registered. */
+export type CapabilityLookup = (key: PaymentProviderKey) => ProviderCapabilities | undefined;
 
 /**
  * Which payment methods a merchant offers, and how to reach the ones that need credentials
@@ -44,18 +41,18 @@ export class MerchantPaymentSettings {
   }
 
   /**
-   * What a merchant with no stored settings gets: Stripe only — the one provider that existed
-   * before merchant configuration did, so a deployment that was taking Stripe payments keeps doing
-   * so. COD and Paymob are always opt-in.
+   * What a merchant with no stored settings gets: whatever the registered providers declare as
+   * `enabledByDefault` (Stripe, so a deployment that was taking Stripe payments keeps doing so).
+   * Everything else is opt-in.
    */
-  static defaults(): MerchantPaymentSettings {
-    return new MerchantPaymentSettings({ enabledMethods: ["stripe"], paymob: undefined });
+  static defaults(enabledByDefault: readonly PaymentProviderKey[]): MerchantPaymentSettings {
+    return new MerchantPaymentSettings({ enabledMethods: [...enabledByDefault], providers: {} });
   }
 
   static reconstitute(props: MerchantPaymentSettingsProps): MerchantPaymentSettings {
     return new MerchantPaymentSettings({
       enabledMethods: [...props.enabledMethods],
-      paymob: props.paymob,
+      providers: { ...props.providers },
     });
   }
 
@@ -63,47 +60,64 @@ export class MerchantPaymentSettings {
     return this.props.enabledMethods;
   }
 
-  get paymob(): PaymobSettings | undefined {
-    return this.props.paymob;
+  /** Every provider this merchant has configured, by key. */
+  get providers(): Readonly<Record<PaymentProviderKey, ProviderSettings>> {
+    return this.props.providers;
+  }
+
+  providerSettings(key: PaymentProviderKey): ProviderSettings | undefined {
+    return Object.prototype.hasOwnProperty.call(this.props.providers, key)
+      ? this.props.providers[key]
+      : undefined;
   }
 
   isEnabled(method: PaymentProviderKey): boolean {
     return this.props.enabledMethods.includes(method);
   }
 
-  /** Replaces the enabled set. `paymob` cannot be enabled without Paymob configuration to back it. */
-  withEnabledMethods(methods: readonly PaymentProviderKey[]): MerchantPaymentSettings {
-    const unique = PAYMENT_PROVIDER_KEYS.filter((key) => methods.includes(key));
-    if (unique.length !== new Set(methods).size) {
-      throw new BusinessRuleError("Unknown payment method in enabled set");
-    }
-    if (unique.includes("paymob") && this.props.paymob === undefined) {
-      throw new BusinessRuleError("Paymob cannot be enabled before its credentials are configured");
+  /**
+   * Replaces the enabled set. A key nothing registered is refused, and so is a provider that needs
+   * merchant credentials before those are configured. Duplicates collapse; the order the caller
+   * gave is kept but carries no meaning.
+   */
+  withEnabledMethods(
+    methods: readonly PaymentProviderKey[],
+    capabilitiesOf: CapabilityLookup,
+  ): MerchantPaymentSettings {
+    const unique = [...new Set(methods)];
+    for (const key of unique) {
+      const capabilities = capabilitiesOf(key);
+      if (capabilities === undefined) {
+        throw new BusinessRuleError("Unknown payment method in enabled set");
+      }
+      if (capabilities.requiresMerchantCredentials && this.providerSettings(key) === undefined) {
+        throw new BusinessRuleError(
+          `Payment method "${key}" cannot be enabled before its credentials are configured`,
+        );
+      }
     }
     return new MerchantPaymentSettings({ ...this.props, enabledMethods: unique });
   }
 
-  withPaymob(paymob: {
-    readonly region: string;
-    readonly integrationId: number;
-    readonly sealedCredentials: string;
-  }): MerchantPaymentSettings {
-    const region = PAYMOB_REGIONS.find((candidate) => candidate === paymob.region);
-    if (region === undefined) {
-      throw new BusinessRuleError(`Unsupported Paymob region "${paymob.region}"`);
+  /** Stores one provider's already-validated config and its sealed credentials. */
+  withProviderSettings(
+    key: PaymentProviderKey,
+    settings: {
+      readonly config: Readonly<Record<string, unknown>>;
+      readonly sealedCredentials: string;
+    },
+  ): MerchantPaymentSettings {
+    if (!isWellFormedProviderKey(key)) {
+      throw new BusinessRuleError("Provider key is malformed");
     }
-    if (!Number.isSafeInteger(paymob.integrationId) || paymob.integrationId <= 0) {
-      throw new BusinessRuleError("Paymob integration id must be a positive integer");
-    }
-    if (paymob.sealedCredentials.length === 0) {
-      throw new BusinessRuleError("Paymob credentials must be sealed before they are stored");
+    if (settings.sealedCredentials.length === 0) {
+      throw new BusinessRuleError(`Credentials for "${key}" must be sealed before they are stored`);
     }
     return new MerchantPaymentSettings({
       ...this.props,
-      paymob: {
-        region,
-        integrationId: paymob.integrationId,
-        sealedCredentials: paymob.sealedCredentials,
+      providers: {
+        ...this.props.providers,
+        [key]: { config: settings.config, sealedCredentials: settings.sealedCredentials },
       },
     });
   }

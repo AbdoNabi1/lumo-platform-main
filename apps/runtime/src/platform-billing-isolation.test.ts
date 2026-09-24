@@ -91,18 +91,21 @@ async function renewalThroughRealComposition() {
     idGenerator: sequentialIds(),
     clock,
     paymentProvider: core.paymentProvider,
-    paymobProviderFactory: core.paymobProviderFactory,
+    providerRegistrations: core.providerRegistrations,
     paymentCredentialVault: core.paymentCredentialVault,
   });
   const configured = await payments.payments.updateMerchantPaymentSettings({
     tenantId: MERCHANT,
     enabledMethods: ["stripe", "paymob"],
-    paymob: {
-      region: "egy",
-      integrationId: 158,
-      secretKey: MERCHANT_PAYMOB_KEY,
-      hmacSecret: "hmac_merchant_own",
-      publicKey: "egy_pk_merchant_own",
+    providerSettings: {
+      paymob: {
+        config: { region: "egy", integrationId: 158 },
+        credentials: {
+          secretKey: MERCHANT_PAYMOB_KEY,
+          hmacSecret: "hmac_merchant_own",
+          publicKey: "egy_pk_merchant_own",
+        },
+      },
     },
   });
   expect(configured.status).toBe(200);

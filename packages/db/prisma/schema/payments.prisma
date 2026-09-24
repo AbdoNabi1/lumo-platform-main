@@ -118,19 +118,19 @@ model Refund {
 }
 
 /// WP-13 T13.2 — one row per merchant (tenant): which payment methods it offers, and how to reach
-/// the ones that need credentials. `paymob_credentials` holds ONLY a sealed `@platform/secrets`
-/// envelope (secret key, HMAC secret, public key) — never plaintext; `region`/`integration_id` are
-/// non-secret routing data and stay in the clear. Tenant-scoped like every business table: the
+/// the ones that need credentials. `provider_settings` is ONE opaque object per provider, keyed by
+/// provider key: `{ "<key>": { "config": {…non-secret routing data, shaped and validated by that
+/// provider's own package…}, "sealedCredentials": "<sealed envelope>" } }`. `sealedCredentials` is
+/// ONLY a sealed `@platform/secrets` envelope — never plaintext. There is no column per provider:
+/// a new provider adds a key here, not a migration. Tenant-scoped like every business table: the
 /// migration adds its own RLS policy (the loop-based RLS migration does not cover new tables).
 model MerchantPaymentSettings {
-  tenantId            String   @id @map("tenant_id")
-  enabledMethods      String[] @map("enabled_methods")
-  paymobRegion        String?  @map("paymob_region")
-  paymobIntegrationId Int?     @map("paymob_integration_id")
-  /// Sealed envelope JSON. NEVER plaintext, never returned by any read DTO.
-  paymobCredentials   String?  @map("paymob_credentials")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  tenantId         String   @id @map("tenant_id")
+  enabledMethods   String[] @map("enabled_methods")
+  /// Per-provider { config, sealedCredentials }. The sealed envelope is NEVER plaintext and never returned by any read DTO.
+  providerSettings Json     @default("{}") @map("provider_settings")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("merchant_payment_settings")
   @@schema("payments")

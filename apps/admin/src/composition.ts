@@ -65,7 +65,7 @@ import {
   type PaymentController,
   type PaymentCredentialVault,
   type PaymentProviderResolver,
-  type PaymobProviderFactory,
+  type ProviderRegistration,
 } from "@platform/payments";
 import { wirePlatformConsole } from "@platform/platform-console";
 import { wirePricing, type PriceController } from "@platform/pricing";
@@ -265,11 +265,12 @@ export interface AdminWiringDeps {
    */
   readonly paymentProvider?: PaymentProvider;
   /**
-   * WP-13: builds a merchant's Paymob provider from that merchant's own opened credentials, and the
-   * vault their secrets are sealed with. Both pass straight through to `wirePayments(deps)`; absent
-   * ⇒ Paymob is unavailable / an in-memory STUB vault that `apps/runtime` refuses outside `local`.
+   * WP-13: the payment providers registered from outside Payments (a key, declared capabilities, a
+   * factory each — see `ProviderRegistration`), and the vault merchants' secrets are sealed with.
+   * Both pass straight through to `wirePayments(deps)`; absent ⇒ only the built-in providers /
+   * an in-memory STUB vault that `apps/runtime` refuses outside `local`.
    */
-  readonly paymobProviderFactory?: PaymobProviderFactory;
+  readonly providerRegistrations?: readonly ProviderRegistration[];
   readonly paymentCredentialVault?: PaymentCredentialVault;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 4 outbound ports Orders' `RequestPaymentCapture`/

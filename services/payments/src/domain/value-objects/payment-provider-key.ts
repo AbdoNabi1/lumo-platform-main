@@ -1,37 +1,22 @@
 /**
- * The payment methods a shopper can select and a merchant can enable (WP-13, decisions 1-3).
- * A closed set: the key is persisted on the intent and selects the adapter, so an unknown value
- * must never reach either.
+ * The identifier of a payment method a shopper can select and a merchant can enable. Open: which
+ * keys exist is decided by the providers registered at composition time (`PaymentProviderRegistry`),
+ * never by a list in this file. The key is persisted on the intent and selects the adapter.
  *
  * The shopper's explicit choice is the ONLY thing that picks one of these. Nothing in payments —
- * not the resolver, not merchant configuration order, not a fee or success-rate preference —
+ * not the resolver, not registration order, not a capability, a fee or a success-rate preference —
  * chooses a provider on the shopper's behalf (WP-13 decision 3, "known traps").
  */
-export const PAYMENT_PROVIDER_KEYS = ["stripe", "paymob", "cod"] as const;
+export type PaymentProviderKey = string;
 
-export type PaymentProviderKey = (typeof PAYMENT_PROVIDER_KEYS)[number];
-
-export function isPaymentProviderKey(value: unknown): value is PaymentProviderKey {
-  return typeof value === "string" && (PAYMENT_PROVIDER_KEYS as readonly string[]).includes(value);
-}
+const WELL_FORMED = /^[a-z][a-z0-9_-]{0,63}$/;
 
 /**
- * Providers whose money is settled at the moment the customer pays / hands over cash, so there is
- * no separate "request capture" step: a Paymob sale is captured when the customer pays (the signed
- * callback is the signal) and cash-on-delivery is "captured" when the courier hands the cash over.
- * Stripe alone runs the authorize → capture split the lifecycle's `capture_requested` models.
+ * Whether `value` is SHAPED like a provider key: short, lower-case, url- and column-safe. This says
+ * nothing about whether a provider by that name is registered — that is the registry's question, at
+ * the boundary. It is the only check a stored row can be held to, so a historical value (`stripe`)
+ * always reads, whichever providers this deployment currently registers.
  */
-const DIRECT_CAPTURE: ReadonlySet<PaymentProviderKey> = new Set(["paymob", "cod"]);
-
-export function isDirectCaptureProvider(provider: PaymentProviderKey): boolean {
-  return DIRECT_CAPTURE.has(provider);
-}
-
-/**
- * Whether a provider can report anything back through a webhook. Cash on delivery cannot: there is
- * no PSP to call us. A webhook naming `cod` is therefore never authentic, and must not be able to
- * settle a COD payment — only an operator's confirmed collection does.
- */
-export function hasProviderWebhooks(provider: PaymentProviderKey): boolean {
-  return provider !== "cod";
+export function isWellFormedProviderKey(value: unknown): boolean {
+  return typeof value === "string" && WELL_FORMED.test(value);
 }

@@ -1,5 +1,12 @@
 import type { PaymentProvider } from "@platform/contracts";
+import { BusinessRuleError } from "@platform/domain";
+import { err, ok, type Result } from "@platform/types";
+import type { DomainError } from "@platform/utils";
 import type { PaymentProviderKey } from "../domain/value-objects/payment-provider-key";
+import type { ProviderCapabilities } from "../domain/value-objects/provider-capabilities";
+import type { ProviderBacking } from "./provider-registry";
+
+export type { ProviderBacking } from "./provider-registry";
 
 export type { PaymentIntentRequest, PaymentProvider, ProviderIntent } from "@platform/contracts";
 
@@ -45,13 +52,13 @@ export class PaymentProviderUnavailableError extends Error {
   }
 }
 
-/** How the platform backs a provider, for the production boot guard. `stub` is an in-memory stand-in. */
-export type ProviderBacking = "real" | "stub" | "absent";
-
+/** What is registered on this platform and how each provider is backed — for the boot guard and the settings read. */
 export interface ProviderAvailability {
-  readonly stripe: ProviderBacking;
-  readonly paymob: ProviderBacking;
-  readonly cod: ProviderBacking;
+  readonly providers: readonly {
+    readonly key: PaymentProviderKey;
+    readonly capabilities: ProviderCapabilities;
+    readonly backing: Exclude<ProviderBacking, "absent">;
+  }[];
   /** The store merchant credentials are sealed with. `stub` means it is not real encryption. */
   readonly credentialVault: ProviderBacking;
 }
@@ -70,7 +77,34 @@ export interface PaymentProviderResolver {
    * method off must still be able to refund what was taken through it. Credentials still are.
    */
   resolveForExisting(tenantId: string, provider: PaymentProviderKey): Promise<PaymentProvider>;
+  /**
+   * For recurring billing: a payment with no payer present. Refuses — with
+   * {@link PaymentProviderUnavailableError} — any provider that does not declare
+   * `chargesOffSession`, and one the merchant has not enabled. As everywhere, the caller names the
+   * provider; nothing here chooses one.
+   */
+  resolveForOffSession(tenantId: string, provider: PaymentProviderKey): Promise<PaymentProvider>;
+  /** What a provider declares; `undefined` if nothing registered that key. Holds no tenant. */
+  capabilitiesOf(provider: PaymentProviderKey): ProviderCapabilities | undefined;
   describe(): ProviderAvailability;
+}
+
+/** The one thing the aggregates' callers need from the resolver when they only branch on capabilities. */
+export type ProviderCapabilityLookup = Pick<PaymentProviderResolver, "capabilitiesOf">;
+
+/**
+ * A provider's declared capabilities, or a business-rule refusal when nothing registered that key.
+ * An intent whose provider is no longer registered fails CLOSED: it is neither settled nor
+ * webhook-driven, because nothing can say what it is allowed to do.
+ */
+export function capabilitiesOrRefusal(
+  lookup: ProviderCapabilityLookup,
+  provider: PaymentProviderKey,
+): Result<ProviderCapabilities, DomainError> {
+  const capabilities = lookup.capabilitiesOf(provider);
+  return capabilities === undefined
+    ? err(new BusinessRuleError(`Payment method "${provider}" is not registered on this platform`))
+    : ok(capabilities);
 }
 
 /**
@@ -91,15 +125,3 @@ export interface PaymentCredentialVault {
   ): Promise<Readonly<Record<string, string>>>;
   readonly backing: ProviderBacking;
 }
-
-/** A merchant's Paymob configuration once its sealed secrets have been opened. Lives only for the duration of one provider construction. */
-export interface PaymobProviderConfig {
-  readonly region: string;
-  readonly integrationId: number;
-  readonly secretKey: string;
-  readonly hmacSecret: string;
-  readonly publicKey: string;
-}
-
-/** Builds a Paymob provider for one merchant. Supplied by the composition root (which owns `@platform/psp-paymob`) so this context depends on no PSP package. */
-export type PaymobProviderFactory = (config: PaymobProviderConfig) => PaymentProvider;

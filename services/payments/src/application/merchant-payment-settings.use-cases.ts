@@ -6,56 +6,62 @@ import { type DomainError, ValidationError } from "@platform/utils";
 import { MerchantPaymentSettings } from "../domain/merchant-payment-settings";
 import type { MerchantPaymentSettingsRepository } from "../domain/merchant-payment-settings-repository";
 import {
-  isPaymentProviderKey,
+  isWellFormedProviderKey,
   type PaymentProviderKey,
 } from "../domain/value-objects/payment-provider-key";
-import type { PaymentCredentialVault, PaymentProviderResolver } from "./ports";
+import type { PaymentCredentialVault } from "./ports";
+import type { PaymentProviderRegistry, ProviderRegistration } from "./provider-registry";
 
 /**
- * What a read of a merchant's payment settings returns — fully primitive, and by construction free
- * of credentials: it has no field a secret could occupy. `configured` says whether Paymob
- * credentials exist; it never says what they are.
+ * One registered method as a merchant sees it. By construction free of credentials: it has no field
+ * a secret could occupy. `configured` (only for a provider that takes merchant credentials) says
+ * whether credentials exist; it never says what they are. `config` is the provider's own NON-secret
+ * routing data, exactly as its registration normalised it.
  */
+export interface ProviderMethodDto {
+  readonly available: boolean;
+  readonly configured?: boolean;
+  readonly config?: Readonly<Record<string, unknown>>;
+}
+
+/** What a read of a merchant's payment settings returns — fully primitive. */
 export interface MerchantPaymentSettingsDto {
   /** Methods the shopper is offered. The order carries no meaning — nothing picks the first. */
   readonly enabledMethods: readonly PaymentProviderKey[];
-  readonly methods: {
-    readonly stripe: { readonly available: boolean };
-    readonly paymob: {
-      readonly available: boolean;
-      readonly configured: boolean;
-      readonly region?: string;
-      readonly integrationId?: number;
-    };
-    readonly cod: { readonly available: boolean };
-  };
+  /** Every method registered on this platform, by key. */
+  readonly methods: Readonly<Record<PaymentProviderKey, ProviderMethodDto>>;
 }
 
 export interface MerchantPaymentSettingsDeps {
   readonly settings: MerchantPaymentSettingsRepository;
-  readonly providers: PaymentProviderResolver;
+  readonly registry: PaymentProviderRegistry;
+  readonly vault: PaymentCredentialVault | undefined;
+}
+
+function isAvailable(
+  registration: ProviderRegistration,
+  vault: PaymentCredentialVault | undefined,
+): boolean {
+  if (!registration.capabilities.requiresMerchantCredentials) return true;
+  return registration.backing === "real" && vault !== undefined && vault.backing !== "absent";
 }
 
 function toDto(
   settings: MerchantPaymentSettings,
-  providers: PaymentProviderResolver,
+  deps: MerchantPaymentSettingsDeps,
 ): MerchantPaymentSettingsDto {
-  const availability = providers.describe();
-  const paymob = settings.paymob;
-  return {
-    enabledMethods: [...settings.enabledMethods],
-    methods: {
-      stripe: { available: availability.stripe !== "absent" },
-      paymob: {
-        available: availability.paymob === "real" && availability.credentialVault !== "absent",
-        configured: paymob !== undefined,
-        ...(paymob !== undefined
-          ? { region: paymob.region, integrationId: paymob.integrationId }
-          : {}),
-      },
-      cod: { available: availability.cod !== "absent" },
-    },
-  };
+  const methods: Record<PaymentProviderKey, ProviderMethodDto> = {};
+  for (const registration of deps.registry.list()) {
+    const stored = settings.providerSettings(registration.key);
+    methods[registration.key] = {
+      available: isAvailable(registration, deps.vault),
+      ...(registration.capabilities.requiresMerchantCredentials
+        ? { configured: stored !== undefined }
+        : {}),
+      ...(stored !== undefined ? { config: stored.config } : {}),
+    };
+  }
+  return { enabledMethods: [...settings.enabledMethods], methods };
 }
 
 export interface GetMerchantPaymentSettingsInput {
@@ -78,31 +84,31 @@ export class GetMerchantPaymentSettings implements UseCase<
     input: GetMerchantPaymentSettingsInput,
   ): Promise<Result<MerchantPaymentSettingsDto, DomainError>> {
     const settings =
-      (await this.deps.settings.get(input.tenantId)) ?? MerchantPaymentSettings.defaults();
-    return ok(toDto(settings, this.deps.providers));
+      (await this.deps.settings.get(input.tenantId)) ??
+      MerchantPaymentSettings.defaults(this.deps.registry.defaultEnabled());
+    return ok(toDto(settings, this.deps));
   }
 }
 
-export interface PaymobCredentialsInput {
-  readonly region: string;
-  readonly integrationId: number;
-  readonly secretKey: string;
-  readonly hmacSecret: string;
-  readonly publicKey: string;
+/** One provider's write: its own non-secret config, and its WRITE-ONLY secrets. */
+export interface ProviderSettingsInput {
+  /** Validated by the provider's own registration (`parseConfig`). Omit for a provider with none. */
+  readonly config?: unknown;
+  /** Keyed by the registration's `credentialFields`. Sealed before anything is stored. */
+  readonly credentials: Readonly<Record<string, string>>;
 }
 
 export interface UpdateMerchantPaymentSettingsInput {
   readonly tenantId: string;
   readonly enabledMethods?: readonly string[];
   /**
-   * WRITE-ONLY. Sealed into the credential vault before anything is stored; no read ever returns
-   * it and no error message contains it.
+   * WRITE-ONLY, keyed by provider. The credentials are sealed into the vault before anything is
+   * stored; no read ever returns them and no error message contains them.
    */
-  readonly paymob?: PaymobCredentialsInput;
+  readonly providerSettings?: Readonly<Record<string, ProviderSettingsInput>>;
 }
 
 export interface UpdateMerchantPaymentSettingsDeps extends MerchantPaymentSettingsDeps {
-  readonly vault: PaymentCredentialVault | undefined;
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
 }
 
@@ -112,11 +118,19 @@ function isSecretString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_SECRET_LENGTH;
 }
 
+interface Prepared {
+  readonly key: PaymentProviderKey;
+  readonly config: Readonly<Record<string, unknown>>;
+  readonly sealed: string;
+}
+
 /**
- * Configures which payment methods a merchant offers and stores their Paymob credentials sealed
- * (WP-13 T13.2). Refuses to enable anything the platform cannot really back — so a merchant cannot
- * switch on a method that would be served by a stub: Stripe needs the platform's Stripe adapter,
- * Paymob needs a real adapter, a real credential vault and stored credentials.
+ * Configures which payment methods a merchant offers and stores each provider's config and sealed
+ * credentials (WP-13 T13.2). Validation lives at THIS boundary, driven by the registry: a key
+ * nothing registered is refused, a provider's config is checked by that provider's own
+ * `parseConfig`, its credentials must be exactly its declared `credentialFields`, and a provider
+ * that needs merchant credentials cannot be enabled without them (or without a real vault). So a
+ * merchant cannot switch on a method nothing real backs.
  */
 export class UpdateMerchantPaymentSettings implements UseCase<
   UpdateMerchantPaymentSettingsInput,
@@ -132,68 +146,86 @@ export class UpdateMerchantPaymentSettings implements UseCase<
   async execute(
     input: UpdateMerchantPaymentSettingsInput,
   ): Promise<Result<MerchantPaymentSettingsDto, DomainError>> {
+    const { registry, vault } = this.deps;
     const requested = input.enabledMethods;
     if (requested !== undefined) {
       if (requested.length === 0) {
         return err(new BusinessRuleError("A merchant must offer at least one payment method"));
       }
-      if (!requested.every(isPaymentProviderKey)) {
+      if (!requested.every((key) => isWellFormedProviderKey(key) && registry.has(key))) {
         return err(new ValidationError("Unknown payment method", []));
       }
+      for (const key of requested) {
+        const registration = registry.get(key);
+        if (registration !== undefined && !isAvailable(registration, vault)) {
+          return err(
+            new BusinessRuleError(`Payment method "${key}" is not available on this platform`),
+          );
+        }
+      }
     }
 
-    const availability = this.deps.providers.describe();
-    if (requested?.includes("stripe") && availability.stripe === "absent") {
-      return err(new BusinessRuleError("Stripe is not configured on this platform"));
-    }
-    if (
-      (requested?.includes("paymob") || input.paymob !== undefined) &&
-      (availability.paymob !== "real" || availability.credentialVault === "absent")
-    ) {
-      return err(new BusinessRuleError("Paymob is not available on this platform"));
-    }
+    const prepared: Prepared[] = [];
+    for (const [key, entry] of Object.entries(input.providerSettings ?? {})) {
+      const registration = isWellFormedProviderKey(key) ? registry.get(key) : undefined;
+      if (registration === undefined) {
+        return err(new ValidationError("Unknown payment method", []));
+      }
+      if (!isAvailable(registration, vault) || vault === undefined) {
+        return err(
+          new BusinessRuleError(`Payment method "${key}" is not available on this platform`),
+        );
+      }
+      if (!registration.capabilities.requiresMerchantCredentials) {
+        return err(new BusinessRuleError(`Payment method "${key}" takes no merchant credentials`));
+      }
 
-    let sealed: string | undefined;
-    if (input.paymob !== undefined) {
-      const p = input.paymob;
-      if (
-        !isSecretString(p.secretKey) ||
-        !isSecretString(p.hmacSecret) ||
-        !isSecretString(p.publicKey)
-      ) {
+      let config: Readonly<Record<string, unknown>> = {};
+      if (registration.parseConfig !== undefined) {
+        const parsed = registration.parseConfig(entry.config ?? {});
+        if (!parsed.ok) {
+          return err(new ValidationError(`Invalid "${key}" configuration: ${parsed.reason}`, []));
+        }
+        config = parsed.value;
+      } else if (entry.config !== undefined && Object.keys(entry.config as object).length > 0) {
+        return err(new ValidationError(`Payment method "${key}" takes no configuration`, []));
+      }
+
+      const fields = registration.credentialFields ?? [];
+      const supplied = entry.credentials;
+      const unexpected = Object.keys(supplied).filter((field) => !fields.includes(field));
+      if (unexpected.length > 0 || !fields.every((field) => isSecretString(supplied[field]))) {
         // The message names no field value — never a secret, not even its length.
-        return err(new ValidationError("Paymob credentials are incomplete or invalid", []));
+        return err(new ValidationError(`Credentials for "${key}" are incomplete or invalid`, []));
       }
-      if (this.deps.vault === undefined) {
-        return err(new BusinessRuleError("Paymob is not available on this platform"));
-      }
-      sealed = await this.deps.vault.seal(input.tenantId, "paymob", {
-        secretKey: p.secretKey,
-        hmacSecret: p.hmacSecret,
-        publicKey: p.publicKey,
-      });
+      const secrets: Record<string, string> = {};
+      for (const field of fields) secrets[field] = supplied[field] as string;
+      prepared.push({ key, config, sealed: await vault.seal(input.tenantId, key, secrets) });
     }
 
     return this.deps.unitOfWork.run<Result<MerchantPaymentSettingsDto, DomainError>>(async (tx) => {
       let settings =
-        (await this.deps.settings.get(input.tenantId, tx)) ?? MerchantPaymentSettings.defaults();
+        (await this.deps.settings.get(input.tenantId, tx)) ??
+        MerchantPaymentSettings.defaults(registry.defaultEnabled());
       try {
-        if (input.paymob !== undefined && sealed !== undefined) {
-          settings = settings.withPaymob({
-            region: input.paymob.region,
-            integrationId: input.paymob.integrationId,
-            sealedCredentials: sealed,
+        for (const entry of prepared) {
+          settings = settings.withProviderSettings(entry.key, {
+            config: entry.config,
+            sealedCredentials: entry.sealed,
           });
         }
         if (requested !== undefined) {
-          settings = settings.withEnabledMethods(requested);
+          settings = settings.withEnabledMethods(
+            requested,
+            (key) => registry.get(key)?.capabilities,
+          );
         }
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;
       }
       await this.deps.settings.save(settings, input.tenantId, tx);
-      return ok(toDto(settings, this.deps.providers));
+      return ok(toDto(settings, this.deps));
     });
   }
 }

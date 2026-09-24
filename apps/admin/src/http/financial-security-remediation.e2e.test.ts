@@ -503,7 +503,9 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
     expect(schema?.safeParse({ orderRef: "order-1", provider: "stripe" }).success).toBe(true);
     // WP-13 decision 3: the method is REQUIRED — a body without one is not defaulted, it is rejected.
     expect(schema?.safeParse({ orderRef: "order-1" }).success).toBe(false);
-    expect(schema?.safeParse({ orderRef: "order-1", provider: "bitcoin" }).success).toBe(false);
+    // The route checks the key's SHAPE only: which providers exist is the registry's call, made in
+    // Payments (a well-formed key nothing registered is refused there — provider-registry tests).
+    expect(schema?.safeParse({ orderRef: "order-1", provider: "Bit Coin!" }).success).toBe(false);
   });
 });
 

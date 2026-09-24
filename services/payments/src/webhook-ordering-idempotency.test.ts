@@ -1,3 +1,4 @@
+import { staticCapabilities } from "./test-support/static-provider-resolver";
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
@@ -163,6 +164,7 @@ function buildWebhookDeps(
     idGenerator: sequentialIds("wh"),
     clock,
     processedWebhooks: new InMemoryProcessedWebhookStore(),
+    providers: staticCapabilities(),
     ...extra,
   };
 }

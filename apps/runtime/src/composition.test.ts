@@ -25,11 +25,7 @@ import { isPaymobRegion, PaymobPaymentProvider } from "@platform/psp-paymob";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import { InMemoryPaymentsAdapter, PlatformBillingPaymentsAdapter } from "@platform/licensing";
 import type { PaymentProvider } from "@platform/contracts";
-import {
-  PAYMOB_REGIONS,
-  type PaymentCredentialVault,
-  type PaymobProviderFactory,
-} from "@platform/payments";
+import type { PaymentCredentialVault, ProviderRegistration } from "@platform/payments";
 import type { Logger } from "@platform/utils";
 
 const validEnv = {
@@ -231,13 +227,29 @@ describe("api entrypoint", () => {
 
   const noPayments = {
     paymentProvider: undefined,
-    paymobProviderFactory: undefined,
+    providerRegistrations: [] as readonly ProviderRegistration[],
     paymentCredentialVault: undefined,
   };
   const realStripe = { createIntent: vi.fn() } as unknown as PaymentProvider;
   const realVault = { backing: "real" } as unknown as PaymentCredentialVault;
   const stubVault = { backing: "stub" } as unknown as PaymentCredentialVault;
-  const paymobFactory: PaymobProviderFactory = () => realStripe;
+  /** Any registered provider that needs per-merchant credentials — the guard reasons about the declared capability, not a name. */
+  const credentialed = (
+    key: string,
+    backing: ProviderRegistration["backing"] = "real",
+  ): ProviderRegistration => ({
+    key,
+    capabilities: {
+      settlesAtPayTime: false,
+      deliversWebhooks: true,
+      requiresMerchantCredentials: true,
+      chargesOffSession: false,
+    },
+    backing,
+    credentialFields: ["apiKey"],
+    create: () => realStripe,
+  });
+  const paymobRegistrations = [credentialed("paymob")];
 
   it("FAILS CLOSED outside local without a production PaymentProvider (V-1) — same shape as the MFA guard, checked independently of it", () => {
     expect(() => assertProductionPaymentProviderConfigured("production", noPayments)).toThrow(
@@ -261,23 +273,52 @@ describe("api entrypoint", () => {
     ).not.toThrow();
   });
 
-  it("WP-13: FAILS CLOSED outside local when Paymob is composed without a REAL credential vault — absent or stub", () => {
+  it("WP-13: FAILS CLOSED outside local when a provider that needs merchant credentials is composed without a REAL credential vault — absent or stub", () => {
     for (const vault of [undefined, stubVault]) {
       expect(() =>
         assertProductionPaymentProviderConfigured("production", {
           paymentProvider: realStripe,
-          paymobProviderFactory: paymobFactory,
+          providerRegistrations: paymobRegistrations,
           paymentCredentialVault: vault,
         }),
       ).toThrow(/credential vault/);
     }
   });
 
+  it("the guard scales with the registry: EVERY registered provider is checked, and each failure names its provider", () => {
+    const failure = () =>
+      assertProductionPaymentProviderConfigured("production", {
+        paymentProvider: realStripe,
+        providerRegistrations: [
+          credentialed("alpha"),
+          credentialed("bravo", "stub"),
+          credentialed("charlie"),
+        ],
+        paymentCredentialVault: stubVault,
+      });
+
+    // A stub-backed registration is refused by name…
+    expect(failure).toThrow(/"bravo"/);
+    // …and so is every credentialed one lacking a real vault, not just the first.
+    expect(failure).toThrow(/"alpha"/);
+    expect(failure).toThrow(/"charlie"/);
+  });
+
+  it("a registration backed by a stub is refused outside local, whatever it is called", () => {
+    expect(() =>
+      assertProductionPaymentProviderConfigured("production", {
+        paymentProvider: realStripe,
+        providerRegistrations: [credentialed("some-new-psp", "stub")],
+        paymentCredentialVault: realVault,
+      }),
+    ).toThrow(/"some-new-psp"/);
+  });
+
   it("WP-13: names BOTH failures at once when Stripe and the Paymob vault are each missing (same aggregated report)", () => {
     const failure = () =>
       assertProductionPaymentProviderConfigured("production", {
         ...noPayments,
-        paymobProviderFactory: paymobFactory,
+        providerRegistrations: paymobRegistrations,
       });
     expect(failure).toThrow(/PaymentProvider/);
     expect(failure).toThrow(/credential vault/);
@@ -287,7 +328,7 @@ describe("api entrypoint", () => {
     expect(() =>
       assertProductionPaymentProviderConfigured("production", {
         paymentProvider: realStripe,
-        paymobProviderFactory: paymobFactory,
+        providerRegistrations: paymobRegistrations,
         paymentCredentialVault: realVault,
       }),
     ).not.toThrow();
@@ -305,7 +346,7 @@ describe("api entrypoint", () => {
     // services/payments (UpdateMerchantPaymentSettings); here we pin the composition side: without
     // PAYMENT_CREDENTIALS_KEK_REF there is no factory at all, so nothing can back Paymob.
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
-    expect(core.paymobProviderFactory).toBeUndefined();
+    expect(core.providerRegistrations).toEqual([]);
     expect(core.paymentCredentialVault).toBeUndefined();
   });
 
@@ -321,19 +362,45 @@ describe("api entrypoint", () => {
       hmacSecret: "hs",
       publicKey: "pk",
     };
-    const a = core.paymobProviderFactory?.(merchant);
-    const b = core.paymobProviderFactory?.(merchant);
+    const registration = core.providerRegistrations.find((r) => r.key === "paymob");
+    expect(registration?.backing).toBe("real");
+    const context = {
+      config: { region: merchant.region, integrationId: merchant.integrationId },
+      credentials: {
+        secretKey: merchant.secretKey,
+        hmacSecret: merchant.hmacSecret,
+        publicKey: merchant.publicKey,
+      },
+    };
+    const a = registration?.create(context);
+    const b = registration?.create(context);
     expect(a).toBeInstanceOf(PaymobPaymentProvider);
     expect(a).not.toBe(b); // one provider per resolution — never a shared instance
-    expect(() => core.paymobProviderFactory?.({ ...merchant, region: "atlantis" })).toThrow(
-      /region/,
-    );
+    expect(() =>
+      registration?.create({ ...context, config: { ...context.config, region: "atlantis" } }),
+    ).toThrow(/region/);
   });
 
-  it("WP-13: the payments domain's Paymob region list is exactly the adapter's", () => {
-    expect([...PAYMOB_REGIONS].sort()).toEqual(
-      ["egy", "ksa", "uae", "oman", "atlantis"].filter((region) => isPaymobRegion(region)).sort(),
+  it("WP-13: the Paymob registration accepts exactly the regions the adapter supports (the payments domain no longer carries a list)", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: "k".repeat(40) }),
     );
+    const registration = core.providerRegistrations.find((r) => r.key === "paymob");
+    expect(registration?.parseConfig).toBeDefined();
+    for (const region of ["egy", "ksa", "uae", "oman", "atlantis", "", "__proto__"]) {
+      expect(registration?.parseConfig?.({ region, integrationId: 1 }).ok).toBe(
+        isPaymobRegion(region),
+      );
+    }
+    // Declared capabilities: Paymob settles when the customer pays, calls back, needs the
+    // merchant's own credentials, and cannot charge off-session (tokenization is a later task).
+    expect(registration?.capabilities).toEqual({
+      settlesAtPayTime: true,
+      deliversWebhooks: true,
+      requiresMerchantCredentials: true,
+      chargesOffSession: false,
+    });
+    expect(registration?.credentialFields).toEqual(["secretKey", "hmacSecret", "publicKey"]);
   });
 
   // WP-14: the guard used to assert "always missing" (no real adapter existed). A real

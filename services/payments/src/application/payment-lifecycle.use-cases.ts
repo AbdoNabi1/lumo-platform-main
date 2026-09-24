@@ -15,10 +15,12 @@ import type { Refund } from "../domain/refund";
 import { PaymentMethod, PspReference } from "../domain/value-objects/payment-references";
 import type { PaymentStatusValue } from "../domain/value-objects/payment-status";
 import {
-  isPaymentProviderKey,
+  isWellFormedProviderKey,
   type PaymentProviderKey,
 } from "../domain/value-objects/payment-provider-key";
+import { isSettledByOperatorConfirmation } from "../domain/value-objects/provider-capabilities";
 import {
+  capabilitiesOrRefusal,
   PaymentProviderUnavailableError,
   type FinancePort,
   type NotificationPort,
@@ -146,7 +148,7 @@ export class CreatePaymentIntentLifecycle implements UseCase<
     const amount = Money.create(input.amountMinor, input.currency);
     if (!amount.ok) return err(amount.error);
 
-    if (!isPaymentProviderKey(input.provider)) {
+    if (!isWellFormedProviderKey(input.provider)) {
       return err(new ValidationError("Unknown payment method", []));
     }
     const providerKey = input.provider;
@@ -448,14 +450,16 @@ export class CapturePaymentLifecycle implements UseCase<
         if (intent === null) {
           return err(new NotFoundError("Payment intent not found"));
         }
-        // A direct-capture provider has no "request capture" step to make. Refusing here — before any
-        // transition and before any provider call — is what stops a generic capture request from
-        // settling a cash-on-delivery order nobody has paid for.
-        if (intent.isDirectCapture && intent.status.value !== "captured") {
+        const capabilities = capabilitiesOrRefusal(this.deps.providers, intent.provider);
+        if (!capabilities.ok) return err(capabilities.error);
+        // A provider that settles at pay time has no "request capture" step to make. Refusing here —
+        // before any transition and before any provider call — is what stops a generic capture
+        // request from settling a cash-on-delivery order nobody has paid for.
+        if (capabilities.value.settlesAtPayTime && intent.status.value !== "captured") {
           return err(
             new BusinessRuleError(
-              intent.provider === "cod"
-                ? "A cash-on-delivery payment is settled by confirming the collection, not by a capture request"
+              isSettledByOperatorConfirmation(capabilities.value)
+                ? "This payment is settled by an operator confirming the collection, not by a capture request"
                 : `A ${intent.provider} payment is captured when the customer pays; there is no capture request to make`,
             ),
           );
@@ -526,11 +530,13 @@ export class CapturePaymentLifecycle implements UseCase<
         // already settled. Pre-A.9 this guarded only the write, not the side effects below it.
         const alreadyCaptured = intent.status.value === "captured";
         if (!alreadyCaptured) {
+          const capabilities = capabilitiesOrRefusal(this.deps.providers, intent.provider);
+          if (!capabilities.ok) return err(capabilities.error);
           try {
             intent.markCaptured(
               this.deps.idGenerator.generate(),
               this.deps.clock.now(),
-              intent.isDirectCapture ? this.deps.idGenerator.generate() : undefined,
+              capabilities.value.settlesAtPayTime ? this.deps.idGenerator.generate() : undefined,
             );
           } catch (error) {
             if (isDomainError(error)) return err(error);

@@ -6,12 +6,16 @@ import {
   GetMerchantPaymentSettings,
   UpdateMerchantPaymentSettings,
 } from "./application/merchant-payment-settings.use-cases";
-import type { PaymobProviderConfig } from "./application/ports";
-import { CashOnDeliveryProvider } from "./infrastructure/cash-on-delivery-provider";
+import { PaymentProviderRegistry } from "./application/provider-registry";
+import {
+  cashOnDeliveryRegistration,
+  stripeRegistration,
+} from "./infrastructure/built-in-provider-registrations";
 import { InMemoryMerchantPaymentSettingsRepository } from "./infrastructure/in-memory-merchant-payment-settings-repository";
 import { PrismaMerchantPaymentSettingsRepository } from "./infrastructure/prisma-merchant-payment-settings-repository";
 import { TenantPaymentProviderResolver } from "./infrastructure/tenant-payment-provider-resolver";
 import { testEnvelopeVault } from "./test-support/local-key-wrap-cipher";
+import { paymobLikeRegistration } from "./test-support/paymob-like-registration";
 
 /**
  * WP-13's definition of done: "merchant payment credentials are never in a Postgres column, a log,
@@ -39,30 +43,44 @@ class PassthroughUnitOfWork implements TransactionalUnitOfWork<unknown> {
 
 const stripeStub = {} as PaymentProvider;
 
-function setup(overrides: { paymobFactory?: (c: PaymobProviderConfig) => PaymentProvider } = {}) {
+/** What a provider is built from, as the test's Paymob-shaped registration receives it. */
+interface Built {
+  readonly config: Readonly<Record<string, unknown>>;
+  readonly credentials: Readonly<Record<string, string>>;
+}
+
+function setup(overrides: { paymobFactory?: (c: Built) => PaymentProvider } = {}) {
   const repo = new InMemoryMerchantPaymentSettingsRepository();
   const vault = testEnvelopeVault();
-  const resolver = new TenantPaymentProviderResolver({
-    settings: repo,
-    stripe: stripeStub,
-    cashOnDelivery: new CashOnDeliveryProvider(),
-    paymobFactory: overrides.paymobFactory ?? (() => ({}) as PaymentProvider),
-    vault,
-  });
+  const registry = PaymentProviderRegistry.from([
+    stripeRegistration(stripeStub),
+    cashOnDeliveryRegistration(),
+    paymobLikeRegistration((context) =>
+      (overrides.paymobFactory ?? (() => ({}) as PaymentProvider))(context),
+    ),
+  ]);
+  const resolver = new TenantPaymentProviderResolver({ settings: repo, registry, vault });
   const update = new UpdateMerchantPaymentSettings({
     settings: repo,
-    providers: resolver,
+    registry,
     vault,
     unitOfWork: new PassthroughUnitOfWork(),
   });
-  const get = new GetMerchantPaymentSettings({ settings: repo, providers: resolver });
+  const get = new GetMerchantPaymentSettings({ settings: repo, registry, vault });
   return { repo, vault, resolver, update, get };
 }
+
+const paymobSettings = (
+  config: unknown = { region: "egy", integrationId: 158 },
+  secrets = SECRETS,
+) => ({
+  paymob: { config, credentials: secrets },
+});
 
 const input = (tenantId = "tenant-a") => ({
   tenantId,
   enabledMethods: ["paymob", "cod"],
-  paymob: { region: "egy", integrationId: 158, ...SECRETS },
+  providerSettings: paymobSettings(),
 });
 
 describe("merchant PSP credentials never leak", () => {
@@ -79,8 +97,7 @@ describe("merchant PSP credentials never leak", () => {
     expect(read.ok && read.value.methods.paymob).toEqual({
       available: true,
       configured: true,
-      region: "egy",
-      integrationId: 158,
+      config: { region: "egy", integrationId: 158 },
     });
   });
 
@@ -89,11 +106,11 @@ describe("merchant PSP credentials never leak", () => {
     await update.execute(input());
 
     const stored = await repo.get("tenant-a");
-    const sealed = stored?.paymob?.sealedCredentials ?? "";
+    const sealed = stored?.providerSettings("paymob")?.sealedCredentials ?? "";
 
     expect(sealed.length).toBeGreaterThan(0);
     noLeak(sealed);
-    noLeak(stored?.paymob);
+    noLeak(stored?.providerSettings("paymob"));
     // It is a genuine envelope (wrapped data key + ciphertext), not an encoding of the secrets.
     expect(JSON.parse(sealed)).toEqual(
       expect.objectContaining({
@@ -126,14 +143,18 @@ describe("merchant PSP credentials never leak", () => {
 
     expect(written).toBeDefined();
     noLeak(written);
+    // One opaque per-provider object — there is no column per provider to put a secret in.
     expect(Object.keys(written!).sort()).toEqual([
       "enabledMethods",
-      "paymobCredentials",
-      "paymobIntegrationId",
-      "paymobRegion",
+      "providerSettings",
       "tenantId",
     ]);
-    expect(written!.paymobCredentials).toBe(settings.paymob!.sealedCredentials);
+    expect(written!.providerSettings).toEqual({
+      paymob: {
+        config: { region: "egy", integrationId: 158 },
+        sealedCredentials: settings.providerSettings("paymob")!.sealedCredentials,
+      },
+    });
   });
 
   it("are not in the message of a rejected update", async () => {
@@ -141,11 +162,11 @@ describe("merchant PSP credentials never leak", () => {
 
     const rejected = await update.execute({
       ...input(),
-      paymob: { region: "atlantis", integrationId: 158, ...SECRETS },
+      providerSettings: paymobSettings({ region: "atlantis", integrationId: 158 }),
     });
     const incomplete = await update.execute({
       ...input(),
-      paymob: { region: "egy", integrationId: 158, ...SECRETS, hmacSecret: "" },
+      providerSettings: paymobSettings(undefined, { ...SECRETS, hmacSecret: "" }),
     });
 
     expect(rejected.ok).toBe(false);
@@ -155,7 +176,7 @@ describe("merchant PSP credentials never leak", () => {
   });
 
   it("are only ever decrypted into the one provider built for one request", async () => {
-    const seen: PaymobProviderConfig[] = [];
+    const seen: Built[] = [];
     const { update, resolver } = setup({
       paymobFactory: (config) => {
         seen.push(config);
@@ -169,7 +190,8 @@ describe("merchant PSP credentials never leak", () => {
 
     // Rebuilt per call, never cached: two resolutions, two constructions.
     expect(seen).toHaveLength(2);
-    expect(seen[0]).toMatchObject(SECRETS);
+    expect(seen[0]?.credentials).toMatchObject(SECRETS);
+    expect(seen[0]?.config).toEqual({ region: "egy", integrationId: 158 });
   });
 
   it("do not open for another tenant, another provider, or a tampered envelope", async () => {

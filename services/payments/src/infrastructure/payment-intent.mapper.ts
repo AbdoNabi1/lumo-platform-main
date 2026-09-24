@@ -8,7 +8,7 @@ import {
   type PaymentAttemptOutcome,
 } from "../domain/payment-attempt";
 import { PaymentIntent } from "../domain/payment-intent";
-import { isPaymentProviderKey } from "../domain/value-objects/payment-provider-key";
+import { isWellFormedProviderKey } from "../domain/value-objects/payment-provider-key";
 import { PaymentMethod, PspReference } from "../domain/value-objects/payment-references";
 import { PaymentStatus, type PaymentStatusValue } from "../domain/value-objects/payment-status";
 import { PspToken } from "../domain/value-objects/psp-token";
@@ -71,7 +71,7 @@ export class PaymentIntentMapper {
     refunds: readonly RefundRow[],
     attempts: readonly AttemptRow[] = [],
   ): PaymentIntent {
-    if (!isPaymentProviderKey(row.provider)) {
+    if (!isWellFormedProviderKey(row.provider)) {
       throw new UnexpectedError(`Corrupt payments row: unknown provider "${row.provider}"`);
     }
     return PaymentIntent.reconstitute(

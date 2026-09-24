@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { Order } from "@platform/orders";
-import { PAYMENT_PROVIDER_KEYS, type PaymentIntent } from "@platform/payments";
+import { isWellFormedProviderKey, type PaymentIntent } from "@platform/payments";
 import { ValidationError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
@@ -13,6 +13,13 @@ import type { AdminResponse } from "../interfaces/admin-response";
  * re-derives them from the authoritative `Order` (`orders:read`'s own `getOrder`, already wired on
  * this same admin composition) named by `orderRef`.
  */
+/**
+ * A payment method key, checked for SHAPE only. Which keys exist is decided by the providers
+ * registered at composition time, and Payments refuses one nothing registered — this route lists no
+ * provider names, so adding a provider never edits it.
+ */
+const providerKey = z.string().refine(isWellFormedProviderKey, "Malformed payment method key");
+
 const createIntentBody = z
   .object({
     orderRef: z.string().min(1),
@@ -20,7 +27,7 @@ const createIntentBody = z
      * WP-13 decision 3: the payment method is stated by the caller and never inferred. A staff
      * member opening an intent names the method the customer chose.
      */
-    provider: z.enum(PAYMENT_PROVIDER_KEYS),
+    provider: providerKey,
   })
   .strict();
 const codCollectionBody = z
@@ -32,16 +39,22 @@ const codCollectionBody = z
  */
 const settingsBody = z
   .object({
-    enabledMethods: z.array(z.enum(PAYMENT_PROVIDER_KEYS)).min(1).optional(),
-    paymob: z
-      .object({
-        region: z.string().min(1),
-        integrationId: z.number().int().positive(),
-        secretKey: z.string().min(1).max(512),
-        hmacSecret: z.string().min(1).max(512),
-        publicKey: z.string().min(1).max(512),
-      })
-      .strict()
+    enabledMethods: z.array(providerKey).min(1).optional(),
+    /**
+     * Per provider: its own non-secret `config` (shaped and validated by that provider's
+     * registration, not here) and its write-only `credentials` (the field names the provider
+     * declares).
+     */
+    providerSettings: z
+      .record(
+        providerKey,
+        z
+          .object({
+            config: z.record(z.string(), z.unknown()).optional(),
+            credentials: z.record(z.string(), z.string().min(1).max(512)),
+          })
+          .strict(),
+      )
       .optional(),
   })
   .strict();
@@ -67,7 +80,7 @@ const refundBody = z.object({
 export interface PaymentIntentDto {
   readonly id: string;
   readonly orderRef: string;
-  /** The method the shopper selected ("stripe" | "paymob" | "cod"). */
+  /** The method the shopper selected (a registered provider key). */
   readonly provider: string;
   readonly status: string;
   readonly currency: string;
@@ -152,7 +165,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       version: 1,
       permission: "payments:update_settings",
       summary:
-        "Enable/disable payment methods and set Paymob credentials (write-only; sealed before storage)",
+        "Enable/disable payment methods and set each provider's configuration and credentials (write-only; sealed before storage)",
       schema: { body: settingsBody },
       handle: ({ body, context }) =>
         admin.payments.updateSettings(context.principal, {

@@ -15,19 +15,31 @@ export type {
   OrdersPort,
   PaymentCredentialVault,
   PaymentProviderResolver,
-  PaymobProviderConfig,
-  PaymobProviderFactory,
   ProviderAvailability,
-  ProviderBacking,
+  ProviderCapabilityLookup,
 } from "./application/ports";
 export { PaymentProviderUnavailableError } from "./application/ports";
 export {
-  PAYMENT_PROVIDER_KEYS,
-  isPaymentProviderKey,
-  isDirectCaptureProvider,
+  PaymentProviderRegistry,
+  type ConfigParseResult,
+  type ProviderBacking,
+  type ProviderBuildContext,
+  type ProviderRegistration,
+} from "./application/provider-registry";
+export {
+  isWellFormedProviderKey,
   type PaymentProviderKey,
 } from "./domain/value-objects/payment-provider-key";
-export { PAYMOB_REGIONS } from "./domain/merchant-payment-settings";
+export {
+  isSettledByOperatorConfirmation,
+  type ProviderCapabilities,
+} from "./domain/value-objects/provider-capabilities";
+export {
+  cashOnDeliveryRegistration,
+  composePaymentProviderRegistrations,
+  stripeRegistration,
+  type PaymentProviderRegistrationInputs,
+} from "./infrastructure/built-in-provider-registrations";
 export type { MerchantPaymentSettingsDto } from "./application/merchant-payment-settings.use-cases";
 export { EnvelopePaymentCredentialVault } from "./infrastructure/envelope-payment-credential-vault";
 export { TenantPaymentProviderResolver } from "./infrastructure/tenant-payment-provider-resolver";

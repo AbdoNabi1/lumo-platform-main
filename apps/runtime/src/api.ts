@@ -4,6 +4,7 @@ import {
   type SignupEmailPort,
 } from "@platform/admin";
 import { PrismaAuditTrail } from "@platform/db";
+import { composePaymentProviderRegistrations } from "@platform/payments";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
 import { InMemoryTotpMfaProvider, type MfaProviderResolver } from "@platform/security";
 import { logger } from "@platform/utils";
@@ -59,34 +60,45 @@ export function assertProductionPaymentProviderConfigured(
   appEnv: RuntimeConfig["APP_ENV"],
   payments: Pick<
     RuntimeCore,
-    "paymentProvider" | "paymobProviderFactory" | "paymentCredentialVault"
+    "paymentProvider" | "providerRegistrations" | "paymentCredentialVault"
   >,
 ): void {
   const problems: string[] = [];
-  if (payments.paymentProvider === undefined) {
-    problems.push(
-      "no production PaymentProvider is configured. The in-memory stub provider " +
-        "(verifyWebhook always returns true) must never accept POST /payments/webhook outside " +
-        "APP_ENV=local (V-1). Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET to configure the " +
-        "real StripePaymentProvider (C2-2).",
-    );
-  }
-  // WP-13: the same class of failure for the merchant-configured methods. A Paymob adapter composed
-  // WITHOUT a real credential vault would seal every merchant's secrets with a stand-in that is not
-  // encryption (`InMemoryPaymentCredentialVault` — base64 in a column). `buildRuntimeCore` only ever
-  // composes the factory together with a real vault, so this is a tripwire on that invariant, not a
-  // reachable state today. (Paymob absent is fine: `UpdateMerchantPaymentSettings` refuses to let a
-  // merchant enable a method nothing real backs, and `TenantPaymentProviderResolver` has no stub to
-  // fall back to — Paymob unavailable is a refusal, never a silent downgrade.)
-  if (
-    payments.paymobProviderFactory !== undefined &&
-    (payments.paymentCredentialVault === undefined ||
-      payments.paymentCredentialVault.backing !== "real")
-  ) {
-    problems.push(
-      "Paymob is composed without a real payment credential vault: merchants' PSP secrets " +
-        "would not be encrypted at rest (WP-13). Set PAYMENT_CREDENTIALS_KEK_REF.",
-    );
+  // WP-13 / open registry: ONE loop over exactly the registrations `wirePayments` will compose (the
+  // same `composePaymentProviderRegistrations`), so N providers are N checks and a provider added
+  // tomorrow is checked without touching this function. Each rule reasons about a registration's
+  // declared backing and capabilities, never its name.
+  for (const registration of composePaymentProviderRegistrations(payments)) {
+    // A stub answers without a real PSP behind it (its `verifyWebhook` accepts anything), so it
+    // must never serve a request outside `local`. (V-1: the Stripe binding is the one that falls
+    // back to a stub when unconfigured.)
+    if (registration.backing !== "real") {
+      problems.push(
+        `no production PaymentProvider is configured for "${registration.key}". The in-memory stub ` +
+          "provider (verifyWebhook always returns true) must never accept POST /payments/webhook " +
+          "outside APP_ENV=local (V-1)." +
+          (registration.configurationHint === undefined
+            ? ""
+            : ` ${registration.configurationHint}`),
+      );
+    }
+    // A provider that needs each merchant's own credentials must not seal them with a stand-in that
+    // is not encryption (`InMemoryPaymentCredentialVault` — base64 in a column). `buildRuntimeCore`
+    // only ever composes such a provider together with a real vault, so this is a tripwire on that
+    // invariant. (Absent is fine: `UpdateMerchantPaymentSettings` refuses to let a merchant enable a
+    // method nothing real backs, and the resolver has no stub to fall back to — unavailable is a
+    // refusal, never a silent downgrade.)
+    if (
+      registration.capabilities.requiresMerchantCredentials &&
+      (payments.paymentCredentialVault === undefined ||
+        payments.paymentCredentialVault.backing !== "real")
+    ) {
+      problems.push(
+        `payment provider "${registration.key}" needs merchant credentials but is composed without a ` +
+          "real payment credential vault: merchants' PSP secrets would not be encrypted at rest " +
+          "(WP-13). Set PAYMENT_CREDENTIALS_KEK_REF.",
+      );
+    }
   }
   if (problems.length === 0) return;
   if (appEnv === "local") {
@@ -457,9 +469,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     paymentsPort: buildReturnsPaymentsPortAdapter(runtime),
     objectStorage: runtime.objectStorage,
     paymentProvider: runtime.paymentProvider,
-    // WP-13: per-merchant Paymob (built per request from the tenant's own sealed credentials) and
-    // the vault that seals them. Neither is a process-wide provider.
-    paymobProviderFactory: runtime.paymobProviderFactory,
+    // WP-13: registered providers (Paymob today; each built per request from the tenant's own
+    // sealed credentials) and the vault that seals them. Neither is a process-wide provider.
+    providerRegistrations: runtime.providerRegistrations,
     paymentCredentialVault: runtime.paymentCredentialVault,
     // WP-14 T14.4: Licensing's REAL collection, through Morbeh's own PSP account. Absent ⇒ Licensing
     // keeps its in-memory stub, which assertProductionLicensingBillingConfigured refuses outside local.

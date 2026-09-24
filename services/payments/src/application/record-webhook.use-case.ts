@@ -5,9 +5,12 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { PaymentIntentRepository } from "../domain/payment-intent-repository";
-import { hasProviderWebhooks } from "../domain/value-objects/payment-provider-key";
 import type { PaymentStatusValue } from "../domain/value-objects/payment-status";
-import type { ProcessedWebhookStore } from "./ports";
+import {
+  capabilitiesOrRefusal,
+  type ProcessedWebhookStore,
+  type ProviderCapabilityLookup,
+} from "./ports";
 
 export interface RecordWebhookInput {
   /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
@@ -55,6 +58,8 @@ export interface RecordWebhookDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   readonly processedWebhooks: ProcessedWebhookStore;
+  /** Declared capabilities decide whether a provider can deliver webhooks at all, and whether its callback IS the capture. */
+  readonly providers: ProviderCapabilityLookup;
   /**
    * Phase A.9. When present, a webhook `kind` mapping to `captured` settles THROUGH the exact same
    * code path a normal client retry uses (`CapturePaymentLifecycle.settle` — Charge creation,
@@ -134,12 +139,15 @@ export class RecordWebhook implements UseCase<
 
       // A webhook may only speak for the provider the shopper chose for THIS intent. Without this a
       // verified callback from one provider could drive an intent that was opened for another.
-      // Cash on delivery has no PSP to call us. A webhook claiming to settle it is forged by
-      // definition — only `ConfirmCodCollection` (an operator's explicit action) marks it paid.
-      if (!hasProviderWebhooks(intent.provider)) {
+      // A provider that does not declare `deliversWebhooks` (cash on delivery has no PSP to call
+      // us) cannot be the sender of one: a webhook claiming to settle it is forged by definition —
+      // only `ConfirmCodCollection` (an operator's explicit action) marks it paid.
+      const capabilities = capabilitiesOrRefusal(this.deps.providers, intent.provider);
+      if (!capabilities.ok) return err(capabilities.error);
+      if (!capabilities.value.deliversWebhooks) {
         return err(
           new BusinessRuleError(
-            "This payment method has no provider webhooks; a cash-on-delivery payment is settled by confirming the collection",
+            "This payment method has no provider webhooks; it is settled by an operator confirming the collection",
           ),
         );
       }
@@ -174,7 +182,7 @@ export class RecordWebhook implements UseCase<
         // production (`deferToCaptureSettlement` is always wired), but `authorized`/`failed`/
         // `cancelled`/`expired` do. A genuinely illegal cross-status webhook (current status differs
         // from `toStatus` and the transition table forbids it) is unaffected and still rejected below.
-        if (deferToCaptureSettlement && intent.isDirectCapture) {
+        if (deferToCaptureSettlement && capabilities.value.settlesAtPayTime) {
           // Paymob (WP-13): the signed callback IS the capture — there was no capture request. Bring
           // the intent to the one status `settle()` may follow, in this same transaction.
           intent.prepareDirectCapture(

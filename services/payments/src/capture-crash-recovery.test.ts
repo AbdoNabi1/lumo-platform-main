@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { staticProviders } from "./test-support/static-provider-resolver";
+import { staticCapabilities, staticProviders } from "./test-support/static-provider-resolver";
 import type { Clock, IdGenerator, PaymentProvider, ProviderIntent } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
@@ -232,6 +232,7 @@ function buildWebhookDeps(
     idGenerator: sequentialIds("wh"),
     clock,
     processedWebhooks: new InMemoryProcessedWebhookStore(),
+    providers: staticCapabilities(),
     ...extra,
   };
 }

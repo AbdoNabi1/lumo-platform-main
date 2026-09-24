@@ -9,6 +9,7 @@ import type {
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wirePayments } from "./composition";
 import { testEnvelopeVault } from "./test-support/local-key-wrap-cipher";
+import { paymobLikeRegistration } from "./test-support/paymob-like-registration";
 
 function sequentialIds(): IdGenerator {
   let counter = 0;
@@ -62,7 +63,11 @@ function wire() {
     idGenerator: sequentialIds(),
     clock,
     paymentProvider: recordingProvider("stripe", calls),
-    paymobProviderFactory: (config) => recordingProvider("paymob", calls, config.secretKey),
+    providerRegistrations: [
+      paymobLikeRegistration(({ credentials }) =>
+        recordingProvider("paymob", calls, credentials.secretKey),
+      ),
+    ],
     paymentCredentialVault: testEnvelopeVault(),
   });
   return { app, calls };
@@ -71,11 +76,14 @@ function wire() {
 type Wired = ReturnType<typeof wire>["app"];
 
 const paymob = (secretKey: string) => ({
-  region: "egy",
-  integrationId: 158,
-  secretKey,
-  hmacSecret: `hmac-of-${secretKey}`,
-  publicKey: `pk-of-${secretKey}`,
+  paymob: {
+    config: { region: "egy", integrationId: 158 },
+    credentials: {
+      secretKey,
+      hmacSecret: `hmac-of-${secretKey}`,
+      publicKey: `pk-of-${secretKey}`,
+    },
+  },
 });
 
 async function configure(
@@ -87,7 +95,7 @@ async function configure(
   const response = await app.payments.updateMerchantPaymentSettings({
     tenantId,
     enabledMethods,
-    paymob: paymob(secretKey),
+    providerSettings: paymob(secretKey),
   });
   expect(response.status).toBe(200);
 }

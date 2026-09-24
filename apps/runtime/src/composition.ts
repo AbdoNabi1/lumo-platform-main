@@ -44,10 +44,10 @@ import {
   wirePayments,
   type PaymentController,
   type PaymentCredentialVault,
-  type PaymobProviderFactory,
+  type ProviderRegistration,
 } from "@platform/payments";
 import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
-import { isPaymobRegion, PaymobPaymentProvider } from "@platform/psp-paymob";
+import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import { PlatformBillingPaymentsAdapter, type PaymentsPort } from "@platform/licensing";
 import {
@@ -130,12 +130,15 @@ export interface RuntimeCore {
    */
   readonly paymentProvider: PaymentProvider | undefined;
   /**
-   * WP-13: how a merchant's Paymob provider is built from that merchant's own opened credentials
-   * (`@platform/psp-paymob`), and the envelope vault their secrets are sealed with. Both exist only
-   * when `PAYMENT_CREDENTIALS_KEK_REF` is configured — otherwise Paymob is unavailable, never stubbed.
-   * Nothing here holds a merchant credential: the factory receives it per call.
+   * The payment providers registered from outside `services/payments` (which ships Stripe's binding
+   * and cash on delivery itself) — the whole of "adding a provider": a key, declared capabilities
+   * and a factory, registered once here at composition time (ADR-0014). Today that is Paymob
+   * (`@platform/psp-paymob`), present only when `PAYMENT_CREDENTIALS_KEK_REF` is configured — and
+   * then together with the real envelope vault their credentials are sealed with — otherwise it is
+   * simply not registered: unavailable, never stubbed. A registration holds no merchant credential;
+   * its factory receives one per call.
    */
-  readonly paymobProviderFactory: PaymobProviderFactory | undefined;
+  readonly providerRegistrations: readonly ProviderRegistration[];
   readonly paymentCredentialVault: PaymentCredentialVault | undefined;
   /**
    * WP-14 T14.4: Licensing's REAL `PaymentsPort` — Morbeh charging a merchant through MORBEH'S OWN
@@ -303,23 +306,8 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     config.PAYMENT_CREDENTIALS_KEK_REF !== undefined
       ? buildPaymentCredentialVault(config.PAYMENT_CREDENTIALS_KEK_REF)
       : undefined;
-  const paymobProviderFactory: PaymobProviderFactory | undefined =
-    paymentCredentialVault !== undefined
-      ? (merchant) => {
-          if (!isPaymobRegion(merchant.region)) {
-            throw new Error(`Unsupported Paymob region "${merchant.region}"`);
-          }
-          return new PaymobPaymentProvider({
-            secretKey: merchant.secretKey,
-            hmacSecret: merchant.hmacSecret,
-            publicKey: merchant.publicKey,
-            integrationId: merchant.integrationId,
-            region: merchant.region,
-            fetch: async (url, init) => fetch(url, init),
-            logger,
-          });
-        }
-      : undefined;
+  const providerRegistrations: readonly ProviderRegistration[] =
+    paymentCredentialVault !== undefined ? [paymobRegistration(logger)] : [];
 
   const platformBillingPayments = buildPlatformBillingPayments(config);
 
@@ -341,7 +329,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     metrics: new RuntimeMetrics(),
     objectStorage,
     paymentProvider,
-    paymobProviderFactory,
+    providerRegistrations,
     paymentCredentialVault,
     platformBillingPayments,
     mfaProviders,
@@ -605,7 +593,7 @@ export function buildReturnsPaymentsPortAdapter(core: RuntimeCore): PrismaPaymen
     prisma: core.prisma,
     paymentProvider: core.paymentProvider,
     // WP-13: a Returns refund of a Paymob payment goes out through the same per-merchant provider.
-    paymobProviderFactory: core.paymobProviderFactory,
+    providerRegistrations: core.providerRegistrations,
     paymentCredentialVault: core.paymentCredentialVault,
   });
   return new PrismaPaymentsPortAdapter(core.prisma, payments);

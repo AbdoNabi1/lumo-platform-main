@@ -5,6 +5,8 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { PaymentIntentRepository } from "../domain/payment-intent-repository";
+import { isSettledByOperatorConfirmation } from "../domain/value-objects/provider-capabilities";
+import { capabilitiesOrRefusal, type ProviderCapabilityLookup } from "./ports";
 import type { CaptureSettlementPort } from "./record-webhook.use-case";
 
 export interface ConfirmCodCollectionInput {
@@ -26,6 +28,8 @@ export interface ConfirmCodCollectionDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  /** Eligibility is by declared capability (settles at pay time, cannot call back), not by provider name. */
+  readonly providers: ProviderCapabilityLookup;
   /** The SAME settlement a card capture goes through (Charge, `payments.payment_intent.captured`, Orders/Finance side effects). */
   readonly captureSettlement: CaptureSettlementPort;
 }
@@ -67,9 +71,13 @@ export class ConfirmCodCollection implements UseCase<
     >(async (tx) => {
       const intent = await this.deps.intents.findById(input.paymentIntentId, input.tenantId, tx);
       if (intent === null) return err(new NotFoundError("Payment intent not found"));
-      if (intent.provider !== "cod") {
+      const capabilities = capabilitiesOrRefusal(this.deps.providers, intent.provider);
+      if (!capabilities.ok) return err(capabilities.error);
+      if (!isSettledByOperatorConfirmation(capabilities.value)) {
         return err(
-          new BusinessRuleError("Only a cash-on-delivery payment can be settled by a collection"),
+          new BusinessRuleError(
+            "Only a payment that is settled by an operator confirming the collection (cash on delivery) can be settled by a collection",
+          ),
         );
       }
       if (intent.status.value === "captured") return ok({ alreadyCaptured: true });

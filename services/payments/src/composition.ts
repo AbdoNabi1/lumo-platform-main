@@ -36,12 +36,15 @@ import type {
   OrdersPort,
   PaymentCredentialVault,
   PaymentProviderResolver,
-  PaymobProviderFactory,
   ProcessedWebhookStore,
 } from "./application/ports";
+import {
+  PaymentProviderRegistry,
+  type ProviderRegistration,
+} from "./application/provider-registry";
 import type { MerchantPaymentSettingsRepository } from "./domain/merchant-payment-settings-repository";
 import type { PaymentIntentRepository } from "./domain/payment-intent-repository";
-import { CashOnDeliveryProvider } from "./infrastructure/cash-on-delivery-provider";
+import { composePaymentProviderRegistrations } from "./infrastructure/built-in-provider-registrations";
 import { InMemoryPaymentCredentialVault } from "./infrastructure/envelope-payment-credential-vault";
 import { InMemoryMerchantPaymentSettingsRepository } from "./infrastructure/in-memory-merchant-payment-settings-repository";
 import { PrismaMerchantPaymentSettingsRepository } from "./infrastructure/prisma-merchant-payment-settings-repository";
@@ -51,7 +54,6 @@ import {
   InMemoryFinanceAdapter,
   InMemoryNotificationAdapter,
   InMemoryOrdersAdapter,
-  InMemoryPaymentProvider,
   InMemoryProcessedWebhookStore,
 } from "./infrastructure/in-memory-port-adapters";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
@@ -80,15 +82,17 @@ export interface PaymentsWiringDeps {
    * The PLATFORM's Stripe adapter (C2-2) — one Stripe account for the whole platform, injected as
    * before. Absent ⇒ `InMemoryPaymentProvider`, the offline stub whose `verifyWebhook()` always
    * returns `true` and whose money operations no-op; `apps/runtime` refuses to boot outside `local`
-   * with that stub backing Stripe. Since WP-13 this is only ONE input to the per-request provider
-   * resolver below — it is no longer what every payment goes through.
+   * with that stub backing Stripe. Since WP-13 this is only ONE registration among several — it is
+   * no longer what every payment goes through.
    */
   readonly paymentProvider?: PaymentProvider;
   /**
-   * Builds a merchant's Paymob provider from that merchant's own (opened) credentials. Supplied by
-   * the composition root, which owns `@platform/psp-paymob`. Absent ⇒ Paymob is unavailable.
+   * Every provider registered from outside this service — the whole of "adding a provider" (a key,
+   * declared capabilities, a factory). Registered here once, at composition time (ADR-0014);
+   * resolved per request. Cash on delivery and the Stripe binding above are built in and need no
+   * entry. A key that collides with a built-in is refused at boot.
    */
-  readonly paymobProviderFactory?: PaymobProviderFactory;
+  readonly providerRegistrations?: readonly ProviderRegistration[];
   /** Seals merchant PSP secrets (`@platform/secrets` envelope). Absent ⇒ an in-memory STUB the boot guard refuses outside `local`. */
   readonly paymentCredentialVault?: PaymentCredentialVault;
   /** Full override of the per-request provider resolver (tests). Absent ⇒ built from the inputs above. */
@@ -132,15 +136,10 @@ function buildController(
   deps: PaymentsWiringDeps,
 ): { readonly controller: PaymentController; readonly providers: PaymentProviderResolver } {
   const credentialVault = deps.paymentCredentialVault ?? new InMemoryPaymentCredentialVault();
+  const registry = PaymentProviderRegistry.from(composePaymentProviderRegistrations(deps));
   const providers =
     deps.paymentProviders ??
-    new TenantPaymentProviderResolver({
-      settings,
-      stripe: deps.paymentProvider ?? new InMemoryPaymentProvider(),
-      cashOnDelivery: new CashOnDeliveryProvider(),
-      paymobFactory: deps.paymobProviderFactory,
-      vault: credentialVault,
-    });
+    new TenantPaymentProviderResolver({ settings, registry, vault: credentialVault });
   const ordersPort = deps.ordersPort ?? new InMemoryOrdersAdapter();
   const financePort = deps.financePort ?? new InMemoryFinanceAdapter();
   const notifications = deps.paymentsNotifications ?? new InMemoryNotificationAdapter();
@@ -162,6 +161,7 @@ function buildController(
       intents,
       unitOfWork,
       idGenerator: deps.idGenerator,
+      providers,
     }),
     capturePayment: new CapturePayment({
       intents,
@@ -192,6 +192,7 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       processedWebhooks,
+      providers,
       // Phase A.9: routes a `captured` PSP webhook through the SAME settlement code a normal
       // client retry uses (Charge/notify/Finance), closing the crash-recovery gap for both the
       // Prisma-backed and in-memory composition branches (this function is shared by both).
@@ -203,12 +204,17 @@ function buildController(
       unitOfWork,
       idGenerator: deps.idGenerator,
       clock: deps.clock,
+      providers,
       captureSettlement: capturePaymentLifecycle,
     }),
-    getMerchantPaymentSettings: new GetMerchantPaymentSettings({ settings, providers }),
+    getMerchantPaymentSettings: new GetMerchantPaymentSettings({
+      settings,
+      registry,
+      vault: credentialVault,
+    }),
     updateMerchantPaymentSettings: new UpdateMerchantPaymentSettings({
       settings,
-      providers,
+      registry,
       vault: credentialVault,
       unitOfWork,
     }),
