@@ -70,6 +70,38 @@ describe("KratosSessionAuthenticator", () => {
     expect(calls).toBe(1); // second hit served from cache
   });
 
+  it("user-editable traits can never override the verified tenant (or session) claim", async () => {
+    // `metadata_public` is operator-written; `traits` are the user's own (self-service settings), and
+    // depending on the identity schema they can carry arbitrary keys. The claim the tenant resolver reads
+    // must come from the operator-written field, whatever the traits contain.
+    const hostile = {
+      ...session,
+      identity: {
+        ...session.identity,
+        traits: { email: "a@b.co", tenant_id: "t-victim", session_id: "sess-forged" },
+      },
+    };
+    const auth = kratos(async () => ({ status: 200, json: async () => hostile }));
+    const context = await auth.verifyWithClaims("tok-x");
+    expect(context?.claims["tenant_id"]).toBe("t-1");
+    expect(context?.claims["session_id"]).toBe("sess-1");
+    expect(context?.claims["email"]).toBe("a@b.co"); // ordinary traits are still exposed
+  });
+
+  it("an identity with no tenant in metadata_public carries NO tenant claim (never a trait's)", async () => {
+    const noTenant = {
+      ...session,
+      identity: {
+        id: "cust-9",
+        metadata_public: { kind: "customer", roles: [] },
+        traits: { email: "a@b.co", tenant_id: "t-victim" },
+      },
+    };
+    const auth = kratos(async () => ({ status: 200, json: async () => noTenant }));
+    const context = await auth.verifyWithClaims("tok-y");
+    expect(context?.claims["tenant_id"]).toBeUndefined();
+  });
+
   it("returns null for 401 and for inactive sessions", async () => {
     expect(
       await kratos(async () => ({ status: 401, json: async () => ({}) })).verify("bad"),

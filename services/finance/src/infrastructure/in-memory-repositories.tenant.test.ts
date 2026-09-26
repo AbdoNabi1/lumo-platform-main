@@ -1,5 +1,5 @@
 import type { ClickHouseClient } from "@clickhouse/client";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createFakePrisma } from "@platform/db/testing";
 import { Money, UniqueEntityId } from "@platform/domain";
 import { rootEventContext } from "@platform/messaging";
@@ -180,4 +180,47 @@ describe("finance read-model tenant isolation, incl. count (T10.5)", () => {
   ];
   for (const fixture of fixtures)
     for (const c of tenantRowIsolationCases(fixture)) it(c.name, c.run);
+});
+
+// ── lookups the shared harness has no operation for ─────────────────────────────────────────────
+// `findByCode` is a second address for the same row. Its filter is a separate guard from `findById`'s,
+// and removing it from either adapter used to turn nothing red (found by WP-10's mutation pass).
+describe("finance account findByCode is tenant-scoped (T10.5 gap closed by the WP-10 DoD pass)", () => {
+  const layers: Array<[string, () => AccountRepository]> = [
+    ["in-memory adapter", () => new InMemoryAccountRepository()],
+    [
+      "prisma repository over fake-prisma",
+      () => new PrismaAccountRepository({ prisma: createFakePrisma().database }),
+    ],
+  ];
+  for (const [layer, make] of layers) {
+    it(`${layer}: tenant B cannot find tenant A's account by its code`, async () => {
+      const repo = make();
+      const acc = Account.reconstitute(
+        UniqueEntityId.from("acc-1"),
+        "1000",
+        "A's cash",
+        accountType,
+        true,
+        0,
+      );
+      await repo.save(acc, "tenant-a");
+      expect((await repo.findByCode("1000", "tenant-a"))?.name).toBe("A's cash");
+      expect(await repo.findByCode("1000", "tenant-b")).toBeNull();
+    });
+
+    it(`${layer}: the same code in two tenants resolves to each tenant's own account`, async () => {
+      const repo = make();
+      await repo.save(
+        Account.reconstitute(UniqueEntityId.from("acc-a"), "1000", "A", accountType, true, 0),
+        "tenant-a",
+      );
+      await repo.save(
+        Account.reconstitute(UniqueEntityId.from("acc-b"), "1000", "B", accountType, true, 0),
+        "tenant-b",
+      );
+      expect((await repo.findByCode("1000", "tenant-a"))?.name).toBe("A");
+      expect((await repo.findByCode("1000", "tenant-b"))?.name).toBe("B");
+    });
+  }
 });

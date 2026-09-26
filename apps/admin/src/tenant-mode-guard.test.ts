@@ -1,5 +1,10 @@
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import { claimTenantResolver, headerTenantResolver, type TenantResolver } from "@platform/http";
+import {
+  claimTenantResolver,
+  headerTenantResolver,
+  publicHeaderTenantResolver,
+  type TenantResolver,
+} from "@platform/http";
 import type { Database } from "@platform/db";
 import { describe, expect, it } from "vitest";
 import { wireAdmin } from "./composition";
@@ -11,7 +16,9 @@ import {
   findConstructionTimeTenants,
 } from "./tenant-mode-guard";
 
-const realChain: readonly TenantResolver[] = [claimTenantResolver, headerTenantResolver];
+// The chain `createAdminHttpApi` really builds under multi (G-69): the header is honoured for
+// unauthenticated requests only.
+const realChain: readonly TenantResolver[] = [claimTenantResolver, publicHeaderTenantResolver];
 
 let counter = 0;
 const ids = { generate: () => `id-${(counter += 1)}` };
@@ -63,6 +70,32 @@ describe("resolver chain probe", () => {
     expect(collectMultiTenantFailures({ resolvers: [], graph: {} })[0]).toContain("resolver-chain");
   });
 
+  it("rejects the G-69 shape: a header that names a tenant for an AUTHENTICATED principal with no claim", () => {
+    const failures = collectMultiTenantFailures({
+      resolvers: [claimTenantResolver, headerTenantResolver],
+      graph: {},
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain("resolver-chain");
+    expect(failures[0]).toContain("authenticated");
+  });
+
+  it("rejects a chain that resolves a blank claim or a blank header as a tenant", () => {
+    const blankIsATenant: TenantResolver = (input) => {
+      const claim = input.claims?.["tenant_id"];
+      if (typeof claim === "string") return claim; // "   " resolves
+      return input.headers["x-tenant-id"] ?? null; // "" resolves
+    };
+    const failures = collectMultiTenantFailures({ resolvers: [blankIsATenant], graph: {} });
+    expect(failures[0]).toContain("blank");
+  });
+
+  it("names the empty chain in the message", () => {
+    expect(collectMultiTenantFailures({ resolvers: [], graph: {} })[0]).toContain(
+      "no tenant resolvers are configured",
+    );
+  });
+
   it("rejects a chain that falls back to a default when nothing resolves", () => {
     const defaulting: TenantResolver = (input) =>
       headerTenantResolver(input) ?? claimTenantResolver(input) ?? "tenant-local";
@@ -83,6 +116,23 @@ describe("construction-time tenant scan", () => {
     a["self"] = a;
     a["repo"] = { tenantId: "t" };
     expect(findConstructionTimeTenants(a)).toEqual(["repo.tenantId"]);
+  });
+
+  it.each(["tenantId", "_tenantId", "defaultTenantId", "pinnedTenantId"])(
+    "recognises %s as a construction-time pin",
+    (field) => {
+      expect(findConstructionTimeTenants({ repo: { [field]: "tenant-local" } })).toEqual([
+        `repo.${field}`,
+      ]);
+    },
+  );
+
+  it("does not exempt a graph key that merely STARTS WITH an exempted one", () => {
+    const graph = {
+      tenancy: { repo: { tenantId: "t" } },
+      tenancyExtras: { repo: { tenantId: "t" } },
+    };
+    expect(findConstructionTimeTenants(graph)).toEqual(["tenancyExtras.repo.tenantId"]);
   });
 
   it("does not treat aggregate rows held in a Map as pins", () => {

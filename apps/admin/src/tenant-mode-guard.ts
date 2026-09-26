@@ -97,14 +97,18 @@ export function findConstructionTimeTenants(
 
 const PROBE_TENANTS = ["probe-tenant-a", "probe-tenant-b"] as const;
 
+/** A verified, non-public identity: what a token that carries no `tenant_id` claim looks like. */
+const AUTHENTICATED_PROBE_PRINCIPAL = { id: "probe-principal", kind: "staff", roles: [] } as const;
+
 function probeInput(overrides: {
   readonly headers?: Readonly<Record<string, string | undefined>>;
   readonly claims?: Readonly<Record<string, unknown>> | null;
+  readonly authenticated?: boolean;
 }): Parameters<TenantResolver>[0] {
   return {
     headers: overrides.headers ?? {},
     hostname: "tenant-probe.invalid",
-    principal: null,
+    principal: overrides.authenticated === true ? AUTHENTICATED_PROBE_PRINCIPAL : null,
     claims: overrides.claims ?? null,
   };
 }
@@ -137,6 +141,32 @@ function resolverChainFailure(resolvers: readonly TenantResolver[]): string | un
     problems.push(
       `a request carrying no tenant resolved to "${unresolved}" — an unresolved tenant must be ` +
         "null (rejected), never defaulted",
+    );
+  }
+  // G-69: the header is client-controlled, so it may name a tenant only where there is no verified
+  // identity. An authenticated principal whose token carries no tenant is bound to none.
+  const forged = firstHit(
+    resolvers,
+    probeInput({
+      authenticated: true,
+      claims: {},
+      headers: { "x-tenant-id": PROBE_TENANTS[0] },
+    }),
+  );
+  if (forged !== null) {
+    problems.push(
+      `an authenticated principal with no tenant claim resolved to "${forged}" from a client-supplied ` +
+        "header (G-69) — the header may only name a tenant for an unauthenticated request",
+    );
+  }
+  // A blank value is "no tenant", not a tenant called "".
+  const blank = firstHit(
+    resolvers,
+    probeInput({ claims: { tenant_id: "   " }, headers: { "x-tenant-id": "   " } }),
+  );
+  if (blank !== null) {
+    problems.push(
+      `a blank claim/header resolved to ${JSON.stringify(blank)} — a blank tenant must be null (rejected)`,
     );
   }
   if (problems.length === 0) return undefined;

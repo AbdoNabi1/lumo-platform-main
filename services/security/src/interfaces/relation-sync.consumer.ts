@@ -1,4 +1,4 @@
-import type { IntegrationEvent } from "@platform/domain-events";
+import { readEnvelopeTenant, type IntegrationEvent } from "@platform/domain-events";
 import type { EventHandler } from "@platform/messaging";
 import type { Logger } from "@platform/utils";
 import type { RelationshipSyncPort } from "../application/authz-ports";
@@ -64,8 +64,10 @@ export class RelationWrittenConsumer implements EventHandler<SecurityRelationPay
       });
       return;
     }
-    const tenantId = event.tenantId;
-    if (tenantId === undefined || tenantId === "") {
+    // `readEnvelopeTenant`, not `=== undefined || === ""`: off the wire the tenant can also be null, blank
+    // or a non-string, and all of those are "no tenant".
+    const tenantId = readEnvelopeTenant(event);
+    if (tenantId === null) {
       this.deps.logger.warn(
         "relation.written has no tenant on the envelope — skipping (fail closed)",
         { messageId: event.messageId, key: event.payload.key },
@@ -108,8 +110,10 @@ export class RelationDeletedConsumer implements EventHandler<SecurityRelationPay
       });
       return;
     }
-    const tenantId = event.tenantId;
-    if (tenantId === undefined || tenantId === "") {
+    // `readEnvelopeTenant`, not `=== undefined || === ""`: off the wire the tenant can also be null, blank
+    // or a non-string, and all of those are "no tenant".
+    const tenantId = readEnvelopeTenant(event);
+    if (tenantId === null) {
       this.deps.logger.error(
         "relation.deleted has no tenant on the envelope — the revocation was NOT applied",
         { messageId: event.messageId, key: event.payload.key },

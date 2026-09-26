@@ -163,6 +163,36 @@ describe("relationship synchronization (H-2)", () => {
       expect(sync.writes).toEqual([]);
     });
 
+    // The type says `string`; the wire says whatever JSON.parse returned.
+    const malformed: Array<[string, unknown]> = [
+      ["whitespace only", "   "],
+      ["JSON null", null],
+      ["a number", 42],
+      ["an object", { id: "tenant-a" }],
+    ];
+    const withTenant = (tenantId: unknown) =>
+      ({ ...relEvent("permissions:orders:refund#granted@user-1"), tenantId }) as never;
+
+    it.each(malformed)(
+      "write: %s is treated as absent — nothing is written",
+      async (_l, tenantId) => {
+        const sync = recordingSync();
+        await new RelationWrittenConsumer({ sync, logger: silent }).handle(withTenant(tenantId));
+        expect(sync.writes).toEqual([]);
+      },
+    );
+
+    it.each(malformed)(
+      "delete: %s THROWS — a revocation is never silently acknowledged",
+      async (_l, tenantId) => {
+        const sync = recordingSync();
+        await expect(
+          new RelationDeletedConsumer({ sync, logger: silent }).handle(withTenant(tenantId)),
+        ).rejects.toThrow(/cannot be revoked/);
+        expect(sync.deletes).toEqual([]);
+      },
+    );
+
     it("delete: THROWS (to retry/DLQ) rather than acknowledge a revocation it cannot apply", async () => {
       // A skipped write denies; a skipped delete ALLOWS. So this must not be a quiet warn-and-ack.
       const sync = recordingSync();

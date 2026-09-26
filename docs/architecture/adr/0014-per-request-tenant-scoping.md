@@ -144,6 +144,78 @@ envelope.tenantId })`) read nothing, and turned gap F-02 ("`tenantId` is optiona
 > — the same pin `PromotionValidationAdapter` already had. They are class (A) rows in the T10.7
 > inventory and go away when checkout, orders and payments convert.
 
+> **Amended 2026-09-26 (Amendment 9 — reconciliation with the code, at WP-10's definition of done).**
+> This ADR was written before T10.3–T10.7 and amended around them; this amendment reads it against
+> what the code does today and records every place they differ. Nothing here changes the Decision. Where
+> an earlier paragraph is now wrong, the paragraph carries an inline `[As built 2026-09-26]` note rather
+> than being rewritten, so the history stays legible. The differences, most important first:
+>
+> 1. **Tenant isolation rests entirely on application code, and only two Prisma repositories had a test
+>    that could prove it.** Point 6 says RLS protects nothing on the application's path (the connecting
+>    role has `BYPASSRLS`); that is still true. A mutation pass over WP-10 removed the `tenantId` filter
+>    from the orders, catalog and inventory Prisma repositories one at a time and **nothing went red** —
+>    their Prisma branches are covered only by `DATABASE_URL_TEST`-gated integration suites. Only
+>    finance accounts and security principals had a fake-backed isolation test. Closed uniformly by
+>    `scripts/dev/check-prisma-tenant-where.mjs`, run in the normal suite by
+>    `packages/db/src/prisma-tenant-where.guard.test.ts`: every Prisma read/update/delete must name the
+>    tenant in its `where`, with a keyed exemption list. It does **not** prove the value is the right
+>    tenant. It found three id-only upserts/lookups, recorded as open in the script and the register
+>    (G-75, G-76), of which **G-75 is a live cross-tenant defect** (below).
+> 2. **Decision 2 is not implemented as written.** It says `PrismaUnitOfWork.run` takes `tenantId` and
+>    issues `set_config('app.tenant_id', $1, true)` first. In the code `PrismaUnitOfWork.run(work)` takes no
+>    tenant and calls plain `runInTransaction`. What exists is `runInTenantTransaction` and `runReadScoped`
+>    (`packages/db/src/transaction.ts`), which do set it, and 122 call sites use `runReadScoped` **when no
+>    `tx` was supplied**. A repository given a `tx` from `PrismaUnitOfWork` reuses it — and that
+>    transaction does **not** carry `app.tenant_id`, contrary to the comment at
+>    `services/catalog/src/infrastructure/prisma-catalog-repositories.ts:46`. Harmless today (the role
+>    bypasses RLS); **a hard blocker for Phase 2**: under `lumo_app`, every write and every read inside a
+>    unit of work would see or write nothing.
+> 3. **Amendment 3's automated "N of N entry points" assertion does not exist**, so Phase 2's gate is unmet
+>    and there is no count to report. No test asserts `current_setting('app.tenant_id', true)` is non-null
+>    at any entry point.
+> 4. **Decision 3's dependency-cruiser rule was not built.** `check-prisma-tenant-where.mjs` (item 1) is
+>    a different, tenant-in-`where` check; it does not enforce "no bare `prisma.<model>` outside the two
+>    helpers".
+> 5. **Decision 7 is a runtime graph scan, not a lint.** `assertMultiTenantReady`
+>    (`apps/admin/src/tenant-mode-guard.ts`) walks the composed graph at boot and probes the resolver chain
+>    behaviourally. As of this amendment the probe also refuses the G-69 shape (a client header naming a
+>    tenant for an authenticated principal) and a chain that resolves a blank value; before, its "real
+>    chain" fixture used `headerTenantResolver` and would have passed the very bug G-69 fixed. The worker
+>    has its own check, `assertWorkerTenantModeSupported`, with empty pin lists since G-64 and T10.6.
+> 6. **Decision 4 (consumers) landed as G-64/D-067**: `IntegrationEvent.tenantId` is required and
+>    consumers read it through `readEnvelopeTenant`/`requireEnvelopeTenant`. Two consumers had bypassed
+>    the helper (`services/security` relation sync and `services/finance` ledger consumers) and accepted
+>    `null`, whitespace and non-string tenants; the relation-sync **delete** acknowledged such a
+>    revocation without applying it. Fixed. The wire deserializer is a bare `JSON.parse` cast, so every
+>    consumer must validate for itself.
+> 7. **Point 6's migration bookkeeping.** The two RLS migrations now exist in the repository
+>    (`packages/db/prisma/schema/migrations/20260823000000_rls_tenant_isolation`,
+>    `…20260823010000_rls_nullable_tenant_write_check`). Whether `migrate resolve` was run against the live
+>    table is an operator matter this pass cannot check (no database access).
+> 8. **Tenant lifecycle (T10.6, D-068) is not described above and is part of the design.** After
+>    resolution and before authorization the pipeline consults a `TenantGate` (`packages/http`
+>    `executeRoute` step 2b): suspended, cancelled and unknown tenants are refused, an unreadable status is
+>    a 503. The platform tenant is protected from suspension. Point 8f's exemption is unchanged.
+> 9. **Two fail-open defaults found and closed.** `createAdminHttpApi` under multi with no `tenantId` left
+>    the tenancy routes **unpinned** (any tenant could create tenants); it now pins to `""`, i.e. nobody
+>    (`deploymentScope`, `apps/admin/src/http/server.ts`). `KratosSessionAuthenticator` spread user-editable
+>    `traits` **after** the verified `tenant_id` claim, so a trait named `tenant_id` overrode it; the
+>    operator-written fields now come last. Neither was reachable in the shipped configuration (the runtime
+>    always passes `tenantId`; the dev identity schema forbids extra traits) — both were one config change
+>    away.
+> 10. **Still future work, unchanged:** Phase 2 (the `lumo_app` role switch), `runReadScoped`'s latency
+>     decision (G-65), the `lumo_app` grant narrowing (point 5), and the platform-operator role (8a–8e). None
+>     was started and none should be as a side effect of this reconciliation.
+>
+> **Open cross-tenant defect (G-75), stated here because it decides whether multi is safe.**
+> `apps/runtime/src/tracking/prisma-event-record-store.ts` `appendHistory` and `get` locate the base row
+> with `findFirst({ where: { eventId } })` — no tenant — although the table's key is `(tenantId, eventId)`
+> and the collector accepts a client-supplied `eventId`. Two tenants can share one; history recorded while
+> delivering one tenant's event is written onto whichever tenant's row is found first. The port
+> (`EventRecordWriterPort.appendHistory`) carries no tenant, so the fix is a `packages/tracking` port change,
+> not a filter. Held as an executable `it.fails` in `prisma-event-record-store.tenant.test.ts`. **Not fixed in
+> the pass that found it.**
+
 ## Context
 
 ADR-0004 (2026-07-04) reserved `tenantId` on the integration-event envelope but explicitly deferred
@@ -154,7 +226,8 @@ isolation, Postgres RLS "as a second enforcement layer once real persistence lan
 runtime's actual composition unaddressed. This ADR is that follow-up: Phase 2 froze schemas and
 topics on the ADR-0008 model over two months ago, and the runtime has run single-tenant since,
 correctly refusing to boot in `TENANT_MODE=multi` (`apps/runtime/src/composition.ts:139-145`)
-rather than silently mis-scoping requests.
+rather than silently mis-scoping requests. **[As built 2026-09-26: that refusal was removed in T10.4 and
+replaced by `assertMultiTenantReady` (API) and `assertWorkerTenantModeSupported` (worker); see Amendment 9.]**
 
 **What T10.1's reading pass found, verified against the actual code rather than assumed:**
 
@@ -200,7 +273,10 @@ TENANT_DEFAULT_ID)` instead, which is why G-64 is a hardcoded value, not a missi
    2026-08-23 by two migrations that exist live but not in this repo's git history. **It currently
    protects nothing on the application's path** — both `DATABASE_URL`/`DIRECT_URL` connect as
    `postgres`, confirmed `rolbypassrls = true` — and nothing in this codebase ever sets
-   `app.tenant_id`. A second role, `lumo_app` (`rolbypassrls = false`, 558 grants), exists unused.
+   `app.tenant_id`. **[As built 2026-09-26: `runInTenantTransaction` and `runReadScoped` now set it, and 122
+   read call sites use the latter when no `tx` is supplied; `PrismaUnitOfWork` still does not (Amendment 9,
+   item 2). RLS remains inert: the connecting role is still `postgres` with `rolbypassrls = true`, re-confirmed
+   against the live database 2026-09-26.]** A second role, `lumo_app` (`rolbypassrls = false`, 558 grants), exists unused.
    `docs/plans/phase-7/WP-10-multi-tenant-runtime.md`'s "RLS interaction" section (approved
    2026-09-09, commit `33ece2d`, amended for rollout order, non-request paths, and the env-var
    split) is the design for turning this into real defense-in-depth; this ADR adopts it as binding
@@ -233,7 +309,9 @@ unknown` already rides on every port method (ADR-0003). Concretely: a read metho
    singleton — no `deps.tenantId` field, no per-tenant instance, no per-tenant cache to invalidate.
    This is the ~40-context mechanical migration `WP-10`'s own estimate already names; this ADR does
    not shrink that estimate, it confirms the target shape the migration converges on.
-2. **`TransactionalUnitOfWork.run` (`PrismaUnitOfWork`, `packages/db/src/prisma-repository.ts`)
+2. **[As built 2026-09-26: NOT implemented as written — `PrismaUnitOfWork.run(work)` takes no tenant and does
+   not set `app.tenant_id`; see Amendment 9, item 2. A Phase 2 blocker.]**
+   **`TransactionalUnitOfWork.run` (`PrismaUnitOfWork`, `packages/db/src/prisma-repository.ts`)
    grows a `tenantId` parameter and issues `SET LOCAL app.tenant_id = <tenantId>` (via
    `set_config('app.tenant_id', $1, true)`, parameterized — never string-interpolated) as the
    FIRST statement inside the transaction it opens, before invoking `work(tx)`.** This is the exact
@@ -246,7 +324,8 @@ unknown` already rides on every port method (ADR-0003). Concretely: a read metho
    `app.tenant_id` the same way, and runs `fn(tx)` — never a bare `prisma.<model>.findX(...)` outside
    either helper. `pnpm arch` should gain a dependency-cruiser rule forbidding direct `this.prisma.
 <model>` calls in a concrete repository outside these two helpers, once T10.3 lands, so this stays
-   enforced rather than a convention someone can silently drift from.
+   enforced rather than a convention someone can silently drift from. **[As built 2026-09-26: the rule was
+   not built (Amendment 9, item 4).]**
 
    **Amended 2026-09-09 (Amendment 1 — benchmark is a gate on context #2, not a later slice).**
    `runReadScoped` turns every previously-bare read into `BEGIN` + `SET LOCAL` + query + `COMMIT` —
@@ -457,7 +536,8 @@ true)` non-null assertion at every entry point) and Phase 2 (the role switch to 
    the same registration lists `packages/http`'s router and `apps/runtime/src/worker.ts`'s
    `supervisor.register(...)` calls already build, not a hand-maintained list that can silently go
    stale as routes/consumers are added. The suite reports **N of N covered**; Phase 2 does not start
-   below N of N. Without this, "the assertion holds everywhere" is exactly the kind of claim that
+   below N of N. **[As built 2026-09-26: this suite does not exist, so Phase 2's gate is unmet (Amendment 9,
+   item 3).]** Without this, "the assertion holds everywhere" is exactly the kind of claim that
    feels true until the one route nobody thought to check ships 200s full of nothing — the precise
    failure mode Amendment 3 exists to close before it can happen, not after.
 
@@ -473,7 +553,8 @@ true)` non-null assertion at every entry point) and Phase 2 (the role switch to 
    live migration-tracking table) that may not land on that timeline. Flipping `DATABASE_URL` to
    `lumo_app` on a migration history that still disagrees with the live database is a different kind
    of risk: `prisma migrate deploy` or `migrate status` behaving on stale assumptions during or after
-   a role switch is exactly the class of surprise Phase 2 should not be carrying. **Hard gate: Phase
+   a role switch is exactly the class of surprise Phase 2 should not be carrying. **[As built 2026-09-26: the two migration files are now in the repository; the `migrate resolve` state of the
+   live table is an operator matter (Amendment 9, item 7).]** **Hard gate: Phase
    2 does not start until the two migrations are committed and resolved. Strong preference, not a
    gate: land it before or during T10.3 anyway, since nothing is lost by doing it early and the
    operator sign-off it needs is independent of engineering time.** `migrate resolve` remains an

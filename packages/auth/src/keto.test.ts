@@ -47,6 +47,21 @@ describe("KetoAccessControl — subject_id convention (default, self-hosted Keto
     expect(await ac.authorize(principal, "products:read")).toBe(false);
   });
 
+  it.each([
+    ["an empty object", {}],
+    ["allowed: null", { allowed: null }],
+    ["allowed: the string 'true'", { allowed: "true" }],
+    ["allowed: 1", { allowed: 1 }],
+    ["an array", []],
+  ])("ONLY a literal allowed:true allows — a 200 whose body is %s denies", async (_label, body) => {
+    const ac = new KetoAccessControl({
+      readUrl: "http://keto:4466",
+      fetch: async () => ({ status: 200, json: async () => body }),
+      logger: silent,
+    });
+    expect(await ac.authorize(principal, "products:read")).toBe(false);
+  });
+
   it("FAILS CLOSED on non-200 and on transport error", async () => {
     expect(
       await new KetoAccessControl({

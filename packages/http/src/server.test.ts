@@ -480,6 +480,23 @@ describe("HTTP transport", () => {
       expect(seen[0]).toMatchObject({ id: "staff-1", tenantId: "t-9" });
       await bound.close();
     });
+
+    it("hands the guard's request context the RESOLVED tenant too (a guard that reads context, not principal)", async () => {
+      // A zero-trust guard (SecurityPermissionGuard) evaluates on `context.tenantId`, not on the
+      // principal; a context that carried a default here would authorise tenant B as tenant A.
+      const contexts: Array<GuardRequestContext | undefined> = [];
+      const bound = await buildServer({ onGuard: (c) => contexts.push(c) });
+      for (const tenant of ["t-9", "t-10"]) {
+        await bound.inject({
+          method: "POST",
+          url: "/api/v1/widgets",
+          headers: { ...good.headers, "x-tenant-id": tenant },
+          payload: { name: "a", quantity: 1 },
+        });
+      }
+      expect(contexts.map((c) => c?.tenantId)).toEqual(["t-9", "t-10"]);
+      await bound.close();
+    });
   });
 
   describe("public routes (Phase 9 hardening — storefront reads)", () => {

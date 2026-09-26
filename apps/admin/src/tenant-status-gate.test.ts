@@ -87,3 +87,55 @@ describe("CachedTenantGate (T10.6): no database read per request, bounded stalen
     expect(await h.gate.availability("t1")).toBe("suspended");
   });
 });
+
+describe("CachedTenantGate (T10.6): a status read before a change is never cached after it", () => {
+  /** A load whose result the test releases by hand, so a suspension can land WHILE a read is in flight. */
+  function deferred() {
+    const pending: Array<(v: TenantAvailability) => void> = [];
+    let loads = 0;
+    const gate = new CachedTenantGate({
+      load: () => {
+        loads += 1;
+        return new Promise<TenantAvailability>((resolve) => pending.push(resolve));
+      },
+      platformTenantId: "platform",
+      ttlMs: 10_000,
+      now: () => 1_000,
+    });
+    return { gate, pending, loads: () => loads };
+  }
+
+  it("invalidate() during an in-flight read discards that read's (now stale) result", async () => {
+    const h = deferred();
+    const first = h.gate.availability("t1"); // read begins: the row says "active"
+    // The operator suspends t1 and the lifecycle route invalidates, while that read is still open.
+    h.gate.invalidate("t1");
+    h.pending[0]?.("active"); // the stale read completes AFTER the change
+    expect(await first).toBe("active"); // the caller that started it may see it once...
+    const next = h.gate.availability("t1"); // ...but it must not have been cached for the next caller
+    expect(h.loads()).toBe(2);
+    h.pending[1]?.("suspended");
+    expect(await next).toBe("suspended");
+  });
+
+  it("invalidate() during an in-flight read: a request arriving after it starts a FRESH read", async () => {
+    const h = deferred();
+    void h.gate.availability("t1");
+    h.gate.invalidate("t1");
+    void h.gate.availability("t1"); // must not join the stale in-flight read
+    expect(h.loads()).toBe(2);
+  });
+
+  it("keeps one tenant's status out of another's (t1 suspended, t2 active)", async () => {
+    const statuses: Record<string, TenantAvailability> = { t1: "suspended", t2: "active" };
+    const gate = new CachedTenantGate({
+      load: async (id) => statuses[id] ?? "unknown",
+      platformTenantId: "platform",
+      ttlMs: 10_000,
+      now: () => 1_000,
+    });
+    expect(await gate.availability("t1")).toBe("suspended");
+    expect(await gate.availability("t2")).toBe("active");
+    expect(await gate.availability("t1")).toBe("suspended");
+  });
+});

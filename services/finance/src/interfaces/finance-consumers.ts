@@ -1,5 +1,5 @@
 import { Money, UniqueEntityId } from "@platform/domain";
-import type { IntegrationEvent } from "@platform/domain-events";
+import { requireEnvelopeTenant, type IntegrationEvent } from "@platform/domain-events";
 import type { EventHandler } from "@platform/messaging";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { LedgerPoster, type PostingAccounts } from "../domain/services/ledger-poster";
@@ -17,13 +17,9 @@ export interface FinanceConsumerDeps {
  * with no resolvable tenant is rejected (retry → DLQ) rather than posted against a guessed tenant.
  */
 function requireTenantId(event: IntegrationEvent<unknown>): string {
-  if (event.tenantId === undefined) {
-    throw new Error(
-      `Finance consumer for "${event.type}" received an event with no tenantId (ADR-0014) — ` +
-        "refusing to post a ledger entry against a guessed tenant.",
-    );
-  }
-  return event.tenantId;
+  // Off the wire the envelope is whatever `JSON.parse` returned: absent, empty, blank, null or a
+  // non-string are all "no tenant" (a ledger entry against tenant "" or 42 is not a guess we may make).
+  return requireEnvelopeTenant(event, "Finance consumer");
 }
 
 async function postAndAppend(

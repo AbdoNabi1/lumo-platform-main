@@ -179,3 +179,47 @@ describe("security principal tenant isolation (T10.5)", () => {
   for (const fixture of fixtures)
     for (const c of tenantRowIsolationCases(fixture)) it(c.name, c.run);
 });
+
+// ── lookups the shared harness has no operation for ─────────────────────────────────────────────
+// `findById` and `findBySubjectRef` are separate addresses for the same row, each with its own filter.
+// Removing the tenant from either Prisma `where` used to turn nothing red (WP-10 DoD mutation pass).
+describe("security principal alternate lookups are tenant-scoped", () => {
+  const layers: Array<
+    [string, () => { repo: PrincipalRepository & PrincipalDirectory; tx: unknown }]
+  > = [
+    [
+      "in-memory adapter",
+      () => ({ repo: new InMemoryPrincipalRepository(inMemoryRepos()), tx: undefined }),
+    ],
+    [
+      "prisma repository over fake-prisma",
+      () => {
+        const fake = createFakePrisma();
+        return {
+          repo: new PrismaPrincipalRepository({
+            prisma: fake.database,
+            outbox: new CapturingOutboxWriter() as never,
+            context,
+          }),
+          tx: fake.database,
+        };
+      },
+    ],
+  ];
+  for (const [layer, make] of layers) {
+    it(`${layer}: tenant B can neither findById nor findBySubjectRef tenant A's principal`, async () => {
+      const { repo, tx } = make();
+      const principal = Principal.register(
+        UniqueEntityId.from("p-shared-id"),
+        { externalId: "ext-1", kind: "human", displayName: "A's", subjectRef: "subj-1" },
+        "evt-1",
+        new Date(0),
+      );
+      await repo.save(principal, "tenant-a", tx);
+      expect((await repo.findById("p-shared-id", "tenant-a", tx))?.displayName).toBe("A's");
+      expect((await repo.findBySubjectRef("subj-1", "tenant-a", tx))?.displayName).toBe("A's");
+      expect(await repo.findById("p-shared-id", "tenant-b", tx)).toBeNull();
+      expect(await repo.findBySubjectRef("subj-1", "tenant-b", tx)).toBeNull();
+    });
+  }
+});

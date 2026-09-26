@@ -106,6 +106,11 @@ describe("assertWorkerTenantModeSupported", () => {
     expect(() => assertWorkerTenantModeSupported("single", on)).not.toThrow();
   });
 
+  it("single mode never refuses, even when pins are registered: a pin is only a problem under multi", () => {
+    const pin = [{ file: "apps/runtime/src/x.ts", what: "pinned" }];
+    expect(() => assertWorkerTenantModeSupported("single", on, pin, pin)).not.toThrow();
+  });
+
   it("allows multi mode when nothing in the worker is still pinned to one tenant", () => {
     expect(() => assertWorkerTenantModeSupported("multi", off)).not.toThrow();
   });

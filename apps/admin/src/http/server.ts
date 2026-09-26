@@ -83,6 +83,24 @@ export function singleTenantGuardedResolver(pinnedTenantId: string | undefined):
 }
 
 /**
+ * What the deployment mode decides about the platform scope, in one place so it can be tested without
+ * booting. Under multi, "nothing to pin to" means NOTHING qualifies (`""`), never "no restriction":
+ *  - `platformTenantId` — the tenant that is always available and may use the operator routes;
+ *  - `legacyStorageKeys` — unprefixed storage keys stay signable only where there is one tenant (G-68);
+ *  - `tenancyPinnedTo` — the tenant the tenancy context (ADR-0014 8f) is pinned to; every other tenant is refused.
+ */
+export function deploymentScope(
+  deps: Pick<AdminHttpDeps, "tenantMode" | "tenantId" | "platformTenantId" | "legacyStorageKeys">,
+) {
+  const multi = deps.tenantMode === "multi";
+  return {
+    platformTenantId: deps.platformTenantId ?? (multi ? (deps.tenantId ?? "") : undefined),
+    legacyStorageKeys: deps.legacyStorageKeys ?? (multi ? ("refuse" as const) : ("allow" as const)),
+    tenancyPinnedTo: multi ? (deps.tenantId ?? "") : undefined,
+  };
+}
+
+/**
  * The admin API composition root (Sprint 2.6): wires the Phase-1 admin facade behind the
  * production HTTP transport. `AdminGuard` (ADR-0007/0009) IS the transport's permission guard —
  * one policy engine, injected structurally (packages never import apps). Tenant resolution is
@@ -93,11 +111,11 @@ export function singleTenantGuardedResolver(pinnedTenantId: string | undefined):
 export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyInstance> {
   // G-68: unprefixed legacy storage keys stay signable only where there is one tenant. Explicit, and
   // overridable by the caller, never inferred from data.
-  const platformTenantId =
-    deps.platformTenantId ?? (deps.tenantMode === "multi" ? (deps.tenantId ?? "") : undefined);
+  const scope = deploymentScope(deps);
+  const platformTenantId = scope.platformTenantId;
   const admin = wireAdmin({
     ...deps,
-    legacyStorageKeys: deps.legacyStorageKeys ?? (deps.tenantMode === "multi" ? "refuse" : "allow"),
+    legacyStorageKeys: scope.legacyStorageKeys,
     // WP-14: under multi the platform-operator tenant is the deployment tenant (ADR-0014 8f, the same
     // scope the tenancy routes are pinned to). Missing there ⇒ "" ⇒ no tenant qualifies: fail closed.
     platformTenantId,
@@ -153,7 +171,7 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     app,
     httpDeps,
     adminRoutes(admin, {
-      ...(multi && deps.tenantId !== undefined ? { tenancyPinnedTo: deps.tenantId } : {}),
+      ...(scope.tenancyPinnedTo === undefined ? {} : { tenancyPinnedTo: scope.tenancyPinnedTo }),
       rateLimiter: deps.rateLimiter,
       ...(tenantGate === undefined
         ? {}

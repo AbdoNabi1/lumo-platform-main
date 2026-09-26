@@ -174,3 +174,44 @@ describe("TenantProvisioner (T10.6, Gap 2)", () => {
     expect(report.missing).toEqual(["roles", "policy", "profile"]);
   });
 });
+
+describe("TenantProvisioner (T10.6): every write names the tenant being provisioned, and repeats nothing", () => {
+  it("registers the owner principal IN the provisioned tenant, referencing that tenant", async () => {
+    const { security } = world();
+    const spy = vi.spyOn(security, "registerPrincipal");
+    await new TenantProvisioner({ security, logger: logger as never }).provision("t-7", {
+      ownerExternalId: "owner-a",
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]![0]).toMatchObject({ tenantId: "t-7", tenantRef: "t-7" });
+  });
+
+  it("a second run does not register the owner or write the enforcement grant again", async () => {
+    const { security } = world();
+    const register = vi.spyOn(security, "registerPrincipal");
+    const grant = vi.spyOn(security, "writeRelationTuple");
+    const assign = vi.spyOn(security, "assignRole");
+    const p = new TenantProvisioner({ security, logger: logger as never });
+    await p.provision("t-1", { ownerExternalId: "owner-a" });
+    await p.provision("t-1", { ownerExternalId: "owner-a" });
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(grant).toHaveBeenCalledTimes(1);
+  });
+
+  it("two tenants provisioned CONCURRENTLY with the same owner id each get provisioned", async () => {
+    const { security } = world();
+    const p = new TenantProvisioner({ security, logger: logger as never });
+    const [one, two] = await Promise.all([
+      p.provision("t-1", { ownerExternalId: "owner-a" }),
+      p.provision("t-2", { ownerExternalId: "owner-a" }),
+    ]);
+    expect(one.tenantId).toBe("t-1");
+    expect(two.tenantId).toBe("t-2");
+    expect(one.complete).toBe(true);
+    expect(two.complete).toBe(true);
+    expect((await security.identityOverview("t-2")).principals.map((x) => x.externalId)).toEqual([
+      "owner-a",
+    ]);
+  });
+});

@@ -38,7 +38,9 @@ export const publicHeaderTenantResolver: TenantResolver = (input) =>
 /** Tenant claim from the verified token (the default for app/API traffic, doc 24 §3). */
 export const claimTenantResolver: TenantResolver = (input) => {
   const claim = input.claims?.["tenant_id"];
-  return typeof claim === "string" && claim.length > 0 ? claim : null;
+  // Same normalisation as the header: a blank claim is no claim, and padding never names a second,
+  // distinct tenant ("t-a" and " t-a " must not be two tenants to a cache key or a Keto object).
+  return typeof claim === "string" && claim.trim().length > 0 ? claim.trim() : null;
 };
 
 /** Custom-domain / subdomain mapping (storefront traffic, doc 25 §3). */

@@ -93,3 +93,33 @@ describe("storage key ownership (G-68 / F-22)", () => {
     expect(storageKeyBelongsToTenant(own, "t-1/../t-1")).toBe(false);
   });
 });
+
+describe("storage key ownership: the CALLER's tenant id is validated too, not only the key's", () => {
+  // A key whose tenant segment literally equals a tenant id that is not itself a valid tenant id must
+  // never be "owned": either check alone is enough to refuse, so both are asserted here, on the
+  // function's answer (a mutation removing one of them cannot be seen through the other, so the
+  // grammar is pinned directly on each side).
+  it.each(["a.b", "a b", "a%2Fb", "a/b", "..", "", "é", "x".repeat(65)])(
+    "tenant id %j owns no key, even one that spells it",
+    (tenantId) => {
+      const key = `tenants/${tenantId}/product-images/2026/09/abc123`;
+      expect(storageKeyBelongsToTenant(key, tenantId)).toBe(false);
+    },
+  );
+
+  it.each(["a.b", "a b", "a%2Fb", "..", "é"])(
+    "a key whose tenant segment is %j is never parsed",
+    (segment) => {
+      expect(parseStorageKey(`tenants/${segment}/product-images/2026/09/abc123`)).toBeNull();
+    },
+  );
+
+  it("a well-formed key belongs to exactly its own tenant", () => {
+    expect(storageKeyBelongsToTenant("tenants/t-1/product-images/2026/09/abc123", "t-1")).toBe(
+      true,
+    );
+    expect(storageKeyBelongsToTenant("tenants/t-1/product-images/2026/09/abc123", "t-2")).toBe(
+      false,
+    );
+  });
+});
