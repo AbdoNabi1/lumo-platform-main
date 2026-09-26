@@ -57,10 +57,17 @@ export interface TenancyWiringDeps {
   readonly prisma?: Database;
   /** Required alongside `prisma` (ADR-0008) — every Tenancy table is tenant-scoped. */
   readonly tenantId?: string;
+  /** T10.6: tenant ids the ordinary lifecycle refuses to suspend/cancel (the platform tenant). */
+  readonly protectedTenantIds?: readonly string[];
 }
+
+/** A tenant's lifecycle status as the request boundary needs it; `unknown` = no such tenant row. */
+export type TenantAvailability = "active" | "suspended" | "cancelled" | "unknown";
 
 export interface WiredTenancy {
   readonly tenancy: TenancyController;
+  /** Reads one tenant's status from the source of truth (no caching — the caller owns that). */
+  readonly tenantAvailability: (tenantId: string) => Promise<TenantAvailability>;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
 }
@@ -81,6 +88,9 @@ function buildController(
     unitOfWork,
     idGenerator: deps.idGenerator,
     clock: deps.clock,
+    ...(deps.protectedTenantIds === undefined
+      ? {}
+      : { protectedTenantIds: deps.protectedTenantIds }),
   };
 
   return new TenancyController({
@@ -98,6 +108,13 @@ function buildController(
     getWorkspace: new GetWorkspace({ workspaces: repos.workspaces }),
     getCurrentWorkspace: new GetCurrentWorkspace({ workspaces: repos.workspaces }),
   });
+}
+
+function availabilityOf(tenants: TenantRepository): WiredTenancy["tenantAvailability"] {
+  return async (tenantId) => {
+    const tenant = await tenants.findById(tenantId);
+    return tenant === null ? "unknown" : tenant.status;
+  };
 }
 
 /**
@@ -127,6 +144,7 @@ export function wireTenancy(deps: TenancyWiringDeps): WiredTenancy {
 
     return {
       tenancy: buildController(repos, unitOfWork, deps),
+      tenantAvailability: availabilityOf(repos.tenants),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -168,6 +186,7 @@ export function wireTenancy(deps: TenancyWiringDeps): WiredTenancy {
 
   return {
     tenancy: controller,
+    tenantAvailability: availabilityOf(repos.tenants),
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

@@ -1,8 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadRuntimeConfig } from "./config";
-import { startWorker } from "./worker";
 import {
   BOOT_TENANT_PINS,
   EVENT_PATH_TENANT_PINS,
@@ -80,11 +78,22 @@ describe("TENANT_DEFAULT_ID classification (T10.4 / T10.7)", () => {
     expect(consumerFiles).toEqual([]);
   });
 
-  it("the boot-time blockers the guard names are exactly the boot-provisioning sites", () => {
+  it("the boot-time blockers the guard names are exactly the boot-pin sites", () => {
     const sites = new Set(
-      TENANT_DEFAULT_ID_SITES.filter((s) => s.class === "boot-provisioning").map((s) => s.file),
+      TENANT_DEFAULT_ID_SITES.filter((s) => s.class === "boot-pin").map((s) => s.file),
     );
     expect(new Set(BOOT_TENANT_PINS.map((p) => p.file))).toEqual(sites);
+  });
+
+  it("has NO boot-time pin left (T10.6): provisioning runs the baseline per tenant", () => {
+    expect(BOOT_TENANT_PINS).toEqual([]);
+    expect(TENANT_DEFAULT_ID_SITES.filter((s) => s.class === "boot-pin")).toEqual([]);
+  });
+
+  it("the one remaining bootstrapSecurity call is classified as the platform tenant's, not a pin", () => {
+    const site = TENANT_DEFAULT_ID_SITES.find((s) => s.line.includes("bootstrapSecurity"));
+    expect(site?.class).toBe("platform-boot");
+    expect(site?.file).toBe("apps/runtime/src/security/wire-security-provisioning.ts");
   });
 });
 
@@ -101,19 +110,19 @@ describe("assertWorkerTenantModeSupported", () => {
     expect(() => assertWorkerTenantModeSupported("multi", off)).not.toThrow();
   });
 
-  it("still refuses multi with principal provisioning on, and names bootstrapSecurity (T10.6)", () => {
-    let message = "";
-    try {
-      assertWorkerTenantModeSupported("multi", on);
-    } catch (error) {
-      message = (error as Error).message;
-    }
-    // Printed so the refusal is visible in the test log.
-    console.warn(message);
-    expect(message).toContain("T10.6");
-    for (const pin of BOOT_TENANT_PINS) expect(message).toContain(pin.file);
-    // It must not name event consumers that are fixed.
-    expect(message).not.toContain("orders-paid.consumers.ts");
+  it("allows multi with principal provisioning on: the baseline is provisioned per tenant (T10.6)", () => {
+    expect(() => assertWorkerTenantModeSupported("multi", on)).not.toThrow();
+  });
+
+  it("still refuses multi with provisioning on, and names the site, if a boot pin is registered", () => {
+    const registered = [
+      { file: "apps/runtime/src/security/new-boot.ts", what: "boots one tenant" },
+    ];
+    expect(() => assertWorkerTenantModeSupported("multi", on, [], registered)).toThrow(
+      /new-boot\.ts/,
+    );
+    // A boot pin only blocks while its feature is on: with provisioning off it never runs.
+    expect(() => assertWorkerTenantModeSupported("multi", off, [], registered)).not.toThrow();
   });
 
   it("refuses multi and names the site if an event-path pin is ever registered again", () => {
@@ -123,17 +132,10 @@ describe("assertWorkerTenantModeSupported", () => {
     );
   });
 
-  it("is what startWorker runs first: multi with provisioning on is refused before anything is built", async () => {
-    const config = loadRuntimeConfig({
-      APP_ENV: "local",
-      DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
-      REDIS_URL: "redis://localhost:6379",
-      KAFKA_BROKERS: "localhost:19092",
-      AUTH_ISSUER_URL: "https://auth.morbeh.local",
-      AUTH_JWKS_URL: "https://auth.morbeh.local/.well-known/jwks.json",
-      TENANT_MODE: "multi",
-      SECURITY_PRINCIPAL_PROVISIONING: "on",
-    } as NodeJS.ProcessEnv);
-    await expect(startWorker(config)).rejects.toThrow(/T10\.6/);
+  it("is what startWorker runs first: the guard is called before anything is built", () => {
+    const worker = readFileSync(join(repoRoot, "apps/runtime/src/worker.ts"), "utf8");
+    const call = worker.indexOf("assertWorkerTenantModeSupported(config.TENANT_MODE, config)");
+    expect(call).toBeGreaterThan(-1);
+    expect(call).toBeLessThan(worker.indexOf("core ?? buildRuntimeCore(config)"));
   });
 });

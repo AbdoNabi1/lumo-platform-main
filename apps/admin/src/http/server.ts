@@ -8,6 +8,7 @@ import {
   registerRoutes,
   type HttpMetricsSink,
   type HttpServerDeps,
+  type TenantGate,
   type TenantResolver,
 } from "@platform/http";
 import type { FastifyInstance } from "fastify";
@@ -17,6 +18,7 @@ import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { AdminGuard } from "../interfaces/admin-guard";
 import { wireAdmin, type AdminWiringDeps } from "../composition";
 import { assertMultiTenantReady } from "../tenant-mode-guard";
+import { CachedTenantGate } from "../tenant-status-gate";
 import { adminRoutes } from "./admin-routes";
 
 export interface AdminHttpDeps extends AdminWiringDeps {
@@ -43,7 +45,21 @@ export interface AdminHttpDeps extends AdminWiringDeps {
   readonly exposeDocs?: boolean;
   /** H-04 (audit): forwarded to `HttpServerDeps` unchanged — see that field's own doc comment. */
   readonly readinessDetail?: "full" | "status-only";
+  /**
+   * T10.6: how long this instance may keep a tenant's lifecycle status before re-reading it - the upper
+   * bound on how late a suspension made on ANOTHER instance is seen here (the instance that makes the
+   * change sees it immediately). Default 10s. Only used under TENANT_MODE=multi.
+   */
+  readonly tenantStatusTtlMs?: number;
+  /**
+   * T10.6: replaces the lifecycle source (default: the tenancy context's rows behind a
+   * `CachedTenantGate`). For embedders and for tests whose fixture tenants have no `Tenant` row; the
+   * production composition (apps/runtime/src/api.ts) never passes it. Only used under multi.
+   */
+  readonly tenantGate?: TenantGate;
 }
+
+const DEFAULT_TENANT_STATUS_TTL_MS = 10_000;
 
 /**
  * Guards the resolved request tenant against the single tenant every Prisma repository was pinned
@@ -77,13 +93,14 @@ export function singleTenantGuardedResolver(pinnedTenantId: string | undefined):
 export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyInstance> {
   // G-68: unprefixed legacy storage keys stay signable only where there is one tenant. Explicit, and
   // overridable by the caller, never inferred from data.
+  const platformTenantId =
+    deps.platformTenantId ?? (deps.tenantMode === "multi" ? (deps.tenantId ?? "") : undefined);
   const admin = wireAdmin({
     ...deps,
     legacyStorageKeys: deps.legacyStorageKeys ?? (deps.tenantMode === "multi" ? "refuse" : "allow"),
     // WP-14: under multi the platform-operator tenant is the deployment tenant (ADR-0014 8f, the same
     // scope the tenancy routes are pinned to). Missing there ⇒ "" ⇒ no tenant qualifies: fail closed.
-    platformTenantId:
-      deps.platformTenantId ?? (deps.tenantMode === "multi" ? (deps.tenantId ?? "") : undefined),
+    platformTenantId,
   });
   const guard = new AdminGuard({
     accessControl: deps.accessControl ?? new AllowAllAccessControl(),
@@ -99,12 +116,24 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     : [singleTenantGuardedResolver(deps.tenantId)];
   if (multi) assertMultiTenantReady({ resolvers: tenantResolvers, graph: admin });
 
+  // T10.6 (Gap 1): under multi, every request's tenant is checked for lifecycle status where the tenant is
+  // resolved. Single mode has one deployment tenant with no lifecycle row, so no gate is mounted there.
+  const cachedGate = multi
+    ? new CachedTenantGate({
+        load: admin.tenantAvailability,
+        platformTenantId: platformTenantId ?? "",
+        ttlMs: deps.tenantStatusTtlMs ?? DEFAULT_TENANT_STATUS_TTL_MS,
+      })
+    : undefined;
+  const tenantGate: TenantGate | undefined = multi ? (deps.tenantGate ?? cachedGate) : undefined;
+
   const httpDeps: HttpServerDeps = {
     logger,
     idGenerator: deps.idGenerator,
     authenticator: deps.authenticator,
     guard,
     tenantResolvers,
+    ...(tenantGate === undefined ? {} : { tenantGate }),
     rateLimiter: deps.rateLimiter,
     rateLimit: { limit: 300, windowMs: 60_000 },
     idempotencyKeys: deps.idempotencyKeys,
@@ -126,6 +155,9 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     adminRoutes(admin, {
       ...(multi && deps.tenantId !== undefined ? { tenancyPinnedTo: deps.tenantId } : {}),
       rateLimiter: deps.rateLimiter,
+      ...(tenantGate === undefined
+        ? {}
+        : { onTenantLifecycleChange: (id: string) => cachedGate?.invalidate(id) }),
     }),
   );
   await app.ready();

@@ -7,6 +7,15 @@ export { SecurityController } from "./interfaces/security.controller";
 export type { SecurityControllerDeps } from "./interfaces/security.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { SecurityConsoleReadModels } from "./interfaces/read-models";
+export {
+  BASELINE_POLICY_KEY,
+  OWNER_GRANT,
+  PLATFORM_ADMIN_ROLE,
+  PLATFORM_SERVICE_ROLE,
+  SYSTEM_GRANTOR,
+  bootstrapSecurity,
+} from "./interfaces/tenant-baseline";
+export type { SecurityBootstrapSummary } from "./interfaces/tenant-baseline";
 export type {
   AuditExplorer,
   DeviceExplorer,
@@ -14,6 +23,7 @@ export type {
   MachineIdentityExplorer,
   PermissionExplorer,
   SecurityDashboard,
+  TenantBaselineState,
 } from "./interfaces/read-models";
 export { SecuritySdk } from "./interfaces/security-sdk";
 export type {

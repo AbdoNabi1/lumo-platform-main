@@ -512,6 +512,9 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
 
   const readModels = new SecurityConsoleReadModels({
     principals,
+    tenantProfiles,
+    assignments,
+    relationTuples,
     roles,
     policies,
     devices,

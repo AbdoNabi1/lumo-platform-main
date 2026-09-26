@@ -91,7 +91,9 @@ import {
 } from "@platform/security";
 import { wireSeo } from "@platform/seo";
 import { wireShipping } from "@platform/shipping";
-import { wireTenancy } from "@platform/tenancy";
+import { wireTenancy, type TenantAvailability } from "@platform/tenancy";
+import { logger as adminLogger } from "@platform/utils";
+import { TenantProvisioner } from "./tenant-provisioning";
 import { wireTheme } from "@platform/theme";
 import { wireWishlist, type WishlistController } from "@platform/wishlist";
 import { AllowAllAccessControl } from "./infrastructure/allow-all-access-control";
@@ -209,6 +211,8 @@ export interface AdminWiringDeps {
    * tenant deployment. `createAdminHttpApi` sets it under `TENANT_MODE=multi` (fail-closed).
    */
   readonly platformTenantId?: string;
+  /** In-memory Security only (tests/dev): Identity subject refs treated as known, so an owner can be registered offline. */
+  readonly knownSubjects?: readonly string[];
   /**
    * Gates Orders' admin backoffice `markOrderPaid` action against Payments (Sprint A1 Task 5).
    * Passed straight through to `wireOrders(deps)` below; defaults to Orders' own always-verify
@@ -443,6 +447,10 @@ export interface WiredAdmin {
   readonly mediaLibrary: MediaLibraryAdminController;
   /** Tenancy screen → Tenancy (Sprint 5.5/5.6 — Tenancy's first admin-transport wiring). */
   readonly tenancy: TenancyAdminController;
+  /** T10.6: a tenant's lifecycle status straight from the source of truth (the gate caches it). */
+  readonly tenantAvailability: (tenantId: string) => Promise<TenantAvailability>;
+  /** T10.6: runs / inspects a tenant's security baseline (idempotent, resumable). */
+  readonly tenantProvisioner: TenantProvisioner;
   /** Licensing screen → Licensing (Sprint 5.5/5.6 — Licensing's first admin-transport wiring). */
   readonly licensing: LicensingAdminController;
   /** Platform Console screen → Platform Console (Sprint 5.6, ADR-0018 addendum-2 §J — read-model only). */
@@ -815,7 +823,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const featureRegistry = wireFeatureRegistry(deps);
   const pages = wirePages(deps);
   const mediaLibrary = wireMediaLibrary(deps);
-  const tenancy = wireTenancy(deps);
+  // T10.6: the platform tenant (WP-14) — and the deployment scope it is — cannot be suspended or
+  // cancelled through the ordinary lifecycle: that would stop Morbeh billing anyone.
+  const tenancy = wireTenancy({
+    ...deps,
+    protectedTenantIds: [deps.platformTenantId, deps.tenantId].filter(
+      (id): id is string => id !== undefined && id !== "",
+    ),
+  });
   const licensing = wireLicensing(deps);
   const platformConsole = wirePlatformConsole();
   const wishlist = wireWishlist(deps);
@@ -1013,6 +1028,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     tenancy: new TenancyAdminController({ tenancy: tenancy.tenancy, guard }),
+    tenantAvailability: tenancy.tenantAvailability,
+    tenantProvisioner: new TenantProvisioner({ security: security.security, logger: adminLogger }),
     licensing: new LicensingAdminController({ licensing: licensing.licensing, guard }),
     platformConsole: new PlatformConsoleAdminController({
       platformConsole: platformConsole.platformConsole,

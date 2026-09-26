@@ -178,6 +178,7 @@ import type {
   SecretExplorer,
   SecurityAnalytics,
   SecurityConsoleReadModels,
+  TenantBaselineState,
   SecurityDashboard,
   SecurityRegistryExplorer,
   SessionExplorer,
@@ -521,6 +522,10 @@ export class SecurityController {
   // ── Console read models (Part 10) ─────────────────────────────────────────
   async identityOverview(tenantId: string): Promise<IdentityOverview> {
     return this.deps.readModels.identityOverview(tenantId);
+  }
+  /** T10.6: the STORED state of a tenant's baseline, for provisioning's completeness report. */
+  async tenantBaseline(tenantId: string, ownerExternalId?: string): Promise<TenantBaselineState> {
+    return this.deps.readModels.tenantBaseline(tenantId, ownerExternalId);
   }
   async permissionExplorer(tenantId: string): Promise<PermissionExplorer> {
     return this.deps.readModels.permissionExplorer(tenantId);

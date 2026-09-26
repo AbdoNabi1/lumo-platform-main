@@ -26,6 +26,8 @@ export function platformBillingRoutes(admin: WiredAdmin): readonly RouteDefiniti
       version: 1,
       permission: "licensing:billing:manage",
       public: true,
+      // T10.6: the card-token callback completes the merchant's invoice payment (see licensing-routes).
+      allowWhenSuspended: true,
       summary:
         "Paymob card-token callback for Morbeh's own billing account (signature-verified via the `hmac` query parameter, not staff-authenticated)",
       schema: { body: cardTokenCallbackBody, querystring: cardTokenCallbackQuery },

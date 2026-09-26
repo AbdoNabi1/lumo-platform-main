@@ -25,6 +25,7 @@ import {
 import { InProcessRateLimiter } from "./degraded-rate-limiter";
 import { mapError } from "./error-mapping";
 import type { RequestContext, RouteDefinition, TransportResponse } from "./route";
+import { suspendedTenantMayCall, type TenantAvailability, type TenantGate } from "./tenant-gate";
 import { PUBLIC_PRINCIPAL_ID, resolveTenant, type TenantResolver } from "./tenant-resolution";
 
 /**
@@ -82,6 +83,12 @@ export interface HttpServerDeps {
   /** Optional metrics sink (F5); when present, requests are counted and appended to `/metrics`. */
   readonly metrics?: HttpMetricsSink;
   readonly tenantResolvers: readonly TenantResolver[];
+  /**
+   * T10.6: lifecycle gate consulted right after tenant resolution. Absent ⇒ no lifecycle enforcement
+   * (single-tenant mode, where the deployment tenant has no lifecycle). Present ⇒ suspended/cancelled/
+   * unknown tenants are refused and an unreadable status fails closed (503).
+   */
+  readonly tenantGate?: TenantGate;
   readonly rateLimiter: RateLimiter;
   /** Requests allowed per window per (tenant, principal) bucket. */
   readonly rateLimit: { readonly limit: number; readonly windowMs: number };
@@ -311,6 +318,50 @@ const PUBLIC_IDENTITY: AuthenticatedIdentity = {
   roles: [],
 };
 
+const TENANT_REFUSALS = {
+  suspended: { code: "TENANT_SUSPENDED", message: "This store is suspended" },
+  cancelled: { code: "TENANT_CANCELLED", message: "This store's tenancy has ended" },
+  unknown: { code: "TENANT_UNKNOWN", message: "No such store" },
+} as const;
+
+async function lifecycleRefusal(
+  deps: HttpServerDeps,
+  request: FastifyRequest,
+  tenantId: string,
+  route: RouteDefinition,
+): Promise<TransportResponse | null> {
+  const gate = deps.tenantGate;
+  if (gate === undefined) return null;
+  let availability: TenantAvailability;
+  try {
+    availability = await gate.availability(tenantId);
+  } catch (error) {
+    deps.logger.error("tenant status unreadable; failing closed", {
+      requestId: request.requestId,
+      tenantId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      status: 503,
+      body: {
+        code: "UNAVAILABLE",
+        message: "Service temporarily unavailable",
+        retryable: true,
+        fields: [],
+        retryAfterMs: 5_000,
+      },
+      headers: { "retry-after": String(retryAfterSeconds(5_000)) },
+    };
+  }
+  if (availability === "active") return null;
+  if (availability === "suspended" && suspendedTenantMayCall(route)) return null;
+  const refusal = TENANT_REFUSALS[availability];
+  return {
+    status: 403,
+    body: { code: refusal.code, message: refusal.message, retryable: false, fields: [] },
+  };
+}
+
 async function executeRoute(
   route: RouteDefinition,
   request: FastifyRequest,
@@ -354,6 +405,11 @@ async function executeRoute(
     throw new AuthorizationError("No tenant resolved for this request");
   }
   request.tenantId = tenantId;
+
+  // 2b. Tenant lifecycle (T10.6): the one place a suspended/cancelled tenant is refused. Same body for
+  //     every endpoint; an unreadable status is a 503, never a pass.
+  const refused = await lifecycleRefusal(deps, request, tenantId, route);
+  if (refused !== null) return refused;
 
   // The identity is bound to the RESOLVED tenant exactly once, here — never defaulted. Everything
   // downstream (guard, authorization cache key, audit record, handlers) sees a tenant-scoped principal.

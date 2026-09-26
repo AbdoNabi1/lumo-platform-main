@@ -67,6 +67,12 @@ export interface RouteDefinition<TBody = unknown, TParams = unknown, TQuery = un
    * unchanged (authenticated + guarded), for every route defined before this field existed.
    */
   readonly public?: boolean;
+  /**
+   * T10.6: opt-in for a route a SUSPENDED tenant must still be able to call (paying an overdue
+   * invoice). Absent ⇒ refused while suspended, unless it is an authenticated `GET` — see
+   * `suspendedTenantMayCall`. A cancelled tenant is refused regardless.
+   */
+  readonly allowWhenSuspended?: boolean;
   readonly summary: string;
   readonly schema: {
     readonly body?: z.ZodType<TBody>;

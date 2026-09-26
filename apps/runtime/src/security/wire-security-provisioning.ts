@@ -45,9 +45,10 @@ export async function wireSecurityProvisioning(
   await bootstrapSecurity(wired.security, core.config.TENANT_DEFAULT_ID, core.logger);
 
   const producer = new KafkaMessageProducer(core.kafka);
-  // G-64: the consumers take their tenant from each message's envelope. `bootstrapSecurity` above is
-  // the one deliberate exception (boot-time baseline for the deployment tenant; per-tenant
-  // provisioning is T10.6), which is why the worker guard still names it under multi.
+  // G-64: the consumers take their tenant from each message's envelope. `bootstrapSecurity` above is the
+  // PLATFORM tenant's own baseline only (that tenant is not created through the lifecycle); every other
+  // tenant's baseline is provisioned by TenantProvisioner when the tenant is created (T10.6), so this
+  // call no longer blocks the worker under multi.
   const deps = { security: wired.security, logger: core.logger };
   const build = <T>(handler: EventHandler<T>, consumerGroup: string): SupervisedConsumer =>
     buildProcessedConsumer<T>(core, handler, consumerGroup, producer, metrics);

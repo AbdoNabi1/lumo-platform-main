@@ -20,12 +20,15 @@ import type { RuntimeConfig } from "./config";
  *  - `EVENT_PATH_TENANT_PINS` — any consumer that takes its tenant from `TENANT_DEFAULT_ID`. Empty now;
  *    a test requires it to equal the table's `event-path-pin` class, so a new pin cannot be classified
  *    without the guard refusing, and the guard cannot claim a site is fixed while the table lists it.
- *  - `BOOT_TENANT_PINS` — `bootstrapSecurity` provisions the baseline roles/policy for the ONE
- *    deployment tenant at boot. With principal provisioning on, the consumers now register principals
- *    and assign roles under each envelope's tenant, but the baseline they assign FROM exists only for
- *    the deployment tenant, so every other tenant's provisioning fails. Per-tenant provisioning is
- *    tenant lifecycle (T10.6). It blocks only when `SECURITY_PRINCIPAL_PROVISIONING` is on, because
- *    that flag is what runs it.
+ *  - `BOOT_TENANT_PINS` — a boot-time site bound to the one deployment tenant, blocking only while
+ *    its feature is on. **Empty since T10.6.** The one entry it used to hold was `bootstrapSecurity`:
+ *    the baseline roles/policy the principal-provisioning consumers assign FROM existed only for the
+ *    deployment tenant, so every other tenant's provisioning failed. Tenant provisioning now runs that
+ *    baseline for the tenant it creates (`TenantProvisioner`, apps/admin), so nothing the consumers need
+ *    is missing for a provisioned tenant. The boot call that remains is the PLATFORM tenant's own
+ *    baseline (that tenant is not created through the lifecycle), classified `platform-boot`. A tenant
+ *    that exists but was never provisioned still cannot be assigned roles — its
+ *    `GET /tenants/:id/provisioning` says so, and the consumers fail closed to the DLQ.
  *
  * This is NOT an exemption from the API assertion; it is a separate check.
  */
@@ -39,23 +42,16 @@ export interface EventPathTenantPin {
 export const EVENT_PATH_TENANT_PINS: readonly EventPathTenantPin[] = Object.freeze([]);
 
 /** Boot-time sites bound to the one deployment tenant; each blocks only while its feature is on. */
-export const BOOT_TENANT_PINS: readonly EventPathTenantPin[] = Object.freeze([
-  {
-    file: "apps/runtime/src/security/wire-security-provisioning.ts",
-    what:
-      "bootstrapSecurity provisions the baseline roles/policy for the deployment tenant only " +
-      "(SECURITY_PRINCIPAL_PROVISIONING=on); other tenants' principals cannot be provisioned until " +
-      "tenant lifecycle (T10.6) provisions per tenant",
-  },
-]);
+export const BOOT_TENANT_PINS: readonly EventPathTenantPin[] = Object.freeze([]);
 
 export function assertWorkerTenantModeSupported(
   mode: RuntimeConfig["TENANT_MODE"],
   features: Pick<RuntimeConfig, "SECURITY_PRINCIPAL_PROVISIONING">,
   eventPathPins: readonly EventPathTenantPin[] = EVENT_PATH_TENANT_PINS,
+  bootTenantPins: readonly EventPathTenantPin[] = BOOT_TENANT_PINS,
 ): void {
   if (mode !== "multi") return;
-  const bootPins = features.SECURITY_PRINCIPAL_PROVISIONING ? BOOT_TENANT_PINS : [];
+  const bootPins = features.SECURITY_PRINCIPAL_PROVISIONING ? bootTenantPins : [];
   if (eventPathPins.length === 0 && bootPins.length === 0) return;
   const lines: string[] = [];
   if (eventPathPins.length > 0) {
@@ -67,8 +63,7 @@ export function assertWorkerTenantModeSupported(
   }
   if (bootPins.length > 0) {
     lines.push(
-      "these boot-time sites are still bound to the one deployment tenant (T10.6, per-tenant " +
-        "provisioning):",
+      "these boot-time sites are still bound to the one deployment tenant:",
       ...bootPins.map((pin, index) => `${index + 1}. ${pin.file} — ${pin.what}`),
     );
   }
@@ -82,7 +77,8 @@ export type TenantDefaultIdClass =
   | "request-path"
   | "event-path-pin"
   | "boot-script"
-  | "boot-provisioning"
+  | "boot-pin"
+  | "platform-boot"
   | "definition"
   | "client-header-source"
   | "test-support";
@@ -117,10 +113,11 @@ export const TENANT_DEFAULT_ID_SITES: readonly TenantDefaultIdSite[] = Object.fr
   {
     file: "apps/runtime/src/security/wire-security-provisioning.ts",
     line: "await bootstrapSecurity(wired.security, core.config.TENANT_DEFAULT_ID, core.logger);",
-    class: "boot-provisioning",
+    class: "platform-boot",
     why:
-      "Boot-time baseline roles/policy for the ONE deployment tenant; no request or envelope to " +
-      "source a tenant from. Per-tenant provisioning belongs to T10.6 tenant lifecycle.",
+      "Boot-time baseline for the PLATFORM tenant (the deployment tenant, ADR-0014 8f), which is not " +
+      "created through the tenant lifecycle. Every other tenant's baseline comes from " +
+      "TenantProvisioner (T10.6), so this no longer blocks the worker under multi.",
   },
   {
     file: "apps/runtime/src/backfill-finance-settlement.ts",

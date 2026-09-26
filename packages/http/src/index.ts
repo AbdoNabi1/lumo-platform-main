@@ -9,6 +9,7 @@ export {
   type TenantResolutionInput,
   type TenantResolver,
 } from "./tenant-resolution";
+export { suspendedTenantMayCall, type TenantAvailability, type TenantGate } from "./tenant-gate";
 export {
   defineRoute,
   type RequestContext,

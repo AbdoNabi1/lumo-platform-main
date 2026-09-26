@@ -1,5 +1,5 @@
 export { wireTenancy } from "./composition";
-export type { TenancyWiringDeps, WiredTenancy } from "./composition";
+export type { TenancyWiringDeps, TenantAvailability, WiredTenancy } from "./composition";
 export { TenancyController } from "./interfaces/tenancy.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { Tenant } from "./domain/tenant";

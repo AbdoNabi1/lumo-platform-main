@@ -16,6 +16,12 @@ export interface TenancyDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  /**
+   * T10.6: tenant ids the ordinary lifecycle may not suspend or cancel — the platform tenant (WP-14),
+   * which owns Morbeh's plans, subscriptions and invoices. Suspending it would stop Morbeh billing
+   * anyone, including the ability to recover, so this is refused here, before any row is read.
+   */
+  readonly protectedTenantIds?: readonly string[];
 }
 
 export interface TenantIdOutput {
@@ -78,7 +84,17 @@ abstract class TenantTransitionUseCase implements UseCase<
 
   protected abstract apply(tenant: Tenant, eventId: string, occurredAt: Date): void;
 
+  /** Whether this transition ends or interrupts service (and so must spare protected tenants). */
+  protected readonly interrupts: boolean = false;
+
   async execute(input: TenantIdInput): Promise<Result<TenantIdOutput, DomainError>> {
+    if (this.interrupts && (this.deps.protectedTenantIds ?? []).includes(input.tenantId)) {
+      return err(
+        new ConflictError(
+          "The platform tenant cannot be suspended or cancelled through the ordinary lifecycle",
+        ),
+      );
+    }
     return this.deps.unitOfWork.run<Result<TenantIdOutput, DomainError>>(async (tx) => {
       const tenant = await this.deps.tenants.findById(input.tenantId, tx);
       if (tenant === null) return err(new NotFoundError("Tenant not found"));
@@ -101,12 +117,14 @@ export class ActivateTenant extends TenantTransitionUseCase {
 }
 
 export class SuspendTenant extends TenantTransitionUseCase {
+  protected override readonly interrupts = true;
   protected apply(tenant: Tenant, eventId: string, occurredAt: Date): void {
     tenant.suspend(eventId, occurredAt);
   }
 }
 
 export class CancelTenant extends TenantTransitionUseCase {
+  protected override readonly interrupts = true;
   protected apply(tenant: Tenant, eventId: string, occurredAt: Date): void {
     tenant.cancel(eventId, occurredAt);
   }

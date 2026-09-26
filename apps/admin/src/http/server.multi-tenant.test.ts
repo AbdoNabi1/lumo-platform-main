@@ -15,6 +15,7 @@ import { pinRoutesToTenant } from "./tenancy-routes";
 import { createAdminHttpApi, type AdminHttpDeps } from "./server";
 
 const staff: AuthenticatedIdentity = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const activeGate = { availability: async () => "active" as const }; // fixture tenants have no Tenant row
 const clock = { now: () => new Date("2026-09-19T00:00:00.000Z") };
 
 function harness(claimTenant?: string) {
@@ -74,8 +75,8 @@ describe("createAdminHttpApi — TENANT_MODE=multi", () => {
     // resolves by header — see tenant-isolation.e2e.test.ts), so each tenant is its own token.
     const a = harness("t-a");
     const b = harness("t-b");
-    const appA = await boot({ ...a.deps, tenantMode: "multi" });
-    const appB = await boot({ ...b.deps, tenantMode: "multi" });
+    const appA = await boot({ ...a.deps, tenantMode: "multi", tenantGate: activeGate });
+    const appB = await boot({ ...b.deps, tenantMode: "multi", tenantGate: activeGate });
     expect((await get(appA, { authorization: "Bearer good" })).statusCode).toBe(200);
     expect((await get(appB, { authorization: "Bearer good" })).statusCode).toBe(200);
     expect(a.rateKeys.some((k) => k.startsWith("rl:t-a:"))).toBe(true);
@@ -84,14 +85,19 @@ describe("createAdminHttpApi — TENANT_MODE=multi", () => {
 
   it("rejects a request with no resolvable tenant — never defaults it", async () => {
     const { deps } = harness();
-    const app = await boot({ ...deps, tenantMode: "multi", tenantId: "tenant-local" });
+    const app = await boot({
+      ...deps,
+      tenantMode: "multi",
+      tenantGate: activeGate,
+      tenantId: "tenant-local",
+    });
     const res = await get(app, { authorization: "Bearer good" });
     expect(res.statusCode).toBe(403);
   });
 
   it("prefers the verified claim over a forged header", async () => {
     const { deps, rateKeys } = harness("t-claim");
-    const app = await boot({ ...deps, tenantMode: "multi" });
+    const app = await boot({ ...deps, tenantMode: "multi", tenantGate: activeGate });
     const res = await get(app, { authorization: "Bearer good", "x-tenant-id": "t-forged" });
     expect(res.statusCode).toBe(200);
     expect(rateKeys.some((k) => k.startsWith("rl:t-claim:"))).toBe(true);
@@ -105,6 +111,7 @@ describe("createAdminHttpApi — TENANT_MODE=multi", () => {
     const app = await boot({
       ...deps,
       tenantMode: "multi",
+      tenantGate: activeGate,
       prisma: {} as unknown as Database,
       tenantId: "tenant-local",
     });

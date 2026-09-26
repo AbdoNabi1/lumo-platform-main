@@ -257,6 +257,8 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       version: 1,
       permission: "licensing:billing:manage",
       idempotent: true,
+      // T10.6: paying an overdue invoice is how a suspended tenant cures its suspension.
+      allowWhenSuspended: true,
       summary:
         "Start the merchant's interactive first payment for an issued invoice (a 3DS checkout that also saves their card for renewals)",
       schema: { params: invoiceIdParams },

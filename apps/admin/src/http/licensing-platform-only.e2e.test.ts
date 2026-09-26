@@ -51,6 +51,7 @@ function harness(claimTenant: string): AdminHttpDeps {
     idempotencyKeys,
     responseCache: cache,
     tenantMode: "multi",
+    tenantGate: { availability: async () => "active" as const }, // fixture tenants have no Tenant row (T10.6)
     tenantId: PLATFORM,
   };
 }

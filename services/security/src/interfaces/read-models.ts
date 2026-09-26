@@ -1,4 +1,10 @@
 import type { Registry } from "@platform/registry";
+import {
+  BASELINE_POLICY_KEY,
+  OWNER_GRANT,
+  PLATFORM_ADMIN_ROLE,
+  PLATFORM_SERVICE_ROLE,
+} from "./tenant-baseline";
 import { isHumanKind } from "../domain/value-objects/principal-kind";
 import type { AuditChain } from "../domain/audit-chain";
 import type { ComplianceControl } from "../domain/compliance-engine";
@@ -10,6 +16,9 @@ import type {
   DeviceDirectory,
   IncidentRepository,
   MachineIdentityProfileRepository,
+  RelationTupleRepository,
+  RoleAssignmentRepository,
+  TenantSecurityProfileRepository,
   PolicyRegistry,
   PrincipalDirectory,
   RoleRegistry,
@@ -51,6 +60,27 @@ export interface IdentityOverview {
   readonly nonHumans: number;
   readonly byStatus: Readonly<Record<string, number>>;
   readonly principals: readonly PrincipalOverviewRow[];
+}
+
+/**
+ * What is actually STORED for a tenant's baseline (T10.6). Provisioning reports completeness from this,
+ * never from "every step returned 2xx": a step that claimed success but wrote nothing shows up here.
+ */
+export interface TenantBaselineState {
+  /** Both baseline roles exist and are active. */
+  readonly roles: boolean;
+  /** The baseline policy exists and has a published (active) version. */
+  readonly policy: boolean;
+  /** The tenant security profile exists and pins the baseline policy as its default. */
+  readonly profile: boolean;
+  /** Present only when an owner was asked about. */
+  readonly owner: {
+    readonly registered: boolean;
+    /** Active `platform-admin` assignments held by the owner — more than 1 means a double grant. */
+    readonly adminAssignments: number;
+    /** Stored enforcement tuples for the owner (the input of the relation-sync consumer). */
+    readonly enforcementGrants: number;
+  } | null;
 }
 
 export interface PermissionExplorer {
@@ -126,6 +156,9 @@ export interface SecurityRegistryExplorer {
 
 export interface SecurityReadModelDeps {
   readonly principals: PrincipalDirectory;
+  readonly tenantProfiles: TenantSecurityProfileRepository;
+  readonly assignments: RoleAssignmentRepository;
+  readonly relationTuples: RelationTupleRepository;
   readonly roles: RoleRegistry;
   readonly policies: PolicyRegistry;
   readonly devices: DeviceDirectory;
@@ -295,6 +328,39 @@ export class SecurityConsoleReadModels {
       nonHumans: rows.length - humans,
       byStatus,
       principals: rows,
+    };
+  }
+
+  async tenantBaseline(tenantId: string, ownerExternalId?: string): Promise<TenantBaselineState> {
+    const roles = await this.deps.roles.listAll(tenantId);
+    const active = new Set(roles.filter((r) => r.status === "active").map((r) => r.key));
+    const policies = await this.deps.policies.listAll(tenantId);
+    const baseline = policies.find((p) => p.key === BASELINE_POLICY_KEY);
+    const profile = await this.deps.tenantProfiles.findByTenant(tenantId, tenantId);
+
+    let owner: TenantBaselineState["owner"] = null;
+    if (ownerExternalId !== undefined) {
+      const principals = await this.deps.principals.listAll(tenantId);
+      const principal = principals.find((p) => p.externalId === ownerExternalId);
+      const assignments =
+        principal === undefined
+          ? []
+          : await this.deps.assignments.listByPrincipal(principal.id.toString(), tenantId);
+      const grantKey = `${OWNER_GRANT.namespace}:${OWNER_GRANT.object}#${OWNER_GRANT.relation}@${ownerExternalId}`;
+      const tuples = await this.deps.relationTuples.listAll(tenantId);
+      owner = {
+        registered: principal !== undefined,
+        adminAssignments: assignments.filter(
+          (a) => a.roleKey === PLATFORM_ADMIN_ROLE && a.status === "active",
+        ).length,
+        enforcementGrants: tuples.filter((t) => t.key() === grantKey).length,
+      };
+    }
+    return {
+      roles: active.has(PLATFORM_ADMIN_ROLE) && active.has(PLATFORM_SERVICE_ROLE),
+      policy: baseline !== undefined && baseline.activeVersionNumber !== null,
+      profile: profile !== null && profile.defaultPolicyKey === BASELINE_POLICY_KEY,
+      owner,
     };
   }
 

@@ -8,6 +8,8 @@
 
 **G-64 is closed (2026-09-26).** `IntegrationEvent.tenantId` is required and the event-path consumers route by it (D-067); the worker guard no longer names the consumers and still refuses `TENANT_MODE=multi` for `bootstrapSecurity` (T10.6) while principal provisioning is on. `TENANT_MODE=multi` is **still not enabled**: the entitlement site (T10.7 class B) and the two-tenant Definition-of-done tests remain.
 
+**T10.6 (2026-09-26, D-068): tenant lifecycle is real.** Suspension and cancellation are enforced where the tenant is resolved (a suspended tenant keeps read access and invoice payment, nothing else; ≤10 s cross-instance staleness), provisioning gives a new tenant a working security baseline idempotently and reports itself incomplete when it is, and the platform tenant cannot be suspended or cancelled. The worker guard no longer refuses `TENANT_MODE=multi` for `bootstrapSecurity` (no boot pin remains) — `TENANT_MODE=multi` is **still not enabled**. G-32 and G-25 are **narrowed, not closed**: nothing is erased.
+
 **All three cross-tenant gaps T10.5 found are now closed** (G-67 cache/audit, G-68 storage keys, G-70 grants). **`TENANT_MODE=multi` is still not enabled and must not be:** the worker refuses it until G-64, legacy storage-key rows have not been counted (G-68's note), and T10.6/T10.7 remain. **Newly open, found reviewing WP-1:** a guest who checked out with an email can never register an account with it (`RegisterCustomer` returns a conflict for any existing email, including a guest one), and the platform has no email-ownership proof to make an upgrade safe (**G-72**) — next task.
 
 ## Status — 2026-09-20 (G-70 code-complete, migration PENDING — multi is STILL forbidden until the migration RUNS)

@@ -740,7 +740,11 @@ function toBrandDto(brand: Brand): BrandDto {
  */
 export function adminRoutes(
   admin: WiredAdmin,
-  options: { readonly tenancyPinnedTo?: string; readonly rateLimiter?: RateLimiter } = {},
+  options: {
+    readonly tenancyPinnedTo?: string;
+    readonly rateLimiter?: RateLimiter;
+    readonly onTenantLifecycleChange?: (tenantId: string) => void;
+  } = {},
 ): readonly RouteDefinition[] {
   return [
     defineRoute({
@@ -1848,9 +1852,16 @@ export function adminRoutes(
     ...featureRegistryRoutes(admin),
     ...pagesRoutes(admin),
     ...mediaLibraryRoutes(admin),
-    ...(options.tenancyPinnedTo === undefined
-      ? tenancyRoutes(admin)
-      : pinRoutesToTenant(tenancyRoutes(admin), options.tenancyPinnedTo)),
+    ...(() => {
+      const tenancy = tenancyRoutes(admin, {
+        ...(options.onTenantLifecycleChange === undefined
+          ? {}
+          : { onLifecycleChange: options.onTenantLifecycleChange }),
+      });
+      return options.tenancyPinnedTo === undefined
+        ? tenancy
+        : pinRoutesToTenant(tenancy, options.tenancyPinnedTo);
+    })(),
     ...licensingRoutes(admin),
     ...platformConsoleRoutes(admin),
     ...promotionsRoutes(admin),

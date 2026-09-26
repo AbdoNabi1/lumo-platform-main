@@ -80,7 +80,10 @@ const createTenantBody = z.object({
   slug: z.string().min(1),
   name: z.string().min(1),
   isolationTier: z.enum(["pooled", "dedicated_schema", "dedicated_db"]),
+  /** T10.6: the tenant's first administrator (an Identity user id). Omitted => baseline only. */
+  ownerExternalId: z.string().min(1).optional(),
 });
+const provisioningQuery = z.object({ owner: z.string().min(1).optional() });
 const tenantIdParams = z.object({ tenantId: z.string().min(1) });
 const rebrandTenantBody = z.object({ branding: z.record(z.string(), z.string()) });
 const createWorkspaceBody = z.object({
@@ -104,8 +107,28 @@ const configureWorkspaceBody = z.object({
   }),
 });
 
-/** The Tenancy admin HTTP surface (Sprint 5.5/5.6). Pure delegation. */
-export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
+export interface TenancyRouteOptions {
+  /**
+   * Called after a status change (activate/suspend/cancel) so the request boundary's cached status for
+   * that tenant is dropped and the change is effective immediately on this instance (T10.6).
+   */
+  readonly onLifecycleChange?: (tenantId: string) => void;
+}
+
+/** The Tenancy admin HTTP surface (Sprint 5.5/5.6). Delegation, plus T10.6 provisioning. */
+export function tenancyRoutes(
+  admin: WiredAdmin,
+  options: TenancyRouteOptions = {},
+): readonly RouteDefinition[] {
+  const changed = async <T extends { readonly status: number }>(
+    tenantId: string,
+    response: Promise<T>,
+  ): Promise<T> => {
+    const result = await response;
+    // Dropped on every outcome, success or not: a failed transition must not leave a stale entry either.
+    options.onLifecycleChange?.(tenantId);
+    return result;
+  };
   return [
     defineRoute({
       method: "POST",
@@ -115,7 +138,19 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a tenant",
       schema: { body: createTenantBody },
-      handle: ({ body, context }) => admin.tenancy.createTenant(context.principal, body),
+      handle: async ({ body, context }) => {
+        const { ownerExternalId, ...input } = body;
+        const created = await admin.tenancy.createTenant(context.principal, input);
+        if (created.status >= 300) return created;
+        // T10.6: a tenant row is not a working store. Provision its security baseline now and put the
+        // truth in the response: provisioning.complete is false when something did not land, and the
+        // operator resumes with POST /tenants/:tenantId/provision. The row stays; it is not rolled back.
+        const id = (created.body as { id: string }).id;
+        const provisioning = await admin.tenantProvisioner.provision(id, {
+          ...(ownerExternalId === undefined ? {} : { ownerExternalId }),
+        });
+        return { ...created, body: { ...(created.body as object), provisioning } };
+      },
     }),
     defineRoute({
       method: "POST",
@@ -125,7 +160,8 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Activate a tenant",
       schema: { params: tenantIdParams },
-      handle: ({ params, context }) => admin.tenancy.activateTenant(context.principal, params),
+      handle: ({ params, context }) =>
+        changed(params.tenantId, admin.tenancy.activateTenant(context.principal, params)),
     }),
     defineRoute({
       method: "POST",
@@ -135,7 +171,8 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Suspend a tenant",
       schema: { params: tenantIdParams },
-      handle: ({ params, context }) => admin.tenancy.suspendTenant(context.principal, params),
+      handle: ({ params, context }) =>
+        changed(params.tenantId, admin.tenancy.suspendTenant(context.principal, params)),
     }),
     defineRoute({
       method: "POST",
@@ -145,7 +182,45 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Cancel a tenant",
       schema: { params: tenantIdParams },
-      handle: ({ params, context }) => admin.tenancy.cancelTenant(context.principal, params),
+      handle: ({ params, context }) =>
+        changed(params.tenantId, admin.tenancy.cancelTenant(context.principal, params)),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/tenants/:tenantId/provision",
+      version: 1,
+      permission: "tenancy:create",
+      idempotent: true,
+      summary: "Run or resume a tenant's security provisioning (idempotent)",
+      schema: {
+        params: tenantIdParams,
+        body: z.object({ ownerExternalId: z.string().min(1).optional() }),
+      },
+      handle: async ({ params, body, context }) => {
+        const found = await admin.tenancy.getTenant(context.principal, params);
+        if (found.status >= 300) return found;
+        const report = await admin.tenantProvisioner.provision(params.tenantId, {
+          ...(body.ownerExternalId === undefined ? {} : { ownerExternalId: body.ownerExternalId }),
+        });
+        return { status: report.complete ? 200 : 202, body: report };
+      },
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/tenants/:tenantId/provisioning",
+      version: 1,
+      permission: "tenancy:read",
+      summary:
+        "What is actually stored for a tenant's security baseline (complete, or the missing steps)",
+      schema: { params: tenantIdParams, querystring: provisioningQuery },
+      handle: async ({ params, query, context }) => {
+        const found = await admin.tenancy.getTenant(context.principal, params);
+        if (found.status >= 300) return found;
+        const report = await admin.tenantProvisioner.inspect(params.tenantId, {
+          ...(query.owner === undefined ? {} : { ownerExternalId: query.owner }),
+        });
+        return { status: 200, body: report };
+      },
     }),
     defineRoute({
       method: "POST",

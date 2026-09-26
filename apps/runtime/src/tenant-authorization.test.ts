@@ -76,6 +76,7 @@ function fixture() {
     audited,
     deps: {
       tenantMode: "multi" as const,
+      tenantGate: { availability: async () => "active" as const }, // fixture tenants have no Tenant row (T10.6)
       serializer: new InMemoryEventSerializer(),
       idGenerator: { generate: () => crypto.randomUUID() },
       clock,

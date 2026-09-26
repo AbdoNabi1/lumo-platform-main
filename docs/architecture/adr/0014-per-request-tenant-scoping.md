@@ -602,6 +602,12 @@ the platform `tenantId` primitive `` (`services/tenancy/src/domain/tenant.ts:25-
    a decision, not an oversight: removing the exemption is the work item once 8a-8d land, and a second
    entry is a finding to report, never a configuration to add.
 
+   **Interaction with T10.6 (2026-09-26, D-068).** The exemption is unchanged and no entry was added. The
+   request-boundary lifecycle gate reads a tenant's status through the existing pinned tenancy
+   repository (`wireTenancy(...).tenantAvailability`), so the `Tenant` rows are still operator data read
+   under the operator scope. The platform tenant is the deployment scope this point already names, and is
+   now additionally refused suspension/cancellation (`protectedTenantIds`).
+
 ## Consequences
 
 - **Positive:** the ~40-context migration converges on a shape (identity's access repositories)
