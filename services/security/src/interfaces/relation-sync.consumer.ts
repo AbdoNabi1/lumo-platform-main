@@ -42,7 +42,7 @@ export function tenantQualifiedTuple(
  * **Tenant scoping (G-70, contracted 2026-09-21).** Only the tenant-qualified tuple
  * (`tenant/<tenantId>/<object>`) is written, the tenant taken from the event envelope
  * (`event.tenantId`). The bare twin was dropped once the live migration had run and been verified
- * (docs/operations/KETO_TENANT_MIGRATION.md). `IntegrationEvent.tenantId` is optional on the type; when
+ * (docs/operations/KETO_TENANT_MIGRATION.md). `IntegrationEvent.tenantId` is required on the type (G-64) but the wire can still omit it; when
  * it is absent NOTHING is written and a warning is logged — a grant not applied, never a grant applied
  * to every tenant.
  */

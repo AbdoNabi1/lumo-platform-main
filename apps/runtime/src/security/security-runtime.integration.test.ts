@@ -39,6 +39,7 @@ function makeEvent<T>(type: string, payload: T): IntegrationEvent<T> {
     occurredAt: new Date("2026-07-19T00:00:00.000Z").toISOString(),
     correlationId: "corr-1",
     causationId: "cause-1",
+    tenantId: TENANT,
     payload,
     metadata: {},
   };
@@ -78,7 +79,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
   });
 
   it("provisions a Security Principal + role from Identity events (blocker A/D/E)", async () => {
-    const deps = { security: wired.security, logger, tenantId: TENANT };
+    const deps = { security: wired.security, logger };
     await new ProvisionPrincipalOnUserCreated(deps).handle(
       makeEvent("identity.user.created", { userId: ADMIN_USER, tenantId: TENANT }),
     );
@@ -103,7 +104,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
   });
 
   it("ALLOWS an authenticated request through the guard: full chain, WORM-audited (blocker C/H)", async () => {
-    const deps = { security: wired.security, logger, tenantId: TENANT };
+    const deps = { security: wired.security, logger };
     await new ProvisionPrincipalOnUserCreated(deps).handle(
       makeEvent("identity.user.created", { userId: ADMIN_USER, tenantId: TENANT }),
     );
@@ -136,7 +137,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
   });
 
   it("DENIES when RBAC does not grant the permission (fail-closed)", async () => {
-    const deps = { security: wired.security, logger, tenantId: TENANT };
+    const deps = { security: wired.security, logger };
     await new ProvisionPrincipalOnUserCreated(deps).handle(
       makeEvent("identity.user.created", { userId: SERVICE_USER, tenantId: TENANT }),
     );
@@ -163,7 +164,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
   });
 
   it("fails closed for a human principal with no valid session (zero-trust structural gate)", async () => {
-    const deps = { security: wired.security, logger, tenantId: TENANT };
+    const deps = { security: wired.security, logger };
     await new ProvisionPrincipalOnUserCreated(deps).handle(
       makeEvent("identity.user.created", { userId: ADMIN_USER, tenantId: TENANT }),
     );
@@ -186,7 +187,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
   });
 
   it("steps up (challenge) at elevated risk and blocks at high risk (risk + policy in the chain)", async () => {
-    const deps = { security: wired.security, logger, tenantId: TENANT };
+    const deps = { security: wired.security, logger };
     await new ProvisionPrincipalOnUserCreated(deps).handle(
       makeEvent("identity.user.created", { userId: ADMIN_USER, tenantId: TENANT }),
     );
@@ -225,7 +226,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
   });
 
   it("disables the Security Principal when Identity deactivates the user (lifecycle sync, D)", async () => {
-    const deps = { security: wired.security, logger, tenantId: TENANT };
+    const deps = { security: wired.security, logger };
     await new ProvisionPrincipalOnUserCreated(deps).handle(
       makeEvent("identity.user.created", { userId: ADMIN_USER, tenantId: TENANT }),
     );
@@ -246,7 +247,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
   });
 
   it("re-drives (throws) when a role assignment races ahead of its principal (retry/DLQ, fail-closed)", async () => {
-    const deps = { security: wired.security, logger, tenantId: TENANT };
+    const deps = { security: wired.security, logger };
     // membership.created before user.created ⇒ principal not found ⇒ throw so the runtime retries.
     await expect(
       new AssignRoleOnMembershipCreated(deps).handle(

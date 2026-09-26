@@ -1,4 +1,8 @@
-import type { IntegrationEvent } from "@platform/domain-events";
+import {
+  readEnvelopeTenant,
+  requireEnvelopeTenant,
+  type IntegrationEvent,
+} from "@platform/domain-events";
 import type { EventHandler } from "@platform/messaging";
 import type { Logger } from "@platform/utils";
 import type { IdentityProjectionStore } from "../application/ports";
@@ -15,14 +19,28 @@ import type { IdentityProjectionStore } from "../application/ports";
 export interface IdentityProjectionConsumerDeps {
   readonly store: IdentityProjectionStore;
   readonly logger: Logger;
-  /**
-   * ADR-0014 (WP-10, T10.3): the projection store takes `tenantId` per call. Until `tenantId` is
-   * required on the event envelope (G-64 — a contract change, out of scope here) the composition root
-   * supplies the row-scope tenant, exactly as the other event consumers in `apps/runtime` do; reading
-   * the envelope tenant per message is the separate G-64 fix. (`userTenant`/`orgTenant` below are the
-   * Identity entity's own business column, not this row scope.)
-   */
-  readonly tenantId: string;
+}
+
+/**
+ * G-64: the row scope of every projection write is the ENVELOPE's tenant (`userTenant`/`orgTenant`
+ * in the payloads are the Identity entity's own business column, not this scope). With no tenant the
+ * two directions differ, per relation-sync.consumer.ts — a skipped write denies, a skipped removal
+ * allows:
+ *  - creates (user, organization, membership) ADD standing → REFUSED: nothing written, error logged;
+ *  - user deactivation and membership role change TAKE AWAY standing → THROW to the retry/DLQ, since
+ *    acking a skipped one would leave the old, wider projection live.
+ */
+function tenantOrRefuse(
+  deps: IdentityProjectionConsumerDeps,
+  event: { readonly tenantId?: unknown; readonly type: string; readonly messageId: string },
+): string | null {
+  const tenantId = readEnvelopeTenant(event);
+  if (tenantId === null) {
+    deps.logger.error(`${event.type} has no tenant on the envelope — projection write refused`, {
+      messageId: event.messageId,
+    });
+  }
+  return tenantId;
 }
 
 export interface IdentityUserCreatedPayload {
@@ -34,6 +52,8 @@ export class IdentityUserCreatedConsumer implements EventHandler<IdentityUserCre
   readonly eventVersion = 1;
   constructor(private readonly deps: IdentityProjectionConsumerDeps) {}
   async handle(event: IntegrationEvent<IdentityUserCreatedPayload>): Promise<void> {
+    const tenantId = tenantOrRefuse(this.deps, event);
+    if (tenantId === null) return;
     await this.deps.store.upsertUser(
       {
         userId: event.payload.userId,
@@ -41,7 +61,7 @@ export class IdentityUserCreatedConsumer implements EventHandler<IdentityUserCre
         status: "active",
         occurredAt: event.occurredAt,
       },
-      this.deps.tenantId,
+      tenantId,
     );
   }
 }
@@ -52,11 +72,12 @@ export class IdentityUserDeactivatedConsumer implements EventHandler<IdentityUse
   readonly eventVersion = 1;
   constructor(private readonly deps: IdentityProjectionConsumerDeps) {}
   async handle(event: IntegrationEvent<IdentityUserDeactivatedPayload>): Promise<void> {
+    const tenantId = requireEnvelopeTenant(event, "IdentityUserDeactivatedConsumer");
     await this.deps.store.setUserStatus(
       event.payload.userId,
       "deactivated",
       event.occurredAt,
-      this.deps.tenantId,
+      tenantId,
     );
   }
 }
@@ -71,6 +92,8 @@ export class IdentityOrganizationCreatedConsumer implements EventHandler<Identit
   readonly eventVersion = 1;
   constructor(private readonly deps: IdentityProjectionConsumerDeps) {}
   async handle(event: IntegrationEvent<IdentityOrganizationCreatedPayload>): Promise<void> {
+    const tenantId = tenantOrRefuse(this.deps, event);
+    if (tenantId === null) return;
     await this.deps.store.upsertOrganization(
       {
         organizationId: event.payload.organizationId,
@@ -78,7 +101,7 @@ export class IdentityOrganizationCreatedConsumer implements EventHandler<Identit
         orgTenant: event.payload.tenantId,
         occurredAt: event.occurredAt,
       },
-      this.deps.tenantId,
+      tenantId,
     );
   }
 }
@@ -94,6 +117,8 @@ export class IdentityMembershipCreatedConsumer implements EventHandler<IdentityM
   readonly eventVersion = 1;
   constructor(private readonly deps: IdentityProjectionConsumerDeps) {}
   async handle(event: IntegrationEvent<IdentityMembershipCreatedPayload>): Promise<void> {
+    const tenantId = tenantOrRefuse(this.deps, event);
+    if (tenantId === null) return;
     await this.deps.store.upsertMembership(
       {
         membershipId: event.payload.membershipId,
@@ -102,7 +127,7 @@ export class IdentityMembershipCreatedConsumer implements EventHandler<IdentityM
         role: event.payload.role,
         occurredAt: event.occurredAt,
       },
-      this.deps.tenantId,
+      tenantId,
     );
   }
 }
@@ -116,11 +141,12 @@ export class IdentityMembershipRoleChangedConsumer implements EventHandler<Ident
   readonly eventVersion = 1;
   constructor(private readonly deps: IdentityProjectionConsumerDeps) {}
   async handle(event: IntegrationEvent<IdentityMembershipRoleChangedPayload>): Promise<void> {
+    const tenantId = requireEnvelopeTenant(event, "IdentityMembershipRoleChangedConsumer");
     await this.deps.store.setMembershipRole(
       event.payload.membershipId,
       event.payload.role,
       event.occurredAt,
-      this.deps.tenantId,
+      tenantId,
     );
   }
 }

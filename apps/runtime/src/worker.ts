@@ -31,9 +31,10 @@ export async function startWorker(
   config: RuntimeConfig,
   core?: RuntimeCore,
 ): Promise<ConsumerSupervisor> {
-  // T10.4: multi mode is possible for the API (per-request resolution) but not for this process —
-  // its consumers are pinned to TENANT_DEFAULT_ID until G-64. Refuse BEFORE building anything.
-  assertWorkerTenantModeSupported(config.TENANT_MODE);
+  // T10.4 / G-64: the consumers route by the envelope's tenant, so multi mode is possible here. The
+  // guard still refuses for anything genuinely bound to one tenant (see tenant-mode-guard.ts).
+  // Refuse BEFORE building anything.
+  assertWorkerTenantModeSupported(config.TENANT_MODE, config);
   const runtime = core ?? buildRuntimeCore(config);
   // H-03: see api.ts — same activation, this process's role suffix.
   const telemetry = startRuntimeTelemetry(config, "worker");
@@ -81,7 +82,7 @@ export async function startWorker(
   // that topic and nothing subscribed — every beacon was accepted, written to Kafka and aged out
   // unprocessed. Config-gated (`TRACKING_INGEST_ENABLED`, default off) because the registry must be
   // seeded first; `buildTrackingIngestRuntime` returns null when it is off.
-  const trackingIngest = await buildTrackingIngestRuntime(runtime);
+  const trackingIngest = buildTrackingIngestRuntime(runtime);
   if (trackingIngest !== null) supervisor.register(trackingIngest);
 
   // H-04: bootstrapSecurity + the three principal-provisioning consumers (security-provisioning.

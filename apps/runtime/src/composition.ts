@@ -85,7 +85,8 @@ import {
   TrackingRegistryHandle,
   TrackingRegistryWatcher,
 } from "./tracking/tracking-registry-handle";
-import { wireTrackingRuntime } from "./tracking/wire-tracking-runtime";
+import { TenantRuntimes } from "./tracking/tenant-runtimes";
+import { wireTrackingRuntime, type TrackingRuntime } from "./tracking/wire-tracking-runtime";
 
 /**
  * The production composition root (Sprint 2.9, D-050). EVERY dependency is wired here — no
@@ -186,9 +187,10 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
   //    of the composed graph for any construction-time tenant. The one recorded exception is
   //    services/tenancy (ADR-0014 8f), whose routes are pinned to TENANT_DEFAULT_ID and 403 every
   //    other tenant.
-  //  - Worker: startWorker still refuses multi (assertWorkerTenantModeSupported) because its event
-  //    consumers take TENANT_DEFAULT_ID at construction until the envelope carries a required
-  //    tenantId (G-64). This function is shared by both processes and no longer decides for them.
+  //  - Worker: its event consumers route by the envelope's required tenantId (G-64), so nothing in
+  //    the consumer path is pinned. startWorker still runs assertWorkerTenantModeSupported, which
+  //    refuses multi for whatever is genuinely single-tenant (tenant-mode-guard.ts). This function
+  //    is shared by both processes and no longer decides for them.
   // Multi mode is now POSSIBLE, not SAFE: T10.5 (adversarial isolation suite) has not been written.
   // Do not enable TENANT_MODE=multi anywhere until it has.
   const clock = new SystemClock();
@@ -655,8 +657,6 @@ export function buildPaymentCapturedRuntime(
     handler: new PaymentCapturedConsumer({
       markOrderPaid,
       logger: core.logger,
-      // G-64 (class D): sourced from config until `tenantId` is required on the event envelope.
-      tenantId: core.config.TENANT_DEFAULT_ID,
     }),
     consumerGroup,
     serializer: core.serializer,
@@ -697,49 +697,58 @@ export function buildPaymentCapturedRuntime(
  *
  * Returns `null` when `TRACKING_INGEST_ENABLED` is off, so an unseeded deployment is unchanged.
  */
-export async function buildTrackingIngestRuntime(
+export function buildTrackingIngestRuntime(
   core: RuntimeCore,
-): Promise<KafkaConsumerRuntime<TrackingCapturedPayload> | null> {
+): KafkaConsumerRuntime<TrackingCapturedPayload> | null {
   if (!core.config.TRACKING_INGEST_ENABLED) return null;
 
-  const tenantId = core.config.TENANT_DEFAULT_ID;
   const registryStore = new PrismaTrackingRegistryStore(core.prisma, core.idGenerator);
-
-  // Loaded once at boot, then hot-reloaded by the watcher. `loadTrackingRegistry` throws on an empty
-  // registry rather than starting: a runtime that captured events and forwarded them nowhere is the
-  // exact silent-loss failure this milestone exists to remove.
-  const snapshot = await loadTrackingRegistry(registryStore, tenantId);
-  const handle = new TrackingRegistryHandle(snapshot, await registryStore.signal(tenantId));
-  new TrackingRegistryWatcher({
-    handle,
-    store: registryStore,
-    tenantId,
-    logger: core.logger,
-    intervalMs: core.config.TRACKING_REGISTRY_POLL_MS,
-  }).start();
 
   const consumerGroup = "tracking.ingest";
   const producer = new KafkaMessageProducer(core.kafka);
   const deadLetters = new PrismaDeadLetterStore(core.prisma, consumerGroup, core.idGenerator);
+  const secrets = createSecretProvider();
 
-  const tracking = wireTrackingRuntime({
-    db: core.prisma,
-    idGenerator: core.idGenerator,
-    secrets: createSecretProvider(),
-    registry: handle,
-    ruleSetKey: core.config.TRACKING_RULE_SET_KEY,
-    clock: core.clock,
-    processed: new PrismaProcessedEventStore(core.prisma, consumerGroup),
-    deadLetters,
-    logger: core.logger,
+  // G-64: one registry, one hot-reload watcher and one ingest engine PER TENANT, built lazily on the
+  // first event that names the tenant (the envelope's tenant — never a deployment default). The old
+  // shape loaded a single tenant's registry at boot and routed every tenant's events through it.
+  //
+  // `loadTrackingRegistry` still throws on an empty registry, so a tenant with no definitions fails
+  // its event loudly (retry → DLQ) instead of being forwarded nowhere. The trade against the old
+  // boot-time load: a tenant whose registry is unseeded is now discovered on its first event, not
+  // at process start — the process no longer knows which tenants to check.
+  const tenantRuntimes = new TenantRuntimes<TrackingRuntime>(async (tenantId) => {
+    const snapshot = await loadTrackingRegistry(registryStore, tenantId);
+    const handle = new TrackingRegistryHandle(snapshot, await registryStore.signal(tenantId));
+    const watcher = new TrackingRegistryWatcher({
+      handle,
+      store: registryStore,
+      tenantId,
+      logger: core.logger,
+      intervalMs: core.config.TRACKING_REGISTRY_POLL_MS,
+    });
+    watcher.start();
+    const runtime = wireTrackingRuntime({
+      db: core.prisma,
+      idGenerator: core.idGenerator,
+      secrets,
+      registry: handle,
+      ruleSetKey: core.config.TRACKING_RULE_SET_KEY,
+      clock: core.clock,
+      processed: new PrismaProcessedEventStore(core.prisma, consumerGroup),
+      deadLetters,
+      logger: core.logger,
+    });
+    return { runtime, stop: () => watcher.stop() };
   });
 
   return new KafkaConsumerRuntime({
     kafka: core.kafka,
     handler: new TrackingIngestHandler({
       // A provider, not a fixed object: each call pins the snapshot current at that moment, so a
-      // hot reload landing mid-event cannot change the definitions under it.
-      ingest: () => tracking.ingest(),
+      // hot reload landing mid-event cannot change the definitions under it. Keyed by the
+      // envelope's tenant (G-64).
+      ingest: async (tenantId) => (await tenantRuntimes.for(tenantId)).ingest(),
       deadLetters,
       logger: core.logger,
       clock: core.clock,

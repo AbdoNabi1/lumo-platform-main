@@ -44,6 +44,7 @@ function makeEvent<T>(type: string, payload: T): IntegrationEvent<T> {
     occurredAt: new Date("2026-07-19T00:00:00.000Z").toISOString(),
     correlationId: "corr-1",
     causationId: "cause-1",
+    tenantId: TENANT,
     payload,
     metadata: {},
   };
@@ -57,7 +58,7 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
   let unfederatedGuard: SecurityPermissionGuard;
 
   async function provision(userId: string): Promise<void> {
-    const deps = { security: wired.security, logger, tenantId: TENANT };
+    const deps = { security: wired.security, logger };
     await new ProvisionPrincipalOnUserCreated(deps).handle(
       makeEvent("identity.user.created", { userId, tenantId: TENANT }),
     );

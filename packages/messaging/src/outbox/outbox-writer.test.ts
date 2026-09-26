@@ -39,7 +39,13 @@ const translator: IntegrationEventTranslator = {
   },
 };
 
-const context: EventContext = { correlationId: "corr-1", causationId: "cause-1" };
+const context: EventContext = {
+  correlationId: "corr-1",
+  causationId: "cause-1",
+  tenantId: "tenant-a",
+};
+/** A context that names no tenant — what the G-64 refusal tests feed the writer. */
+const untenanted: EventContext = { correlationId: "corr-1", causationId: "cause-1" };
 const aggregateId = UniqueEntityId.from("order-1");
 
 function newWriter(store: InMemoryOutboxStore): OutboxWriter {
@@ -94,7 +100,37 @@ describe("OutboxWriter", () => {
   it("skips domain events with no translation", async () => {
     const store = new InMemoryOutboxStore();
     const internal = new InternalOnly({ eventId: "evt-2", aggregateId, occurredAt: new Date(0) });
-    await newWriter(store).write([internal], context, undefined);
+    await newWriter(store).write([internal], untenanted, undefined);
     expect(store.snapshot()).toHaveLength(0);
+  });
+});
+
+describe("OutboxWriter — the envelope always names its tenant (G-64)", () => {
+  const event = new OrderPlaced(
+    { eventId: "evt-t", aggregateId, occurredAt: new Date("2026-06-29T11:00:00.000Z") },
+    1,
+  );
+
+  it("stamps the context tenant on the envelope, the header and the entry", async () => {
+    const store = new InMemoryOutboxStore();
+    await newWriter(store).write([event], { ...context, tenantId: "tenant-b" }, undefined);
+    const entry = store.snapshot()[0];
+    expect(entry?.headers["tenantId"]).toBe("tenant-b");
+    expect(new TextDecoder().decode(entry?.payload)).toContain('"tenantId":"tenant-b"');
+  });
+
+  it.each([
+    ["absent", untenanted],
+    ["empty", { ...context, tenantId: "" }],
+  ])("refuses to enqueue a translated event when the context tenant is %s", async (_n, ctx) => {
+    const store = new InMemoryOutboxStore();
+    await expect(newWriter(store).write([event], ctx, undefined)).rejects.toThrow(/tenant/i);
+    expect(store.snapshot()).toHaveLength(0);
+  });
+
+  it("does not demand a tenant for events that are not published at all", async () => {
+    const store = new InMemoryOutboxStore();
+    const internal = new InternalOnly({ eventId: "evt-i", aggregateId, occurredAt: new Date() });
+    await expect(newWriter(store).write([internal], context, undefined)).resolves.toBeUndefined();
   });
 });

@@ -42,6 +42,9 @@ import {
 } from "./infrastructure/tenancy-event-translator";
 import { TenancyController } from "./interfaces/tenancy.controller";
 
+/** Envelope tenant for the in-memory composition when the caller supplies none (never a deployment default). */
+export const IN_MEMORY_TENANT_ID = "tenant-in-memory";
+
 export interface TenancyWiringDeps {
   readonly serializer: EventSerializer;
   readonly idGenerator: IdGenerator;
@@ -137,7 +140,9 @@ export function wireTenancy(deps: TenancyWiringDeps): WiredTenancy {
     clock: deps.clock,
     producer: "tenancy",
   });
-  const context = rootEventContext(deps.idGenerator);
+  // The in-memory composition (dev/tests) has no deployment tenant; the outbox requires one on every
+  // envelope (G-64), so it is the caller's when given, else an explicit in-memory marker.
+  const context = rootEventContext(deps.idGenerator, deps.tenantId ?? IN_MEMORY_TENANT_ID);
 
   const repos: TenancyRepos = {
     tenants: new InMemoryTenantRepository({ outbox: outboxWriter, context }),

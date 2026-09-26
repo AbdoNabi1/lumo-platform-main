@@ -51,6 +51,7 @@ function message(total: number, messageId = "evt-1"): IncomingMessage {
     occurredAt: "2026-06-29T00:00:00.000Z",
     correlationId: "c",
     causationId: "c",
+    tenantId: "tenant-test",
     payload: { total },
     metadata: {},
   };

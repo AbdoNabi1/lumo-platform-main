@@ -1,4 +1,8 @@
-import type { IntegrationEvent } from "@platform/domain-events";
+import {
+  readEnvelopeTenant,
+  requireEnvelopeTenant,
+  type IntegrationEvent,
+} from "@platform/domain-events";
 import type { EventHandler } from "@platform/messaging";
 import type {
   ControllerResponse,
@@ -50,14 +54,28 @@ function ensureProvisioned(response: ControllerResponse, action: string): void {
 interface ProvisioningDeps {
   readonly security: SecurityController;
   readonly logger: Logger;
-  /**
-   * ADR-0014 (WP-10, T10.3): every `SecurityController` use-case takes `tenantId` per call. Until
-   * `tenantId` is required on the event envelope (G-64 — a contract change, out of scope here) the
-   * composition root supplies it, exactly as the other event consumers in `apps/runtime` do; reading
-   * the envelope tenant per message is the separate G-64 fix. (`tenantRef` below is the Identity
-   * user's own tenant, a business attribute — not this row scope.)
-   */
-  readonly tenantId: string;
+}
+
+/**
+ * G-64: every `SecurityController` use-case runs under the ENVELOPE's tenant (`tenantRef` below is
+ * the Identity user's own business attribute, not this scope). With no tenant, per
+ * relation-sync.consumer.ts (a skipped write denies, a skipped delete allows):
+ *  - registering a principal and assigning a role GRANT standing → REFUSED: nothing provisioned,
+ *    error logged, message acked;
+ *  - disabling a principal on deactivation REMOVES standing → THROWS to the retry/DLQ, since acking
+ *    a skipped disable would leave a deactivated user's principal live.
+ */
+function tenantOrRefuse(
+  deps: ProvisioningDeps,
+  event: { readonly tenantId?: unknown; readonly type: string; readonly messageId: string },
+): string | null {
+  const tenantId = readEnvelopeTenant(event);
+  if (tenantId === null) {
+    deps.logger.error(`${event.type} has no tenant on the envelope — provisioning refused`, {
+      messageId: event.messageId,
+    });
+  }
+  return tenantId;
 }
 
 /** `identity.user.created` → register the human Security Principal (idempotent per Identity user id). */
@@ -66,15 +84,17 @@ export class ProvisionPrincipalOnUserCreated implements EventHandler<IdentityUse
   readonly eventVersion = 1;
   constructor(private readonly deps: ProvisioningDeps) {}
   async handle(event: IntegrationEvent<IdentityUserCreatedPayload>): Promise<void> {
-    const { userId, tenantId } = event.payload;
+    const { userId, tenantId: tenantRef } = event.payload;
+    const tenantId = tenantOrRefuse(this.deps, event);
+    if (tenantId === null) return;
     ensureProvisioned(
       await this.deps.security.registerPrincipal({
-        tenantId: this.deps.tenantId,
+        tenantId,
         externalId: userId,
         kind: "human",
         displayName: userId,
         subjectRef: userId,
-        tenantRef: tenantId,
+        tenantRef,
       }),
       "registerPrincipal",
     );
@@ -87,9 +107,10 @@ export class DisablePrincipalOnUserDeactivated implements EventHandler<IdentityU
   readonly eventVersion = 1;
   constructor(private readonly deps: ProvisioningDeps) {}
   async handle(event: IntegrationEvent<IdentityUserDeactivatedPayload>): Promise<void> {
+    const tenantId = requireEnvelopeTenant(event, "DisablePrincipalOnUserDeactivated");
     ensureProvisioned(
       await this.deps.security.transitionPrincipal({
-        tenantId: this.deps.tenantId,
+        tenantId,
         externalId: event.payload.userId,
         to: "disabled",
       }),
@@ -104,9 +125,11 @@ export class AssignRoleOnMembershipCreated implements EventHandler<IdentityMembe
   readonly eventVersion = 1;
   constructor(private readonly deps: ProvisioningDeps) {}
   async handle(event: IntegrationEvent<IdentityMembershipCreatedPayload>): Promise<void> {
+    const tenantId = tenantOrRefuse(this.deps, event);
+    if (tenantId === null) return;
     ensureProvisioned(
       await this.deps.security.assignRole({
-        tenantId: this.deps.tenantId,
+        tenantId,
         principalExternalId: event.payload.userId,
         roleKey: mapMembershipRole(event.payload.role),
         grantedBy: SYSTEM_GRANTOR,

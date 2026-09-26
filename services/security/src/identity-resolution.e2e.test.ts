@@ -36,6 +36,7 @@ function evt<T>(type: string, aggregateId: string, payload: T): IntegrationEvent
     occurredAt: "2026-07-18T00:00:00.000Z",
     correlationId: "c",
     causationId: "c",
+    tenantId: "tenant-a",
     payload,
     metadata: {},
   };
@@ -60,14 +61,12 @@ describe("H-2 identity resolution (end to end)", () => {
 
     // Identity emits — Security projects (owned by Identity).
     await new IdentityUserCreatedConsumer({
-      tenantId: "tenant-a",
       store: identityProjection,
       logger: silent,
     }).handle(
       evt("identity.user.created", "kratos-7", { userId: "kratos-7", tenantId: "tenant-1" }),
     );
     await new IdentityOrganizationCreatedConsumer({
-      tenantId: "tenant-a",
       store: identityProjection,
       logger: silent,
     }).handle(
@@ -78,7 +77,6 @@ describe("H-2 identity resolution (end to end)", () => {
       }),
     );
     await new IdentityMembershipCreatedConsumer({
-      tenantId: "tenant-a",
       store: identityProjection,
       logger: silent,
     }).handle(

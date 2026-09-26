@@ -8,14 +8,26 @@ import type { RuntimeConfig } from "./config";
  *  - The API process resolves the tenant per HTTP request. Its guard is
  *    `assertMultiTenantReady` (apps/admin/src/tenant-mode-guard.ts), run inside
  *    `createAdminHttpApi`, because that is where the real resolver chain and the composed graph exist.
- *  - The worker process has no request. Its Kafka consumers are pinned to `TENANT_DEFAULT_ID` at
- *    builder time (T10.7 class D / G-64): the event envelope does not yet carry a required
- *    `tenantId`, so there is no per-message tenant to hand them. Under multi mode that would consume
- *    tenant B's events into the default tenant's rows — the exact silent-defaulting bug T10.4 exists
- *    to prevent. So the worker still refuses multi mode, now naming precisely what blocks it.
+ *  - The worker process has no request. Its Kafka consumers used to be pinned to
+ *    `TENANT_DEFAULT_ID` at builder time (T10.7 class D / G-64), so under multi mode tenant B's
+ *    events would have been consumed into the default tenant's rows. **G-64 closed that:** the event
+ *    envelope now carries a required `tenantId` and every consumer routes by it, so
+ *    `EVENT_PATH_TENANT_PINS` is empty.
  *
- * This is NOT an exemption from the API assertion; it is a separate check that stays failing until
- * G-64 lands (a required envelope `tenantId`, a contract change).
+ * The worker guard is honest rather than removed. It still refuses multi mode for whatever in the
+ * worker is genuinely still bound to one tenant, and names exactly that:
+ *
+ *  - `EVENT_PATH_TENANT_PINS` — any consumer that takes its tenant from `TENANT_DEFAULT_ID`. Empty now;
+ *    a test requires it to equal the table's `event-path-pin` class, so a new pin cannot be classified
+ *    without the guard refusing, and the guard cannot claim a site is fixed while the table lists it.
+ *  - `BOOT_TENANT_PINS` — `bootstrapSecurity` provisions the baseline roles/policy for the ONE
+ *    deployment tenant at boot. With principal provisioning on, the consumers now register principals
+ *    and assign roles under each envelope's tenant, but the baseline they assign FROM exists only for
+ *    the deployment tenant, so every other tenant's provisioning fails. Per-tenant provisioning is
+ *    tenant lifecycle (T10.6). It blocks only when `SECURITY_PRINCIPAL_PROVISIONING` is on, because
+ *    that flag is what runs it.
+ *
+ * This is NOT an exemption from the API assertion; it is a separate check.
  */
 
 export interface EventPathTenantPin {
@@ -24,39 +36,45 @@ export interface EventPathTenantPin {
 }
 
 /** Every event-path (non-request) site that still sources its tenant from `TENANT_DEFAULT_ID`. */
-export const EVENT_PATH_TENANT_PINS: readonly EventPathTenantPin[] = Object.freeze([
-  {
-    file: "apps/runtime/src/consumers/orders-paid.consumers.ts",
-    what: "orders.order.paid consumers (loyalty, customer-360, notifications, …)",
-  },
-  {
-    file: "apps/runtime/src/consumers/finance-settlement.consumers.ts",
-    what: "finance settlement consumers",
-  },
-  {
-    file: "apps/runtime/src/composition.ts",
-    what: "payments.payment_intent.captured consumer and tracking-ingest runtime",
-  },
-  {
-    file: "apps/runtime/src/security/wire-security-identity.ts",
-    what: "consent-changed and Identity-projection consumers",
-  },
+export const EVENT_PATH_TENANT_PINS: readonly EventPathTenantPin[] = Object.freeze([]);
+
+/** Boot-time sites bound to the one deployment tenant; each blocks only while its feature is on. */
+export const BOOT_TENANT_PINS: readonly EventPathTenantPin[] = Object.freeze([
   {
     file: "apps/runtime/src/security/wire-security-provisioning.ts",
-    what: "security provisioning consumers",
+    what:
+      "bootstrapSecurity provisions the baseline roles/policy for the deployment tenant only " +
+      "(SECURITY_PRINCIPAL_PROVISIONING=on); other tenants' principals cannot be provisioned until " +
+      "tenant lifecycle (T10.6) provisions per tenant",
   },
 ]);
 
-export function assertWorkerTenantModeSupported(mode: RuntimeConfig["TENANT_MODE"]): void {
+export function assertWorkerTenantModeSupported(
+  mode: RuntimeConfig["TENANT_MODE"],
+  features: Pick<RuntimeConfig, "SECURITY_PRINCIPAL_PROVISIONING">,
+  eventPathPins: readonly EventPathTenantPin[] = EVENT_PATH_TENANT_PINS,
+): void {
   if (mode !== "multi") return;
+  const bootPins = features.SECURITY_PRINCIPAL_PROVISIONING ? BOOT_TENANT_PINS : [];
+  if (eventPathPins.length === 0 && bootPins.length === 0) return;
+  const lines: string[] = [];
+  if (eventPathPins.length > 0) {
+    lines.push(
+      "these event consumers still take their tenant from TENANT_DEFAULT_ID at construction " +
+        "(T10.7 class D, G-64) and would write every tenant's events into the default tenant's rows:",
+      ...eventPathPins.map((pin, index) => `${index + 1}. ${pin.file} — ${pin.what}`),
+    );
+  }
+  if (bootPins.length > 0) {
+    lines.push(
+      "these boot-time sites are still bound to the one deployment tenant (T10.6, per-tenant " +
+        "provisioning):",
+      ...bootPins.map((pin, index) => `${index + 1}. ${pin.file} — ${pin.what}`),
+    );
+  }
   throw new Error(
-    "worker: refusing to boot with TENANT_MODE=multi — these event consumers still take their " +
-      "tenant from TENANT_DEFAULT_ID at construction (T10.7 class D, G-64: the event envelope has " +
-      "no required tenantId yet, so there is no per-message tenant), and would write every " +
-      "tenant's events into the default tenant's rows:\n\n" +
-      EVENT_PATH_TENANT_PINS.map((pin, index) => `${index + 1}. ${pin.file} — ${pin.what}`).join(
-        "\n",
-      ),
+    "worker: refusing to boot with TENANT_MODE=multi — " +
+      lines.join("\n\n").replace(/\n\n(\d\.)/g, "\n$1"),
   );
 }
 
@@ -78,8 +96,8 @@ export interface TenantDefaultIdSite {
 }
 
 /**
- * Every non-test, non-comment `TENANT_DEFAULT_ID` reference under apps/ services/ packages/ (14 code
- * sites; the 14 comment-only mentions are prose, not references). A count is not a classification:
+ * Every non-test, non-comment `TENANT_DEFAULT_ID` reference under apps/ services/ packages/ (8 code
+ * sites after G-64 removed the six event-path pins; comment-only mentions are prose, not references). A count is not a classification:
  * `tenant-mode-guard.test.ts` diffs this table against the source tree, so a new reference — or a
  * moved one — fails the build until someone classifies it here.
  *
@@ -95,44 +113,6 @@ export const TENANT_DEFAULT_ID_SITES: readonly TenantDefaultIdSite[] = Object.fr
       "exemption; routes pinned to it, every other tenant gets 403). assertMultiTenantReady " +
       "fails boot if any other context in the composed graph carries it, and the resolver probe " +
       "fails boot if an unresolved request could resolve to it.",
-  },
-  {
-    file: "apps/runtime/src/composition.ts",
-    line: "tenantId: core.config.TENANT_DEFAULT_ID,",
-    class: "event-path-pin",
-    why: "PaymentCapturedConsumer deps (G-64). Worker refuses multi mode.",
-  },
-  {
-    file: "apps/runtime/src/composition.ts",
-    line: "const tenantId = core.config.TENANT_DEFAULT_ID;",
-    class: "event-path-pin",
-    why:
-      "buildTrackingIngestRuntime: registry + watcher for one tenant. Not listed in the T10.7 " +
-      "inventory before this task. Worker refuses multi mode.",
-  },
-  {
-    file: "apps/runtime/src/consumers/orders-paid.consumers.ts",
-    line: "const tenantId = core.config.TENANT_DEFAULT_ID;",
-    class: "event-path-pin",
-    why: "Four orders.order.paid consumers (G-64). Worker refuses multi mode.",
-  },
-  {
-    file: "apps/runtime/src/consumers/finance-settlement.consumers.ts",
-    line: "const tenantId = core.config.TENANT_DEFAULT_ID;",
-    class: "event-path-pin",
-    why: "Finance settlement consumers (G-64). Worker refuses multi mode.",
-  },
-  {
-    file: "apps/runtime/src/security/wire-security-identity.ts",
-    line: "const tenantId = config.TENANT_DEFAULT_ID;",
-    class: "event-path-pin",
-    why: "Consent-changed + Identity-projection consumers (G-64). Worker refuses multi mode.",
-  },
-  {
-    file: "apps/runtime/src/security/wire-security-provisioning.ts",
-    line: "tenantId: core.config.TENANT_DEFAULT_ID,",
-    class: "event-path-pin",
-    why: "Three security provisioning consumers (G-64). Worker refuses multi mode.",
   },
   {
     file: "apps/runtime/src/security/wire-security-provisioning.ts",

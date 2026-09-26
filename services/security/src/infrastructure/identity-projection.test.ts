@@ -33,6 +33,7 @@ function evt<T>(
     occurredAt,
     correlationId: "c",
     causationId: "c",
+    tenantId: "tenant-a",
     payload,
     metadata: {},
   };
@@ -42,12 +43,10 @@ describe("identity projection (H-2)", () => {
   it("projects a user then a deactivation (status transition, LWW)", async () => {
     const store = new InMemoryIdentityProjectionStore();
     const created = new IdentityUserCreatedConsumer({
-      tenantId: "tenant-a",
       store,
       logger: silent,
     });
     const deactivated = new IdentityUserDeactivatedConsumer({
-      tenantId: "tenant-a",
       store,
       logger: silent,
     });
@@ -77,11 +76,10 @@ describe("identity projection (H-2)", () => {
   it("is last-writer-wins: an older redelivered create never regresses a newer deactivation", async () => {
     const store = new InMemoryIdentityProjectionStore();
     await new IdentityUserDeactivatedConsumer({
-      tenantId: "tenant-a",
       store,
       logger: silent,
     }).handle(evt("identity.user.deactivated", "u1", { userId: "u1" }, "2026-07-18T02:00:00.000Z"));
-    await new IdentityUserCreatedConsumer({ tenantId: "tenant-a", store, logger: silent }).handle(
+    await new IdentityUserCreatedConsumer({ store, logger: silent }).handle(
       evt(
         "identity.user.created",
         "u1",
@@ -95,7 +93,6 @@ describe("identity projection (H-2)", () => {
   it("projects organizations and memberships and updates a role", async () => {
     const store = new InMemoryIdentityProjectionStore();
     await new IdentityOrganizationCreatedConsumer({
-      tenantId: "tenant-a",
       store,
       logger: silent,
     }).handle(
@@ -107,7 +104,6 @@ describe("identity projection (H-2)", () => {
       ),
     );
     await new IdentityMembershipCreatedConsumer({
-      tenantId: "tenant-a",
       store,
       logger: silent,
     }).handle(
@@ -125,7 +121,6 @@ describe("identity projection (H-2)", () => {
     expect(before[0]?.role).toBe("member");
 
     await new IdentityMembershipRoleChangedConsumer({
-      tenantId: "tenant-a",
       store,
       logger: silent,
     }).handle(
@@ -142,7 +137,6 @@ describe("identity projection (H-2)", () => {
   it("ignores a role change for an unknown membership (create precedes mutate)", async () => {
     const store = new InMemoryIdentityProjectionStore();
     await new IdentityMembershipRoleChangedConsumer({
-      tenantId: "tenant-a",
       store,
       logger: silent,
     }).handle(

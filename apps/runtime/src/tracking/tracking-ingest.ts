@@ -25,7 +25,7 @@
  * same judgement the delivery layer makes when it breaks the attempt loop on a permanent 4xx.
  */
 
-import type { IntegrationEvent } from "@platform/domain-events";
+import { readEnvelopeTenant, type IntegrationEvent } from "@platform/domain-events";
 import type { EventHandler } from "@platform/messaging";
 import type { Logger } from "@platform/utils";
 import {
@@ -86,7 +86,8 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
   constructor(
     private readonly deps: {
       /**
-       * Resolves the ingest dependencies for **one** event.
+       * Resolves the ingest dependencies for **one** event, of the tenant the ENVELOPE names
+       * (G-64) — each tenant has its own registry, so there is no single object to hand back.
        *
        * A provider rather than a fixed object because the registry is hot-reloadable (M6.7): each
        * call pins the snapshot current at that moment, and this handler calls it exactly once per
@@ -95,7 +96,7 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
        * — the restart-required behaviour the reload exists to remove — or, if that object read the
        * handle internally, expose the event to a mid-pipeline swap.
        */
-      readonly ingest: () => IngestRuntimeDeps;
+      readonly ingest: (tenantId: string) => Promise<IngestRuntimeDeps>;
       readonly deadLetters: IngestDeadLetterPort;
       readonly logger: Logger;
       readonly clock: { now(): Date };
@@ -122,8 +123,30 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
   async handle(event: IntegrationEvent<TrackingCapturedPayload>): Promise<void> {
     this.received += 1;
 
+    // G-64: the tenant is the envelope's, and the payload's own `tenancy` (which the collector set
+    // from the write key) must agree with it. Ingest ADDS delivery records, so nothing is protected
+    // by skipping — but a beacon dropped quietly is lost signal, so a missing or disagreeing tenant
+    // is refused into the dead letters (visible, replayable) and acked. Ingesting a disagreeing pair
+    // would file the event under one tenant while routing it through the other's registry.
+    const tenantId = readEnvelopeTenant(event);
+    if (tenantId === null) {
+      this.refused += 1;
+      await this.deadLetter(event, "tenant_missing: no tenantId on the envelope");
+      return;
+    }
+    const payloadTenant = (event.payload.envelope as { tenancy?: { tenantId?: unknown } }).tenancy
+      ?.tenantId;
+    if (payloadTenant !== tenantId) {
+      this.refused += 1;
+      await this.deadLetter(
+        event,
+        `tenant_mismatch: envelope tenant "${tenantId}" vs payload tenancy ${JSON.stringify(payloadTenant ?? null)}`,
+      );
+      return;
+    }
+
     // Pinned once, here, for the whole event.
-    const outcome = await ingestTrackingEvent(this.deps.ingest(), {
+    const outcome = await ingestTrackingEvent(await this.deps.ingest(tenantId), {
       envelope: event.payload.envelope,
     });
 
@@ -160,6 +183,13 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
       throw new Error(`tracking ingest deferred: ${reason}`);
     }
 
+    await this.deadLetter(event, reason);
+  }
+
+  private async deadLetter(
+    event: IntegrationEvent<TrackingCapturedPayload>,
+    reason: string,
+  ): Promise<void> {
     this.deadLettered += 1;
     await this.deps.deadLetters.add({
       messageId: event.messageId,

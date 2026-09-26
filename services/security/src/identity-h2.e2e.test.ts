@@ -52,7 +52,6 @@ describe("H-2 live identity binding (end to end)", () => {
       consentStore,
     });
     const consumer = new ConsentChangedConsumer({
-      tenantId: "tenant-a",
       store: consentStore,
       logger: silent,
     });
@@ -66,6 +65,7 @@ describe("H-2 live identity binding (end to end)", () => {
       occurredAt: "2026-07-18T00:00:00.000Z",
       correlationId: "c",
       causationId: "c",
+      tenantId: "tenant-a",
       payload: { scope: "marketing", granted: true },
       metadata: {},
     };
@@ -142,6 +142,7 @@ describe("H-2 live identity binding (end to end)", () => {
       occurredAt: "2026-07-18T00:00:00.000Z",
       correlationId: "c",
       causationId: "c",
+      tenantId: "tenant-test",
       payload: { key: "kratos-7", status: "revoked" },
       metadata: {},
     };

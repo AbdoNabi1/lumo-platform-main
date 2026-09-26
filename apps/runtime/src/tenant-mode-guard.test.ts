@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { loadRuntimeConfig } from "./config";
 import { startWorker } from "./worker";
 import {
+  BOOT_TENANT_PINS,
   EVENT_PATH_TENANT_PINS,
   TENANT_DEFAULT_ID_SITES,
   assertWorkerTenantModeSupported,
@@ -59,27 +60,70 @@ describe("TENANT_DEFAULT_ID classification (T10.4 / T10.7)", () => {
     const registered = new Set(EVENT_PATH_TENANT_PINS.map((p) => p.file));
     expect(registered).toEqual(pinnedFiles);
   });
+
+  it("has NO event-path pin left (G-64): a new one must be classified here AND make the guard refuse", () => {
+    expect(TENANT_DEFAULT_ID_SITES.filter((s) => s.class === "event-path-pin")).toEqual([]);
+    expect(EVENT_PATH_TENANT_PINS).toEqual([]);
+  });
+
+  it("no event consumer reads TENANT_DEFAULT_ID — structurally, not by the table's say-so", () => {
+    const consumerFiles = codeReferences()
+      .map((r) => r.file)
+      .filter(
+        (f) =>
+          /\/consumers\//.test(f) ||
+          /\.consumers?\.ts$/.test(f) ||
+          /\/interfaces\//.test(f) ||
+          f === "apps/runtime/src/security/wire-security-identity.ts" ||
+          f === "apps/runtime/src/tracking/tracking-ingest.ts",
+      );
+    expect(consumerFiles).toEqual([]);
+  });
+
+  it("the boot-time blockers the guard names are exactly the boot-provisioning sites", () => {
+    const sites = new Set(
+      TENANT_DEFAULT_ID_SITES.filter((s) => s.class === "boot-provisioning").map((s) => s.file),
+    );
+    expect(new Set(BOOT_TENANT_PINS.map((p) => p.file))).toEqual(sites);
+  });
 });
 
 describe("assertWorkerTenantModeSupported", () => {
-  it("allows single mode", () => {
-    expect(() => assertWorkerTenantModeSupported("single")).not.toThrow();
+  const off = { SECURITY_PRINCIPAL_PROVISIONING: false } as const;
+  const on = { SECURITY_PRINCIPAL_PROVISIONING: true } as const;
+
+  it("allows single mode, with or without provisioning", () => {
+    expect(() => assertWorkerTenantModeSupported("single", off)).not.toThrow();
+    expect(() => assertWorkerTenantModeSupported("single", on)).not.toThrow();
   });
 
-  it("refuses multi mode and names G-64 plus every pinned consumer site", () => {
+  it("allows multi mode when nothing in the worker is still pinned to one tenant", () => {
+    expect(() => assertWorkerTenantModeSupported("multi", off)).not.toThrow();
+  });
+
+  it("still refuses multi with principal provisioning on, and names bootstrapSecurity (T10.6)", () => {
     let message = "";
     try {
-      assertWorkerTenantModeSupported("multi");
+      assertWorkerTenantModeSupported("multi", on);
     } catch (error) {
       message = (error as Error).message;
     }
-    // Printed so the refusal is visible in the test log (T10.4 evidence).
+    // Printed so the refusal is visible in the test log.
     console.warn(message);
-    expect(message).toContain("G-64");
-    for (const pin of EVENT_PATH_TENANT_PINS) expect(message).toContain(pin.file);
+    expect(message).toContain("T10.6");
+    for (const pin of BOOT_TENANT_PINS) expect(message).toContain(pin.file);
+    // It must not name event consumers that are fixed.
+    expect(message).not.toContain("orders-paid.consumers.ts");
   });
 
-  it("is what startWorker runs first: multi mode is refused with G-64 before anything is built", async () => {
+  it("refuses multi and names the site if an event-path pin is ever registered again", () => {
+    const registered = [{ file: "apps/runtime/src/consumers/new.consumers.ts", what: "x" }];
+    expect(() => assertWorkerTenantModeSupported("multi", off, registered)).toThrow(
+      /new\.consumers\.ts/,
+    );
+  });
+
+  it("is what startWorker runs first: multi with provisioning on is refused before anything is built", async () => {
     const config = loadRuntimeConfig({
       APP_ENV: "local",
       DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
@@ -88,7 +132,8 @@ describe("assertWorkerTenantModeSupported", () => {
       AUTH_ISSUER_URL: "https://auth.morbeh.local",
       AUTH_JWKS_URL: "https://auth.morbeh.local/.well-known/jwks.json",
       TENANT_MODE: "multi",
+      SECURITY_PRINCIPAL_PROVISIONING: "on",
     } as NodeJS.ProcessEnv);
-    await expect(startWorker(config)).rejects.toThrow(/G-64/);
+    await expect(startWorker(config)).rejects.toThrow(/T10\.6/);
   });
 });

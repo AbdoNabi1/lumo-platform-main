@@ -51,7 +51,6 @@ function wire() {
   const placeOrder = new PlaceOrder({ orders, unitOfWork, idGenerator, clock });
   const markOrderPaid = new MarkOrderPaid({ orders, unitOfWork, idGenerator, clock });
   const consumer = new PaymentCapturedConsumer({
-    tenantId: "tenant-a",
     markOrderPaid,
     logger: silentLogger(),
   });
@@ -71,6 +70,7 @@ function capturedEvent(
     occurredAt: "2026-07-05T00:00:00.000Z",
     correlationId: "corr-1",
     causationId: "cause-1",
+    tenantId: "tenant-a",
     payload: { orderRef: orderId, amountMinor: 3998, currency: "USD" },
     metadata: {},
   };

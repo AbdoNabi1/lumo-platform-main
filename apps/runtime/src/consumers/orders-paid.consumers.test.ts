@@ -62,6 +62,7 @@ function orderPaidEvent(
     occurredAt: "2026-08-24T10:00:00.000Z",
     correlationId: "corr-1",
     causationId: "cause-1",
+    tenantId: "tenant-local",
     metadata: {},
     payload: {
       orderNumber: "ORD-1001",
@@ -93,20 +94,15 @@ const POSTING_ACCOUNTS = {
   fees: "6100-FEES",
 };
 
-const FINANCE_TEST_TENANT_ID = "tenant-orders-paid-test";
-
 function financeConsumer(
   append: (journal: Journal, tenantId?: string, tx?: unknown) => Promise<void>,
 ) {
-  return new FinanceOrdersPaidConsumer(
-    {
-      journals: { append, findById: vi.fn(), findBySourceRef: vi.fn() },
-      postingAccounts: POSTING_ACCOUNTS,
-      idGenerator: { generate: () => "journal-1" },
-      clock: { now: () => new Date("2026-08-24T10:00:01.000Z") },
-    },
-    FINANCE_TEST_TENANT_ID,
-  );
+  return new FinanceOrdersPaidConsumer({
+    journals: { append, findById: vi.fn(), findBySourceRef: vi.fn() },
+    postingAccounts: POSTING_ACCOUNTS,
+    idGenerator: { generate: () => "journal-1" },
+    clock: { now: () => new Date("2026-08-24T10:00:01.000Z") },
+  });
 }
 
 describe("FinanceOrdersPaidConsumer (Task 17b, C-2 — payload adaptation)", () => {
@@ -150,7 +146,7 @@ describe("FinanceOrdersPaidConsumer — atomic ledger posting (C-2 fix round 1, 
     // the tx reaching the repository is therefore proof the consumer bound the runtime's
     // transaction.
     expect(append).toHaveBeenCalledTimes(1);
-    expect(append.mock.calls[0]?.[1]).toBe(FINANCE_TEST_TENANT_ID);
+    expect(append.mock.calls[0]?.[1]).toBe("tenant-local");
     expect(append.mock.calls[0]?.[2]).toBe("runtime-tx");
   });
 
@@ -201,7 +197,6 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
       accounts: fakeAccounts(activeAccount),
       earnPoints: { execute } as unknown as EarnPoints,
       logger: silentLogger,
-      tenantId: "tenant-local",
     });
 
     await consumer.handle(orderPaidEvent());
@@ -223,7 +218,6 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
       accounts: fakeAccounts(null),
       earnPoints: { execute } as unknown as EarnPoints,
       logger: silentLogger,
-      tenantId: "tenant-local",
     });
 
     await expect(consumer.handle(orderPaidEvent())).resolves.toBeUndefined();
@@ -242,7 +236,6 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
         accounts: fakeAccounts({ id: { toString: () => "acc-1" }, status: { value: status } }),
         earnPoints: { execute } as unknown as EarnPoints,
         logger: silentLogger,
-        tenantId: "tenant-local",
       });
 
       await expect(consumer.handle(orderPaidEvent())).resolves.toBeUndefined();
@@ -257,7 +250,6 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
         execute: vi.fn(async () => err(new ValidationError("boom", []))),
       } as unknown as EarnPoints,
       logger: silentLogger,
-      tenantId: "tenant-local",
     });
 
     await expect(consumer.handle(orderPaidEvent())).rejects.toThrow(/boom/);
@@ -276,7 +268,7 @@ describe("Customer360OrdersPaidConsumer (Task 17b, C-2)", () => {
     const execute = vi.fn(async () => ok({ applied: true, version: 1 }));
     const consumer = new Customer360OrdersPaidConsumer({
       updateProfileProjection: { execute } as unknown as UpdateProfileProjection,
-      tenantId: "tenant-local",
+      logger: silentLogger,
     });
 
     await consumer.handle(orderPaidEvent());
@@ -299,7 +291,7 @@ describe("Customer360OrdersPaidConsumer (Task 17b, C-2)", () => {
       updateProfileProjection: {
         execute: vi.fn(async () => err(new ValidationError("bad field", []))),
       } as unknown as UpdateProfileProjection,
-      tenantId: "tenant-local",
+      logger: silentLogger,
     });
 
     await expect(consumer.handle(orderPaidEvent())).rejects.toThrow(/bad field/);
@@ -311,7 +303,7 @@ describe("NotificationsOrdersPaidConsumer (Task 17b, C-2)", () => {
     const execute = vi.fn(async () => ok({ notificationId: "ntf-1", status: "created" }));
     const consumer = new NotificationsOrdersPaidConsumer({
       createNotification: { execute } as unknown as CreateNotification,
-      tenantId: "tenant-local",
+      logger: silentLogger,
     });
 
     await consumer.handle(orderPaidEvent());
@@ -337,7 +329,7 @@ describe("NotificationsOrdersPaidConsumer (Task 17b, C-2)", () => {
       createNotification: {
         execute: vi.fn(async () => err(new ValidationError("no channels", []))),
       } as unknown as CreateNotification,
-      tenantId: "tenant-local",
+      logger: silentLogger,
     });
 
     await expect(consumer.handle(orderPaidEvent())).rejects.toThrow(/no channels/);

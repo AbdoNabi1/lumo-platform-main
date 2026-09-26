@@ -1,4 +1,4 @@
-import type { IntegrationEvent } from "@platform/domain-events";
+import { requireEnvelopeTenant, type IntegrationEvent } from "@platform/domain-events";
 import type { EventHandler } from "@platform/messaging";
 import type { Logger } from "@platform/utils";
 import type { MarkOrderPaid } from "../application/mark-order-paid.use-case";
@@ -13,13 +13,6 @@ export interface PaymentCapturedPayload {
 export interface PaymentCapturedConsumerDeps {
   readonly markOrderPaid: MarkOrderPaid;
   readonly logger: Logger;
-  /**
-   * ADR-0014 (WP-10, T10.3): `MarkOrderPaid` takes `tenantId` per call. Until `tenantId` is required
-   * on the event envelope (G-64 — a contract change, out of scope here) the composition root
-   * supplies it, exactly as the other event consumers in `apps/runtime` do; reading the envelope
-   * tenant per message is the separate G-64 fix.
-   */
-  readonly tenantId: string;
 }
 
 /**
@@ -35,6 +28,9 @@ export interface PaymentCapturedConsumerDeps {
  *   either terminal-for-payment status.
  * - Order not found → THROW (retryable): `order.placed` and the capture may race across
  *   contexts; the retry schedule absorbs the ordering gap.
+ * - **No tenant on the envelope → THROW** (G-64). `MarkOrderPaid` is scoped by the envelope's own
+ *   tenant, never a deployment default. A capture that cannot be applied leaves a customer charged
+ *   and an order unpaid, so it must reach the DLQ rather than be acked.
  * - Any other business-rule violation (e.g. capture arriving after refund) → THROW: a genuine
  *   anomaly that must surface in the DLQ for operator triage, never silently swallowed.
  */
@@ -48,8 +44,9 @@ export class PaymentCapturedConsumer implements EventHandler<PaymentCapturedPayl
   }
 
   async handle(event: IntegrationEvent<PaymentCapturedPayload>): Promise<void> {
+    const tenantId = requireEnvelopeTenant(event, "PaymentCapturedConsumer");
     const result = await this.deps.markOrderPaid.execute({
-      tenantId: this.deps.tenantId,
+      tenantId,
       orderId: event.payload.orderRef,
       paymentRef: event.aggregateId, // the payment intent id
     });

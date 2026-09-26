@@ -61,6 +61,7 @@ function settlementEvent(
     occurredAt: "2026-08-24T10:00:00.000Z",
     correlationId: "corr-1",
     causationId: "cause-1",
+    tenantId: TEST_TENANT_ID,
     metadata: {},
     payload: { orderRef: "ORD-1001", amountMinor: 5_000, currency: "EUR", ...overrides },
   };
@@ -82,7 +83,7 @@ describe("FinancePaymentsCapturedConsumer (WP-11, F-11)", () => {
     const append = vi.fn(
       async (_journal: Journal, _tenantId?: string, _tx?: unknown): Promise<void> => undefined,
     );
-    const consumer = new FinancePaymentsCapturedConsumer(journalDeps(append), TEST_TENANT_ID);
+    const consumer = new FinancePaymentsCapturedConsumer(journalDeps(append));
 
     await consumer.handleAtomic(
       settlementEvent("payments.payment_intent.captured"),
@@ -104,9 +105,9 @@ describe("FinancePaymentsCapturedConsumer (WP-11, F-11)", () => {
   it("REFUSES the non-atomic path rather than risk double-posting the fee entry", async () => {
     const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
 
-    await expect(
-      new FinancePaymentsCapturedConsumer(journalDeps(append), TEST_TENANT_ID).handle(),
-    ).rejects.toThrow(/requires the atomic path/);
+    await expect(new FinancePaymentsCapturedConsumer(journalDeps(append)).handle()).rejects.toThrow(
+      /requires the atomic path/,
+    );
     expect(append).not.toHaveBeenCalled();
   });
 
@@ -118,7 +119,7 @@ describe("FinancePaymentsCapturedConsumer (WP-11, F-11)", () => {
     // consumer refusing a second call. This test pins that division of responsibility explicitly,
     // so a future change does not mistake "posts twice when called twice" for a regression here.
     const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
-    const consumer = new FinancePaymentsCapturedConsumer(journalDeps(append), TEST_TENANT_ID);
+    const consumer = new FinancePaymentsCapturedConsumer(journalDeps(append));
     const tx = "runtime-tx" as unknown as TransactionClient;
 
     await consumer.handleAtomic(settlementEvent("payments.payment_intent.captured"), tx);
@@ -131,7 +132,7 @@ describe("FinancePaymentsCapturedConsumer (WP-11, F-11)", () => {
 describe("FinanceRefundsIssuedConsumer (WP-11, F-11)", () => {
   it("posts a balanced contra entry (debit refund contra, credit receivable)", async () => {
     const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
-    const consumer = new FinanceRefundsIssuedConsumer(journalDeps(append), TEST_TENANT_ID);
+    const consumer = new FinanceRefundsIssuedConsumer(journalDeps(append));
 
     await consumer.handleAtomic(
       settlementEvent("payments.payment_intent.refunded", { amountMinor: 2_000 }),
@@ -150,9 +151,9 @@ describe("FinanceRefundsIssuedConsumer (WP-11, F-11)", () => {
   it("REFUSES the non-atomic path rather than risk double-posting the contra entry", async () => {
     const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
 
-    await expect(
-      new FinanceRefundsIssuedConsumer(journalDeps(append), TEST_TENANT_ID).handle(),
-    ).rejects.toThrow(/requires the atomic path/);
+    await expect(new FinanceRefundsIssuedConsumer(journalDeps(append)).handle()).rejects.toThrow(
+      /requires the atomic path/,
+    );
     expect(append).not.toHaveBeenCalled();
   });
 });
@@ -165,13 +166,10 @@ describe("settlement invariant: refund after capture -> one contra entry (WP-11,
     });
     const tx = "runtime-tx" as unknown as TransactionClient;
 
-    const capturedConsumer = new FinancePaymentsCapturedConsumer(
-      journalDeps(append),
-      TEST_TENANT_ID,
-    );
+    const capturedConsumer = new FinancePaymentsCapturedConsumer(journalDeps(append));
     await capturedConsumer.handleAtomic(settlementEvent("payments.payment_intent.captured"), tx);
 
-    const refundedConsumer = new FinanceRefundsIssuedConsumer(journalDeps(append), TEST_TENANT_ID);
+    const refundedConsumer = new FinanceRefundsIssuedConsumer(journalDeps(append));
     await refundedConsumer.handleAtomic(
       settlementEvent("payments.payment_intent.refunded", { amountMinor: 2_000 }),
       tx,

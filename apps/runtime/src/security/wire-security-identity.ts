@@ -55,7 +55,6 @@ export function wireSecurityIdentity(
   core: RuntimeCore,
   metrics?: MessagingMetrics,
 ): WiredSecurityIdentity | null {
-  const { config } = core;
   const ory = buildOryClients(core);
   if (ory === null) {
     core.logger.warn("security live identity binding disabled: Ory URLs unset (APP_ENV=local)");
@@ -81,14 +80,12 @@ export function wireSecurityIdentity(
   const build = <T>(handler: EventHandler<T>, consumerGroup: string): SupervisedConsumer =>
     buildProcessedConsumer<T>(core, handler, consumerGroup, producer, metrics);
 
-  // ADR-0014 (WP-10, T10.3) — class D / G-64: the projection stores take `tenantId` per call, but the
-  // event envelope carries no required tenant yet, so the consumers are handed the deployment tenant
-  // here (T10.7 inventory). Reading the envelope tenant per message is the separate G-64 fix.
-  const tenantId = config.TENANT_DEFAULT_ID;
-  const idp = { store: identityProjection, logger: core.logger, tenantId };
+  // ADR-0014 / G-64: the projection stores take `tenantId` per call and the consumers read it from
+  // each message's envelope — nothing here names a tenant.
+  const idp = { store: identityProjection, logger: core.logger };
   const runtimes: readonly SupervisedConsumer[] = [
     build(
-      new ConsentChangedConsumer({ store: consentStore, logger: core.logger, tenantId }),
+      new ConsentChangedConsumer({ store: consentStore, logger: core.logger }),
       "security.consent-projection",
     ),
     build(

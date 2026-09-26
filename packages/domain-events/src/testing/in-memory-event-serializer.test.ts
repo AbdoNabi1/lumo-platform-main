@@ -11,6 +11,7 @@ const sample: IntegrationEvent<{ total: number }> = {
   occurredAt: "2026-06-29T00:00:00.000Z",
   correlationId: "corr-1",
   causationId: "cause-1",
+  tenantId: "tenant-test",
   payload: { total: 4200 },
   metadata: { source: "checkout" },
 };

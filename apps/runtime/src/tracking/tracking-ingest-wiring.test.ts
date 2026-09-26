@@ -18,7 +18,9 @@ import { TrackingIngestHandler } from "./tracking-ingest";
  * package, not the wiring.
  */
 
-function handlerWith(ingest: () => IngestRuntimeDeps): TrackingIngestHandler {
+function handlerWith(
+  ingest: (tenantId: string) => Promise<IngestRuntimeDeps>,
+): TrackingIngestHandler {
   return new TrackingIngestHandler({
     ingest,
     deadLetters: { add: async () => undefined },
@@ -29,7 +31,7 @@ function handlerWith(ingest: () => IngestRuntimeDeps): TrackingIngestHandler {
 
 describe("tracking ingest wiring (C-07)", () => {
   it("subscribes to exactly the topic the collector publishes", () => {
-    const handler = handlerWith(() => ({}) as IngestRuntimeDeps);
+    const handler = handlerWith(async () => ({}) as IngestRuntimeDeps);
 
     // The collector serializes with these same two constants (apps/collector/src/
     // collector-endpoint.ts). Reading them from the package on both sides is what stops the
@@ -44,7 +46,7 @@ describe("tracking ingest wiring (C-07)", () => {
   it("starts with every counter at zero, so 'wired but dead' is observable", () => {
     // A counter that never moves is the signal C-07 describes: the pipeline present, reachable in
     // principle, and never actually invoked.
-    expect(handlerWith(() => ({}) as IngestRuntimeDeps).counters()).toEqual({
+    expect(handlerWith(async () => ({}) as IngestRuntimeDeps).counters()).toEqual({
       received: 0,
       accepted: 0,
       refused: 0,
@@ -58,12 +60,13 @@ describe("tracking ingest wiring (C-07)", () => {
     // exactly once per event and threaded through routing, mapping, delivery and version stamping.
     // Re-reading it mid-pipeline would let a swap stamp a record with a version that never produced
     // its bytes.
-    const ingest = vi.fn(() => ({}) as IngestRuntimeDeps);
+    const ingest = vi.fn(async (_tenantId: string) => ({}) as IngestRuntimeDeps);
     const handler = handlerWith(ingest);
 
     await handler
       .handle({
-        payload: { envelope: {} },
+        tenantId: "tenant-a",
+        payload: { envelope: { tenancy: { tenantId: "tenant-a" } } },
       } as never)
       .catch(() => undefined); // the empty deps make the pipeline refuse; the call count is the point
 

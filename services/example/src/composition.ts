@@ -66,7 +66,9 @@ export function wireExample(deps: ExampleWiringDeps): WiredExample {
   });
   const repository = new InMemoryExampleRepository({
     outbox: outboxWriter,
-    context: rootEventContext(deps.idGenerator),
+    // The template has no tenant of its own, but the envelope requires one (G-64): a generated
+    // context replaces this with the per-call tenant its repository merges.
+    context: rootEventContext(deps.idGenerator, "tenant-example"),
   });
   const useCase = new RegisterExample({
     examples: repository,

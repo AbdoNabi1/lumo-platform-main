@@ -50,6 +50,7 @@ function payload(total: number, messageId: string): EachMessagePayload {
     occurredAt: clock.now().toISOString(),
     correlationId: "c",
     causationId: "c",
+    tenantId: "tenant-test",
     payload: { total },
     metadata: {},
   };

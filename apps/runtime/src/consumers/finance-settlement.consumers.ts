@@ -1,5 +1,5 @@
 import { PrismaOutboxStore, PrismaUnitOfWork, type TransactionClient } from "@platform/db";
-import type { IntegrationEvent } from "@platform/domain-events";
+import { requireEnvelopeTenant, type IntegrationEvent } from "@platform/domain-events";
 import {
   FinanceEventTranslator,
   PaymentsCapturedConsumer,
@@ -56,16 +56,14 @@ abstract class AtomicFinanceSettlementConsumer implements EventHandler<
   abstract readonly eventType: string;
   readonly eventVersion = 1;
   private readonly deps: FinanceConsumerDeps;
-  private readonly tenantId: string;
 
   /**
-   * `tenantId` (ADR-0014, WP-10 T10.3, G-64): sourced from `core.config.TENANT_DEFAULT_ID` at
-   * builder time, unchanged from before — now an explicit argument instead of buried inside the
-   * journal repository's own construction. See `FinanceOrdersPaidConsumer`'s identical note.
+   * **Tenant (G-64).** Journalled under the tenant on the message's own envelope; an envelope with
+   * none THROWS to the retry/DLQ pipeline (a captured payment or refund with no ledger entry is
+   * missing money, and acking it would hide that). See `FinanceOrdersPaidConsumer`.
    */
-  protected constructor(deps: FinanceConsumerDeps, tenantId: string) {
+  protected constructor(deps: FinanceConsumerDeps) {
     this.deps = deps;
-    this.tenantId = tenantId;
   }
 
   protected abstract buildInner(deps: FinanceConsumerDeps): EventHandler<PaymentSettlementPayload>;
@@ -86,11 +84,12 @@ abstract class AtomicFinanceSettlementConsumer implements EventHandler<
     event: IntegrationEvent<PaymentSettlementPayload>,
     tx: TransactionClient,
   ): Promise<void> {
+    const tenantId = requireEnvelopeTenant(event, this.constructor.name);
     const inner = this.buildInner({
       ...this.deps,
       journals: new TxBoundJournalRepository(this.deps.journals, tx),
     });
-    await inner.handle({ ...event, tenantId: this.tenantId });
+    await inner.handle({ ...event, tenantId });
   }
 }
 
@@ -98,8 +97,8 @@ abstract class AtomicFinanceSettlementConsumer implements EventHandler<
 export class FinancePaymentsCapturedConsumer extends AtomicFinanceSettlementConsumer {
   readonly eventType = "payments.payment_intent.captured";
 
-  constructor(deps: FinanceConsumerDeps, tenantId: string) {
-    super(deps, tenantId);
+  constructor(deps: FinanceConsumerDeps) {
+    super(deps);
   }
 
   protected buildInner(deps: FinanceConsumerDeps): EventHandler<PaymentSettlementPayload> {
@@ -111,8 +110,8 @@ export class FinancePaymentsCapturedConsumer extends AtomicFinanceSettlementCons
 export class FinanceRefundsIssuedConsumer extends AtomicFinanceSettlementConsumer {
   readonly eventType = "payments.payment_intent.refunded";
 
-  constructor(deps: FinanceConsumerDeps, tenantId: string) {
-    super(deps, tenantId);
+  constructor(deps: FinanceConsumerDeps) {
+    super(deps);
   }
 
   protected buildInner(deps: FinanceConsumerDeps): EventHandler<PaymentSettlementPayload> {
@@ -123,7 +122,7 @@ export class FinanceRefundsIssuedConsumer extends AtomicFinanceSettlementConsume
 /**
  * The two payments-settlement Finance consumers (WP-11, F-11) — same construction shape as
  * `buildOrdersPaidConsumerRuntimes`: composed directly against `core.prisma` +
- * `core.config.TENANT_DEFAULT_ID` (ADR-0008), each with its own context-scoped `OutboxWriter`
+ * the tenant on each message's envelope (ADR-0008, G-64), each with its own context-scoped `OutboxWriter`
  * (ADR-0003), through `buildProcessedConsumer` for the standard reliability envelope (Postgres
  * inbox idempotency, retry topics, DLQ topic + row). Both get a `unitOfWork` (unlike the three
  * self-idempotent `orders.order.paid` consumers) for the same reason `FinanceOrdersPaidConsumer`
@@ -138,9 +137,10 @@ export function buildFinanceSettlementConsumerRuntimes(
   core: RuntimeCore,
   metrics?: MessagingMetrics,
 ): readonly SupervisedConsumer[] {
-  const tenantId = core.config.TENANT_DEFAULT_ID;
   const unitOfWork = new PrismaUnitOfWork(core.prisma);
-  const context = rootEventContext(core.idGenerator, tenantId);
+  // No tenant on purpose (G-64): `PrismaJournalRepository` merges the per-call tenant, and each
+  // consumer takes that tenant from the message envelope.
+  const context = rootEventContext(core.idGenerator);
   const journals = new PrismaJournalRepository({
     prisma: core.prisma,
     outbox: new OutboxWriter({
@@ -165,7 +165,7 @@ export function buildFinanceSettlementConsumerRuntimes(
   return [
     buildProcessedConsumer<PaymentSettlementPayload, TransactionClient>(
       core,
-      new FinancePaymentsCapturedConsumer(deps, tenantId),
+      new FinancePaymentsCapturedConsumer(deps),
       "finance.payments-captured",
       producer,
       metrics,
@@ -173,7 +173,7 @@ export function buildFinanceSettlementConsumerRuntimes(
     ),
     buildProcessedConsumer<PaymentSettlementPayload, TransactionClient>(
       core,
-      new FinanceRefundsIssuedConsumer(deps, tenantId),
+      new FinanceRefundsIssuedConsumer(deps),
       "finance.refunds-issued",
       producer,
       metrics,

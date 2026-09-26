@@ -110,6 +110,10 @@ envelope.tenantId })`) read nothing, and turned gap F-02 ("`tenantId` is optiona
 > context's `outbox.write` call that never mentions `tenantId`. Making `tenantId` required on the
 > envelope type remains the F-02/G-64 work and was deliberately not taken here.
 >
+> **Addendum, 2026-09-26 — G-64 took it.** `IntegrationEvent.tenantId` is now required, the six event-path
+> sites that pinned `TENANT_DEFAULT_ID` read it per message, and a consumer that cannot find one never
+> defaults: writes that add standing are refused, removals throw to the DLQ (D-067).
+>
 > **Addendum, 2026-09-18 — the check covers `packages` and `apps` too.** The first version of
 > `scripts/dev/check-outbox-tenant.mjs` scanned `services` only and so missed
 > `packages/usage/src/usage-recorder.port.ts:39` (`OutboxUsageRecorder`, the canonical port for

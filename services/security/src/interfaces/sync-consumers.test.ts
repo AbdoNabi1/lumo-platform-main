@@ -38,7 +38,8 @@ function relEvent(
     ...(tenantId !== null ? { tenantId } : {}),
     payload: { key },
     metadata: {},
-  };
+    // Off the wire the tenant can be absent even though the type now requires it (G-64).
+  } as IntegrationEvent<SecurityRelationPayload>;
 }
 function sessionEvent(key: string): IntegrationEvent<SessionRevokedAllPayload> {
   return {
@@ -50,6 +51,7 @@ function sessionEvent(key: string): IntegrationEvent<SessionRevokedAllPayload> {
     occurredAt: "2026-07-18T00:00:00.000Z",
     correlationId: "c",
     causationId: "c",
+    tenantId: "tenant-test",
     payload: { key, status: "revoked" },
     metadata: {},
   };
@@ -139,7 +141,7 @@ describe("relationship synchronization (H-2)", () => {
     expect(sync.writes).toHaveLength(0);
   });
 
-  describe("an envelope with no tenant (IntegrationEvent.tenantId is optional)", () => {
+  describe("an envelope with no tenant (required on the type, but absent off the wire)", () => {
     it("write: writes NOTHING — no bare tuple either — and warns", async () => {
       const sync = recordingSync();
       const logger = capturingLogger();

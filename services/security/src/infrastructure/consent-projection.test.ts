@@ -30,6 +30,7 @@ function event(
     occurredAt,
     correlationId: "c",
     causationId: "c",
+    tenantId: "tenant-a",
     payload: { scope, granted },
     metadata: {},
   };
@@ -38,7 +39,7 @@ function event(
 describe("consent projection (H-2)", () => {
   it("projects a grant then answers hasConsent via the port", async () => {
     const store = new InMemoryConsentProjectionStore();
-    const consumer = new ConsentChangedConsumer({ tenantId: "tenant-a", store, logger: silent });
+    const consumer = new ConsentChangedConsumer({ store, logger: silent });
     const port = new ProjectionConsentPort(store);
 
     await consumer.handle(event("cust-1", "marketing", true, "2026-07-18T00:00:00.000Z"));
@@ -48,7 +49,7 @@ describe("consent projection (H-2)", () => {
 
   it("is last-writer-wins: an older redelivered event never regresses a newer decision", async () => {
     const store = new InMemoryConsentProjectionStore();
-    const consumer = new ConsentChangedConsumer({ tenantId: "tenant-a", store, logger: silent });
+    const consumer = new ConsentChangedConsumer({ store, logger: silent });
     const port = new ProjectionConsentPort(store);
 
     await consumer.handle(event("cust-1", "marketing", false, "2026-07-18T10:00:00.000Z")); // newer: revoked
@@ -58,7 +59,7 @@ describe("consent projection (H-2)", () => {
 
   it("is idempotent on exact redelivery", async () => {
     const store = new InMemoryConsentProjectionStore();
-    const consumer = new ConsentChangedConsumer({ tenantId: "tenant-a", store, logger: silent });
+    const consumer = new ConsentChangedConsumer({ store, logger: silent });
     const port = new ProjectionConsentPort(store);
     const e = event("cust-1", "marketing", true, "2026-07-18T00:00:00.000Z");
     await consumer.handle(e);
@@ -68,7 +69,7 @@ describe("consent projection (H-2)", () => {
 
   it("skips a malformed event (no subject) without throwing", async () => {
     const store = new InMemoryConsentProjectionStore();
-    const consumer = new ConsentChangedConsumer({ tenantId: "tenant-a", store, logger: silent });
+    const consumer = new ConsentChangedConsumer({ store, logger: silent });
     await expect(
       consumer.handle(event("", "marketing", true, "2026-07-18T00:00:00.000Z")),
     ).resolves.toBeUndefined();

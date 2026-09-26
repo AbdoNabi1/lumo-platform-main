@@ -19,7 +19,7 @@
 
 import type { EventPublisher } from "@platform/messaging";
 import type { EventSerializer } from "@platform/domain-events";
-import { topicFor } from "@platform/domain-events";
+import { readEnvelopeTenant, topicFor } from "@platform/domain-events";
 import type { Logger } from "@platform/utils";
 import {
   collect,
@@ -86,6 +86,21 @@ export class CollectorEndpoint {
     const { envelope } = outcome;
     const payload: TrackingCapturedEventPayload = { envelope };
 
+    // G-64: the integration-event envelope REQUIRES a tenant. `collect()` resolves it from the write
+    // key and validation rejects an envelope without one, so this narrows a type (the accepted
+    // envelope's `tenancy` is optional) rather than handling a live case. It still refuses instead of
+    // publishing an untenanted message if that invariant is ever broken.
+    const tenantId = readEnvelopeTenant(envelope.tenancy ?? {});
+    if (tenantId === null) {
+      this.refused += 1;
+      return this.refuse({
+        code: "validation_failed",
+        violations: [
+          { rule: "tenancy", field: "tenancy.tenantId", message: "tenantId is required" },
+        ],
+      });
+    }
+
     // `messageId` is the envelope's `eventId` — the ingest idempotency key (UUIDv7, unique per
     // occurrence). The runtime consumer dedups on exactly this via `ProcessedEventStore`, so a
     // browser that retries a beacon on a flaky connection is deduplicated end to end rather than
@@ -99,7 +114,7 @@ export class CollectorEndpoint {
       occurredAt: envelope.timestamp,
       correlationId: envelope.eventId,
       causationId: envelope.eventId,
-      ...(envelope.tenancy?.tenantId === undefined ? {} : { tenantId: envelope.tenancy.tenantId }),
+      tenantId,
       producer: PRODUCER,
       payload,
       metadata: {},
@@ -110,7 +125,7 @@ export class CollectorEndpoint {
         topic: topicFor(TRACKING_CAPTURED_TOPIC, TRACKING_CAPTURED_VERSION),
         // Partitioned by tenant so one merchant's traffic spike cannot reorder another's, while
         // events for a tenant keep per-partition order.
-        key: envelope.tenancy?.tenantId ?? envelope.eventId,
+        key: tenantId,
         value: serialized.data,
         headers: { "content-type": serialized.contentType },
       });
@@ -121,7 +136,7 @@ export class CollectorEndpoint {
       this.publishFailed += 1;
       this.deps.logger.error("collector publish failed", {
         eventId: envelope.eventId,
-        tenantId: envelope.tenancy?.tenantId,
+        tenantId,
         error: cause instanceof Error ? cause.message : String(cause),
       });
       return {
