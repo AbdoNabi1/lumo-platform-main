@@ -19,12 +19,13 @@ import { EntitlementMiddleware } from "./entitlement-middleware";
  * real adapters — Licensing PDP + Feature Registry read model (`EntitlementPort`), optional policy/quota ports, a
  * distributed-or-memory cache, audit, metrics and telemetry — and exposes the {@link EntitlementMiddleware} seam
  * every surface composes. No business logic; pure DI over the frozen kernel.
+ *
+ * Tenant-free by construction (T10.7): the graph is a process-wide singleton and the tenant arrives on each
+ * `EntitlementRequest`. The cache it builds is keyed `entitlement:<tenant>:<feature>:<action>`.
  */
 export interface EntitlementWiringDeps {
   readonly featureRegistry: FeatureRegistryReader;
   readonly licensing: LicensingDecider;
-  /** The platform tenant (ADR-0014) this guard's Feature Registry reads are scoped to. */
-  readonly tenantId: string;
   /** Optional runtime-policy port (subscription state → policy). */
   readonly policy?: PolicyPort;
   /** Optional usage-quota port (reads Licensing's UsageCounter). */
@@ -56,7 +57,6 @@ export function wireEntitlement(deps: EntitlementWiringDeps): WiredEntitlement {
   const port = new LicensingEntitlementPort({
     featureRegistry: deps.featureRegistry,
     licensing: deps.licensing,
-    tenantId: deps.tenantId,
   });
   const guard = new EntitlementGuard(port, {
     cache,

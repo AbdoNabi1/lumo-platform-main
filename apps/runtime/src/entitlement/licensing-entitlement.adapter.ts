@@ -15,6 +15,8 @@ interface ControllerResponse {
  * Structural view of the Feature Registry controller (frozen public port) — reused, never
  * re-implemented. ADR-0014 (WP-10, T10.5): `resolve` takes the platform `tenantId` explicitly,
  * matching `ResolveFeatureInput` on the real, already-tenant-scoped `FeatureRegistryController`.
+ * A feature definition is a per-tenant row (`(tenantId, key)`), so the tenant passed is the one
+ * being asked about, never one the caller was constructed for.
  */
 export interface FeatureRegistryReader {
   resolve(input: { readonly key: string; readonly tenantId: string }): Promise<ControllerResponse>;
@@ -48,21 +50,25 @@ interface EntitlementBody {
  * (`CheckEntitlement`, the frozen 5-tier resolver). It delegates every verdict to Licensing and never re-implements
  * the resolver; it only enriches the decision with explanation signals for the read model. Deterministic and
  * side-effect-free (both calls are reads).
+ *
+ * **Tenant scope (T10.7, ADR-0014):** a process-wide singleton. `request.tenant` is the ONE tenant of the
+ * decision — it scopes the Feature Registry read (definitions are per-tenant rows), goes to Licensing as the
+ * `tenantRef`, and is the cache/audit tenant in the guard. Nothing about a tenant is captured at construction;
+ * before T10.7 the Registry half used a construction-time tenant while the Licensing half used the request's,
+ * so under `multi` every tenant would have been answered from one tenant's catalog.
  */
 export class LicensingEntitlementPort implements EntitlementPort {
   constructor(
     private readonly deps: {
       readonly featureRegistry: FeatureRegistryReader;
       readonly licensing: LicensingDecider;
-      /** The platform tenant (ADR-0014) this port's Feature Registry reads are scoped to. */
-      readonly tenantId: string;
     },
   ) {}
 
   async check(request: EntitlementRequest): Promise<EntitlementDecision> {
     const resolved = await this.deps.featureRegistry.resolve({
       key: request.featureKey,
-      tenantId: this.deps.tenantId,
+      tenantId: request.tenant,
     });
     if (resolved.status === 404)
       return {

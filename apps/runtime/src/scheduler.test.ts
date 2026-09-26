@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Clock } from "@platform/contracts";
 import type { Logger } from "@platform/utils";
-import { buildJobs, createCdcWatchdogState, runCdcWatchdog } from "./scheduler";
+import { buildJobs, createCdcWatchdogState, runCdcWatchdog, startJobLoop } from "./scheduler";
 import type { RuntimeCore } from "./composition";
 
 const silentLogger: Logger = {
@@ -427,5 +427,64 @@ describe("cdc-watchdog job (Phase A.23, Task 3/4)", () => {
     const job = buildJobs(core).find((j) => j.name === "cdc-watchdog");
     expect(job).toBeDefined();
     await expect(job!.run()).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * T10.7 — every scheduled job is classified, and a job's lock key is global on purpose.
+ *
+ * Both jobs act on shared infrastructure (one `platform.outbox` table, one Kafka Connect cluster) and
+ * touch no tenant's business data, so they are platform-global: they run ONCE per tick for the whole
+ * platform, under a lock keyed by job name alone. A job that processes a tenant's business data must
+ * instead run per tenant with a tenant-qualified lock (`job:<name>:<tenant>`); a global lock there
+ * would let one tenant's slow run starve every other tenant's. This table forces that decision:
+ * adding a job fails the test until it is classified here, and a job classified per-tenant cannot
+ * pass through the global loop unnoticed.
+ */
+describe("scheduled jobs are classified for tenancy (T10.7)", () => {
+  const CLASSIFICATION: Readonly<Record<string, "platform-global">> = {
+    "outbox-prune": "platform-global",
+    "cdc-watchdog": "platform-global",
+  };
+
+  it("has exactly the jobs the classification names — a new job must be classified before it ships", () => {
+    const core = {
+      ...fakeCore({ count: vi.fn(), deleteMany: vi.fn() }),
+      config: {
+        OUTBOX_RETENTION_DAYS: 7,
+        CDC_WATCHDOG_INTERVAL_MS: 1000,
+      } as RuntimeCore["config"],
+    } as RuntimeCore;
+    expect(
+      buildJobs(core)
+        .map((job) => job.name)
+        .sort(),
+    ).toEqual(Object.keys(CLASSIFICATION).sort());
+  });
+
+  it("locks each job by its name alone (one holder platform-wide), never by a tenant", async () => {
+    vi.useFakeTimers();
+    try {
+      const acquired: string[] = [];
+      const lock = {
+        acquire: async (key: string) => {
+          acquired.push(key);
+          return { release: async () => true };
+        },
+      };
+      const timers = startJobLoop(
+        [
+          { name: "outbox-prune", intervalMs: 1000, run: async () => undefined },
+          { name: "cdc-watchdog", intervalMs: 1000, run: async () => undefined },
+        ],
+        silentLogger,
+        lock,
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      for (const timer of timers) clearInterval(timer);
+      expect(acquired.sort()).toEqual(["job:cdc-watchdog", "job:outbox-prune"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

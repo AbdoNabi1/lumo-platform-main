@@ -31,3 +31,16 @@ describe("InMemoryFeatureFlags", () => {
     expect(await flags.isEnabled("checkout.express", "tenant-b", context)).toBe(true);
   });
 });
+
+describe("InMemoryFeatureFlags is platform-global by design (T10.7)", () => {
+  it("answers every tenant from the same static map — it holds no tenant data, so it must not vary", async () => {
+    const flags = new InMemoryFeatureFlags({ "checkout.express": true });
+    await expect(flags.isEnabled("checkout.express", "tenant-a", { subjectId: "s" })).resolves.toBe(
+      true,
+    );
+    await expect(flags.isEnabled("checkout.express", "tenant-b", { subjectId: "s" })).resolves.toBe(
+      true,
+    );
+    await expect(flags.isEnabled("other", "tenant-a", { subjectId: "s" })).resolves.toBe(false);
+  });
+});

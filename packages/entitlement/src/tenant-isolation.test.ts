@@ -76,3 +76,23 @@ describe("entitlement cache tenant isolation (T10.5)", () => {
     );
   });
 });
+
+describe("entitlement cache key shape (T10.7)", () => {
+  it("is `entitlement:<tenant>:<feature>:<action>`: the tenant is in every key, so no two tenants share one", () => {
+    const cache = new EntitlementCache();
+    expect(cache.key("tenant-a", "loyalty", "write")).toBe("entitlement:tenant-a:loyalty:write");
+    expect(cache.key("tenant-b", "loyalty", "write")).toBe("entitlement:tenant-b:loyalty:write");
+  });
+
+  it("stays injective even for a tenant id that contains the delimiter (feature keys cannot contain ':')", () => {
+    const cache = new EntitlementCache();
+    // Feature keys are `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`, so parsing from the right is unambiguous.
+    const keys = [
+      cache.key("a:b", "loyalty", "read"),
+      cache.key("a", "loyalty", "read"),
+      cache.key("b", "loyalty", "read"),
+      cache.key("a", "loyalty", "write"),
+    ];
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});

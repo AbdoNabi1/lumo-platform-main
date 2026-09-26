@@ -83,6 +83,9 @@ interface TestOverrides {
   /** Observes every rate-limiter key the transport consumes. */
   readonly onRateLimitKey?: (key: string) => void;
   readonly metrics?: HttpMetricsSink;
+  readonly logger?: Logger;
+  /** Registers a route whose handler throws, to exercise the 5xx error log. */
+  readonly explode?: boolean;
 }
 
 let handled: unknown[] = [];
@@ -90,7 +93,7 @@ let guardCalls = 0;
 
 async function buildServer(overrides: TestOverrides = {}): Promise<FastifyInstance> {
   const deps: HttpServerDeps = {
-    logger: silentLogger(),
+    logger: overrides.logger ?? silentLogger(),
     idGenerator: { generate: () => crypto.randomUUID() },
     authenticator:
       overrides.authenticator ??
@@ -166,6 +169,21 @@ async function buildServer(overrides: TestOverrides = {}): Promise<FastifyInstan
         return { status: 200, body: { items: [] } };
       },
     }),
+    ...(overrides.explode === true
+      ? [
+          defineRoute({
+            method: "GET",
+            path: "/boom",
+            version: 1,
+            permission: "widgets:read",
+            summary: "Always fails",
+            schema: {},
+            handle: async () => {
+              throw new Error("boom");
+            },
+          }),
+        ]
+      : []),
   ]);
   await app.ready();
   return app;
@@ -593,5 +611,44 @@ describe("HTTP transport", () => {
       expect(res.json()).toEqual({ status: "unhealthy" });
       await statusOnly.close();
     });
+  });
+});
+
+describe("HTTP transport — log lines name the tenant (T10.7)", () => {
+  function recordingLogger(): {
+    readonly logger: Logger;
+    readonly lines: { message: string; fields: Record<string, unknown> }[];
+  } {
+    const lines: { message: string; fields: Record<string, unknown> }[] = [];
+    const record = (message: string, fields?: Record<string, unknown>): void => {
+      lines.push({ message, fields: fields ?? {} });
+    };
+    const logger: Logger = {
+      debug: record,
+      info: record,
+      warn: record,
+      error: record,
+      child: () => logger,
+    };
+    return { logger, lines };
+  }
+
+  it("a 5xx failure line carries the tenant the request resolved to, and never another's", async () => {
+    const { logger, lines } = recordingLogger();
+    const app = await buildServer({ logger, explode: true });
+    try {
+      for (const tenant of ["t-1", "t-2"]) {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/boom",
+          headers: { ...good.headers, "x-tenant-id": tenant },
+        });
+        expect(res.statusCode).toBe(500);
+      }
+    } finally {
+      await app.close();
+    }
+    const failed = lines.filter((line) => line.message === "http request failed");
+    expect(failed.map((line) => line.fields["tenantId"])).toEqual(["t-1", "t-2"]);
   });
 });

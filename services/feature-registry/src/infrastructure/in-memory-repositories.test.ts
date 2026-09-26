@@ -96,3 +96,34 @@ describe("InMemoryFeatureDefinitionRepository write-time tenant (ADR-0014 amendm
     });
   });
 });
+
+describe("the same key registered by two tenants (T10.7)", () => {
+  it("keeps both: the second tenant's save does not replace the first's, for definitions and bundles", async () => {
+    const { features, bundles, nextId } = wire();
+    for (const tenantId of ["tenant-a", "tenant-b"]) {
+      await features.save(
+        FeatureDefinition.register(
+          UniqueEntityId.from(nextId()),
+          { key: "ai.copywriter", name: `AI ${tenantId}`, category: "ai", tenantId },
+          nextId(),
+          clock.now(),
+        ),
+        tenantId,
+      );
+      await bundles.save(
+        FeatureBundle.create(
+          UniqueEntityId.from(nextId()),
+          { key: "growth", name: `Growth ${tenantId}`, featureKeys: [], tenantId },
+          nextId(),
+          clock.now(),
+        ),
+        tenantId,
+      );
+    }
+
+    expect((await features.findByKey("ai.copywriter", "tenant-a"))?.name).toBe("AI tenant-a");
+    expect((await features.findByKey("ai.copywriter", "tenant-b"))?.name).toBe("AI tenant-b");
+    expect((await bundles.findByKey("growth", "tenant-a"))?.name).toBe("Growth tenant-a");
+    expect((await bundles.findByKey("growth", "tenant-b"))?.name).toBe("Growth tenant-b");
+  });
+});

@@ -139,3 +139,24 @@ describe("assertWorkerTenantModeSupported", () => {
     expect(call).toBeLessThan(worker.indexOf("core ?? buildRuntimeCore(config)"));
   });
 });
+
+/**
+ * T10.7 — `@platform/config`'s `setFlagProvider`/`isEnabled(key, ctx)` is a process-global with no
+ * tenant parameter. It is dormant today; the tenant-aware evaluator is `FeatureFlags.isEnabled(key,
+ * tenantId, ctx)` (`AggregateFeatureFlags`). If anything starts using the global one, tenant A's
+ * flag state would answer tenant B, so nothing outside the package may import it.
+ */
+describe("the process-global flag provider stays unused (T10.7)", () => {
+  it("nothing outside packages/config references setFlagProvider or StaticFlagProvider", () => {
+    const offenders: string[] = [];
+    for (const root of ["apps", "services", "packages"]) {
+      for (const path of sourceFiles(join(repoRoot, root))) {
+        const file = relative(repoRoot, path).split(sep).join("/");
+        if (file.startsWith("packages/config/")) continue;
+        if (/\b(setFlagProvider|StaticFlagProvider)\b/.test(readFileSync(path, "utf8")))
+          offenders.push(file);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});

@@ -192,6 +192,7 @@ export class KafkaConsumerRuntime<TPayload, TContext = unknown> {
         value,
         headers,
         messageId: envelope.messageId,
+        tenantId: envelope.tenantId,
         error,
       });
     }
@@ -239,6 +240,8 @@ export class KafkaConsumerRuntime<TPayload, TContext = unknown> {
     readonly value: Uint8Array;
     readonly headers: Readonly<Record<string, string>>;
     readonly messageId: string;
+    /** The envelope's tenant, so a retry or dead-letter line can be attributed (T10.7). */
+    readonly tenantId: string;
     readonly error: unknown;
   }): Promise<void> {
     const nextAttempt = input.attempt + 1;
@@ -258,6 +261,7 @@ export class KafkaConsumerRuntime<TPayload, TContext = unknown> {
         topic: this.topic,
         consumerGroup: this.deps.consumerGroup,
         messageId: input.messageId,
+        tenantId: input.tenantId,
         attempts: input.attempt,
       });
       return;
@@ -284,6 +288,7 @@ export class KafkaConsumerRuntime<TPayload, TContext = unknown> {
       topic: this.topic,
       consumerGroup: this.deps.consumerGroup,
       messageId: input.messageId,
+      tenantId: input.tenantId,
       attempt: nextAttempt,
       delayMs: delay,
     });

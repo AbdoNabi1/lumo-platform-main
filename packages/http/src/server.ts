@@ -240,6 +240,9 @@ export function createHttpServer(deps: HttpServerDeps): FastifyInstance {
       deps.logger.error("http request failed", {
         requestId: request.requestId,
         correlationId: request.correlationId,
+        // T10.7: a 5xx that cannot be attributed to a tenant cannot be investigated. `null` before
+        // resolution (the failure happened ahead of tenant resolution) is logged as absent, not defaulted.
+        tenantId: request.tenantId,
         error: error instanceof Error ? error.message : String(error),
       });
     }

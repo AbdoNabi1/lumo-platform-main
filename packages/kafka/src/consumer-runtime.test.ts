@@ -40,7 +40,7 @@ const serializer: EventSerializer = new InMemoryEventSerializer();
 const noopPublisher = { publish: async () => {}, publishBatch: async () => {} };
 
 /** Builds a fake `EachMessagePayload` for `handleMessage` — never touches `.kafka`, so no broker needed. */
-function payload(total: number, messageId: string): EachMessagePayload {
+function payload(total: number, messageId: string, tenantId = "tenant-test"): EachMessagePayload {
   const envelope = {
     messageId,
     type: "orders.order.placed",
@@ -50,7 +50,7 @@ function payload(total: number, messageId: string): EachMessagePayload {
     occurredAt: clock.now().toISOString(),
     correlationId: "c",
     causationId: "c",
-    tenantId: "tenant-test",
+    tenantId,
     payload: { total },
     metadata: {},
   };
@@ -270,5 +270,70 @@ describe("KafkaConsumerRuntime — H-05 retry topic runs on its own consumer", (
     await runtime.stop();
     expect(main?.consumer.disconnectCalls).toBe(1);
     expect(retry?.consumer.disconnectCalls).toBe(1);
+  });
+});
+
+/** A logger that keeps every line, so a test can read what was (and was not) attributed to whom. */
+function recordingLogger(): {
+  readonly logger: Logger;
+  readonly lines: { message: string; fields: Record<string, unknown> }[];
+} {
+  const lines: { message: string; fields: Record<string, unknown> }[] = [];
+  const record = (message: string, fields?: Record<string, unknown>): void => {
+    lines.push({ message, fields: fields ?? {} });
+  };
+  const logger: Logger = {
+    debug: record,
+    info: record,
+    warn: record,
+    error: record,
+    child: () => logger,
+  };
+  return { logger, lines };
+}
+
+describe("KafkaConsumerRuntime — failure log lines name the tenant (T10.7)", () => {
+  const failing: EventHandler<OrderPayload, FakeTx> = {
+    eventType: "orders.order.placed",
+    eventVersion: 1,
+    handle: async () => {
+      throw new Error("handler failed");
+    },
+  };
+
+  it("a retry line carries the envelope's tenant, and only that tenant's", async () => {
+    const { logger, lines } = recordingLogger();
+    const runtime = new KafkaConsumerRuntime({
+      ...baseDeps({ logger, retrySchedule: { delaysMs: [10] } }),
+      handler: failing,
+      processedEvents: new InMemoryProcessedEventStore(),
+    });
+
+    await runtime.handleMessage(payload(1, "evt-a", "tenant-a"));
+    await runtime.handleMessage(payload(2, "evt-b", "tenant-b"));
+
+    const retries = lines.filter((line) => line.message === "message scheduled for retry");
+    expect(retries.map((line) => [line.fields["messageId"], line.fields["tenantId"]])).toEqual([
+      ["evt-a", "tenant-a"],
+      ["evt-b", "tenant-b"],
+    ]);
+  });
+
+  it("a dead-letter line carries the envelope's tenant, and only that tenant's", async () => {
+    const { logger, lines } = recordingLogger();
+    const runtime = new KafkaConsumerRuntime({
+      ...baseDeps({ logger, retrySchedule: { delaysMs: [] } }),
+      handler: failing,
+      processedEvents: new InMemoryProcessedEventStore(),
+    });
+
+    await runtime.handleMessage(payload(1, "evt-a", "tenant-a"));
+    await runtime.handleMessage(payload(2, "evt-b", "tenant-b"));
+
+    const dead = lines.filter((line) => line.message === "message dead-lettered");
+    expect(dead.map((line) => [line.fields["messageId"], line.fields["tenantId"]])).toEqual([
+      ["evt-a", "tenant-a"],
+      ["evt-b", "tenant-b"],
+    ]);
   });
 });

@@ -3,6 +3,11 @@ import type { FeatureBundle } from "../domain/feature-bundle";
 import type { FeatureDefinition } from "../domain/feature-definition";
 import type { FeatureBundleRepository, FeatureDefinitionRepository } from "../domain/repositories";
 
+/** Composite `(tenantId, key)` store key. JSON, not a delimiter join, so no id can forge another's. */
+function storeKey(tenantId: string, key: string): string {
+  return JSON.stringify([tenantId, key]);
+}
+
 export interface InMemoryFeatureRegistryRepositoryDeps {
   readonly outbox: OutboxWriter;
   readonly context: EventContext;
@@ -21,7 +26,7 @@ export class InMemoryFeatureDefinitionRepository implements FeatureDefinitionRep
   constructor(private readonly deps: InMemoryFeatureRegistryRepositoryDeps) {}
 
   async save(feature: FeatureDefinition, tenantId: string, tx?: unknown): Promise<void> {
-    this.store.set(feature.key, { tenantId, feature });
+    this.store.set(storeKey(tenantId, feature.key), { tenantId, feature });
     await this.deps.outbox.write(
       feature.pullDomainEvents(),
       { ...this.deps.context, tenantId },
@@ -30,7 +35,7 @@ export class InMemoryFeatureDefinitionRepository implements FeatureDefinitionRep
   }
 
   async findByKey(key: string, tenantId: string): Promise<FeatureDefinition | null> {
-    const entry = this.store.get(key);
+    const entry = this.store.get(storeKey(tenantId, key));
     return entry !== undefined && entry.tenantId === tenantId ? entry.feature : null;
   }
 
@@ -60,12 +65,12 @@ export class InMemoryFeatureBundleRepository implements FeatureBundleRepository 
   constructor(private readonly deps: InMemoryFeatureRegistryRepositoryDeps) {}
 
   async save(bundle: FeatureBundle, tenantId: string, tx?: unknown): Promise<void> {
-    this.store.set(bundle.key, { tenantId, bundle });
+    this.store.set(storeKey(tenantId, bundle.key), { tenantId, bundle });
     await this.deps.outbox.write(bundle.pullDomainEvents(), { ...this.deps.context, tenantId }, tx);
   }
 
   async findByKey(key: string, tenantId: string): Promise<FeatureBundle | null> {
-    const entry = this.store.get(key);
+    const entry = this.store.get(storeKey(tenantId, key));
     return entry !== undefined && entry.tenantId === tenantId ? entry.bundle : null;
   }
 
