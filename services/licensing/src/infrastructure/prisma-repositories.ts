@@ -172,8 +172,10 @@ export class PrismaSubscriptionRepository implements SubscriptionRepository {
   }
 
   /**
-   * T14.5/G-74 (7): the `where` narrows on the indexed `(tenantId, status)` columns only — `status`
-   * is a plain column, but `renewalSchedule.nextRenewalAt` lives inside a JSONB blob, and this
+   * T14.5/G-74 (7): the `where` narrows on the `(tenantId, status)` columns only — `tenantId` leads
+   * `subscriptions_tenant_id_tenant_ref_key`, but `status` is an UNINDEXED plain column (unlike
+   * `PlatformInvoice`, which has `@@index([tenantId, tenantRef, status])`), and
+   * `renewalSchedule.nextRenewalAt` lives inside a JSONB blob, and this
    * codebase has no proven, tested pattern for a JSON-path date comparison in a Prisma query that
    * can be verified without live-database access (this task is expressly forbidden from connecting
    * to one). Filtering the due date in application code over the (small, business-population-sized,

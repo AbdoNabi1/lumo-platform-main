@@ -6,7 +6,7 @@ import type {
   CardEnrolmentPort,
   CardTokenCallbackVerifier,
 } from "./application/ports";
-import { DEFAULT_DUNNING_POLICY } from "./application/dunning.use-cases";
+import { DEFAULT_DUNNING_POLICY, type DunningPolicy } from "./application/dunning.use-cases";
 import { wireLicensing } from "./composition";
 import type { PlanSpec } from "./domain/value-objects/plan-spec";
 import { RecordingPaymentProvider } from "./test-support/recording-payment-provider";
@@ -172,6 +172,36 @@ describe("detection: a failed renewal enters dunning", () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect((second.body as { status: string }).status).toBe("grace");
+  });
+
+  it("refuses a SECOND invoice while already in grace, and keeps retrying the first one", async () => {
+    const { app, provider, time } = setup();
+    const v1 = await newPublishedVersion(app, "merchant-1");
+    const subscriptionId = await activeSubscription(app, "merchant-1", v1);
+    const firstInvoiceId = await billAndFail(app, provider, subscriptionId);
+    await app.licensing.enterDunning({
+      subscriptionId,
+      invoiceId: firstInvoiceId,
+      tenantId: PLATFORM,
+    });
+
+    // A different invoice must not silently take over an open dunning cycle. Both silent outcomes
+    // lose money: adopting it abandons the first invoice's retry schedule, and returning ok without
+    // adopting it drops the second invoice with nobody ever told. A refusal is the one outcome the
+    // scheduler logs as an error. Without this case the guard was untested — gutting it to `if
+    // (true)` left all 124 licensing tests green.
+    const second = await app.licensing.enterDunning({
+      subscriptionId,
+      invoiceId: "inv-a-different-one",
+      tenantId: PLATFORM,
+    });
+    expect(second.status).toBe(409);
+    expect(JSON.stringify(second.body)).toContain("different invoice");
+
+    // And the schedule still points at the FIRST invoice, not the refused one.
+    time.now = new Date(time.now.getTime() + FIRST_RETRY_DAYS * DAY_MS);
+    const retried = await app.licensing.retryDunningInvoice({ subscriptionId, tenantId: PLATFORM });
+    expect((retried.body as { invoiceId: string }).invoiceId).toBe(firstInvoiceId);
   });
 
   it("an illegal transition is refused by the machine, not by a caller's if: entering dunning from a non-active subscription", async () => {
@@ -364,5 +394,41 @@ describe("a merchant with no stored card (G-74 (1) x T14.5)", () => {
       tenantId: PLATFORM,
     });
     expect((entered.body as { status: string }).status).toBe("grace");
+  });
+});
+
+describe("the dunning policy asserts its own coherence at construction", () => {
+  const wire = (dunningPolicy: DunningPolicy) =>
+    wireLicensing({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: sequentialIds(),
+      clock: { now: () => new Date("2026-10-01T00:00:00.000Z") },
+      platformTenantId: PLATFORM,
+      payments: new PlatformBillingPaymentsAdapter({ provider: new RecordingPaymentProvider() }),
+      dunningPolicy,
+    });
+
+  it("refuses retryIntervalsDays that does not have exactly maxAttempts entries", () => {
+    expect(() => wire({ maxAttempts: 3, retryIntervalsDays: [1, 3], gracePeriodDays: 11 })).toThrow(
+      /exactly maxAttempts \(3\) entries, got 2/,
+    );
+  });
+
+  it("refuses a grace period shorter than the day the last retry runs", () => {
+    // The combination the default shipped with: retries out to day 11, grace recorded as 7. Nothing
+    // enforces gracePeriodDays yet, so this never misbehaved at runtime — but it is the date the
+    // merchant is shown, and a subscription still recoverable on day 11 whose own row says it lapsed
+    // on day 7 is a number that becomes a lie the moment T14.6/T14.7 display it.
+    expect(() =>
+      wire({ maxAttempts: 3, retryIntervalsDays: [1, 3, 7], gracePeriodDays: 7 }),
+    ).toThrow(
+      /gracePeriodDays \(7\) must be at least the day the last retry runs \(sum of retryIntervalsDays = 11\)/,
+    );
+  });
+
+  it("accepts a deliberately widened grace period", () => {
+    expect(() =>
+      wire({ maxAttempts: 3, retryIntervalsDays: [1, 3, 7], gracePeriodDays: 14 }),
+    ).not.toThrow();
   });
 });

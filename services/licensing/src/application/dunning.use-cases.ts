@@ -12,9 +12,11 @@ import type { CollectInvoice, IssueInvoice } from "./billing.use-cases";
  * T14.5 (dunning) — the retry schedule and grace period. `retryIntervalsDays[i]` is the number of
  * days after the PREVIOUS attempt (attempt `i`, 0-indexed — entering grace counts as attempt 0's
  * scheduling) before attempt `i + 1` runs; its length must equal `maxAttempts` (asserted by
- * {@link buildDunningPolicy}, not by convention). `gracePeriodDays` is informational only — it is
- * what {@link Subscription.enterGrace} records — and is the exhaustion date (`sum(retryIntervalsDays)`
- * unless deliberately widened, e.g. a legal/comms review margin the operator decides).
+ * {@link buildPolicy}, not by convention). `gracePeriodDays` is not enforced anywhere yet — it is
+ * only what {@link Subscription.enterGrace} records on the row — but it is the date a merchant will
+ * be shown (T14.6/T14.7), so it must be at least the exhaustion date (`sum(retryIntervalsDays)`),
+ * and may be wider, e.g. a legal/comms review margin the operator decides. {@link buildPolicy}
+ * asserts that too, rather than leaving the two numbers free to drift apart silently.
  *
  * These numbers are a deliberately plain, defensible default (not a discovered product spec) chosen
  * so the state machine can be exercised end to end — the same "placeholder policy, not a discovered
@@ -30,7 +32,11 @@ export interface DunningPolicy {
 export const DEFAULT_DUNNING_POLICY: DunningPolicy = {
   maxAttempts: 3,
   retryIntervalsDays: [1, 3, 7],
-  gracePeriodDays: 7,
+  // 1 + 3 + 7: the day the LAST retry runs and dunning exhausts. This is the number `enterGrace`
+  // writes to the row, so a shorter one would promise the merchant their grace period ends before
+  // the machine has stopped trying to charge them — a subscription still recoverable on day 11 while
+  // its own record says it lapsed on day 7. `buildPolicy` now refuses that combination outright.
+  gracePeriodDays: 11,
 };
 
 function buildPolicy(policy?: DunningPolicy): DunningPolicy {
@@ -38,6 +44,12 @@ function buildPolicy(policy?: DunningPolicy): DunningPolicy {
   if (resolved.retryIntervalsDays.length !== resolved.maxAttempts) {
     throw new Error(
       `DunningPolicy.retryIntervalsDays must have exactly maxAttempts (${resolved.maxAttempts}) entries, got ${resolved.retryIntervalsDays.length}`,
+    );
+  }
+  const untilExhaustion = resolved.retryIntervalsDays.reduce((sum, days) => sum + days, 0);
+  if (resolved.gracePeriodDays < untilExhaustion) {
+    throw new Error(
+      `DunningPolicy.gracePeriodDays (${resolved.gracePeriodDays}) must be at least the day the last retry runs (sum of retryIntervalsDays = ${untilExhaustion}); a shorter grace period is recorded on the subscription as an end date the retry schedule then outlives`,
     );
   }
   return resolved;

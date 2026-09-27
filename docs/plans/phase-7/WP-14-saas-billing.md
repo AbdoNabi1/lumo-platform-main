@@ -78,7 +78,7 @@ action/job/AI request`); check whether billing entitlements should flow through 
       gained `billing-renewals` and `billing-dunning-retries`; a failed charge opens dunning
       (`EnterDunning`: `active -> grace`, existing `enterGrace`, first retry scheduled), a scheduled
       retry either recovers (`RetryDunningInvoice` -> `Subscription.recoverFromGrace`, `grace ->
-    active`), reschedules, or exhausts (`Subscription.exhaustDunning`, `grace -> expired`) once
+  active`), reschedules, or exhausts (`Subscription.exhaustDunning`, `grace -> expired`) once
       the policy's `maxAttempts` is used up. `past_due` above is this codebase's `grace` — no second
       state was added. Every transition has its own test
       (`services/licensing/src/dunning.test.ts`), including "payment recovers mid-grace-period."
@@ -104,10 +104,12 @@ action/job/AI request`); check whether billing entitlements should flow through 
 
 ## Status — part 1 landed 2026-09-24 (T14.1, T14.2, T14.4); T14.5 landed 2026-09-27
 
-T14.3 (coupons), T14.5 (dunning), T14.6 (analytics) and T14.7 (screens) are NOT started, so the Definition of Done
+T14.3 (coupons), T14.6 (analytics) and T14.7 (screens) are NOT started, so the Definition of Done
 below stays open and Morbeh F-16 is recorded as **G-74**, open, with the follow-ups part 1 found. Design and
 findings: **D-061** (Morbeh's own PSP account; no `PaymentIntent` row), **D-062** (platform-global plans,
-pinned immutable versions, platform-only surface, row mapping), **D-063** (integer minor-unit money). Migration
+pinned immutable versions, platform-only surface, row mapping), **D-063** (integer minor-unit money),
+**D-070** (dunning: the existing state machine and `retryPolicy` column reused; the notification
+boundary is a created record plus a boot guard, never a provider call). Migration
 `20260924000000_wp14_platform_plans` is created and **not applied**. New runtime env vars:
 `PLATFORM_BILLING_STRIPE_SECRET_KEY` and `PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET` (absent ⇒ no billing adapter,
 never a stub; the boot guard refuses that outside `local`). The DoD's price-change test is
