@@ -103,7 +103,11 @@ describe("check-prisma-tenant-where: the real tree", () => {
   ])(
     "the exact mutation that used to be invisible is caught: %s loses its tenant filter",
     async (_label, file, from, to) => {
-      const original = readFileSync(join(repoRoot, file), "utf8");
+      // Line endings are normalised first. git is configured with core.autocrlf=true on Windows, so
+      // on a fresh clone every source file is CRLF while the multi-line snippets above are written
+      // with LF — without this, two of these cases fail for a reason that has nothing to do with the
+      // tenant filter they exist to guard, which is the worst possible failure mode for a guard test.
+      const original = readFileSync(join(repoRoot, file), "utf8").replaceAll("\r\n", "\n");
       expect(original).toContain(from);
       const root = fixture({ [file]: original.replace(from, to) });
       const { violations } = (await scanner())(root);
