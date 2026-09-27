@@ -250,3 +250,26 @@ passes on the real filter, not a whitelist. `packages/db/src/prisma-tenant-where
 is caught" cases, and its "lists the KNOWN GAPS as open" assertion now expects an empty list. **The survivor
 count above (31 of 145) is unchanged — these two were never mutation survivors; they were static-scan
 findings deliberately left open, and this is the record of them leaving that state.**
+
+### One survivor found while verifying the closure (2026-09-27, closed same pass)
+
+Re-mutating the closed code line by line — rather than only re-running the mutation the fixing session
+chose — found one line the fix touched that no test covered:
+
+| ID  | Mutation                                                                                                   | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PG2 | `trackingEventRevision.count` in `appendHistory` loses its `tenantId`, the `findFirst` above it keeping it | **Survived the suite** (373/373 green), caught only by PG1. Counting revisions across tenants starts the next tenant's `revisionSeq` above 1, leaving gaps that read as lost revisions in a sequence the Event Record exists to make auditable. Not a leak and not a lost write — the row still lands under the right tenant, which is separately covered. Closed by `prisma-event-record-store.tenant.test.ts` → "tenant B's first revision is revisionSeq 1 even when tenant A already has revisions under the same eventId". |
+
+The lesson is the same one this document opened with: a mutation that the fixing session picks tends to be
+the one its new test was written against. The line next to it is where coverage actually ends. PG1 caught
+this one, so it could never have been merged — but "a guard catches it" and "a test describes what breaks"
+are different properties, and only the second survives the guard being loosened later.
+
+### Recorded tradeoff from the G-76 fix
+
+`upsert` was atomic at the database (`INSERT ... ON CONFLICT DO UPDATE`); `updateMany` + `create`-on-miss is
+two statements. Two concurrent saves of the same _new_ `productVariant` or `refund` under _one_ tenant can
+now both miss and both insert, and the second fails `create`'s primary-key constraint instead of being
+folded in. That is a loud, retryable error in place of a silent cross-tenant overwrite, which is the trade
+this pass intended — but it is a behaviour change, not a pure fix. If either write ever moves onto a
+concurrent path, give the table a `@@unique([tenantId, id])` and restore a real `upsert` against it.

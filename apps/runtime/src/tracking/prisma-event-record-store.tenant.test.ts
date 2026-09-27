@@ -98,6 +98,37 @@ describe("tracking event record store — one eventId, two tenants (G-75, closed
     expect(revisions).toHaveLength(0);
   });
 
+  it("tenant B's first revision is revisionSeq 1 even when tenant A already has revisions under the same eventId", async () => {
+    const { db, revisions } = fakeDb();
+    let n = 0;
+    const store = new PrismaEventRecordStore(db as never, { generate: () => `id-${(n += 1)}` });
+    await store.append(base("tenant-a"));
+    await store.append(base("tenant-b"));
+
+    // tenant A accumulates two revisions first.
+    for (const at of ["2026-09-26T00:00:01.000Z", "2026-09-26T00:00:02.000Z"]) {
+      await store.appendHistory({
+        eventId: "evt-shared",
+        tenantId: "tenant-a",
+        state: "processing",
+        at,
+      });
+    }
+
+    await store.appendHistory({
+      eventId: "evt-shared",
+      tenantId: "tenant-b",
+      state: "delivered",
+      at: "2026-09-26T00:00:03.000Z",
+    });
+
+    // Counting revisions across tenants would start B at 3, leaving a gap that reads as two lost
+    // revisions in a sequence the record exists to make auditable.
+    const forB = revisions.filter((r) => r.tenantId === "tenant-b");
+    expect(forB).toHaveLength(1);
+    expect(forB[0]?.revisionSeq).toBe(1);
+  });
+
   it("get() for tenant A returns tenant A's record when both tenants share an eventId", async () => {
     const { db } = fakeDb();
     const store = new PrismaEventRecordStore(db as never, { generate: () => "id-1" });
