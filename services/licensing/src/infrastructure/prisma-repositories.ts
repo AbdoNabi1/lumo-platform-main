@@ -524,6 +524,7 @@ export class PrismaBillingPaymentMethodRepository implements BillingPaymentMetho
       tenantRef: state.tenantRef,
       provider: state.provider,
       providerOrderId: state.providerOrderId,
+      invoiceRef: state.invoiceRef ?? null,
       status: state.status,
       tokenId: state.tokenId ?? null,
       sealedToken: state.sealedToken ?? null,
@@ -586,6 +587,7 @@ interface BillingPaymentMethodRow {
   readonly tenantRef: string;
   readonly provider: string;
   readonly providerOrderId: string;
+  readonly invoiceRef: string | null;
   readonly status: string;
   readonly tokenId: string | null;
   readonly sealedToken: string | null;
@@ -605,6 +607,7 @@ function toBillingPaymentMethod(row: BillingPaymentMethodRow): BillingPaymentMet
     tenantRef: row.tenantRef,
     provider: row.provider,
     providerOrderId: row.providerOrderId,
+    ...(row.invoiceRef === null ? {} : { invoiceRef: row.invoiceRef }),
     status: row.status,
     ...(row.tokenId === null ? {} : { tokenId: row.tokenId }),
     ...(row.sealedToken === null ? {} : { sealedToken: row.sealedToken }),

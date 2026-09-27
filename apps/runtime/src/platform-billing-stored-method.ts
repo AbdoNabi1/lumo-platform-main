@@ -3,7 +3,9 @@ import type { PaymentCredentialVault } from "@platform/payments";
 import {
   PaymobPaymentProvider,
   extractSignedCardToken,
+  extractSignedTransaction,
   verifyPaymobCardTokenSignature,
+  verifyPaymobSignature,
 } from "@platform/psp-paymob";
 import type { Logger } from "@platform/utils";
 import type { RuntimeConfig } from "./config";
@@ -135,5 +137,34 @@ export function buildPlatformBillingStoredMethod(
             };
       },
     },
+    // G-74 (8): the billing TRANSACTION callback — a DIFFERENT Paymob scheme from the card-token
+    // one above (D-065), same secret. `verifyPaymobSignature`/`extractSignedTransaction` are the
+    // same known-answer-tested functions `PaymobPaymentProvider.verifyWebhook` uses for the store's
+    // own webhook; called directly here (sync) rather than through `provider.verifyWebhook`
+    // (async) to match `cardTokenVerifier`'s sync port shape.
+    transactionVerifier: {
+      verify: (rawBody, signature) => {
+        if (!verifyPaymobSignature({ payload: rawBody, signature, secret: hmacSecret })) {
+          return null;
+        }
+        const signed = extractSignedTransaction(rawBody);
+        return signed === null
+          ? null
+          : {
+              transactionId: signed.transactionId,
+              providerOrderId: signed.orderId,
+              amountMinor: signed.amountCents,
+              currency: signed.currency,
+              success: signed.success,
+              pending: signed.pending,
+              isAuth: signed.isAuth,
+              isCapture: signed.isCapture,
+              isVoided: signed.isVoided,
+              isRefunded: signed.isRefunded,
+              errorOccured: signed.errorOccured,
+            };
+      },
+    },
+    logger,
   };
 }

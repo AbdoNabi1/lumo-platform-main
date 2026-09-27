@@ -54,10 +54,17 @@ export {
 } from "./infrastructure/stored-method-billing-payments-adapter";
 export type {
   BillingTokenSealer,
+  BillingTransactionCallbackVerifier,
   CardEnrolmentPort,
   CardTokenCallbackVerifier,
   VerifiedCardToken,
+  VerifiedInvoiceTransaction,
 } from "./application/ports";
+export type {
+  RecordInvoiceTransactionInput,
+  RecordInvoiceTransactionOutcome,
+  RecordInvoiceTransactionOutput,
+} from "./application/payment-method.use-cases";
 export type { StoredMethodBillingDeps } from "./composition";
 export {
   DEFAULT_DUNNING_POLICY,

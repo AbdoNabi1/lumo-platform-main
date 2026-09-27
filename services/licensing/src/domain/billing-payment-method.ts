@@ -12,6 +12,14 @@ export interface BillingPaymentMethodState {
   readonly provider: string;
   /** The PSP's order id of the interactive first payment: how its token callback is correlated to a merchant. */
   readonly providerOrderId: string;
+  /**
+   * The invoice the interactive first payment (`BeginCardEnrolment`) was started for. The only
+   * signed field the billing TRANSACTION callback carries is `order.id` (this row's
+   * `providerOrderId`) — never the invoice id itself — so recording it here at enrolment time is
+   * what lets `RecordInvoiceTransaction` reach the invoice without trusting the callback's unsigned
+   * `special_reference` (G-74 (8)). Absent on a row created before that use case existed.
+   */
+  readonly invoiceRef?: string;
   readonly status: BillingPaymentMethodStatus;
   /** The PSP's id for the stored card (stable across redeliveries of its callback). */
   readonly tokenId?: string;
@@ -51,6 +59,7 @@ export class BillingPaymentMethod {
     tenantRef: string,
     provider: string,
     providerOrderId: string,
+    invoiceRef: string,
     now: Date,
   ): BillingPaymentMethod {
     return new BillingPaymentMethod({
@@ -58,6 +67,7 @@ export class BillingPaymentMethod {
       tenantRef,
       provider,
       providerOrderId,
+      invoiceRef,
       status: "pending",
       version: 0,
       createdAt: now,
@@ -80,6 +90,9 @@ export class BillingPaymentMethod {
   }
   get providerOrderId(): string {
     return this.state.providerOrderId;
+  }
+  get invoiceRef(): string | undefined {
+    return this.state.invoiceRef;
   }
   get status(): BillingPaymentMethodStatus {
     return this.state.status;

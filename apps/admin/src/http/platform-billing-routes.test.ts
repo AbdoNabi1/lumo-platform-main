@@ -22,8 +22,15 @@ function context(withBody: boolean): RequestContext {
   };
 }
 
-function fakeAdmin(recordCardToken: ReturnType<typeof vi.fn>, paymentsWebhook = {}): WiredAdmin {
-  return { licensing: { recordCardToken }, paymentsWebhook } as unknown as WiredAdmin;
+function fakeAdmin(
+  recordCardToken: ReturnType<typeof vi.fn>,
+  paymentsWebhook = {},
+  recordInvoiceTransaction: ReturnType<typeof vi.fn> = vi.fn(),
+): WiredAdmin {
+  return {
+    licensing: { recordCardToken, recordInvoiceTransaction },
+    paymentsWebhook,
+  } as unknown as WiredAdmin;
 }
 
 describe("Morbeh's card-token callback route", () => {
@@ -73,6 +80,71 @@ describe("Morbeh's card-token callback route", () => {
       .fn()
       .mockResolvedValue({ status: 401, body: { code: "UNAUTHENTICATED" } });
     const [route] = platformBillingRoutes(fakeAdmin(recordCardToken));
+
+    const response = await route!.handle({
+      body: {},
+      params: {},
+      query: { hmac: "forged" },
+      context: context(true),
+    });
+
+    expect(response.status).toBe(401);
+  });
+});
+
+describe("Morbeh's billing transaction callback route (G-74 (8))", () => {
+  it("is public, lives at its own path, and is distinct from both the card-token and store routes", () => {
+    const routes = platformBillingRoutes(fakeAdmin(vi.fn()));
+    const route = routes.find((r) => r.path === "/platform-billing/paymob/transaction");
+    expect(route?.public).toBe(true);
+    expect(route?.path).not.toBe(routes[0]?.path);
+    const storePaths = paymentsWebhookRoutes(fakeAdmin(vi.fn())).map((r) => r.path);
+    expect(storePaths).not.toContain(route?.path);
+  });
+
+  it("passes the RAW bytes and the hmac query parameter to Licensing", async () => {
+    const recordInvoiceTransaction = vi
+      .fn()
+      .mockResolvedValue({ status: 200, body: { outcome: "paid" } });
+    const routes = platformBillingRoutes(fakeAdmin(vi.fn(), {}, recordInvoiceTransaction));
+    const route = routes.find((r) => r.path === "/platform-billing/paymob/transaction");
+
+    const response = await route!.handle({
+      body: {},
+      params: {},
+      query: { hmac: "abc123" },
+      context: context(true),
+    });
+
+    expect(response.status).toBe(200);
+    expect(recordInvoiceTransaction).toHaveBeenCalledTimes(1);
+    const [input] = recordInvoiceTransaction.mock.calls[0]!;
+    expect(input.rawBody).toBe(rawBody);
+    expect(input.signature).toBe("abc123");
+  });
+
+  it("answers 401 without a raw body, and never reaches Licensing", async () => {
+    const recordInvoiceTransaction = vi.fn();
+    const routes = platformBillingRoutes(fakeAdmin(vi.fn(), {}, recordInvoiceTransaction));
+    const route = routes.find((r) => r.path === "/platform-billing/paymob/transaction");
+
+    const response = await route!.handle({
+      body: {},
+      params: {},
+      query: { hmac: "abc123" },
+      context: context(false),
+    });
+
+    expect(response.status).toBe(401);
+    expect(recordInvoiceTransaction).not.toHaveBeenCalled();
+  });
+
+  it("passes through Licensing's refusal of an unverified callback (401)", async () => {
+    const recordInvoiceTransaction = vi
+      .fn()
+      .mockResolvedValue({ status: 401, body: { code: "UNAUTHENTICATED" } });
+    const routes = platformBillingRoutes(fakeAdmin(vi.fn(), {}, recordInvoiceTransaction));
+    const route = routes.find((r) => r.path === "/platform-billing/paymob/transaction");
 
     const response = await route!.handle({
       body: {},

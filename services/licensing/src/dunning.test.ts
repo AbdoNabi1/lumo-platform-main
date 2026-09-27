@@ -3,6 +3,7 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import type {
   BillingTokenSealer,
+  BillingTransactionCallbackVerifier,
   CardEnrolmentPort,
   CardTokenCallbackVerifier,
 } from "./application/ports";
@@ -354,6 +355,7 @@ describe("a merchant with no stored card (G-74 (1) x T14.5)", () => {
       Promise.resolve({ providerOrderId: "order-x", checkoutUrl: "https://pay.test/x" }),
   };
   const cardTokenVerifier: CardTokenCallbackVerifier = { verify: () => null };
+  const transactionVerifier: BillingTransactionCallbackVerifier = { verify: () => null };
 
   function setupStoredMethod() {
     const time = { now: new Date("2026-10-01T00:00:00.000Z") };
@@ -370,7 +372,7 @@ describe("a merchant with no stored card (G-74 (1) x T14.5)", () => {
       idGenerator: sequentialIds(),
       clock,
       platformTenantId: PLATFORM,
-      storedMethodBilling: { sealer, charger, enrolment, cardTokenVerifier },
+      storedMethodBilling: { sealer, charger, enrolment, cardTokenVerifier, transactionVerifier },
     });
     return { app, calls, time };
   }

@@ -1,6 +1,7 @@
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { PrismaOutboxStore, PrismaUnitOfWork, type Database } from "@platform/db";
 import type { EventSerializer } from "@platform/domain-events";
+import { createLogger, type Logger } from "@platform/utils";
 import {
   InMemoryEventBus,
   InMemoryEventPublisher,
@@ -44,6 +45,7 @@ import {
 import {
   BeginCardEnrolment,
   RecordCardToken,
+  RecordInvoiceTransaction,
   RevokeBillingPaymentMethod,
 } from "./application/payment-method.use-cases";
 import { BillSubscriptionRenewal } from "./application/renewal.use-cases";
@@ -68,6 +70,7 @@ import type {
 } from "./domain/repositories";
 import type {
   BillingTokenSealer,
+  BillingTransactionCallbackVerifier,
   CardEnrolmentPort,
   CardTokenCallbackVerifier,
   FinanceLedgerPort,
@@ -117,6 +120,17 @@ export interface StoredMethodBillingDeps {
   readonly charger: OffSessionCharger;
   readonly enrolment: CardEnrolmentPort;
   readonly cardTokenVerifier: CardTokenCallbackVerifier;
+  /**
+   * G-74 (8): verifies Morbeh's billing TRANSACTION callback (a different Paymob signing scheme
+   * from `cardTokenVerifier`, D-065) — what `RecordInvoiceTransaction` settles the first invoice with.
+   */
+  readonly transactionVerifier: BillingTransactionCallbackVerifier;
+  /**
+   * Where `RecordInvoiceTransaction` logs an amount/currency mismatch or an orphaned callback loud
+   * enough to reconcile by hand. Absent ⇒ a plain `createLogger()` (same default every other
+   * composed context reaches for when a caller supplies none).
+   */
+  readonly logger?: Logger;
 }
 
 export interface LicensingWiringDeps {
@@ -253,6 +267,19 @@ function buildController(
           idGenerator: deps.idGenerator,
           clock: deps.clock,
         };
+  const recordInvoiceTransactionDeps =
+    stored === undefined
+      ? undefined
+      : {
+          methods: repos.billingPaymentMethods,
+          invoices: repos.invoices,
+          financeLedger,
+          transactionVerifier: stored.transactionVerifier,
+          unitOfWork,
+          idGenerator: deps.idGenerator,
+          clock: deps.clock,
+          logger: stored.logger ?? createLogger({ scope: "licensing.billing-transaction" }),
+        };
 
   return new LicensingController({
     platformTenantId: deps.platformTenantId,
@@ -263,6 +290,9 @@ function buildController(
           recordCardToken: new RecordCardToken(paymentMethodDeps),
           revokeBillingPaymentMethod: new RevokeBillingPaymentMethod(paymentMethodDeps),
         }),
+    ...(recordInvoiceTransactionDeps === undefined
+      ? {}
+      : { recordInvoiceTransaction: new RecordInvoiceTransaction(recordInvoiceTransactionDeps) }),
     billSubscriptionRenewal: new BillSubscriptionRenewal({
       subscriptions: repos.subscriptions,
       plans: repos.plans,

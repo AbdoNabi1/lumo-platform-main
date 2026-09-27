@@ -158,6 +158,17 @@ export class LicensingAdminController {
     return this.licensing.recordCardToken(input);
   }
 
+  /**
+   * G-74 (8): Morbeh's billing TRANSACTION callback — settles the merchant's first invoice. Same
+   * reason as `recordCardToken` for staying off the staff guard: the caller is the PSP, authenticated
+   * by the callback's own signature (verified inside the use case), not a staff Bearer token.
+   */
+  recordInvoiceTransaction(
+    input: Parameters<LicensingController["recordInvoiceTransaction"]>[0],
+  ): Promise<AdminResponse> {
+    return this.licensing.recordInvoiceTransaction(input);
+  }
+
   async collectInvoice(
     principal: Principal,
     input: Parameters<LicensingController["collectInvoice"]>[0],

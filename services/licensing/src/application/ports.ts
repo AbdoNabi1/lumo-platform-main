@@ -87,3 +87,34 @@ export interface ProcessedUsageRecordStore {
   hasProcessed(recordId: string): Promise<boolean>;
   markProcessed(recordId: string): Promise<void>;
 }
+
+/**
+ * A billing TRANSACTION callback whose signature was verified; only SIGNED values reach here
+ * (`order.id`, never the unsigned `special_reference` a caller could rewrite — G-74 (8)).
+ */
+export interface VerifiedInvoiceTransaction {
+  /** Paymob's transaction id — recorded as the invoice's `paymentReference` once settled. */
+  readonly transactionId: string;
+  /** Paymob's order id (SIGNED) — how this correlates to a `BillingPaymentMethod`, never the invoice directly. */
+  readonly providerOrderId: string;
+  readonly amountMinor: number;
+  readonly currency: string;
+  readonly success: boolean;
+  readonly pending: boolean;
+  readonly isAuth: boolean;
+  readonly isCapture: boolean;
+  readonly isVoided: boolean;
+  readonly isRefunded: boolean;
+  readonly errorOccured: boolean;
+}
+
+/**
+ * Verifies Morbeh's billing TRANSACTION callback — the PSP's confirmation of the merchant's
+ * interactive first invoice payment (G-74 (8)) — against MORBEH'S OWN billing-account secret, by
+ * the transaction-callback scheme (20 fixed fields, `packages/psp-paymob/src/webhook-signature.ts`).
+ * A DIFFERENT scheme from {@link CardTokenCallbackVerifier} (D-065): Paymob signs the transaction
+ * callback and the card-token callback with two different field sets under the same secret.
+ */
+export interface BillingTransactionCallbackVerifier {
+  verify(rawBody: Uint8Array, signature: string): VerifiedInvoiceTransaction | null;
+}

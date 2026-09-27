@@ -155,6 +155,88 @@ describe("the card-token callback is verified against Morbeh's billing secret, b
   });
 });
 
+/**
+ * G-74 (8) — the billing TRANSACTION callback: a DIFFERENT Paymob scheme from the card-token one
+ * above (D-065), verified with the SAME `PLATFORM_BILLING_PAYMOB_HMAC_SECRET`. `special_reference`
+ * (Paymob's echo of `order.merchant_order_id`) is deliberately absent from the verified shape below:
+ * it is not one of the 20 signed fields, so a correlator must never read it (see the security note
+ * in `services/licensing/src/application/payment-method.use-cases.ts`).
+ */
+const transactionCallback = {
+  type: "TRANSACTION",
+  obj: {
+    id: 217503754,
+    amount_cents: 149900,
+    created_at: "2026-09-27T10:00:00.000000",
+    currency: "EGP",
+    error_occured: false,
+    has_parent_transaction: false,
+    integration_id: 4001,
+    is_3d_secure: true,
+    is_auth: false,
+    is_capture: true,
+    is_refunded: false,
+    is_standalone_payment: true,
+    is_voided: false,
+    order: { id: 593881581, merchant_order_id: "inv-1:0:enrol" },
+    owner: 164295,
+    pending: false,
+    source_data: { pan: "2346", sub_type: "MasterCard", type: "card" },
+    success: true,
+  },
+};
+const TRANSACTION_CONCATENATION = concatenateSignedFields(transactionCallback.obj) ?? "";
+
+describe("the billing TRANSACTION callback is verified against Morbeh's billing secret, by the transaction scheme (G-74 (8))", () => {
+  const verifier = () => core(paymobEnv).platformBillingStoredMethod!.transactionVerifier;
+
+  it("accepts a callback signed under the transaction scheme with Morbeh's HMAC secret", () => {
+    expect(
+      verifier().verify(bytes(transactionCallback), sign(TRANSACTION_CONCATENATION, BILLING_HMAC)),
+    ).toEqual({
+      transactionId: "217503754",
+      providerOrderId: "593881581",
+      amountMinor: 149900,
+      currency: "EGP",
+      success: true,
+      pending: false,
+      isAuth: false,
+      isCapture: true,
+      isVoided: false,
+      isRefunded: false,
+      errorOccured: false,
+    });
+  });
+
+  it("never returns the unsigned special_reference / merchant_order_id — it is not in the shape at all", () => {
+    const result = verifier().verify(
+      bytes(transactionCallback),
+      sign(TRANSACTION_CONCATENATION, BILLING_HMAC),
+    );
+    expect(JSON.stringify(result)).not.toContain("inv-1");
+  });
+
+  it("rejects one signed with a MERCHANT's secret, and one signed under the card-token scheme", () => {
+    expect(
+      verifier().verify(bytes(transactionCallback), sign(TRANSACTION_CONCATENATION, MERCHANT_HMAC)),
+    ).toBeNull();
+    expect(
+      verifier().verify(bytes(transactionCallback), sign(CARD_TOKEN_CONCATENATION, BILLING_HMAC)),
+    ).toBeNull();
+  });
+
+  it("rejects a tampered body and a missing hmac", () => {
+    const tampered = {
+      ...transactionCallback,
+      obj: { ...transactionCallback.obj, amount_cents: 1 },
+    };
+    expect(
+      verifier().verify(bytes(tampered), sign(TRANSACTION_CONCATENATION, BILLING_HMAC)),
+    ).toBeNull();
+    expect(verifier().verify(bytes(transactionCallback), "")).toBeNull();
+  });
+});
+
 describe("what goes on the wire", () => {
   interface Call {
     readonly url: string;

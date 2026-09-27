@@ -3,6 +3,7 @@ import type { Clock, IdGenerator, OffSessionChargeRequest } from "@platform/cont
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import type {
   BillingTokenSealer,
+  BillingTransactionCallbackVerifier,
   CardEnrolmentPort,
   CardTokenCallbackVerifier,
   FinanceLedgerPort,
@@ -62,6 +63,9 @@ const cardTokenVerifier: CardTokenCallbackVerifier = {
       : null,
 };
 
+/** Unused by these tests (the invoice-transaction callback is covered in `invoice-transaction.test.ts`). */
+const transactionVerifier: BillingTransactionCallbackVerifier = { verify: () => null };
+
 function setup(overrides: { financeLedger?: FinanceLedgerPort } = {}) {
   const time = { now: new Date("2026-10-01T00:00:00.000Z") };
   const clock: Clock = { now: () => time.now };
@@ -88,7 +92,7 @@ function setup(overrides: { financeLedger?: FinanceLedgerPort } = {}) {
     clock,
     platformTenantId: PLATFORM,
     ...(overrides.financeLedger === undefined ? {} : { financeLedger: overrides.financeLedger }),
-    storedMethodBilling: { sealer, charger, enrolment, cardTokenVerifier },
+    storedMethodBilling: { sealer, charger, enrolment, cardTokenVerifier, transactionVerifier },
   });
   return { app, charger, enrolments, time };
 }

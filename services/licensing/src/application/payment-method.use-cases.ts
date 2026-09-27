@@ -5,13 +5,21 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import {
   AuthenticationError,
+  ConcurrencyError,
   type DomainError,
+  type Logger,
   NotFoundError,
   isDomainError,
 } from "@platform/utils";
 import { BILLING_PROVIDER, BillingPaymentMethod } from "../domain/billing-payment-method";
 import type { BillingPaymentMethodRepository, InvoiceRepository } from "../domain/repositories";
-import type { BillingTokenSealer, CardEnrolmentPort, CardTokenCallbackVerifier } from "./ports";
+import type {
+  BillingTokenSealer,
+  BillingTransactionCallbackVerifier,
+  CardEnrolmentPort,
+  CardTokenCallbackVerifier,
+  FinanceLedgerPort,
+} from "./ports";
 
 export interface PaymentMethodDeps {
   readonly methods: BillingPaymentMethodRepository;
@@ -73,6 +81,7 @@ export class BeginCardEnrolment implements UseCase<
       invoice.tenantRef,
       BILLING_PROVIDER,
       checkout.providerOrderId,
+      input.invoiceId,
       this.deps.clock.now(),
     );
     await this.deps.unitOfWork.run(async (tx) => {
@@ -208,5 +217,201 @@ export class RevokeBillingPaymentMethod implements UseCase<
         return ok({ revoked: true });
       },
     );
+  }
+}
+
+export interface RecordInvoiceTransactionInput {
+  readonly rawBody: Uint8Array;
+  readonly signature: string;
+  /** The platform tenant scope. The controller pins it; a caller cannot choose a merchant scope. */
+  readonly tenantId: string;
+}
+
+/**
+ * What actually happened to a VERIFIED callback. Every branch but a bad signature returns one of
+ * these with `ok` (200) — a verified callback the invoice cannot or need not accept is still
+ * acknowledged, never a 4xx/5xx that would make Paymob retry the same body forever.
+ */
+export type RecordInvoiceTransactionOutcome =
+  "paid" | "already_paid" | "ignored" | "no_enrolment" | "amount_mismatch" | "currency_mismatch";
+
+export interface RecordInvoiceTransactionOutput {
+  readonly outcome: RecordInvoiceTransactionOutcome;
+}
+
+export interface RecordInvoiceTransactionDeps {
+  readonly methods: BillingPaymentMethodRepository;
+  readonly invoices: InvoiceRepository;
+  readonly financeLedger: FinanceLedgerPort;
+  readonly transactionVerifier: BillingTransactionCallbackVerifier;
+  readonly unitOfWork: TransactionalUnitOfWork<unknown>;
+  readonly idGenerator: IdGenerator;
+  readonly clock: Clock;
+  readonly logger: Logger;
+}
+
+/**
+ * G-74 (8): Morbeh's billing TRANSACTION callback — the PSP's confirmation that the merchant's
+ * FIRST invoice (paid interactively via `BeginCardEnrolment`) actually settled. Without this, an
+ * operator had to mark that invoice `paid` by hand; every invoice after it already settles itself
+ * through `CollectInvoice`'s synchronous MIT response (T14.5).
+ *
+ * SECURITY (D-071): correlates on the SIGNED `order.id` only, via
+ * `BillingPaymentMethodRepository.findByProviderOrder` — never on `special_reference`, the
+ * unsigned field Paymob echoes `BeginCardEnrolment`'s `<invoiceId>:<version>:enrol` idempotency key
+ * back as (`paymob-payment-provider.ts`). `special_reference` is NOT among the 20 fields the
+ * transaction callback signs (`packages/psp-paymob/src/webhook-signature.ts`); trusting it would
+ * let anyone holding one valid billing callback replay it with that field rewritten to settle a
+ * DIFFERENT merchant's invoice. The signed order id resolves to a `BillingPaymentMethod` row, whose
+ * `invoiceRef` (recorded at `BeginCardEnrolment` time) is the only invoice this callback may settle.
+ */
+export class RecordInvoiceTransaction implements UseCase<
+  RecordInvoiceTransactionInput,
+  RecordInvoiceTransactionOutput,
+  DomainError
+> {
+  private static readonly MAX_CONCURRENCY_RETRIES = 5;
+  private readonly deps: RecordInvoiceTransactionDeps;
+
+  constructor(deps: RecordInvoiceTransactionDeps) {
+    this.deps = deps;
+  }
+
+  async execute(
+    input: RecordInvoiceTransactionInput,
+  ): Promise<Result<RecordInvoiceTransactionOutput, DomainError>> {
+    const verified = this.deps.transactionVerifier.verify(input.rawBody, input.signature);
+    if (verified === null) {
+      return err(
+        new AuthenticationError("Billing transaction callback signature verification failed"),
+      );
+    }
+
+    const method = await this.deps.methods.findByProviderOrder(
+      BILLING_PROVIDER,
+      verified.providerOrderId,
+      input.tenantId,
+    );
+    if (method === null || method.invoiceRef === undefined) {
+      this.deps.logger.warn(
+        "billing transaction callback for an order with no enrolled invoice — settling nothing",
+        { providerOrderId: verified.providerOrderId },
+      );
+      return ok({ outcome: "no_enrolment" });
+    }
+
+    // Decide, from SIGNED flags only, whether this callback reports an actual settlement. A
+    // pending, errored, voided, refunded, declined (`success: false`) or auth-without-capture
+    // transaction is not a payment; it is acknowledged and the invoice is left exactly as it was
+    // (relying on `Invoice.TRANSITIONS` to refuse un-paying is unnecessary here because these
+    // branches never call `markPaid` in the first place).
+    const isSettlement =
+      verified.success &&
+      !verified.pending &&
+      !verified.errorOccured &&
+      !verified.isVoided &&
+      !verified.isRefunded &&
+      !(verified.isAuth && !verified.isCapture);
+    if (!isSettlement) {
+      return ok({ outcome: "ignored" });
+    }
+
+    const invoiceRef = method.invoiceRef;
+    const tenantRef = method.tenantRef;
+    const settled = await this.withConcurrencyRetry(() =>
+      this.deps.unitOfWork.run<Result<RecordInvoiceTransactionOutput, DomainError>>(async (tx) => {
+        const invoice = await this.deps.invoices.findById(invoiceRef, input.tenantId, tx);
+        if (invoice === null) {
+          this.deps.logger.error(
+            "billing transaction callback names an invoice that no longer exists",
+            { invoiceId: invoiceRef, providerOrderId: verified.providerOrderId },
+          );
+          return ok({ outcome: "no_enrolment" });
+        }
+        // A replay of an already-settled invoice is a no-op — the state machine backs this too
+        // (`paid` has no outgoing transitions), but checking here avoids calling `markPaid` at all.
+        if (invoice.status === "paid") {
+          return ok({ outcome: "already_paid" });
+        }
+        if (invoice.status !== "issued") {
+          this.deps.logger.warn("billing transaction callback for an invoice that is not issued", {
+            invoiceId: invoiceRef,
+            status: invoice.status,
+          });
+          return ok({ outcome: "ignored" });
+        }
+        // Signed amount/currency must match the invoice's own total before it is trusted (the same
+        // check `paymob-payment-provider.ts`'s MIT charge makes) — a mismatch settles nothing, and
+        // is logged loud enough to reconcile by hand.
+        if (verified.amountMinor !== invoice.totalMinor) {
+          this.deps.logger.error(
+            "billing transaction callback amount does not match the invoice total — invoice left untouched",
+            {
+              invoiceId: invoiceRef,
+              signedAmountMinor: verified.amountMinor,
+              invoiceTotalMinor: invoice.totalMinor,
+            },
+          );
+          return ok({ outcome: "amount_mismatch" });
+        }
+        if (verified.currency !== invoice.currency) {
+          this.deps.logger.error(
+            "billing transaction callback currency does not match the invoice — invoice left untouched",
+            {
+              invoiceId: invoiceRef,
+              signedCurrency: verified.currency,
+              invoiceCurrency: invoice.currency,
+            },
+          );
+          return ok({ outcome: "currency_mismatch" });
+        }
+        try {
+          invoice.markPaid(
+            verified.transactionId,
+            this.deps.idGenerator.generate(),
+            this.deps.clock.now(),
+          );
+        } catch (error) {
+          if (isDomainError(error)) return err(error);
+          throw error;
+        }
+        await this.deps.invoices.save(invoice, input.tenantId, tx);
+        return ok({ outcome: "paid" });
+      }),
+    );
+
+    // Finance posting follows `CollectInvoice`'s shape: best-effort, and only when THIS call
+    // performed the actual `markPaid` write — a replay that resolved to `already_paid` must not
+    // double-post the same settlement.
+    if (settled.ok && settled.value.outcome === "paid") {
+      try {
+        await this.deps.financeLedger.postSettlement(
+          tenantRef,
+          verified.amountMinor,
+          verified.currency,
+          verified.transactionId,
+        );
+      } catch {
+        // Best-effort (see `CollectInvoice`): the collection itself already committed; a
+        // ledger-post failure here is a Finance-side reconciliation gap, not a payment failure.
+      }
+    }
+    return settled;
+  }
+
+  private async withConcurrencyRetry<T>(attempt: () => Promise<T>): Promise<T> {
+    for (let i = 1; i <= RecordInvoiceTransaction.MAX_CONCURRENCY_RETRIES; i += 1) {
+      try {
+        return await attempt();
+      } catch (error) {
+        if (
+          !(error instanceof ConcurrencyError) ||
+          i === RecordInvoiceTransaction.MAX_CONCURRENCY_RETRIES
+        ) {
+          throw error;
+        }
+      }
+    }
+    throw new Error("unreachable");
   }
 }

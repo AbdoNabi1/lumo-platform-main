@@ -151,6 +151,10 @@ model BillingPaymentMethod {
   provider        String
   /// The PSP order id of the interactive first payment: how its token callback is correlated.
   providerOrderId String   @map("provider_order_id")
+  /// G-74 (8): the invoice `BeginCardEnrolment` started this checkout for — how the billing
+  /// TRANSACTION callback reaches an invoice via the signed `order.id` alone. Nullable: absent on a
+  /// row created before this column existed. See migration `20260927000000_billing_payment_methods_invoice_ref`.
+  invoiceRef      String?  @map("invoice_ref")
   status          String // pending | active | revoked
   tokenId         String?  @map("token_id")
   sealedToken     String?  @map("sealed_token")

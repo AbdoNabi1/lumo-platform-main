@@ -78,7 +78,7 @@ action/job/AI request`); check whether billing entitlements should flow through 
       gained `billing-renewals` and `billing-dunning-retries`; a failed charge opens dunning
       (`EnterDunning`: `active -> grace`, existing `enterGrace`, first retry scheduled), a scheduled
       retry either recovers (`RetryDunningInvoice` -> `Subscription.recoverFromGrace`, `grace ->
-  active`), reschedules, or exhausts (`Subscription.exhaustDunning`, `grace -> expired`) once
+active`), reschedules, or exhausts (`Subscription.exhaustDunning`, `grace -> expired`) once
       the policy's `maxAttempts` is used up. `past_due` above is this codebase's `grace` — no second
       state was added. Every transition has its own test
       (`services/licensing/src/dunning.test.ts`), including "payment recovers mid-grace-period."
@@ -136,6 +136,26 @@ schedule lives in the EXISTING `retryPolicy` JSONB column (`nextRetryAt`/`invoic
 TypeScript shape only). Double-charge protection is `CollectInvoice`'s existing idempotency key, proven
 with a concurrent-retry test and a resume-from-`issued` test. Dunning notifications are NOT delivered:
 `assertProductionDunningNotificationsConfigured` refuses to boot outside `local` — see G-74 (12).
+
+**Update 2026-09-27 — the billing TRANSACTION callback lands, closing G-74 (8) and the Paymob half
+of G-74 (2).** A merchant can now pay their FIRST invoice with no operator touching it: Paymob's
+transaction-processed callback (the SAME 20-field scheme `packages/psp-paymob/src/webhook-signature.ts`
+already verified for the store's own webhook, now also verified against
+`PLATFORM_BILLING_PAYMOB_HMAC_SECRET`) is consumed by the new `RecordInvoiceTransaction` use case
+(`services/licensing/src/application/payment-method.use-cases.ts`) at its own route,
+`POST /platform-billing/paymob/transaction`. **Correlates on the signed `order.id` only, never the
+unsigned `special_reference`** — see the new **D-071** for the full reasoning, which is the
+recommended reading for anyone touching this callback. `licensing.billing_payment_methods` gained a
+nullable `invoice_ref` column (migration `20260927000000_billing_payment_methods_invoice_ref`,
+created, NOT applied) recorded at `BeginCardEnrolment` time so the signed order id can reach an
+invoice at all. The signed amount and currency are checked against the invoice before it is trusted;
+`pending`, an auth-without-capture, `error_occured`, voided and refunded transactions are each
+decided explicitly and never mark an invoice paid; a replay is a no-op via `Invoice`'s own state
+machine (`paid` has no outgoing transitions), so no new `ProcessedWebhookStore`-style table was
+added. Finance posting follows `CollectInvoice`'s best-effort, only-on-actual-write shape. **Still
+open:** the Stripe half of G-74 (2) (no Stripe billing webhook exists — Stripe billing cannot
+collect at all today, G-74 (11), so a webhook for a path that never charges stays out of scope);
+G-74 (9) (card update/expiry/3DS recovery); G-74 (10) (MIT idempotency unproven live).
 
 ## Definition of done
 

@@ -55,6 +55,8 @@ import type {
   BeginCardEnrolmentInput,
   RecordCardToken,
   RecordCardTokenInput,
+  RecordInvoiceTransaction,
+  RecordInvoiceTransactionInput,
   RevokeBillingPaymentMethod,
   RevokeBillingPaymentMethodInput,
 } from "../application/payment-method.use-cases";
@@ -112,6 +114,8 @@ export interface LicensingControllerDeps {
    */
   readonly beginCardEnrolment?: BeginCardEnrolment;
   readonly recordCardToken?: RecordCardToken;
+  /** G-74 (8): the billing TRANSACTION callback that settles the first invoice. Same presence rule as above. */
+  readonly recordInvoiceTransaction?: RecordInvoiceTransaction;
   readonly revokeBillingPaymentMethod?: RevokeBillingPaymentMethod;
   /**
    * The platform-operator tenant (WP-14, T14.2). Present ⇒ every operation that PRICES or GRANTS a
@@ -295,6 +299,21 @@ export class LicensingController {
    */
   async recordCardToken(input: RecordCardTokenInput): Promise<ControllerResponse> {
     const useCase = this.deps.recordCardToken;
+    if (useCase === undefined) return notConfigured();
+    const tenantId = this.deps.platformTenantId ?? input.tenantId;
+    return present(await useCase.execute({ ...input, tenantId }), 200);
+  }
+
+  /**
+   * G-74 (8): Morbeh's billing TRANSACTION callback — settles the merchant's first invoice once the
+   * PSP confirms it. NOT `platformOnly`, for the same reason as `recordCardToken`: the caller is the
+   * PSP, authenticated by the callback's own signature (checked inside the use case), not a tenant.
+   * The scope is pinned to the platform tenant regardless of what `input.tenantId` names.
+   */
+  async recordInvoiceTransaction(
+    input: RecordInvoiceTransactionInput,
+  ): Promise<ControllerResponse> {
+    const useCase = this.deps.recordInvoiceTransaction;
     if (useCase === undefined) return notConfigured();
     const tenantId = this.deps.platformTenantId ?? input.tenantId;
     return present(await useCase.execute({ ...input, tenantId }), 200);

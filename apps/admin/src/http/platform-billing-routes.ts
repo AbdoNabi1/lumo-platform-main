@@ -5,6 +5,8 @@ import type { WiredAdmin } from "../composition";
 /** Paymob's callback carries no field this route reads: the use case parses the verified, signed ones. */
 const cardTokenCallbackBody = z.object({}).passthrough();
 const cardTokenCallbackQuery = z.object({ hmac: z.string().min(1) });
+const invoiceTransactionCallbackBody = z.object({}).passthrough();
+const invoiceTransactionCallbackQuery = z.object({ hmac: z.string().min(1) });
 
 /**
  * Morbeh's OWN billing ingress — deliberately not `payments-webhook-routes.ts`. A merchant's store
@@ -39,6 +41,35 @@ export function platformBillingRoutes(admin: WiredAdmin): readonly RouteDefiniti
           };
         }
         return await admin.licensing.recordCardToken({
+          tenantId: context.tenantId,
+          rawBody: context.rawBody,
+          signature: query.hmac,
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/platform-billing/paymob/transaction",
+      version: 1,
+      permission: "licensing:billing:manage",
+      public: true,
+      // T10.6: the same reason as the card-token route — this callback is how a suspended tenant's
+      // overdue first invoice gets paid, so it must still be reachable while suspended.
+      allowWhenSuspended: true,
+      summary:
+        "Paymob billing TRANSACTION callback for Morbeh's own billing account (G-74 (8)) — settles the merchant's first invoice; signature-verified via the `hmac` query parameter, not staff-authenticated",
+      schema: {
+        body: invoiceTransactionCallbackBody,
+        querystring: invoiceTransactionCallbackQuery,
+      },
+      handle: async ({ query, context }) => {
+        if (context.rawBody === undefined) {
+          return {
+            status: 401,
+            body: { code: "UNAUTHORIZED", message: "Missing request body" },
+          };
+        }
+        return await admin.licensing.recordInvoiceTransaction({
           tenantId: context.tenantId,
           rawBody: context.rawBody,
           signature: query.hmac,

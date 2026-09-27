@@ -4,6 +4,7 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireLicensing } from "@platform/licensing";
 import { wirePayments } from "@platform/payments";
+import { concatenateSignedFields } from "@platform/psp-paymob";
 import { loadRuntimeConfig } from "./config";
 import { buildRuntimeCore } from "./composition";
 
@@ -512,5 +513,117 @@ describe("the saved-card callback shares nothing with a merchant-store payment",
       });
       expect(recorded.status).toBe(404);
     }
+  });
+});
+
+/**
+ * G-74 (8) — the billing TRANSACTION callback settles the merchant's FIRST invoice. Same isolation
+ * guarantee as the card-token callback above, proven end to end through the real composition root:
+ * Morbeh's real HMAC secret, the real 20-field transaction scheme, and the merchant's own store
+ * webhook never authenticate each other's callback.
+ */
+function signedTransactionCallback(orderId: string, secret: string, amountMinor: number) {
+  const obj = {
+    id: 300000001,
+    amount_cents: amountMinor,
+    created_at: "2026-09-27T10:00:00.000000",
+    currency: "EGP",
+    error_occured: false,
+    has_parent_transaction: false,
+    integration_id: 4001,
+    is_3d_secure: true,
+    is_auth: false,
+    is_capture: true,
+    is_refunded: false,
+    is_standalone_payment: true,
+    is_voided: false,
+    order: { id: orderId },
+    owner: 164295,
+    pending: false,
+    source_data: { pan: "2346", sub_type: "MasterCard", type: "card" },
+    success: true,
+  };
+  const concatenated = concatenateSignedFields(obj) ?? "";
+  return {
+    rawBody: new TextEncoder().encode(JSON.stringify({ type: "TRANSACTION", obj })),
+    signature: createHmac("sha512", secret).update(concatenated).digest("hex"),
+  };
+}
+
+describe("the billing TRANSACTION callback settles the first invoice through MORBEH's account only", () => {
+  it("a callback signed with Morbeh's real billing secret settles the interactive first invoice", async () => {
+    stubPaymobWire(outbound);
+    const core = buildRuntimeCore(loadRuntimeConfig(paymobBillingEnv));
+    const licensing = wireLicensing({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: sequentialIds(),
+      clock,
+      platformTenantId: PLATFORM,
+      ...(core.platformBillingStoredMethod === undefined
+        ? {}
+        : { storedMethodBilling: core.platformBillingStoredMethod }),
+    });
+    const invoice = await licensing.licensing.createInvoice({
+      tenantRef: MERCHANT,
+      subscriptionRef: "sub-first",
+      currency: "EGP",
+      lineItems: [{ description: "First period", amountMinor: 149900 }],
+      tenantId: PLATFORM,
+    });
+    const invoiceId = (invoice.body as { id: string }).id;
+    await licensing.licensing.issueInvoice({ invoiceId, tenantId: PLATFORM });
+    const begun = await licensing.licensing.beginCardEnrolment({ invoiceId, tenantId: PLATFORM });
+    const orderId = (begun.body as { providerOrderId: string }).providerOrderId;
+
+    const forged = signedTransactionCallback(orderId, "hmac_merchant_own", 149900);
+    const forgedResult = await licensing.licensing.recordInvoiceTransaction({
+      tenantId: PLATFORM,
+      ...forged,
+    });
+    expect(forgedResult.status).toBe(401);
+
+    const genuine = signedTransactionCallback(orderId, BILLING_PAYMOB_HMAC, 149900);
+    const recorded = await licensing.licensing.recordInvoiceTransaction({
+      tenantId: PLATFORM,
+      ...genuine,
+    });
+    expect(recorded.status).toBe(200);
+    expect((recorded.body as { outcome: string }).outcome).toBe("paid");
+  });
+
+  it("the store's own Paymob webhook verifier does not authenticate a billing-signed transaction callback", async () => {
+    const core = buildRuntimeCore(loadRuntimeConfig(paymobBillingEnv));
+    const payments = wirePayments({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: sequentialIds(),
+      clock,
+      paymentProvider: core.paymentProvider,
+      providerRegistrations: core.providerRegistrations,
+      paymentCredentialVault: core.paymentCredentialVault,
+    });
+    await payments.payments.updateMerchantPaymentSettings({
+      tenantId: MERCHANT,
+      enabledMethods: ["paymob"],
+      providerSettings: {
+        paymob: {
+          config: { region: "egy", integrationId: 158 },
+          credentials: {
+            secretKey: MERCHANT_PAYMOB_KEY,
+            hmacSecret: "hmac_merchant_own",
+            publicKey: "egy_pk_merchant_own",
+          },
+        },
+      },
+    });
+    const billingSigned = signedTransactionCallback("order-x", BILLING_PAYMOB_HMAC, 149900);
+
+    expect(
+      await payments.payments.verifyWebhook({
+        tenantId: MERCHANT,
+        provider: "paymob",
+        payload: billingSigned.rawBody,
+        signature: billingSigned.signature,
+      }),
+    ).toBe(false);
   });
 });
