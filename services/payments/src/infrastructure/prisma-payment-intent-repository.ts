@@ -61,11 +61,16 @@ export class PrismaPaymentIntentRepository implements PaymentIntentRepository {
     }
     const refunds = PaymentIntentMapper.toRefundRows(intent, tenantId);
     for (const refund of refunds) {
-      await client.refund.upsert({
-        where: { id: refund.id },
-        create: refund,
-        update: { status: refund.status },
+      // Scoped to (id, tenantId) rather than `upsert`ed by id alone (G-76): an id collision with
+      // another tenant's refund then fails create's own primary-key constraint instead of settling
+      // that tenant's row.
+      const updated = await client.refund.updateMany({
+        where: { id: refund.id, tenantId },
+        data: { status: refund.status },
       });
+      if (updated.count === 0) {
+        await client.refund.create({ data: refund });
+      }
     }
     const attempts = PaymentIntentMapper.toAttemptRows(intent, tenantId);
     if (attempts.length > 0) {

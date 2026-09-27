@@ -217,3 +217,36 @@ the static check (PG1) plus 5 sampled mutations (PR1–PR5), not one mutation ea
 | PR3 | [sample] catalog Prisma product findById where carries tenantId                  | Same, catalog product `findById`.                                                                                                                                         |
 | PR4 | [sample] inventory Prisma findById where carries tenantId                        | Same, inventory `findById`.                                                                                                                                               |
 | PR5 | [sample] catalog Prisma category findById where carries tenantId                 | Same, catalog category `findById`.                                                                                                                                        |
+
+### G-75 / G-76 — found by PG1's real-tree scan, deliberately left open, now closed (2026-09-27)
+
+PG1 (`check-prisma-tenant-where.mjs` run over the real tree, not a mutation) surfaced calls whose `where`
+never named the tenant. The orders/catalog/inventory shape above was fixed in this pass. Three others —
+`trackingEventRecord.findFirst` (G-75), `productVariant.upsert` and `refund.upsert` (both G-76) — could not
+be filtered the same way (`findFirst` needed a port change to carry the tenant at all; an `upsert`'s `where`
+cannot add a field without a compound unique) and were recorded as `open` exemptions in the guard rather than
+fixed in the pass that found them, per this document's own intro ("fix in a separate pass from the one that
+found it").
+
+Closed in a later session (2026-09-27):
+
+- **G-75.** `EventRecordStorePort.get` and `EventRecordWriterPort.appendHistory` now take `tenantId`
+  explicitly; `PrismaEventRecordStore` scopes `findFirst`/`count`/`create` on `(tenantId, eventId)` instead of
+  deriving the tenant from whatever row a client-suppliable `eventId` matched. The sole caller
+  (`delivery-runtime.ts:407`) already held `initial.tenantId`. `prisma-event-record-store.tenant.test.ts`'s
+  `it.fails` is now a plain `it()`, plus a control (`get()` returns null for another tenant's eventId, and
+  `appendHistory` rejects rather than adopting another tenant's row). Mutation-checked: dropping the tenant
+  from the `appendHistory` lookup again turns the rejection test red.
+- **G-76.** Both upserts became `updateMany({ where: { id, tenantId } })` with `create` on a count-0 miss —
+  no compound unique or migration needed. A collision now fails `create`'s own primary-key constraint instead
+  of crossing tenants. New fake-Prisma tenant-isolation tests:
+  `services/catalog/src/infrastructure/prisma-catalog-repositories.tenant.test.ts` and
+  `services/payments/src/infrastructure/prisma-payment-intent-repository.tenant.test.ts`. Mutation-checked:
+  dropping the tenant from the refund `updateMany`'s `where` turns its cross-tenant test red AND fails PG1.
+
+All three `open` exemptions are removed from `scripts/dev/check-prisma-tenant-where.mjs` — the guard now
+passes on the real filter, not a whitelist. `packages/db/src/prisma-tenant-where.guard.test.ts` gained the
+`productVariant`/`refund` upsert-by-id-alone equivalents of its "the exact mutation that used to be invisible
+is caught" cases, and its "lists the KNOWN GAPS as open" assertion now expects an empty list. **The survivor
+count above (31 of 145) is unchanged — these two were never mutation survivors; they were static-scan
+findings deliberately left open, and this is the record of them leaving that state.**

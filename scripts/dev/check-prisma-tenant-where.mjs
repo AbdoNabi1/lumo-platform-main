@@ -99,24 +99,9 @@ export const EXEMPTIONS = {
     reason:
       "ConsentProjectionStore port, not Prisma; the tenant is an explicit argument (readEnvelopeTenant)",
   },
-  // KNOWN GAPS. Each is a row addressed by id alone.
-  "apps/runtime/src/tracking/prisma-event-record-store.ts|trackingEventRecord.findFirst": {
-    cls: "open",
-    reason:
-      "G-75: appendHistory/get find the base row by eventId ALONE, but the key is (tenantId, eventId) and " +
-      "the collector accepts a client-supplied eventId — two tenants can share one, and history lands on whichever row is found first",
-  },
-  "services/catalog/src/infrastructure/prisma-catalog-repositories.ts|productVariant.upsert": {
-    cls: "open",
-    reason:
-      "G-76: upsert by id alone would move another tenant's variant if a variant id collided; reachable only " +
-      "with a client-chosen id, which no route accepts today (ids come from the tenant-scoped aggregate)",
-  },
-  "services/payments/src/infrastructure/prisma-payment-intent-repository.ts|refund.upsert": {
-    cls: "open",
-    reason:
-      "G-76: upsert by id alone; refund ids are server-generated on the tenant-scoped aggregate, so not reachable today",
-  },
+  // G-75 and G-76 (both classes of "a row addressed by id alone") closed 2026-09-27: the tracking
+  // store's findFirst now names the tenant, and the two upserts became updateMany-scoped-to-tenant +
+  // create-on-miss. No open exemptions remain — see docs/plans/phase-7/WP-10-guard-verification.md.
 };
 
 function walk(dir, out = []) {

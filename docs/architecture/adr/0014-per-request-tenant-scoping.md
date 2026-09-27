@@ -216,6 +216,27 @@ envelope.tenantId })`) read nothing, and turned gap F-02 ("`tenantId` is optiona
 > not a filter. Held as an executable `it.fails` in `prisma-event-record-store.tenant.test.ts`. **Not fixed in
 > the pass that found it.**
 
+> **Amended 2026-09-27 (Amendment 10 — G-75 and G-76 closed; WP-10's definition of done is now met).**
+> The defect Amendment 9 stated above, and the sibling id-only-upsert gap it named alongside it, are fixed.
+> **G-75.** `EventRecordStorePort.get` and `EventRecordWriterPort.appendHistory`
+> (`packages/tracking/src/inspector/event-record.ts`) now take `tenantId` explicitly; the adapter scopes
+> `findFirst`/`count`/`create` on `(tenantId, eventId)` — the table's actual key — instead of deriving the
+> tenant from whatever row a client-suppliable `eventId` happened to match. The sole caller
+> (`delivery-runtime.ts:407`) already held `initial.tenantId`; no resolver or ambient lookup was added. The
+> `it.fails` is now a plain `it()`, with a control (`get()` returns null for another tenant's eventId;
+> `appendHistory` rejects rather than adopting another tenant's row) and a mutation check (dropping the
+> tenant from the lookup again turns the rejection test red). **G-76.** `productVariant.upsert`/`refund.upsert`
+> (addressed by `id` alone) are now `updateMany({ where: { id, tenantId } })` with `create` on a count-0 miss
+> — no compound unique needed; a colliding id now fails `create`'s own primary-key constraint instead of
+> crossing tenants. Both were previously `open` exemptions in `scripts/dev/check-prisma-tenant-where.mjs`;
+> that list is now empty. **What this does and does not mean for `TENANT_MODE=multi`:** application-code
+> tenant isolation — the DoD this ADR states in point 1 above — no longer has a known live defect, so the
+> DoD is met and enabling multi is no longer blocked by G-75/G-76/G-53. This is **not** a statement that RLS
+> protects anything (point 1: `BYPASSRLS = true`, unchanged) or that Phase 2 is unblocked (item 10 above —
+> G-65, `PrismaUnitOfWork` not setting `app.tenant_id`, Amendment 3's N-of-N assertion — none of that was
+> touched). `TENANT_MODE=multi` remains unset in every env file, manifest and CI job; enabling it is an
+> operator decision, not automated by this amendment.
+
 ## Context
 
 ADR-0004 (2026-07-04) reserved `tenantId` on the integration-event envelope but explicitly deferred

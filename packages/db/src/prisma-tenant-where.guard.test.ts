@@ -58,13 +58,9 @@ describe("check-prisma-tenant-where: the real tree", () => {
     expect(result.stale).toEqual([]);
   });
 
-  it("lists the KNOWN GAPS as open rather than hiding them", async () => {
+  it("has no KNOWN GAPS left open (G-75, G-76 closed 2026-09-27)", async () => {
     const { open } = (await scanner())(repoRoot);
-    expect(open.map(([key]) => key).sort()).toEqual([
-      "apps/runtime/src/tracking/prisma-event-record-store.ts|trackingEventRecord.findFirst",
-      "services/catalog/src/infrastructure/prisma-catalog-repositories.ts|productVariant.upsert",
-      "services/payments/src/infrastructure/prisma-payment-intent-repository.ts|refund.upsert",
-    ]);
+    expect(open.map(([key]) => key)).toEqual([]);
   });
 
   it.each([
@@ -85,6 +81,24 @@ describe("check-prisma-tenant-where: the real tree", () => {
       "services/inventory/src/infrastructure/prisma-inventory-item-repository.ts",
       "where: { id, tenantId },\n        include: { reservations: true },",
       "where: { id },\n        include: { reservations: true },",
+    ],
+    [
+      "tracking appendHistory/get base-row lookup (G-75)",
+      "apps/runtime/src/tracking/prisma-event-record-store.ts",
+      "where: { tenantId: input.tenantId, eventId: input.eventId },",
+      "where: { eventId: input.eventId },",
+    ],
+    [
+      "catalog productVariant upsert-by-id-alone (G-76)",
+      "services/catalog/src/infrastructure/prisma-catalog-repositories.ts",
+      "where: { id: row.id, tenantId },",
+      "where: { id: row.id },",
+    ],
+    [
+      "payments refund upsert-by-id-alone (G-76)",
+      "services/payments/src/infrastructure/prisma-payment-intent-repository.ts",
+      "where: { id: refund.id, tenantId },",
+      "where: { id: refund.id },",
     ],
   ])(
     "the exact mutation that used to be invisible is caught: %s loses its tenant filter",

@@ -92,7 +92,16 @@ export class PrismaProductRepository implements ProductRepository {
     });
     for (const row of ProductMapper.toVariantRows(product, tenantId)) {
       const data = { ...row, selection: jsonOrDbNull(row.selection) };
-      await client.productVariant.upsert({ where: { id: row.id }, create: data, update: data });
+      // Scoped to (id, tenantId) rather than `upsert`ed by id alone (G-76): an id collision with
+      // another tenant's variant then fails create's own primary-key constraint instead of
+      // overwriting that tenant's row.
+      const updated = await client.productVariant.updateMany({
+        where: { id: row.id, tenantId },
+        data,
+      });
+      if (updated.count === 0) {
+        await client.productVariant.create({ data });
+      }
     }
 
     await this.deps.outbox.write(

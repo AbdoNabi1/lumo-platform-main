@@ -406,6 +406,7 @@ export async function receiveAndDeliver(
 
   await deps.records.appendHistory({
     eventId: initial.eventId,
+    tenantId: initial.tenantId,
     stages: [deliveryStage, retryStage],
     destinations: finalEntries,
     state,
