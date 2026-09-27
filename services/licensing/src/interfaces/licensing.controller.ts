@@ -62,6 +62,15 @@ import type {
   BillSubscriptionRenewal,
   BillSubscriptionRenewalInput,
 } from "../application/renewal.use-cases";
+import type {
+  EnterDunning,
+  EnterDunningInput,
+  ListDueInput,
+  ListSubscriptionsDueForDunningRetry,
+  ListSubscriptionsDueForRenewal,
+  RetryDunningInvoice,
+  RetryDunningInvoiceInput,
+} from "../application/dunning.use-cases";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface LicensingControllerDeps {
@@ -81,6 +90,11 @@ export interface LicensingControllerDeps {
   readonly cancelSubscription: CancelSubscription;
   readonly previewRenewal: PreviewRenewal;
   readonly billSubscriptionRenewal: BillSubscriptionRenewal;
+  /** T14.5 (dunning) — the renewal-billing scheduler job's own read; platform-only like every other billing operation. */
+  readonly listSubscriptionsDueForRenewal: ListSubscriptionsDueForRenewal;
+  readonly listSubscriptionsDueForDunningRetry: ListSubscriptionsDueForDunningRetry;
+  readonly enterDunning: EnterDunning;
+  readonly retryDunningInvoice: RetryDunningInvoice;
   readonly setMerchantFeatureOverride: SetMerchantFeatureOverride;
   readonly grantMerchantCapability: GrantMerchantCapability;
   readonly revokeMerchantCapability: RevokeMerchantCapability;
@@ -231,6 +245,34 @@ export class LicensingController {
   async billSubscriptionRenewal(input: BillSubscriptionRenewalInput): Promise<ControllerResponse> {
     return this.platformOnly(input, async () =>
       present(await this.deps.billSubscriptionRenewal.execute(input), 200),
+    );
+  }
+
+  /** T14.5: subscriptions due for renewal billing, under the platform tenant scope only. */
+  async listSubscriptionsDueForRenewal(input: ListDueInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.listSubscriptionsDueForRenewal.execute(input), 200),
+    );
+  }
+
+  /** T14.5: subscriptions due for a dunning retry, under the platform tenant scope only. */
+  async listSubscriptionsDueForDunningRetry(input: ListDueInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.listSubscriptionsDueForDunningRetry.execute(input), 200),
+    );
+  }
+
+  /** T14.5: a renewal charge just failed — opens the dunning grace period and schedules the first retry. */
+  async enterDunning(input: EnterDunningInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.enterDunning.execute(input), 200),
+    );
+  }
+
+  /** T14.5: runs one scheduled dunning retry (re-issue + collect) for a subscription in grace. */
+  async retryDunningInvoice(input: RetryDunningInvoiceInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.retryDunningInvoice.execute(input), 200),
     );
   }
 

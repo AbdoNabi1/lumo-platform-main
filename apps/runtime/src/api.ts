@@ -238,6 +238,48 @@ export function assertProductionSignupEmailConfigured(
 }
 
 /**
+ * T14.5 (dunning) — a merchant about to lose service to non-payment must be notified before it
+ * happens. `buildDunningNotificationsConsumerRuntimes` (`consumers/dunning-notifications.consumers.ts`)
+ * reacts to `licensing.subscription.{entered_grace,recovered_from_grace,dunning_exhausted}` by
+ * opening a `Notification` row through `CreateNotification` — it deliberately never calls a provider
+ * directly, the same "create and stop" scope `NotificationsOrdersPaidConsumer` already has, because
+ * every provider in `services/notifications` is still an offline, environment-unaware in-memory stub
+ * with no delivery path (that class's own doc comment; a pre-existing, separately tracked gap — see
+ * the gap register). For an order confirmation that gap is a missed nicety; for dunning it is the one
+ * message a merchant must receive before a grace period starts, or before losing service to
+ * non-payment — a business-critical failure waiting to happen, not an acceptable placeholder.
+ *
+ * Unlike the `instanceof`-on-a-resolved-value guards above, this one is unconditional: nothing in
+ * this codebase composes a real delivery path for a created Notification anywhere — no env var, no
+ * adapter, no config branch (D4: "the user's choice", deliberately out of scope everywhere it has
+ * come up before). It refuses to boot outside `local` until an operator (1) builds a real
+ * `EmailProviderPort` (or other channel) adapter, (2) plumbs it through
+ * `NotificationsWiringDeps`/`AdminWiringDeps`, and (3) has this file's call to `createAdminHttpApi`
+ * pass it (deliberately omitted today — see the comment at that call site: "notifications is
+ * deliberately absent here").
+ */
+export function assertProductionDunningNotificationsConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+): void {
+  if (appEnv === "local") {
+    logger.warn(
+      "Dunning notifications are not deliverable: no real notification provider is composed " +
+        "anywhere (APP_ENV=local, not enforced)",
+    );
+    return;
+  }
+  throw new Error(
+    "api: dunning is enabled (T14.5) but no real notification delivery path exists. A merchant " +
+      "entering the grace period, recovering mid-grace, or losing service to non-payment must be " +
+      "notified before it happens; services/notifications' provider ports are permanent offline " +
+      "stubs with no delivery path. This must never back dunning outside APP_ENV=local. Operator " +
+      "steps: build a real EmailProviderPort (or other channel) adapter, wire it through " +
+      "NotificationsWiringDeps/AdminWiringDeps, and pass it from this file's call to " +
+      "createAdminHttpApi (deliberately omitted today).",
+  );
+}
+
+/**
  * Stage 5 / Phase 3 (audit remediation plan, C-03): this guard originally covered 12 outbound
  * ports Orders/Checkout/Payments call to reach across context boundaries, all still offline
  * in-memory stubs. Tasks 9-13 wired real adapters over 8 of them (pricingValidation,
@@ -433,6 +475,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     collectGuardFailure(() =>
       assertProductionSignupEmailConfigured(config.APP_ENV, runtime.signupEmail),
     ),
+    collectGuardFailure(() => assertProductionDunningNotificationsConfigured(config.APP_ENV)),
   ].filter((message): message is string => message !== undefined);
 
   if (guardFailures.length > 0) {

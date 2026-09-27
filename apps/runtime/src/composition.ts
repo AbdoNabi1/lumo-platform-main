@@ -51,8 +51,10 @@ import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import {
   PlatformBillingPaymentsAdapter,
+  wireLicensing,
   type PaymentsPort,
   type StoredMethodBillingDeps,
+  type WiredLicensing,
 } from "@platform/licensing";
 import { buildPlatformBillingStoredMethod } from "./platform-billing-stored-method";
 import {
@@ -162,6 +164,22 @@ export interface RuntimeCore {
    * configured. Holds no merchant credential; the card token it stores is sealed with the real vault.
    */
   readonly platformBillingStoredMethod: StoredMethodBillingDeps | undefined;
+  /**
+   * T14.5/G-74 (7): Licensing's own composition root, wired independently of `apps/admin`'s (same
+   * shared `prisma` client, separate object graph — the same duplication `platformBillingPayments`
+   * above already accepts, since the scheduler/worker processes never go through
+   * `createAdminHttpApi`). The renewal-billing and dunning-retry scheduler jobs (`scheduler.ts`) call
+   * `licensing.licensing` (the `LicensingController`, so the platform-only guard applies to a
+   * scheduled job exactly like an HTTP caller) and read `licensing.subscriptions` directly for the
+   * due-subscription sweep.
+   */
+  readonly licensing: WiredLicensing;
+  /**
+   * The ADR-0014 platform-operator tenant scope every Licensing call in this process uses — always a
+   * concrete id (never the merchant's own `tenantRef`), same value under `single` and `multi`
+   * (`apps/admin`'s `deploymentScope` computes the same thing for the HTTP surface).
+   */
+  readonly platformTenantId: string;
   /**
    * Production MFA provider resolver (C2-4). Real RFC 6238 `TotpMfaProvider` over `NodeCrypto`,
    * built unconditionally — unlike `objectStorage`/`paymentProvider`, this needs no external
@@ -330,6 +348,21 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     logger,
   );
 
+  // ADR-0014 8f shape: the platform-operator tenant scope. Under `multi` it is the deployment
+  // tenant (`TENANT_DEFAULT_ID`) and `LicensingController`'s platformOnly guard is live; under
+  // `single` there is only one tenant, so it IS the platform and the guard is inert — the same
+  // `deploymentScope` logic `apps/admin/src/http/server.ts` uses for the HTTP surface.
+  const platformTenantId = config.TENANT_DEFAULT_ID;
+  const licensing = wireLicensing({
+    prisma,
+    serializer,
+    idGenerator,
+    clock,
+    payments: platformBillingPayments,
+    storedMethodBilling: platformBillingStoredMethod,
+    platformTenantId: config.TENANT_MODE === "multi" ? platformTenantId : undefined,
+  });
+
   return {
     config,
     logger,
@@ -352,6 +385,8 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     paymentCredentialVault,
     platformBillingPayments,
     platformBillingStoredMethod,
+    licensing,
+    platformTenantId,
     mfaProviders,
     signupEmail: new LoggingSignupEmailAdapter(),
   };

@@ -433,18 +433,28 @@ describe("cdc-watchdog job (Phase A.23, Task 3/4)", () => {
 /**
  * T10.7 — every scheduled job is classified, and a job's lock key is global on purpose.
  *
- * Both jobs act on shared infrastructure (one `platform.outbox` table, one Kafka Connect cluster) and
- * touch no tenant's business data, so they are platform-global: they run ONCE per tick for the whole
- * platform, under a lock keyed by job name alone. A job that processes a tenant's business data must
- * instead run per tenant with a tenant-qualified lock (`job:<name>:<tenant>`); a global lock there
- * would let one tenant's slow run starve every other tenant's. This table forces that decision:
- * adding a job fails the test until it is classified here, and a job classified per-tenant cannot
- * pass through the global loop unnoticed.
+ * `outbox-prune`/`cdc-watchdog` act on shared infrastructure (one `platform.outbox` table, one Kafka
+ * Connect cluster) and touch no tenant's business data at all: `platform-global`. A job that
+ * processes a MERCHANT tenant's business data (a per-ADR-0014-tenant one, once such a job exists)
+ * would instead need to run per tenant with a tenant-qualified lock (`job:<name>:<tenant>`) — a
+ * global lock there would let one tenant's slow run starve every other tenant's.
+ *
+ * `billing-renewals`/`billing-dunning-retries` (T14.5) are a third shape, `platform-tenant-scoped`:
+ * they DO touch business data (each subscription's own `tenantRef`, a merchant), but that data lives
+ * under exactly ONE ADR-0014 tenant scope regardless of `TENANT_MODE` — Licensing's billing tables
+ * are platform-owned (D-062), never scoped per merchant tenant. There is only ever one list to sweep,
+ * so the global, job-name-only lock is still correct: sharding it per (non-existent) ADR-0014 tenant
+ * would buy nothing, and every write still goes through `LicensingController`'s platformOnly guard.
+ *
+ * This table forces the classification decision: adding a job fails the test until it is classified
+ * here, and a job classified per-tenant cannot pass through the global loop unnoticed.
  */
 describe("scheduled jobs are classified for tenancy (T10.7)", () => {
-  const CLASSIFICATION: Readonly<Record<string, "platform-global">> = {
+  const CLASSIFICATION: Readonly<Record<string, "platform-global" | "platform-tenant-scoped">> = {
     "outbox-prune": "platform-global",
     "cdc-watchdog": "platform-global",
+    "billing-renewals": "platform-tenant-scoped",
+    "billing-dunning-retries": "platform-tenant-scoped",
   };
 
   it("has exactly the jobs the classification names — a new job must be classified before it ships", () => {
@@ -483,6 +493,184 @@ describe("scheduled jobs are classified for tenancy (T10.7)", () => {
       await vi.advanceTimersByTimeAsync(1000);
       for (const timer of timers) clearInterval(timer);
       expect(acquired.sort()).toEqual(["job:cdc-watchdog", "job:outbox-prune"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+/**
+ * T14.5/G-74 (7) — the renewal-billing and dunning-retry jobs' own ORCHESTRATION logic (calling the
+ * right `LicensingController` method for each due subscription and reacting to its result), tested
+ * against a fake controller. The underlying state machine itself (grace/recovery/exhaustion, the
+ * double-charge protection) is `services/licensing/src/dunning.test.ts`'s job — this suite only
+ * proves the job wires the two together correctly.
+ */
+describe("billing-renewals / billing-dunning-retries jobs (T14.5)", () => {
+  interface FakeLicensingController {
+    readonly listSubscriptionsDueForRenewal: ReturnType<typeof vi.fn>;
+    readonly billSubscriptionRenewal: ReturnType<typeof vi.fn>;
+    readonly enterDunning: ReturnType<typeof vi.fn>;
+    readonly listSubscriptionsDueForDunningRetry: ReturnType<typeof vi.fn>;
+    readonly retryDunningInvoice: ReturnType<typeof vi.fn>;
+  }
+
+  function fakeBillingCore(overrides: Partial<FakeLicensingController> = {}): {
+    core: RuntimeCore;
+    licensing: FakeLicensingController;
+    errors: unknown[];
+    warnings: unknown[];
+  } {
+    const errors: unknown[] = [];
+    const warnings: unknown[] = [];
+    const logger: Logger = {
+      ...silentLogger,
+      error: (...args: unknown[]) => void errors.push(args),
+      warn: (...args: unknown[]) => void warnings.push(args),
+    };
+    const licensing: FakeLicensingController = {
+      listSubscriptionsDueForRenewal: vi.fn().mockResolvedValue({
+        status: 200,
+        body: { subscriptionIds: [] },
+      }),
+      billSubscriptionRenewal: vi.fn(),
+      enterDunning: vi.fn(),
+      listSubscriptionsDueForDunningRetry: vi.fn().mockResolvedValue({
+        status: 200,
+        body: { subscriptionIds: [] },
+      }),
+      retryDunningInvoice: vi.fn(),
+      ...overrides,
+    };
+    const core = {
+      config: {} as RuntimeCore["config"],
+      logger,
+      platformTenantId: "platform-tenant",
+      licensing: { licensing },
+    } as unknown as RuntimeCore;
+    return { core, licensing, errors, warnings };
+  }
+
+  function findJob(core: RuntimeCore, name: string) {
+    const job = buildJobs(core).find((j) => j.name === name);
+    if (job === undefined) throw new Error(`job ${name} not found`);
+    return job;
+  }
+
+  it("billing-renewals: bills each due subscription and enters dunning on a failed charge", async () => {
+    const { core, licensing } = fakeBillingCore({
+      listSubscriptionsDueForRenewal: vi.fn().mockResolvedValue({
+        status: 200,
+        body: { subscriptionIds: ["sub-paying", "sub-declining"] },
+      }),
+      billSubscriptionRenewal: vi
+        .fn()
+        .mockResolvedValueOnce({ status: 200, body: { invoiceId: "inv-1", status: "paid" } })
+        .mockResolvedValueOnce({ status: 200, body: { invoiceId: "inv-2", status: "failed" } }),
+      enterDunning: vi.fn().mockResolvedValue({ status: 200, body: { status: "grace" } }),
+    });
+
+    await findJob(core, "billing-renewals").run();
+
+    expect(licensing.listSubscriptionsDueForRenewal).toHaveBeenCalledWith({
+      tenantId: "platform-tenant",
+    });
+    expect(licensing.billSubscriptionRenewal).toHaveBeenCalledTimes(2);
+    expect(licensing.billSubscriptionRenewal).toHaveBeenNthCalledWith(1, {
+      subscriptionId: "sub-paying",
+      tenantId: "platform-tenant",
+    });
+    // Only the FAILED renewal enters dunning — a paid one never does.
+    expect(licensing.enterDunning).toHaveBeenCalledTimes(1);
+    expect(licensing.enterDunning).toHaveBeenCalledWith({
+      subscriptionId: "sub-declining",
+      invoiceId: "inv-2",
+      tenantId: "platform-tenant",
+    });
+  });
+
+  it("billing-renewals: a subscription the list does not return is never billed (not-yet-due is excluded upstream)", async () => {
+    const { core, licensing } = fakeBillingCore();
+    await findJob(core, "billing-renewals").run();
+    expect(licensing.billSubscriptionRenewal).not.toHaveBeenCalled();
+  });
+
+  it("billing-renewals: logs and continues past a failed listing call rather than throwing", async () => {
+    const { core, licensing, errors } = fakeBillingCore({
+      listSubscriptionsDueForRenewal: vi.fn().mockResolvedValue({ status: 500, body: {} }),
+    });
+    await expect(findJob(core, "billing-renewals").run()).resolves.toBeUndefined();
+    expect(licensing.billSubscriptionRenewal).not.toHaveBeenCalled();
+    expect(errors).toHaveLength(1);
+  });
+
+  it("billing-dunning-retries: runs a retry for each due subscription and logs by outcome", async () => {
+    const { core, licensing, warnings } = fakeBillingCore({
+      listSubscriptionsDueForDunningRetry: vi.fn().mockResolvedValue({
+        status: 200,
+        body: { subscriptionIds: ["sub-recovering", "sub-exhausting"] },
+      }),
+      retryDunningInvoice: vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: 200,
+          body: { outcome: "recovered", invoiceId: "inv-1" },
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          body: { outcome: "exhausted", invoiceId: "inv-2" },
+        }),
+    });
+
+    await findJob(core, "billing-dunning-retries").run();
+
+    expect(licensing.retryDunningInvoice).toHaveBeenCalledTimes(2);
+    expect(licensing.retryDunningInvoice).toHaveBeenNthCalledWith(1, {
+      subscriptionId: "sub-recovering",
+      tenantId: "platform-tenant",
+    });
+    // Only "exhausted" — the point service is lost — is logged at warn severity.
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("locks each billing job by its name alone, same as the platform-global jobs", async () => {
+    vi.useFakeTimers();
+    try {
+      const acquired: string[] = [];
+      const lock = {
+        acquire: async (key: string) => {
+          acquired.push(key);
+          return { release: async () => true };
+        },
+      };
+      const timers = startJobLoop(
+        [
+          { name: "billing-renewals", intervalMs: 1000, run: async () => undefined },
+          { name: "billing-dunning-retries", intervalMs: 1000, run: async () => undefined },
+        ],
+        silentLogger,
+        lock,
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      for (const timer of timers) clearInterval(timer);
+      expect(acquired.sort()).toEqual(["job:billing-dunning-retries", "job:billing-renewals"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a second instance does not double-bill while the lock is held (same mechanism as outbox-prune)", async () => {
+    vi.useFakeTimers();
+    try {
+      let ran = 0;
+      const timers = startJobLoop(
+        [{ name: "billing-renewals", intervalMs: 5, run: async () => void (ran += 1) }],
+        silentLogger,
+        { acquire: async () => null }, // another instance holds the lock
+      );
+      await vi.advanceTimersByTimeAsync(25);
+      for (const timer of timers) clearInterval(timer);
+      expect(ran).toBe(0);
     } finally {
       vi.useRealTimers();
     }

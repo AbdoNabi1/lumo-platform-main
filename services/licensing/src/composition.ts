@@ -47,6 +47,14 @@ import {
   RevokeBillingPaymentMethod,
 } from "./application/payment-method.use-cases";
 import { BillSubscriptionRenewal } from "./application/renewal.use-cases";
+import {
+  DEFAULT_DUNNING_POLICY,
+  EnterDunning,
+  ListSubscriptionsDueForDunningRetry,
+  ListSubscriptionsDueForRenewal,
+  RetryDunningInvoice,
+  type DunningPolicy,
+} from "./application/dunning.use-cases";
 import type { OffSessionCharger } from "@platform/contracts";
 import type {
   BillingPaymentMethodRepository,
@@ -152,12 +160,20 @@ export interface LicensingWiringDeps {
    * `apps/admin`'s composition passes the deployment tenant under `TENANT_MODE=multi` (ADR-0014 8f).
    */
   readonly platformTenantId?: string;
+  /** T14.5 (dunning): the retry schedule and grace period. Absent ⇒ {@link DEFAULT_DUNNING_POLICY}. */
+  readonly dunningPolicy?: DunningPolicy;
 }
 
 export interface WiredLicensing {
   readonly licensing: LicensingController;
   /** The platform-scoped saved-card store: exposed for the composition root and for isolation tests. */
   readonly billingPaymentMethods: BillingPaymentMethodRepository;
+  /**
+   * T14.5/G-74 (7): exposed for the composition root — the renewal-billing and dunning-retry
+   * scheduler jobs read due subscriptions directly (a genuinely cross-tenant sweep, ADR-0014 point
+   * 4), the same reason `billingPaymentMethods` above is exposed rather than kept private.
+   */
+  readonly subscriptions: SubscriptionRepository;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
 }
@@ -213,6 +229,17 @@ function buildController(
   };
 
   const collectInvoice = new CollectInvoice(billingDeps);
+  const issueInvoiceForDunning = new IssueInvoice(billingDeps);
+  const dunningDeps = {
+    subscriptions: repos.subscriptions,
+    invoices: repos.invoices,
+    issueInvoice: issueInvoiceForDunning,
+    collectInvoice,
+    unitOfWork,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+    policy: deps.dunningPolicy ?? DEFAULT_DUNNING_POLICY,
+  };
   const paymentMethodDeps =
     stored === undefined
       ? undefined
@@ -260,6 +287,10 @@ function buildController(
     resumeSubscription: new ResumeSubscription(licensingDeps),
     cancelSubscription: new CancelSubscription(licensingDeps),
     previewRenewal: new PreviewRenewal(licensingDeps),
+    listSubscriptionsDueForRenewal: new ListSubscriptionsDueForRenewal(dunningDeps),
+    listSubscriptionsDueForDunningRetry: new ListSubscriptionsDueForDunningRetry(dunningDeps),
+    enterDunning: new EnterDunning(dunningDeps),
+    retryDunningInvoice: new RetryDunningInvoice(dunningDeps),
     setMerchantFeatureOverride: new SetMerchantFeatureOverride(licensingDeps),
     grantMerchantCapability: new GrantMerchantCapability(licensingDeps),
     revokeMerchantCapability: new RevokeMerchantCapability(licensingDeps),
@@ -304,6 +335,7 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
     return {
       licensing: buildController(repos, unitOfWork, deps),
       billingPaymentMethods: repos.billingPaymentMethods,
+      subscriptions: repos.subscriptions,
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -356,6 +388,7 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
   return {
     licensing: controller,
     billingPaymentMethods: repos.billingPaymentMethods,
+    subscriptions: repos.subscriptions,
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

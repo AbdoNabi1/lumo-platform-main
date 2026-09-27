@@ -12,6 +12,7 @@ import {
 } from "./composition";
 import { buildJobs, startJobLoop } from "./scheduler";
 import {
+  assertProductionDunningNotificationsConfigured,
   assertProductionIntegrationPortsConfigured,
   assertProductionLicensingBillingConfigured,
   assertProductionObjectStorageConfigured,
@@ -209,20 +210,22 @@ describe("api entrypoint", () => {
 
   it("G0-4 (launch-readiness review): a fresh non-local boot names EVERY failed guard in one error, not just the first", async () => {
     // The default local composition core has no production PSP/Licensing/ObjectStorage/
-    // integration-port/SignupEmail adapters wired at all — every one of the 5 still-open guards
-    // should fail together. MFA (C2-4) is deliberately absent from this list — closed above.
+    // integration-port/SignupEmail adapters wired at all, and dunning notifications have no real
+    // delivery path anywhere (T14.5, unconditional) — every one of the 6 still-open guards should
+    // fail together. MFA (C2-4) is deliberately absent from this list — closed above.
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     const prodConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
       KETO_READ_URL: "https://keto.morbeh.local",
     });
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/5 production guards failed/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/6 production guards failed/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/PaymentProvider/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/Licensing/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/object-storage/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/still offline in-memory/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/SignupEmailPort/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/dunning is enabled/);
   });
 
   const noPayments = {
@@ -539,6 +542,16 @@ describe("api entrypoint", () => {
   it("G-72: buildRuntimeCore always resolves the logging adapter (no real provider is wired anywhere — D4, out of scope)", () => {
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     expect(core.signupEmail).toBeInstanceOf(LoggingSignupEmailAdapter);
+  });
+
+  it("T14.5: dunning is enabled + no real notification delivery path ⇒ FAILS CLOSED outside local", () => {
+    expect(() => assertProductionDunningNotificationsConfigured("production")).toThrow(
+      /dunning is enabled/,
+    );
+  });
+
+  it("T14.5: stays permissive in local (matches the other guards' dev-mode behavior)", () => {
+    expect(() => assertProductionDunningNotificationsConfigured("local")).not.toThrow();
   });
 
   it("FAILS CLOSED outside local while any integration port is still an offline stub (Phase 3, C-03) — names every stubbed port in one error, matching the real production literal (api.ts's `integrationPorts`) which lists exactly these 4 after Tasks 9-13 wired real adapters over 8 of the original 12 and Task 17a wired the 9th, orderCreation (C-2)", () => {
@@ -1103,7 +1116,12 @@ describe("scheduler jobs", () => {
   it("defines the outbox-prune job and the loop respects the distributed lock", async () => {
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     const jobs = buildJobs(core);
-    expect(jobs.map((j) => j.name)).toEqual(["outbox-prune", "cdc-watchdog"]);
+    expect(jobs.map((j) => j.name)).toEqual([
+      "outbox-prune",
+      "cdc-watchdog",
+      "billing-renewals",
+      "billing-dunning-retries",
+    ]);
 
     let ran = 0;
     const silent: Logger = {

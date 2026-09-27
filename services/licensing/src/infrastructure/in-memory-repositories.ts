@@ -92,6 +92,30 @@ export class InMemorySubscriptionRepository implements SubscriptionRepository {
     }
     return null;
   }
+
+  async findDueForRenewal(before: Date, tenantId: string): Promise<readonly Subscription[]> {
+    const due: Subscription[] = [];
+    for (const entry of this.store.values()) {
+      if (entry.tenantId !== tenantId || entry.subscription.status !== "active") continue;
+      const nextRenewalAt = entry.subscription.renewalSchedule?.nextRenewalAt;
+      if (nextRenewalAt !== undefined && nextRenewalAt.getTime() <= before.getTime()) {
+        due.push(entry.subscription);
+      }
+    }
+    return due;
+  }
+
+  async findDueForDunningRetry(before: Date, tenantId: string): Promise<readonly Subscription[]> {
+    const due: Subscription[] = [];
+    for (const entry of this.store.values()) {
+      if (entry.tenantId !== tenantId || entry.subscription.status !== "grace") continue;
+      const nextRetryAt = entry.subscription.retryPolicy?.nextRetryAt;
+      if (nextRetryAt !== undefined && nextRetryAt.getTime() <= before.getTime()) {
+        due.push(entry.subscription);
+      }
+    }
+    return due;
+  }
 }
 
 export class InMemoryMerchantFeatureOverrideRepository implements MerchantFeatureOverrideRepository {

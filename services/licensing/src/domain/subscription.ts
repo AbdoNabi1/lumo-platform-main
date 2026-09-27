@@ -21,6 +21,10 @@ export interface RenewalSchedule {
 export interface RetryPolicy {
   readonly maxAttempts: number;
   readonly attempt: number;
+  /** T14.5 (dunning): when the next retry is due. Absent once dunning ends (recovered/exhausted). */
+  readonly nextRetryAt?: Date;
+  /** T14.5 (dunning): the failed invoice this retry schedule is chasing. */
+  readonly invoiceRef?: string;
 }
 
 interface SubscriptionProps {
@@ -90,6 +94,26 @@ export class Subscription extends AggregateRoot<SubscriptionProps> {
     this.transition("expired", eventId, occurredAt, "expired");
   }
 
+  /**
+   * T14.5 (dunning): a mid-grace retry collected successfully. Same target status as {@link activate}
+   * (`grace -> active`) but its own action/event name — distinct from a fresh `trial -> active`
+   * activation — so a notifications consumer (or anyone reading the event stream) can tell "a new
+   * subscription started" from "a payment recovered mid-dunning" without inspecting prior state.
+   */
+  recoverFromGrace(eventId: string, occurredAt: Date): void {
+    this.transition("active", eventId, occurredAt, "recovered_from_grace");
+  }
+
+  /**
+   * T14.5 (dunning): every scheduled retry was exhausted with no successful collection. Same target
+   * status as {@link expire} (`grace -> expired`) but its own action/event name, for the same reason
+   * `recoverFromGrace` has one — this is the state a merchant loses service to non-payment in, not a
+   * routine trial/plan expiry.
+   */
+  exhaustDunning(eventId: string, occurredAt: Date): void {
+    this.transition("expired", eventId, occurredAt, "dunning_exhausted");
+  }
+
   suspend(eventId: string, occurredAt: Date): void {
     this.transition("suspended", eventId, occurredAt, "suspended");
   }
@@ -113,7 +137,7 @@ export class Subscription extends AggregateRoot<SubscriptionProps> {
     this.props.renewalSchedule = schedule;
   }
 
-  setRetryPolicy(policy: RetryPolicy): void {
+  setRetryPolicy(policy: RetryPolicy | undefined): void {
     this.props.retryPolicy = policy;
   }
 

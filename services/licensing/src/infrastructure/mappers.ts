@@ -162,7 +162,18 @@ export class SubscriptionMapper {
                 nextRenewalAt: new Date(row.renewalSchedule.nextRenewalAt),
               },
         gracePeriodDays: row.gracePeriodDays ?? undefined,
-        retryPolicy: row.retryPolicy ?? undefined,
+        // JSONB hands `nextRetryAt` back as an ISO string too; revive it the same way as
+        // `renewalSchedule.nextRenewalAt` above (T14.5).
+        retryPolicy:
+          row.retryPolicy === null || row.retryPolicy === undefined
+            ? undefined
+            : {
+                ...row.retryPolicy,
+                nextRetryAt:
+                  row.retryPolicy.nextRetryAt === undefined
+                    ? undefined
+                    : new Date(row.retryPolicy.nextRetryAt),
+              },
         cancellationReason: row.cancellationReason ?? undefined,
         pausedUntil: row.pausedUntil === null ? undefined : new Date(row.pausedUntil),
       },

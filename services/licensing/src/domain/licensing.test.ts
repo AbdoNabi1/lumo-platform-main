@@ -147,6 +147,66 @@ describe("Subscription", () => {
     subscription.cancel("no longer needed", "evt-2", new Date(0));
     expect(() => subscription.activate("evt-3", new Date(0))).toThrow();
   });
+
+  describe("T14.5 (dunning) — recoverFromGrace / exhaustDunning", () => {
+    it("recoverFromGrace moves grace -> active, same as activate but its own event", () => {
+      const subscription = Subscription.startTrial(
+        UniqueEntityId.from("sub-4"),
+        "tenant-4",
+        "plan-1-v1",
+        "evt-1",
+        new Date(0),
+      );
+      subscription.activate("evt-2", new Date(0));
+      subscription.enterGrace(7, "evt-3", new Date(0));
+      subscription.recoverFromGrace("evt-4", new Date(0));
+      expect(subscription.status).toBe("active");
+    });
+
+    it("exhaustDunning moves grace -> expired, same as expire but its own event", () => {
+      const subscription = Subscription.startTrial(
+        UniqueEntityId.from("sub-5"),
+        "tenant-5",
+        "plan-1-v1",
+        "evt-1",
+        new Date(0),
+      );
+      subscription.activate("evt-2", new Date(0));
+      subscription.enterGrace(7, "evt-3", new Date(0));
+      subscription.exhaustDunning("evt-4", new Date(0));
+      expect(subscription.status).toBe("expired");
+    });
+
+    it("the machine, not a caller's if: recoverFromGrace is refused from active (no grace -> active loop needed)", () => {
+      const subscription = Subscription.startTrial(
+        UniqueEntityId.from("sub-6"),
+        "tenant-6",
+        "plan-1-v1",
+        "evt-1",
+        new Date(0),
+      );
+      subscription.activate("evt-2", new Date(0));
+      expect(() => subscription.recoverFromGrace("evt-3", new Date(0))).toThrow(
+        /Cannot transition subscription from active to active/,
+      );
+    });
+
+    it("the machine, not a caller's if: exhaustDunning is refused once already expired (expired has no outgoing transitions)", () => {
+      const subscription = Subscription.startTrial(
+        UniqueEntityId.from("sub-7"),
+        "tenant-7",
+        "plan-1-v1",
+        "evt-1",
+        new Date(0),
+      );
+      subscription.activate("evt-2", new Date(0));
+      subscription.enterGrace(7, "evt-3", new Date(0));
+      subscription.exhaustDunning("evt-4", new Date(0));
+      expect(() => subscription.exhaustDunning("evt-5", new Date(0))).toThrow(
+        /Cannot transition subscription from expired to expired/,
+      );
+    });
+  });
 });
 
 describe("MerchantFeatureOverride / MerchantCapabilities", () => {

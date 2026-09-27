@@ -7,6 +7,7 @@ import {
   buildTrackingIngestRuntime,
   type RuntimeCore,
 } from "./composition";
+import { buildDunningNotificationsConsumerRuntimes } from "./consumers/dunning-notifications.consumers";
 import { buildFinanceSettlementConsumerRuntimes } from "./consumers/finance-settlement.consumers";
 import { buildOrdersPaidConsumerRuntimes } from "./consumers/orders-paid.consumers";
 import { assertWorkerTenantModeSupported } from "./tenant-mode-guard";
@@ -75,6 +76,18 @@ export async function startWorker(
   // entry, silently. Registered unconditionally, same reasoning as `buildOrdersPaidConsumerRuntimes`
   // just above: needs only Kafka + Prisma, always present wherever the worker runs at all.
   for (const consumerRuntime of buildFinanceSettlementConsumerRuntimes(runtime, runtime.metrics)) {
+    supervisor.register(consumerRuntime);
+  }
+
+  // T14.5 (dunning): opens a durable Notification row (never a provider call — see that file's doc
+  // comment) on entered_grace/recovered_from_grace/dunning_exhausted. Registered unconditionally,
+  // same reasoning as the two blocks above: needs only Kafka + Prisma, always present. Whether the
+  // resulting notification is ever actually DELIVERED is gated at boot by `api.ts`'s
+  // `assertProductionDunningNotificationsConfigured`, not by anything here.
+  for (const consumerRuntime of buildDunningNotificationsConsumerRuntimes(
+    runtime,
+    runtime.metrics,
+  )) {
     supervisor.register(consumerRuntime);
   }
 

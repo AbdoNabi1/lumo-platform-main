@@ -59,3 +59,8 @@ export type {
   VerifiedCardToken,
 } from "./application/ports";
 export type { StoredMethodBillingDeps } from "./composition";
+export {
+  DEFAULT_DUNNING_POLICY,
+  type DunningPolicy,
+  type DunningRetryOutcome,
+} from "./application/dunning.use-cases";

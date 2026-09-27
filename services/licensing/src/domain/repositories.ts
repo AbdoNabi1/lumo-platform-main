@@ -31,6 +31,25 @@ export interface SubscriptionRepository {
   save(subscription: Subscription, tenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tenantId: string, tx?: unknown): Promise<Subscription | null>;
   findByTenantRef(tenantRef: string, tenantId: string, tx?: unknown): Promise<Subscription | null>;
+  /**
+   * T14.5/G-74 (7): every `active` subscription whose `renewalSchedule.nextRenewalAt` is at or
+   * before `before` — the renewal-billing scheduler job's own read. A genuinely cross-tenant sweep
+   * (ADR-0014 point 4, same category as the outbox relay and the two existing scheduler jobs): it
+   * reads every subscription under the ONE platform `tenantId` scope, never a merchant's own scope
+   * (billing data is platform-owned per D-062 — `tenantId` here is the ADR-0014 scope, not the
+   * merchant `tenantRef` business key on each row).
+   */
+  findDueForRenewal(before: Date, tenantId: string, tx?: unknown): Promise<readonly Subscription[]>;
+  /**
+   * T14.5: every `grace` subscription whose `retryPolicy.nextRetryAt` is at or before `before` — the
+   * dunning-retry scheduler job's own read. Same cross-tenant-sweep shape as
+   * {@link findDueForRenewal}.
+   */
+  findDueForDunningRetry(
+    before: Date,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Subscription[]>;
 }
 
 export interface MerchantFeatureOverrideRepository {

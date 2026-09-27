@@ -170,6 +170,56 @@ export class PrismaSubscriptionRepository implements SubscriptionRepository {
         : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : SubscriptionMapper.toDomain(row as SubscriptionRow);
   }
+
+  /**
+   * T14.5/G-74 (7): the `where` narrows on the indexed `(tenantId, status)` columns only — `status`
+   * is a plain column, but `renewalSchedule.nextRenewalAt` lives inside a JSONB blob, and this
+   * codebase has no proven, tested pattern for a JSON-path date comparison in a Prisma query that
+   * can be verified without live-database access (this task is expressly forbidden from connecting
+   * to one). Filtering the due date in application code over the (small, business-population-sized,
+   * never event/order-volume-sized) `active` set is the honestly-documented trade-off: correct, and
+   * cheap enough for a subscription count, at the cost of transferring rows for every `active`
+   * subscription rather than only the due ones. Revisit with a tested JSON-path filter if the active
+   * population ever grows large enough for that to matter.
+   */
+  async findDueForRenewal(
+    before: Date,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Subscription[]> {
+    const run = (client: TransactionClient) =>
+      client.subscription.findMany({ where: { tenantId, status: "active" } });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return (rows as SubscriptionRow[])
+      .map((row) => SubscriptionMapper.toDomain(row))
+      .filter((subscription) => {
+        const nextRenewalAt = subscription.renewalSchedule?.nextRenewalAt;
+        return nextRenewalAt !== undefined && nextRenewalAt.getTime() <= before.getTime();
+      });
+  }
+
+  /** T14.5: same JSON-filter-in-application-code trade-off as {@link findDueForRenewal}. */
+  async findDueForDunningRetry(
+    before: Date,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Subscription[]> {
+    const run = (client: TransactionClient) =>
+      client.subscription.findMany({ where: { tenantId, status: "grace" } });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return (rows as SubscriptionRow[])
+      .map((row) => SubscriptionMapper.toDomain(row))
+      .filter((subscription) => {
+        const nextRetryAt = subscription.retryPolicy?.nextRetryAt;
+        return nextRetryAt !== undefined && nextRetryAt.getTime() <= before.getTime();
+      });
+  }
 }
 
 export class PrismaMerchantFeatureOverrideRepository implements MerchantFeatureOverrideRepository {

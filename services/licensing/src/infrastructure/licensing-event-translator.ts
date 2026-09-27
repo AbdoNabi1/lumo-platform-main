@@ -29,6 +29,8 @@ export const LICENSING_PUBLISHED_EVENTS: readonly string[] = [
   "licensing.subscription.activated",
   "licensing.subscription.repinned",
   "licensing.subscription.entered_grace",
+  "licensing.subscription.recovered_from_grace",
+  "licensing.subscription.dunning_exhausted",
   "licensing.subscription.expired",
   "licensing.subscription.suspended",
   "licensing.subscription.cancelled",

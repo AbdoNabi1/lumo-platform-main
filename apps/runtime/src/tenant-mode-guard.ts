@@ -81,7 +81,8 @@ export type TenantDefaultIdClass =
   | "platform-boot"
   | "definition"
   | "client-header-source"
-  | "test-support";
+  | "test-support"
+  | "platform-scope-job";
 
 export interface TenantDefaultIdSite {
   readonly file: string;
@@ -92,8 +93,9 @@ export interface TenantDefaultIdSite {
 }
 
 /**
- * Every non-test, non-comment `TENANT_DEFAULT_ID` reference under apps/ services/ packages/ (8 code
- * sites after G-64 removed the six event-path pins; comment-only mentions are prose, not references). A count is not a classification:
+ * Every non-test, non-comment `TENANT_DEFAULT_ID` reference under apps/ services/ packages/ (9 code
+ * sites after G-64 removed the six event-path pins and T14.5 added one scheduled-job site;
+ * comment-only mentions are prose, not references). A count is not a classification:
  * `tenant-mode-guard.test.ts` diffs this table against the source tree, so a new reference — or a
  * moved one — fails the build until someone classifies it here.
  *
@@ -124,6 +126,19 @@ export const TENANT_DEFAULT_ID_SITES: readonly TenantDefaultIdSite[] = Object.fr
     line: "const tenantId = core.config.TENANT_DEFAULT_ID;",
     class: "boot-script",
     why: "WP-11 backfill script, one tenant per invocation (ADR-0014 Amendment B). Not served.",
+  },
+  {
+    file: "apps/runtime/src/composition.ts",
+    line: "const platformTenantId = config.TENANT_DEFAULT_ID;",
+    class: "platform-scope-job",
+    why:
+      "T14.5/G-74 (7): the renewal-billing and dunning-retry scheduler jobs' tenant. Not a per-tenant " +
+      "pin in the G-64 sense — Licensing's billing tables (subscriptions/invoices) live under the ONE " +
+      "ADR-0014 platform tenant scope regardless of mode (D-062: plans/subscriptions/invoices are " +
+      "platform-owned, never a merchant's own tenant scope), so there is exactly one tenant these jobs " +
+      "could ever act as. Every write still goes through LicensingController's platformOnly guard " +
+      "(same as an HTTP caller), and the merchant a subscription bills is its own `tenantRef` business " +
+      "key, carried on the row — never this scope.",
   },
   {
     file: "apps/runtime/src/config.ts",

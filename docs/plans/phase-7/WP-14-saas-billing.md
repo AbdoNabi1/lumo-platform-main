@@ -73,13 +73,19 @@ action/job/AI request`); check whether billing entitlements should flow through 
       client or a second webhook handler — reuse `packages/psp-stripe` and (once `WP-13` lands)
       `packages/psp-paymob` as-is.
 
-- [ ] **T14.5 — Dunning.**
-      Detection (a renewal/usage charge fails), a retry schedule, a grace period, notification
-      (through `services/notifications`' real providers once `WP-6` lands — a stub notification
-      provider for dunning is a business-critical failure waiting to happen, not an acceptable
-      placeholder), state transitions (active → past_due → suspended, with the exact transitions
-      as a state machine, not ad hoc flags), and recovery reporting. Every state transition needs
-      its own test, including the "payment recovers mid-grace-period" case.
+- [x] **T14.5 — Dunning.** Landed 2026-09-27 (D-070). Detection, retry schedule, grace period,
+      and state transitions as a machine (not ad hoc flags) are done: `apps/runtime/src/scheduler.ts`
+      gained `billing-renewals` and `billing-dunning-retries`; a failed charge opens dunning
+      (`EnterDunning`: `active -> grace`, existing `enterGrace`, first retry scheduled), a scheduled
+      retry either recovers (`RetryDunningInvoice` -> `Subscription.recoverFromGrace`, `grace ->
+    active`), reschedules, or exhausts (`Subscription.exhaustDunning`, `grace -> expired`) once
+      the policy's `maxAttempts` is used up. `past_due` above is this codebase's `grace` — no second
+      state was added. Every transition has its own test
+      (`services/licensing/src/dunning.test.ts`), including "payment recovers mid-grace-period."
+      **Notification is NOT fully done:** dunning raises events and a `Notification` row is opened
+      per transition, but no real provider exists anywhere in this codebase to deliver it — the boot
+      guard (`assertProductionDunningNotificationsConfigured`) refuses to boot outside `local` until
+      an operator wires one, rather than shipping a stub that would silently swallow the message.
 
 - [ ] **T14.6 — Billing analytics over the ledger.**
       MRR and its components (new, expansion, contraction, churned), ARPU, churn, retention, LTV,
@@ -96,7 +102,7 @@ action/job/AI request`); check whether billing entitlements should flow through 
       `apps/admin-web` gated to a platform-only role, with a note in this WP's commit that it should
       migrate to the platform-admin app once `WP-15` exists.
 
-## Status — part 1 landed 2026-09-24 (T14.1, T14.2, T14.4)
+## Status — part 1 landed 2026-09-24 (T14.1, T14.2, T14.4); T14.5 landed 2026-09-27
 
 T14.3 (coupons), T14.5 (dunning), T14.6 (analytics) and T14.7 (screens) are NOT started, so the Definition of Done
 below stays open and Morbeh F-16 is recorded as **G-74**, open, with the follow-ups part 1 found. Design and
@@ -118,13 +124,25 @@ port into the unchanged `CollectInvoice`. No stored card ⇒ the invoice fails v
 Still open and NOT closed here: nothing schedules renewals (G-74 (7)); the first interactive invoice is not
 settled by a PSP callback (G-74 (8)); Stripe billing is still on-session. Operator steps are in D-066.
 
+**Update 2026-09-27 — T14.5 (dunning) landed, closing G-74 (7) (D-070).** `apps/runtime/src/scheduler.ts`
+gained `billing-renewals` (calls `BillSubscriptionRenewal` for every due subscription; a decline opens
+dunning) and `billing-dunning-retries` (runs the retry schedule: recover / reschedule / exhaust). New
+`services/licensing/src/application/dunning.use-cases.ts` (`EnterDunning`, `RetryDunningInvoice`, the two
+`ListSubscriptionsDueFor*` queries) and two new `Subscription` domain methods (`recoverFromGrace`,
+`exhaustDunning` — same transitions as `activate`/`expire`, distinct events). No migration: the retry
+schedule lives in the EXISTING `retryPolicy` JSONB column (`nextRetryAt`/`invoiceRef` added to the
+TypeScript shape only). Double-charge protection is `CollectInvoice`'s existing idempotency key, proven
+with a concurrent-retry test and a resume-from-`issued` test. Dunning notifications are NOT delivered:
+`assertProductionDunningNotificationsConfigured` refuses to boot outside `local` — see G-74 (12).
+
 ## Definition of done
 
 - [ ] Changing a plan's price leaves every existing subscription on its pinned version — prove it
       with a test that changes a plan's price and asserts an existing subscription's charge amount
       is unaffected.
 - [ ] No price is hardcoded anywhere in the billing path.
-- [ ] A failed charge walks the dunning path deterministically, with a test per state transition.
+- [x] A failed charge walks the dunning path deterministically, with a test per state transition
+      (2026-09-27, D-070). Notification delivery is the one piece still open (G-74 (12)).
 - [ ] Billing analytics reconcile to the ledger — an MRR figure traces back to real `Invoice`/
       `Subscription` rows, not an estimate.
 - [ ] Morbeh F-16 closed in `docs/architecture/23-platform-gap-register.md` and
