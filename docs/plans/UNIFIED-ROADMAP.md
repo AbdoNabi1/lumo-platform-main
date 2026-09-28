@@ -283,7 +283,7 @@ ran before the first failure and reports that partial result as green — `WP-0`
 production build, run `pnpm --filter <name> run build` per package touched and record in
 `docs/plans/BLOCKERS.md` if a repo-wide build is genuinely required and still blocked.
 
-Two known concurrency-only flakes — re-run either file alone
+Three known concurrency-only flakes — re-run the file alone
 (`pnpm --filter <name> run test`) before treating a failure in it as a regression:
 
 - `apps/runtime/src/security/wire-security-provisioning.test.ts` times out at 5s only under
@@ -292,6 +292,16 @@ Two known concurrency-only flakes — re-run either file alone
   a public route") times out at 5s only under `--workspace-concurrency=4`, passes in 530ms
   (all 28 tests in the file) run alone. Found during `WP-0`'s gate measurement, not previously
   documented.
+- `apps/admin/src/http/public-auth-routes.test.ts` ("expired, reused, wrong-tenant, and tampered
+  tokens are all rejected indistinguishably", G-72 guest-to-account upgrade) fails
+  `expected 404 to be 201` only under `--workspace-concurrency=4`; 39/39 pass run alone. Seen twice
+  now, in unrelated whole-workspace runs (most recently 2026-09-28, verifying T14.3).
+  **This one is a different class from the two above and worth treating as a real defect, not just
+  noise:** they time out, which a loaded machine explains; this one returns the WRONG STATUS, which
+  a loaded machine does not. A registration that 404s under parallel load points at state shared
+  across test files (a store or a tenant another file tears down), and the same sharing would be a
+  genuine bug if it exists in the code rather than the fixtures. Nobody has looked yet. Until
+  someone does, a green full suite is a slightly weaker claim than it reads as.
 
 ## 4. The master work-package table
 
