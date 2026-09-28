@@ -60,6 +60,13 @@ platform-global.
       dropping data.
 
 - [ ] **T14.3 — Coupons, add-ons, and credits.**
+      Note (settled 2026-09-28, G-74 (6)): a `Credit` is a quantity of a pre-purchased metered resource, NOT
+      money — leave `credits.amount`/`usage_counters.amount` as `Decimal(19,4)` and never migrate them to
+      minor units. What T14.3 owes is a resource on `Credit`, a top-up path (price → invoice → grant on
+      paid), and a per-tenant LIMIT read on Licensing's controller — consumption is already measured
+      (`PrismaUsageQuota` feeds `@platform/entitlement`'s `EntitlementGuard` from `usageCounter.amount`)
+      but never enforced, because that adapter hardcodes `limit: -1` for want of such a read (P1.3 §12).
+      Route billing entitlements through that existing PEP; do not add a second check path.
       Give coupons a full lifecycle (issue, redeem, expire, revoke). Integrate discounts and add-ons
       with `MerchantFeatureOverride`/`MerchantCapabilities` and the existing `Credit` model, rather
       than a parallel entitlement mechanism — `packages/entitlement` already exists per Phase 7's
