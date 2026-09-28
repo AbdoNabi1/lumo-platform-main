@@ -22,6 +22,7 @@ import {
 } from "./application/billing.use-cases";
 import {
   ExpireCoupon,
+  GetCoupon,
   IssueCoupon,
   RedeemCoupon,
   RevokeCoupon,
@@ -324,6 +325,7 @@ function buildController(
     redeemCoupon: new RedeemCoupon(couponDeps),
     expireCoupon: new ExpireCoupon(couponDeps),
     revokeCoupon: new RevokeCoupon(couponDeps),
+    getCoupon: new GetCoupon(couponDeps),
     createPlan: new CreatePlan(licensingDeps),
     createPlanDraft: new CreatePlanDraft(licensingDeps),
     schedulePlanVersion: new SchedulePlanVersion(licensingDeps),

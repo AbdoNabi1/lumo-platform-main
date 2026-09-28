@@ -53,6 +53,7 @@ import type {
 import type {
   CouponActionInput,
   ExpireCoupon,
+  GetCoupon,
   IssueCoupon,
   IssueCouponInput,
   RedeemCoupon,
@@ -123,6 +124,7 @@ export interface LicensingControllerDeps {
   readonly redeemCoupon: RedeemCoupon;
   readonly expireCoupon: ExpireCoupon;
   readonly revokeCoupon: RevokeCoupon;
+  readonly getCoupon: GetCoupon;
   /**
    * Saved-card use cases (G-74 (1)). Present only when the deployment composes stored-method billing;
    * absent ⇒ the operations answer 404, never a silent success.
@@ -441,6 +443,16 @@ export class LicensingController {
   async revokeCoupon(input: RevokeCouponInput): Promise<ControllerResponse> {
     return this.platformOnly(input, async () =>
       present(await this.deps.revokeCoupon.execute(input), 200),
+    );
+  }
+
+  /**
+   * T14.3: an operator's read of one coupon. Platform-only like the writes: a coupon's status and
+   * redemption are billing data, and a merchant-readable lookup would let any session probe for ids.
+   */
+  async getCoupon(input: CouponActionInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.getCoupon.execute(input), 200),
     );
   }
 }

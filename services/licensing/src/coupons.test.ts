@@ -479,3 +479,64 @@ describe("coupons on scheduled renewals", () => {
     expect(provider.moved[0]?.amountMinor).toBe(2900);
   });
 });
+
+describe("an operator can read a coupon (T14.3, the read that makes issuance operable)", () => {
+  const read = (app: App, couponId: string, tenantId = PLATFORM) =>
+    app.licensing.getCoupon({ couponId, tenantId });
+
+  it("shows an issued coupon with its value, expiry and addressee", async () => {
+    const { app } = setup();
+    const couponId = await issueCoupon(app, "LAUNCH20", PERCENT_20, { merchantRef: "merchant-1" });
+    const res = await read(app, couponId);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      id: couponId,
+      code: "LAUNCH20",
+      value: PERCENT_20,
+      expiresAt: IN_A_MONTH.toISOString(),
+      merchantRef: "merchant-1",
+      status: "issued",
+      pastExpiry: false,
+    });
+  });
+
+  it("names the invoice a redeemed coupon was spent on", async () => {
+    const { app } = setup();
+    const couponId = await issueCoupon(app, "LAUNCH20");
+    const invoiceId = await draftInvoice(app);
+    expect((await redeem(app, "LAUNCH20", invoiceId)).status).toBe(200);
+    const res = await read(app, couponId);
+    expect(res.body).toMatchObject({
+      status: "redeemed",
+      redemption: { invoiceRef: invoiceId, redeemedAt: START.toISOString() },
+    });
+  });
+
+  it("shows a revoked coupon's reason", async () => {
+    const { app } = setup();
+    const couponId = await issueCoupon(app, "LAUNCH20");
+    await app.licensing.revokeCoupon({ couponId, reason: "issued in error", tenantId: PLATFORM });
+    expect((await read(app, couponId)).body).toMatchObject({
+      status: "revoked",
+      revokedReason: "issued in error",
+    });
+  });
+
+  it("flags an unswept coupon past its expiry, which `status` alone would call issued", async () => {
+    const { app, time } = setup();
+    const couponId = await issueCoupon(app, "LAUNCH20");
+    time.now = PAST_EXPIRY;
+    expect((await read(app, couponId)).body).toMatchObject({ status: "issued", pastExpiry: true });
+  });
+
+  it("answers 404 for an unknown coupon", async () => {
+    const { app } = setup();
+    expect((await read(app, "no-such-coupon")).status).toBe(404);
+  });
+
+  it("refuses a merchant tenant 403 — the read would otherwise be an oracle for coupon ids", async () => {
+    const { app } = setup();
+    const couponId = await issueCoupon(app, "LAUNCH20");
+    expect((await read(app, couponId, MERCHANT_TENANT)).status).toBe(403);
+  });
+});

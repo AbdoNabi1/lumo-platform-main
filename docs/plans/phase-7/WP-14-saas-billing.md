@@ -68,6 +68,17 @@ platform-global.
       coupon, and a 100% coupon settling `paid` with no PSP call. Migration
       `20260928000000_billing_coupons` created, NOT applied. NOT landed: add-ons, entitlement wiring for
       either, the `Credit` resource/top-up/limit-read items (G-74 (6a)/(6b)).
+      **Update 2026-09-28 (part 6) — the coupon half is now OPERABLE over HTTP.** Reachable by a platform
+      operator (permission `licensing:billing:manage`, reused — there is no `licensing:billing:read`; platform-only
+      at `LicensingController`, a merchant tenant is 403 on all five): `POST /billing/coupons` (issue, 201),
+      `GET /billing/coupons/:couponId` (read: status, `pastExpiry`, the invoice a redeemed coupon was spent on,
+      a revoked coupon's reason), `POST /billing/coupons/redeem` (by code onto a draft invoice, 200),
+      `POST /billing/coupons/:couponId/expire`, `POST /billing/coupons/:couponId/revoke`. The prefix is
+      `/billing/coupons` because `/coupons` is the merchant's own promotions surface. The four writes set
+      `idempotent: true` (a retry with the same `Idempotency-Key` replays the first answer; a genuinely second
+      redeem is still 409); the read does not, or a replayed read would go on saying `issued`. Still NOT
+      reachable: a merchant-facing redeem (G-74 (14), deliberately open), a coupon LIST or lookup by code
+      (G-74 (16) — needs pagination, left to T14.7), add-ons, the `Credit` items above, and any screen.
       Note (settled 2026-09-28, G-74 (6)): a `Credit` is a quantity of a pre-purchased metered resource, NOT
       money — leave `credits.amount`/`usage_counters.amount` as `Decimal(19,4)` and never migrate them to
       minor units. What T14.3 owes is a resource on `Credit`, a top-up path (price → invoice → grant on

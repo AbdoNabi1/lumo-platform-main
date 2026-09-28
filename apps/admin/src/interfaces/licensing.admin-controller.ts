@@ -186,4 +186,55 @@ export class LicensingAdminController {
     if (denied) return denied;
     return this.licensing.grantCredit(input);
   }
+
+  /**
+   * T14.3 coupons. Gated by `licensing:billing:manage` like every other billing operation (there is
+   * no `licensing:billing:read`; the read reuses this one so no new grant needs provisioning, and
+   * because a coupon lookup is at least as sensitive as issuing one). Whether the caller's TENANT may
+   * act is decided at `LicensingController`, not here.
+   */
+  async issueCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["issueCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.issueCoupon(input);
+  }
+
+  async redeemCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["redeemCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.redeemCoupon(input);
+  }
+
+  async expireCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["expireCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.expireCoupon(input);
+  }
+
+  async revokeCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["revokeCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.revokeCoupon(input);
+  }
+
+  async getCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["getCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.getCoupon(input);
+  }
 }

@@ -4,7 +4,7 @@ import { UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { ConflictError, type DomainError, NotFoundError, isDomainError } from "@platform/utils";
-import { Coupon, type CouponValue } from "../domain/coupon";
+import { Coupon, type CouponStatus, type CouponValue } from "../domain/coupon";
 import type { CouponRepository, InvoiceRepository } from "../domain/repositories";
 import { withConcurrencyRetry } from "./billing.use-cases";
 
@@ -207,5 +207,54 @@ export class RevokeCoupon implements UseCase<RevokeCouponInput, CouponIdOutput, 
         return ok({ id: coupon.id.toString() });
       }),
     );
+  }
+}
+
+export interface GetCouponOutput {
+  readonly id: string;
+  readonly code: string;
+  readonly value: CouponValue;
+  readonly expiresAt: string;
+  readonly merchantRef?: string;
+  readonly status: CouponStatus;
+  /**
+   * `status` moves only when something writes it, so an `issued` coupon past its expiry is still
+   * `issued` until swept — yet {@link Coupon.assertRedeemable} already refuses it. This says so.
+   */
+  readonly pastExpiry: boolean;
+  readonly redemption?: { readonly invoiceRef: string; readonly redeemedAt: string };
+  readonly revokedReason?: string;
+}
+
+/** An operator's read of one coupon: its status, and — once spent — the invoice it was spent on. */
+export class GetCoupon implements UseCase<CouponActionInput, GetCouponOutput, DomainError> {
+  private readonly deps: CouponDeps;
+
+  constructor(deps: CouponDeps) {
+    this.deps = deps;
+  }
+
+  async execute(input: CouponActionInput): Promise<Result<GetCouponOutput, DomainError>> {
+    const coupon = await this.deps.coupons.findById(input.couponId, input.tenantId);
+    if (coupon === null) return err(new NotFoundError("Coupon not found"));
+    const redemption = coupon.redemption;
+    return ok({
+      id: coupon.id.toString(),
+      code: coupon.code,
+      value: coupon.value,
+      expiresAt: coupon.expiresAt.toISOString(),
+      ...(coupon.merchantRef === undefined ? {} : { merchantRef: coupon.merchantRef }),
+      status: coupon.status,
+      pastExpiry: this.deps.clock.now().getTime() >= coupon.expiresAt.getTime(),
+      ...(redemption === undefined
+        ? {}
+        : {
+            redemption: {
+              invoiceRef: redemption.invoiceRef,
+              redeemedAt: redemption.redeemedAt.toISOString(),
+            },
+          }),
+      ...(coupon.revokedReason === undefined ? {} : { revokedReason: coupon.revokedReason }),
+    });
   }
 }

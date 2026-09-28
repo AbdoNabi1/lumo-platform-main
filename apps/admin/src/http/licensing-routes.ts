@@ -61,6 +61,31 @@ const grantCreditBody = z.object({
   amount: z.number(),
   reason: z.string().min(1),
 });
+// T14.3. `.strict()` on the bodies that create money-affecting state: a stripped, mistyped
+// `merchantRef` would otherwise issue a BEARER coupon any merchant may present.
+const couponValue = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("percentage"), basisPoints: z.number().int() }).strict(),
+  z
+    .object({
+      kind: z.literal("fixed"),
+      amountMinor: z.number().int(),
+      currency: z.string().min(1),
+    })
+    .strict(),
+]);
+const issueCouponBody = z
+  .object({
+    code: z.string().min(1),
+    value: couponValue,
+    expiresAt: z.coerce.date(),
+    merchantRef: z.string().min(1).optional(),
+  })
+  .strict();
+const redeemCouponBody = z
+  .object({ code: z.string().min(1), invoiceId: z.string().min(1) })
+  .strict();
+const couponIdParams = z.object({ couponId: z.string().min(1) });
+const revokeCouponBody = z.object({ reason: z.string().min(1) }).strict();
 
 /**
  * The Licensing admin HTTP surface (Sprint 5.5/5.6). Pure delegation.
@@ -293,6 +318,71 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { body: grantCreditBody },
       handle: ({ body, context }) =>
         admin.licensing.grantCredit(context.principal, { ...body, tenantId: context.tenantId }),
+    }),
+    // T14.3 coupons. Under `/billing/coupons`, not `/coupons`: that prefix is the MERCHANT's own
+    // promotions surface (`coupons-routes.ts`). Status codes are the controller's, passed through.
+    defineRoute({
+      method: "POST",
+      path: "/billing/coupons",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary: "Issue a billing coupon (platform operator)",
+      schema: { body: issueCouponBody },
+      handle: ({ body, context }) =>
+        admin.licensing.issueCoupon(context.principal, { ...body, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/billing/coupons/redeem",
+      version: 1,
+      permission: "licensing:billing:manage",
+      // A duplicate Idempotency-Key replays the first answer; a genuinely second redeem (a new key, or
+      // none) still reaches the state machine and is refused 409.
+      idempotent: true,
+      summary: "Redeem a coupon by code onto a draft invoice (platform operator)",
+      schema: { body: redeemCouponBody },
+      handle: ({ body, context }) =>
+        admin.licensing.redeemCoupon(context.principal, { ...body, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/billing/coupons/:couponId",
+      version: 1,
+      permission: "licensing:billing:manage",
+      // Deliberately NOT `idempotent`: a replayed read would keep answering `issued` for a coupon
+      // that has since been redeemed.
+      summary:
+        "Read one billing coupon: its status and, once spent, the invoice (platform operator)",
+      schema: { params: couponIdParams },
+      handle: ({ params, context }) =>
+        admin.licensing.getCoupon(context.principal, { ...params, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/billing/coupons/:couponId/expire",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary: "Mark an issued coupon expired once its expiry has passed (platform operator)",
+      schema: { params: couponIdParams },
+      handle: ({ params, context }) =>
+        admin.licensing.expireCoupon(context.principal, { ...params, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/billing/coupons/:couponId/revoke",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary: "Withdraw an issued coupon (platform operator)",
+      schema: { params: couponIdParams, body: revokeCouponBody },
+      handle: ({ params, body, context }) =>
+        admin.licensing.revokeCoupon(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
   ] as readonly RouteDefinition[];
 }
