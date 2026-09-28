@@ -1,6 +1,7 @@
 import { UniqueEntityId } from "@platform/domain";
 import type { Decimal } from "decimal.js";
 import { Credit, type CreditStatus } from "../domain/credit";
+import { Coupon, type CouponStatus, type CouponValue } from "../domain/coupon";
 import { Invoice, type InvoiceLineItem, type InvoiceStatus } from "../domain/invoice";
 import {
   MerchantCapabilities,
@@ -101,6 +102,25 @@ export interface InvoiceRow {
   readonly lineItems: readonly InvoiceLineItem[];
   readonly status: InvoiceStatus;
   readonly paymentReference: string | null;
+  /** T14.3: both null or both set (a CHECK in the migration says so too). */
+  readonly discountMinor: number | null;
+  readonly discountCouponRef: string | null;
+  readonly version: number;
+}
+
+export interface CouponRow {
+  readonly id: string;
+  readonly tenantRef: string | null;
+  readonly code: string;
+  readonly kind: string;
+  readonly percentBasisPoints: number | null;
+  readonly amountMinor: number | null;
+  readonly currency: string | null;
+  readonly expiresAt: Date;
+  readonly status: CouponStatus;
+  readonly redeemedInvoiceRef: string | null;
+  readonly redeemedAt: Date | null;
+  readonly revokedReason: string | null;
   readonly version: number;
 }
 
@@ -310,7 +330,23 @@ export class InvoiceMapper {
       row.status,
       row.version,
       row.paymentReference ?? undefined,
+      InvoiceMapper.discountOf(row),
     );
+  }
+
+  private static discountOf(row: InvoiceRow) {
+    const { discountMinor, discountCouponRef } = row;
+    if (discountMinor === null && discountCouponRef === null) return undefined;
+    if (
+      discountMinor === null ||
+      discountCouponRef === null ||
+      !Number.isSafeInteger(discountMinor)
+    ) {
+      throw new Error(
+        `Invoice ${row.id} has a half-recorded or non-integer discount; refusing to read it as money`,
+      );
+    }
+    return { couponRef: discountCouponRef, amountMinor: discountMinor };
   }
 
   /**
@@ -343,6 +379,58 @@ export class InvoiceMapper {
       lineItems: invoice.lineItems,
       status: invoice.status,
       paymentReference: invoice.paymentReference ?? null,
+      discountMinor: invoice.discount?.amountMinor ?? null,
+      discountCouponRef: invoice.discount?.couponRef ?? null,
+      version: 1,
+    };
+  }
+}
+
+export class CouponMapper {
+  static toDomain(row: CouponRow): Coupon {
+    return Coupon.reconstitute(
+      UniqueEntityId.from(row.id),
+      {
+        code: row.code,
+        value: CouponMapper.valueOf(row),
+        expiresAt: row.expiresAt,
+        ...(row.tenantRef === null ? {} : { merchantRef: row.tenantRef }),
+        status: row.status,
+        ...(row.redeemedInvoiceRef === null || row.redeemedAt === null
+          ? {}
+          : { redemption: { invoiceRef: row.redeemedInvoiceRef, redeemedAt: row.redeemedAt } }),
+        ...(row.revokedReason === null ? {} : { revokedReason: row.revokedReason }),
+      },
+      row.version,
+    );
+  }
+
+  private static valueOf(row: CouponRow): CouponValue {
+    if (row.kind === "percentage" && row.percentBasisPoints !== null) {
+      return { kind: "percentage", basisPoints: row.percentBasisPoints };
+    }
+    if (row.kind === "fixed" && row.amountMinor !== null && row.currency !== null) {
+      return { kind: "fixed", amountMinor: row.amountMinor, currency: row.currency };
+    }
+    throw new Error(`Coupon ${row.id} has an inconsistent kind/value shape; refusing to read it`);
+  }
+
+  static toRow(coupon: Coupon, tenantId: string) {
+    const value = coupon.value;
+    return {
+      id: coupon.id.toString(),
+      tenantId,
+      tenantRef: coupon.merchantRef ?? null,
+      code: coupon.code,
+      kind: value.kind,
+      percentBasisPoints: value.kind === "percentage" ? value.basisPoints : null,
+      amountMinor: value.kind === "fixed" ? value.amountMinor : null,
+      currency: value.kind === "fixed" ? value.currency : null,
+      expiresAt: coupon.expiresAt,
+      status: coupon.status,
+      redeemedInvoiceRef: coupon.redemption?.invoiceRef ?? null,
+      redeemedAt: coupon.redemption?.redeemedAt ?? null,
+      revokedReason: coupon.revokedReason ?? null,
       version: 1,
     };
   }

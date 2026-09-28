@@ -60,6 +60,14 @@ platform-global.
       dropping data.
 
 - [ ] **T14.3 — Coupons, add-ons, and credits.**
+      **Status 2026-09-28 — FIRST HALF LANDED (coupons, D-072); this box stays unticked because the add-ons
+      half and the credit work below have not started.** Landed: coupon lifecycle state machine
+      (`Coupon`, `issued -> redeemed | expired | revoked`), platform-only issue/redeem/expire/revoke, a
+      discount that reduces `Invoice.totalMinor` (a separate `discount`, not a negative line; `draft`
+      invoices only), redeem-once under concurrent redemption, renewal auto-apply of a merchant-addressed
+      coupon, and a 100% coupon settling `paid` with no PSP call. Migration
+      `20260928000000_billing_coupons` created, NOT applied. NOT landed: add-ons, entitlement wiring for
+      either, the `Credit` resource/top-up/limit-read items (G-74 (6a)/(6b)).
       Note (settled 2026-09-28, G-74 (6)): a `Credit` is a quantity of a pre-purchased metered resource, NOT
       money — leave `credits.amount`/`usage_counters.amount` as `Decimal(19,4)` and never migrate them to
       minor units. What T14.3 owes is a resource on `Credit`, a top-up path (price → invoice → grant on

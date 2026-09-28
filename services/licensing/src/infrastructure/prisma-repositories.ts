@@ -3,6 +3,7 @@ import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { Prisma } from "@prisma/client";
 import { BillingPaymentMethod } from "../domain/billing-payment-method";
+import type { Coupon } from "../domain/coupon";
 import type { Credit } from "../domain/credit";
 import type { Invoice } from "../domain/invoice";
 import type { MerchantCapabilities } from "../domain/merchant-capabilities";
@@ -10,6 +11,7 @@ import type { MerchantFeatureOverride } from "../domain/merchant-feature-overrid
 import type { Plan } from "../domain/plan";
 import type {
   BillingPaymentMethodRepository,
+  CouponRepository,
   CreditRepository,
   InvoiceRepository,
   MerchantCapabilitiesRepository,
@@ -21,6 +23,7 @@ import type {
 import type { Subscription } from "../domain/subscription";
 import type { UsageCounter } from "../domain/usage-counter";
 import {
+  CouponMapper,
   CreditMapper,
   InvoiceMapper,
   MerchantCapabilitiesMapper,
@@ -28,6 +31,7 @@ import {
   PlanMapper,
   SubscriptionMapper,
   UsageCounterMapper,
+  type CouponRow,
   type CreditRow,
   type InvoiceRow,
   type MerchantCapabilitiesRow,
@@ -476,6 +480,8 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
         data: {
           status: row.status,
           paymentReference: row.paymentReference,
+          discountMinor: row.discountMinor,
+          discountCouponRef: row.discountCouponRef,
           version: { increment: 1 },
         },
       });
@@ -500,6 +506,90 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
     // Prisma row's `lineItems: JsonValue` has no structural overlap with `InvoiceRow`'s
     // `readonly InvoiceLineItem[]` (comparability fails).
     return row === null ? null : InvoiceMapper.toDomain(row as unknown as InvoiceRow);
+  }
+}
+
+/**
+ * T14.3 (D-072): billing coupons, scoped to the PLATFORM tenant like invoices — every read and write
+ * carries `tenantId`. `save` is the storage half of the redeem-once guard: an UPDATE guarded by
+ * `version` that touches 0 rows is a lost race and becomes `ConcurrencyError`, so of N transactions
+ * that read the same `issued` coupon only ONE write commits.
+ */
+export class PrismaCouponRepository implements CouponRepository {
+  private readonly deps: PrismaLicensingRepositoriesDeps;
+
+  constructor(deps: PrismaLicensingRepositoriesDeps) {
+    this.deps = deps;
+  }
+
+  async save(coupon: Coupon, tenantId: string, tx?: unknown): Promise<void> {
+    const client = requireTx(tx);
+    const id = coupon.id.toString();
+    const row = CouponMapper.toRow(coupon, tenantId);
+    if (coupon.version === 0) {
+      await client.billingCoupon.create({ data: row });
+    } else {
+      const updated = await client.billingCoupon.updateMany({
+        where: { id, tenantId, version: coupon.version },
+        data: {
+          status: row.status,
+          redeemedInvoiceRef: row.redeemedInvoiceRef,
+          redeemedAt: row.redeemedAt,
+          revokedReason: row.revokedReason,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count === 0) {
+        throw new ConcurrencyError(`Coupon ${id} was modified concurrently`);
+      }
+    }
+    await this.deps.outbox.write(
+      coupon.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
+  }
+
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Coupon | null> {
+    const run = (client: TransactionClient) =>
+      client.billingCoupon.findFirst({ where: { id, tenantId } });
+    return this.readOne(run, tenantId, tx);
+  }
+
+  async findByCode(code: string, tenantId: string, tx?: unknown): Promise<Coupon | null> {
+    const run = (client: TransactionClient) =>
+      client.billingCoupon.findFirst({ where: { code, tenantId } });
+    return this.readOne(run, tenantId, tx);
+  }
+
+  async findIssuedForMerchant(
+    merchantRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Coupon[]> {
+    const run = (client: TransactionClient) =>
+      client.billingCoupon.findMany({
+        where: { tenantId, tenantRef: merchantRef, status: "issued" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return rows.map((row) => CouponMapper.toDomain(row as CouponRow));
+  }
+
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  private async readOne(
+    run: (client: TransactionClient) => Promise<unknown>,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Coupon | null> {
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : CouponMapper.toDomain(row as CouponRow);
   }
 }
 

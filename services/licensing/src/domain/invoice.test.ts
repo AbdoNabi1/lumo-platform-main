@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { UniqueEntityId } from "@platform/domain";
+import { Money, UniqueEntityId } from "@platform/domain";
 import { Invoice } from "./invoice";
 
 /**
@@ -48,7 +48,7 @@ describe("Invoice money (WP-14 Trap 3)", () => {
     expect(() => draft([{ description: "plan", amountMinor: 0.1 }])).toThrow(/minor/i);
   });
 
-  it("refuses a negative amount (discounts are a separate, later concept — T14.3)", () => {
+  it("refuses a negative amount (a discount is not a negative line — see Invoice discount below)", () => {
     expect(() => draft([{ description: "plan", amountMinor: -1 }])).toThrow(/minor/i);
   });
 
@@ -80,5 +80,115 @@ describe("Invoice money (WP-14 Trap 3)", () => {
     invoice.markPaid("ref-1", "e3", NOW);
     expect(() => invoice.markFailed("e4", NOW)).toThrow();
     expect(() => invoice.issue("e5", NOW)).toThrow();
+  });
+});
+
+/**
+ * WP-14 T14.3 (coupons): `Money` is non-negative, so a discount is NOT a negative line item. It is a
+ * separate, single, optional `discount` carried beside the lines: `subtotal` is the exact sum of the
+ * lines (unchanged), `total = subtotal.minus(discount)` — and `Money.minus` is what refuses a
+ * discount larger than the subtotal, loudly, rather than flooring it. Applied only while the invoice
+ * is a `draft`: once `issued` the total is the number the merchant has been told they owe, and
+ * `CollectInvoice`'s `<invoiceId>:<version>:collect` key is derived from a `version` that any later
+ * mutation would bump — silently minting a new key.
+ */
+describe("Invoice discount (T14.3)", () => {
+  const usd = (amountMinor: number) => {
+    const money = Money.create(amountMinor, "USD");
+    if (!money.ok) throw new Error("bad money");
+    return money.value;
+  };
+  const plan = () => draft([{ description: "plan", amountMinor: 2900 }]);
+
+  it("reduces the total by the discount and leaves the subtotal and the lines untouched", () => {
+    const invoice = plan();
+    invoice.applyDiscount("coupon-1", usd(500), "e2", NOW);
+    expect(invoice.subtotal.amountMinor).toBe(2900);
+    expect(invoice.totalMinor).toBe(2400);
+    expect(invoice.lineItems).toEqual([{ description: "plan", amountMinor: 2900 }]);
+    expect(invoice.discount).toEqual({ couponRef: "coupon-1", amountMinor: 500 });
+    expect(invoice.isFullyDiscounted).toBe(false);
+  });
+
+  it("a discount equal to the subtotal makes the invoice fully discounted (total 0)", () => {
+    const invoice = plan();
+    invoice.applyDiscount("coupon-1", usd(2900), "e2", NOW);
+    expect(invoice.totalMinor).toBe(0);
+    expect(invoice.isFullyDiscounted).toBe(true);
+  });
+
+  it("an invoice that was never discounted is not `fully discounted`, even at zero", () => {
+    expect(draft([{ description: "free", amountMinor: 0 }]).isFullyDiscounted).toBe(false);
+  });
+
+  it("refuses a discount larger than the subtotal via Money's non-negativity, changing nothing", () => {
+    const invoice = plan();
+    expect(() => invoice.applyDiscount("coupon-1", usd(2901), "e2", NOW)).toThrow(/negative/i);
+    expect(invoice.discount).toBeUndefined();
+    expect(invoice.totalMinor).toBe(2900);
+  });
+
+  it("refuses a discount in another currency", () => {
+    const egp = Money.create(500, "EGP");
+    if (!egp.ok) throw new Error("bad money");
+    const invoice = plan();
+    expect(() => invoice.applyDiscount("coupon-1", egp.value, "e2", NOW)).toThrow(/different/i);
+    expect(invoice.discount).toBeUndefined();
+  });
+
+  it("allows ONE discount per invoice", () => {
+    const invoice = plan();
+    invoice.applyDiscount("coupon-1", usd(500), "e2", NOW);
+    expect(() => invoice.applyDiscount("coupon-2", usd(100), "e3", NOW)).toThrow(/already/i);
+    expect(invoice.discount?.couponRef).toBe("coupon-1");
+    expect(invoice.totalMinor).toBe(2400);
+  });
+
+  it("is applicable only to a DRAFT invoice — the machine refuses every other status", () => {
+    const issued = plan();
+    issued.issue("e2", NOW);
+    const paid = plan();
+    paid.issue("e2", NOW);
+    paid.markPaid("ref", "e3", NOW);
+    const failed = plan();
+    failed.issue("e2", NOW);
+    failed.markFailed("e3", NOW);
+    const voided = plan();
+    voided.voidInvoice("e2", NOW);
+    for (const invoice of [issued, paid, failed, voided]) {
+      const before = invoice.totalMinor;
+      expect(() => invoice.applyDiscount("coupon-1", usd(500), "e9", NOW)).toThrow(/draft/i);
+      expect(invoice.discount).toBeUndefined();
+      expect(invoice.totalMinor).toBe(before);
+    }
+  });
+
+  it("survives reconstitution and re-issue: a failed, discounted invoice retries at the discounted total", () => {
+    const invoice = plan();
+    invoice.applyDiscount("coupon-1", usd(500), "e2", NOW);
+    invoice.issue("e3", NOW);
+    invoice.markFailed("e4", NOW);
+    const reloaded = Invoice.reconstitute(
+      ID,
+      "merchant-1",
+      "sub-1",
+      "USD",
+      invoice.lineItems,
+      "failed",
+      3,
+      undefined,
+      invoice.discount,
+    );
+    reloaded.issue("e5", NOW);
+    expect(reloaded.totalMinor).toBe(2400);
+  });
+
+  it("raises licensing.invoice.discounted", () => {
+    const invoice = plan();
+    invoice.applyDiscount("coupon-1", usd(500), "e2", NOW);
+    const actions = invoice.domainEvents.map(
+      (e) => (e as unknown as { data: { action: string } }).data.action,
+    );
+    expect(actions).toContain("discounted");
   });
 });

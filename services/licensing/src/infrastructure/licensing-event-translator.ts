@@ -51,4 +51,9 @@ export const LICENSING_PUBLISHED_EVENTS: readonly string[] = [
   "licensing.invoice.paid",
   "licensing.invoice.failed",
   "licensing.invoice.voided",
+  "licensing.invoice.discounted",
+  "licensing.coupon.issued",
+  "licensing.coupon.redeemed",
+  "licensing.coupon.expired",
+  "licensing.coupon.revoked",
 ];

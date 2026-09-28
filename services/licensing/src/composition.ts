@@ -21,6 +21,12 @@ import {
   IssueInvoice,
 } from "./application/billing.use-cases";
 import {
+  ExpireCoupon,
+  IssueCoupon,
+  RedeemCoupon,
+  RevokeCoupon,
+} from "./application/coupon.use-cases";
+import {
   ActivateSubscription,
   ArchivePlanVersion,
   CancelSubscription,
@@ -60,6 +66,7 @@ import {
 import type { OffSessionCharger } from "@platform/contracts";
 import type {
   BillingPaymentMethodRepository,
+  CouponRepository,
   CreditRepository,
   InvoiceRepository,
   MerchantCapabilitiesRepository,
@@ -83,6 +90,7 @@ import {
 } from "./infrastructure/deferred-billing-adapters";
 import {
   InMemoryBillingPaymentMethodRepository,
+  InMemoryCouponRepository,
   InMemoryCreditRepository,
   InMemoryInvoiceRepository,
   InMemoryMerchantCapabilitiesRepository,
@@ -99,6 +107,7 @@ import {
 } from "./infrastructure/licensing-event-translator";
 import {
   PrismaBillingPaymentMethodRepository,
+  PrismaCouponRepository,
   PrismaCreditRepository,
   PrismaInvoiceRepository,
   PrismaMerchantCapabilitiesRepository,
@@ -200,6 +209,7 @@ interface LicensingRepos {
   readonly usageCounters: UsageCounterRepository;
   readonly credits: CreditRepository;
   readonly invoices: InvoiceRepository;
+  readonly coupons: CouponRepository;
   readonly billingPaymentMethods: BillingPaymentMethodRepository;
 }
 
@@ -242,6 +252,13 @@ function buildController(
     clock: deps.clock,
   };
 
+  const couponDeps = {
+    coupons: repos.coupons,
+    invoices: repos.invoices,
+    unitOfWork,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+  };
   const collectInvoice = new CollectInvoice(billingDeps);
   const issueInvoiceForDunning = new IssueInvoice(billingDeps);
   const dunningDeps = {
@@ -297,11 +314,16 @@ function buildController(
       subscriptions: repos.subscriptions,
       plans: repos.plans,
       invoices: repos.invoices,
+      coupons: repos.coupons,
       collectInvoice,
       unitOfWork,
       idGenerator: deps.idGenerator,
       clock: deps.clock,
     }),
+    issueCoupon: new IssueCoupon(couponDeps),
+    redeemCoupon: new RedeemCoupon(couponDeps),
+    expireCoupon: new ExpireCoupon(couponDeps),
+    revokeCoupon: new RevokeCoupon(couponDeps),
     createPlan: new CreatePlan(licensingDeps),
     createPlanDraft: new CreatePlanDraft(licensingDeps),
     schedulePlanVersion: new SchedulePlanVersion(licensingDeps),
@@ -358,6 +380,7 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
       usageCounters: new PrismaUsageCounterRepository(licensingDeps),
       credits: new PrismaCreditRepository(licensingDeps),
       invoices: new PrismaInvoiceRepository(licensingDeps),
+      coupons: new PrismaCouponRepository(licensingDeps),
       billingPaymentMethods: new PrismaBillingPaymentMethodRepository(licensingDeps),
     };
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
@@ -395,6 +418,7 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
     usageCounters: new InMemoryUsageCounterRepository({ outbox: outboxWriter, context }),
     credits: new InMemoryCreditRepository({ outbox: outboxWriter, context }),
     invoices: new InMemoryInvoiceRepository({ outbox: outboxWriter, context }),
+    coupons: new InMemoryCouponRepository({ outbox: outboxWriter, context }),
     billingPaymentMethods: new InMemoryBillingPaymentMethodRepository(),
   };
   const unitOfWork = new InMemoryUnitOfWork();

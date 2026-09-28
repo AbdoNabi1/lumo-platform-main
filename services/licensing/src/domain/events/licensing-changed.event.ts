@@ -8,7 +8,8 @@ export type LicensingFamily =
   | "merchant_capabilities"
   | "usage_counter"
   | "credit"
-  | "invoice";
+  | "invoice"
+  | "coupon";
 
 export interface LicensingChangedData {
   readonly ref: string;
@@ -17,7 +18,7 @@ export interface LicensingChangedData {
 }
 
 /**
- * Raised whenever any of Licensing's 8 aggregates changes (ADR-0018 Sprint 5.5/5.6 addenda) — a
+ * Raised whenever any of Licensing's 9 aggregates changes (ADR-0018 Sprint 5.5/5.6 addenda) — a
  * generic `(family, action)` change event, matching the plural-aggregate-single-event-file
  * precedent (SEO/Tenancy, G4/G5). The translator maps this to `licensing.<family>.<action>`.
  */

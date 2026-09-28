@@ -70,7 +70,48 @@ describe("InvoiceMapper (WP-14, Trap 3)", () => {
     lineItems: lineItems as never,
     status: "issued" as const,
     paymentReference: null,
+    discountMinor: null,
+    discountCouponRef: null,
     version: 1,
+  });
+
+  it("round-trips a coupon discount, and a null pair means no discount", () => {
+    const plain = InvoiceMapper.toDomain(row([{ description: "plan", amountMinor: 2900 }]));
+    expect(plain.discount).toBeUndefined();
+    expect(InvoiceMapper.toRow(plain, "platform")).toMatchObject({
+      discountMinor: null,
+      discountCouponRef: null,
+    });
+
+    const discounted = InvoiceMapper.toDomain({
+      ...row([{ description: "plan", amountMinor: 2900 }]),
+      discountMinor: 580,
+      discountCouponRef: "coupon-1",
+    });
+    expect(discounted.totalMinor).toBe(2320);
+    expect(InvoiceMapper.toRow(discounted, "platform")).toMatchObject({
+      discountMinor: 580,
+      discountCouponRef: "coupon-1",
+    });
+  });
+
+  it("refuses a half-recorded discount rather than charging a guess", () => {
+    expect(() =>
+      InvoiceMapper.toDomain({
+        ...row([{ description: "plan", amountMinor: 2900 }]),
+        discountMinor: 580,
+      }),
+    ).toThrow(/discount/i);
+  });
+
+  it("refuses a persisted discount larger than its subtotal (a corrupt row is not charged)", () => {
+    expect(() =>
+      InvoiceMapper.toDomain({
+        ...row([{ description: "plan", amountMinor: 2900 }]),
+        discountMinor: 5000,
+        discountCouponRef: "coupon-1",
+      }),
+    ).toThrow(/negative/i);
   });
 
   it("round-trips integer minor-unit line items exactly", () => {

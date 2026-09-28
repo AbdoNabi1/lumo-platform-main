@@ -69,6 +69,13 @@ export class BeginCardEnrolment implements UseCase<
     if (invoice.status !== "issued") {
       return err(new BusinessRuleError(`Cannot start a payment for a ${invoice.status} invoice`));
     }
+    // A PSP cannot open a checkout for nothing: a fully discounted (zero) first invoice settles
+    // without a payer, so it can never yield a card token (T14.3, see D-072 trade-offs).
+    if (invoice.totalMinor === 0) {
+      return err(
+        new BusinessRuleError("Cannot start a card payment for an invoice with a zero total"),
+      );
+    }
     // The PSP call is outside any transaction (the same rule `CollectInvoice` follows).
     const checkout = await this.deps.enrolment.startCheckout({
       tenantRef: invoice.tenantRef,

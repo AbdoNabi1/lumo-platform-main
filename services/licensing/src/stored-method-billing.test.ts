@@ -426,3 +426,36 @@ describe("a merchant with no stored token is not silently skipped", () => {
     expect(postSettlement).not.toHaveBeenCalled();
   });
 });
+
+describe("a fully discounted first invoice cannot start a card checkout (T14.3, D-072)", () => {
+  it("refuses beginCardEnrolment for a zero-total invoice and asks the PSP for nothing", async () => {
+    const { app, enrolments } = setup();
+    const coupon = await app.licensing.issueCoupon({
+      code: "FREEMONTH",
+      value: { kind: "percentage", basisPoints: 10000 },
+      expiresAt: new Date("2026-11-01T00:00:00.000Z"),
+      tenantId: PLATFORM,
+    });
+    expect(coupon.status).toBe(201);
+    const created = await app.licensing.createInvoice({
+      tenantRef: MERCHANT,
+      subscriptionRef: "sub-1",
+      currency: "EGP",
+      lineItems: [{ description: "First month", amountMinor: 149900 }],
+      tenantId: PLATFORM,
+    });
+    const invoiceId = (created.body as { id: string }).id;
+    const redeemed = await app.licensing.redeemCoupon({
+      code: "FREEMONTH",
+      invoiceId,
+      tenantId: PLATFORM,
+    });
+    expect(redeemed.status).toBe(200);
+    await app.licensing.issueInvoice({ invoiceId, tenantId: PLATFORM });
+
+    const begun = await app.licensing.beginCardEnrolment({ invoiceId, tenantId: PLATFORM });
+
+    expect(begun.status).toBe(409);
+    expect(enrolments).toHaveLength(0);
+  });
+});

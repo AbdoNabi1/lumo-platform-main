@@ -1,4 +1,5 @@
 import type { BillingPaymentMethod } from "./billing-payment-method";
+import type { Coupon } from "./coupon";
 import type { Credit } from "./credit";
 import type { Invoice } from "./invoice";
 import type { MerchantCapabilities } from "./merchant-capabilities";
@@ -112,4 +113,23 @@ export interface BillingPaymentMethodRepository {
 export interface InvoiceRepository {
   save(invoice: Invoice, tenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tenantId: string, tx?: unknown): Promise<Invoice | null>;
+}
+
+/**
+ * Billing coupons (WP-14 T14.3). Scoped to the PLATFORM tenant like `InvoiceRepository` — a merchant
+ * tenant's scope finds nothing — and the merchant is the `merchantRef` business key on the row.
+ * `save` is the redeem-once guard's storage half: it must be an optimistic-lock compare-and-swap that
+ * throws `ConcurrencyError` when another writer already advanced the row's `version`.
+ */
+export interface CouponRepository {
+  save(coupon: Coupon, tenantId: string, tx?: unknown): Promise<void>;
+  findById(id: string, tenantId: string, tx?: unknown): Promise<Coupon | null>;
+  /** `code` is the normalised (upper-case) code. */
+  findByCode(code: string, tenantId: string, tx?: unknown): Promise<Coupon | null>;
+  /** Every `issued` coupon addressed to `merchantRef`, oldest first — renewal billing's own read. */
+  findIssuedForMerchant(
+    merchantRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Coupon[]>;
 }

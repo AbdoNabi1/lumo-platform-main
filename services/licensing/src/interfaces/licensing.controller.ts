@@ -51,6 +51,16 @@ import type {
   IssueInvoice,
 } from "../application/billing.use-cases";
 import type {
+  CouponActionInput,
+  ExpireCoupon,
+  IssueCoupon,
+  IssueCouponInput,
+  RedeemCoupon,
+  RedeemCouponInput,
+  RevokeCoupon,
+  RevokeCouponInput,
+} from "../application/coupon.use-cases";
+import type {
   BeginCardEnrolment,
   BeginCardEnrolmentInput,
   RecordCardToken,
@@ -108,6 +118,11 @@ export interface LicensingControllerDeps {
   readonly grantCredit: GrantCredit;
   readonly consumeCredit: ConsumeCredit;
   readonly expireCredit: ExpireCredit;
+  /** T14.3 (D-072): coupons. Every operation is platform-only — issuance AND redemption. */
+  readonly issueCoupon: IssueCoupon;
+  readonly redeemCoupon: RedeemCoupon;
+  readonly expireCoupon: ExpireCoupon;
+  readonly revokeCoupon: RevokeCoupon;
   /**
    * Saved-card use cases (G-74 (1)). Present only when the deployment composes stored-method billing;
    * absent ⇒ the operations answer 404, never a silent success.
@@ -391,6 +406,41 @@ export class LicensingController {
   async expireCredit(input: CreditIdInput): Promise<ControllerResponse> {
     return this.platformOnly(input, async () =>
       present(await this.deps.expireCredit.execute(input), 200),
+    );
+  }
+
+  /**
+   * T14.3: issues a coupon. Platform-only, at THIS boundary like every other pricing operation: a
+   * merchant tenant holding any `licensing:*` permission must not be able to issue itself a 100% coupon.
+   */
+  async issueCoupon(input: IssueCouponInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.issueCoupon.execute(input), 201),
+    );
+  }
+
+  /**
+   * T14.3: redeems a coupon onto a DRAFT invoice. Platform-only too — not merely issuance. Invoices
+   * live in the platform's tenant scope, which a merchant's own scope cannot read, so a merchant-facing
+   * redeem would need this controller to pin the scope to the platform's the way the PSP callbacks do:
+   * a bearer code would then let any merchant session pick ANY invoice id and discount it. An operator
+   * applies the code a merchant presents instead (see D-072).
+   */
+  async redeemCoupon(input: RedeemCouponInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.redeemCoupon.execute(input), 200),
+    );
+  }
+
+  async expireCoupon(input: CouponActionInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.expireCoupon.execute(input), 200),
+    );
+  }
+
+  async revokeCoupon(input: RevokeCouponInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.revokeCoupon.execute(input), 200),
     );
   }
 }

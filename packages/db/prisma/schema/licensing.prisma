@@ -128,6 +128,11 @@ model Invoice {
   lineItems         Json     @default("[]") @map("line_items")
   status            String // draft | issued | paid | failed | voided
   paymentReference  String?  @map("payment_reference")
+  /// T14.3 (D-072): the invoice's ONE coupon discount, in integer minor units of `currency` — NOT a
+  /// negative line item (`Money` is non-negative). Both null or both set (CHECK in the migration).
+  /// `total = sum(lineItems) - discount_minor`. See migration `20260928000000_billing_coupons`.
+  discountMinor     Int?     @map("discount_minor")
+  discountCouponRef String?  @map("discount_coupon_ref")
   version           Int      @default(0)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
@@ -167,5 +172,35 @@ model BillingPaymentMethod {
   @@unique([tenantId, provider, providerOrderId])
   @@index([tenantId, tenantRef, status])
   @@map("billing_payment_methods")
+  @@schema("licensing")
+}
+
+/// T14.3 (D-072): a Morbeh-issued billing coupon — platform-scoped (`tenant_id` is the ADR-0014 platform
+/// scope, RLS forced, exactly like `invoices`), `tenant_ref` the merchant it is ADDRESSED to (null = a
+/// bearer coupon). A percentage carries `percent_basis_points` and no currency; a fixed amount carries
+/// `amount_minor` (integer minor units — never Decimal, never Float) and `currency`; the CHECKs in the
+/// migration make the two shapes exclusive. `version` is the optimistic lock that makes redemption
+/// once-only. See migration `20260928000000_billing_coupons`.
+model BillingCoupon {
+  id                 String    @id @db.Uuid
+  tenantId           String    @map("tenant_id")
+  tenantRef          String?   @map("tenant_ref")
+  code               String
+  kind               String // percentage | fixed
+  percentBasisPoints Int?      @map("percent_basis_points")
+  amountMinor        Int?      @map("amount_minor")
+  currency           String?
+  expiresAt          DateTime  @map("expires_at")
+  status             String // issued | redeemed | expired | revoked
+  redeemedInvoiceRef String?   @map("redeemed_invoice_ref")
+  redeemedAt         DateTime? @map("redeemed_at")
+  revokedReason      String?   @map("revoked_reason")
+  version            Int       @default(0)
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, code])
+  @@index([tenantId, tenantRef, status])
+  @@map("billing_coupons")
   @@schema("licensing")
 }

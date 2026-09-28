@@ -1,5 +1,6 @@
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { BillingPaymentMethod } from "../domain/billing-payment-method";
+import type { Coupon } from "../domain/coupon";
 import type { Credit } from "../domain/credit";
 import type { Invoice } from "../domain/invoice";
 import type { MerchantCapabilities } from "../domain/merchant-capabilities";
@@ -7,6 +8,7 @@ import type { MerchantFeatureOverride } from "../domain/merchant-feature-overrid
 import type { Plan } from "../domain/plan";
 import type {
   BillingPaymentMethodRepository,
+  CouponRepository,
   CreditRepository,
   InvoiceRepository,
   MerchantCapabilitiesRepository,
@@ -278,6 +280,62 @@ export class InMemoryInvoiceRepository implements InvoiceRepository {
   async findById(id: string, tenantId: string): Promise<Invoice | null> {
     const entry = this.store.get(id);
     return entry !== undefined && entry.tenantId === tenantId ? entry.invoice : null;
+  }
+}
+
+/**
+ * In-memory coupons — for the offline composition only. Like every repository in this file it hands
+ * aggregates out BY REFERENCE and does not enforce an optimistic lock, so it is NOT evidence for the
+ * redeem-once guarantee; that is proven against `PrismaCouponRepository` over `FakeLicensingDb`
+ * (`coupon-redemption-concurrency.test.ts`), which does implement the compare-and-swap.
+ */
+export class InMemoryCouponRepository implements CouponRepository {
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly coupon: Coupon }
+  >();
+  private readonly outbox: OutboxWriter;
+  private readonly context: EventContext;
+
+  constructor(deps: InMemoryLicensingRepositoriesDeps) {
+    this.outbox = deps.outbox;
+    this.context = deps.context;
+  }
+
+  async save(coupon: Coupon, tenantId: string, tx?: unknown): Promise<void> {
+    this.store.set(coupon.id.toString(), { tenantId, coupon });
+    await this.outbox.write(coupon.pullDomainEvents(), { ...this.context, tenantId }, tx);
+  }
+
+  findById(id: string, tenantId: string): Promise<Coupon | null> {
+    const entry = this.store.get(id);
+    return Promise.resolve(
+      entry !== undefined && entry.tenantId === tenantId ? entry.coupon : null,
+    );
+  }
+
+  findByCode(code: string, tenantId: string): Promise<Coupon | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.coupon.code === code) {
+        return Promise.resolve(entry.coupon);
+      }
+    }
+    return Promise.resolve(null);
+  }
+
+  findIssuedForMerchant(merchantRef: string, tenantId: string): Promise<readonly Coupon[]> {
+    // Map iteration order is insertion order, i.e. oldest first.
+    const found: Coupon[] = [];
+    for (const entry of this.store.values()) {
+      if (
+        entry.tenantId === tenantId &&
+        entry.coupon.merchantRef === merchantRef &&
+        entry.coupon.status === "issued"
+      ) {
+        found.push(entry.coupon);
+      }
+    }
+    return Promise.resolve(found);
   }
 }
 

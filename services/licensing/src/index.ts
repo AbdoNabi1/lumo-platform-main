@@ -14,8 +14,12 @@ export { MerchantCapabilities } from "./domain/merchant-capabilities";
 export { UsageCounter } from "./domain/usage-counter";
 export { Credit } from "./domain/credit";
 export { Invoice } from "./domain/invoice";
+export type { InvoiceDiscount } from "./domain/invoice";
+export { Coupon } from "./domain/coupon";
+export type { CouponStatus, CouponValue } from "./domain/coupon";
 export { EntitlementResolver } from "./domain/entitlement-resolver";
 export type {
+  CouponRepository,
   CreditRepository,
   InvoiceRepository,
   MerchantCapabilitiesRepository,
@@ -25,6 +29,7 @@ export type {
   UsageCounterRepository,
 } from "./domain/repositories";
 export {
+  PrismaCouponRepository,
   PrismaCreditRepository,
   PrismaInvoiceRepository,
   PrismaMerchantCapabilitiesRepository,

@@ -30,7 +30,10 @@ export interface IdOutput {
  * expected/recoverable (two racing collect attempts for the same invoice), so the read-check-write
  * attempt is retried from scratch against the now-current row. Any other error propagates immediately.
  */
-async function withConcurrencyRetry<T>(maxAttempts: number, attempt: () => Promise<T>): Promise<T> {
+export async function withConcurrencyRetry<T>(
+  maxAttempts: number,
+  attempt: () => Promise<T>,
+): Promise<T> {
   for (let i = 1; i <= maxAttempts; i += 1) {
     try {
       return await attempt();
@@ -123,6 +126,12 @@ interface CollectPrecheck {
    * `payments.collect()`'s idempotency key is derived from. See class doc §Idempotency.
    */
   readonly version: number;
+  /**
+   * T14.3 (D-072): set only for an invoice a coupon brought to a zero total. There is nothing to ask a
+   * PSP for, so it settles `paid` under this reference (`coupon:<couponId>`) with NO PSP call and no
+   * ledger post (nothing was settled). An UNdiscounted zero total is still refused, below.
+   */
+  readonly zeroDueReference?: string;
 }
 
 /**
@@ -204,6 +213,15 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
     const precheck = await this.precheck(input.invoiceId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     if (precheck.value.alreadyPaid) return ok({ id: input.invoiceId });
+    const zeroDueReference = precheck.value.zeroDueReference;
+    if (zeroDueReference !== undefined) {
+      const settledFree = await this.settleSuccess(
+        input.invoiceId,
+        zeroDueReference,
+        input.tenantId,
+      );
+      return settledFree.ok ? ok({ id: input.invoiceId }) : err(settledFree.error);
+    }
     const { tenantRef, totalMinor, currency, version } = precheck.value;
     const idempotencyKey = `${input.invoiceId}:${version}:collect`;
 
@@ -270,9 +288,18 @@ export class CollectInvoice implements UseCase<InvoiceIdInput, IdOutput, DomainE
           new BusinessRuleError(`Cannot transition invoice from ${invoice.status} to paid`),
         );
       }
-      // WP-14: a zero-total invoice has nothing to collect, and a PSP rejects a zero amount — refuse
-      // here rather than send it (and, on the failure path, wrongly mark the invoice `failed`).
+      // WP-14: a zero-total invoice has nothing to collect, and a PSP rejects a zero amount — never
+      // send it (and, on the failure path, wrongly mark the invoice `failed`). T14.3: when a COUPON
+      // made it zero it is a settled invoice, not a malformed one: it is marked paid with no PSP call.
+      // Any other zero total is still refused.
       if (invoice.totalMinor === 0) {
+        if (invoice.isFullyDiscounted && invoice.discount !== undefined) {
+          return ok({
+            alreadyPaid: false,
+            ...context,
+            zeroDueReference: `coupon:${invoice.discount.couponRef}`,
+          });
+        }
         return err(new BusinessRuleError("Cannot collect an invoice with a zero total"));
       }
       return ok({ alreadyPaid: false, ...context });

@@ -6,17 +6,20 @@ import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError, isDomainError } from "@platform/utils";
 import { Invoice } from "../domain/invoice";
 import type {
+  CouponRepository,
   InvoiceRepository,
   PlanRepository,
   SubscriptionRepository,
 } from "../domain/repositories";
-import type { CollectInvoice } from "./billing.use-cases";
+import { type CollectInvoice, withConcurrencyRetry } from "./billing.use-cases";
 import { findPinnedVersion } from "./licensing.use-cases";
 
 export interface BillSubscriptionRenewalDeps {
   readonly subscriptions: SubscriptionRepository;
   readonly plans: PlanRepository;
   readonly invoices: InvoiceRepository;
+  /** T14.3: absent means renewals never consult coupons (an older composition). */
+  readonly coupons?: CouponRepository;
   readonly collectInvoice: CollectInvoice;
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
@@ -64,7 +67,9 @@ export class BillSubscriptionRenewal implements UseCase<
   async execute(
     input: BillSubscriptionRenewalInput,
   ): Promise<Result<BillSubscriptionRenewalOutput, DomainError>> {
-    const prepared = await this.prepare(input);
+    // A lost race on the coupon's or subscription's optimistic lock rolls the whole preparation back
+    // (no invoice, no advanced schedule), so re-running it from scratch is safe.
+    const prepared = await withConcurrencyRetry(3, () => this.prepare(input));
     if (!prepared.ok) return err(prepared.error);
     const invoiceId = prepared.value;
 
@@ -82,6 +87,44 @@ export class BillSubscriptionRenewal implements UseCase<
       const invoice = await this.deps.invoices.findById(invoiceId, input.tenantId);
       if (invoice?.status === "failed") return ok({ invoiceId, status: "failed" });
       throw error;
+    }
+  }
+
+  /**
+   * Applies at most ONE coupon ADDRESSED to this merchant to the draft, oldest first, BEFORE it is
+   * issued (the only moment a discount may land — see `Invoice`'s DISCOUNTABLE). A coupon that cannot
+   * apply (expired, wrong currency, worth more than the invoice, would discount nothing) is SKIPPED and
+   * stays `issued`: renewal billing is never blocked by a coupon, unlike an explicit `RedeemCoupon`,
+   * which refuses loudly. Redemption saves the coupon here under its optimistic lock, so a concurrent
+   * explicit redemption of the same coupon loses cleanly (D-072).
+   */
+  private async applyMerchantCoupon(
+    invoice: Invoice,
+    merchantRef: string,
+    tenantId: string,
+    now: Date,
+    tx: unknown,
+  ): Promise<void> {
+    const coupons = this.deps.coupons;
+    if (coupons === undefined) return;
+    for (const coupon of await coupons.findIssuedForMerchant(merchantRef, tenantId, tx)) {
+      try {
+        const discount = coupon.discountFor(invoice.subtotal);
+        coupon.assertRedeemable(merchantRef, now);
+        invoice.assertCanDiscount(discount);
+        coupon.redeem(invoice.id.toString(), merchantRef, this.deps.idGenerator.generate(), now);
+        invoice.applyDiscount(
+          coupon.id.toString(),
+          discount,
+          this.deps.idGenerator.generate(),
+          now,
+        );
+      } catch (error) {
+        if (isDomainError(error)) continue;
+        throw error;
+      }
+      await coupons.save(coupon, tenantId, tx);
+      return;
     }
   }
 
@@ -146,6 +189,7 @@ export class BillSubscriptionRenewal implements UseCase<
           this.deps.idGenerator.generate(),
           now,
         );
+        await this.applyMerchantCoupon(invoice, subscription.tenantRef, input.tenantId, now, tx);
         invoice.issue(this.deps.idGenerator.generate(), now);
         subscription.setRenewalSchedule({
           cycleDays: schedule.cycleDays,
