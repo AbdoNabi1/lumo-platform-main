@@ -15,7 +15,7 @@ const SOURCE = readFileSync(
 
 describe("FINANCE_PUBLISHED_EVENTS is exactly what FinanceEventTranslator emits", () => {
   it("every type the translator emits is listed, and nothing else is", () => {
-    const emitted = [...SOURCE.matchAll(/^\s+type: "([a-z0-9_.]+)",$/gm)].map((m) => m[1]);
+    const emitted = [...SOURCE.matchAll(/\btype:\s*"([a-z0-9_.]+)"/g)].map((m) => m[1]);
     expect(emitted.length).toBeGreaterThan(0);
     expect([...new Set(emitted)].sort()).toEqual([...FINANCE_PUBLISHED_EVENTS].sort());
   });
