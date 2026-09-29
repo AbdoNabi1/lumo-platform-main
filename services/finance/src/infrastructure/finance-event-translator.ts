@@ -86,3 +86,19 @@ export class FinanceEventTranslator implements IntegrationEventTranslator {
     return undefined;
   }
 }
+
+/**
+ * Published-event contract for the Finance context — every type {@link FinanceEventTranslator} emits.
+ * Pinned to the translator by `finance-event-translator.test.ts`, and read by the runtime's Kafka
+ * topic inventory: a type missing here gets no topic, and one unprovisioned topic stalls the relay.
+ */
+export const FINANCE_PUBLISHED_EVENTS = [
+  "finance.ledger.posted",
+  "finance.expense.created",
+  "finance.budget.updated",
+  "finance.period.closed",
+  "finance.snapshot.created",
+  "finance.statement.generated",
+  "finance.cashflow.updated",
+  "finance.tax.calculated",
+] as const;

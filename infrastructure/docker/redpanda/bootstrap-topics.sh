@@ -1,21 +1,33 @@
 #!/bin/bash
-# Sprint 2.2.5 — Redpanda topic bootstrap. Idempotent (rpk create errors on existing topics
-# are tolerated). Source of truth for names: docs/architecture/20 §1.1; policies: doc 05 §2.
+# Sprint 2.2.5 — Redpanda topic bootstrap for the COMPOSE stack. Idempotent (rpk create errors on
+# existing topics are tolerated).
+#
+# Topic NAMES and RETENTION are not written here any more (G-80, 2026-09-29). They come from
+# `topics.manifest` beside this script, which is GENERATED from the one inventory in
+# `apps/runtime/src/kafka-topics/topic-inventory.ts`:
+#
+#     pnpm --filter @platform/runtime run topics:manifest
+#
+# `apps/runtime/src/kafka-topics/topic-inventory.test.ts` fails when the committed manifest drifts
+# from the inventory. Hand-written topic lines drifted before: this script once provisioned 26 of the
+# 397 event types the platform produces, and the in-process outbox relay stalls permanently at the
+# first row whose topic does not exist. Deployments that are not compose (Railway) use
+# `apps/runtime/src/provision-topics.ts`, which reads the same inventory.
 #
 # Conventions:
 # - Business topics: `<context>.<aggregate>.<event>.v<version>`, partitioned by aggregate id
-#   (producer-side key), 30d retention default (doc 20 §1), 6 partitions locally.
-# - Per-topic companions: `<topic>.retry` (consumer redelivery with backoff — replaces the
-#   in-process sleep, ADR-0005 note) and `<topic>.dlq` (poison messages; long retention).
+#   (producer-side key). A topic the worker CONSUMES, and its .retry, gets 6 partitions locally
+#   (override with TOPIC_PARTITIONS); every other topic gets 1. Redpanda reserves ~4 MiB per
+#   partition, so ~400 topics x 6 would not fit the broker's memory.
+# - Only topics the worker CONSUMES get `<topic>.retry` (redelivery with backoff, ADR-0005) and
+#   `<topic>.dlq` (poison messages, 1 partition). A companion nothing consumes does nothing.
 # - Financial topics get 7-year-archive semantics in production via tiered storage; locally
 #   we approximate with longer retention.
 set -u
 
 BROKERS="${REDPANDA_BROKERS:-redpanda:9092}"
-DAY_MS=86400000
-RET_30D=$((30 * DAY_MS))
-RET_13MO=$((395 * DAY_MS))
-RET_7Y=$((2555 * DAY_MS))
+PARTITIONS="${TOPIC_PARTITIONS:-6}"
+MANIFEST="${TOPICS_MANIFEST:-/bootstrap/topics.manifest}"
 FAILED=0
 
 # `rpk topic create` exits non-zero both when the topic already exists (idempotent — expected on
@@ -36,65 +48,33 @@ create() { # name partitions retention_ms
   fi
 }
 
-with_companions() { # name partitions retention_ms
-  create "$1" "$2" "$3"
-  create "$1.retry" "$2" "$RET_30D"
-  create "$1.dlq" 1 "$RET_13MO"
-}
+if [ ! -r "$MANIFEST" ]; then
+  echo "FAILED   topic manifest not readable at $MANIFEST (mount infrastructure/docker/redpanda/topics.manifest)"
+  exit 1
+fi
 
-# Implemented Phase-1 topics (doc 20 §1.1) ------------------------------------------------
-with_companions catalog.product.published.v1        6 "$RET_30D"
-with_companions catalog.product.updated.v1          6 "$RET_30D"
-with_companions media.asset.ready.v1                6 "$RET_30D"
-with_companions pricing.price.changed.v1            6 "$RET_30D"
-with_companions inventory.inventory_item.adjusted.v1 6 "$RET_30D"
-with_companions cart.cart.checked_out.v1            6 "$RET_30D"
-with_companions cart.cart.abandoned.v1              6 "$RET_30D"
-with_companions checkout.checkout_session.completed.v1 6 "$RET_30D"
-with_companions checkout.checkout_session.failed.v1 6 "$RET_30D"
-with_companions orders.order.placed.v1              6 "$RET_7Y"
-with_companions orders.order.paid.v1                6 "$RET_7Y"
-with_companions orders.order.refunded.v1            6 "$RET_7Y"
-with_companions payments.payment_intent.captured.v1 6 "$RET_7Y"
-with_companions payments.payment_intent.failed.v1   6 "$RET_7Y"
-with_companions payments.payment_intent.refunded.v1 6 "$RET_7Y"
-with_companions identity.customer.registered.v1     6 "$RET_13MO"
-with_companions identity.customer.consent_changed.v1 6 "$RET_7Y"
-
-# Audit (ADR-0009; producer added with the outbox-backed AuditTrail adapter) ---------------
-with_companions platform.audit.entry_recorded.v1    6 "$RET_7Y"
-
-# H-06: the bridge event from the tracking collector to ingest (apps/runtime/src/tracking/
-# tracking-ingest.ts) — consumer subscribes with allowAutoTopicCreation=false, so it could never
-# start without this topic existing first. Retention per docs/architecture/20-events-catalog.md
-# §5 ("tracking.event.captured.v1" row): 13mo.
-with_companions tracking.event.captured.v1          6 "$RET_13MO"
-
-# Topics the WORKER subscribes to that were never provisioned (2026-09-29). The worker subscribes
-# with allowAutoTopicCreation=false and `ConsumerSupervisor.startAll()` has no per-consumer
-# isolation, so ANY one of these missing stopped the worker at boot, outbox relay included.
-# `apps/runtime/src/worker-topics-provisioned.test.ts` now fails if a subscribed topic is missing here.
-#
-# T14.5 dunning -> notifications (apps/runtime/src/consumers/dunning-notifications.consumers.ts).
-# 13mo, not 7y: these are billing-LIFECYCLE signals; the financial record (invoices, journal
-# entries) lives in Postgres under its own retention.
-with_companions licensing.subscription.entered_grace.v1        6 "$RET_13MO"
-with_companions licensing.subscription.recovered_from_grace.v1 6 "$RET_13MO"
-with_companions licensing.subscription.dunning_exhausted.v1    6 "$RET_13MO"
-# G-79 usage metering -> Licensing usage counters (usage-recorded.consumers.ts). 13mo: the
-# counter is the durable projection; revisit if usage is ever invoiced straight from events.
-with_companions platform.usage.recorded.v1                     6 "$RET_13MO"
-# H-04 principal provisioning (security-provisioning.consumers.ts) — config-gated
-# (SECURITY_PRINCIPAL_PROVISIONING, default off), so turning it on also stopped the worker.
-with_companions identity.user.created.v1                       6 "$RET_13MO"
-with_companions identity.user.deactivated.v1                   6 "$RET_13MO"
-with_companions identity.membership.created.v1                 6 "$RET_13MO"
+COUNT=0
+while read -r name kind retention partitioning; do
+  case "$name" in "" | "#"*) continue ;; esac
+  # A Windows checkout (core.autocrlf, no .gitattributes) ends each line in \r; strip it, or the
+  # last field reads "full\r" and a consumed topic silently gets one partition.
+  partitioning="${partitioning%$'\r'}"
+  # `full`: a consumed topic and its .retry. `single`: produced-only topics and every .dlq.
+  if [ "$partitioning" = "full" ]; then
+    create "$name" "$PARTITIONS" "$retention"
+  else
+    create "$name" 1 "$retention"
+  fi
+  COUNT=$((COUNT + 1))
+done < "$MANIFEST"
+echo "manifest topics processed: $COUNT"
 
 # Kafka Connect internal topics (Sprint 3.0B First Boot fix): Debezium requires its config/
 # offset/status topics to be `cleanup.policy=compact`. If Connect auto-creates them against a
 # broker whose default is `delete` (Redpanda's default), the herder refuses to start with a
 # ConfigException. Pre-creating them here with compact removes that boot ordering hazard so
-# Connect always finds correctly-configured topics. Compacted (no retention.ms).
+# Connect always finds correctly-configured topics. Compacted (no retention.ms). Compose-only:
+# these belong to Kafka Connect, not to the platform, so they are not in the topic inventory.
 compact() { # name partitions
   out=$(rpk topic create "$1" --brokers "$BROKERS" -p "$2" -r 1 -c "cleanup.policy=compact" 2>&1)
   if [ $? -eq 0 ]; then

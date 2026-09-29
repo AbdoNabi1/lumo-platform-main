@@ -16,6 +16,12 @@
 
 ## 1.1 Implemented events — reconciliation (ADR-0004)
 
+> **Superseded as the list of topics that must EXIST (G-80, 2026-09-29):** that list is now
+> generated from code — `apps/runtime/src/kafka-topics/topic-inventory.ts`, 430 topics — and provisioned
+> from it (`apps/runtime/src/provision-topics.ts` on Railway, the generated
+> `infrastructure/docker/redpanda/topics.manifest` in compose). The table below still records the
+> Phase-1 topics and what raises them.
+>
 > **This table is the source of truth for the Phase-1 topics that exist in code.** Event names are
 > canonically **3 segments** (`<context>.<aggregate>.<event>`, enforced by `topicFor`); rows
 > elsewhere in this catalog that use older 2-segment shorthand (e.g. `cart.abandoned.v1`) or

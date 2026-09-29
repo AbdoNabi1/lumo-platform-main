@@ -42,4 +42,7 @@ export {
   PrismaJournalRepository,
   type PrismaJournalDeps,
 } from "./infrastructure/prisma-finance-repositories";
-export { FinanceEventTranslator } from "./infrastructure/finance-event-translator";
+export {
+  FINANCE_PUBLISHED_EVENTS,
+  FinanceEventTranslator,
+} from "./infrastructure/finance-event-translator";

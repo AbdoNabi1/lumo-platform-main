@@ -16,3 +16,10 @@ export class MediaEventTranslator implements IntegrationEventTranslator {
     return undefined;
   }
 }
+
+/**
+ * Published-event contract for {@link MediaEventTranslator} (the Media ASSET events; the library's
+ * are `MEDIA_LIBRARY_PUBLISHED_EVENTS`). Pinned by `media-event-translator.test.ts`; read by the
+ * runtime's Kafka topic inventory.
+ */
+export const MEDIA_PUBLISHED_EVENTS = ["media.asset.ready"] as const;

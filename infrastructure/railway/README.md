@@ -162,3 +162,144 @@ railway link
 `railway up` deploys the linked service; `railway variables --set 'KEY=value'` sets env vars;
 `railway run <cmd>` executes a one-off command (use it for the manual seed in §5.3) with the
 service's environment injected.
+
+## 8. Kafka (Redpanda) and the worker — the asynchronous half
+
+Everything above runs the **API only**. The platform also writes every business event (an order
+paid, a product created, a subscription entering grace) to the `platform.outbox` table in the same
+transaction as the change, and a **worker** relays those rows to Kafka and runs the consumers that
+act on them. Without a broker and a worker none of that happens: the rows accumulate in the outbox
+and nothing reads them. Concretely, these do not run today:
+
+| Consumer (topic)                                  | What it does                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------- |
+| `payments.payment_intent.captured.v1`             | marks the order paid; Finance posts the fee entry                         |
+| `payments.payment_intent.refunded.v1`             | Finance posts the contra entry                                            |
+| `orders.order.paid.v1` (four consumers)           | ledger entry, loyalty points, customer profile, confirmation notification |
+| `licensing.subscription.*` (three dunning events) | opens the dunning notification record                                     |
+| `platform.usage.recorded.v1`                      | counts usage into Licensing's usage counters (G-79)                       |
+| `identity.user.*`, `identity.membership.created`  | principal provisioning — only if `SECURITY_PRINCIPAL_PROVISIONING` is on  |
+| `tracking.event.captured.v1`                      | tracking ingest — only if `TRACKING_INGEST_ENABLED` is on                 |
+
+This section adds two Railway services, **`redpanda`** and **`worker`**. Do the steps in order.
+
+### 8.1 First: the migrations — they apply on the next `runtime-api` deploy
+
+`runtime-api.railway.json`'s `preDeployCommand` runs `prisma migrate deploy` against whatever
+`DATABASE_URL` points at — **for this deployment, Supabase**. So the next `runtime-api` deploy of a
+branch that contains pending migrations APPLIES them. Six are pending today (created, never
+applied): `20260923000000_wp13_merchant_payments`, `20260924000000_wp14_platform_plans`,
+`20260924010000_open_payment_provider_registry`, `20260924020000_billing_payment_methods`,
+`20260927000000_billing_payment_methods_invoice_ref`, `20260928000000_billing_coupons`.
+
+Apply them **deliberately, before the worker's first start** — the worker's consumers read tables
+these migrations change. Check which branch Railway deploys `runtime-api` from before merging
+anything into it, so this happens when you decide and not as a side effect of a merge.
+
+### 8.2 The `redpanda` service
+
+Create an empty service from the Docker image **`redpandadata/redpanda:v24.2.7`** (the version the
+compose stack pins) and name it exactly `redpanda`: the name is its private DNS name,
+`redpanda.railway.internal` (Railway: services are reachable at `SERVICE_NAME.railway.internal`).
+
+- **Volume:** mount one at `/var/lib/redpanda/data`, or every restart loses every topic and message.
+- **Start command:** the compose flags (`infrastructure/docker/docker-compose.yml`, `redpanda`
+  service), with the addresses changed for Railway's private network and no external listener:
+
+  ```
+  redpanda start --smp=1 --memory=3G --overprovisioned
+    --kafka-addr=internal://0.0.0.0:9092
+    --advertise-kafka-addr=internal://redpanda.railway.internal:9092
+    --rpc-addr=0.0.0.0:33145
+    --advertise-rpc-addr=redpanda.railway.internal:33145
+  ```
+
+- **Memory:** `--memory=3G` is not arbitrary. Redpanda reserves ~4 MiB per partition
+  (`topic_memory_per_partition`, recorded live in the compose file's comment), and the platform
+  needs 430 topics, which is 430 partitions at the Railway default of 1 each, about 1.7 GiB before
+  any data. Give the service more RAM than `--memory`: Redpanda needs headroom beyond its own
+  allocation.
+- **Do NOT copy compose's `--mode=dev-container`** unless losing events is acceptable. Redpanda's
+  own documentation says development mode "Bypasses `fsync` … which results in unrealistically
+  fast clusters and may result in data loss." An event the relay has marked published and Redpanda
+  then loses is gone for good — ledger postings included.
+- **Not verified — check these first if the worker cannot connect:**
+  - Railway environments created **after 16 Oct 2025** resolve private DNS to IPv4 **and** IPv6;
+    **older ("legacy") environments resolve to IPv6 only** (Railway docs, private networking, "how
+    it works"). `0.0.0.0` listens on IPv4 only, so in a legacy environment Redpanda must listen on
+    IPv6 instead. The exact Redpanda address syntax for that was not verified.
+  - Whether Redpanda without `--mode` (fsync on) starts cleanly in a Railway container without its
+    host tuners. `--overprovisioned` is set for exactly that reason.
+  - The file-descriptor ceiling. The compose stack hit "Refusing to create 6 partitions as total
+    partition count 210 would exceed FD limit 204" until it raised `ulimits.nofile`. If topic
+    creation fails with `INVALID_PARTITIONS … hardware constraints`, this is the likely cause.
+
+### 8.3 The `worker` service
+
+Create a service from this repo with the config-as-code path
+**`infrastructure/railway/worker.railway.json`**. It builds the same image as `runtime-api` and
+differs only in what it runs:
+
+- **Pre-deploy:** `provision-topics.ts` creates every topic the platform needs, from the one
+  inventory in `apps/runtime/src/kafka-topics/topic-inventory.ts`. It is idempotent, logs each
+  created or failed topic, and **exits non-zero if any topic could not be created**, which on
+  Railway blocks the deploy. Railway: "If your command fails, it will not be retried and the
+  deployment will not proceed"; pre-deploy commands "execute within your private network and have
+  access to your application's environment variables."
+- **Start:** `node --import tsx src/worker.ts`; health on `/healthz`.
+
+Variables: **everything `runtime-api` has** (§3: `APP_ENV`, `DATABASE_URL`, `DIRECT_URL`,
+`REDIS_URL`, and the rest), plus:
+
+| Variable                         | Value                            | Why                                                 |
+| -------------------------------- | -------------------------------- | --------------------------------------------------- |
+| `KAFKA_BROKERS`                  | `redpanda.railway.internal:9092` | the private address from §8.2                       |
+| `OUTBOX_RELAY_ENABLED`           | `true`                           | the worker relays the outbox — **read §8.4 first**  |
+| `KAFKA_TOPIC_PARTITIONS`         | `1`                              | a consumed topic's partitions (others always get 1) |
+| `KAFKA_TOPIC_REPLICATION_FACTOR` | `1`                              | one broker                                          |
+
+**Never set `TENANT_MODE=multi`.** Whether the worker boots under `APP_ENV=local` was **not
+verified**: it has not been started against a real broker.
+
+### 8.4 Decide about the backlog BEFORE the worker's first start
+
+The relay publishes **every** `pending` row in `platform.outbox`, oldest first — including every
+row written since the relay was switched off (`docs/operations/CLOUD_RUNBOOK.md` §3.3 counted 94
+then). The consumers in the table above then act on events that may be weeks old: ledger postings,
+loyalty points, notifications. Look first (read-only):
+
+```sql
+SELECT topic, count(*) FROM platform.outbox WHERE status = 'pending' GROUP BY topic ORDER BY 2 DESC;
+```
+
+Then choose. **Replay:** start the worker as is. **Skip:** mark the backlog published before the
+first start, so it is never delivered:
+
+```sql
+UPDATE platform.outbox SET status = 'published', published_at = now() WHERE status = 'pending';
+```
+
+Skipping cannot be undone in effect: those events will never reach a consumer. Nothing in this repo
+makes this choice for you.
+
+### 8.5 Verify
+
+1. The worker's pre-deploy log ends with `topic provisioning finished` and `failed: 0`.
+2. The worker's `/healthz` returns 200.
+3. Create a product, then read the `PRODUCT` usage counter
+   (`GET /api/v1/usage-counters?tenantRef=<tenant>&resource=PRODUCT`, as an admin). It should read
+   **1**: the first time G-79's metering runs outside a test.
+
+### 8.6 Known limits
+
+- **A type emitted outside its context's list still stalls the relay.** The inventory is exactly as
+  complete as each context's `*_PUBLISHED_EVENTS` list. Licensing, Finance and Media are pinned to
+  what their translators emit; the other contexts' lists are hand-kept (G-80). The symptom is the
+  worker logging `outbox relay failed` on every pass while `pending` rows stop draining. Find the
+  oldest pending row's `topic` in `platform.outbox`, add that type to its context's list, then
+  redeploy the worker so its pre-deploy provisions it.
+- **No SASL/TLS.** `createKafkaClient` (`packages/kafka/src/index.ts`) passes only `clientId`,
+  `brokers` and `logLevel`. That is fine inside Railway's private network and not enough for a
+  managed broker on the internet (Confluent, Redpanda Cloud); using one needs a code change first.
+- **The compose stack is separate.** It provisions from `infrastructure/docker/redpanda/topics.manifest`,
+  generated from the same inventory (`pnpm --filter @platform/runtime run topics:manifest`).

@@ -300,7 +300,7 @@ Four known concurrency-only flakes — re-run the file alone
 - `apps/admin/src/http/public-auth-routes.test.ts` ("expired, reused, wrong-tenant, and tampered
   tokens are all rejected indistinguishably", G-72 guest-to-account upgrade) fails
   `expected 404 to be 201` at its `first.status` assertion, only under a whole-workspace
-  `--workspace-concurrency=4` run; 39/39 pass run alone. **Seen four times now** (most recently
+  `--workspace-concurrency=4` run; 39/39 pass run alone. **Seen five times now** (twice on
   2026-09-29), in unrelated runs, always the same assertion and the same status.
   **This one is a different class from the two above and worth treating as a real defect, not just
   noise:** they time out, which a loaded machine explains; this one returns the WRONG STATUS, which

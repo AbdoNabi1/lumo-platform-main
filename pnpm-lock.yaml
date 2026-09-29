@@ -400,18 +400,33 @@ importers:
       '@platform/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@platform/automation':
+        specifier: workspace:*
+        version: link:../../services/automation
+      '@platform/cart':
+        specifier: workspace:*
+        version: link:../../services/cart
       '@platform/catalog':
         specifier: workspace:*
         version: link:../../services/catalog
+      '@platform/checkout':
+        specifier: workspace:*
+        version: link:../../services/checkout
       '@platform/clock':
         specifier: workspace:*
         version: link:../../packages/clock
+      '@platform/components':
+        specifier: workspace:*
+        version: link:../../services/components
       '@platform/content':
         specifier: workspace:*
         version: link:../../services/content
       '@platform/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@platform/coupons':
+        specifier: workspace:*
+        version: link:../../services/coupons
       '@platform/customer-360':
         specifier: workspace:*
         version: link:../../services/customer-360
@@ -427,15 +442,27 @@ importers:
       '@platform/entitlement':
         specifier: workspace:*
         version: link:../../packages/entitlement
+      '@platform/experience':
+        specifier: workspace:*
+        version: link:../../services/experience
+      '@platform/experimentation':
+        specifier: workspace:*
+        version: link:../../services/experimentation
       '@platform/expression':
         specifier: workspace:*
         version: link:../../packages/expression
+      '@platform/feature-flags-service':
+        specifier: workspace:*
+        version: link:../../services/feature-flags
       '@platform/feature-registry':
         specifier: workspace:*
         version: link:../../services/feature-registry
       '@platform/finance':
         specifier: workspace:*
         version: link:../../services/finance
+      '@platform/fulfillment':
+        specifier: workspace:*
+        version: link:../../services/fulfillment
       '@platform/health':
         specifier: workspace:*
         version: link:../../packages/health
@@ -457,6 +484,9 @@ importers:
       '@platform/licensing':
         specifier: workspace:*
         version: link:../../services/licensing
+      '@platform/localization':
+        specifier: workspace:*
+        version: link:../../services/localization
       '@platform/loyalty':
         specifier: workspace:*
         version: link:../../services/loyalty
@@ -475,6 +505,9 @@ importers:
       '@platform/orders':
         specifier: workspace:*
         version: link:../../services/orders
+      '@platform/pages':
+        specifier: workspace:*
+        version: link:../../services/pages
       '@platform/payments':
         specifier: workspace:*
         version: link:../../services/payments
@@ -490,12 +523,18 @@ importers:
       '@platform/psp-stripe':
         specifier: workspace:*
         version: link:../../packages/psp-stripe
+      '@platform/recommendations':
+        specifier: workspace:*
+        version: link:../../services/recommendations
       '@platform/redis':
         specifier: workspace:*
         version: link:../../packages/redis
       '@platform/registry':
         specifier: workspace:*
         version: link:../../packages/registry
+      '@platform/reporting':
+        specifier: workspace:*
+        version: link:../../services/reporting
       '@platform/returns':
         specifier: workspace:*
         version: link:../../services/returns
@@ -505,15 +544,30 @@ importers:
       '@platform/rules':
         specifier: workspace:*
         version: link:../../packages/rules
+      '@platform/search':
+        specifier: workspace:*
+        version: link:../../services/search
       '@platform/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
       '@platform/security':
         specifier: workspace:*
         version: link:../../services/security
+      '@platform/seo':
+        specifier: workspace:*
+        version: link:../../services/seo
+      '@platform/shipping':
+        specifier: workspace:*
+        version: link:../../services/shipping
       '@platform/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@platform/tenancy':
+        specifier: workspace:*
+        version: link:../../services/tenancy
+      '@platform/theme':
+        specifier: workspace:*
+        version: link:../../services/theme
       '@platform/tracking':
         specifier: workspace:*
         version: link:../../packages/tracking
@@ -526,6 +580,9 @@ importers:
       '@platform/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@platform/wishlist':
+        specifier: workspace:*
+        version: link:../../services/wishlist
       zod:
         specifier: ^3.25.0
         version: 3.25.76

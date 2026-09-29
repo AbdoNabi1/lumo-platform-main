@@ -29,3 +29,4 @@ export {
   type PrismaLibraryRepositoriesDeps,
 } from "./infrastructure/prisma-library-repositories";
 export { MEDIA_LIBRARY_PUBLISHED_EVENTS } from "./infrastructure/media-library-event-translator";
+export { MEDIA_PUBLISHED_EVENTS } from "./infrastructure/media-event-translator";
