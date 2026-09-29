@@ -223,7 +223,17 @@ compose stack pins) and name it exactly `redpanda`: the name is its private DNS 
   own documentation says development mode "Bypasses `fsync` … which results in unrealistically
   fast clusters and may result in data loss." An event the relay has marked published and Redpanda
   then loses is gone for good — ledger postings included.
-- **Not verified — check these first if the worker cannot connect:**
+- **Not verified — check these first if the service will not start or the worker cannot connect:**
+  - **The start command's form.** Railway: "the start command overrides the image's `ENTRYPOINT` in
+    exec form" (Railway docs, start command). Redpanda's own compose examples begin the command with
+    `redpanda start`, which relies on the image's entrypoint. If the service fails immediately with
+    the command as written, use `rpk redpanda start …` (the form on Redpanda's `rpk redpanda start`
+    page) with the same flags. Not run.
+  - **Volume permissions.** Railway: "Docker images that run as a non-root UID by default will have
+    permissions issues when performing operations within an attached volume", fixed by setting
+    `RAILWAY_RUN_UID=0` on the service (Railway docs, volumes). The Redpanda image is understood to
+    run as a non-root user; that was not confirmed from Redpanda's docs. If Redpanda cannot write
+    `/var/lib/redpanda/data`, set `RAILWAY_RUN_UID=0`.
   - Railway environments created **after 16 Oct 2025** resolve private DNS to IPv4 **and** IPv6;
     **older ("legacy") environments resolve to IPv6 only** (Railway docs, private networking, "how
     it works"). `0.0.0.0` listens on IPv4 only, so in a legacy environment Redpanda must listen on
