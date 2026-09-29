@@ -128,6 +128,19 @@ describe("the Kafka topic inventory is complete", () => {
     expect(partitions * 4).toBeLessThanOrEqual(memoryGiB * 1024 * 0.8);
   });
 
+  it("keeps the compose container's memory limit at or above redpanda's own --memory", () => {
+    // The compose file says the `deploy.resources.limits.memory` value is "kept ≥ --memory", and
+    // Docker Compose v2 applies that limit as the container's cgroup ceiling. Raising --memory to 3G
+    // for this inventory while leaving the limit at 2560m would ask Redpanda for more than its
+    // container may use.
+    const compose = readFileSync(join(ROOT, "infrastructure/docker/docker-compose.yml"), "utf8");
+    const redpanda = /\n {2}redpanda:\n([\s\S]*?)\n {2}redpanda-topics:/.exec(compose)?.[1] ?? "";
+    const memoryMiB = Number(/--memory=(\d+)G/.exec(redpanda)?.[1]) * 1024;
+    const limitMiB = Number(/limits:\s*\n\s*memory:\s*(\d+)m\b/.exec(redpanda)?.[1]);
+    expect(memoryMiB).toBeGreaterThan(0);
+    expect(limitMiB).toBeGreaterThanOrEqual(memoryMiB);
+  });
+
   it("names every topic once", () => {
     const names = topicInventory().map((s) => s.name);
     expect(new Set(names).size).toBe(names.length);
