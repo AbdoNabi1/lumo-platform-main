@@ -128,9 +128,11 @@ active`), reschedules, or exhausts (`Subscription.exhaustDunning`, `grace -> exp
       `apps/admin-web` gated to a platform-only role, with a note in this WP's commit that it should
       migrate to the platform-admin app once `WP-15` exists.
 
-## Status — part 1 landed 2026-09-24 (T14.1, T14.2, T14.4); T14.5 landed 2026-09-27
+## Status — part 1 landed 2026-09-24 (T14.1, T14.2, T14.4); T14.5 2026-09-27; T14.3 coupons 2026-09-28
 
-T14.3 (coupons), T14.6 (analytics) and T14.7 (screens) are NOT started, so the Definition of Done
+T14.3 is HALF landed — coupons (D-072, 2026-09-28) including the five operator routes under
+`/billing/coupons` (2026-09-29); its add-ons and credit halves are not started. T14.6 (analytics) and
+T14.7 (screens) are NOT started, so the Definition of Done
 below stays open and Morbeh F-16 is recorded as **G-74**, open, with the follow-ups part 1 found. Design and
 findings: **D-061** (Morbeh's own PSP account; no `PaymentIntent` row), **D-062** (platform-global plans,
 pinned immutable versions, platform-only surface, row mapping), **D-063** (integer minor-unit money),

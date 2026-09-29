@@ -294,14 +294,23 @@ Three known concurrency-only flakes — re-run the file alone
   documented.
 - `apps/admin/src/http/public-auth-routes.test.ts` ("expired, reused, wrong-tenant, and tampered
   tokens are all rejected indistinguishably", G-72 guest-to-account upgrade) fails
-  `expected 404 to be 201` only under `--workspace-concurrency=4`; 39/39 pass run alone. Seen twice
-  now, in unrelated whole-workspace runs (most recently 2026-09-28, verifying T14.3).
+  `expected 404 to be 201` at its `first.status` assertion, only under a whole-workspace
+  `--workspace-concurrency=4` run; 39/39 pass run alone. **Seen four times now** (most recently
+  2026-09-29), in unrelated runs, always the same assertion and the same status.
   **This one is a different class from the two above and worth treating as a real defect, not just
   noise:** they time out, which a loaded machine explains; this one returns the WRONG STATUS, which
-  a loaded machine does not. A registration that 404s under parallel load points at state shared
-  across test files (a store or a tenant another file tears down), and the same sharing would be a
-  genuine bug if it exists in the code rather than the fixtures. Nobody has looked yet. Until
-  someone does, a green full suite is a slightly weaker claim than it reads as.
+  a loaded machine does not.
+  First look, 2026-09-29 — two explanations ruled OUT, the field narrowed rather than closed:
+  - _Not_ worker starvation inside the package: `pnpm --filter @platform/admin exec vitest run
+--maxWorkers=1 --minWorkers=1` passes 60 files / 542 tests. Nor does the package's own suite fail
+    when run alone at default parallelism.
+  - _Not_ state leaking between tests in the file, and _not_ a real-clock race in the test: `beforeEach`
+    rebuilds the entire harness (line 176), every store is in-memory, and the clock is a module-level
+    fixed `NOW` (2026-08-31) that only three later tests advance deliberately.
+    So the trigger is something shared ACROSS PACKAGE PROCESSES, which in-memory fixtures and a fixed
+    clock should not be able to touch — the next place to look is whether the signup-token flow reads a
+    real `Date.now()` or any ambient resource instead of the injected clock. Until someone finishes this,
+    a green full suite is a slightly weaker claim than it reads as.
 
 ## 4. The master work-package table
 

@@ -12,10 +12,13 @@ import { LicensingAdminController } from "./licensing.admin-controller";
 
 /**
  * Every OPERATOR action on this controller authorizes before it delegates (ADR-0007). Nothing proved
- * that: every HTTP test drives an allow-everything `AccessControl`, so deleting a `guard.ensure` line
- * from any one method left the whole `@platform/admin` suite green and the `permission` declared on
- * its route became decoration. This walks the PROTOTYPE rather than a hand-written list, so a method
- * added later is covered the day it lands.
+ * that. This is the SECOND of two checks — the permission a route DECLARES is already enforced at the
+ * HTTP edge (`packages/http/src/server.ts:440`, covered by that package's own denying-guard test) —
+ * but the second one is the authoritative one for the action, nothing asserts the two agree, and it is
+ * the only check for a caller that arrives by some other path. Every test under `apps/admin` drives an
+ * allow-everything `AccessControl`, so deleting a `guard.ensure` line from any one method here left the
+ * whole `@platform/admin` suite green. This walks the PROTOTYPE rather than a hand-written list, so a
+ * method added later is covered the day it lands.
  *
  * The two PSP callback methods are exempt BY NAME, and the exemption is checked: their caller is
  * Paymob, authenticated by the callback signature verified inside the use case, and they take no
