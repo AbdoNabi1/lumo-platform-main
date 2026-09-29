@@ -70,6 +70,26 @@ with_companions platform.audit.entry_recorded.v1    6 "$RET_7Y"
 # §5 ("tracking.event.captured.v1" row): 13mo.
 with_companions tracking.event.captured.v1          6 "$RET_13MO"
 
+# Topics the WORKER subscribes to that were never provisioned (2026-09-29). The worker subscribes
+# with allowAutoTopicCreation=false and `ConsumerSupervisor.startAll()` has no per-consumer
+# isolation, so ANY one of these missing stopped the worker at boot, outbox relay included.
+# `apps/runtime/src/worker-topics-provisioned.test.ts` now fails if a subscribed topic is missing here.
+#
+# T14.5 dunning -> notifications (apps/runtime/src/consumers/dunning-notifications.consumers.ts).
+# 13mo, not 7y: these are billing-LIFECYCLE signals; the financial record (invoices, journal
+# entries) lives in Postgres under its own retention.
+with_companions licensing.subscription.entered_grace.v1        6 "$RET_13MO"
+with_companions licensing.subscription.recovered_from_grace.v1 6 "$RET_13MO"
+with_companions licensing.subscription.dunning_exhausted.v1    6 "$RET_13MO"
+# G-79 usage metering -> Licensing usage counters (usage-recorded.consumers.ts). 13mo: the
+# counter is the durable projection; revisit if usage is ever invoiced straight from events.
+with_companions platform.usage.recorded.v1                     6 "$RET_13MO"
+# H-04 principal provisioning (security-provisioning.consumers.ts) — config-gated
+# (SECURITY_PRINCIPAL_PROVISIONING, default off), so turning it on also stopped the worker.
+with_companions identity.user.created.v1                       6 "$RET_13MO"
+with_companions identity.user.deactivated.v1                   6 "$RET_13MO"
+with_companions identity.membership.created.v1                 6 "$RET_13MO"
+
 # Kafka Connect internal topics (Sprint 3.0B First Boot fix): Debezium requires its config/
 # offset/status topics to be `cleanup.policy=compact`. If Connect auto-creates them against a
 # broker whose default is `delete` (Redpanda's default), the herder refuses to start with a

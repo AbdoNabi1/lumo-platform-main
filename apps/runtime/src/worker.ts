@@ -1,4 +1,4 @@
-import { ConsumerSupervisor, KafkaMessageProducer } from "@platform/kafka";
+import { ConsumerSupervisor, KafkaMessageProducer, type SupervisedConsumer } from "@platform/kafka";
 import { logger } from "@platform/utils";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
@@ -16,6 +16,64 @@ import { startHealthServer } from "./health-server";
 import { startOutboxRelay } from "./outbox-relay-runtime";
 import { wireSecurityProvisioning } from "./security/wire-security-provisioning";
 import { startRuntimeTelemetry } from "./telemetry";
+
+/**
+ * Every consumer the worker registers UNCONDITIONALLY, in registration order. Extracted from
+ * {@link startWorker} so `worker-topics-provisioned.test.ts` checks exactly the list the worker
+ * runs: a consumer whose topic is not provisioned makes `ConsumerSupervisor.startAll()` throw,
+ * and the outbox relay is only started after that call returns, so one unprovisioned topic here
+ * stops the whole worker, relay included (`allowAutoTopicCreation: false`, `packages/kafka`).
+ */
+export function buildAlwaysOnConsumerRuntimes(runtime: RuntimeCore): readonly SupervisedConsumer[] {
+  return [
+    buildPaymentCapturedRuntime(runtime),
+
+    // C-2 (Task 17b): nothing subscribed to `orders.order.paid` anywhere in this repo, so a paid
+    // order posted no ledger entry (Finance's `OrdersPaidConsumer` had zero callers), earned no
+    // loyalty points, updated no customer profile, and created no confirmation notification (the
+    // delivery half — QueueNotification/SendNotification — is still a separately-tracked gap, since
+    // every delivery provider in this codebase remains an in-memory stub).
+    //
+    // WHICH orders actually reach these four, stated plainly because the obvious reading is wrong:
+    // ONLY orders that reach `paid`/`payment_received` via the LEGACY `PlaceOrder` + admin-mark-paid
+    // path, because `orders.order.paid` is raised solely by `markPaid`/`completePayment`
+    // (`services/orders/src/domain/order.ts`). Orders created by the checkout flow
+    // (`CreateOrderFromCheckout` → `Order.createFromCheckout`) sit at status `created` and never
+    // transition further under any code path that exists today, so NONE of these four fire for the
+    // checkout flow. That is an OPEN C-2 sub-gap awaiting a product decision on how payment capture
+    // integrates with checkout completion — not something to close by fabricating a payment
+    // reference, which would push wrong-but-plausible entries into Finance's ledger. The current
+    // behavior is regression-pinned by
+    // `apps/admin/src/http/cart-checkout-pricing-security.e2e.test.ts`; full reasoning in
+    // `api.ts`'s `assertProductionIntegrationPortsConfigured` doc comment.
+    //
+    // Registered UNCONDITIONALLY, unlike the two gated blocks below: those depend on external
+    // infrastructure (Ory, a seeded tracking registry) that is genuinely absent in some environments,
+    // whereas these four need only Kafka + Prisma — always present wherever the worker runs at all.
+    // Same reasoning as `buildPaymentCapturedRuntime` above, the closest sibling, which is also
+    // ungated; a flag here would be a speculative switch whose "off" position is a silently broken
+    // paid-order flow.
+    ...buildOrdersPaidConsumerRuntimes(runtime, runtime.metrics),
+
+    // WP-11 (F-11): `PaymentsCapturedConsumer`/`RefundsIssuedConsumer` (`services/finance`) had zero
+    // callers — every captured payment posted no fee entry and every issued refund posted no contra
+    // entry, silently. Registered unconditionally, same reasoning as `buildOrdersPaidConsumerRuntimes`
+    // just above: needs only Kafka + Prisma, always present wherever the worker runs at all.
+    ...buildFinanceSettlementConsumerRuntimes(runtime, runtime.metrics),
+
+    // G-79 (usage metering, link 2): `platform.usage.recorded` had a producer path (`CreateProduct`) and a
+    // writer (`RecordUsage`) with nothing between them, so `GET /usage-counters` could never return a
+    // number. Registered unconditionally, same reasoning as the blocks above: needs only Kafka + Prisma.
+    ...buildUsageRecordedConsumerRuntimes(runtime, runtime.metrics),
+
+    // T14.5 (dunning): opens a durable Notification row (never a provider call — see that file's doc
+    // comment) on entered_grace/recovered_from_grace/dunning_exhausted. Registered unconditionally,
+    // same reasoning as the two blocks above: needs only Kafka + Prisma, always present. Whether the
+    // resulting notification is ever actually DELIVERED is gated at boot by `api.ts`'s
+    // `assertProductionDunningNotificationsConfigured`, not by anything here.
+    ...buildDunningNotificationsConsumerRuntimes(runtime, runtime.metrics),
+  ];
+}
 
 /**
  * Worker entrypoint (Sprint 2.9): the Kafka consumer fleet under the `ConsumerSupervisor`
@@ -41,61 +99,7 @@ export async function startWorker(
   // H-03: see api.ts — same activation, this process's role suffix.
   const telemetry = startRuntimeTelemetry(config, "worker");
   const supervisor = new ConsumerSupervisor(runtime.kafka, runtime.logger);
-  supervisor.register(buildPaymentCapturedRuntime(runtime));
-
-  // C-2 (Task 17b): nothing subscribed to `orders.order.paid` anywhere in this repo, so a paid
-  // order posted no ledger entry (Finance's `OrdersPaidConsumer` had zero callers), earned no
-  // loyalty points, updated no customer profile, and created no confirmation notification (the
-  // delivery half — QueueNotification/SendNotification — is still a separately-tracked gap, since
-  // every delivery provider in this codebase remains an in-memory stub).
-  //
-  // WHICH orders actually reach these four, stated plainly because the obvious reading is wrong:
-  // ONLY orders that reach `paid`/`payment_received` via the LEGACY `PlaceOrder` + admin-mark-paid
-  // path, because `orders.order.paid` is raised solely by `markPaid`/`completePayment`
-  // (`services/orders/src/domain/order.ts`). Orders created by the checkout flow
-  // (`CreateOrderFromCheckout` → `Order.createFromCheckout`) sit at status `created` and never
-  // transition further under any code path that exists today, so NONE of these four fire for the
-  // checkout flow. That is an OPEN C-2 sub-gap awaiting a product decision on how payment capture
-  // integrates with checkout completion — not something to close by fabricating a payment
-  // reference, which would push wrong-but-plausible entries into Finance's ledger. The current
-  // behavior is regression-pinned by
-  // `apps/admin/src/http/cart-checkout-pricing-security.e2e.test.ts`; full reasoning in
-  // `api.ts`'s `assertProductionIntegrationPortsConfigured` doc comment.
-  //
-  // Registered UNCONDITIONALLY, unlike the two gated blocks below: those depend on external
-  // infrastructure (Ory, a seeded tracking registry) that is genuinely absent in some environments,
-  // whereas these four need only Kafka + Prisma — always present wherever the worker runs at all.
-  // Same reasoning as `buildPaymentCapturedRuntime` above, the closest sibling, which is also
-  // ungated; a flag here would be a speculative switch whose "off" position is a silently broken
-  // paid-order flow.
-  for (const consumerRuntime of buildOrdersPaidConsumerRuntimes(runtime, runtime.metrics)) {
-    supervisor.register(consumerRuntime);
-  }
-
-  // WP-11 (F-11): `PaymentsCapturedConsumer`/`RefundsIssuedConsumer` (`services/finance`) had zero
-  // callers — every captured payment posted no fee entry and every issued refund posted no contra
-  // entry, silently. Registered unconditionally, same reasoning as `buildOrdersPaidConsumerRuntimes`
-  // just above: needs only Kafka + Prisma, always present wherever the worker runs at all.
-  for (const consumerRuntime of buildFinanceSettlementConsumerRuntimes(runtime, runtime.metrics)) {
-    supervisor.register(consumerRuntime);
-  }
-
-  // G-79 (usage metering, link 2): `platform.usage.recorded` had a producer path (`CreateProduct`) and a
-  // writer (`RecordUsage`) with nothing between them, so `GET /usage-counters` could never return a
-  // number. Registered unconditionally, same reasoning as the blocks above: needs only Kafka + Prisma.
-  for (const consumerRuntime of buildUsageRecordedConsumerRuntimes(runtime, runtime.metrics)) {
-    supervisor.register(consumerRuntime);
-  }
-
-  // T14.5 (dunning): opens a durable Notification row (never a provider call — see that file's doc
-  // comment) on entered_grace/recovered_from_grace/dunning_exhausted. Registered unconditionally,
-  // same reasoning as the two blocks above: needs only Kafka + Prisma, always present. Whether the
-  // resulting notification is ever actually DELIVERED is gated at boot by `api.ts`'s
-  // `assertProductionDunningNotificationsConfigured`, not by anything here.
-  for (const consumerRuntime of buildDunningNotificationsConsumerRuntimes(
-    runtime,
-    runtime.metrics,
-  )) {
+  for (const consumerRuntime of buildAlwaysOnConsumerRuntimes(runtime)) {
     supervisor.register(consumerRuntime);
   }
 

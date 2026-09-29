@@ -283,7 +283,7 @@ ran before the first failure and reports that partial result as green — `WP-0`
 production build, run `pnpm --filter <name> run build` per package touched and record in
 `docs/plans/BLOCKERS.md` if a repo-wide build is genuinely required and still blocked.
 
-Three known concurrency-only flakes — re-run the file alone
+Four known concurrency-only flakes — re-run the file alone
 (`pnpm --filter <name> run test`) before treating a failure in it as a regression:
 
 - `apps/runtime/src/security/wire-security-provisioning.test.ts` times out at 5s only under
@@ -292,6 +292,11 @@ Three known concurrency-only flakes — re-run the file alone
   a public route") times out at 5s only under `--workspace-concurrency=4`, passes in 530ms
   (all 28 tests in the file) run alone. Found during `WP-0`'s gate measurement, not previously
   documented.
+- `apps/admin-web/src/lib/api/route-contract.test.ts` ("every lib/api path exists in adminRoutes()")
+  times out at 5s only under `--workspace-concurrency=4` (first seen 2026-09-29); run alone it passes
+  1/1 with a 613ms test body. Same timeout class as the two above. **Its package is `admin-web`, not
+  `@platform/admin-web`** — and a wrong `--filter` name makes pnpm print "No projects matched" and
+  EXIT 0, so a re-run under the wrong name looks like a pass. Read the output, not the exit code.
 - `apps/admin/src/http/public-auth-routes.test.ts` ("expired, reused, wrong-tenant, and tampered
   tokens are all rejected indistinguishably", G-72 guest-to-account upgrade) fails
   `expected 404 to be 201` at its `first.status` assertion, only under a whole-workspace
