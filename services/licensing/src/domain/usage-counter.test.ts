@@ -1,4 +1,4 @@
-import { UniqueEntityId } from "@platform/domain";
+import { BusinessRuleError, UniqueEntityId } from "@platform/domain";
 import { describe, expect, it } from "vitest";
 import { UsageCounter } from "./usage-counter";
 
@@ -40,6 +40,17 @@ describe("UsageCounter (WP-11, F-07 — Float -> Decimal)", () => {
 
     // 0.1+0.2+0.3+1.1+2.7+0.05+0.05 = 4.5 exactly.
     expect(counter.amount).toBe(4.5);
+  });
+
+  it("refuses a record in a different unit rather than silently relabelling the running total", () => {
+    // `unit` is a single column on the counter, so a second unit cannot be kept beside the first.
+    // Overwriting it would leave "5 count" reading as "5 gb"; refusing is loud and recoverable.
+    const counter = UsageCounter.create(ID, TENANT_REF, RESOURCE, "e1", new Date());
+    counter.recordUsage(5, "count", new Date(), "e2");
+
+    expect(() => counter.recordUsage(1, "gb", new Date(), "e3")).toThrow(BusinessRuleError);
+    expect(counter.amount).toBe(5);
+    expect(counter.unit).toBe("count");
   });
 
   it("round-trips through reconstitute unchanged, given the exact decimal string a Prisma Decimal column would return", () => {

@@ -82,10 +82,17 @@ export interface FinanceLedgerPort {
   ): Promise<void>;
 }
 
-/** Replay-safe dedup for consuming `platform.usage.recorded` — backs `RecordUsage`'s idempotency. */
+/**
+ * Replay-safe dedup for consuming `platform.usage.recorded` — backs `RecordUsage`'s idempotency.
+ *
+ * Both calls take the caller's transaction so the marker commits or rolls back WITH the counter it
+ * guards. `hasProcessed` is only a fast path (a plain read cannot be atomic); `markProcessed` is the
+ * atomic gate: it rejects with a `ConcurrencyError` when the record was already marked, so of two
+ * concurrent deliveries exactly one goes on to commit.
+ */
 export interface ProcessedUsageRecordStore {
-  hasProcessed(recordId: string): Promise<boolean>;
-  markProcessed(recordId: string): Promise<void>;
+  hasProcessed(recordId: string, tx?: unknown): Promise<boolean>;
+  markProcessed(recordId: string, tx?: unknown): Promise<void>;
 }
 
 /**

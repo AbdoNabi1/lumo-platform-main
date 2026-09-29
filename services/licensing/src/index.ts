@@ -47,6 +47,7 @@ export {
 export { PlatformBillingPaymentsAdapter } from "./infrastructure/platform-billing-payments-adapter";
 export type { PlatformBillingPaymentsAdapterDeps } from "./infrastructure/platform-billing-payments-adapter";
 export type { FinanceLedgerPort, PaymentsPort } from "./application/ports";
+export { USAGE_RECORD_CONSUMER_GROUP } from "./infrastructure/prisma-processed-usage-record-store";
 export { LICENSING_PUBLISHED_EVENTS } from "./infrastructure/licensing-event-translator";
 export { BillingPaymentMethod } from "./domain/billing-payment-method";
 export type { BillingPaymentMethodStatus } from "./domain/billing-payment-method";

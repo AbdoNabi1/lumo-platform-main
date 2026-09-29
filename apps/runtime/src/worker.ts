@@ -10,6 +10,7 @@ import {
 import { buildDunningNotificationsConsumerRuntimes } from "./consumers/dunning-notifications.consumers";
 import { buildFinanceSettlementConsumerRuntimes } from "./consumers/finance-settlement.consumers";
 import { buildOrdersPaidConsumerRuntimes } from "./consumers/orders-paid.consumers";
+import { buildUsageRecordedConsumerRuntimes } from "./consumers/usage-recorded.consumers";
 import { assertWorkerTenantModeSupported } from "./tenant-mode-guard";
 import { startHealthServer } from "./health-server";
 import { startOutboxRelay } from "./outbox-relay-runtime";
@@ -76,6 +77,13 @@ export async function startWorker(
   // entry, silently. Registered unconditionally, same reasoning as `buildOrdersPaidConsumerRuntimes`
   // just above: needs only Kafka + Prisma, always present wherever the worker runs at all.
   for (const consumerRuntime of buildFinanceSettlementConsumerRuntimes(runtime, runtime.metrics)) {
+    supervisor.register(consumerRuntime);
+  }
+
+  // G-79 (usage metering, link 2): `platform.usage.recorded` had a producer path (`CreateProduct`) and a
+  // writer (`RecordUsage`) with nothing between them, so `GET /usage-counters` could never return a
+  // number. Registered unconditionally, same reasoning as the blocks above: needs only Kafka + Prisma.
+  for (const consumerRuntime of buildUsageRecordedConsumerRuntimes(runtime, runtime.metrics)) {
     supervisor.register(consumerRuntime);
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { InMemoryUsageRecorder } from "@platform/usage";
 import { AddProductToCollection } from "./add-product-to-collection.use-case";
 import { AddVariant } from "./add-variant.use-case";
 import { AssignCategories } from "./assign-categories.use-case";
@@ -44,7 +45,8 @@ function harness() {
   const collections = new InMemoryCollectionRepository({ outbox, context });
   const unitOfWork = new InMemoryUnitOfWork();
   const idGenerator = sequentialIds();
-  return { products, categories, brands, collections, unitOfWork, idGenerator, clock };
+  const usage = new InMemoryUsageRecorder();
+  return { products, categories, brands, collections, unitOfWork, idGenerator, clock, usage };
 }
 
 describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7.0)", () => {

@@ -83,6 +83,7 @@ import type {
   CardTokenCallbackVerifier,
   FinanceLedgerPort,
   PaymentsPort,
+  ProcessedUsageRecordStore,
 } from "./application/ports";
 import { StoredMethodBillingPaymentsAdapter } from "./infrastructure/stored-method-billing-payments-adapter";
 import {
@@ -117,6 +118,7 @@ import {
   PrismaSubscriptionRepository,
   PrismaUsageCounterRepository,
 } from "./infrastructure/prisma-repositories";
+import { PrismaProcessedUsageRecordStore } from "./infrastructure/prisma-processed-usage-record-store";
 import { LicensingController } from "./interfaces/licensing.controller";
 
 /**
@@ -219,8 +221,8 @@ function buildController(
   repos: LicensingRepos,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   deps: LicensingWiringDeps,
+  processedUsageRecords: ProcessedUsageRecordStore,
 ): LicensingController {
-  const processedUsageRecords = new InMemoryProcessedUsageRecordStore();
   const stored = deps.storedMethodBilling;
   const payments: PaymentsPort =
     stored === undefined
@@ -388,7 +390,13 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {
-      licensing: buildController(repos, unitOfWork, deps),
+      // Durable dedup: the marker is written in `RecordUsage`'s own transaction (G-79 link 3).
+      licensing: buildController(
+        repos,
+        unitOfWork,
+        deps,
+        new PrismaProcessedUsageRecordStore(deps.prisma, deps.clock),
+      ),
       billingPaymentMethods: repos.billingPaymentMethods,
       subscriptions: repos.subscriptions,
       drainOutbox: async () => 0,
@@ -424,7 +432,12 @@ export function wireLicensing(deps: LicensingWiringDeps): WiredLicensing {
     billingPaymentMethods: new InMemoryBillingPaymentMethodRepository(),
   };
   const unitOfWork = new InMemoryUnitOfWork();
-  const controller = buildController(repos, unitOfWork, deps);
+  const controller = buildController(
+    repos,
+    unitOfWork,
+    deps,
+    new InMemoryProcessedUsageRecordStore(),
+  );
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];

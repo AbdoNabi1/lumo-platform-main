@@ -92,8 +92,10 @@ describe("admin wiring (end to end)", () => {
     // Events from every context flow through the aggregated outbox drain.
     const published = await admin.drainOutbox();
     // product.created + product.published + category.created (Commerce Sprint 1: create now
-    // emits) + inventory.adjusted + customer.registered + order.placed
-    expect(published).toBe(6);
+    // emits) + inventory.adjusted + customer.registered + order.placed + the platform.usage.recorded
+    // row creating the product wrote in the same transaction (G-79 link 1). It is relayed but is not a
+    // catalog event, so it is absent from `deliveredEventTypes` below.
+    expect(published).toBe(7);
     expect(admin.deliveredEventTypes).toEqual(
       expect.arrayContaining([
         "catalog.product.created",

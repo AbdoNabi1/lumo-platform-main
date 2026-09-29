@@ -67,6 +67,7 @@
     "@platform/storage": "workspace:*",
     "@platform/tracking": "workspace:*",
     "@platform/types": "workspace:*",
+    "@platform/usage": "workspace:*",
     "@platform/utils": "workspace:*",
     "zod": "^3.25.0"
   },
@@ -76,6 +77,7 @@
     "@types/node": "^22.7.5",
     "@vitest/coverage-v8": "^2.1.4",
     "eslint": "^9.13.0",
+    "fastify": "^5.1.0",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"

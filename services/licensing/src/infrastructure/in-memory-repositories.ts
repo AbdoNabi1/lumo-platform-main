@@ -1,4 +1,6 @@
 import type { EventContext, OutboxWriter } from "@platform/messaging";
+import { ConcurrencyError } from "@platform/utils";
+import type { ProcessedUsageRecordStore } from "../application/ports";
 import type { BillingPaymentMethod } from "../domain/billing-payment-method";
 import type { Coupon } from "../domain/coupon";
 import type { Credit } from "../domain/credit";
@@ -384,15 +386,28 @@ export class InMemoryBillingPaymentMethodRepository implements BillingPaymentMet
   }
 }
 
-/** Replay-safe idempotency store for `RecordUsage` (in-memory stub). */
-export class InMemoryProcessedUsageRecordStore {
+/**
+ * Replay-safe idempotency store for `RecordUsage` (in-memory). `markProcessed` checks and adds in one
+ * synchronous step, so — like the Prisma store's primary-key insert — it refuses a second mark of the
+ * same record even when two deliveries interleave.
+ *
+ * **Only the Prisma path is atomic.** The transaction handle is ignored here, but that does NOT mean
+ * there is nothing to roll back: the marker is state. `InMemoryUnitOfWork` passes `undefined` and
+ * never rolls anything back, so in memory a marker can outlive a failed `save`, and that record's
+ * retry is then swallowed as a duplicate. This is a property of the whole in-memory licensing layer
+ * (no repository rolls back either), not something this store can fix.
+ */
+export class InMemoryProcessedUsageRecordStore implements ProcessedUsageRecordStore {
   private readonly seen = new Set<string>();
 
-  async hasProcessed(recordId: string): Promise<boolean> {
+  async hasProcessed(recordId: string, _tx?: unknown): Promise<boolean> {
     return this.seen.has(recordId);
   }
 
-  async markProcessed(recordId: string): Promise<void> {
+  async markProcessed(recordId: string, _tx?: unknown): Promise<void> {
+    if (this.seen.has(recordId)) {
+      throw new ConcurrencyError(`Usage record "${recordId}" was already processed`);
+    }
     this.seen.add(recordId);
   }
 }

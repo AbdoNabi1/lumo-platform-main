@@ -35,8 +35,10 @@ describe("catalog (end to end)", () => {
     const published = await app.products.publish({ productId: id, tenantId: "tenant-1" });
     expect(published.status).toBe(200);
 
+    // Three outbox rows: the two catalog events, plus the `platform.usage.recorded` row that creating
+    // the product wrote in the same transaction (G-79). `deliveredEventTypes` lists catalog events only.
     const count = await app.drainOutbox();
-    expect(count).toBe(2);
+    expect(count).toBe(3);
     expect(app.deliveredEventTypes).toEqual([
       "catalog.product.created",
       "catalog.product.published",

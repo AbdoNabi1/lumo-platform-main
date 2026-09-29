@@ -738,7 +738,12 @@ export class RecordUsage implements UseCase<RecordUsageInput, RecordUsageOutput,
 
   async execute(input: RecordUsageInput): Promise<Result<RecordUsageOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<RecordUsageOutput, DomainError>>(async (tx) => {
-      const alreadyProcessed = await this.deps.processedUsageRecords.hasProcessed(input.recordId);
+      // Fast path only: a read cannot make replay safe (two redeliveries can both see "not processed").
+      // The atomic gate is `markProcessed` below.
+      const alreadyProcessed = await this.deps.processedUsageRecords.hasProcessed(
+        input.recordId,
+        tx,
+      );
       let counter = await this.deps.usageCounters.findByTenantRefAndResource(
         input.tenantRef,
         input.resource,
@@ -757,14 +762,23 @@ export class RecordUsage implements UseCase<RecordUsageInput, RecordUsageOutput,
       if (alreadyProcessed) {
         return ok({ id: counter.id.toString(), duplicate: true });
       }
-      counter.recordUsage(
-        input.amount,
-        input.unit,
-        input.occurredAt,
-        this.deps.idGenerator.generate(),
-      );
+      // Validate before marking: a record the counter refuses (a different unit) must leave no marker
+      // behind, or its retry would be swallowed as a "duplicate" instead of reaching the DLQ.
+      try {
+        counter.recordUsage(
+          input.amount,
+          input.unit,
+          input.occurredAt,
+          this.deps.idGenerator.generate(),
+        );
+      } catch (error) {
+        if (error instanceof BusinessRuleError) return err(error);
+        throw error;
+      }
+      // Atomic gate, inside this transaction: the marker commits or rolls back with the counter. A
+      // concurrent delivery of the same record loses here (ConcurrencyError) and rolls back.
+      await this.deps.processedUsageRecords.markProcessed(input.recordId, tx);
       await this.deps.usageCounters.save(counter, input.tenantId, tx);
-      await this.deps.processedUsageRecords.markProcessed(input.recordId);
       return ok({ id: counter.id.toString(), duplicate: false });
     });
   }

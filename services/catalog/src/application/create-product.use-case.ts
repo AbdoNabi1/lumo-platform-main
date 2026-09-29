@@ -3,6 +3,7 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
+import { usageResourceRegistry, type UsageRecorderPort } from "@platform/usage";
 import { type DomainError, ValidationError } from "@platform/utils";
 import { Product } from "../domain/product";
 import type { ProductRepository } from "../domain/product-repository";
@@ -36,9 +37,26 @@ export interface CreateProductDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  /**
+   * G-79 link 1: metering. A created product is written as one `PRODUCT` usage record INSIDE the
+   * unit of work (ADR-0003), so the record commits or rolls back with the product. It only records:
+   * nothing here compares the count against a limit, so it can never refuse a creation (links 5/6).
+   */
+  readonly usage: UsageRecorderPort;
 }
 
-/** Creates a draft product (with at least one variant) and persists it. */
+/** The registry is the source of truth for a resource's unit; a literal here could drift from it. */
+const PRODUCT_RESOURCE = "PRODUCT";
+
+function productUnit(): string {
+  const definition = usageResourceRegistry.find(PRODUCT_RESOURCE);
+  if (definition === null) {
+    throw new Error(`Usage resource "${PRODUCT_RESOURCE}" is not in the usage registry`);
+  }
+  return definition.unit;
+}
+
+/** Creates a draft product (with at least one variant) and persists it, recording one unit of usage. */
 export class CreateProduct implements UseCase<
   CreateProductInput,
   CreateProductOutput,
@@ -94,6 +112,17 @@ export class CreateProduct implements UseCase<
         this.deps.clock.now(),
       );
       await this.deps.products.save(product, input.tenantId, tx);
+      await this.deps.usage.record(
+        {
+          tenant: input.tenantId,
+          resource: PRODUCT_RESOURCE,
+          amount: 1,
+          unit: productUnit(),
+          occurredAt: this.deps.clock.now().toISOString(),
+          metadata: { productId: id.toString() },
+        },
+        tx,
+      );
       return ok({ id: id.toString() });
     });
   }

@@ -47,6 +47,7 @@ import {
   type FinanceLedgerPort,
   type PaymentsPort,
   type StoredMethodBillingDeps,
+  type WiredLicensing,
 } from "@platform/licensing";
 import { wireLocalization } from "@platform/localization";
 import { wireLoyalty, type LoyaltyController } from "@platform/loyalty";
@@ -246,6 +247,13 @@ export interface AdminWiringDeps {
    * real one.
    */
   readonly payments?: PaymentsPort;
+  /**
+   * TEST SEAM: an already-wired Licensing to serve instead of building one from `deps`. It exists so
+   * a test can feed the SAME Licensing instance from another context's consumer and then read it
+   * back through the real admin HTTP routes (`apps/runtime`'s usage-metering e2e). Production never
+   * sets it: `apps/runtime/src/api.ts` passes no `licensing`, so `wireLicensing(deps)` runs as before.
+   */
+  readonly licensing?: WiredLicensing;
   /**
    * Charging a merchant's saved card off-session on Morbeh's own PSP account (G-74 (1)). Passed
    * straight through to `wireLicensing(deps)`; present ⇒ renewals collect through the stored card and
@@ -831,7 +839,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       (id): id is string => id !== undefined && id !== "",
     ),
   });
-  const licensing = wireLicensing(deps);
+  const licensing = deps.licensing ?? wireLicensing(deps);
   const platformConsole = wirePlatformConsole();
   const wishlist = wireWishlist(deps);
   const accessControl = deps.accessControl ?? new AllowAllAccessControl();

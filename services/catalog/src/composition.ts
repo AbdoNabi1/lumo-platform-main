@@ -11,6 +11,12 @@ import {
   type Subscriber,
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
+import {
+  OutboxUsageRecorder,
+  PLATFORM_USAGE_EVENT,
+  UsageEventTranslator,
+  type UsageRecorderPort,
+} from "@platform/usage";
 import { AddProductToCollection } from "./application/add-product-to-collection.use-case";
 import { AddVariant } from "./application/add-variant.use-case";
 import { ArchiveProduct } from "./application/archive-product.use-case";
@@ -85,6 +91,14 @@ export interface CatalogWiringDeps {
    * unrelated wireX call sharing the same literal — an unused excess field, not consumed here).
    */
   readonly prisma?: Database;
+  /**
+   * TEST SEAM, in-memory branch only (G-79): called with each `platform.usage.recorded` record when
+   * `drainOutbox()` relays it, standing in for the Kafka topic a real consumer reads. It exists because
+   * the in-memory bus is otherwise closed (a fixed sink on `CATALOG_EVENT_TYPES`, bus not exposed).
+   * Ignored when `prisma` is present: there the outbox is relayed by the runtime's Kafka relay, and
+   * nothing in this process delivers to a subscriber.
+   */
+  readonly onUsageRecorded?: Subscriber;
 }
 
 export interface WiredCatalog {
@@ -111,6 +125,7 @@ function buildControllers(
   repos: CatalogRepos,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   deps: CatalogWiringDeps,
+  usage: UsageRecorderPort,
 ): {
   products: ProductController;
   categories: CategoryController;
@@ -121,7 +136,7 @@ function buildControllers(
   const { idGenerator, clock } = deps;
 
   const productController = new ProductController({
-    createProduct: new CreateProduct({ products, unitOfWork, idGenerator, clock }),
+    createProduct: new CreateProduct({ products, unitOfWork, idGenerator, clock, usage }),
     publishProduct: new PublishProduct({ products, unitOfWork, idGenerator, clock }),
     updateProduct: new UpdateProduct({ products, unitOfWork, idGenerator, clock }),
     getProduct: new GetProduct({ products }),
@@ -261,7 +276,20 @@ export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
       collections: new PrismaCollectionRepository(prismaDeps),
     };
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
-    const controllers = buildControllers(repos, unitOfWork, deps);
+    // Usage rides the same outbox table as the catalog events, written in the caller's transaction.
+    const usage = new OutboxUsageRecorder({
+      outbox: new OutboxWriter({
+        store: new PrismaOutboxStore(deps.prisma),
+        translator: new UsageEventTranslator(),
+        serializer: deps.serializer,
+        clock: deps.clock,
+        producer: "catalog",
+      }),
+      context,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    });
+    const controllers = buildControllers(repos, unitOfWork, deps, usage);
 
     return { ...controllers, drainOutbox: async () => 0, deliveredEventTypes: [] };
   }
@@ -283,7 +311,19 @@ export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
     collections: new InMemoryCollectionRepository({ outbox: outboxWriter, context }),
   };
   const unitOfWork = new InMemoryUnitOfWork();
-  const controllers = buildControllers(repos, unitOfWork, deps);
+  const usage = new OutboxUsageRecorder({
+    outbox: new OutboxWriter({
+      store: outboxStore,
+      translator: new UsageEventTranslator(),
+      serializer: deps.serializer,
+      clock: deps.clock,
+      producer: "catalog",
+    }),
+    context,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+  });
+  const controllers = buildControllers(repos, unitOfWork, deps, usage);
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];
@@ -292,6 +332,9 @@ export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
   };
   for (const type of CATALOG_EVENT_TYPES) {
     bus.subscribe(type, sink);
+  }
+  if (deps.onUsageRecorded !== undefined) {
+    bus.subscribe(`${PLATFORM_USAGE_EVENT}.v1`, deps.onUsageRecorded);
   }
 
   const relay = new OutboxRelay({

@@ -1,4 +1,4 @@
-import { AggregateRoot, type UniqueEntityId } from "@platform/domain";
+import { AggregateRoot, BusinessRuleError, type UniqueEntityId } from "@platform/domain";
 import Decimal, { type Decimal as DecimalType } from "decimal.js";
 import { LicensingChanged } from "./events/licensing-changed.event";
 
@@ -51,8 +51,26 @@ export class UsageCounter extends AggregateRoot<UsageCounterProps> {
     );
   }
 
-  /** Increments the counter from one `platform.usage.recorded` record — idempotency is the caller's job. */
+  /**
+   * Increments the counter from one `platform.usage.recorded` record — idempotency is the caller's job.
+   *
+   * `unit` is one column on the counter, so a counter has exactly one unit: the first record fixes it
+   * and a later record in another unit is REFUSED. Overwriting it would relabel the running total
+   * (5 "count" would read as 5 "gb"); refusing is loud and recoverable.
+   */
   recordUsage(amount: number, unit: string, occurredAt: Date, eventId: string): void {
+    if (this.props.unit !== "" && this.props.unit !== unit) {
+      throw new BusinessRuleError(
+        `Usage counter "${this.props.resource}" is kept in "${this.props.unit}"; refusing a record in "${unit}"`,
+        {
+          context: {
+            resource: this.props.resource,
+            counterUnit: this.props.unit,
+            recordUnit: unit,
+          },
+        },
+      );
+    }
     this.props.amount = this.props.amount.plus(amount);
     this.props.unit = unit;
     this.props.lastRecordedAt = occurredAt;
