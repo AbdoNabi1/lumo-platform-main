@@ -107,6 +107,27 @@ describe("provisionTopics", () => {
     expect(report.existing).toEqual([]);
   });
 
+  it("names the real cause when kafkajs wraps it in an aggregate error", async () => {
+    // Shape verified in kafkajs@2.2.4 (`createTopics/v0/response.js`, `admin/index.js`): a rejected
+    // topic throws a `KafkaJSAggregateError` whose OWN message is only "Topic creation errors"; the
+    // cause (`type`, `message`) lives in `.errors[]`. Logging `.message` alone left the runbook's
+    // "INVALID_PARTITIONS" diagnosis invisible in the pre-deploy log.
+    const aggregate = Object.assign(new Error("Topic creation errors"), {
+      name: "KafkaJSAggregateError",
+      errors: [
+        Object.assign(new Error("Number of partitions is invalid"), {
+          type: "INVALID_PARTITIONS",
+          topic: "a.b.c.v1",
+        }),
+      ],
+    });
+    const { admin } = fakeAdmin([], { "a.b.c.v1": aggregate });
+    const report = await provisionTopics(admin, [spec("a.b.c.v1")], OPTIONS);
+    expect(report.failed).toHaveLength(1);
+    expect(report.failed[0]?.error).toContain("INVALID_PARTITIONS");
+    expect(report.failed[0]?.error).toContain("Number of partitions is invalid");
+  });
+
   it("disconnects even when listing topics throws", async () => {
     const { admin, calls } = fakeAdmin([]);
     admin.listTopics = async () => {

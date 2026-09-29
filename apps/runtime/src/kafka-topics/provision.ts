@@ -40,6 +40,21 @@ function isAlreadyExists(error: unknown): boolean {
 }
 
 /**
+ * What to log for a failed creation. kafkajs rejects a topic with a `KafkaJSAggregateError` whose own
+ * message is only "Topic creation errors"; the cause (`type`, `message`) is in `.errors[]`, so the
+ * message alone would hide why the deploy was blocked.
+ */
+function describeFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const causes = (error as { errors?: unknown } | null)?.errors;
+  if (!Array.isArray(causes) || causes.length === 0) return message;
+  const detail = causes.map((cause: { type?: unknown; message?: unknown }) =>
+    [cause.type, cause.message].filter((part) => typeof part === "string").join(": "),
+  );
+  return `${message} (${detail.join("; ")})`;
+}
+
+/**
  * Creates every topic in `specs` that does not exist yet. Idempotent: an existing topic is left
  * untouched — its partitions and retention are NOT changed, so re-running cannot silently rewrite a
  * live topic's configuration. Topics are created ONE AT A TIME so a failure is attributed to the
@@ -84,10 +99,7 @@ export async function provisionTopics(
         if (isAlreadyExists(error)) {
           existing.push(spec.name);
         } else {
-          failed.push({
-            topic: spec.name,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          failed.push({ topic: spec.name, error: describeFailure(error) });
         }
       }
     }
