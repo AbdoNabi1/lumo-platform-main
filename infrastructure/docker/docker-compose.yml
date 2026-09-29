@@ -194,8 +194,9 @@ services:
       - start
       - --mode=dev-container
       - --smp=1
-      # Effective memory limit (Compose ignores deploy.resources outside Swarm, so this is the
-      # REAL constraint). At topic_memory_per_partition = 4 MiB, every partition costs memory before
+      # Redpanda's own memory allocation. The container's cgroup limit (`deploy.resources.limits.memory`
+      # below, which Compose v2 applies) must stay above it — `topic-inventory.test.ts` pins both.
+      # At topic_memory_per_partition = 4 MiB, every partition costs memory before
       # a single message. G-80 (2026-09-29): the topic set is now GENERATED from
       # apps/runtime/src/kafka-topics/topic-inventory.ts — 430 topics, of which the 11 consumed
       # topics and their 11 .retry get 6 partitions and the rest 1 = 540 partitions ≈ 2.1 GiB, plus

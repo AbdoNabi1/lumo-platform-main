@@ -186,7 +186,9 @@ This section adds two Railway services, **`redpanda`** and **`worker`**. Do the 
 ### 8.1 First: the migrations — they apply on the next `runtime-api` deploy
 
 `runtime-api.railway.json`'s `preDeployCommand` runs `prisma migrate deploy` against whatever
-`DATABASE_URL` points at — **for this deployment, Supabase**. So the next `runtime-api` deploy of a
+`DATABASE_URL` points at. The owner reports this deployment's database is **Supabase**, while §2
+and §3 above still describe the Railway Postgres plugin — whichever `DATABASE_URL` is set is the
+database that gets migrated, so confirm it before deploying. The next `runtime-api` deploy of a
 branch that contains pending migrations APPLIES them. Six are pending today (created, never
 applied): `20260923000000_wp13_merchant_payments`, `20260924000000_wp14_platform_plans`,
 `20260924010000_open_payment_provider_registry`, `20260924020000_billing_payment_methods`,
@@ -204,10 +206,13 @@ compose stack pins) and name it exactly `redpanda`: the name is its private DNS 
 
 - **Volume:** mount one at `/var/lib/redpanda/data`, or every restart loses every topic and message.
 - **Start command:** the compose flags (`infrastructure/docker/docker-compose.yml`, `redpanda`
-  service), with the addresses changed for Railway's private network and no external listener:
+  service), with the addresses changed for Railway's private network and no external listener —
+  and written as `rpk redpanda start`, not compose's `redpanda start`. Railway's start command
+  "overrides the image's `ENTRYPOINT` in exec form"; compose's `redpanda start` works only through
+  that entrypoint, while `rpk redpanda start` is the command Redpanda documents on its own:
 
   ```
-  redpanda start --smp=1 --memory=3G --overprovisioned
+  rpk redpanda start --smp=1 --memory=3G --overprovisioned
     --kafka-addr=internal://0.0.0.0:9092
     --advertise-kafka-addr=internal://redpanda.railway.internal:9092
     --rpc-addr=0.0.0.0:33145
@@ -224,11 +229,11 @@ compose stack pins) and name it exactly `redpanda`: the name is its private DNS 
   fast clusters and may result in data loss." An event the relay has marked published and Redpanda
   then loses is gone for good — ledger postings included.
 - **Not verified — check these first if the service will not start or the worker cannot connect:**
-  - **The start command's form.** Railway: "the start command overrides the image's `ENTRYPOINT` in
-    exec form" (Railway docs, start command). Redpanda's own compose examples begin the command with
-    `redpanda start`, which relies on the image's entrypoint. If the service fails immediately with
-    the command as written, use `rpk redpanda start …` (the form on Redpanda's `rpk redpanda start`
-    page) with the same flags. Not run.
+  - **Three of the start flags.** Redpanda's `rpk redpanda start` page documents `--kafka-addr`,
+    `--advertise-kafka-addr`, `--rpc-addr`, `--advertise-rpc-addr` and `--mode`. `--smp`, `--memory`
+    and `--overprovisioned` are not in that page's flag table: they are Seastar options that compose
+    passes the same way, understood to be forwarded by `rpk`. Not run. If the service rejects one,
+    that is the cause.
   - **Volume permissions.** Railway: "Docker images that run as a non-root UID by default will have
     permissions issues when performing operations within an attached volume", fixed by setting
     `RAILWAY_RUN_UID=0` on the service (Railway docs, volumes). The Redpanda image is understood to
@@ -297,7 +302,8 @@ makes this choice for you.
 1. The worker's pre-deploy log ends with `topic provisioning finished` and `failed: 0`.
 2. The worker's `/healthz` returns 200.
 3. Create a product, then read the `PRODUCT` usage counter
-   (`GET /api/v1/usage-counters?tenantRef=<tenant>&resource=PRODUCT`, as an admin). It should read
+   (`GET /api/v1/usage-counters?tenantRef=<tenant>&resource=PRODUCT` as an authenticated admin,
+   with the same `x-tenant-id` header as the §5 checks). It should read
    **1**: the first time G-79's metering runs outside a test.
 
 ### 8.6 Known limits
