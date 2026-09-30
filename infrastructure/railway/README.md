@@ -3,19 +3,37 @@
 > Step (1) of the storefront recovery plan: get the Runtime API actually serving HTTP in a hosted
 > environment so the storefront reads live data instead of its Sprint 0.1 fallback text.
 
-This directory holds Railway **config-as-code** files. Railway reads one config file per service,
-and the path is set per service in the dashboard (Settings → Config-as-code), because a monorepo
-deploying two services cannot share a single root `railway.json`.
+This directory holds Railway **config-as-code** files, one per service, because a monorepo
+deploying several services cannot describe them all in one file.
 
-| Service       | Config path                                        | Dockerfile                                 |
-| ------------- | -------------------------------------------------- | ------------------------------------------ |
-| `runtime-api` | `/infrastructure/railway/runtime-api.railway.json` | `infrastructure/docker/runtime.Dockerfile` |
-| `storefront`  | `/infrastructure/railway/storefront.railway.json`  | `infrastructure/docker/web.Dockerfile`     |
+**The repository root also has a `railway.json`, and it is the API config.** Railway "looks for
+`railway.toml` or `railway.json` files by default" (config-as-code reference), so a service with no
+config path set in its dashboard still builds the runtime image and starts the API — no dashboard
+field required. It exists because three deploys in a row instead fell back to Railpack and failed
+with `No start command detected`, the symptom of an unset or unread per-service path.
+`apps/runtime/src/railway-config.test.ts` pins it byte-identical to
+`infrastructure/railway/runtime-api.railway.json`.
+
+**The consequence, which matters when adding a service:** every service built from this repo
+inherits the API config unless its own path is set. A `worker` service that forgets its path becomes
+a SECOND API — it would pass its health check while consuming nothing. Set the path on every service
+that is not the API.
+
+| Service       | Config path                                                    | Dockerfile                                 |
+| ------------- | -------------------------------------------------------------- | ------------------------------------------ |
+| `runtime-api` | none needed — the root `railway.json` is this service's config | `infrastructure/docker/runtime.Dockerfile` |
+| `worker`      | `/infrastructure/railway/worker.railway.json`                  | `infrastructure/docker/runtime.Dockerfile` |
+| `storefront`  | `/infrastructure/railway/storefront.railway.json`              | `infrastructure/docker/web.Dockerfile`     |
+
+Setting `/infrastructure/railway/runtime-api.railway.json` on the API service is equivalent — the
+test above keeps the two files identical — so an already-configured service needs no change.
 
 The leading `/` is required: Railway asks for "the absolute path to the file in your repository"
-(its example is `/backend/railway.toml`). With the path missing or not picked up, Railway falls back
-to Railpack, which fails on this monorepo with `No start command detected` — that build log means
-the config path is not set, not that the code is broken.
+(its example is `/backend/railway.toml`). A build log whose first lines are `Railpack` and
+`No start command detected` means no config was read at all — with the root `railway.json` present
+that should no longer happen, so if it does, check which branch and environment the service builds
+from before anything else. Railpack's own line `Found workspace with N packages` names the branch it
+read: `main` has 82, `morbeh/w0-w17-w12` has 83.
 
 Both Dockerfiles expect the **monorepo root** as build context, which is Railway's default.
 
