@@ -7,10 +7,15 @@ This directory holds Railway **config-as-code** files. Railway reads one config 
 and the path is set per service in the dashboard (Settings → Config-as-code), because a monorepo
 deploying two services cannot share a single root `railway.json`.
 
-| Service       | Config path                                       | Dockerfile                                 |
-| ------------- | ------------------------------------------------- | ------------------------------------------ |
-| `runtime-api` | `infrastructure/railway/runtime-api.railway.json` | `infrastructure/docker/runtime.Dockerfile` |
-| `storefront`  | `infrastructure/railway/storefront.railway.json`  | `infrastructure/docker/web.Dockerfile`     |
+| Service       | Config path                                        | Dockerfile                                 |
+| ------------- | -------------------------------------------------- | ------------------------------------------ |
+| `runtime-api` | `/infrastructure/railway/runtime-api.railway.json` | `infrastructure/docker/runtime.Dockerfile` |
+| `storefront`  | `/infrastructure/railway/storefront.railway.json`  | `infrastructure/docker/web.Dockerfile`     |
+
+The leading `/` is required: Railway asks for "the absolute path to the file in your repository"
+(its example is `/backend/railway.toml`). With the path missing or not picked up, Railway falls back
+to Railpack, which fails on this monorepo with `No start command detected` — that build log means
+the config path is not set, not that the code is broken.
 
 Both Dockerfiles expect the **monorepo root** as build context, which is Railway's default.
 
@@ -252,7 +257,7 @@ compose stack pins) and name it exactly `redpanda`: the name is its private DNS 
 ### 8.3 The `worker` service
 
 Create a service from this repo with the config-as-code path
-**`infrastructure/railway/worker.railway.json`**. It builds the same image as `runtime-api` and
+**`/infrastructure/railway/worker.railway.json`**. It builds the same image as `runtime-api` and
 differs only in what it runs:
 
 - **Pre-deploy:** `provision-topics.ts` creates every topic the platform needs, from the one
