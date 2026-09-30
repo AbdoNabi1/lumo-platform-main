@@ -168,13 +168,13 @@ railway link
 `railway run <cmd>` executes a one-off command (use it for the manual seed in §5.3) with the
 service's environment injected.
 
-## 8. Kafka (Redpanda) and the worker — the asynchronous half
+## 8. The worker — the asynchronous half
 
 Everything above runs the **API only**. The platform also writes every business event (an order
 paid, a product created, a subscription entering grace) to the `platform.outbox` table in the same
-transaction as the change, and a **worker** relays those rows to Kafka and runs the consumers that
-act on them. Without a broker and a worker none of that happens: the rows accumulate in the outbox
-and nothing reads them. Concretely, these do not run today:
+transaction as the change, and a **worker** delivers those rows to the consumers that act on them.
+Without a worker none of that happens: the rows accumulate in the outbox and nothing reads them.
+Concretely, these do not run today:
 
 | Consumer (topic)                                  | What it does                                                              |
 | ------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -186,7 +186,22 @@ and nothing reads them. Concretely, these do not run today:
 | `identity.user.*`, `identity.membership.created`  | principal provisioning — only if `SECURITY_PRINCIPAL_PROVISIONING` is on  |
 | `tracking.event.captured.v1`                      | tracking ingest — only if `TRACKING_INGEST_ENABLED` is on                 |
 
-This section adds two Railway services, **`redpanda`** and **`worker`**. Do the steps in order.
+The worker can get the rows to its consumers in one of two ways, chosen by `EVENT_TRANSPORT`:
+
+| `EVENT_TRANSPORT` | Services to add         | What carries the events                                        |
+| ----------------- | ----------------------- | -------------------------------------------------------------- |
+| `postgres`        | `worker`                | the worker reads the outbox and calls the consumers in-process |
+| `kafka` (default) | `redpanda` and `worker` | the worker publishes to Redpanda and consumes from it          |
+
+**Use `postgres` unless there is a reason not to** — §8.2. It runs the same consumers with the same
+idempotency and the same dead-letter rows, and needs no broker. The reason is cost, in Railway's
+own numbers (pricing page, read 2026-09-30): the Trial plan caps a service at 1 GB RAM and a volume
+at 0.5 GB, and usage is billed at $10 per GB of RAM per month. Redpanda here needs `--memory=3G`
+plus headroom and a volume (§8.3), so it cannot run on Trial at all and costs roughly $30 a month
+or more on Hobby before the worker and API are counted. What `postgres` gives up is listed in §8.7;
+none of it matters until there is more than one worker's worth of events.
+
+Do the steps in order: §8.1, then §8.2 **or** §8.3–8.4, then §8.5 and §8.6.
 
 ### 8.1 First: the migrations — they apply on the next `runtime-api` deploy
 
@@ -194,16 +209,55 @@ This section adds two Railway services, **`redpanda`** and **`worker`**. Do the 
 `DATABASE_URL` points at. The owner reports this deployment's database is **Supabase**, while §2
 and §3 above still describe the Railway Postgres plugin — whichever `DATABASE_URL` is set is the
 database that gets migrated, so confirm it before deploying. The next `runtime-api` deploy of a
-branch that contains pending migrations APPLIES them. Six are pending today (created, never
+branch that contains pending migrations APPLIES them. Seven are pending today (created, never
 applied): `20260923000000_wp13_merchant_payments`, `20260924000000_wp14_platform_plans`,
 `20260924010000_open_payment_provider_registry`, `20260924020000_billing_payment_methods`,
-`20260927000000_billing_payment_methods_invoice_ref`, `20260928000000_billing_coupons`.
+`20260927000000_billing_payment_methods_invoice_ref`, `20260928000000_billing_coupons`,
+`20260930000000_outbox_delivery_attempts`. The last one adds the two columns the `postgres`
+transport keeps its retry state in; a worker started before it is applied fails on its first poll.
 
 Apply them **deliberately, before the worker's first start** — the worker's consumers read tables
 these migrations change. Check which branch Railway deploys `runtime-api` from before merging
 anything into it, so this happens when you decide and not as a side effect of a merge.
 
-### 8.2 The `redpanda` service
+### 8.2 The worker WITHOUT a broker (`EVENT_TRANSPORT=postgres`)
+
+Create a service from this repo with the config-as-code path
+**`/infrastructure/railway/worker.railway.json`** — the same file the Kafka path uses. It builds the
+same image as `runtime-api`. Its pre-deploy step (`provision-topics.ts`) sees
+`EVENT_TRANSPORT=postgres`, logs `topic provisioning skipped`, and exits 0 without connecting to
+anything; its start command is `node --import tsx src/worker.ts`, health on `/healthz`.
+
+Variables: **everything `runtime-api` has** (§3: `APP_ENV`, `DATABASE_URL`, `DIRECT_URL`,
+`REDIS_URL`, and the rest), plus:
+
+| Variable               | Value      | Why                                                                         |
+| ---------------------- | ---------- | --------------------------------------------------------------------------- |
+| `EVENT_TRANSPORT`      | `postgres` | deliver from the outbox in-process; start no Kafka consumer                 |
+| `OUTBOX_RELAY_ENABLED` | `true`     | required with `postgres` (the config refuses to load without it) — **§8.5** |
+
+`KAFKA_BROKERS` is not needed. `REDIS_URL` still is: the delivery loop takes a Redis lock so two
+workers never drain the outbox at once. **Never set `TENANT_MODE=multi`**, and do not set
+`TRACKING_INGEST_ENABLED=true` — the collector publishes to a broker, so the config refuses that
+combination.
+
+How it behaves (`apps/runtime/src/outbox-delivery-runtime.ts`): every `OUTBOX_RELAY_INTERVAL_MS`
+(2 s) the worker takes the pending rows that are due, oldest first, and hands each to every consumer
+registered for its topic. A row is marked `published` once all of them have effected it. If one
+fails, the row stays `pending` with `attempts` raised and `available_at` set, and is retried on the
+same schedule Kafka mode uses — 5 s, 30 s, 2 min, 10 min, 1 h — without holding up the rows behind
+it. After the last retry each consumer still failing gets a `platform.dead_letters` row and the
+outbox row is marked `published`. A row on a topic no consumer subscribes to is marked `published`
+at once.
+
+What was verified and what was not: the delivery loop, the retry schedule and the dead-letter path
+are covered by tests that run a real producer's outbox row through the real consumer runtime with
+no broker. **It has not been run against a real database or on Railway**; the first deploy is that
+test. If the worker logs `outbox delivery failed` on every pass, the message names the cause.
+
+Skip §8.3 and §8.4.
+
+### 8.3 Alternative: the `redpanda` service
 
 Create an empty service from the Docker image **`redpandadata/redpanda:v24.2.7`** (the version the
 compose stack pins) and name it exactly `redpanda`: the name is its private DNS name,
@@ -254,7 +308,7 @@ compose stack pins) and name it exactly `redpanda`: the name is its private DNS 
     partition count 210 would exceed FD limit 204" until it raised `ulimits.nofile`. If topic
     creation fails with `INVALID_PARTITIONS … hardware constraints`, this is the likely cause.
 
-### 8.3 The `worker` service
+### 8.4 The `worker` service on Kafka
 
 Create a service from this repo with the config-as-code path
 **`/infrastructure/railway/worker.railway.json`**. It builds the same image as `runtime-api` and
@@ -273,18 +327,18 @@ Variables: **everything `runtime-api` has** (§3: `APP_ENV`, `DATABASE_URL`, `DI
 
 | Variable                         | Value                            | Why                                                 |
 | -------------------------------- | -------------------------------- | --------------------------------------------------- |
-| `KAFKA_BROKERS`                  | `redpanda.railway.internal:9092` | the private address from §8.2                       |
-| `OUTBOX_RELAY_ENABLED`           | `true`                           | the worker relays the outbox — **read §8.4 first**  |
+| `KAFKA_BROKERS`                  | `redpanda.railway.internal:9092` | the private address from §8.3                       |
+| `OUTBOX_RELAY_ENABLED`           | `true`                           | the worker relays the outbox — **read §8.5 first**  |
 | `KAFKA_TOPIC_PARTITIONS`         | `1`                              | a consumed topic's partitions (others always get 1) |
 | `KAFKA_TOPIC_REPLICATION_FACTOR` | `1`                              | one broker                                          |
 
 **Never set `TENANT_MODE=multi`.** Whether the worker boots under `APP_ENV=local` was **not
 verified**: it has not been started against a real broker.
 
-### 8.4 Decide about the backlog BEFORE the worker's first start
+### 8.5 Decide about the backlog BEFORE the worker's first start
 
-The relay publishes **every** `pending` row in `platform.outbox`, oldest first — including every
-row written since the relay was switched off (`docs/operations/CLOUD_RUNBOOK.md` §3.3 counted 94
+This applies to **both** transports. The worker delivers **every** `pending` row in
+`platform.outbox`, oldest first — including every row written since the relay was switched off (`docs/operations/CLOUD_RUNBOOK.md` §3.3 counted 94
 then). The consumers in the table above then act on events that may be weeks old: ledger postings,
 loyalty points, notifications. Look first (read-only):
 
@@ -302,16 +356,36 @@ UPDATE platform.outbox SET status = 'published', published_at = now() WHERE stat
 Skipping cannot be undone in effect: those events will never reach a consumer. Nothing in this repo
 makes this choice for you.
 
-### 8.5 Verify
+### 8.6 Verify
 
-1. The worker's pre-deploy log ends with `topic provisioning finished` and `failed: 0`.
-2. The worker's `/healthz` returns 200.
+1. The worker's pre-deploy log ends with `topic provisioning skipped` (`postgres`), or with
+   `topic provisioning finished` and `failed: 0` (`kafka`).
+2. The worker's `/healthz` returns 200, and its log has `worker started` with the `transport` you
+   chose.
 3. Create a product, then read the `PRODUCT` usage counter
    (`GET /api/v1/usage-counters?tenantRef=<tenant>&resource=PRODUCT` as an authenticated admin,
    with the same `x-tenant-id` header as the §5 checks). It should read
    **1**: the first time G-79's metering runs outside a test.
 
-### 8.6 Known limits
+### 8.7 Known limits
+
+Under `EVENT_TRANSPORT=postgres`:
+
+- **The outbox table is the only copy.** There is no topic to replay from and no `.dlq` topic; a
+  dead-lettered message exists only as its `platform.dead_letters` row (which keeps the original
+  bytes and headers, but not the stack trace the broker copy would carry).
+- **One row at a time.** Delivery is sequential and single-flight across workers, so a second
+  worker adds availability, not throughput. If a pass outlives the 60 s lock, a second worker may
+  deliver the same rows; the consumers' inbox (`platform.inbox_processed_events`) absorbs that.
+- **A consumer added later does not see earlier events** — rows on a topic with no subscriber are
+  marked `published` immediately.
+- **No tracking ingest.** The collector needs a broker.
+- **Nothing prunes the outbox unless the scheduler runs.** Delivered rows are deleted after
+  `OUTBOX_RETENTION_DAYS` by `apps/runtime/src/scheduler.ts`, which this guide does not deploy.
+- **Switching to `kafka` later** needs no data change: the two columns are ignored by the Kafka
+  relay. Rows waiting on a retry at that moment are published to the broker immediately.
+
+Under `EVENT_TRANSPORT=kafka`:
 
 - **A type emitted outside its context's list still stalls the relay.** The inventory is exactly as
   complete as each context's `*_PUBLISHED_EVENTS` list. Licensing, Finance and Media are pinned to

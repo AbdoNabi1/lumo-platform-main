@@ -94,3 +94,47 @@ describe("payments schema — migration history matches the Prisma model's requi
     });
   }
 });
+
+/**
+ * The same static replay for `platform.outbox`. The Postgres event transport added `attempts`
+ * (required) and `available_at` to the model; the generated client names them whenever it reads the
+ * table, so a schema change with no migration behind it would break every outbox read in a
+ * deployment while every test stayed green.
+ */
+describe("platform.outbox — migration history matches the Prisma model's columns", () => {
+  const allMigrationSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  /** Every scalar field on `OutboxEntry` (packages/db/prisma/schema/platform.prisma), by column name. */
+  function modelColumns(): string[] {
+    const schema = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "platform.prisma"),
+      "utf-8",
+    );
+    const body = /model OutboxEntry \{([\s\S]*?)\n\}/.exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+\w+[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns()).toEqual(
+      expect.arrayContaining(["id", "topic", "payload", "status", "attempts", "available_at"]),
+    );
+  });
+
+  it("every column the model declares was created by some migration", () => {
+    const actual = columnsEverAddedTo("platform", "outbox", allMigrationSql);
+    for (const column of modelColumns()) {
+      expect(actual.has(column), `expected "platform"."outbox"."${column}" to exist`).toBe(true);
+    }
+  });
+});

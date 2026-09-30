@@ -53,6 +53,15 @@ export const EXEMPTIONS = {
     cls: "platform-global",
     reason: "marks relayed rows by id; the relay is cross-tenant by design",
   },
+  "packages/db/src/messaging/prisma-outbox-delivery-queue.ts|outboxEntry.findMany": {
+    cls: "platform-global",
+    reason:
+      "the broker-less delivery relay takes every tenant's due rows in one pass, like the Kafka relay above",
+  },
+  "packages/db/src/messaging/prisma-outbox-delivery-queue.ts|outboxEntry.updateMany": {
+    cls: "platform-global",
+    reason: "marks or defers delivered rows by id; the relay is cross-tenant by design",
+  },
   "packages/db/src/messaging/prisma-processed-event-store.ts|processedEvent.findUnique": {
     cls: "platform-global",
     reason: "consumer idempotency on a globally unique message id (T10.7: residual risk recorded)",

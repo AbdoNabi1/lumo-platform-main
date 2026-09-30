@@ -15,17 +15,25 @@ import { topicInventory } from "./kafka-topics/topic-inventory";
  * - `KAFKA_BROKERS` (comma-separated, same as the runtime), `KAFKA_CLIENT_ID`;
  * - `KAFKA_TOPIC_PARTITIONS` (default 1): partitions for a CONSUMED topic and its `.retry`; every
  *   other topic gets 1 (see `Partitioning` in `kafka-topics/topic-inventory.ts` for why);
- * - `KAFKA_TOPIC_REPLICATION_FACTOR` (default 1): the single-broker default.
+ * - `KAFKA_TOPIC_REPLICATION_FACTOR` (default 1): the single-broker default;
+ * - `EVENT_TRANSPORT` (default `kafka`): under `postgres` there is no broker and no topic, so this
+ *   exits 0 without connecting to anything. The worker's Railway config runs this script before
+ *   every deploy; without the early exit a broker-less worker could never deploy.
  */
 const ProvisionEnv = z.object({
   KAFKA_BROKERS: z.string().min(1).default("localhost:19092"),
   KAFKA_CLIENT_ID: z.string().min(1).default("morbeh-topic-provisioner"),
   KAFKA_TOPIC_PARTITIONS: z.coerce.number().int().positive().default(1),
   KAFKA_TOPIC_REPLICATION_FACTOR: z.coerce.number().int().positive().default(1),
+  EVENT_TRANSPORT: z.enum(["kafka", "postgres"]).default("kafka"),
 });
 
 export async function main(env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const config = ProvisionEnv.parse(env);
+  if (config.EVENT_TRANSPORT === "postgres") {
+    logger.info("topic provisioning skipped: EVENT_TRANSPORT=postgres uses no broker");
+    return 0;
+  }
   const specs = topicInventory();
   const kafka = createKafkaClient({
     clientId: config.KAFKA_CLIENT_ID,

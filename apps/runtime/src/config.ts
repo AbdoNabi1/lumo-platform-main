@@ -29,6 +29,21 @@ const schema = z
     KAFKA_BROKERS: z.string().min(1).default("localhost:19092"),
     KAFKA_CLIENT_ID: z.string().default("morbeh-runtime"),
 
+    /**
+     * How integration events get from `platform.outbox` to the worker's consumers.
+     *
+     * - `kafka` (default, unchanged): the relay publishes rows to the broker and each consumer reads
+     *   its topic from there. Needs a reachable broker with every topic provisioned.
+     * - `postgres`: no broker. The worker delivers each outbox row straight to the consumers
+     *   registered for its topic, in-process, and the row carries its own retry state
+     *   (`outbox-delivery-runtime.ts`). Same consumers, same inbox idempotency, same dead-letter rows;
+     *   what is given up is stated in that file. For a deployment that cannot run a broker.
+     *
+     * Read by the worker and by `provision-topics.ts` (which becomes a no-op under `postgres`). The
+     * API never publishes to the broker itself, so the value does not change how it behaves.
+     */
+    EVENT_TRANSPORT: z.enum(["kafka", "postgres"]).default("kafka"),
+
     // ── Phase A.23: CDC (Debezium/Kafka Connect) watchdog ──
     /**
      * Kafka Connect REST base URL (e.g. `http://localhost:8083` in compose, `http://debezium-connect:8083`
@@ -299,6 +314,27 @@ const schema = z
         path: ["SECURITY_ZERO_TRUST_ENFORCEMENT"],
         message:
           "SECURITY_ZERO_TRUST_ENFORCEMENT requires SECURITY_PRINCIPAL_PROVISIONING=on (enforcement fails closed against an unprovisioned store).",
+      });
+    }
+    // The Postgres transport IS the outbox relay: with the relay off nothing would be delivered at all,
+    // and the scheduler's prune job would take its CDC branch for a table no CDC is reading.
+    if (cfg.EVENT_TRANSPORT === "postgres" && !cfg.OUTBOX_RELAY_ENABLED) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["OUTBOX_RELAY_ENABLED"],
+        message:
+          "EVENT_TRANSPORT=postgres requires OUTBOX_RELAY_ENABLED=true: under this transport the outbox relay is the only thing that delivers events.",
+      });
+    }
+    // The collector publishes beacons straight to the broker (`tracking.event.captured.v1`), never
+    // through the outbox, so without a broker the ingest consumer would be registered and receive
+    // nothing, forever. Refuse the combination rather than report a healthy consumer that is deaf.
+    if (cfg.EVENT_TRANSPORT === "postgres" && cfg.TRACKING_INGEST_ENABLED) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["TRACKING_INGEST_ENABLED"],
+        message:
+          "TRACKING_INGEST_ENABLED=true requires EVENT_TRANSPORT=kafka: the collector publishes tracking events to the broker directly, not through the outbox, so the Postgres transport can never deliver them.",
       });
     }
     // H-01: `buildSecurityHttpGuard` (apps/runtime/src/security/wire-security-runtime.ts) is not called

@@ -9,9 +9,13 @@ import { topicInventory } from "./kafka-topics/topic-inventory";
  * deployed a worker onto a broker missing topics. No broker: the kafkajs client is mocked.
  */
 let admin: TopicAdmin;
+let clientsCreated = 0;
 
 vi.mock("@platform/kafka", () => ({
-  createKafkaClient: () => ({ admin: () => admin }),
+  createKafkaClient: () => {
+    clientsCreated += 1;
+    return { admin: () => admin };
+  },
 }));
 
 function fakeAdmin(
@@ -39,6 +43,7 @@ const ALL = topicInventory().map((spec) => spec.name);
 describe("provision-topics main() exit code — what Railway's pre-deploy acts on", () => {
   beforeEach(() => {
     vi.resetModules();
+    clientsCreated = 0;
   });
 
   it("exits 0 when every topic already exists", async () => {
@@ -58,5 +63,28 @@ describe("provision-topics main() exit code — what Railway's pre-deploy acts o
     admin = fakeAdmin(ALL.slice(1), new Set([missing]));
     const { main } = await import("./provision-topics");
     await expect(main({})).resolves.toBe(1);
+  });
+
+  it("exits 0 WITHOUT touching a broker under EVENT_TRANSPORT=postgres", async () => {
+    // An admin that fails on any use: a broker-less worker's pre-deploy step must not need one.
+    const unreachable = async (): Promise<never> => {
+      throw new Error("no broker");
+    };
+    admin = {
+      connect: unreachable,
+      disconnect: unreachable,
+      listTopics: unreachable,
+      createTopics: unreachable,
+    };
+    const { main } = await import("./provision-topics");
+    await expect(main({ EVENT_TRANSPORT: "postgres" })).resolves.toBe(0);
+    expect(clientsCreated).toBe(0);
+  });
+
+  it("still provisions under the default transport — the skip is opt-in", async () => {
+    admin = fakeAdmin(ALL);
+    const { main } = await import("./provision-topics");
+    await expect(main({ EVENT_TRANSPORT: "kafka" })).resolves.toBe(0);
+    expect(clientsCreated).toBe(1);
   });
 });

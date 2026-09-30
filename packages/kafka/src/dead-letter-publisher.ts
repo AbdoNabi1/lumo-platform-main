@@ -53,6 +53,22 @@ export class DeadLetterPublisher {
       },
     });
 
+    await this.addRow(input, error, failedAt);
+  }
+
+  /**
+   * The `platform.dead_letters` row WITHOUT the `<topic>.dlq` publish — for the broker-less transport
+   * (`EVENT_TRANSPORT=postgres`), where there is no topic to publish to and `publish` would hang on
+   * a connection that can never open. The row is what operators query and replay from. The forensic
+   * `x-dlq-*` headers exist only on the broker copy and are not written here; what they carry
+   * (attempts, error message, time) is on the row itself, except the stack trace, which is dropped.
+   */
+  async record(input: DeadLetterInput): Promise<void> {
+    const error = input.error instanceof Error ? input.error : new Error(String(input.error));
+    await this.addRow(input, error, this.deps.clock.now().toISOString());
+  }
+
+  private async addRow(input: DeadLetterInput, error: Error, failedAt: string): Promise<void> {
     await this.deps.store.add({
       messageId: input.messageId,
       topic: input.originalTopic,

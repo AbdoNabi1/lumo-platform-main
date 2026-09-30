@@ -3,8 +3,11 @@ import type { Clock } from "@platform/contracts";
 import type { EventSerializer, IntegrationEvent } from "@platform/domain-events";
 import {
   DuplicateProcessedEventError,
+  type DirectConsumer,
+  type DirectDeadLetter,
   type EventHandler,
   type EventPublisher,
+  type IncomingMessage,
   type ProcessedEventStore,
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
@@ -61,7 +64,7 @@ export interface KafkaConsumerRuntimeDeps<TPayload, TContext = unknown> {
  * the handler records the marker inside its own transaction (`PrismaProcessedEventStore`
  * accepts the tx); handlers remain idempotent regardless (ADR-0005).
  */
-export class KafkaConsumerRuntime<TPayload, TContext = unknown> {
+export class KafkaConsumerRuntime<TPayload, TContext = unknown> implements DirectConsumer {
   private readonly deps: KafkaConsumerRuntimeDeps<TPayload, TContext>;
   private readonly metrics: MessagingMetrics;
   private readonly schedule: RetrySchedule;
@@ -150,40 +153,15 @@ export class KafkaConsumerRuntime<TPayload, TContext = unknown> {
       if (wait > 0) await this.sleep(wait);
     }
 
-    const envelope = this.deps.serializer.deserialize<TPayload>({
-      type: headers["type"] ?? "",
-      eventVersion: Number(headers["eventVersion"] ?? "0"),
-      contentType: headers["contentType"] ?? "",
-      data: value,
-    });
+    const envelope = this.decode(headers, value);
 
     const started = this.deps.clock.now().getTime();
-    if (await this.deps.processedEvents.has(envelope.messageId)) {
-      this.metrics.duplicate(this.topic, this.deps.consumerGroup);
+    if (await this.alreadyEffected(envelope)) {
       return; // already effected — redelivery ack'd
     }
 
     try {
-      if (this.deps.handler.handleAtomic !== undefined && this.deps.unitOfWork !== undefined) {
-        const handled = await this.handleAtomic(envelope);
-        if (!handled) {
-          // Lost the recordIfNew race inside the transaction — a concurrent redelivery already
-          // effected this message; the domain write rolled back with it. Benign duplicate, ack.
-          this.metrics.duplicate(this.topic, this.deps.consumerGroup);
-          return;
-        }
-      } else {
-        await this.deps.handler.handle(envelope);
-        await this.deps.processedEvents.recordIfNew(
-          envelope.messageId,
-          this.deps.clock.now().toISOString(),
-        );
-      }
-      this.metrics.processed(
-        this.topic,
-        this.deps.consumerGroup,
-        this.deps.clock.now().getTime() - started,
-      );
+      await this.effect(envelope, started);
     } catch (error) {
       this.metrics.failed(this.topic, this.deps.consumerGroup);
       await this.scheduleRetryOrDeadLetter({
@@ -196,6 +174,98 @@ export class KafkaConsumerRuntime<TPayload, TContext = unknown> {
         error,
       });
     }
+  }
+
+  /**
+   * Broker-less delivery (`DirectConsumer`, `EVENT_TRANSPORT=postgres`): the SAME decode →
+   * inbox pre-check → handle → inbox marker as {@link handleMessage}, minus everything that needs a
+   * broker. It effects the message once or THROWS — it never publishes to `<topic>.retry`, because
+   * under that transport the outbox row carries the retry state and `OutboxDeliveryRelay` decides
+   * what happens next. A message that cannot even be decoded throws too, so it is retried and then
+   * dead-lettered like any other failure instead of wedging the queue.
+   *
+   * Callable without `start()`: no Kafka consumer is opened on this path.
+   */
+  async deliver(message: IncomingMessage): Promise<void> {
+    const started = this.deps.clock.now().getTime();
+    try {
+      const envelope = this.decode(message.headers, message.value);
+      if (await this.alreadyEffected(envelope)) return;
+      await this.effect(envelope, started);
+    } catch (error) {
+      this.metrics.failed(this.topic, this.deps.consumerGroup);
+      throw error;
+    }
+  }
+
+  /**
+   * Broker-less dead-letter: the `platform.dead_letters` row for THIS consumer group, without the
+   * `<topic>.dlq` publish (see `DeadLetterPublisher.record`).
+   */
+  async deadLetter(input: DirectDeadLetter): Promise<void> {
+    await this.deps.deadLetters.record({
+      originalTopic: this.topic,
+      consumerGroup: this.deps.consumerGroup,
+      messageId: input.messageId,
+      key: input.message.key,
+      value: input.message.value,
+      headers: input.message.headers,
+      attempts: input.attempts,
+      error: input.error,
+    });
+    this.metrics.deadLettered(this.topic, this.deps.consumerGroup);
+    this.deps.logger.error("message dead-lettered", {
+      topic: this.topic,
+      consumerGroup: this.deps.consumerGroup,
+      messageId: input.messageId,
+      tenantId: input.message.headers["tenantId"],
+      attempts: input.attempts,
+    });
+  }
+
+  private decode(
+    headers: Readonly<Record<string, string>>,
+    value: Uint8Array,
+  ): IntegrationEvent<TPayload> {
+    return this.deps.serializer.deserialize<TPayload>({
+      type: headers["type"] ?? "",
+      eventVersion: Number(headers["eventVersion"] ?? "0"),
+      contentType: headers["contentType"] ?? "",
+      data: value,
+    });
+  }
+
+  /** The fast inbox pre-check; counts the duplicate when it hits. */
+  private async alreadyEffected(envelope: IntegrationEvent<TPayload>): Promise<boolean> {
+    if (await this.deps.processedEvents.has(envelope.messageId)) {
+      this.metrics.duplicate(this.topic, this.deps.consumerGroup);
+      return true;
+    }
+    return false;
+  }
+
+  /** Handle + inbox marker (atomic when the handler opts in), then the processed metric. Throws on failure. */
+  private async effect(envelope: IntegrationEvent<TPayload>, started: number): Promise<void> {
+    if (this.deps.handler.handleAtomic !== undefined && this.deps.unitOfWork !== undefined) {
+      const handled = await this.handleAtomic(envelope);
+      if (!handled) {
+        // Lost the recordIfNew race inside the transaction — a concurrent redelivery already
+        // effected this message; the domain write rolled back with it. Benign duplicate, ack.
+        this.metrics.duplicate(this.topic, this.deps.consumerGroup);
+        return;
+      }
+    } else {
+      await this.deps.handler.handle(envelope);
+      await this.deps.processedEvents.recordIfNew(
+        envelope.messageId,
+        this.deps.clock.now().toISOString(),
+      );
+    }
+    this.metrics.processed(
+      this.topic,
+      this.deps.consumerGroup,
+      this.deps.clock.now().getTime() - started,
+    );
   }
 
   /**
