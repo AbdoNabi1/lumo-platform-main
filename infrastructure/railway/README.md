@@ -69,8 +69,19 @@ Only two backing services. Kafka and Temporal are **not** required by the `api` 
 `createKafkaClient` is lazy (`composition.ts:137`) and consumers live in `worker.ts`, which this
 deployment does not run.
 
-- **Postgres** — Railway plugin. Supplies `DATABASE_URL`.
-- **Redis** — Railway plugin. Supplies `REDIS_URL`. Used for rate limiting, idempotency, cache.
+- **Postgres** — Railway plugin, or an external database. Supplies `DATABASE_URL`.
+- **Redis** — Railway plugin. Supplies `REDIS_URL`. Used for rate limiting, idempotency, cache,
+  and the worker's single-flight lock. There is **no in-memory fallback**: `REDIS_URL` has no
+  default, so a service without it exits at boot with `Invalid runtime configuration`.
+
+**This deployment uses Supabase for Postgres, so there is no Railway Postgres plugin** — but Redis
+is still a Railway service to add (New → Database → Redis), whatever the database is. Deploying the
+API with neither produced exactly this, on a loop, which is what an unset required variable looks
+like:
+
+```
+Error: Invalid runtime configuration: DATABASE_URL: Required; REDIS_URL: Required
+```
 
 ## 3. Environment variables — `runtime-api` service
 
@@ -79,13 +90,25 @@ Railway injects `PORT` itself; `config.ts` coerces it, and `api.ts` binds `0.0.0
 | Variable            | Value                        | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `APP_ENV`           | `local`                      | §1 — the only value that boots today                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `DATABASE_URL`      | `${{Postgres.DATABASE_URL}}` | required, no default                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `DATABASE_URL`      | `${{Postgres.DATABASE_URL}}` | required, no default. **On Supabase** this is that project's connection string instead — its POOLED one (Supabase → Connect → Transaction pooler), which is what an app with many short-lived connections should hold.                                                                                                                                                                                                                             |
 | `DIRECT_URL`        | `${{Postgres.DATABASE_URL}}` | required for `preDeployCommand`'s `prisma migrate deploy` — the Prisma CLI validates `directUrl = env("DIRECT_URL")` (`main.prisma`, Phase A.43) on every invocation, even when it isn't the connection actually used. Railway's own Postgres plugin isn't behind a transaction-mode pooler (unlike the Supabase deployment path in the PHASE_A42/A43 reports), so this is the _same_ value as `DATABASE_URL`, not a distinct pooled/direct split. |
 | `REDIS_URL`         | `${{Redis.REDIS_URL}}`       | required, no default                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `AUTH_ISSUER_URL`   | any valid URL                | required unconditionally (`composition.ts:146`) — `JwtVerifier` is constructed at boot but only fetches JWKS when a token is actually verified, which public routes never do                                                                                                                                                                                                                                                                       |
 | `AUTH_JWKS_URL`     | any valid URL                | same                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `TENANT_DEFAULT_ID` | `tenant-local`               | must match the seed's `TENANT_ID` (`apps/runtime/src/seed.ts:24`) or the API resolves to an empty tenant                                                                                                                                                                                                                                                                                                                                           |
 | `TENANT_MODE`       | `single`                     | leave `single`: `multi` is possible, not safe (T10.5 unwritten); the worker refuses it (G-64)                                                                                                                                                                                                                                                                                                                                                      |
+
+`AUTH_ISSUER_URL` and `AUTH_JWKS_URL` are the ones to watch: the schema marks them optional
+(`config.ts:70`), so a missing one is NOT reported by the `Invalid runtime configuration` error
+above — composition throws separately, one boot later, with "Runtime composition requires
+AUTH_ISSUER_URL + AUTH_JWKS_URL". Set all of the table's rows at once rather than chasing one error
+per deploy.
+
+**On Supabase, `DIRECT_URL` is NOT the same value as `DATABASE_URL`** (unlike the Railway plugin
+described in that row): use the project's direct connection (Supabase → Connect → Direct
+connection, port 5432), because `prisma migrate deploy` cannot run migrations through a
+transaction-mode pooler. Getting this wrong fails the pre-deploy step, which blocks the deploy —
+visibly, not silently.
 
 Leave every other variable unset — each optional group (S3, Stripe, KMS, HSM, threat feeds, OTel,
 tracking ingest) fails closed if half-configured.
