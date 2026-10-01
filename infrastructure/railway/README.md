@@ -63,6 +63,24 @@ means building a real MFA provider, wiring Stripe, S3, and an Ory Kratos/Keto st
   therefore **unauthorized-by-default in this environment** — do not expose admin paths publicly.
 - `KETO_WRITE_URL` / `KRATOS_PUBLIC_URL` / `KRATOS_ADMIN_URL` are not required (`config.ts:187`).
 
+**Once this service has a public domain, that relaxation is reachable by anyone.** Measured against
+the live deployment on 2026-10-01, unauthenticated, with nothing but the hostname:
+
+| Path            | Status | What comes back                                                        |
+| --------------- | ------ | ---------------------------------------------------------------------- |
+| `/openapi.json` | 200    | 244 KB — the entire API surface, every route and schema                |
+| `/docs`         | 200    | the Swagger UI over it                                                 |
+| `/readyz`       | 503    | the database host and the driver's literal authentication-failure text |
+| `/metrics`      | 200    | process memory and request counts                                      |
+
+`/docs`, `/openapi.json` and `/readyz`'s detail are gated on `APP_ENV === "local"`
+(`api.ts:552-553`) — the one value that boots — so this deployment cannot have the HTTP surface
+without them. `/healthz`, `/readyz` (status only) and `/metrics` are registered unconditionally
+(`packages/http/src/server.ts`), so those stay public in every mode.
+
+Treat the domain as the secret: hand it only to people who should see an unfinished API, and do not
+put real customer data behind it. G-82.
+
 ## 2. Infrastructure the API actually needs
 
 Only two backing services. Kafka and Temporal are **not** required by the `api` entrypoint —
