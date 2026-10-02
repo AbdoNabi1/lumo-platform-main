@@ -79,27 +79,39 @@ describe("runtime-api.railway.json", () => {
  * not picked up. It must stay byte-identical to the API's own config: two files that drift would
  * make a service's behaviour depend on whether its dashboard path happens to be set.
  */
-describe("the root railway.json — the default any service picks up", () => {
-  it("is identical to runtime-api.railway.json", () => {
-    expect(readFileSync(join(ROOT, "railway.json"), "utf8")).toBe(
-      readFileSync(join(ROOT, "infrastructure/railway/runtime-api.railway.json"), "utf8"),
-    );
+describe("the root railway.json — what every service inherits", () => {
+  const root = (): RailwayConfig =>
+    JSON.parse(readFileSync(join(ROOT, "railway.json"), "utf8")) as RailwayConfig;
+
+  it("builds the runtime image, so a service needs no per-service config file to build", () => {
+    expect(root().build.builder).toBe("DOCKERFILE");
+    expect(root().build.dockerfilePath).toBe("infrastructure/docker/runtime.Dockerfile");
   });
 
-  it("starts the API and migrates first, so a service with no config path still boots correctly", () => {
-    const root = JSON.parse(readFileSync(join(ROOT, "railway.json"), "utf8")) as RailwayConfig;
-    expect(root.build.dockerfilePath).toBe("infrastructure/docker/runtime.Dockerfile");
-    expect(root.deploy.startCommand).toBe("node --import tsx src/api.ts");
-    expect(root.deploy.preDeployCommand).toBe(
-      "cd /app/packages/db && pnpm exec prisma migrate deploy",
-    );
+  it("pins NO start command, so each service decides what it runs", () => {
+    // The load-bearing assertion. Railway: "Configuration defined in code will always override
+    // values from the dashboard" — so a `startCommand` here would silently beat the start command
+    // set on a service, and EVERY service built from this repo would run the API. Not hypothetical:
+    // the worker service ran `src/api.ts` and logged `api listening` until this field was removed.
+    // Nor can it be fixed per-service with a config file: Railway deprecated config-as-code, and
+    // "starting 2026-08-28, services that have never used Config as Code cannot opt in" — which is
+    // every service created from then on, including that worker.
+    expect(root().deploy.startCommand).toBeUndefined();
   });
 
-  it("does NOT start the worker: a worker service that forgets its config path must not become a second API silently", () => {
-    // Not a redundant assertion — it is the whole hazard of having a root default. The worker's
-    // own config is the only place its start command lives; see README section 8.
-    const worker = railway("worker.railway.json");
-    const root = JSON.parse(readFileSync(join(ROOT, "railway.json"), "utf8")) as RailwayConfig;
-    expect(root.deploy.startCommand).not.toBe(worker.deploy.startCommand);
+  it("leaves the API as the image default, so a service with no start command still serves HTTP", () => {
+    // With no startCommand anywhere, Railway runs the image CMD. That CMD must stay the API: the
+    // API service sets no start command of its own and relies on exactly this.
+    const dockerfile = readFileSync(join(ROOT, "infrastructure/docker/runtime.Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/^CMD \["node", "--import", "tsx", "src\/api\.ts"\]$/m);
+  });
+
+  it("keeps the worker command OUT of the image default, so running the worker is a deliberate act", () => {
+    const dockerfile = readFileSync(join(ROOT, "infrastructure/docker/runtime.Dockerfile"), "utf8");
+    expect(dockerfile).not.toContain("src/worker.ts");
+    // The command an operator sets on the worker service, kept named in one place.
+    expect(railway("worker.railway.json").deploy.startCommand).toBe(
+      "node --import tsx src/worker.ts",
+    );
   });
 });

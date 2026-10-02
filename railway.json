@@ -6,7 +6,6 @@
   },
   "deploy": {
     "preDeployCommand": "cd /app/packages/db && pnpm exec prisma migrate deploy",
-    "startCommand": "node --import tsx src/api.ts",
     "healthcheckPath": "/healthz",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",

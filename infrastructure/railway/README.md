@@ -6,34 +6,55 @@
 This directory holds Railway **config-as-code** files, one per service, because a monorepo
 deploying several services cannot describe them all in one file.
 
-**The repository root also has a `railway.json`, and it is the API config.** Railway "looks for
-`railway.toml` or `railway.json` files by default" (config-as-code reference), so a service with no
-config path set in its dashboard still builds the runtime image and starts the API — no dashboard
-field required. It exists because three deploys in a row instead fell back to Railpack and failed
-with `No start command detected`, the symptom of an unset or unread per-service path.
-`apps/runtime/src/railway-config.test.ts` pins it byte-identical to
-`infrastructure/railway/runtime-api.railway.json`.
+**The repository root has a `railway.json`, and it defines the BUILD ONLY — deliberately no
+`startCommand`.** Railway "looks for `railway.toml` or `railway.json` files by default"
+(config-as-code reference), so every service built from this repo gets the runtime image with no
+dashboard field required. It exists because three deploys in a row instead fell back to Railpack and
+failed with `No start command detected`.
 
-**The consequence, which matters when adding a service:** every service built from this repo
-inherits the API config unless its own path is set. A `worker` service that forgets its path becomes
-a SECOND API — it would pass its health check while consuming nothing. Set the path on every service
-that is not the API.
+**Why it must not pin a start command.** Railway: "Configuration defined in code will always
+override values from the dashboard." A `startCommand` at the root would therefore beat the start
+command set on any individual service, and every service built from this repo would run the API.
+That is what happened: the worker service logged `api listening` and consumed nothing, through two
+deploys, while its own config file sat unread.
 
-| Service       | Config path                                                    | Dockerfile                                 |
-| ------------- | -------------------------------------------------------------- | ------------------------------------------ |
-| `runtime-api` | none needed — the root `railway.json` is this service's config | `infrastructure/docker/runtime.Dockerfile` |
-| `worker`      | `/infrastructure/railway/worker.railway.json`                  | `infrastructure/docker/runtime.Dockerfile` |
-| `storefront`  | `/infrastructure/railway/storefront.railway.json`              | `infrastructure/docker/web.Dockerfile`     |
+**And the per-service config file cannot fix it any more.** Railway has deprecated config-as-code
+("Existing config files keep working until 2026-12-01"), and **"starting 2026-08-28, services that
+have never used Config as Code cannot opt in"** — which is every service created from that date,
+including that worker. The field is visible in its settings and does nothing.
 
-Setting `/infrastructure/railway/runtime-api.railway.json` on the API service is equivalent — the
-test above keeps the two files identical — so an already-configured service needs no change.
+So what a service runs is decided in this order, and only this order:
 
-The leading `/` is required: Railway asks for "the absolute path to the file in your repository"
-(its example is `/backend/railway.toml`). A build log whose first lines are `Railpack` and
-`No start command detected` means no config was read at all — with the root `railway.json` present
-that should no longer happen, so if it does, check which branch and environment the service builds
-from before anything else. Railpack's own line `Found workspace with N packages` names the branch it
-read: `main` has 82, `morbeh/w0-w17-w12` has 83.
+1. the **start command set on the service** in its Railway settings — the only per-service lever a
+   new service has; or
+2. the **image's `CMD`**, which is `node --import tsx src/api.ts`, when no start command is set.
+
+Which makes the API the thing a service runs when nobody says otherwise, and the worker a
+deliberate act. `apps/runtime/src/railway-config.test.ts` pins all of it, including that the root
+config has no `startCommand` and that the image default is still the API.
+
+The files under `infrastructure/railway/` remain the record of what each service should run; for a
+service that can still read one they work as before, and for one that cannot they are the text to
+copy into its start-command field.
+
+| Service       | Start command to set on the service | Dockerfile                                 |
+| ------------- | ----------------------------------- | ------------------------------------------ |
+| `runtime-api` | none — the image default is the API | `infrastructure/docker/runtime.Dockerfile` |
+| `worker`      | `node --import tsx src/worker.ts`   | `infrastructure/docker/runtime.Dockerfile` |
+| `storefront`  | `node apps/storefront/server.js`    | `infrastructure/docker/web.Dockerfile`     |
+
+The storefront also needs its own Dockerfile, which the root config does not give it — that service
+still needs a config file (if it can read one) or its build settings set in the dashboard.
+
+A build log whose first lines are `Railpack` and `No start command detected` means no config was
+read at all — with the root `railway.json` present that should no longer happen, so if it does,
+check which branch and environment the service builds from before anything else. Railpack's own line
+`Found workspace with N packages` names the branch it read: `main` has 82, `morbeh/w0-w17-w12`
+has 83.
+
+**`preDeployCommand` has never been observed to run** on this project — the root config carries one
+(`prisma migrate deploy`) and three migrations stayed unapplied through several deploys while the
+API reported healthy. Treat migrations as a manual step (§8.1) until that is understood.
 
 Both Dockerfiles expect the **monorepo root** as build context, which is Railway's default.
 
@@ -298,19 +319,40 @@ anything into it, so this happens when you decide and not as a side effect of a 
 
 ### 8.2 The worker WITHOUT a broker (`EVENT_TRANSPORT=postgres`)
 
-Create a service from this repo with the config-as-code path
-**`/infrastructure/railway/worker.railway.json`** — the same file the Kafka path uses. It builds the
-same image as `runtime-api`. Its pre-deploy step (`provision-topics.ts`) sees
-`EVENT_TRANSPORT=postgres`, logs `topic provisioning skipped`, and exits 0 without connecting to
-anything; its start command is `node --import tsx src/worker.ts`, health on `/healthz`.
+Create a service from this repo. It builds the same image as `runtime-api` from the root
+`railway.json`; what makes it a worker is **one field**:
 
-Variables: **everything `runtime-api` has** (§3: `APP_ENV`, `DATABASE_URL`, `DIRECT_URL`,
-`REDIS_URL`, and the rest), plus:
+**Settings → Deploy → start command:**
 
-| Variable               | Value      | Why                                                                         |
-| ---------------------- | ---------- | --------------------------------------------------------------------------- |
-| `EVENT_TRANSPORT`      | `postgres` | deliver from the outbox in-process; start no Kafka consumer                 |
-| `OUTBOX_RELAY_ENABLED` | `true`     | required with `postgres` (the config refuses to load without it) — **§8.5** |
+```
+node --import tsx src/worker.ts
+```
+
+Set it, and check it after the deploy. Without it the service runs the image default — the API —
+and reports itself healthy while consuming nothing; `api listening` in its log instead of
+`worker started` is that failure, and it is the one this section gets wrong most often. Do not use
+the **Config-as-code** field for this: a service created after 2026-08-28 cannot opt in (see the top
+of this file), so `worker.railway.json` is reference text here, not something Railway will read.
+
+Nothing else from that file is needed under this transport: its pre-deploy step provisions Kafka
+topics, and there is no broker. Health on `/healthz` comes from the root config.
+
+Variables: the **ten** below — not a copy of everything `runtime-api` has. Each optional group
+(S3, Stripe, KMS, HSM, tracking) fails closed when half-configured, so a bulk copy of the API's
+environment is a boot failure waiting to happen rather than a shortcut.
+
+| Variable               | Value                  | Why                                                         |
+| ---------------------- | ---------------------- | ----------------------------------------------------------- |
+| `APP_ENV`              | `local`                | §1 — the only value that boots                              |
+| `TENANT_MODE`          | `single`               | never `multi` — the worker refuses it (G-64)                |
+| `TENANT_DEFAULT_ID`    | `tenant-local`         | matches the seed                                            |
+| `AUTH_ISSUER_URL`      | any valid URL          | composition throws without it, and the error names BOTH     |
+| `AUTH_JWKS_URL`        | any valid URL          | the other half of that pair                                 |
+| `DATABASE_URL`         | the API's value (§3)   | Supabase transaction pooler, port 6543                      |
+| `DIRECT_URL`           | the API's value (§3)   | Supabase SESSION pooler, port 5432                          |
+| `REDIS_URL`            | `${{Redis.REDIS_URL}}` | the delivery loop's single-flight lock                      |
+| `EVENT_TRANSPORT`      | `postgres`             | deliver from the outbox in-process; start no Kafka consumer |
+| `OUTBOX_RELAY_ENABLED` | `true`                 | required with `postgres`, or the config refuses to load     |
 
 `KAFKA_BROKERS` is not needed. `REDIS_URL` still is: the delivery loop takes a Redis lock so two
 workers never drain the outbox at once. **Never set `TENANT_MODE=multi`**, and do not set
@@ -386,8 +428,9 @@ compose stack pins) and name it exactly `redpanda`: the name is its private DNS 
 
 ### 8.4 The `worker` service on Kafka
 
-Create a service from this repo with the config-as-code path
-**`/infrastructure/railway/worker.railway.json`**. It builds the same image as `runtime-api` and
+Create a service from this repo, and **set its start command** (Settings → Deploy) to
+`node --import tsx src/worker.ts` — see the top of this file for why the config-as-code path field
+cannot be used on a service created after 2026-08-28. It builds the same image as `runtime-api` and
 differs only in what it runs:
 
 - **Pre-deploy:** `provision-topics.ts` creates every topic the platform needs, from the one
