@@ -37,11 +37,14 @@ The files under `infrastructure/railway/` remain the record of what each service
 service that can still read one they work as before, and for one that cannot they are the text to
 copy into its start-command field.
 
-| Service       | Start command to set on the service | Dockerfile                                 |
-| ------------- | ----------------------------------- | ------------------------------------------ |
-| `runtime-api` | none — the image default is the API | `infrastructure/docker/runtime.Dockerfile` |
-| `worker`      | `node --import tsx src/worker.ts`   | `infrastructure/docker/runtime.Dockerfile` |
-| `storefront`  | `node apps/storefront/server.js`    | `infrastructure/docker/web.Dockerfile`     |
+| Service       | Start command to set on the service                       | Dockerfile                                 |
+| ------------- | --------------------------------------------------------- | ------------------------------------------ |
+| `runtime-api` | none — the image default is the API                       | `infrastructure/docker/runtime.Dockerfile` |
+| `worker`      | `cd /app/apps/runtime && node --import tsx src/worker.ts` | `infrastructure/docker/runtime.Dockerfile` |
+| `storefront`  | `node apps/storefront/server.js`                          | `infrastructure/docker/web.Dockerfile`     |
+
+A command typed here runs from `/app`, not from the image's `WORKDIR` — hence the `cd`. The image
+default needs none because it keeps the `WORKDIR`.
 
 The storefront also needs its own Dockerfile, which the root config does not give it — that service
 still needs a config file (if it can read one) or its build settings set in the dashboard.
@@ -325,7 +328,16 @@ Create a service from this repo. It builds the same image as `runtime-api` from 
 **Settings → Deploy → start command:**
 
 ```
-node --import tsx src/worker.ts
+cd /app/apps/runtime && node --import tsx src/worker.ts
+```
+
+The `cd` is required and is the one difference from `worker.railway.json`'s `startCommand`. The
+image sets `WORKDIR /app/apps/runtime`, but a start command typed into the dashboard runs from
+`/app` — where neither `src/worker.ts` nor the `tsx` loader resolves, since pnpm links a package's
+dependencies under that package, not at the workspace root:
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'tsx' imported from /app/
 ```
 
 Set it, and check it after the deploy. Without it the service runs the image default — the API —
