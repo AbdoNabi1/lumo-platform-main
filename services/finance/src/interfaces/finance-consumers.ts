@@ -33,7 +33,24 @@ async function postAndAppend(
   if (!result.ok) {
     throw result.error;
   }
-  result.value.post(event.messageId, deps.clock.now());
+  // The LedgerPosted event gets a FRESH id, never `event.messageId`. That id becomes the
+  // `platform.outbox` primary key of the entry this append writes (`OutboxWriter.toEntry`:
+  // `id: envelope.messageId`, which is the domain event's `eventId`) — and the incoming message
+  // IS a row in that same table, under exactly that id. Reusing it made every append collide with
+  // the message that triggered it:
+  //
+  //   Invalid `prisma.outboxEntry.createMany()` invocation:
+  //   Unique constraint failed on the fields: (`id`)
+  //
+  // deterministically, for every paid order, so no sale ever reached the ledger. Observed in
+  // production on 2026-10-02, on the first deployment that ever ran these consumers.
+  //
+  // A fresh id does not weaken redelivery safety, because that was never what guarded it: the
+  // append is not idempotent (see `FinanceOrdersPaidConsumer.handle`, which refuses the
+  // non-atomic path outright), and what prevents a second posting is the inbox marker written in
+  // the SAME transaction (ADR-0005). The causal link to the triggering message is carried by the
+  // envelope's `causationId`, which is the `EventContext`'s job, not the event id's.
+  result.value.post(deps.idGenerator.generate(), deps.clock.now());
   await deps.journals.append(result.value, tenantId);
 }
 
