@@ -133,7 +133,7 @@ Railway injects `PORT` itself; `config.ts` coerces it, and `api.ts` binds `0.0.0
 | Variable            | Value                        | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `APP_ENV`           | `local`                      | §1 — the only value that boots today                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `DATABASE_URL`      | `${{Postgres.DATABASE_URL}}` | required, no default. **On Supabase** this is that project's connection string instead — its POOLED one (Supabase → Connect → Transaction pooler), which is what an app with many short-lived connections should hold.                                                                                                                                                                                                                             |
+| `DATABASE_URL`      | `${{Postgres.DATABASE_URL}}` | required, no default. **On Supabase** this is that project's connection string instead — its POOLED one (Supabase → Connect → Transaction pooler), with **`?pgbouncer=true` appended**. See below.                                                                                                                                                                                                                                                 |
 | `DIRECT_URL`        | `${{Postgres.DATABASE_URL}}` | required for `preDeployCommand`'s `prisma migrate deploy` — the Prisma CLI validates `directUrl = env("DIRECT_URL")` (`main.prisma`, Phase A.43) on every invocation, even when it isn't the connection actually used. Railway's own Postgres plugin isn't behind a transaction-mode pooler (unlike the Supabase deployment path in the PHASE_A42/A43 reports), so this is the _same_ value as `DATABASE_URL`, not a distinct pooled/direct split. |
 | `REDIS_URL`         | `${{Redis.REDIS_URL}}`       | required, no default                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `AUTH_ISSUER_URL`   | any valid URL                | required unconditionally (`composition.ts:146`) — `JwtVerifier` is constructed at boot but only fetches JWKS when a token is actually verified, which public routes never do                                                                                                                                                                                                                                                                       |
@@ -146,6 +146,19 @@ Railway injects `PORT` itself; `config.ts` coerces it, and `api.ts` binds `0.0.0
 above — composition throws separately, one boot later, with "Runtime composition requires
 AUTH_ISSUER_URL + AUTH_JWKS_URL". Set all of the table's rows at once rather than chasing one error
 per deploy.
+
+**On Supabase, `DATABASE_URL` must end in `?pgbouncer=true`.** Supabase's own Prisma guide:
+"Make sure to append `pgbouncer=true` to the end of the string to work with Supavisor." Without it
+Prisma keeps using server-side prepared statements, which a transaction-mode pooler cannot keep
+pinned to one connection, and reads start failing INTERMITTENTLY once connections are reused — the
+API passed its readiness probe for hours before producing:
+
+```
+Raw query failed. Code: `42P05`. Message: `ERROR: prepared statement "s0" already exists`
+```
+
+Set it on **every** service holding a `DATABASE_URL`, API and worker alike. `DIRECT_URL` does NOT
+take the flag: session mode supports prepared statements, which is part of why migrations use it.
 
 **On Supabase, `DIRECT_URL` is NOT the same value as `DATABASE_URL`** (unlike the Railway plugin
 described in that row), and it is **NOT the direct connection either** — that is the trap. Use
