@@ -123,10 +123,27 @@ AUTH_ISSUER_URL + AUTH_JWKS_URL". Set all of the table's rows at once rather tha
 per deploy.
 
 **On Supabase, `DIRECT_URL` is NOT the same value as `DATABASE_URL`** (unlike the Railway plugin
-described in that row): use the project's direct connection (Supabase → Connect → Direct
-connection, port 5432), because `prisma migrate deploy` cannot run migrations through a
-transaction-mode pooler. Getting this wrong fails the pre-deploy step, which blocks the deploy —
-visibly, not silently.
+described in that row), and it is **NOT the direct connection either** — that is the trap. Use
+**Supabase → Connect → Session pooler** (the POOLER host on port 5432, username
+`postgres.[PROJECT-REF]`).
+
+Why not the direct connection, which is what Supabase recommends for migrations in general: it is
+unreachable from Railway. Supabase's own words — "Direct connections are on IPv6, or on IPv4 if the
+project has the IPv4 add-on... If your network is IPv4-only and you don't have the add-on, use
+session mode instead." A container here reaches `db.[PROJECT-REF].supabase.co:5432` not at all:
+
+```
+Error: P1001: Can't reach database server at `db.[PROJECT-REF].supabase.co:5432`
+```
+
+Session mode is the right one anyway: it "supports prepared statements" and behaves like a single
+session, which is what `prisma migrate deploy` needs and what transaction mode (port 6543, the
+`DATABASE_URL` value) cannot give it. So the two variables differ by PORT on the same pooler host:
+6543 for the app, 5432 for migrations.
+
+This failure is silent in the one place it matters: the deploy still proceeded and the API came up
+healthy with its migrations unapplied, so a green service is NOT evidence that §8.1's migrations
+ran. Verify them with the query in §8.6 rather than assuming.
 
 Leave every other variable unset — each optional group (S3, Stripe, KMS, HSM, threat feeds, OTel,
 tracking ingest) fails closed if half-configured.
