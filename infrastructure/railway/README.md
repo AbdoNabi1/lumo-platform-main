@@ -3,62 +3,46 @@
 > Step (1) of the storefront recovery plan: get the Runtime API actually serving HTTP in a hosted
 > environment so the storefront reads live data instead of its Sprint 0.1 fallback text.
 
-This directory holds Railway **config-as-code** files, one per service, because a monorepo
-deploying several services cannot describe them all in one file.
+**Every service is configured on the service itself. There is no root `railway.json`, on purpose.**
 
-**The repository root has a `railway.json`, and it defines the BUILD ONLY — deliberately no
-`startCommand`.** Railway "looks for `railway.toml` or `railway.json` files by default"
-(config-as-code reference), so every service built from this repo gets the runtime image with no
-dashboard field required. It exists because three deploys in a row instead fell back to Railpack and
-failed with `No start command detected`.
+Each service sets two things in Railway:
 
-**Why it must not pin a start command.** Railway: "Configuration defined in code will always
-override values from the dashboard." A `startCommand` at the root would therefore beat the start
-command set on any individual service, and every service built from this repo would run the API.
-That is what happened: the worker service logged `api listening` and consumed nothing, through two
-deploys, while its own config file sat unread.
+| Service       | Variable `RAILWAY_DOCKERFILE_PATH`         | Start command (Settings → Deploy)                                 |
+| ------------- | ------------------------------------------ | ----------------------------------------------------------------- |
+| `runtime-api` | `infrastructure/docker/runtime.Dockerfile` | none — the image default is the API                               |
+| `worker`      | `infrastructure/docker/runtime.Dockerfile` | `sh -c "cd /app/apps/runtime && node --import tsx src/worker.ts"` |
+| `storefront`  | `infrastructure/docker/web.Dockerfile`     | none — the image default is the storefront server                 |
 
-**And the per-service config file cannot fix it any more.** Railway has deprecated config-as-code
-("Existing config files keep working until 2026-12-01"), and **"starting 2026-08-28, services that
-have never used Config as Code cannot opt in"** — which is every service created from that date,
-including that worker. The field is visible in its settings and does nothing.
+`RAILWAY_DOCKERFILE_PATH` is Railway's documented service variable for "the path to the file"
+(Dockerfiles guide). Without it a service falls back to Railpack, which fails on this monorepo with
+`No start command detected`; Railpack's own line `Found workspace with N packages` then names the
+branch it read (`main` has 82, `morbeh/w0-w17-w12` has 83).
 
-So what a service runs is decided in this order, and only this order:
+**Why not a root `railway.json`.** Railway: "Configuration defined in code will always override
+values from the dashboard." A root config file therefore decides the Dockerfile, start command and
+health check of EVERY service built from this repo, and nothing set on a service can override it.
+One existed for two days, and both ways it bit are why it is gone: it pinned the API's start
+command, so the worker service ran `src/api.ts` and logged `api listening`; and it pinned the
+runtime Dockerfile, so the storefront, which needs `web.Dockerfile`, could not have been built at
+all. `apps/runtime/src/railway-config.test.ts` fails if one is added back.
 
-1. the **start command set on the service** in its Railway settings — the only per-service lever a
-   new service has; or
-2. the **image's `CMD`**, which is `node --import tsx src/api.ts`, when no start command is set.
+**Why not per-service config files either.** Railway has deprecated config-as-code ("Existing config
+files keep working until 2026-12-01") and "starting 2026-08-28, services that have never used Config
+as Code cannot opt in" — every service created since. The Config-as-code field is still visible in
+their settings and does nothing. The `*.railway.json` files in this directory are kept as the record
+of what each service should run, nothing more.
 
-Which makes the API the thing a service runs when nobody says otherwise, and the worker a
-deliberate act. `apps/runtime/src/railway-config.test.ts` pins all of it, including that the root
-config has no `startCommand` and that the image default is still the API.
+**Why the worker's start command looks like that.** A command typed into the dashboard runs from
+`/app`, not the image's `WORKDIR` — so `tsx` does not resolve without the `cd` — and in exec form,
+not through a shell — so the `cd` needs `sh -c`. The image defaults need neither, because they keep
+their `WORKDIR`.
 
-The files under `infrastructure/railway/` remain the record of what each service should run; for a
-service that can still read one they work as before, and for one that cannot they are the text to
-copy into its start-command field.
+**Health check.** With no config file, set **Healthcheck Path** on the service if you want Railway to
+wait for one before switching traffic: `/healthz` for the API and the worker, `/` for the storefront.
 
-| Service       | Start command to set on the service                               | Dockerfile                                 |
-| ------------- | ----------------------------------------------------------------- | ------------------------------------------ |
-| `runtime-api` | none — the image default is the API                               | `infrastructure/docker/runtime.Dockerfile` |
-| `worker`      | `sh -c "cd /app/apps/runtime && node --import tsx src/worker.ts"` | `infrastructure/docker/runtime.Dockerfile` |
-| `storefront`  | `node apps/storefront/server.js`                                  | `infrastructure/docker/web.Dockerfile`     |
-
-A command typed here runs from `/app` rather than the image's `WORKDIR`, and in exec form rather
-than through a shell — hence both the `cd` and the `sh -c` around it. The image default needs
-neither, because it keeps the `WORKDIR`.
-
-The storefront also needs its own Dockerfile, which the root config does not give it — that service
-still needs a config file (if it can read one) or its build settings set in the dashboard.
-
-A build log whose first lines are `Railpack` and `No start command detected` means no config was
-read at all — with the root `railway.json` present that should no longer happen, so if it does,
-check which branch and environment the service builds from before anything else. Railpack's own line
-`Found workspace with N packages` names the branch it read: `main` has 82, `morbeh/w0-w17-w12`
-has 83.
-
-**`preDeployCommand` has never been observed to run** on this project — the root config carries one
-(`prisma migrate deploy`) and three migrations stayed unapplied through several deploys while the
-API reported healthy. Treat migrations as a manual step (§8.1) until that is understood.
+**`preDeployCommand` never ran** on this project while a root config carried one (`prisma migrate
+deploy`), and three migrations stayed unapplied through several deploys while the API reported
+healthy. Migrations are a manual step — §8.1, from the service's Console.
 
 Both Dockerfiles expect the **monorepo root** as build context, which is Railway's default.
 
@@ -336,8 +320,9 @@ anything into it, so this happens when you decide and not as a side effect of a 
 
 ### 8.2 The worker WITHOUT a broker (`EVENT_TRANSPORT=postgres`)
 
-Create a service from this repo. It builds the same image as `runtime-api` from the root
-`railway.json`; what makes it a worker is **one field**:
+Create a service from this repo with the variable
+`RAILWAY_DOCKERFILE_PATH=infrastructure/docker/runtime.Dockerfile` — the same image as `runtime-api`
+(see the top of this file). What makes it a worker is **one field**:
 
 **Settings → Deploy → start command:**
 
@@ -372,7 +357,7 @@ the **Config-as-code** field for this: a service created after 2026-08-28 cannot
 of this file), so `worker.railway.json` is reference text here, not something Railway will read.
 
 Nothing else from that file is needed under this transport: its pre-deploy step provisions Kafka
-topics, and there is no broker. Health on `/healthz` comes from the root config.
+topics, and there is no broker. For a health check, set the service's Healthcheck Path to `/healthz`.
 
 Variables: the **ten** below — not a copy of everything `runtime-api` has. Each optional group
 (S3, Stripe, KMS, HSM, tracking) fails closed when half-configured, so a bulk copy of the API's

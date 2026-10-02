@@ -79,29 +79,30 @@ describe("runtime-api.railway.json", () => {
  * not picked up. It must stay byte-identical to the API's own config: two files that drift would
  * make a service's behaviour depend on whether its dashboard path happens to be set.
  */
-describe("the root railway.json — what every service inherits", () => {
-  const root = (): RailwayConfig =>
-    JSON.parse(readFileSync(join(ROOT, "railway.json"), "utf8")) as RailwayConfig;
-
-  it("builds the runtime image, so a service needs no per-service config file to build", () => {
-    expect(root().build.builder).toBe("DOCKERFILE");
-    expect(root().build.dockerfilePath).toBe("infrastructure/docker/runtime.Dockerfile");
+/**
+ * There is NO root `railway.json`, on purpose. Railway: "Configuration defined in code will always
+ * override values from the dashboard" — so a root config file decides the Dockerfile, the start
+ * command and the health check for EVERY service built from this repo, and no per-service setting
+ * can override it. Two things that cost a day are why it went:
+ *
+ * - it carried the API's start command, so the worker service ran `src/api.ts`;
+ * - it carried the runtime Dockerfile, so the storefront — which needs `web.Dockerfile` — could
+ *   not have been built from this repo at all.
+ *
+ * Per-service config files cannot replace it: Railway deprecated config-as-code ("Existing config
+ * files keep working until 2026-12-01") and "starting 2026-08-28, services that have never used
+ * Config as Code cannot opt in". So each service picks its image with the `RAILWAY_DOCKERFILE_PATH`
+ * variable and its process with its start command (or the image default), both set on the service.
+ */
+describe("no root railway.json — every service configures itself", () => {
+  it("has no root railway.json or railway.toml to override the services' own settings", () => {
+    expect(existsSync(join(ROOT, "railway.json"))).toBe(false);
+    expect(existsSync(join(ROOT, "railway.toml"))).toBe(false);
   });
 
-  it("pins NO start command, so each service decides what it runs", () => {
-    // The load-bearing assertion. Railway: "Configuration defined in code will always override
-    // values from the dashboard" — so a `startCommand` here would silently beat the start command
-    // set on a service, and EVERY service built from this repo would run the API. Not hypothetical:
-    // the worker service ran `src/api.ts` and logged `api listening` until this field was removed.
-    // Nor can it be fixed per-service with a config file: Railway deprecated config-as-code, and
-    // "starting 2026-08-28, services that have never used Config as Code cannot opt in" — which is
-    // every service created from then on, including that worker.
-    expect(root().deploy.startCommand).toBeUndefined();
-  });
-
-  it("leaves the API as the image default, so a service with no start command still serves HTTP", () => {
-    // With no startCommand anywhere, Railway runs the image CMD. That CMD must stay the API: the
-    // API service sets no start command of its own and relies on exactly this.
+  it("keeps the API as the runtime image default, so the API service needs no start command", () => {
+    // With no start command set, Railway runs the image CMD. The API service sets none and relies
+    // on exactly this.
     const dockerfile = readFileSync(join(ROOT, "infrastructure/docker/runtime.Dockerfile"), "utf8");
     expect(dockerfile).toMatch(/^CMD \["node", "--import", "tsx", "src\/api\.ts"\]$/m);
   });
@@ -109,9 +110,17 @@ describe("the root railway.json — what every service inherits", () => {
   it("keeps the worker command OUT of the image default, so running the worker is a deliberate act", () => {
     const dockerfile = readFileSync(join(ROOT, "infrastructure/docker/runtime.Dockerfile"), "utf8");
     expect(dockerfile).not.toContain("src/worker.ts");
-    // The command an operator sets on the worker service, kept named in one place.
     expect(railway("worker.railway.json").deploy.startCommand).toBe(
       "node --import tsx src/worker.ts",
+    );
+  });
+
+  it("gives the storefront its own image whose default is the storefront server", () => {
+    // The storefront service sets RAILWAY_DOCKERFILE_PATH to this file and no start command.
+    const dockerfile = readFileSync(join(ROOT, "infrastructure/docker/web.Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/^CMD \["node", "apps\/storefront\/server\.js"\]$/m);
+    expect(railway("storefront.railway.json").build.dockerfilePath).toBe(
+      "infrastructure/docker/web.Dockerfile",
     );
   });
 });
