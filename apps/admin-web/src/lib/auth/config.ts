@@ -1,5 +1,7 @@
 import { optionalEnv, requireProdEnv } from "@/lib/env";
 
+const hydraAdminUrl = requireProdEnv("HYDRA_ADMIN_URL", "http://localhost:4445");
+
 /**
  * Ory Hydra/Kratos config for admin-web's login integration (Phase A.32). Server-only — never
  * imported from a Client Component. Defaults match `infrastructure/docker/docker-compose.yml`'s
@@ -10,8 +12,12 @@ import { optionalEnv, requireProdEnv } from "@/lib/env";
  */
 export const authConfig = {
   hydraPublicUrl: requireProdEnv("HYDRA_PUBLIC_URL", "http://localhost:4444"),
-  hydraAdminUrl: requireProdEnv("HYDRA_ADMIN_URL", "http://localhost:4445"),
+  hydraAdminUrl,
   kratosPublicUrl: requireProdEnv("KRATOS_PUBLIC_URL", "http://localhost:4433"),
+  // Admin API base for identity lookups (app/consent/page.tsx when Ory's hosted login is used). Optional
+  // in production: on Ory Network every API shares the project base URL, so it falls back to
+  // HYDRA_ADMIN_URL; self-hosted deployments that need it set KRATOS_ADMIN_URL.
+  kratosAdminUrl: optionalEnv("KRATOS_ADMIN_URL", "") || hydraAdminUrl,
   issuerUrl: requireProdEnv("AUTH_ISSUER_URL", "http://localhost:4444/"),
   jwksUrl: requireProdEnv("AUTH_JWKS_URL", "http://localhost:4444/.well-known/jwks.json"),
   audience: optionalEnv("AUTH_AUDIENCE", "morbeh-admin"),
