@@ -120,8 +120,11 @@ describe("no root railway.json — every service configures itself", () => {
     // id" failed the storefront's first build. The prefix Railway wants is the service's own id, so
     // a cache mount cannot be written portably at all.
     const dir = join(ROOT, "infrastructure/docker");
-    for (const file of readdirSync(dir).filter((name) => name.endsWith(".Dockerfile"))) {
-      expect(readFileSync(join(dir, file), "utf8"), file).not.toMatch(/^RUNs+--mount=type=cache/m);
+    const dockerfiles = readdirSync(dir).filter((name) => name.endsWith(".Dockerfile"));
+    // Guards the loop below against passing vacuously over an empty or misread directory.
+    expect(dockerfiles).toEqual(expect.arrayContaining(["runtime.Dockerfile", "web.Dockerfile"]));
+    for (const file of dockerfiles) {
+      expect(readFileSync(join(dir, file), "utf8"), file).not.toMatch(/^RUN\s+--mount=type=cache/m);
     }
   });
 
