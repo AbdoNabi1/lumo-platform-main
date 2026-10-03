@@ -74,6 +74,7 @@ interface TestOverrides {
   readonly rateLimit?: { readonly limit: number; readonly windowMs: number };
   readonly exposeDocs?: boolean;
   readonly readinessDetail?: "full" | "status-only";
+  readonly metricsAccess?: "open" | "closed" | { readonly bearerToken: string };
   readonly authenticator?: Authenticator | ClaimsAuthenticator;
   readonly denyPermissions?: boolean;
   /** Observes the request context the transport hands the guard (session/device/IP). */
@@ -135,6 +136,7 @@ async function buildServer(overrides: TestOverrides = {}): Promise<FastifyInstan
     ...(overrides.readinessDetail === undefined
       ? {}
       : { readinessDetail: overrides.readinessDetail }),
+    ...(overrides.metricsAccess === undefined ? {} : { metricsAccess: overrides.metricsAccess }),
   };
 
   const app = createHttpServer(deps);
@@ -579,6 +581,47 @@ describe("HTTP transport", () => {
     );
     expect(spec.info.title).toBe("Morbeh Admin API");
     await withDocs.close();
+  });
+
+  describe("G-82: /metrics access is decided by the composition root", () => {
+    it('metricsAccess: "closed" does not register /metrics at all (404)', async () => {
+      const closed = await buildServer({ metricsAccess: "closed" });
+      expect((await closed.inject({ url: "/metrics" })).statusCode).toBe(404);
+      await closed.close();
+    });
+
+    it("a bearer-token /metrics refuses a missing, wrong, or wrong-length token and accepts the right one", async () => {
+      const guarded = await buildServer({ metricsAccess: { bearerToken: "s3cret-metrics-token" } });
+      const anon = await guarded.inject({ url: "/metrics" });
+      expect(anon.statusCode).toBe(401);
+      expect(anon.body).not.toContain("process_uptime_seconds");
+      const wrong = await guarded.inject({
+        url: "/metrics",
+        headers: { authorization: "Bearer s3cret-metrics-tokeX" },
+      });
+      expect(wrong.statusCode).toBe(401);
+      const short = await guarded.inject({
+        url: "/metrics",
+        headers: { authorization: "Bearer s3cret" },
+      });
+      expect(short.statusCode).toBe(401);
+      const wrongScheme = await guarded.inject({
+        url: "/metrics",
+        headers: { authorization: "Beaxer s3cret-metrics-token" },
+      });
+      expect(wrongScheme.statusCode).toBe(401);
+      const ok = await guarded.inject({
+        url: "/metrics",
+        headers: { authorization: "Bearer s3cret-metrics-token" },
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.body).toContain("process_uptime_seconds");
+      await guarded.close();
+    });
+
+    it("an absent metricsAccess keeps /metrics open (existing scrapers unchanged)", async () => {
+      expect((await app.inject({ url: "/metrics" })).statusCode).toBe(200);
+    });
   });
 
   describe("H-04 (audit): /docs, /openapi.json, and /readyz detail default to off", () => {

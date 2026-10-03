@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -115,6 +116,15 @@ export interface HttpServerDeps {
    * probe actually needs. The status CODE (200/503) is unaffected either way.
    */
   readonly readinessDetail?: "full" | "status-only";
+  /**
+   * G-82: who may read `/metrics`. `"open"` (also what an absent value means — in-cluster Prometheus
+   * scrapers that send no credentials keep working) serves it to anyone who can reach the port.
+   * `"closed"` does not register the route (404). `{ bearerToken }` serves it only to a caller
+   * sending exactly `Authorization: Bearer <token>` (compared in constant time) and answers 401
+   * otherwise. The composition root picks per environment; on a public domain "open" hands anonymous
+   * callers process memory and per-route request counts.
+   */
+  readonly metricsAccess?: "open" | "closed" | { readonly bearerToken: string };
 }
 
 interface ReplaySnapshot {
@@ -562,6 +572,15 @@ async function executeRoute(
   return route.handle({ body, params, query, context });
 }
 
+/** Constant-time `Authorization: Bearer <token>` check; a length mismatch is a plain mismatch. */
+function bearerMatches(request: FastifyRequest, expected: string): boolean {
+  const header = request.headers.authorization;
+  if (typeof header !== "string" || !header.startsWith("Bearer ")) return false;
+  const given = Buffer.from(header.slice("Bearer ".length));
+  const wanted = Buffer.from(expected);
+  return given.length === wanted.length && timingSafeEqual(given, wanted);
+}
+
 function registerOperationalEndpoints(
   app: FastifyInstance,
   deps: HttpServerDeps,
@@ -581,7 +600,12 @@ function registerOperationalEndpoints(
     const body = deps.readinessDetail === "full" ? report : { status: report.status };
     return reply.status(report.status === "unhealthy" ? 503 : 200).send(body);
   });
-  app.get("/metrics", async (_request, reply) => {
+  const metricsAccess = deps.metricsAccess ?? "open";
+  if (metricsAccess === "closed") return;
+  app.get("/metrics", async (request, reply) => {
+    if (typeof metricsAccess === "object" && !bearerMatches(request, metricsAccess.bearerToken)) {
+      return reply.status(401).header("www-authenticate", "Bearer").send({ error: "unauthorized" });
+    }
     const memory = process.memoryUsage();
     const lines = [
       "# TYPE process_uptime_seconds gauge",
