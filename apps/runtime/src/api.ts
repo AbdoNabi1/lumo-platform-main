@@ -8,6 +8,7 @@ import { composePaymentProviderRegistrations } from "@platform/payments";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
 import { InMemoryTotpMfaProvider, type MfaProviderResolver } from "@platform/security";
 import { logger } from "@platform/utils";
+import { resolveApiExposure } from "./api-exposure";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
   buildReturnsPaymentsPortAdapter,
@@ -549,8 +550,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // publicly reachable, unauthenticated, on a hosted deployment — the composition root (here,
     // not the transport) is what actually knows whether this process is `local` dev or a
     // deployed/staging/production one, so it — not a transport-level default — makes the call.
-    exposeDocs: config.APP_ENV === "local",
-    readinessDetail: config.APP_ENV === "local" ? "full" : "status-only",
+    // G-82: `APP_ENV === "local"` was also the only value a deployment could boot with, so a public
+    // domain exposed all of this. See resolveApiExposure.
+    ...resolveApiExposure(config, process.env["NODE_ENV"]),
   });
   await app.listen({ port: config.PORT, host: "0.0.0.0" });
   logger.info("api listening", { port: config.PORT, env: config.APP_ENV });

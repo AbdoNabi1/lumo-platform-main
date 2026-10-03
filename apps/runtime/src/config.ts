@@ -93,6 +93,18 @@ const schema = z
      */
     ORY_API_KEY: z.string().optional(),
 
+    /**
+     * G-82: whether this process serves `/openapi.json`, `/docs`, the full `/readyz` body and an
+     * anonymous `/metrics`. Unset ⇒ decided by `resolveApiExposure` (open only on a developer machine,
+     * closed in the container image). `true` is refused outside `APP_ENV=local`.
+     */
+    EXPOSE_API_DIAGNOSTICS: z
+      .enum(["true", "false"])
+      .optional()
+      .transform((v) => (v === undefined ? undefined : v === "true")),
+    /** G-82: bearer token that lets a scraper read `/metrics` while the diagnostics are closed. */
+    METRICS_TOKEN: z.string().min(16).optional(),
+
     TENANT_MODE: z.enum(["single", "multi"]).default("single"),
     TENANT_DEFAULT_ID: z.string().default("tenant-local"),
 
@@ -305,6 +317,14 @@ const schema = z
           message: `${key} is required unless APP_ENV=local (Ory identity binding, H-2).`,
         });
       }
+    }
+    if (cfg.EXPOSE_API_DIAGNOSTICS === true && cfg.APP_ENV !== "local") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["EXPOSE_API_DIAGNOSTICS"],
+        message:
+          "EXPOSE_API_DIAGNOSTICS=true is only allowed with APP_ENV=local (G-82): outside it the spec, docs, readiness detail and metrics must stay closed.",
+      });
     }
     // P2.0.2 (C): zero-trust HTTP enforcement fails closed against an unpopulated Security store, so it
     // must not be enabled without the provisioning fleet that seeds principals/roles/policies (A,B,D,E).
