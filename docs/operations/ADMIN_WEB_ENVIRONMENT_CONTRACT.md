@@ -27,6 +27,17 @@ split (A.33 P0 #6). If your real domains can't share a parent, the login bridge 
 `login/page.tsx`/`middleware.ts` needs a different mechanism — that redesign is out of this
 phase's scope; treat it as an open item until decided.
 
+**Decided 2026-10-03 for the Ory Network deployment (no shared domain):** the shared cookie is only
+needed because `/login` is the sign-in page and reads Kratos's session cookie. With Ory Network's
+hosted sign-in (Account Experience) that page is not used at all; the authorization-code + PKCE
+round trip needs no cookie shared with Ory, and `/consent` reads `kind`/`roles` from the identity's
+`metadata_public` through the Admin API (`lib/auth/consent-claims.ts`). Two additions for that
+topology: `ADMIN_WEB_ORIGIN` (optional, pins the public origin used for `redirect_uri` and
+redirects — behind a proxy Next otherwise reports the container's bind address;
+`lib/public-origin.ts`) and `KRATOS_ADMIN_URL` (optional, defaults to `HYDRA_ADMIN_URL`, which on
+Ory Network is the same project URL). The self-hosted topology above is unchanged. Railway values:
+`infrastructure/railway/README.md` §4a.
+
 ## Auth (admin-web)
 
 | Var                  | Required outside local/dev           | Value                                                                                                                          |

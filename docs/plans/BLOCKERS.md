@@ -1615,3 +1615,13 @@ that entry's status.
 deploy` of WP-11's pending migration against the live Supabase database (after a backup), and
 decide whether/how to commit the two reconstructed RLS migration files back into this repo so the
 migration history stops drifting from what is actually deployed.
+
+## Step 1 (admin-web live) — the handoff's premise for G-82 was false: `APP_ENV=production` cannot be made bootable with Ory variables alone (2026-10-03)
+
+**What the handoff said:** make `APP_ENV=production` bootable "once the real Ory vars are present", so the API stops being `local` and G-82 closes with it.
+
+**What the code says:** `config.ts:300` is only one of several refusals. Outside `local`, `startApi` collects and throws every failure of `assertProductionMfaConfigured`, `assertProductionPaymentProviderConfigured`, `assertProductionLicensingBillingConfigured`, `assertProductionObjectStorageConfigured`, `assertProductionIntegrationPortsConfigured`, `assertProductionSignupEmailConfigured` and `assertProductionDunningNotificationsConfigured` (`apps/runtime/src/api.ts`). `infrastructure/railway/README.md` §1 already said so ("Lifting it means building a real MFA provider, wiring Stripe, S3, and an Ory Kratos/Keto stack — separate work"); the handoff was written without that section in view.
+
+**What was done instead:** G-82 was closed by decoupling the exposure decision from `APP_ENV` (`apps/runtime/src/api-exposure.ts`, `994b169`, `ff03f30`), which is what the G-82 entry itself proposed ("a third mode or a separate switch"). `APP_ENV` stays `local` on the deployment. The remainder is recorded as **G-84** in both gap registers.
+
+**Next action needed (operator decision):** none for today. Before the first real merchant, G-84 needs scoping against WP-18 (tax/shipping), G-49 (email) and the payment/MFA work, alongside the Ory plan decision recorded in `docs/plans/UNIFIED-ROADMAP.md` (Status — 2026-10-03).
