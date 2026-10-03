@@ -1123,3 +1123,46 @@ describe("GET /customers/:customerId", () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+describe("G-82: createAdminHttpApi forwards how /metrics may be read", () => {
+  // The composition root (apps/runtime/src/api.ts) decides this; the wrapper in ./server.ts used to
+  // forward exposeDocs and readinessDetail but drop metricsAccess, so a closed /metrics stayed open on
+  // the live deployment even though every unit test of the transport passed.
+  async function build(metricsAccess?: "open" | "closed" | { readonly bearerToken: string }) {
+    const f = fakes();
+    return createAdminHttpApi({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: f.idGenerator,
+      clock,
+      auditTrail: new InMemoryAuditTrail(),
+      authenticator: f.authenticator,
+      rateLimiter: f.rateLimiter,
+      idempotencyKeys: f.idempotencyKeys,
+      responseCache: f.cache,
+      ...(metricsAccess === undefined ? {} : { metricsAccess }),
+    });
+  }
+
+  it('metricsAccess: "closed" makes /metrics a 404', async () => {
+    const app = await build("closed");
+    expect((await app.inject({ url: "/metrics" })).statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("a bearer token makes /metrics refuse anonymous callers and serve the right token", async () => {
+    const app = await build({ bearerToken: "metrics-token-0123456789" });
+    expect((await app.inject({ url: "/metrics" })).statusCode).toBe(401);
+    const ok = await app.inject({
+      url: "/metrics",
+      headers: { authorization: "Bearer metrics-token-0123456789" },
+    });
+    expect(ok.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it("without metricsAccess /metrics stays open, as before", async () => {
+    const app = await build();
+    expect((await app.inject({ url: "/metrics" })).statusCode).toBe(200);
+    await app.close();
+  });
+});

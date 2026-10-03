@@ -45,6 +45,8 @@ export interface AdminHttpDeps extends AdminWiringDeps {
   readonly exposeDocs?: boolean;
   /** H-04 (audit): forwarded to `HttpServerDeps` unchanged — see that field's own doc comment. */
   readonly readinessDetail?: "full" | "status-only";
+  /** G-82: forwarded to `HttpServerDeps` unchanged — see that field's own doc comment. */
+  readonly metricsAccess?: "open" | "closed" | { readonly bearerToken: string };
   /**
    * T10.6: how long this instance may keep a tenant's lifecycle status before re-reading it - the upper
    * bound on how late a suspension made on ANOTHER instance is seen here (the instance that makes the
@@ -159,6 +161,7 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     ...(deps.metrics === undefined ? {} : { metrics: deps.metrics }),
     ...(deps.exposeDocs === undefined ? {} : { exposeDocs: deps.exposeDocs }),
     ...(deps.readinessDetail === undefined ? {} : { readinessDetail: deps.readinessDetail }),
+    ...(deps.metricsAccess === undefined ? {} : { metricsAccess: deps.metricsAccess }),
     health: deps.health ?? new HealthRegistry(),
     api: {
       title: "Morbeh Admin API",
