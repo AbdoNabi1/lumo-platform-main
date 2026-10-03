@@ -7,11 +7,12 @@
 
 Each service sets two things in Railway:
 
-| Service       | Variable `RAILWAY_DOCKERFILE_PATH`         | Start command (Settings → Deploy)                                 |
-| ------------- | ------------------------------------------ | ----------------------------------------------------------------- |
-| `runtime-api` | `infrastructure/docker/runtime.Dockerfile` | none — the image default is the API                               |
-| `worker`      | `infrastructure/docker/runtime.Dockerfile` | `sh -c "cd /app/apps/runtime && node --import tsx src/worker.ts"` |
-| `storefront`  | `infrastructure/docker/web.Dockerfile`     | none — the image default is the storefront server                 |
+| Service       | Variable `RAILWAY_DOCKERFILE_PATH`           | Start command (Settings → Deploy)                                 |
+| ------------- | -------------------------------------------- | ----------------------------------------------------------------- |
+| `runtime-api` | `infrastructure/docker/runtime.Dockerfile`   | none — the image default is the API                               |
+| `worker`      | `infrastructure/docker/runtime.Dockerfile`   | `sh -c "cd /app/apps/runtime && node --import tsx src/worker.ts"` |
+| `storefront`  | `infrastructure/docker/web.Dockerfile`       | none — the image default is the storefront server                 |
+| `admin-web`   | `infrastructure/docker/admin-web.Dockerfile` | none — the image default is the merchant dashboard server         |
 
 `RAILWAY_DOCKERFILE_PATH` is Railway's documented service variable for "the path to the file"
 (Dockerfiles guide). Without it a service falls back to Railpack, which fails on this monorepo with
@@ -82,13 +83,19 @@ the live deployment on 2026-10-01, unauthenticated, with nothing but the hostnam
 | `/readyz`       | 503    | the database host and the driver's literal authentication-failure text |
 | `/metrics`      | 200    | process memory and request counts                                      |
 
-`/docs`, `/openapi.json` and `/readyz`'s detail are gated on `APP_ENV === "local"`
-(`api.ts:552-553`) — the one value that boots — so this deployment cannot have the HTTP surface
-without them. `/healthz`, `/readyz` (status only) and `/metrics` are registered unconditionally
-(`packages/http/src/server.ts`), so those stay public in every mode.
+**G-82 is closed — by a separate switch, not by `APP_ENV`.** The rows above were gated on
+`APP_ENV === "local"`, the one value that boots, so a public domain was the "local" case. The gate is
+now `resolveApiExposure` (`apps/runtime/src/api-exposure.ts`): open only on a developer machine
+(`APP_ENV=local` and no `NODE_ENV=production`), **closed in this image** (`runtime.Dockerfile` sets
+`NODE_ENV=production`). Closed means `/openapi.json` and `/docs` do not exist (404), `/readyz`
+returns `{"status": …}` and nothing else, and `/metrics` is 404 — or, if you set `METRICS_TOKEN`
+(16+ characters, a secret), served only to `Authorization: Bearer <token>`. No variable needs to be
+set on this service for that. `EXPOSE_API_DIAGNOSTICS=true` re-opens it for a local container and is
+refused outside `APP_ENV=local`. `/healthz` stays public by design.
 
-Treat the domain as the secret: hand it only to people who should see an unfinished API, and do not
-put real customer data behind it. G-82.
+Still true: `APP_ENV=local` is the only value that boots, so `KETO_READ_URL` unset means permissive
+authorization. **Set `KETO_READ_URL` and `ORY_API_KEY` on this service before anyone logs in** (§3),
+or every authenticated user is authorized for everything.
 
 ## 2. Infrastructure the API actually needs
 
@@ -170,12 +177,68 @@ ran. Verify them with the query in §8.6 rather than assuming.
 Leave every other variable unset — each optional group (S3, Stripe, KMS, HSM, threat feeds, OTel,
 tracking ingest) fails closed if half-configured.
 
+### 3a. `runtime-api` once real login exists (Ory Network)
+
+Replace the placeholder auth values and add the two that turn authorization on. `<ory>` is the Ory
+project's base URL, `https://<project-slug>.projects.oryapis.com`:
+
+| Variable          | Value                           | Why                                                                                                                                    |
+| ----------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_ISSUER_URL` | `<ory>` — **no trailing slash** | must equal the token's `iss` exactly; Ory's discovery document (`<ory>/.well-known/openid-configuration`) reports it without the slash |
+| `AUTH_JWKS_URL`   | `<ory>/.well-known/jwks.json`   | where `JwtVerifier` fetches the signing keys                                                                                           |
+| `KETO_READ_URL`   | `<ory>`                         | **turns authorization on** — unset (with `APP_ENV=local`) every authenticated caller is allowed everything                             |
+| `ORY_API_KEY`     | the project's `ory_pat_…` key   | Ory Network authenticates permission checks with it; a missing key silently denies everything                                          |
+
+`AUTH_AUDIENCE` stays at its default `morbeh-admin`, which is what `scripts/ops/seed-ory-network.mjs`
+registers the dashboard's OAuth2 client with.
+
 ## 4. Environment variables — `storefront` service
 
 | Variable            | Value                                                     |
 | ------------------- | --------------------------------------------------------- |
 | `RUNTIME_API_URL`   | the `runtime-api` service's public URL, no trailing slash |
 | `TENANT_DEFAULT_ID` | `tenant-local`                                            |
+
+### 4a. Environment variables — `admin-web` service (the merchant dashboard)
+
+Login uses **Ory Network's hosted sign-in page** (the Account Experience, on the Ory project's own
+domain), so the dashboard and Ory do not need to share a cookie domain — `up.railway.app` is on the
+Public Suffix List and could not share one anyway. `/login` in this app is not used in that mode;
+`/consent` is, and it reads the token's `roles` from the identity's `metadata_public`.
+
+Railway injects `PORT=8080`; the image's `ENV PORT=3100` is only a default and Next's standalone
+`server.js` reads `PORT`. Point the public domain at **port 8080**. Healthcheck path `/api/healthz`.
+No start command. `<ory>` is the Ory project's base URL, no trailing slash.
+
+| Variable                  | Value                                                                  |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `RAILWAY_DOCKERFILE_PATH` | `infrastructure/docker/admin-web.Dockerfile`                           |
+| `APP_ENV`                 | `production`                                                           |
+| `ADMIN_WEB_ORIGIN`        | this service's own public origin, e.g. `https://<name>.up.railway.app` |
+| `AUTH_ISSUER_URL`         | `<ory>` — no trailing slash, same as the API's                         |
+| `AUTH_JWKS_URL`           | `<ory>/.well-known/jwks.json`                                          |
+| `HYDRA_PUBLIC_URL`        | `<ory>`                                                                |
+| `HYDRA_ADMIN_URL`         | `<ory>`                                                                |
+| `KRATOS_PUBLIC_URL`       | `<ory>`                                                                |
+| `AUTH_CLIENT_SECRET`      | the secret chosen when the OAuth2 client was registered                |
+| `ORY_API_KEY`             | the project's `ory_pat_…` key (consent + identity lookup)              |
+| `RUNTIME_API_URL`         | the `runtime-api` service's public URL, no trailing slash              |
+| `TENANT_DEFAULT_ID`       | `tenant-local`                                                         |
+
+Leave unset: `COOKIE_DOMAIN` (host-only cookies are correct here), `ADMIN_API_TOKEN` (a static
+fallback token that would bypass the login), `AUTH_AUDIENCE` and `AUTH_CLIENT_ID` (their defaults
+match what the seed script registers). `ADMIN_WEB_ORIGIN` matters: behind Railway's proxy Next
+reports the container's own address as the request origin, which put
+`redirect_uri=https://localhost:8080/auth/callback` into the authorize request until the origin was
+taken from `ADMIN_WEB_ORIGIN` / the forwarded headers (`apps/admin-web/src/lib/public-origin.ts`).
+
+In the **Ory Console** two settings that earlier local development pointed at `http://localhost:3100`
+must be reset: OAuth 2 → URLs → **Login UI**, and Branding → UI URLs → **Login UI**, both back to
+the Account Experience default (the project's own `/ui/login`). Then set OAuth 2 → URLs →
+**Consent UI** to `https://<admin-web-origin>/consent`. The OAuth2 client, the owner's identity (`kind: staff`,
+`roles: ["admin"]`) and the 65 tenant-qualified grants are created in one idempotent run of
+`scripts/ops/seed-ory-network.mjs` — see `docs/operations/KETO_TENANT_MIGRATION.md` for why every
+grant is read back.
 
 `runtime-api.ts` sends `TENANT_DEFAULT_ID` as the `x-tenant-id` header, so it must match §3.
 

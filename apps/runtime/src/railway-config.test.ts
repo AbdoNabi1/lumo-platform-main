@@ -122,7 +122,9 @@ describe("no root railway.json — every service configures itself", () => {
     const dir = join(ROOT, "infrastructure/docker");
     const dockerfiles = readdirSync(dir).filter((name) => name.endsWith(".Dockerfile"));
     // Guards the loop below against passing vacuously over an empty or misread directory.
-    expect(dockerfiles).toEqual(expect.arrayContaining(["runtime.Dockerfile", "web.Dockerfile"]));
+    expect(dockerfiles).toEqual(
+      expect.arrayContaining(["runtime.Dockerfile", "web.Dockerfile", "admin-web.Dockerfile"]),
+    );
     for (const file of dockerfiles) {
       expect(readFileSync(join(dir, file), "utf8"), file).not.toMatch(/^RUN\s+--mount=type=cache/m);
     }
@@ -135,5 +137,30 @@ describe("no root railway.json — every service configures itself", () => {
     expect(railway("storefront.railway.json").build.dockerfilePath).toBe(
       "infrastructure/docker/web.Dockerfile",
     );
+  });
+
+  it("gives the merchant dashboard its own image whose default is the admin-web server", () => {
+    // The admin-web service sets RAILWAY_DOCKERFILE_PATH to this file and no start command.
+    const dockerfile = readFileSync(
+      join(ROOT, "infrastructure/docker/admin-web.Dockerfile"),
+      "utf8",
+    );
+    expect(dockerfile).toMatch(/^CMD \["node", "apps\/admin-web\/server\.js"\]$/m);
+    expect(railway("admin-web.railway.json").build.dockerfilePath).toBe(
+      "infrastructure/docker/admin-web.Dockerfile",
+    );
+  });
+
+  it("lets Railway choose admin-web's port: the Next standalone server reads PORT, nothing pins it", () => {
+    // Railway injects PORT=8080 and the public domain targets that port. The image's own PORT=3100 is
+    // only a default, so the start command must not hard-code a port or host.
+    const dockerfile = readFileSync(
+      join(ROOT, "infrastructure/docker/admin-web.Dockerfile"),
+      "utf8",
+    );
+    expect(dockerfile).toMatch(/^ENV PORT=3100$/m);
+    expect(dockerfile).not.toMatch(/^CMD .*(--port|-p |--hostname)/m);
+    const readme = readFileSync(join(ROOT, "infrastructure/railway/README.md"), "utf8");
+    expect(readme).toMatch(/\| `admin-web` +\| `infrastructure\/docker\/admin-web\.Dockerfile` /);
   });
 });
