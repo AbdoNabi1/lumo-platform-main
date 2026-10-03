@@ -3,6 +3,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { optionalEnv, requireProdEnv } from "@/lib/env";
 import { readRolesClaim } from "@/lib/auth/claims";
 import { deriveCodeChallenge, generateCodeVerifier } from "@/lib/auth/pkce";
+import { publicOrigin } from "@/lib/public-origin";
 
 /**
  * Admin route gate (Phase A.32) + role gate (Phase A.34). Runs on the Edge runtime, so it reads
@@ -151,7 +152,9 @@ function clearAuthCookies(response: NextResponse): void {
 }
 
 export async function middleware(request: NextRequest): Promise<NextResponse> {
-  const { pathname, search, origin } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
+  // Not Next's own request origin: behind a proxy that is the container's bind address (public-origin.ts).
+  const origin = publicOrigin(request);
 
   if (
     PUBLIC_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)) ||

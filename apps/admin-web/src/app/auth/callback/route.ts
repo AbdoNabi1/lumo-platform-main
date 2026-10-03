@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth/config";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { safeReturnTo } from "@/lib/auth/safe-return-to";
+import { publicOrigin } from "@/lib/public-origin";
 
 // Module-level cache (mirrors middleware.ts's own `jwks` singleton) — createRemoteJWKSet keeps
 // its own internal key cache keyed by this instance, so reusing it across requests is what
@@ -27,7 +28,10 @@ function getJwks(): ReturnType<typeof createRemoteJWKSet> {
  * client secret or talks to Hydra's token endpoint directly.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const { searchParams, origin } = request.nextUrl;
+  const { searchParams } = request.nextUrl;
+  // Not Next's own request origin: behind a proxy that is the container's bind address, and this value
+  // is the `redirect_uri` that must equal the one the authorize request sent (lib/public-origin.ts).
+  const origin = publicOrigin(request);
   const error = searchParams.get("error");
   if (error !== null) {
     return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(error)}`, origin));

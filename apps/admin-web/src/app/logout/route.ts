@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authConfig, SESSION_COOKIE } from "@/lib/auth/config";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
+import { publicOrigin } from "@/lib/public-origin";
 
 /**
  * Clears the local admin session (Phase A.32). Best-effort also starts a Kratos self-service
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // best-effort only — see doc comment above
   }
 
-  const response = NextResponse.redirect(new URL("/login", request.nextUrl.origin));
+  const response = NextResponse.redirect(new URL("/login", publicOrigin(request)));
   // Same domain/path the session cookie was set with (auth/callback/route.ts) — delete() with
   // mismatched attributes silently no-ops instead of clearing it.
   response.cookies.set(SESSION_COOKIE, "", {
