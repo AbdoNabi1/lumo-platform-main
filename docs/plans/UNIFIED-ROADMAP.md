@@ -1,5 +1,21 @@
 # Unified Roadmap — Phase 7 (base) + Morbeh (business-model layer)
 
+## Status — 2026-10-03 (deployment live on Railway + Supabase; order of work approved)
+
+**What runs where.** Railway project "focused-achievement": the runtime API (`lumo-platform-main`, `infrastructure/docker/runtime.Dockerfile`, public domain → port 8080), the outbox worker (`earnest-vision`, same image, start command `sh -c "cd /app/apps/runtime && node --import tsx src/worker.ts"`, `EVENT_TRANSPORT=postgres`), the storefront (`infrastructure/docker/web.Dockerfile`, renders seed products live from the API) and Redis (private network). The database is Supabase (`DATABASE_URL` = transaction pooler :6543 with `?pgbouncer=true`; `DIRECT_URL` = session pooler :5432, because the direct host is IPv6-only). Verified: `/readyz` healthy, the worker drained the outbox (pending=0, dead_letters=0), Finance posts real journals (G-83 closed). The API runs `APP_ENV=local` with placeholder `AUTH_ISSUER_URL`/`AUTH_JWKS_URL` (composition refuses to boot without them — D-048), so **nobody can log in to anything yet**. Railway specifics are in `infrastructure/railway/README.md`.
+
+**Approved order (owner, 2026-10-03).**
+
+1. Merchant dashboard (`apps/admin-web`) live with real login, and close G-82.
+2. WP-18: real tax / shipping / package weight.
+3. Real email sending (G-49), broken out of WP-6; Resend free tier first.
+4. Finish WP-14 (T14.3 add-ons/credits, T14.6, T14.7 screens) and wire G-78 entitlements into a request path.
+5. WP-8: storefront look + SEO/CMS.
+6. WP-15: platform control plane.
+7. Later, only once there are real merchants/traffic: WP-2/3/4/5/7/9, redesigned for no Kafka.
+
+**Decisions recorded.** Kafka is off (`EVENT_TRANSPORT=postgres`) and can be switched on later with no data migration (README §8.7; check G-80's topic inventory first). WP-11's T11.5 (CDC proof on Kafka) is not applicable under this transport. WP-5's model string `claude-opus-5` is stale (current: `claude-opus-5-5`; Haiku 4.5 `claude-haiku-4-5-20251001` for cheap calls). WP-3 (ClickHouse) and WP-6's Temporal dependency are deferred for cost; WP-6 should use the existing scheduler. WP-2's collector publishes straight to Kafka (`config.ts` refuses `TRACKING_INGEST_ENABLED` under postgres), so WP-2 needs a redesign before it can run. `TENANT_MODE=multi` is still not enabled.
+
 ## Status — 2026-09-22 (G-70 closed on the live Ory project; WP-1 migrations deployed — multi is STILL not enabled)
 
 **G-70 is closed.** The operator migration ran against the live Ory Network project on 2026-09-21: 65 grants qualified with `tenant/tenant-local/`, each read back, count gate PASS 65/65, 65 bare tuples deleted and verified absent, post-delete gate `PASS (nothing at risk): contracted`. On the way it found that **Ory Network answers 2xx to burst writes and persists only a prefix** (19 of 65, then 11 of 46); the count gate caught it and delete-bare refused, so nothing was lost, and the scripts now read back every write and delete (`7fafbd8`). The four writers are contracted to qualified-only (`1a371cf`), and an untenanted revocation now throws to retry/DLQ instead of being acknowledged (D-056, amended).
