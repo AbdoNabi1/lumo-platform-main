@@ -18,7 +18,11 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/admin-web/package.json ./apps/admin-web/package.json
 COPY packages ./packages
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+# No `--mount=type=cache` here. Railway's builder rejects a cache mount whose id lacks its own
+# per-service prefix ("flag '--mount=type=cache,id=pnpm,target=/pnpm/store' is missing the cacheKey
+# prefix from its id"), and that prefix is the service's id — which would tie this file to one
+# Railway service. A plain install costs some build time and works on every builder.
+RUN pnpm install --frozen-lockfile
 
 # ── Dev (hot reload; used by docker-compose) ───────────────────────────────────
 FROM deps AS dev

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -113,6 +113,16 @@ describe("no root railway.json — every service configures itself", () => {
     expect(railway("worker.railway.json").deploy.startCommand).toBe(
       "node --import tsx src/worker.ts",
     );
+  });
+
+  it("uses no BuildKit cache mount, which Railway's builder rejects without a per-service id", () => {
+    // "flag '--mount=type=cache,id=pnpm,target=/pnpm/store' is missing the cacheKey prefix from its
+    // id" failed the storefront's first build. The prefix Railway wants is the service's own id, so
+    // a cache mount cannot be written portably at all.
+    const dir = join(ROOT, "infrastructure/docker");
+    for (const file of readdirSync(dir).filter((name) => name.endsWith(".Dockerfile"))) {
+      expect(readFileSync(join(dir, file), "utf8"), file).not.toMatch(/^RUNs+--mount=type=cache/m);
+    }
   });
 
   it("gives the storefront its own image whose default is the storefront server", () => {
