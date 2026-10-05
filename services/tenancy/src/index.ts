@@ -8,7 +8,17 @@ export { Workspace } from "./domain/workspace";
 export type { WorkspaceEnv, WorkspaceStatus } from "./domain/workspace";
 export { TenantSlug } from "./domain/value-objects/tenant-slug";
 export { WorkspaceConfig } from "./domain/value-objects/workspace-config";
-export type { TenantRepository, WorkspaceRepository } from "./domain/repositories";
+export type {
+  ShopDomainRepository,
+  TenantRepository,
+  WorkspaceRepository,
+} from "./domain/repositories";
+export { Hostname } from "./domain/value-objects/hostname";
+export { ShopDomain } from "./domain/shop-domain";
+export type { ShopDomainKind, ShopDomainStatus } from "./domain/shop-domain";
+export type { DnsVerifier } from "./domain/dns-verifier";
+export { NodeDnsVerifier } from "./infrastructure/node-dns-verifier";
+export type { ResolvedHost, ShopDomainView } from "./application/shop-domains.use-cases";
 export {
   PrismaTenantRepository,
   PrismaWorkspaceRepository,
