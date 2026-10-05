@@ -121,6 +121,52 @@ export class TenancyAdminController {
     return this.tenancy.getWorkspace(input);
   }
 
+  async listShopDomains(
+    principal: Principal,
+    input: Parameters<TenancyController["listShopDomains"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "tenancy:read");
+    if (denied) return denied;
+    return this.tenancy.listShopDomains(input);
+  }
+
+  async addCustomDomain(
+    principal: Principal,
+    input: Parameters<TenancyController["addCustomDomain"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "tenancy:update");
+    if (denied) return denied;
+    return this.tenancy.addCustomDomain(input);
+  }
+
+  async verifyDomain(
+    principal: Principal,
+    input: Parameters<TenancyController["verifyDomain"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "tenancy:update");
+    if (denied) return denied;
+    return this.tenancy.verifyDomain(input);
+  }
+
+  async setPrimaryDomain(
+    principal: Principal,
+    input: Parameters<TenancyController["setPrimaryDomain"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "tenancy:update");
+    if (denied) return denied;
+    return this.tenancy.setPrimaryDomain(input);
+  }
+
+  /**
+   * Plan 1A: UNGUARDED on purpose — the storefront edge resolves a hostname before anyone is signed
+   * in (same reasoning as `admin.publicReads`). Returns only shop id, hostnames and shop status.
+   */
+  async resolveHost(
+    input: Parameters<TenancyController["resolveHost"]>[0],
+  ): Promise<AdminResponse> {
+    return this.tenancy.resolveHost(input);
+  }
+
   async getCurrentWorkspace(principal: Principal): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "tenancy:read");
     if (denied) return denied;

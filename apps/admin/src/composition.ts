@@ -92,7 +92,7 @@ import {
 } from "@platform/security";
 import { wireSeo } from "@platform/seo";
 import { wireShipping } from "@platform/shipping";
-import { wireTenancy, type TenantAvailability } from "@platform/tenancy";
+import { wireTenancy, type DnsVerifier, type TenantAvailability } from "@platform/tenancy";
 import { logger as adminLogger } from "@platform/utils";
 import { TenantProvisioner } from "./tenant-provisioning";
 import { wireTheme } from "@platform/theme";
@@ -212,6 +212,10 @@ export interface AdminWiringDeps {
    * tenant deployment. `createAdminHttpApi` sets it under `TENANT_MODE=multi` (fail-closed).
    */
   readonly platformTenantId?: string;
+  /** Plan 1A: e.g. `morbeh.store`; new shops get `<slug>.<this>`. */
+  readonly platformStoreDomain?: string;
+  /** Plan 1A: verifies custom domains' DNS; absent ⇒ custom domains stay pending. */
+  readonly dnsVerifier?: DnsVerifier;
   /** In-memory Security only (tests/dev): Identity subject refs treated as known, so an owner can be registered offline. */
   readonly knownSubjects?: readonly string[];
   /**

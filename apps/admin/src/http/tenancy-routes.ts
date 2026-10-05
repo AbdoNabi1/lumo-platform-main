@@ -85,6 +85,9 @@ const createTenantBody = z.object({
 });
 const provisioningQuery = z.object({ owner: z.string().min(1).optional() });
 const tenantIdParams = z.object({ tenantId: z.string().min(1) });
+const domainIdParams = z.object({ domainId: z.string().min(1) });
+const addDomainBody = z.object({ hostname: z.string().min(1).max(253) });
+const resolveHostQuery = z.object({ host: z.string().min(1).max(260) });
 const rebrandTenantBody = z.object({ branding: z.record(z.string(), z.string()) });
 const createWorkspaceBody = z.object({
   tenantId: z.string().min(1),
@@ -322,6 +325,60 @@ export function tenancyRoutes(
         if (response.status !== 200) return response;
         return { status: 200, body: toWorkspaceDto(response.body as Workspace) };
       },
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/tenants/:tenantId/domains",
+      version: 1,
+      permission: "tenancy:read",
+      summary: "List a shop's domains",
+      schema: { params: tenantIdParams },
+      handle: ({ params, context }) =>
+        admin.tenancy.listShopDomains(context.principal, { shopId: params.tenantId }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/tenants/:tenantId/domains",
+      version: 1,
+      permission: "tenancy:update",
+      idempotent: true,
+      summary: "Add a custom domain to a shop (pending until verified)",
+      schema: { params: tenantIdParams, body: addDomainBody },
+      handle: ({ params, body, context }) =>
+        admin.tenancy.addCustomDomain(context.principal, {
+          shopId: params.tenantId,
+          hostname: body.hostname,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/domains/:domainId/verify",
+      version: 1,
+      permission: "tenancy:update",
+      idempotent: true,
+      summary: "Verify a custom domain's DNS points at the platform",
+      schema: { params: domainIdParams },
+      handle: ({ params, context }) => admin.tenancy.verifyDomain(context.principal, params),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/domains/:domainId/primary",
+      version: 1,
+      permission: "tenancy:update",
+      idempotent: true,
+      summary: "Make a verified domain the shop's primary",
+      schema: { params: domainIdParams },
+      handle: ({ params, context }) => admin.tenancy.setPrimaryDomain(context.principal, params),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/public/domains/resolve",
+      version: 1,
+      permission: "tenancy:read",
+      public: true,
+      summary: "Public: resolve a hostname to the shop it serves (verified domains only)",
+      schema: { querystring: resolveHostQuery },
+      handle: ({ query }) => admin.tenancy.resolveHost({ hostname: query.host }),
     }),
   ] as readonly RouteDefinition[];
 }
