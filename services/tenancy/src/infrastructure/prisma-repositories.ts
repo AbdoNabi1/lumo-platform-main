@@ -4,10 +4,22 @@ import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/r
 import type { CursorPage, Paginated } from "@platform/types";
 import { ConcurrencyError } from "@platform/utils";
 import type { Prisma } from "@prisma/client";
-import type { TenantRepository, WorkspaceRepository } from "../domain/repositories";
+import type {
+  ShopDomainRepository,
+  TenantRepository,
+  WorkspaceRepository,
+} from "../domain/repositories";
+import type { ShopDomain } from "../domain/shop-domain";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
-import { TenantMapper, WorkspaceMapper, type TenantRow, type WorkspaceRow } from "./mappers";
+import {
+  ShopDomainMapper,
+  TenantMapper,
+  WorkspaceMapper,
+  type ShopDomainRow,
+  type TenantRow,
+  type WorkspaceRow,
+} from "./mappers";
 
 export interface PrismaTenancyRepositoriesDeps {
   readonly prisma: Database;
@@ -167,5 +179,58 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
   private requireTx(tx: unknown): TransactionClient {
     if (tx === undefined || tx === null) throw new Error("requires transaction client (ADR-0003)");
     return tx as TransactionClient;
+  }
+}
+
+export class PrismaShopDomainRepository implements ShopDomainRepository {
+  private readonly deps: PrismaTenancyRepositoriesDeps;
+
+  constructor(deps: PrismaTenancyRepositoriesDeps) {
+    this.deps = deps;
+  }
+
+  async save(domain: ShopDomain, tx?: unknown): Promise<void> {
+    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+    const tenantId = this.deps.tenantId;
+    const id = domain.id.toString();
+    const row = ShopDomainMapper.toRow(domain, tenantId);
+    if (domain.version === 0) {
+      await client.shopDomain.create({ data: row });
+      return;
+    }
+    const updated = await client.shopDomain.updateMany({
+      where: { id, tenantId, version: domain.version },
+      data: {
+        status: row.status,
+        isPrimary: row.isPrimary,
+        verifiedAt: row.verifiedAt,
+        version: { increment: 1 },
+      },
+    });
+    if (updated.count === 0)
+      throw new ConcurrencyError(`ShopDomain ${id} was modified concurrently`);
+  }
+
+  async findById(id: string, tx?: unknown): Promise<ShopDomain | null> {
+    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+    const row = await client.shopDomain.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+    return row === null ? null : ShopDomainMapper.toDomain(row as ShopDomainRow);
+  }
+
+  async findByHostname(hostname: string, tx?: unknown): Promise<ShopDomain | null> {
+    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+    const row = await client.shopDomain.findFirst({
+      where: { hostname, tenantId: this.deps.tenantId },
+    });
+    return row === null ? null : ShopDomainMapper.toDomain(row as ShopDomainRow);
+  }
+
+  async listByShop(shopRef: string, tx?: unknown): Promise<readonly ShopDomain[]> {
+    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+    const rows = await client.shopDomain.findMany({
+      where: { shopRef, tenantId: this.deps.tenantId },
+      orderBy: { hostname: "asc" },
+    });
+    return rows.map((row) => ShopDomainMapper.toDomain(row as ShopDomainRow));
   }
 }

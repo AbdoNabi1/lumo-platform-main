@@ -138,3 +138,35 @@ describe("platform.outbox — migration history matches the Prisma model's colum
     }
   });
 });
+
+describe("tenancy.shop_domains — migration history matches the Prisma model (Plan 1A)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("every required column was created by some migration", () => {
+    const actual = columnsEverAddedTo("tenancy", "shop_domains", allSql);
+    for (const column of [
+      "id",
+      "tenant_id",
+      "shop_ref",
+      "hostname",
+      "kind",
+      "status",
+      "is_primary",
+      "version",
+      "created_at",
+      "updated_at",
+    ]) {
+      expect(actual.has(column), `expected "tenancy"."shop_domains"."${column}"`).toBe(true);
+    }
+  });
+
+  it("is RLS-forced with the tenant_isolation policy and one primary per shop", () => {
+    expect(allSql).toContain('ALTER TABLE "tenancy"."shop_domains" FORCE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('CREATE POLICY tenant_isolation ON "tenancy"."shop_domains"');
+    expect(allSql).toContain('CREATE UNIQUE INDEX "shop_domains_one_primary_per_shop"');
+    expect(allSql).toContain('CREATE UNIQUE INDEX "shop_domains_hostname_key"');
+  });
+});
