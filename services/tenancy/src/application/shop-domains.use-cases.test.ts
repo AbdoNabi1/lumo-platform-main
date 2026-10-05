@@ -9,6 +9,7 @@ import type { DnsVerifier } from "../domain/dns-verifier";
 import {
   InMemoryShopDomainRepository,
   InMemoryTenantRepository,
+  InMemoryWorkspaceRepository,
 } from "../infrastructure/in-memory-repositories";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { TenancyEventTranslator } from "../infrastructure/tenancy-event-translator";
@@ -20,6 +21,7 @@ import {
   VerifyDomain,
   type ShopDomainsDeps,
 } from "./shop-domains.use-cases";
+import { CreateTenant } from "./tenancy.use-cases";
 
 const clock: Clock = { now: () => new Date("2026-10-05T00:00:00.000Z") };
 
@@ -153,5 +155,41 @@ describe("shop domain use cases", () => {
     expect(unknown.ok || unknown.error.code).toBe("NOT_FOUND");
     const garbage = await new ResolveHost(deps).execute({ hostname: "not a host" });
     expect(garbage.ok || garbage.error.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("CreateTenant platform subdomain", () => {
+  it("creates <slug>.<platformStoreDomain> as the verified primary domain", async () => {
+    const deps = await setup();
+    const workspaces = new InMemoryWorkspaceRepository({
+      outbox: undefined as never,
+      context: undefined as never,
+    });
+    const created = await new CreateTenant({ ...deps, workspaces }).execute({
+      slug: "beta",
+      name: "Beta",
+      isolationTier: "pooled",
+    });
+    if (!created.ok) throw new Error("create failed");
+    const resolved = await new ResolveHost(deps).execute({ hostname: "beta.morbeh.store" });
+    expect(resolved.ok && resolved.value.shopId).toBe(created.value.id);
+    expect(resolved.ok && resolved.value.primaryHostname).toBe("beta.morbeh.store");
+  });
+
+  it("adds no domain when platformStoreDomain is not configured", async () => {
+    const deps = await setup();
+    const { platformStoreDomain: _unused, ...withoutZone } = deps;
+    const workspaces = new InMemoryWorkspaceRepository({
+      outbox: undefined as never,
+      context: undefined as never,
+    });
+    const created = await new CreateTenant({ ...withoutZone, workspaces }).execute({
+      slug: "gamma",
+      name: "Gamma",
+      isolationTier: "pooled",
+    });
+    if (!created.ok) throw new Error("create failed");
+    const list = await new ListShopDomains(deps).execute({ shopId: created.value.id });
+    expect(list.ok && list.value.items).toEqual([]);
   });
 });
