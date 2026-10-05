@@ -108,6 +108,22 @@ const schema = z
     TENANT_MODE: z.enum(["single", "multi"]).default("single"),
     TENANT_DEFAULT_ID: z.string().default("tenant-local"),
 
+    /** Plan 1A: the zone shops get subdomains under (`<slug>.<this>`). Unset ⇒ no automatic subdomain. */
+    PLATFORM_STORE_DOMAIN: z.string().min(3).optional(),
+    /** Plan 1A: the name merchants CNAME custom domains to. Unset ⇒ custom domains cannot be verified. */
+    STOREFRONT_CNAME_TARGET: z.string().min(3).optional(),
+    /** Plan 1A: the storefront's public IPv4s, for apex custom domains (comma-separated). */
+    STOREFRONT_IPV4: z
+      .string()
+      .optional()
+      .transform((v) =>
+        (v ?? "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s !== ""),
+      )
+      .pipe(z.array(z.string().ip({ version: "v4" }))),
+
     RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
     OUTBOX_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
 

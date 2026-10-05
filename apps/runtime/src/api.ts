@@ -7,6 +7,7 @@ import { PrismaAuditTrail } from "@platform/db";
 import { composePaymentProviderRegistrations } from "@platform/payments";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
 import { InMemoryTotpMfaProvider, type MfaProviderResolver } from "@platform/security";
+import { NodeDnsVerifier } from "@platform/tenancy";
 import { logger } from "@platform/utils";
 import { resolveApiExposure } from "./api-exposure";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
@@ -512,6 +513,17 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // context (ADR-0014 8f) alone stays pinned to it; its routes reject every other tenant.
     tenantMode: runtime.config.TENANT_MODE,
     tenantId: runtime.config.TENANT_DEFAULT_ID,
+    ...(runtime.config.PLATFORM_STORE_DOMAIN === undefined
+      ? {}
+      : { platformStoreDomain: runtime.config.PLATFORM_STORE_DOMAIN }),
+    ...(runtime.config.STOREFRONT_CNAME_TARGET === undefined
+      ? {}
+      : {
+          dnsVerifier: new NodeDnsVerifier({
+            cnameTarget: runtime.config.STOREFRONT_CNAME_TARGET,
+            ipv4Targets: runtime.config.STOREFRONT_IPV4,
+          }),
+        }),
     paymentVerification: new PrismaPaymentVerificationAdapter(runtime.prisma),
     // Phase A.2 (F-04 closure): gates Returns' DecideResolution refund amount against the
     // refundable ceiling derived from Payments' own charges/refunds ledger — same wiring
