@@ -1,4 +1,5 @@
 import type { CursorPage, Paginated } from "@platform/types";
+import type { ShopDomain } from "./shop-domain";
 import type { Tenant } from "./tenant";
 import type { Workspace } from "./workspace";
 
@@ -22,4 +23,12 @@ export interface WorkspaceRepository {
    */
   findCurrent(tx?: unknown): Promise<Workspace | null>;
   list(page: CursorPage, tx?: unknown): Promise<Paginated<Workspace>>;
+}
+
+export interface ShopDomainRepository {
+  save(domain: ShopDomain, tx?: unknown): Promise<void>;
+  findById(id: string, tx?: unknown): Promise<ShopDomain | null>;
+  /** `hostname` is already normalised (`Hostname.value`). Unique across the whole platform. */
+  findByHostname(hostname: string, tx?: unknown): Promise<ShopDomain | null>;
+  listByShop(shopRef: string, tx?: unknown): Promise<readonly ShopDomain[]>;
 }
