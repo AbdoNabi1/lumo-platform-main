@@ -1077,6 +1077,8 @@ process restart and are not shared across replicas.** Two related notes:
 C2-4 already established for the MFA provider stub. A Kratos/Auth0-backed provider then implements
 credential storage, and `CustomerCredentialsPort` becomes two no-ops.
 
+`2026-10-06: limitation 1 resolved by Plan 1B-1 (durable, tenant-scoped HashedPasswordAuthProvider).`
+
 ### 5. Config decision T5.16 §1 left open, now made
 
 T5.16 §1 left "does customer auth get its own `AuthMethodKind` (e.g. `customer_password`)" to the
