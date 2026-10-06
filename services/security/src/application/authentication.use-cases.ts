@@ -123,6 +123,7 @@ export class Authenticate implements UseCase<
       );
 
     const result = await provider.authenticate({
+      tenantId: input.tenantId,
       method: input.method,
       identifier: input.identifier,
       ...(input.credential !== undefined ? { credential: input.credential } : {}),

@@ -151,7 +151,12 @@ import type {
   KmsPort,
   SessionRevocationPort,
 } from "./application/ports";
-import type { CryptoPort, MfaProviderResolver } from "./application/auth-ports";
+import type {
+  AuthenticationProviderPort,
+  CryptoPort,
+  MfaProviderResolver,
+} from "./application/auth-ports";
+import type { PasswordRegistrar } from "./application/password-credentials";
 import type { ThreatIntelResolver } from "./application/threat-ports";
 import type { RelationshipCheckPort } from "./application/authz-ports";
 import { CheckConsent } from "./application/consent.use-cases";
@@ -242,6 +247,11 @@ export interface SecurityWiringDeps {
    * responsible for refusing to boot outside `local` without a real one injected here.
    */
   readonly mfaProviders?: MfaProviderResolver;
+  /**
+   * Plan 1B-1: the production `"password"` provider (HashedPasswordAuthProvider over Postgres).
+   * Absent ⇒ the in-memory reference provider, exactly as before this field existed.
+   */
+  readonly passwordAuthProvider?: AuthenticationProviderPort & PasswordRegistrar;
 }
 
 /** The persistence + outbox infrastructure — Prisma-backed in production, in-memory for tests. */
@@ -372,6 +382,8 @@ export interface WiredSecurity {
   readonly telemetry: InMemorySecurityTelemetry;
   /** Reference auth/MFA/geo adapters exposed so tests (and local dev) can seed them. */
   readonly passwordProvider: InMemoryPasswordAuthProvider;
+  /** Plan 1B-1: where passwords are written — the injected durable provider, else the reference one. */
+  readonly passwordRegistrar: PasswordRegistrar;
   readonly totpProvider: InMemoryTotpMfaProvider;
   readonly geoIp: InMemoryGeoIp;
   readonly threatProvider: InMemoryThreatIntelProvider;
@@ -435,7 +447,16 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
 
   const passwordProvider = new InMemoryPasswordAuthProvider();
   const totpProvider = new InMemoryTotpMfaProvider();
-  const authProviders = new MapAuthenticationProviderResolver([passwordProvider]);
+  const authProviders = new MapAuthenticationProviderResolver([
+    deps.passwordAuthProvider ?? passwordProvider,
+  ]);
+  // Plan 1B-1: the one write path for passwords. The injected provider when present; otherwise an
+  // adapter over the in-memory reference provider, which is not tenant-scoped (tests/local only).
+  const passwordRegistrar: PasswordRegistrar = deps.passwordAuthProvider ?? {
+    setPassword: async (input) => {
+      passwordProvider.register(input.identifier, input.password, input.principalExternalId);
+    },
+  };
   // C2-4: `deps.mfaProviders` overrides the hardcoded-code reference stub — same seam pattern as
   // identityDirectory/kms/crypto below. Still exposed via WiredSecurity.totpProvider unconditionally
   // (tests/local dev seed it directly), but it only backs LIVE verification when nothing real was injected.
@@ -691,6 +712,7 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     deviceTrust,
     telemetry,
     passwordProvider,
+    passwordRegistrar,
     totpProvider,
     geoIp,
     threatProvider,

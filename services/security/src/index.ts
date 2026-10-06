@@ -283,3 +283,15 @@ export type { PrincipalKind, PrincipalStatus } from "./domain/value-objects/prin
 /** Canonical integration events Security publishes (runtime-verified by `securityModule`). */
 export { SECURITY_PUBLISHED_EVENTS } from "./infrastructure/security-event-translator";
 export type { SecurityEventName } from "./domain/events/security-changed.event";
+
+// Plan 1B-1: durable, tenant-scoped password credentials.
+export { ScryptPasswordHasher } from "./infrastructure/scrypt-password-hasher";
+export { HashedPasswordAuthProvider } from "./infrastructure/hashed-password-auth-provider";
+export { InMemoryPasswordCredentialStore } from "./infrastructure/in-memory-password-credential-store";
+export {
+  normalizeIdentifier,
+  type PasswordCredentialRecord,
+  type PasswordCredentialStore,
+  type PasswordHasher,
+  type PasswordRegistrar,
+} from "./application/password-credentials";
