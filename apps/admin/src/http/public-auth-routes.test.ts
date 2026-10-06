@@ -341,7 +341,11 @@ describe("POST /public/auth/register — G-72 guest-to-account upgrade", () => {
     const token = new URL(sent?.link ?? "").searchParams.get("token") ?? "";
 
     const unknown = await completeSignup(h.admin, { token: "bogus-token-value" });
-    const tampered = await completeSignup(h.admin, { token: token.slice(0, -1) + "0" });
+    // Replace the last character with one that is guaranteed to differ, so the token is always tampered.
+    const last = token.slice(-1);
+    const tampered = await completeSignup(h.admin, {
+      token: token.slice(0, -1) + (last === "0" ? "1" : "0"),
+    });
     const first = await completeSignup(h.admin, { token });
     expect(first.status).toBe(201);
     const reused = await completeSignup(h.admin, { token });
