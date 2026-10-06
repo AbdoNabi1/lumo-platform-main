@@ -17,6 +17,7 @@ import { AllowAllAccessControl } from "../infrastructure/allow-all-access-contro
 import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { AdminGuard } from "../interfaces/admin-guard";
 import { wireAdmin, type AdminWiringDeps } from "../composition";
+import { bootstrapStaffOwner } from "../staff-owner-bootstrap";
 import { assertMultiTenantReady } from "../tenant-mode-guard";
 import { CachedTenantGate } from "../tenant-status-gate";
 import { adminRoutes } from "./admin-routes";
@@ -59,6 +60,8 @@ export interface AdminHttpDeps extends AdminWiringDeps {
    * production composition (apps/runtime/src/api.ts) never passes it. Only used under multi.
    */
   readonly tenantGate?: TenantGate;
+  /** Plan 1B-2: create the first owner (idempotent) from runtime env. Absent ⇒ nothing happens. */
+  readonly bootstrapOwner?: { readonly email: string; readonly password: string };
 }
 
 const DEFAULT_TENANT_STATUS_TTL_MS = 10_000;
@@ -122,6 +125,14 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     // scope the tenancy routes are pinned to). Missing there ⇒ "" ⇒ no tenant qualifies: fail closed.
     platformTenantId,
   });
+  if (deps.bootstrapOwner !== undefined && deps.tenantId !== undefined) {
+    await bootstrapStaffOwner(admin, {
+      tenantId: deps.tenantId,
+      email: deps.bootstrapOwner.email,
+      password: deps.bootstrapOwner.password,
+      logger,
+    });
+  }
   const guard = new AdminGuard({
     accessControl: deps.accessControl ?? new AllowAllAccessControl(),
     auditTrail: deps.auditTrail ?? new InMemoryAuditTrail(),

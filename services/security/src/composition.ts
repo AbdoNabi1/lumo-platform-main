@@ -458,6 +458,8 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
       passwordProvider.register(input.identifier, input.password, input.principalExternalId);
       return Promise.resolve();
     },
+    // The reference provider has no lookup; it is tests/local only, so the owner bootstrap simply re-runs.
+    hasCredential: () => Promise.resolve(false),
   };
   // C2-4: `deps.mfaProviders` overrides the hardcoded-code reference stub — same seam pattern as
   // identityDirectory/kms/crypto below. Still exposed via WiredSecurity.totpProvider unconditionally

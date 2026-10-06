@@ -123,6 +123,19 @@ describe("HashedPasswordAuthProvider", () => {
     );
   });
 
+  it("hasCredential is false before setPassword and true after, case-insensitively", async () => {
+    const { provider } = setup();
+    expect(await provider.hasCredential("shop-a", "x@y.com")).toBe(false);
+    await provider.setPassword({
+      tenantId: "shop-a",
+      identifier: "x@y.com",
+      password: "fake-password-1",
+      principalExternalId: "a-1",
+    });
+    expect(await provider.hasCredential("shop-a", " X@Y.COM ")).toBe(true);
+    expect(await provider.hasCredential("shop-b", "x@y.com")).toBe(false);
+  });
+
   it("stores only a hash", async () => {
     const { provider, store } = setup();
     await provider.setPassword({

@@ -41,6 +41,8 @@ export interface PasswordRegistrar {
     readonly password: string;
     readonly principalExternalId: string;
   }): Promise<void>;
+  /** Plan 1B-2: whether a credential exists for this identifier in this tenant (owner bootstrap idempotency). */
+  hasCredential(tenantId: string, identifier: string): Promise<boolean>;
 }
 
 /** Login identifiers are emails: trimmed and lower-cased so "A@x.com " and "a@x.com" are one account. */

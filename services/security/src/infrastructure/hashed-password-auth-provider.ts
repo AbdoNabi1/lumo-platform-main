@@ -66,6 +66,10 @@ export class HashedPasswordAuthProvider implements AuthenticationProviderPort, P
     });
   }
 
+  async hasCredential(tenantId: string, identifier: string): Promise<boolean> {
+    return (await this.deps.store.find(tenantId, normalizeIdentifier(identifier))) !== null;
+  }
+
   async authenticate(request: AuthenticationRequest): Promise<AuthenticationResult> {
     const tenantId = request.tenantId;
     if (tenantId === undefined || tenantId === "") {
