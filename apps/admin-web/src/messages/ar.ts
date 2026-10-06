@@ -60,6 +60,7 @@ export const ar: Dictionary = {
     unreadNotifications: "لديك إشعارات غير مقروءة",
     messages: "الرسائل",
     account: "الحساب",
+    signOut: "تسجيل الخروج",
     language: "اللغة",
   },
   header: {

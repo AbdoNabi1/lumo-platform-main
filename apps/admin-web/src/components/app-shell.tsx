@@ -12,12 +12,14 @@ import {
   TooltipTrigger,
   cn,
 } from "@platform/ui";
+import { AccountMenu } from "./account-menu";
 import { BrandMark } from "./brand-mark";
 import { CreateMenu } from "./create-menu";
 import { GlobalSearch } from "./global-search";
 import { LocaleSwitch } from "./locale-switch";
 import { MobileNav } from "./mobile-nav";
 import { SidebarNav } from "./sidebar-nav";
+import { SignOutLink } from "./sign-out-link";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
@@ -76,6 +78,11 @@ export function AppShell({ children, t, locale, activeNavId, user }: AppShellPro
               <p className="text-muted-foreground truncate text-xs">{user.role}</p>
             </div>
           </div>
+          <SignOutLink
+            label={t.topbar.signOut}
+            hideLabel="max-lg:sr-only"
+            className="max-lg:justify-center max-lg:px-0"
+          />
           <ThemeToggle className="max-lg:hidden" />
         </div>
       </aside>
@@ -87,17 +94,20 @@ export function AppShell({ children, t, locale, activeNavId, user }: AppShellPro
             title={t.brand}
             description={t.nav.primary}
             footer={
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <Avatar>
-                    <AvatarFallback>{user.initials}</AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{user.name}</p>
-                    <p className="text-muted-foreground truncate text-xs">{user.role}</p>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar>
+                      <AvatarFallback>{user.initials}</AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{user.name}</p>
+                      <p className="text-muted-foreground truncate text-xs">{user.role}</p>
+                    </div>
                   </div>
+                  <ThemeToggle />
                 </div>
-                <ThemeToggle />
+                <SignOutLink label={t.topbar.signOut} />
               </div>
             }
           >
@@ -150,10 +160,7 @@ export function AppShell({ children, t, locale, activeNavId, user }: AppShellPro
                 the only theme control below that, where the sidebar is a rail or gone. */}
             <ThemeToggle className="hidden sm:inline-flex" />
 
-            <Avatar className="ms-1 size-8">
-              <AvatarFallback>{user.initials}</AvatarFallback>
-              <span className="sr-only">{user.name}</span>
-            </Avatar>
+            <AccountMenu t={t} user={user} />
           </div>
         </header>
 

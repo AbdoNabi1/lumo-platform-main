@@ -55,6 +55,7 @@ export const en = {
     unreadNotifications: "You have unread notifications",
     messages: "Messages",
     account: "Account",
+    signOut: "Sign out",
     language: "Language",
   },
   header: {
