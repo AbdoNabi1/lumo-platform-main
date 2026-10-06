@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authConfig, SESSION_COOKIE } from "@/lib/auth/config";
+import { isNativeAuth } from "@/lib/auth/native";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { publicOrigin } from "@/lib/public-origin";
 
@@ -15,24 +16,27 @@ import { publicOrigin } from "@/lib/public-origin";
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const cookieHeader = request.headers.get("cookie") ?? "";
-  try {
-    const logoutFlow = await fetchWithTimeout(
-      `${authConfig.kratosPublicUrl}/self-service/logout/browser`,
-      {
-        headers: cookieHeader.length > 0 ? { cookie: cookieHeader } : {},
-        cache: "no-store",
-      },
-    );
-    if (logoutFlow.ok) {
-      const { logout_url: logoutUrl } = (await logoutFlow.json()) as { logout_url?: string };
-      if (logoutUrl !== undefined) {
-        await fetchWithTimeout(logoutUrl, {
+  // Plan 1B-2: native mode has no Kratos session to end — clearing the cookie below is the logout.
+  if (!isNativeAuth()) {
+    try {
+      const logoutFlow = await fetchWithTimeout(
+        `${authConfig.kratosPublicUrl}/self-service/logout/browser`,
+        {
           headers: cookieHeader.length > 0 ? { cookie: cookieHeader } : {},
-        });
+          cache: "no-store",
+        },
+      );
+      if (logoutFlow.ok) {
+        const { logout_url: logoutUrl } = (await logoutFlow.json()) as { logout_url?: string };
+        if (logoutUrl !== undefined) {
+          await fetchWithTimeout(logoutUrl, {
+            headers: cookieHeader.length > 0 ? { cookie: cookieHeader } : {},
+          });
+        }
       }
+    } catch {
+      // best-effort only — see doc comment above
     }
-  } catch {
-    // best-effort only — see doc comment above
   }
 
   const response = NextResponse.redirect(new URL("/login", publicOrigin(request)));

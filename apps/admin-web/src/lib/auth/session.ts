@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { readRolesClaim, readStringClaim } from "./claims";
 import { authConfig, SESSION_COOKIE } from "./config";
+import { jwksFetchHeaders } from "./native";
 
 export { SESSION_COOKIE } from "./config";
 
@@ -28,7 +29,7 @@ export function highestRole(roles: readonly string[]): Role | undefined {
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
 function getJwks() {
-  jwks ??= createRemoteJWKSet(new URL(authConfig.jwksUrl));
+  jwks ??= createRemoteJWKSet(new URL(authConfig.jwksUrl), { headers: jwksFetchHeaders() });
   return jwks;
 }
 

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { optionalEnv, requireProdEnv } from "@/lib/env";
 import { readRolesClaim } from "@/lib/auth/claims";
+import { isNativeAuth, jwksFetchHeaders } from "@/lib/auth/native";
 import { deriveCodeChallenge, generateCodeVerifier } from "@/lib/auth/pkce";
 import { publicOrigin } from "@/lib/public-origin";
 
@@ -47,7 +48,14 @@ const NONCE_COOKIE = "morbeh_oauth_nonce";
 // Hydra's own login/consent callbacks, the token-exchange callback, and the dependency-free health
 // probe must never be gated — gating them would create a redirect loop back into themselves (or,
 // for /api/healthz, make container/k8s health checks depend on the auth backend being reachable).
-const PUBLIC_PREFIXES = ["/login", "/consent", "/auth/callback", "/logout", "/api/healthz"];
+const PUBLIC_PREFIXES = [
+  "/login",
+  "/consent",
+  "/auth/callback",
+  "/auth/native-login",
+  "/logout",
+  "/api/healthz",
+];
 
 // Authenticated-but-role-exempt: reachable by ANY authenticated session regardless of role, so
 // `/forbidden` itself can never redirect-loop into another `/forbidden`.
@@ -134,7 +142,8 @@ function highestRole(roles: readonly unknown[]): Role | undefined {
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
 function getJwks() {
-  jwks ??= createRemoteJWKSet(new URL(AUTH_JWKS_URL));
+  // Plan 1B-2: the runtime resolves a tenant for every route, JWKS included (a no-op for Hydra).
+  jwks ??= createRemoteJWKSet(new URL(AUTH_JWKS_URL), { headers: jwksFetchHeaders() });
   return jwks;
 }
 
@@ -193,6 +202,15 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     } catch {
       // expired / invalid / wrong-issuer token -> fall through and re-authenticate
     }
+  }
+
+  if (isNativeAuth()) {
+    // Plan 1B-2: no OAuth2 round trip — send the browser to our own form and drop the dead cookie.
+    const login = new URL("/login", origin);
+    login.searchParams.set("return_to", `${pathname}${search}`);
+    const response = NextResponse.redirect(login);
+    clearAuthCookies(response);
+    return response;
   }
 
   const state = crypto.randomUUID();

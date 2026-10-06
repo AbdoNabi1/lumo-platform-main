@@ -4,7 +4,9 @@ import { Button, Card, CardContent, Input, Label } from "@platform/ui";
 import { BrandMark } from "@/components/brand-mark";
 import { authConfig } from "@/lib/auth/config";
 import { oryAdminHeaders } from "@/lib/auth/ory-admin";
+import { isNativeAuth } from "@/lib/auth/native";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
+import { NativeLoginForm } from "./native-login-form";
 
 /**
  * The Hydra login provider (Phase A.32) — the page `infrastructure/docker/hydra/hydra.yml`'s
@@ -54,11 +56,16 @@ interface LoginPageProps {
   readonly searchParams: Promise<{
     readonly login_challenge?: string;
     readonly flow?: string;
+    readonly error?: string;
+    readonly return_to?: string;
   }>;
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { login_challenge: loginChallenge, flow } = await searchParams;
+  const { login_challenge: loginChallenge, flow, error, return_to: returnTo } = await searchParams;
+
+  // Plan 1B-2: native mode is a plain email/password form — no Hydra challenge, no Kratos flow.
+  if (isNativeAuth()) return <NativeLoginForm error={error} returnTo={returnTo} />;
 
   if (loginChallenge !== undefined) {
     await handleLoginChallenge(loginChallenge);
