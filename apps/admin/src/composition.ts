@@ -87,7 +87,9 @@ import { wireReviews, type ReviewsController } from "@platform/reviews";
 import { wireSearch } from "@platform/search";
 import {
   wireSecurity,
+  type AuthenticationProviderPort,
   type MfaProviderResolver,
+  type PasswordRegistrar,
   type SecurityController,
 } from "@platform/security";
 import { wireSeo } from "@platform/seo";
@@ -244,6 +246,11 @@ export interface AdminWiringDeps {
    * field existed. `apps/runtime/src/api.ts` refuses to boot outside `local` without a real one.
    */
   readonly mfaProviders?: MfaProviderResolver;
+  /**
+   * Plan 1B-1: the durable password provider, passed straight through to `wireSecurity(deps)`.
+   * Absent ⇒ Security's in-memory reference provider (tests/local), as before.
+   */
+  readonly passwordAuthProvider?: AuthenticationProviderPort & PasswordRegistrar;
   /**
    * Production PSP-backed billing collection for Licensing (M2-3). Passed straight through to
    * `wireLicensing(deps)` below; absent ⇒ Licensing's own always-succeeds in-memory stub, same as
@@ -872,12 +879,10 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
    * **Two limitations, both inherited from those reference adapters and neither introduced here**
    * (recorded in full in `docs/plans/BLOCKERS.md`'s T5.17 entry):
    *
-   * 1. `InMemoryPasswordAuthProvider` holds its account map in process memory, so credentials
-   *    registered here do not survive a restart and are not shared across replicas. It is the ONLY
-   *    `AuthenticationProviderPort` `wireSecurity` registers for `"password"` today, and it already
-   *    backs the admin console's `POST /security/authenticate` — this task reuses that seam rather
-   *    than inventing a second credential store beside it, which is what "reuse the machinery, do
-   *    not reimplement password storage" requires.
+   * 1. Resolved by Plan 1B-1 whenever `passwordAuthProvider` is injected: passwords then go through
+   *    `security.passwordRegistrar` into a durable, tenant-scoped, scrypt-hashed store. Only without
+   *    it (tests/local) does `InMemoryPasswordAuthProvider` hold the account map in process memory,
+   *    so credentials do not survive a restart and are not shared across replicas.
    * 2. `wireSecurity` returns its own in-memory `identityDirectory` on `WiredSecurity` even when a
    *    live one (Kratos) was injected, so `registerSubject` only takes effect on the in-memory
    *    branch. With a live directory the customer must already exist in it before registration —
@@ -890,8 +895,13 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     registerSubject: async (subjectRef) => {
       security.identityDirectory.register(subjectRef);
     },
-    setPassword: async (identifier, password, principalExternalId) => {
-      security.passwordProvider.register(identifier, password, principalExternalId);
+    setPassword: async (identifier, password, principalExternalId, tenantId) => {
+      await security.passwordRegistrar.setPassword({
+        tenantId,
+        identifier,
+        password,
+        principalExternalId,
+      });
     },
   };
   // G-72: absent ⇒ the logging dev adapter, guarded out of production by

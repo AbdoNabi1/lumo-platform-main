@@ -6,7 +6,13 @@ import {
 import { PrismaAuditTrail } from "@platform/db";
 import { composePaymentProviderRegistrations } from "@platform/payments";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
-import { InMemoryTotpMfaProvider, type MfaProviderResolver } from "@platform/security";
+import {
+  HashedPasswordAuthProvider,
+  InMemoryTotpMfaProvider,
+  PrismaPasswordCredentialStore,
+  ScryptPasswordHasher,
+  type MfaProviderResolver,
+} from "@platform/security";
 import { NodeDnsVerifier } from "@platform/tenancy";
 import { logger } from "@platform/utils";
 import { resolveApiExposure } from "./api-exposure";
@@ -508,6 +514,12 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     health: runtime.health,
     metrics: runtime.metrics,
     prisma: runtime.prisma,
+    // Plan 1B-1: passwords in Postgres (scrypt, tenant-scoped, lockout) instead of process memory.
+    passwordAuthProvider: new HashedPasswordAuthProvider({
+      store: new PrismaPasswordCredentialStore(runtime.prisma),
+      hasher: new ScryptPasswordHasher(),
+      clock: runtime.clock,
+    }),
     // T10.4: `multi` swaps the pinned resolver for the claim → header chain and runs the boot
     // assertion inside createAdminHttpApi. `tenantId` below is still passed because the tenancy
     // context (ADR-0014 8f) alone stays pinned to it; its routes reject every other tenant.

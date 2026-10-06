@@ -188,7 +188,7 @@ export class CustomerAuthAdminController {
     if (principal.status < 200 || principal.status >= 300) return principal;
 
     await this.ensurePasswordMethod(tenantId);
-    await this.deps.credentials.setPassword(email, password, customerId);
+    await this.deps.credentials.setPassword(email, password, customerId, tenantId);
     return null;
   }
 

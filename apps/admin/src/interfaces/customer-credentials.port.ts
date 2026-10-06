@@ -29,7 +29,13 @@ export interface CustomerCredentialsPort {
   /**
    * Registers the customer's login credential with Security's password authentication provider,
    * mapping the login `identifier` (the customer's email) to the `principalExternalId` that
-   * `Authenticate` will resolve on success. Called exactly once, at registration.
+   * `Authenticate` will resolve on success. Called exactly once, at registration. `tenantId` scopes
+   * the credential: the same email in two shops is two credentials (Plan 1B-1).
    */
-  setPassword(identifier: string, password: string, principalExternalId: string): Promise<void>;
+  setPassword(
+    identifier: string,
+    password: string,
+    principalExternalId: string,
+    tenantId: string,
+  ): Promise<void>;
 }
