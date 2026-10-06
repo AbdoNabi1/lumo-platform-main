@@ -31,6 +31,7 @@ import {
   GrantRolePermission,
   RevokeRoleAssignment,
 } from "./application/authorization.use-cases";
+import { ListPrincipalRoleKeys } from "./application/principal-roles.use-cases";
 import {
   CheckAccess,
   DeleteRelationTuple,
@@ -581,6 +582,7 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const startImpersonation = new StartImpersonation(securityDeps);
   const configureTenantSecurity = new ConfigureTenantSecurity(securityDeps);
   const evaluateAccess = new EvaluateAccess(securityDeps);
+  const listPrincipalRoleKeys = new ListPrincipalRoleKeys(securityDeps);
   const verifyAuditChain = new VerifyAuditChain(securityDeps);
   const registerAuthMethod = new RegisterAuthMethod(securityDeps);
   const authenticate = new Authenticate(securityDeps);
@@ -648,6 +650,7 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     startImpersonation,
     configureTenantSecurity,
     evaluateAccess,
+    listPrincipalRoleKeys,
     verifyAuditChain,
     registerAuthMethod,
     authenticate,

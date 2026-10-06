@@ -38,6 +38,11 @@ export type {
   IntrospectSessionSubjectInput,
   SessionSubject,
 } from "./application/session.use-cases";
+// Plan 1B-2 — a principal's active role keys, for minting a native staff token.
+export {
+  ListPrincipalRoleKeys,
+  type ListPrincipalRoleKeysInput,
+} from "./application/principal-roles.use-cases";
 // Zero-trust access decision types — reused by the H-4 edge guard (decision stays in EvaluateAccess).
 export type { EvaluateAccessInput, AccessDecisionOutput } from "./application/access.use-cases";
 

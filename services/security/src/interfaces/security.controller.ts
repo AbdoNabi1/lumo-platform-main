@@ -117,6 +117,10 @@ import type {
   RevokeRoleAssignmentInput,
 } from "../application/authorization.use-cases";
 import type {
+  ListPrincipalRoleKeys,
+  ListPrincipalRoleKeysInput,
+} from "../application/principal-roles.use-cases";
+import type {
   IssueCredential,
   IssueCredentialInput,
   RevokeCredential,
@@ -218,6 +222,8 @@ export interface SecurityControllerDeps {
   readonly configureTenantSecurity: ConfigureTenantSecurity;
   // Zero-trust + audit
   readonly evaluateAccess: EvaluateAccess;
+  /** Plan 1B-2 — the role keys a principal holds now (staff token minting). */
+  readonly listPrincipalRoleKeys: ListPrincipalRoleKeys;
   readonly verifyAuditChain: VerifyAuditChain;
   // P2.0-B — authentication, MFA, device, risk
   readonly registerAuthMethod: RegisterAuthMethod;
@@ -369,6 +375,9 @@ export class SecurityController {
   // ── Zero-trust + audit ────────────────────────────────────────────────────
   async evaluateAccess(input: EvaluateAccessInput): Promise<ControllerResponse> {
     return present(await this.deps.evaluateAccess.execute(input), 200);
+  }
+  async listPrincipalRoleKeys(input: ListPrincipalRoleKeysInput): Promise<ControllerResponse> {
+    return present(await this.deps.listPrincipalRoleKeys.execute(input), 200);
   }
   async verifyAuditChain(input: VerifyAuditChainInput): Promise<ControllerResponse> {
     return present(await this.deps.verifyAuditChain.execute(input), 200);
