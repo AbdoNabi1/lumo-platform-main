@@ -4,7 +4,8 @@ import type { CryptoPort, MfaProviderPort } from "../application/auth-ports";
 import type { MfaMethodKind } from "../domain/value-objects/auth-method";
 import { base32Decode, base32Encode, totp } from "./totp";
 
-const KEY_REF = "security.mfa.totp";
+/** Legacy constant — local/tests only. Production passes `keyRef` from MFA_TOTP_KEY (G-87). */
+const LEGACY_KEY_REF = "security.mfa.totp";
 const ISSUER = "Morbeh";
 const STEP_TOLERANCE = 1; // ± one 30s period, absorbing clock drift between client and server.
 
@@ -19,17 +20,25 @@ const STEP_TOLERANCE = 1; // ± one 30s period, absorbing clock drift between cl
 export class TotpMfaProvider implements MfaProviderPort {
   readonly method: MfaMethodKind = "totp";
 
+  private readonly keyRef: string;
+
   constructor(
     private readonly crypto: CryptoPort,
     private readonly clock: Clock,
-  ) {}
+    options: { readonly keyRef?: string } = {},
+  ) {
+    if (options.keyRef !== undefined && options.keyRef.length < 32) {
+      throw new Error("TotpMfaProvider: keyRef must be at least 32 characters (G-87).");
+    }
+    this.keyRef = options.keyRef ?? LEGACY_KEY_REF;
+  }
 
   async enroll(input: {
     readonly principalRef: string;
   }): Promise<{ readonly secretRef: string; readonly provisioningUri: string }> {
     const secret = randomBytes(20);
     const base32Secret = base32Encode(secret);
-    const secretRef = await this.crypto.encrypt(base32Secret, KEY_REF);
+    const secretRef = await this.crypto.encrypt(base32Secret, this.keyRef);
     const provisioningUri =
       `otpauth://totp/${encodeURIComponent(ISSUER)}:${encodeURIComponent(input.principalRef)}` +
       `?secret=${base32Secret}&issuer=${encodeURIComponent(ISSUER)}&algorithm=SHA1&digits=6&period=30`;
@@ -51,7 +60,7 @@ export class TotpMfaProvider implements MfaProviderPort {
     if (input.secretRef === null) return false;
     let base32Secret: string;
     try {
-      base32Secret = await this.crypto.decrypt(input.secretRef, KEY_REF);
+      base32Secret = await this.crypto.decrypt(input.secretRef, this.keyRef);
     } catch {
       return false;
     }
