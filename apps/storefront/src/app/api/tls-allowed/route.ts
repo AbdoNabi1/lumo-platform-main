@@ -1,8 +1,6 @@
-import { fetchShopFromRuntime, normalizeHost } from "@/lib/shop-host";
+import { PLATFORM_TENANT_ID, fetchShopFromRuntime, normalizeHost } from "@/lib/shop-host";
 
 const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
-const PLATFORM_TENANT_ID =
-  process.env.PLATFORM_TENANT_ID ?? process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 /**
  * Plan 1A: Caddy's on-demand TLS "ask" endpoint (`GET /api/tls-allowed?domain=x`). 200 ⇒ Caddy may

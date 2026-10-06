@@ -166,7 +166,18 @@ export const TENANT_DEFAULT_ID_SITES: readonly TenantDefaultIdSite[] = Object.fr
     class: "client-header-source",
     why:
       "Outbound x-tenant-id header from the storefront server. One storefront deployment serves " +
-      "one tenant until domain resolution replaces it; the API never defaults a missing tenant.",
+      "one tenant when STOREFRONT_HOST_ROUTING is off; when on, the shop id comes from the " +
+      "middleware's x-shop-id (Plan 1A); the API never defaults a missing tenant.",
+  },
+  {
+    file: "apps/storefront/src/lib/shop-host.ts",
+    line: 'process.env.PLATFORM_TENANT_ID ?? process.env.TENANT_DEFAULT_ID ?? "tenant-local";',
+    class: "client-header-source",
+    why:
+      "Outbound x-tenant-id for the public domain-resolve call only: it addresses the PLATFORM scope " +
+      "the tenancy context is pinned to (ADR-0014 8f), never a merchant's data. The merchant shop id " +
+      "comes from the resolved domain (x-shop-id, overwritten by the middleware); the API never " +
+      "defaults a missing tenant.",
   },
   {
     file: "apps/e2e/tests/support/admin-api.ts",

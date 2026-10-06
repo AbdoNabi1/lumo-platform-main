@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  PLATFORM_TENANT_ID,
   SHOP_ID_HEADER,
   createShopResolver,
   fetchShopFromRuntime,
@@ -7,8 +8,6 @@ import {
 } from "./lib/shop-host";
 
 const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
-const PLATFORM_TENANT_ID =
-  process.env.PLATFORM_TENANT_ID ?? process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 const resolveShop = createShopResolver({
   fetchShop: fetchShopFromRuntime(RUNTIME_API_URL, PLATFORM_TENANT_ID),

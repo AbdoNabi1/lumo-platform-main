@@ -2,6 +2,10 @@
 
 export const SHOP_ID_HEADER = "x-shop-id";
 
+/** The PLATFORM tenant scope the public domain-resolve call addresses; read here and nowhere else. */
+export const PLATFORM_TENANT_ID =
+  process.env.PLATFORM_TENANT_ID ?? process.env.TENANT_DEFAULT_ID ?? "tenant-local";
+
 export interface ResolvedShop {
   readonly shopId: string;
   readonly hostname: string;
