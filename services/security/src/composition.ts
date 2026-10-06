@@ -453,8 +453,9 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   // Plan 1B-1: the one write path for passwords. The injected provider when present; otherwise an
   // adapter over the in-memory reference provider, which is not tenant-scoped (tests/local only).
   const passwordRegistrar: PasswordRegistrar = deps.passwordAuthProvider ?? {
-    setPassword: async (input) => {
+    setPassword: (input) => {
       passwordProvider.register(input.identifier, input.password, input.principalExternalId);
+      return Promise.resolve();
     },
   };
   // C2-4: `deps.mfaProviders` overrides the hardcoded-code reference stub — same seam pattern as
