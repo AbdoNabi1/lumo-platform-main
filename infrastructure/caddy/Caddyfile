@@ -1,0 +1,26 @@
+# Plan 1A — single-server edge (Hetzner move). Every shop hostname gets a certificate on demand,
+# but only after the storefront's /api/tls-allowed says the hostname is a verified shop domain.
+# Let's Encrypt allows ~50 new certificates per registered domain per week: past that many new
+# `*.{$PLATFORM_STORE_DOMAIN}` shops a week, switch the platform zone to one wildcard certificate
+# (DNS challenge plugin) and keep on-demand for custom domains only.
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		ask http://storefront:3000/api/tls-allowed
+	}
+}
+
+{$ADMIN_HOST} {
+	reverse_proxy admin-web:3100
+}
+
+{$API_HOST} {
+	reverse_proxy runtime:8080
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	reverse_proxy storefront:3000
+}
