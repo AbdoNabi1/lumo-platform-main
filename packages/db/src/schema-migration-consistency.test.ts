@@ -170,3 +170,37 @@ describe("tenancy.shop_domains — migration history matches the Prisma model (P
     expect(allSql).toContain('CREATE UNIQUE INDEX "shop_domains_hostname_key"');
   });
 });
+
+describe("security.password_credentials — migration history matches the Prisma model (Plan 1B-1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("every required column was created by some migration", () => {
+    const actual = columnsEverAddedTo("security", "password_credentials", allSql);
+    for (const column of [
+      "id",
+      "tenant_id",
+      "identifier",
+      "principal_external_id",
+      "password_hash",
+      "failed_attempts",
+      "version",
+      "created_at",
+      "updated_at",
+    ]) {
+      expect(actual.has(column), `expected "security"."password_credentials"."${column}"`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("is RLS-forced and unique per (tenant, identifier)", () => {
+    expect(allSql).toContain(
+      'ALTER TABLE "security"."password_credentials" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(allSql).toContain('CREATE POLICY tenant_isolation ON "security"."password_credentials"');
+    expect(allSql).toContain('CREATE UNIQUE INDEX "password_credentials_tenant_id_identifier_key"');
+  });
+});

@@ -295,3 +295,4 @@ export {
   type PasswordHasher,
   type PasswordRegistrar,
 } from "./application/password-credentials";
+export { PrismaPasswordCredentialStore } from "./infrastructure/prisma-password-credential-store";

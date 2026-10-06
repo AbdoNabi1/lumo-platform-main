@@ -407,3 +407,23 @@ model SecurityIdentityMembership {
   @@map("identity_membership_projection")
   @@schema("security")
 }
+
+// Plan 1B-1 — one password credential per (tenant, login identifier). Only a scrypt hash is stored
+// (`scrypt$<log2N>$<r>$<p>$<salt>$<hash>`); the password itself never reaches the database.
+model SecurityPasswordCredential {
+  id                  String    @id @db.Uuid
+  tenantId            String    @map("tenant_id")
+  identifier          String // trimmed + lower-cased email
+  principalExternalId String    @map("principal_external_id")
+  passwordHash        String    @map("password_hash")
+  failedAttempts      Int       @default(0) @map("failed_attempts")
+  lockedUntil         DateTime? @map("locked_until")
+  version             Int       @default(0)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, identifier])
+  @@index([tenantId, principalExternalId])
+  @@map("password_credentials")
+  @@schema("security")
+}
