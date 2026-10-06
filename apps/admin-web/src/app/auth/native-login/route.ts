@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authConfig, SESSION_COOKIE } from "@/lib/auth/config";
-import { exchangePassword, isNativeAuth } from "@/lib/auth/native";
+import { exchangePassword, isNativeAuth, nativeTenantId } from "@/lib/auth/native";
 import { safeReturnTo } from "@/lib/auth/safe-return-to";
 import { requireProdEnv } from "@/lib/env";
 import { publicOrigin } from "@/lib/public-origin";
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const returnTo = safeReturnTo(field(form, "return_to", "/"), origin);
   const result = await exchangePassword({
     runtimeUrl: requireProdEnv("RUNTIME_API_URL", "http://localhost:3080"),
-    tenantId: requireProdEnv("TENANT_DEFAULT_ID", "tenant-local"),
+    tenantId: nativeTenantId(),
     email,
     password,
   });

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { exchangePassword } from "./native";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { exchangePassword, jwksFetchHeaders, nativeTenantId } from "./native";
 
 const ok = (status: number, body: unknown): typeof fetch =>
   (async () => new Response(JSON.stringify(body), { status })) as typeof fetch;
@@ -51,5 +51,24 @@ describe("exchangePassword", () => {
       ok: false,
       reason: "unavailable",
     });
+  });
+});
+
+describe("tenant for native sign-in", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("adds no JWKS header in ory mode, and the tenant header only when native", () => {
+    vi.stubEnv("TENANT_DEFAULT_ID", "shop-1");
+    expect(jwksFetchHeaders()).toEqual({});
+    vi.stubEnv("AUTH_MODE", "native");
+    expect(jwksFetchHeaders()).toEqual({ "x-tenant-id": "shop-1" });
+  });
+
+  it("falls back to tenant-local only in local, and fails closed outside it", () => {
+    vi.stubEnv("TENANT_DEFAULT_ID", "");
+    vi.stubEnv("APP_ENV", "local");
+    expect(nativeTenantId()).toBe("tenant-local");
+    vi.stubEnv("APP_ENV", "production");
+    expect(() => nativeTenantId()).toThrow(/TENANT_DEFAULT_ID/);
   });
 });

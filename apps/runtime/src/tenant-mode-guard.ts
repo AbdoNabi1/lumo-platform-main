@@ -161,6 +161,15 @@ export const TENANT_DEFAULT_ID_SITES: readonly TenantDefaultIdSite[] = Object.fr
     why: "Same outbound header source as above.",
   },
   {
+    file: "apps/admin-web/src/lib/auth/native.ts",
+    line: 'return requireProdEnv("TENANT_DEFAULT_ID", "tenant-local");',
+    class: "client-header-source",
+    why:
+      "Outbound x-tenant-id from the admin-web server for native staff sign-in and the JWKS fetch " +
+      "(Plan 1B-2). Same source and same fail-closed resolution as lib/api/client.ts; the API resolves " +
+      "the verified claim first under multi and never defaults a missing tenant.",
+  },
+  {
     file: "apps/storefront/src/lib/runtime-api.ts",
     line: 'const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";',
     class: "client-header-source",

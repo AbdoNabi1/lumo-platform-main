@@ -1,7 +1,17 @@
+import { requireProdEnv } from "@/lib/env";
+
 /** Plan 1B-2: native staff sign-in helpers (no Ory). Pure, so they are testable without Next. */
 
 export function isNativeAuth(): boolean {
   return process.env["AUTH_MODE"] === "native";
+}
+
+/**
+ * The one place native sign-in reads the shop's tenant id. Same source and the same fail-closed
+ * resolution as lib/api/client.ts (a localhost-style default only in local/development).
+ */
+export function nativeTenantId(): string {
+  return requireProdEnv("TENANT_DEFAULT_ID", "tenant-local");
 }
 
 /**
@@ -10,7 +20,7 @@ export function isNativeAuth(): boolean {
  */
 export function jwksFetchHeaders(): Record<string, string> {
   if (!isNativeAuth()) return {};
-  return { "x-tenant-id": process.env["TENANT_DEFAULT_ID"] ?? "tenant-local" };
+  return { "x-tenant-id": nativeTenantId() };
 }
 
 export type ExchangeResult =
