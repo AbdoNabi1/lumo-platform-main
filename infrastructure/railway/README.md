@@ -249,6 +249,57 @@ grant is read back.
 
 `runtime-api.ts` sends `TENANT_DEFAULT_ID` as the `x-tenant-id` header, so it must match §3.
 
+### 4b. Native staff sign-in (Plan 1B-2) — an alternative to Ory, off by default
+
+With `AUTH_MODE=native` the API checks the staff email and password itself, signs its own ES256 tokens
+and publishes its public keys at `/api/v1/public/auth/jwks`. Authorization is a fixed three-role table:
+**admin** (everything), **operator** (products, orders, inventory and the other shop data, but not
+money, security or settings) and **viewer** (read-only). Ory Keto is not consulted. With `AUTH_MODE`
+unset (the default is `ory`) nothing in this section applies and the deployment behaves as before.
+
+The dashboard then shows a plain email/password form at `/login` and stores the token in the same
+`morbeh_admin_session` cookie, set by admin-web on its own host, so no shared cookie domain is needed.
+
+| Service   | Variable                   | Value                                                                      |
+| --------- | -------------------------- | -------------------------------------------------------------------------- |
+| API       | `AUTH_MODE`                | `native`                                                                   |
+| API       | `AUTH_SIGNING_KEY`         | secret: base64 PEM, see the generator command below                        |
+| API       | `AUTH_ISSUER_URL`          | `https://<api public domain>/`                                             |
+| API       | `MFA_TOTP_KEY`             | secret, at least 32 characters                                             |
+| API       | `BOOTSTRAP_OWNER_EMAIL`    | the owner's email (one boot only)                                          |
+| API       | `BOOTSTRAP_OWNER_PASSWORD` | at least 12 characters (one boot only; **remove after the first sign-in**) |
+| admin-web | `AUTH_MODE`                | `native`                                                                   |
+| admin-web | `AUTH_ISSUER_URL`          | the same value as the API's                                                |
+| admin-web | `AUTH_JWKS_URL`            | `https://<api public domain>/api/v1/public/auth/jwks`                      |
+| admin-web | `COOKIE_DOMAIN`            | **unset**                                                                  |
+
+Leave the existing Ory variables (`HYDRA_*`, `KRATOS_*`, `AUTH_CLIENT_SECRET`, `ORY_API_KEY`, and the
+API's `KETO_*`) where they are: admin-web still reads some of them at start-up, and the rollback below
+needs them. In native mode the API does not require `AUTH_JWKS_URL`, `KETO_*` or `KRATOS_*`.
+
+**Generator commands.** Run them in the API service's Railway Console. They print a secret: paste it
+into Railway variables and nowhere else.
+
+```bash
+node -e "const c=require('crypto');const k=c.generateKeyPairSync('ec',{namedCurve:'P-256'}).privateKey.export({type:'pkcs8',format:'pem'});console.log(Buffer.from(k).toString('base64'))"
+```
+
+and for `MFA_TOTP_KEY`:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+Notes:
+
+- The token lasts 2 hours (`STAFF_TOKEN_TTL_SECONDS`, 300 to 86400). It cannot be revoked earlier: gap G-88.
+- Staff sign-in is limited to 10 attempts per 15 minutes per shop and email, on top of the lockout
+  after 10 failures. A staff login and a customer login are separate accounts even for the same email.
+- TOTP enrollments made before `MFA_TOTP_KEY` was set must be re-enrolled; none are known on the live
+  deployment (G-87).
+
+**Rollback:** set `AUTH_MODE=ory` on both services (or delete it). Nothing else changes.
+
 ## 5. Deploy order
 
 1. Create the Postgres and Redis plugins first.
