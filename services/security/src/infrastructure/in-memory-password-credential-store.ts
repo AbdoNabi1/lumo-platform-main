@@ -15,7 +15,7 @@ export class InMemoryPasswordCredentialStore implements PasswordCredentialStore 
     return this.rows.get(InMemoryPasswordCredentialStore.key(tenantId, identifier)) ?? null;
   }
 
-  async upsert(input: {
+  async save(input: {
     readonly tenantId: string;
     readonly identifier: string;
     readonly principalExternalId: string;

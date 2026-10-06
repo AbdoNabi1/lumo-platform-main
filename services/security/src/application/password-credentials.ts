@@ -20,7 +20,7 @@ export interface PasswordCredentialRecord {
 export interface PasswordCredentialStore {
   find(tenantId: string, identifier: string): Promise<PasswordCredentialRecord | null>;
   /** Insert or replace the hash and owner; resets failures and any lock. */
-  upsert(input: {
+  save(input: {
     readonly tenantId: string;
     readonly identifier: string;
     readonly principalExternalId: string;

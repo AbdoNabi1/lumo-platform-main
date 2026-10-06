@@ -58,7 +58,7 @@ export class HashedPasswordAuthProvider implements AuthenticationProviderPort, P
         { field: "password", message: "must be 8 to 256 characters" },
       ]);
     }
-    await this.deps.store.upsert({
+    await this.deps.store.save({
       tenantId: input.tenantId,
       identifier: normalizeIdentifier(input.identifier),
       principalExternalId: input.principalExternalId,
