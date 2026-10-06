@@ -70,6 +70,20 @@ const schema = z
     AUTH_ISSUER_URL: z.string().url().optional(),
     AUTH_JWKS_URL: z.string().url().optional(),
     AUTH_AUDIENCE: z.string().default("morbeh-admin"),
+    /**
+     * Plan 1B-2: who signs staff in. `ory` (default) = Hydra/Kratos/Keto as today. `native` = this
+     * runtime verifies passwords (Plan 1B-1), signs ES256 tokens with AUTH_SIGNING_KEY, and authorises
+     * with the fixed staff role table — no Ory service is needed.
+     */
+    AUTH_MODE: z.enum(["ory", "native"]).default("ory"),
+    /** Plan 1B-2: EC P-256 PKCS#8 private key (PEM, or base64 of the PEM). Secret. Required when native. */
+    AUTH_SIGNING_KEY: z.string().min(1).optional(),
+    STAFF_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(7200),
+    /** Plan 1B-2: first owner, created once at boot. Remove the password after first sign-in. */
+    BOOTSTRAP_OWNER_EMAIL: z.string().email().optional(),
+    BOOTSTRAP_OWNER_PASSWORD: z.string().min(12).optional(),
+    /** G-87: key the TOTP secrets are encrypted under. Secret, ≥32 chars. Absent ⇒ legacy constant (local only). */
+    MFA_TOTP_KEY: z.string().min(32).optional(),
     KETO_READ_URL: z.string().url().optional(),
     /** Ory Keto write-API base (relation-tuple sync); required outside `local` (H-2, superRefine). */
     KETO_WRITE_URL: z.string().url().optional(),
@@ -325,14 +339,36 @@ const schema = z
   .superRefine((cfg, ctx) => {
     // H-2 (G-SEC-4): live identity binding (Keto relation-tuple sync + Kratos identity/session) is
     // mandatory outside `local` — the security enforcement sync must not silently no-op in production.
-    for (const key of ["KETO_WRITE_URL", "KRATOS_PUBLIC_URL", "KRATOS_ADMIN_URL"] as const) {
-      if (cfg.APP_ENV !== "local" && cfg[key] === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [key],
-          message: `${key} is required unless APP_ENV=local (Ory identity binding, H-2).`,
-        });
+    if (cfg.AUTH_MODE === "ory") {
+      for (const key of ["KETO_WRITE_URL", "KRATOS_PUBLIC_URL", "KRATOS_ADMIN_URL"] as const) {
+        if (cfg.APP_ENV !== "local" && cfg[key] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required unless APP_ENV=local (Ory identity binding, H-2).`,
+          });
+        }
       }
+    } else {
+      for (const key of ["AUTH_SIGNING_KEY", "AUTH_ISSUER_URL"] as const) {
+        if (cfg[key] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when AUTH_MODE=native (Plan 1B-2).`,
+          });
+        }
+      }
+    }
+    if (
+      (cfg.BOOTSTRAP_OWNER_EMAIL === undefined) !==
+      (cfg.BOOTSTRAP_OWNER_PASSWORD === undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["BOOTSTRAP_OWNER_PASSWORD"],
+        message: "BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD must be set together.",
+      });
     }
     if (cfg.EXPOSE_API_DIAGNOSTICS === true && cfg.APP_ENV !== "local") {
       ctx.addIssue({

@@ -74,7 +74,15 @@ import {
   RedisRateLimiter,
   type RedisHandle,
 } from "@platform/redis";
-import { CachedAccessControl, JwtVerifier, KetoAccessControl } from "@platform/auth";
+import {
+  CachedAccessControl,
+  JwtVerifier,
+  KetoAccessControl,
+  NativeTokenIssuer,
+  RoleTableAccessControl,
+  loadSigningKey,
+  localKeyResolver,
+} from "@platform/auth";
 import { EnvelopeCipher, KeyAliasRegistry, createSecretProvider } from "@platform/secrets";
 import { createS3Client, S3StorageService } from "@platform/storage";
 import { logger, type Logger } from "@platform/utils";
@@ -111,6 +119,8 @@ export interface RuntimeCore {
   readonly serializer: EventSerializer;
   readonly authenticator: Authenticator;
   readonly accessControl: AccessControl;
+  /** Plan 1B-2: the platform's own staff token issuer. Present only when AUTH_MODE=native. */
+  readonly staffTokenIssuer?: NativeTokenIssuer;
   readonly rateLimiter: RedisRateLimiter;
   readonly idempotencyKeys: RedisIdempotencyKeyStore;
   readonly distributedLock: RedisDistributedLock;
@@ -243,42 +253,66 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
   // the package's actual production export, not a test double.
   const serializer: EventSerializer = new JsonEventSerializer();
 
-  if (config.AUTH_JWKS_URL === undefined || config.AUTH_ISSUER_URL === undefined) {
-    throw new Error(
-      "Runtime composition requires AUTH_ISSUER_URL + AUTH_JWKS_URL — there is no fake identity provider (D-048).",
-    );
-  }
-  const authenticator = new JwtVerifier({
-    issuer: config.AUTH_ISSUER_URL,
-    audience: config.AUTH_AUDIENCE,
-    jwksUrl: config.AUTH_JWKS_URL,
-    logger,
-  });
-
+  let authenticator: Authenticator;
   let accessControl: AccessControl;
-  if (config.KETO_READ_URL !== undefined) {
-    accessControl = new CachedAccessControl(
-      new KetoAccessControl({
-        readUrl: config.KETO_READ_URL,
-        fetch: createOryFetch(config.ORY_API_KEY),
-        // Same signal createOryFetch uses (isOryNetworkApiKey, not a bare !== undefined — a
-        // blank-but-set key must resolve the same way in both places, see that function's doc):
-        // an API key means Ory Network, whose OPL-compiled namespaces require subject-set tuples
-        // (see keto.ts's subjectConvention doc). Absent ⇒ self-hosted Keto
-        // (infrastructure/docker/keto/keto.yml), unchanged subject_id behavior.
-        subjectConvention: isOryNetworkApiKey(config.ORY_API_KEY) ? "subject_set" : "subject_id",
-        logger,
-      }),
-      redis.cache,
-    );
-  } else if (config.APP_ENV === "local") {
-    // Local-only escape hatch; anything else without Keto fails CLOSED at startup.
-    accessControl = { authorize: () => Promise.resolve(true) };
-    logger.warn("authorization is permissive: KETO_READ_URL unset and APP_ENV=local");
+  let staffTokenIssuer: NativeTokenIssuer | undefined;
+  if (config.AUTH_MODE === "native") {
+    if (config.AUTH_SIGNING_KEY === undefined || config.AUTH_ISSUER_URL === undefined) {
+      throw new Error("AUTH_MODE=native requires AUTH_SIGNING_KEY + AUTH_ISSUER_URL (Plan 1B-2).");
+    }
+    staffTokenIssuer = new NativeTokenIssuer({
+      privateKey: loadSigningKey(config.AUTH_SIGNING_KEY),
+      issuer: config.AUTH_ISSUER_URL,
+      audience: config.AUTH_AUDIENCE,
+      ttlSeconds: config.STAFF_TOKEN_TTL_SECONDS,
+    });
+    // buildRuntimeCore is synchronous: resolve the local JWKS lazily, once.
+    const resolver = localKeyResolver(staffTokenIssuer);
+    authenticator = new JwtVerifier({
+      issuer: config.AUTH_ISSUER_URL,
+      audience: config.AUTH_AUDIENCE,
+      getKey: (header, token) => resolver.then((getKey) => getKey(header, token)),
+      logger,
+    });
+    accessControl = new RoleTableAccessControl();
+    logger.info("auth: native staff sign-in (own ES256 issuer, role-table authorization)");
   } else {
-    throw new Error(
-      "KETO_READ_URL is required outside APP_ENV=local (authorization fails closed).",
-    );
+    if (config.AUTH_JWKS_URL === undefined || config.AUTH_ISSUER_URL === undefined) {
+      throw new Error(
+        "Runtime composition requires AUTH_ISSUER_URL + AUTH_JWKS_URL — there is no fake identity provider (D-048).",
+      );
+    }
+    authenticator = new JwtVerifier({
+      issuer: config.AUTH_ISSUER_URL,
+      audience: config.AUTH_AUDIENCE,
+      jwksUrl: config.AUTH_JWKS_URL,
+      logger,
+    });
+
+    if (config.KETO_READ_URL !== undefined) {
+      accessControl = new CachedAccessControl(
+        new KetoAccessControl({
+          readUrl: config.KETO_READ_URL,
+          fetch: createOryFetch(config.ORY_API_KEY),
+          // Same signal createOryFetch uses (isOryNetworkApiKey, not a bare !== undefined — a
+          // blank-but-set key must resolve the same way in both places, see that function's doc):
+          // an API key means Ory Network, whose OPL-compiled namespaces require subject-set tuples
+          // (see keto.ts's subjectConvention doc). Absent ⇒ self-hosted Keto
+          // (infrastructure/docker/keto/keto.yml), unchanged subject_id behavior.
+          subjectConvention: isOryNetworkApiKey(config.ORY_API_KEY) ? "subject_set" : "subject_id",
+          logger,
+        }),
+        redis.cache,
+      );
+    } else if (config.APP_ENV === "local") {
+      // Local-only escape hatch; anything else without Keto fails CLOSED at startup.
+      accessControl = { authorize: () => Promise.resolve(true) };
+      logger.warn("authorization is permissive: KETO_READ_URL unset and APP_ENV=local");
+    } else {
+      throw new Error(
+        "KETO_READ_URL is required outside APP_ENV=local (authorization fails closed).",
+      );
+    }
   }
 
   const health = new HealthRegistry();
@@ -316,7 +350,12 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
   // config presence. `assertProductionMfaConfigured` (api.ts) checks the resolved provider's
   // identity, not this composition's branching, so `local` and non-local share this exact path.
   const mfaProviders: MfaProviderResolver = new MapMfaProviderResolver([
-    new TotpMfaProvider(new NodeCrypto(), clock),
+    // G-87: secrets are encrypted under MFA_TOTP_KEY when set; absent ⇒ the legacy constant (local only).
+    new TotpMfaProvider(
+      new NodeCrypto(),
+      clock,
+      config.MFA_TOTP_KEY === undefined ? {} : { keyRef: config.MFA_TOTP_KEY },
+    ),
   ]);
 
   // C2-2: same present/absent convention as `objectStorage` above — `undefined` here is the exact
@@ -374,6 +413,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     serializer,
     authenticator,
     accessControl,
+    ...(staffTokenIssuer === undefined ? {} : { staffTokenIssuer }),
     rateLimiter: new RedisRateLimiter(redis.client),
     idempotencyKeys: new RedisIdempotencyKeyStore(redis.client),
     distributedLock: new RedisDistributedLock(redis.client),

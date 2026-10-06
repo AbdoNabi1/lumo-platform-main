@@ -523,6 +523,20 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // T10.4: `multi` swaps the pinned resolver for the claim → header chain and runs the boot
     // assertion inside createAdminHttpApi. `tenantId` below is still passed because the tenancy
     // context (ADR-0014 8f) alone stays pinned to it; its routes reject every other tenant.
+    // Plan 1B-2: native staff sign-in (present only when AUTH_MODE=native) and the one-time first owner.
+    ...(runtime.staffTokenIssuer === undefined
+      ? {}
+      : { staffTokenIssuer: runtime.staffTokenIssuer }),
+    staffTokenTtlSeconds: runtime.config.STAFF_TOKEN_TTL_SECONDS,
+    ...(runtime.config.BOOTSTRAP_OWNER_EMAIL === undefined ||
+    runtime.config.BOOTSTRAP_OWNER_PASSWORD === undefined
+      ? {}
+      : {
+          bootstrapOwner: {
+            email: runtime.config.BOOTSTRAP_OWNER_EMAIL,
+            password: runtime.config.BOOTSTRAP_OWNER_PASSWORD,
+          },
+        }),
     tenantMode: runtime.config.TENANT_MODE,
     tenantId: runtime.config.TENANT_DEFAULT_ID,
     ...(runtime.config.PLATFORM_STORE_DOMAIN === undefined
