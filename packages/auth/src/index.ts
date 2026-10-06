@@ -19,3 +19,8 @@ export {
   type NativeStaffClaims,
   type NativeTokenIssuerOptions,
 } from "./native-token-issuer";
+export {
+  ROLE_PERMISSIONS,
+  RoleTableAccessControl,
+  permissionMatches,
+} from "./role-table-access-control";
