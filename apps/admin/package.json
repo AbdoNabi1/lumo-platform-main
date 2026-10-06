@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@platform/analytics": "workspace:*",
+    "@platform/auth": "workspace:*",
     "@platform/automation": "workspace:*",
     "@platform/cart": "workspace:*",
     "@platform/catalog": "workspace:*",

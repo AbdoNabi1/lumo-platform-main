@@ -35,6 +35,7 @@ import { platformConsoleRoutes } from "./platform-console-routes";
 import { promotionsRoutes } from "./promotions-routes";
 import { mapPage, publicCatalogRoutes } from "./public-catalog-routes";
 import { publicAuthRoutes } from "./public-auth-routes";
+import { publicStaffAuthRoutes } from "./public-staff-auth-routes";
 import { publicCartRoutes } from "./public-cart-routes";
 import { publicCheckoutRoutes } from "./public-checkout-routes";
 import { publicLoyaltyRoutes } from "./public-loyalty-routes";
@@ -1866,6 +1867,7 @@ export function adminRoutes(
     ...platformConsoleRoutes(admin),
     ...promotionsRoutes(admin),
     ...publicAuthRoutes(admin, options.rateLimiter),
+    ...publicStaffAuthRoutes(admin, options.rateLimiter),
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),
     ...publicCheckoutRoutes(admin),

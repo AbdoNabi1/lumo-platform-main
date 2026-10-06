@@ -67,6 +67,9 @@ importers:
       '@platform/analytics':
         specifier: workspace:*
         version: link:../../services/analytics
+      '@platform/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@platform/automation':
         specifier: workspace:*
         version: link:../../services/automation

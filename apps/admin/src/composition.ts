@@ -1,4 +1,5 @@
 import { wireAnalytics } from "@platform/analytics";
+import type { NativeTokenIssuer } from "@platform/auth";
 import { wireAutomation } from "@platform/automation";
 import { wireCart, type CartController } from "@platform/cart";
 import {
@@ -91,6 +92,7 @@ import {
   type MfaProviderResolver,
   type PasswordRegistrar,
   type SecurityController,
+  type WiredSecurity,
 } from "@platform/security";
 import { wireSeo } from "@platform/seo";
 import { wireShipping } from "@platform/shipping";
@@ -120,6 +122,7 @@ import { AdminGuard } from "./interfaces/admin-guard";
 import { CustomerAuthAdminController } from "./interfaces/customer-auth.admin-controller";
 import type { CustomerCredentialsPort } from "./interfaces/customer-credentials.port";
 import { CustomerGuard } from "./interfaces/customer-guard";
+import { StaffAuthAdminController } from "./interfaces/staff-auth.admin-controller";
 import type { SignupEmailPort } from "./interfaces/signup-email.port";
 import { AnalyticsAdminController } from "./interfaces/analytics.admin-controller";
 import { AutomationAdminController } from "./interfaces/automation.admin-controller";
@@ -251,6 +254,10 @@ export interface AdminWiringDeps {
    * Absent ⇒ Security's in-memory reference provider (tests/local), as before.
    */
   readonly passwordAuthProvider?: AuthenticationProviderPort & PasswordRegistrar;
+  /** Plan 1B-2: the platform's own token issuer; absent ⇒ staff login/JWKS answer 503. */
+  readonly staffTokenIssuer?: NativeTokenIssuer;
+  /** Plan 1B-2: staff session/token lifetime in seconds (default 7200). */
+  readonly staffTokenTtlSeconds?: number;
   /**
    * Production PSP-backed billing collection for Licensing (M2-3). Passed straight through to
    * `wireLicensing(deps)` below; absent ⇒ Licensing's own always-succeeds in-memory stub, same as
@@ -484,6 +491,13 @@ export interface WiredAdmin {
    * its `requireSession` seam rather than building a second one.
    */
   readonly customerAuth: CustomerAuthAdminController;
+  /** Plan 1B-2: native staff sign-in (password → role keys → platform-signed token) and JWKS. */
+  readonly staffAuth: StaffAuthAdminController;
+  /** Plan 1B-2: the parts of Security the staff login and the owner bootstrap drive directly. */
+  readonly securityWiring: Pick<
+    WiredSecurity,
+    "security" | "identityDirectory" | "passwordRegistrar"
+  >;
   /** Drains every wired context's outbox once; returns the total number of events published. */
   readonly drainOutbox: () => Promise<number>;
   /** Integration-event types delivered so far across all wired contexts (for demonstration/tests). */
@@ -1068,6 +1082,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       signupEmail,
       signupCompletionUrlBase,
     }),
+    staffAuth: new StaffAuthAdminController({
+      security: security.security,
+      ...(deps.staffTokenIssuer === undefined ? {} : { issuer: deps.staffTokenIssuer }),
+      sessionTtlSeconds: deps.staffTokenTtlSeconds ?? 7200,
+    }),
+    securityWiring: security,
     drainOutbox: async () => {
       let total = 0;
       for (const context of contexts) {
