@@ -137,18 +137,19 @@ export class StaffAuthAdminController {
     if (passwordReset === undefined || emailSender === undefined || adminPublicUrl === undefined) {
       return RESET_SENT;
     }
-    const issued = await passwordReset.request(input.tenantId, staffIdentifier(input.email));
-    if (issued !== null) {
-      const origin = adminPublicUrl.replace(/\/$/, "");
-      const link = `${origin}/reset-password?token=${encodeURIComponent(issued.token)}`;
-      try {
+    try {
+      const issued = await passwordReset.request(input.tenantId, staffIdentifier(input.email));
+      if (issued !== null) {
+        const origin = adminPublicUrl.replace(/\/$/, "");
+        const link = `${origin}/reset-password?token=${encodeURIComponent(issued.token)}`;
         await emailSender.send({
           to: input.email.trim().toLowerCase(),
           ...passwordResetEmail(link),
         });
-      } catch {
-        // A provider failure must not change the answer (no enumeration); the token simply expires.
       }
+    } catch {
+      // A store or provider failure must not change the answer: a 500 only for real accounts would
+      // tell them apart (no enumeration). The token, if one was stored, simply expires.
     }
     return RESET_SENT;
   }

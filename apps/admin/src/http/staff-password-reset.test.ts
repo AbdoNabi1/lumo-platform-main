@@ -7,6 +7,7 @@ import {
   HashedPasswordAuthProvider,
   InMemoryPasswordCredentialStore,
   ScryptPasswordHasher,
+  type PasswordResetTokenStore,
 } from "@platform/security";
 import type { RouteDefinition } from "@platform/http";
 import { wireAdmin, type WiredAdmin } from "../composition";
@@ -41,7 +42,7 @@ class RecordingSender {
 }
 const tokenFrom = (text: string) => /https?:\/\/\S+token=([A-Za-z0-9_-]+)/.exec(text)?.[1] ?? "";
 
-function setup(rateLimiter?: RateLimiter) {
+function setup(rateLimiter?: RateLimiter, passwordResetTokens?: PasswordResetTokenStore) {
   let n = 0;
   const idGenerator: IdGenerator = {
     generate: () => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`,
@@ -65,6 +66,7 @@ function setup(rateLimiter?: RateLimiter) {
     }),
     emailSender: sender,
     adminPublicUrl: "https://admin.test",
+    ...(passwordResetTokens === undefined ? {} : { passwordResetTokens }),
   });
   return {
     admin,
@@ -199,6 +201,19 @@ describe("staff password reset and change (Plan 1C)", () => {
     const res = await call(find(publicRoutes, "POST", REQUEST), { email: "owner@example.test" });
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ outcome: "sent-if-exists" });
+  });
+
+  it("a token-store failure still answers the same 202 (no 500 that tells a real account apart)", async () => {
+    const failing: PasswordResetTokenStore = {
+      save: () => Promise.reject(new Error("relation does not exist")),
+      consume: () => Promise.reject(new Error("relation does not exist")),
+    };
+    const { admin, publicRoutes, sender } = setup(undefined, failing);
+    await seedStaff(admin, "platform-admin");
+    const res = await call(find(publicRoutes, "POST", REQUEST), { email: "owner@example.test" });
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ outcome: "sent-if-exists" });
+    expect(sender.sent).toHaveLength(0);
   });
 
   it("the sixth request inside an hour is 429, keyed by tenant and normalised email", async () => {
