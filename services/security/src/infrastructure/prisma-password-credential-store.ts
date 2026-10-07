@@ -34,6 +34,25 @@ export class PrismaPasswordCredentialStore implements PasswordCredentialStore {
         };
   }
 
+  async findByPrincipal(
+    tenantId: string,
+    principalExternalId: string,
+  ): Promise<PasswordCredentialRecord | null> {
+    const row = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.securityPasswordCredential.findFirst({ where: { tenantId, principalExternalId } }),
+    );
+    return row === null
+      ? null
+      : {
+          tenantId: row.tenantId,
+          identifier: row.identifier,
+          principalExternalId: row.principalExternalId,
+          passwordHash: row.passwordHash,
+          failedAttempts: row.failedAttempts,
+          lockedUntil: row.lockedUntil,
+        };
+  }
+
   async save(input: {
     readonly tenantId: string;
     readonly identifier: string;

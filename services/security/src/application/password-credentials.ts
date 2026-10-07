@@ -19,6 +19,11 @@ export interface PasswordCredentialRecord {
 
 export interface PasswordCredentialStore {
   find(tenantId: string, identifier: string): Promise<PasswordCredentialRecord | null>;
+  /** Plan 1C: the credential owned by this principal (change-password has the principal, not the email). */
+  findByPrincipal(
+    tenantId: string,
+    principalExternalId: string,
+  ): Promise<PasswordCredentialRecord | null>;
   /** Insert or replace the hash and owner; resets failures and any lock. */
   save(input: {
     readonly tenantId: string;
