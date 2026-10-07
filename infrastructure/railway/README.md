@@ -300,6 +300,41 @@ Notes:
 
 **Rollback:** set `AUTH_MODE=ory` on both services (or delete it). Nothing else changes.
 
+### 4c. Email and password reset (Plan 1C) — off until a key is set
+
+Every email the platform sends goes through one sender, which uses [Resend](https://resend.com) when
+`RESEND_API_KEY` is set. Without the key nothing changes: emails are written to the log, **recipient
+and subject only, never the body or any link**.
+
+With the key and `ADMIN_PUBLIC_URL`, native sign-in gains:
+
+- **Forgot password:** "Forgot password?" on the login form emails a link that works **once** and
+  expires after **30 minutes**. The page answers the same way whether or not the email has an account.
+  Requests are limited to 5 per hour per email, and completions to 10 per 15 minutes per shop.
+- **Change password:** "Change password" in the account menu (needs the current password).
+- **Customer signup email** (G-72): the "complete your account" link is actually emailed instead of
+  logged.
+
+| Service | Variable           | Value                                                                  |
+| ------- | ------------------ | ---------------------------------------------------------------------- |
+| API     | `RESEND_API_KEY`   | secret, from Resend. Paste it straight into Railway; never into a chat |
+| API     | `EMAIL_FROM`       | optional; default `Morbeh <onboarding@resend.dev>`                     |
+| API     | `ADMIN_PUBLIC_URL` | `https://<admin-web domain>`, used to build the reset link             |
+
+Notes:
+
+- Resend's sandbox sender (`onboarding@resend.dev`) delivers **only to the email address the Resend
+  account was created with**. That is enough for the owner's own password reset. Sending to customers
+  needs a verified sending domain, which means buying a domain.
+- Only a SHA-256 hash of each reset token is stored; the table is `security.password_reset_tokens`.
+  Expired and used rows are never deleted yet (G-90).
+- **Deploy the migration first** (or together with the release), from the API Console:
+  `cd /app/packages/db && ./node_modules/.bin/prisma migrate deploy`. Expect
+  `20261007000000_security_password_reset_tokens`. Without the table, a reset request still answers
+  the same way but no link is sent.
+
+**Rollback:** delete `RESEND_API_KEY`. Emails go back to the log; the table stays, unused.
+
 ## 5. Deploy order
 
 1. Create the Postgres and Redis plugins first.
