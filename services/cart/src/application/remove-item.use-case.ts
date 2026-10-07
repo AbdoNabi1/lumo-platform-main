@@ -10,6 +10,8 @@ export interface RemoveItemInput {
   readonly tenantId: string;
   readonly cartId: string;
   readonly productId: string;
+  /** Plan 2A: the variant line to remove; absent addresses a legacy line by `productId`. */
+  readonly variantId?: string;
 }
 
 export interface RemoveItemOutput {
@@ -41,7 +43,7 @@ export class RemoveItem implements UseCase<RemoveItemInput, RemoveItemOutput, Do
       }
 
       try {
-        cart.removeItem(productRef.value.value);
+        cart.removeItem(input.variantId ?? productRef.value.value);
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;

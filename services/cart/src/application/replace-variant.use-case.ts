@@ -5,6 +5,7 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
+import type { CartLineMerchandise } from "../domain/cart-item";
 import { Quantity } from "../domain/value-objects/quantity";
 
 export interface ReplaceVariantInput {
@@ -12,7 +13,11 @@ export interface ReplaceVariantInput {
   readonly tenantId: string;
   readonly cartId: string;
   readonly oldProductId: string;
+  /** Plan 2A: the variant line being replaced; absent addresses a legacy line by `oldProductId`. */
+  readonly oldVariantId?: string;
   readonly newProductId: string;
+  /** Plan 2A: the replacement variant, resolved server-side. */
+  readonly newMerchandise?: CartLineMerchandise;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
@@ -60,11 +65,15 @@ export class ReplaceVariant implements UseCase<
       try {
         cart.replaceItemVariant(
           UniqueEntityId.from(this.deps.idGenerator.generate()),
-          input.oldProductId,
+          input.oldVariantId ?? input.oldProductId,
           newProductRef.value,
           quantity.value,
           unitPrice.value,
-          { inventoryAvailable: input.inventoryAvailable, metadata: input.metadata },
+          {
+            inventoryAvailable: input.inventoryAvailable,
+            metadata: input.metadata,
+            merchandise: input.newMerchandise,
+          },
         );
       } catch (error) {
         if (isDomainError(error)) return err(error);

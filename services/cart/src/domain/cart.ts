@@ -72,7 +72,8 @@ export class Cart extends AggregateRoot<CartProps> {
     if (unitPrice.currency !== this.props.currency) {
       throw new BusinessRuleError("Item currency does not match the cart currency");
     }
-    const existing = this.props.items.find((i) => i.productRef.value === productRef.value);
+    const lineKey = snapshots.merchandise?.variantRef ?? productRef.value;
+    const existing = this.props.items.find((i) => i.lineKey === lineKey);
     if (existing !== undefined) {
       existing.increaseBy(quantity);
       return;
@@ -80,28 +81,33 @@ export class Cart extends AggregateRoot<CartProps> {
     this.props.items.push(CartItem.create(itemId, productRef, quantity, unitPrice, snapshots));
   }
 
-  removeItem(productId: string): void {
+  /** `lineKey` is the variant ref of a variant line, or the product id of a legacy (variant-less) line. */
+  removeItem(lineKey: string): void {
     this.ensureActive();
-    const item = this.props.items.find((i) => i.productRef.value === productId);
+    const item = this.props.items.find((i) => i.lineKey === lineKey);
     if (item === undefined) {
       throw new BusinessRuleError("Item not found in cart");
     }
     this.props.items.splice(this.props.items.indexOf(item), 1);
   }
 
-  changeItemQuantity(productId: string, quantity: Quantity): void {
+  /** `lineKey` is the variant ref of a variant line, or the product id of a legacy (variant-less) line. */
+  changeItemQuantity(lineKey: string, quantity: Quantity): void {
     this.ensureActive();
-    const item = this.props.items.find((i) => i.productRef.value === productId);
+    const item = this.props.items.find((i) => i.lineKey === lineKey);
     if (item === undefined) {
       throw new BusinessRuleError("Item not found in cart");
     }
     item.changeQuantityTo(quantity);
   }
 
-  /** Replaces a line's product (e.g. a different variant), carrying a fresh price/quantity snapshot. */
+  /**
+   * Replaces a line's product (e.g. a different variant), carrying a fresh price/quantity snapshot.
+   * `oldLineKey` is the variant ref of a variant line, or the product id of a legacy line.
+   */
   replaceItemVariant(
     itemId: UniqueEntityId,
-    oldProductId: string,
+    oldLineKey: string,
     newProductRef: ProductRef,
     quantity: Quantity,
     unitPrice: Money,
@@ -111,7 +117,7 @@ export class Cart extends AggregateRoot<CartProps> {
     if (unitPrice.currency !== this.props.currency) {
       throw new BusinessRuleError("Item currency does not match the cart currency");
     }
-    const index = this.props.items.findIndex((i) => i.productRef.value === oldProductId);
+    const index = this.props.items.findIndex((i) => i.lineKey === oldLineKey);
     if (index === -1) {
       throw new BusinessRuleError("Item not found in cart");
     }
@@ -142,7 +148,7 @@ export class Cart extends AggregateRoot<CartProps> {
       throw new BusinessRuleError("Cannot merge carts with different currencies");
     }
     for (const item of source.items) {
-      const existing = this.props.items.find((i) => i.productRef.value === item.productRef.value);
+      const existing = this.props.items.find((i) => i.lineKey === item.lineKey);
       if (existing !== undefined) {
         existing.increaseBy(item.quantity);
       } else {

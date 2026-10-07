@@ -11,6 +11,8 @@ export interface ChangeItemQuantityInput {
   readonly tenantId: string;
   readonly cartId: string;
   readonly productId: string;
+  /** Plan 2A: the variant line to change; absent addresses a legacy line by `productId`. */
+  readonly variantId?: string;
   readonly quantity: number;
 }
 
@@ -51,7 +53,7 @@ export class ChangeItemQuantity implements UseCase<
       }
 
       try {
-        cart.changeItemQuantity(productRef.value.value, quantity.value);
+        cart.changeItemQuantity(input.variantId ?? productRef.value.value, quantity.value);
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;

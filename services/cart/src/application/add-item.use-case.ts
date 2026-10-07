@@ -5,6 +5,7 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
+import type { CartLineMerchandise } from "../domain/cart-item";
 import { Quantity } from "../domain/value-objects/quantity";
 
 export interface AddItemInput {
@@ -20,6 +21,8 @@ export interface AddItemInput {
   readonly inventoryAvailable?: number;
   /** Free-form caller metadata (e.g. selected variant options), stored verbatim (Sprint 4.5). */
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /** Plan 2A: the exact variant being sold, resolved server-side (never client-supplied). */
+  readonly merchandise?: CartLineMerchandise;
 }
 
 export interface AddItemOutput {
@@ -61,7 +64,11 @@ export class AddItem implements UseCase<AddItemInput, AddItemOutput, DomainError
           productRef.value,
           quantity.value,
           unitPrice.value,
-          { inventoryAvailable: input.inventoryAvailable, metadata: input.metadata },
+          {
+            inventoryAvailable: input.inventoryAvailable,
+            metadata: input.metadata,
+            merchandise: input.merchandise,
+          },
         );
       } catch (error) {
         if (isDomainError(error)) return err(error);
