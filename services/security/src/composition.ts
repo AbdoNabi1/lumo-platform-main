@@ -158,6 +158,9 @@ import type {
   MfaProviderResolver,
 } from "./application/auth-ports";
 import type { PasswordRegistrar } from "./application/password-credentials";
+import { PasswordResetService, type PasswordResetTokenStore } from "./application/password-reset";
+import { HashedPasswordAuthProvider } from "./infrastructure/hashed-password-auth-provider";
+import { InMemoryPasswordResetTokenStore } from "./infrastructure/in-memory-password-reset-token-store";
 import type { ThreatIntelResolver } from "./application/threat-ports";
 import type { RelationshipCheckPort } from "./application/authz-ports";
 import { CheckConsent } from "./application/consent.use-cases";
@@ -253,6 +256,8 @@ export interface SecurityWiringDeps {
    * Absent ⇒ the in-memory reference provider, exactly as before this field existed.
    */
   readonly passwordAuthProvider?: AuthenticationProviderPort & PasswordRegistrar;
+  /** Plan 1C: where password-reset tokens live. Absent ⇒ in-memory (tests/local). */
+  readonly passwordResetTokens?: PasswordResetTokenStore;
 }
 
 /** The persistence + outbox infrastructure — Prisma-backed in production, in-memory for tests. */
@@ -385,6 +390,8 @@ export interface WiredSecurity {
   readonly passwordProvider: InMemoryPasswordAuthProvider;
   /** Plan 1B-1: where passwords are written — the injected durable provider, else the reference one. */
   readonly passwordRegistrar: PasswordRegistrar;
+  /** Plan 1C: built only when the durable (hashed) password provider is injected; else undefined. */
+  readonly passwordReset: PasswordResetService | undefined;
   readonly totpProvider: InMemoryTotpMfaProvider;
   readonly geoIp: InMemoryGeoIp;
   readonly threatProvider: InMemoryThreatIntelProvider;
@@ -461,6 +468,15 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     // The reference provider has no lookup; it is tests/local only, so the owner bootstrap simply re-runs.
     hasCredential: () => Promise.resolve(false),
   };
+  const passwordReset =
+    deps.passwordAuthProvider instanceof HashedPasswordAuthProvider
+      ? new PasswordResetService({
+          tokens: deps.passwordResetTokens ?? new InMemoryPasswordResetTokenStore(),
+          credentials: deps.passwordAuthProvider.credentialStore,
+          registrar: deps.passwordAuthProvider,
+          clock: deps.clock,
+        })
+      : undefined;
   // C2-4: `deps.mfaProviders` overrides the hardcoded-code reference stub — same seam pattern as
   // identityDirectory/kms/crypto below. Still exposed via WiredSecurity.totpProvider unconditionally
   // (tests/local dev seed it directly), but it only backs LIVE verification when nothing real was injected.
@@ -719,6 +735,7 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     telemetry,
     passwordProvider,
     passwordRegistrar,
+    passwordReset,
     totpProvider,
     geoIp,
     threatProvider,

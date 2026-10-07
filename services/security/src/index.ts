@@ -301,3 +301,12 @@ export {
   type PasswordRegistrar,
 } from "./application/password-credentials";
 export { PrismaPasswordCredentialStore } from "./infrastructure/prisma-password-credential-store";
+// Plan 1C: single-use, expiring password reset tokens.
+export {
+  PasswordResetService,
+  hashResetToken,
+  type PasswordResetTokenRecord,
+  type PasswordResetTokenStore,
+} from "./application/password-reset";
+export { InMemoryPasswordResetTokenStore } from "./infrastructure/in-memory-password-reset-token-store";
+export { PrismaPasswordResetTokenStore } from "./infrastructure/prisma-password-reset-token-store";

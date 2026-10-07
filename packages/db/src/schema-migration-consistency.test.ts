@@ -204,3 +204,39 @@ describe("security.password_credentials — migration history matches the Prisma
     expect(allSql).toContain('CREATE UNIQUE INDEX "password_credentials_tenant_id_identifier_key"');
   });
 });
+
+describe("security.password_reset_tokens — migration history matches the Prisma model (Plan 1C)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("every required column was created by some migration", () => {
+    const actual = columnsEverAddedTo("security", "password_reset_tokens", allSql);
+    for (const column of [
+      "id",
+      "tenant_id",
+      "token_hash",
+      "identifier",
+      "expires_at",
+      "used_at",
+      "created_at",
+    ]) {
+      expect(actual.has(column), `expected "security"."password_reset_tokens"."${column}"`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("is RLS-forced and unique per (tenant, token hash)", () => {
+    expect(allSql).toContain(
+      'ALTER TABLE "security"."password_reset_tokens" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(allSql).toContain(
+      'CREATE POLICY tenant_isolation ON "security"."password_reset_tokens"',
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "password_reset_tokens_tenant_id_token_hash_key"',
+    );
+  });
+});

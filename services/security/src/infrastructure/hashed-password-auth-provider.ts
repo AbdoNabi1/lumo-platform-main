@@ -42,6 +42,11 @@ export class HashedPasswordAuthProvider implements AuthenticationProviderPort, P
     this.lockoutMs = (deps.lockoutSeconds ?? 900) * 1000;
   }
 
+  /** Plan 1C: read access for the reset service and change-password; never exposes a hash outward. */
+  get credentialStore(): PasswordCredentialStore {
+    return this.deps.store;
+  }
+
   async setPassword(input: {
     readonly tenantId: string;
     readonly identifier: string;

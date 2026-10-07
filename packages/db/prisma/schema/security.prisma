@@ -427,3 +427,20 @@ model SecurityPasswordCredential {
   @@map("password_credentials")
   @@schema("security")
 }
+
+// Plan 1C — single-use password reset tokens. Only SHA-256(token) is stored; the token lives in the
+// email link alone. Expired/used rows are inert; a later retention job may delete them.
+model SecurityPasswordResetToken {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id")
+  tokenHash  String    @map("token_hash")
+  identifier String
+  expiresAt  DateTime  @map("expires_at")
+  usedAt     DateTime? @map("used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@unique([tenantId, tokenHash])
+  @@index([tenantId, identifier])
+  @@map("password_reset_tokens")
+  @@schema("security")
+}
