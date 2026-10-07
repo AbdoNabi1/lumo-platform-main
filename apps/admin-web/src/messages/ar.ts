@@ -61,6 +61,7 @@ export const ar: Dictionary = {
     messages: "الرسائل",
     account: "الحساب",
     signOut: "تسجيل الخروج",
+    changePassword: "تغيير كلمة السر",
     language: "اللغة",
   },
   header: {

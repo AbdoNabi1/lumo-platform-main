@@ -58,14 +58,21 @@ interface LoginPageProps {
     readonly flow?: string;
     readonly error?: string;
     readonly return_to?: string;
+    readonly reset?: string;
   }>;
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { login_challenge: loginChallenge, flow, error, return_to: returnTo } = await searchParams;
+  const {
+    login_challenge: loginChallenge,
+    flow,
+    error,
+    return_to: returnTo,
+    reset,
+  } = await searchParams;
 
   // Plan 1B-2: native mode is a plain email/password form — no Hydra challenge, no Kratos flow.
-  if (isNativeAuth()) return <NativeLoginForm error={error} returnTo={returnTo} />;
+  if (isNativeAuth()) return <NativeLoginForm error={error} returnTo={returnTo} reset={reset} />;
 
   if (loginChallenge !== undefined) {
     await handleLoginChallenge(loginChallenge);

@@ -27,6 +27,8 @@ export interface CurrentUser {
   readonly name: string;
   readonly role: string;
   readonly initials: string;
+  /** Plan 1C: true under native sign-in, the only mode where the staff member owns a password here. */
+  readonly canChangePassword?: boolean;
 }
 
 interface AppShellProps {

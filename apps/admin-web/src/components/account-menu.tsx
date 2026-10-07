@@ -1,6 +1,7 @@
 "use client";
 
-import { LogOutIcon } from "lucide-react";
+import Link from "next/link";
+import { KeyRoundIcon, LogOutIcon } from "lucide-react";
 import {
   Avatar,
   AvatarFallback,
@@ -45,6 +46,14 @@ export function AccountMenu({ t, user }: { readonly t: Dictionary; readonly user
           <span className="text-muted-foreground truncate text-xs">{user.role}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {user.canChangePassword === true && (
+          <DropdownMenuItem asChild>
+            <Link href="/account/password">
+              <KeyRoundIcon aria-hidden="true" />
+              {t.topbar.changePassword}
+            </Link>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem asChild>
           <a href="/logout">
             <LogOutIcon aria-hidden="true" className="rtl:-scale-x-100" />

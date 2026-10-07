@@ -53,6 +53,10 @@ const PUBLIC_PREFIXES = [
   "/consent",
   "/auth/callback",
   "/auth/native-login",
+  "/forgot-password",
+  "/reset-password",
+  "/auth/forgot",
+  "/auth/reset",
   "/logout",
   "/api/healthz",
 ];
@@ -116,6 +120,7 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/inventory", "operator"],
   ["/pricing", "operator"],
   ["/analytics", "viewer"],
+  ["/account/password", "viewer"],
   ["/", "viewer"],
 ];
 

@@ -56,6 +56,7 @@ export const en = {
     messages: "Messages",
     account: "Account",
     signOut: "Sign out",
+    changePassword: "Change password",
     language: "Language",
   },
   header: {

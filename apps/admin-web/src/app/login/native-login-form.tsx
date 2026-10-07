@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Button, Card, CardContent, Input, Label } from "@platform/ui";
 import { BrandMark } from "@/components/brand-mark";
 
@@ -8,14 +9,23 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   unavailable: "Sign-in is temporarily unavailable / الدخول غير متاح مؤقتاً",
 };
 
+/** Plan 1C: neutral notices after the forgot-password / reset-password round trips. */
+const NOTICE_TEXT: Readonly<Record<string, string>> = {
+  done: "Password changed. Sign in / اتغيرت كلمة السر، ادخل",
+  sent: "If the account exists, a reset link is on its way / لو الحساب موجود، هيوصلك لينك إعادة التعيين",
+};
+
 export function NativeLoginForm({
   error,
   returnTo,
+  reset,
 }: {
   readonly error: string | undefined;
   readonly returnTo: string | undefined;
+  readonly reset?: string | undefined;
 }) {
   const message = error === undefined ? undefined : ERROR_TEXT[error];
+  const notice = reset === undefined ? undefined : NOTICE_TEXT[reset];
   return (
     <main className="lumo-canvas flex min-h-dvh items-center justify-center px-4">
       <Card className="w-full max-w-sm">
@@ -27,6 +37,15 @@ export function NativeLoginForm({
             </span>
           </div>
           <p className="text-muted-foreground -mt-4 mb-6 text-sm">Sign in to continue.</p>
+
+          {notice !== undefined && message === undefined && (
+            <div
+              role="status"
+              className="bg-success-subtle text-success-foreground mb-4 rounded-xl px-3.5 py-2.5 text-sm"
+            >
+              <p>{notice}</p>
+            </div>
+          )}
 
           {message !== undefined && (
             <div
@@ -57,6 +76,11 @@ export function NativeLoginForm({
               Sign in
             </Button>
           </form>
+          <p className="mt-4 text-center text-sm">
+            <Link href="/forgot-password" className="text-muted-foreground underline">
+              Forgot password? / نسيت كلمة السر؟
+            </Link>
+          </p>
         </CardContent>
       </Card>
     </main>
