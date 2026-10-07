@@ -35,6 +35,10 @@ model OrderItem {
   name                 String
   unitPriceAmountMinor Int    @map("unit_price_amount_minor")
   quantity             Int
+  /// Plan 2A: snapshot of the variant sold; null on orders placed before variants were tracked.
+  variantRef           String? @map("variant_ref")
+  sku                  String?
+  variantTitle         String? @map("variant_title")
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
 

@@ -240,3 +240,29 @@ describe("security.password_reset_tokens — migration history matches the Prism
     );
   });
 });
+
+describe("cart.cart_items and orders.order_items — variant lines (Plan 2A)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("cart_items gained the nullable variant snapshot columns", () => {
+    const actual = columnsEverAddedTo("cart", "cart_items", allSql);
+    for (const column of ["variant_ref", "sku", "title", "variant_title"]) {
+      expect(actual.has(column), `expected "cart"."cart_items"."${column}"`).toBe(true);
+    }
+  });
+
+  it("order_items gained the nullable variant snapshot columns", () => {
+    const actual = columnsEverAddedTo("orders", "order_items", allSql);
+    for (const column of ["variant_ref", "sku", "variant_title"]) {
+      expect(actual.has(column), `expected "orders"."order_items"."${column}"`).toBe(true);
+    }
+  });
+
+  it("widens cart line uniqueness to (cart, product, variant) keeping legacy lines unique", () => {
+    expect(allSql).toContain('DROP INDEX IF EXISTS "cart"."cart_items_cart_id_product_ref_key";');
+    expect(allSql).toContain("NULLS NOT DISTINCT");
+  });
+});
