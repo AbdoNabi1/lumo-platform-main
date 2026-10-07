@@ -14,6 +14,15 @@ const staffLoginBody = z
   })
   .strict();
 
+const staffResetRequestBody = z.object({ email: z.string().min(3).max(320) }).strict();
+const staffResetCompleteBody = z
+  .object({ token: z.string().min(1).max(256), password: z.string().min(1).max(256) })
+  .strict();
+
+const STAFF_RESET_REQUEST_LIMIT = 5;
+const STAFF_RESET_REQUEST_WINDOW_MS = 60 * 60 * 1000;
+const STAFF_RESET_COMPLETE_LIMIT = 10;
+const STAFF_RESET_COMPLETE_WINDOW_MS = 15 * 60 * 1000;
 const STAFF_LOGIN_LIMIT = 10;
 const STAFF_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
@@ -27,6 +36,14 @@ const STAFF_LOGIN_WINDOW_MS = 15 * 60 * 1000;
  * normalisation `staffIdentifier` applies) and counts every attempt, successful or not, whether or not
  * the account exists — so a refusal reveals nothing about the account.
  */
+function rateLimited(retryAfterMs: number, message: string) {
+  return {
+    status: 429,
+    body: { code: "RATE_LIMITED", message, retryable: true, fields: [], retryAfterMs },
+    headers: { "retry-after": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+  };
+}
+
 export function publicStaffAuthRoutes(
   admin: WiredAdmin,
   rateLimiter?: RateLimiter,
@@ -64,6 +81,58 @@ export function publicStaffAuthRoutes(
         return admin.staffAuth.login({
           tenantId: context.tenantId,
           email: body.email,
+          password: body.password,
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/staff/password-reset/request",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary: "Public: email a staff member a single-use password-reset link (always 202)",
+      schema: { body: staffResetRequestBody },
+      handle: async ({ body, context }) => {
+        if (rateLimiter !== undefined) {
+          const normalised = staffIdentifier(body.email).slice(STAFF_IDENTIFIER_PREFIX.length);
+          const decision = await rateLimiter.consume(
+            `rl:${context.tenantId}:staff-reset-request:${normalised}`,
+            STAFF_RESET_REQUEST_LIMIT,
+            STAFF_RESET_REQUEST_WINDOW_MS,
+          );
+          if (!decision.allowed) {
+            return rateLimited(decision.retryAfterMs, "Too many reset requests for this email");
+          }
+        }
+        return admin.staffAuth.requestPasswordReset({
+          tenantId: context.tenantId,
+          email: body.email,
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/staff/password-reset/complete",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary: "Public: set a new staff password with a reset token",
+      schema: { body: staffResetCompleteBody },
+      handle: async ({ body, context }) => {
+        if (rateLimiter !== undefined) {
+          const decision = await rateLimiter.consume(
+            `rl:${context.tenantId}:staff-reset-complete`,
+            STAFF_RESET_COMPLETE_LIMIT,
+            STAFF_RESET_COMPLETE_WINDOW_MS,
+          );
+          if (!decision.allowed) {
+            return rateLimited(decision.retryAfterMs, "Too many password reset attempts");
+          }
+        }
+        return admin.staffAuth.completePasswordReset({
+          tenantId: context.tenantId,
+          token: body.token,
           password: body.password,
         });
       },

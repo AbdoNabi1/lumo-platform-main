@@ -88,9 +88,11 @@ import { wireReviews, type ReviewsController } from "@platform/reviews";
 import { wireSearch } from "@platform/search";
 import {
   wireSecurity,
+  HashedPasswordAuthProvider,
   type AuthenticationProviderPort,
   type MfaProviderResolver,
   type PasswordRegistrar,
+  type PasswordResetTokenStore,
   type SecurityController,
   type WiredSecurity,
 } from "@platform/security";
@@ -123,6 +125,7 @@ import { CustomerAuthAdminController } from "./interfaces/customer-auth.admin-co
 import type { CustomerCredentialsPort } from "./interfaces/customer-credentials.port";
 import { CustomerGuard } from "./interfaces/customer-guard";
 import { StaffAuthAdminController } from "./interfaces/staff-auth.admin-controller";
+import type { EmailSender } from "./interfaces/email-sender.port";
 import type { SignupEmailPort } from "./interfaces/signup-email.port";
 import { AnalyticsAdminController } from "./interfaces/analytics.admin-controller";
 import { AutomationAdminController } from "./interfaces/automation.admin-controller";
@@ -256,6 +259,12 @@ export interface AdminWiringDeps {
   readonly passwordAuthProvider?: AuthenticationProviderPort & PasswordRegistrar;
   /** Plan 1B-2: the platform's own token issuer; absent ⇒ staff login/JWKS answer 503. */
   readonly staffTokenIssuer?: NativeTokenIssuer;
+  /** Plan 1C: the platform's one email sender; absent ⇒ forgot-password answers 202 and sends nothing. */
+  readonly emailSender?: EmailSender;
+  /** Plan 1C: public origin of admin-web, used to build the reset link (e.g. https://admin.example.com). */
+  readonly adminPublicUrl?: string;
+  /** Plan 1C: where reset tokens live; passed straight through to `wireSecurity(deps)`. Absent ⇒ in-memory. */
+  readonly passwordResetTokens?: PasswordResetTokenStore;
   /** Plan 1B-2: staff session/token lifetime in seconds (default 7200). */
   readonly staffTokenTtlSeconds?: number;
   /**
@@ -1086,6 +1095,15 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       security: security.security,
       ...(deps.staffTokenIssuer === undefined ? {} : { issuer: deps.staffTokenIssuer }),
       sessionTtlSeconds: deps.staffTokenTtlSeconds ?? 7200,
+      ...(security.passwordReset === undefined ? {} : { passwordReset: security.passwordReset }),
+      ...(deps.emailSender === undefined ? {} : { emailSender: deps.emailSender }),
+      ...(deps.adminPublicUrl === undefined ? {} : { adminPublicUrl: deps.adminPublicUrl }),
+      ...(deps.passwordAuthProvider instanceof HashedPasswordAuthProvider
+        ? {
+            passwordRegistrar: deps.passwordAuthProvider,
+            credentialStore: deps.passwordAuthProvider.credentialStore,
+          }
+        : {}),
     }),
     securityWiring: security,
     drainOutbox: async () => {

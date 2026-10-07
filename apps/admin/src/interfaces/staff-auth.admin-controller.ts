@@ -1,6 +1,14 @@
 import type { NativeTokenIssuer } from "@platform/auth";
-import type { SecurityController } from "@platform/security";
+import type {
+  PasswordCredentialStore,
+  PasswordRegistrar,
+  PasswordResetService,
+  SecurityController,
+} from "@platform/security";
+import { ValidationError, toErrorEnvelope } from "@platform/utils";
+import { passwordResetEmail } from "../infrastructure/email-templates";
 import type { AdminResponse } from "./admin-response";
+import type { EmailSender } from "./email-sender.port";
 
 /** Staff logins live in their own identifier namespace so a shop's customer and staff never collide. */
 export const STAFF_IDENTIFIER_PREFIX = "staff:";
@@ -30,7 +38,16 @@ export interface StaffAuthAdminControllerDeps {
   readonly security: SecurityController;
   readonly issuer?: NativeTokenIssuer;
   readonly sessionTtlSeconds: number;
+  /** Plan 1C: forgot-password. Absent ⇒ the request endpoint still answers 202 and sends nothing. */
+  readonly passwordReset?: PasswordResetService;
+  readonly emailSender?: EmailSender;
+  readonly adminPublicUrl?: string;
+  /** Plan 1C: change-password (the durable provider's registrar and credential store). */
+  readonly passwordRegistrar?: PasswordRegistrar;
+  readonly credentialStore?: PasswordCredentialStore;
 }
+
+const RESET_SENT: AdminResponse = { status: 202, body: { outcome: "sent-if-exists" } };
 
 /** Plan 1B-2: native staff sign-in — password (Plan 1B-1 provider) → session → role keys → token. */
 export class StaffAuthAdminController {
@@ -106,6 +123,104 @@ export class StaffAuthAdminController {
       email: input.email.trim().toLowerCase(),
     });
     return { status: 200, body: { accessToken: token, tokenType: "Bearer", expiresIn } };
+  }
+
+  /**
+   * Plan 1C: ALWAYS 202 with the same body — whether the account exists, whether the email provider
+   * worked, whether anything is configured — so the endpoint reveals nothing about who has an account.
+   */
+  async requestPasswordReset(input: {
+    readonly tenantId: string;
+    readonly email: string;
+  }): Promise<AdminResponse> {
+    const { passwordReset, emailSender, adminPublicUrl } = this.deps;
+    if (passwordReset === undefined || emailSender === undefined || adminPublicUrl === undefined) {
+      return RESET_SENT;
+    }
+    const issued = await passwordReset.request(input.tenantId, staffIdentifier(input.email));
+    if (issued !== null) {
+      const origin = adminPublicUrl.replace(/\/$/, "");
+      const link = `${origin}/reset-password?token=${encodeURIComponent(issued.token)}`;
+      try {
+        await emailSender.send({
+          to: input.email.trim().toLowerCase(),
+          ...passwordResetEmail(link),
+        });
+      } catch {
+        // A provider failure must not change the answer (no enumeration); the token simply expires.
+      }
+    }
+    return RESET_SENT;
+  }
+
+  async completePasswordReset(input: {
+    readonly tenantId: string;
+    readonly token: string;
+    readonly password: string;
+  }): Promise<AdminResponse> {
+    if (this.deps.passwordReset === undefined) return NOT_CONFIGURED;
+    try {
+      const done = await this.deps.passwordReset.complete(
+        input.tenantId,
+        input.token,
+        input.password,
+      );
+      return done
+        ? { status: 200, body: { outcome: "reset" } }
+        : {
+            status: 400,
+            body: {
+              error: { code: "INVALID_TOKEN", message: "This link is invalid or has expired" },
+            },
+          };
+    } catch (error) {
+      if (error instanceof ValidationError) return { status: 422, body: toErrorEnvelope(error) };
+      throw error;
+    }
+  }
+
+  async changePassword(input: {
+    readonly tenantId: string;
+    readonly principalExternalId: string;
+    readonly currentPassword: string;
+    readonly newPassword: string;
+  }): Promise<AdminResponse> {
+    const { credentialStore, passwordRegistrar } = this.deps;
+    if (credentialStore === undefined || passwordRegistrar === undefined) return NOT_CONFIGURED;
+    const credential = await credentialStore.findByPrincipal(
+      input.tenantId,
+      input.principalExternalId,
+    );
+    if (credential === null || !credential.identifier.startsWith(STAFF_IDENTIFIER_PREFIX)) {
+      return UNAUTHENTICATED;
+    }
+    await this.ensurePasswordMethod(input.tenantId);
+    const verified = await this.deps.security.authenticate({
+      tenantId: input.tenantId,
+      method: "password",
+      identifier: credential.identifier,
+      credential: input.currentPassword,
+      sessionTtlSeconds: this.deps.sessionTtlSeconds,
+    });
+    if (
+      verified.status < 200 ||
+      verified.status >= 300 ||
+      (verified.body as { authenticated?: boolean }).authenticated !== true
+    ) {
+      return UNAUTHENTICATED;
+    }
+    try {
+      await passwordRegistrar.setPassword({
+        tenantId: input.tenantId,
+        identifier: credential.identifier,
+        password: input.newPassword,
+        principalExternalId: input.principalExternalId,
+      });
+    } catch (error) {
+      if (error instanceof ValidationError) return { status: 422, body: toErrorEnvelope(error) };
+      throw error;
+    }
+    return { status: 200, body: { outcome: "changed" } };
   }
 
   async jwks(): Promise<AdminResponse> {

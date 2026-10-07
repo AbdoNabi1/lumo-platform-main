@@ -32,7 +32,7 @@ const SHOP_RESOURCES = [
 const READ_ONLY_RESOURCES = ["analytics", "reporting", "search", "recommendations"] as const;
 
 /**
- * Plan 1B-2: Shopify-style fixed staff roles. Money (payments, finance), security, tenancy, billing
+ * Plan 1B-2: Shopify-style fixed staff roles. Every role may `account:update_self` (Plan 1C; admin via `*:*`). Money (payments, finance), security, tenancy, billing
  * and feature administration stay admin-only. Granular per-staff permissions are a later plan.
  */
 export const ROLE_PERMISSIONS = {
@@ -40,8 +40,12 @@ export const ROLE_PERMISSIONS = {
   operator: [
     ...SHOP_RESOURCES.map((r) => `${r}:*`),
     ...READ_ONLY_RESOURCES.map((r) => `${r}:read`),
+    "account:update_self",
   ],
-  viewer: [...SHOP_RESOURCES, ...READ_ONLY_RESOURCES].map((r) => `${r}:read`),
+  viewer: [
+    ...[...SHOP_RESOURCES, ...READ_ONLY_RESOURCES].map((r) => `${r}:read`),
+    "account:update_self",
+  ],
 } as const satisfies Readonly<Record<string, readonly string[]>>;
 
 /** The tenant baseline's owner role (services/security tenant-baseline.ts) is an admin. */

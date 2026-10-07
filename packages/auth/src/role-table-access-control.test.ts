@@ -20,6 +20,14 @@ describe("permissionMatches", () => {
 });
 
 describe("RoleTableAccessControl", () => {
+  it("every staff role may change its own password; a customer may not (Plan 1C)", async () => {
+    for (const role of ["admin", "operator", "viewer"]) {
+      expect(await acl.authorize(who([role]), "account:update_self")).toBe(true);
+    }
+    const customer: Principal = { id: "c", kind: "customer", roles: ["viewer"], tenantId: "t" };
+    expect(await acl.authorize(customer, "account:update_self")).toBe(false);
+  });
+
   it("admin and platform-admin can do everything", async () => {
     expect(await acl.authorize(who(["admin"]), "security:manage")).toBe(true);
     expect(await acl.authorize(who(["platform-admin"]), "finance:create")).toBe(true);
