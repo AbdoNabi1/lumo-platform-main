@@ -171,8 +171,16 @@ describe("public catalog routes — DTO boundary", () => {
       slug: "wooden-building-blocks",
       status: "draft",
     });
+    expect(body.items[0]?.options).toEqual([]);
     expect(body.items[0]?.variants).toEqual([
-      { id: expect.any(String), sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" },
+      {
+        id: expect.any(String),
+        sku: "WB-001-STD",
+        priceAmountMinor: 2999,
+        currency: "USD",
+        selection: null,
+        title: null,
+      },
     ]);
   });
 

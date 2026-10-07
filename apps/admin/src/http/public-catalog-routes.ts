@@ -5,6 +5,7 @@ import type { InventoryItem } from "@platform/inventory";
 import type { Price } from "@platform/pricing";
 import type { Paginated } from "@platform/types";
 import type { WiredAdmin } from "../composition";
+import { variantTitleOf } from "./merchandise-resolution";
 
 const pageQuery = z.object({
   first: z.coerce.number().int().positive().optional(),
@@ -94,6 +95,10 @@ export interface PublicVariantDto {
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
+  /** Plan 2A: this variant's position in the option matrix (`{ Size: "L" }`); `null` for a plain variant. */
+  readonly selection: Readonly<Record<string, string>> | null;
+  /** Plan 2A: human label in the product's option order (`"Red / L"`); `null` when no selection. */
+  readonly title: string | null;
 }
 
 export interface PublicProductDto {
@@ -102,6 +107,8 @@ export interface PublicProductDto {
   readonly name: string;
   readonly slug: string;
   readonly status: string;
+  /** Plan 2A: the declared options the shopper picks from, in display order. */
+  readonly options: readonly { readonly name: string; readonly values: readonly string[] }[];
   readonly variants: readonly PublicVariantDto[];
 }
 
@@ -139,17 +146,21 @@ export interface PublicInventoryDto {
 
 /** Public product projection — identity, naming, publish state, and purchasable variants only. */
 function toProductDto(product: Product): PublicProductDto {
+  const options = product.options.map((o) => ({ name: o.name, values: [...o.values] }));
   return {
     id: product.id.value,
     sku: product.sku.value,
     name: product.name,
     slug: product.slug.value,
     status: product.status.value,
+    options,
     variants: product.variants.map((variant) => ({
       id: variant.id.value,
       sku: variant.sku.value,
       priceAmountMinor: variant.price.amountMinor,
       currency: variant.price.currency,
+      selection: variant.selection?.values ?? null,
+      title: variantTitleOf(options, variant.selection?.values ?? null),
     })),
   };
 }
