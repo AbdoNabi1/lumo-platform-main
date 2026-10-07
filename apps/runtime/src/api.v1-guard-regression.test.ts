@@ -36,6 +36,24 @@ vi.mock("@platform/admin", () => ({
       return undefined;
     }
   },
+  LoggingEmailSender: class {
+    send() {
+      return Promise.resolve();
+    }
+  },
+  ResendEmailSender: class {
+    send() {
+      return Promise.resolve();
+    }
+  },
+  EmailSignupEmailAdapter: class {
+    sendCompleteAccountEmail() {
+      return Promise.resolve();
+    }
+    sendAlreadyRegisteredEmail() {
+      return Promise.resolve();
+    }
+  },
 }));
 
 const validEnv = {

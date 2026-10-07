@@ -10,12 +10,14 @@ import {
   HashedPasswordAuthProvider,
   InMemoryTotpMfaProvider,
   PrismaPasswordCredentialStore,
+  PrismaPasswordResetTokenStore,
   ScryptPasswordHasher,
   type MfaProviderResolver,
 } from "@platform/security";
 import { NodeDnsVerifier } from "@platform/tenancy";
 import { logger } from "@platform/utils";
 import { resolveApiExposure } from "./api-exposure";
+import { resolveEmailWiring } from "./email-wiring";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
   buildReturnsPaymentsPortAdapter,
@@ -411,6 +413,10 @@ export function assertProductionIntegrationPortsConfigured(
  */
 export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promise<void> {
   const runtime = core ?? buildRuntimeCore(config);
+  // Plan 1C: Resend when RESEND_API_KEY is set, else a logging sender. A real signupEmail is passed
+  // ONLY with a key, so the G-72 guard below keeps refusing a non-local boot that has no real sender.
+  const email = resolveEmailWiring(runtime.config);
+  const signupEmail = email.signupEmail ?? runtime.signupEmail;
 
   // Stage 5 (C-03 partial): none of these 12 ports have a real adapter yet (Stage 6) — this object
   // is the single source of truth for both the guard below and the deps spread into
@@ -480,9 +486,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     collectGuardFailure(() =>
       assertProductionIntegrationPortsConfigured(config.APP_ENV, integrationPorts),
     ),
-    collectGuardFailure(() =>
-      assertProductionSignupEmailConfigured(config.APP_ENV, runtime.signupEmail),
-    ),
+    collectGuardFailure(() => assertProductionSignupEmailConfigured(config.APP_ENV, signupEmail)),
     collectGuardFailure(() => assertProductionDunningNotificationsConfigured(config.APP_ENV)),
   ].filter((message): message is string => message !== undefined);
 
@@ -581,8 +585,15 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // memory limit). The durable adapter, the `platform.audit_events` table, and the 7-year-retention
     // `platform.audit.entry_recorded.v1` topic all already existed — only this wiring was missing.
     auditTrail: new PrismaAuditTrail(runtime.prisma, runtime.idGenerator),
-    // G-72: guarded above by assertProductionSignupEmailConfigured.
-    signupEmail: runtime.signupEmail,
+    // G-72: guarded above by assertProductionSignupEmailConfigured; real once RESEND_API_KEY is set.
+    signupEmail,
+    // Plan 1C: staff forgot-password. The reset link is built from ADMIN_PUBLIC_URL; without it the
+    // request endpoint still answers 202 and sends nothing.
+    emailSender: email.emailSender,
+    ...(runtime.config.ADMIN_PUBLIC_URL === undefined
+      ? {}
+      : { adminPublicUrl: runtime.config.ADMIN_PUBLIC_URL }),
+    passwordResetTokens: new PrismaPasswordResetTokenStore(runtime.prisma),
     storefrontPublicUrl: config.STOREFRONT_PUBLIC_URL,
     // H-04 (audit): /docs, /openapi.json, and /readyz's full dependency-error detail are verified
     // publicly reachable, unauthenticated, on a hosted deployment — the composition root (here,

@@ -79,6 +79,15 @@ const schema = z
     /** Plan 1B-2: EC P-256 PKCS#8 private key (PEM, or base64 of the PEM). Secret. Required when native. */
     AUTH_SIGNING_KEY: z.string().min(1).optional(),
     STAFF_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(7200),
+    /**
+     * Plan 1C: Resend API key (`re_...`). SECRET — set it only in Railway Variables; never log or commit it.
+     * Absent ⇒ emails are written to the log (recipient + subject only) instead of being sent.
+     */
+    RESEND_API_KEY: z.string().min(10).optional(),
+    /** Plan 1C: the From header. The default is Resend's sandbox sender, which only delivers to the Resend account's own address. */
+    EMAIL_FROM: z.string().min(3).default("Morbeh <onboarding@resend.dev>"),
+    /** Plan 1C: public origin of admin-web; the password-reset email links to `${ADMIN_PUBLIC_URL}/reset-password`. */
+    ADMIN_PUBLIC_URL: z.string().url().optional(),
     /** Plan 1B-2: first owner, created once at boot. Remove the password after first sign-in. */
     BOOTSTRAP_OWNER_EMAIL: z.string().email().optional(),
     BOOTSTRAP_OWNER_PASSWORD: z.string().min(12).optional(),
