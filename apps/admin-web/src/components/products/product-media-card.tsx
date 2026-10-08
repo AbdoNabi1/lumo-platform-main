@@ -7,7 +7,6 @@ import {
   attachProductMediaAction,
   detachProductMediaAction,
   reorderProductMediaAction,
-  setProductSeoAction,
 } from "@/app/products/actions";
 import type { FormState } from "@/lib/api/mutation";
 import type { Dictionary } from "@/messages/en";
@@ -20,17 +19,14 @@ export interface ProductMediaAsset {
   readonly url: string | null;
 }
 
-export function ProductMediaSeoCard({
+/** The media half of the old media + SEO card; SEO now lives in the editor's own card (Plan 2C-2). */
+export function ProductMediaCard({
   productId,
   mediaAssets,
-  seoTitle,
-  seoDescription,
   t,
 }: {
   readonly productId: string;
   readonly mediaAssets: readonly ProductMediaAsset[];
-  readonly seoTitle: string | null;
-  readonly seoDescription: string | null;
   readonly t: Dictionary;
 }) {
   return (
@@ -38,14 +34,8 @@ export function ProductMediaSeoCard({
       <CardHeader>
         <CardTitle>{t.productDetail.media}</CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-6">
+      <CardContent>
         <MediaSection productId={productId} mediaAssets={mediaAssets} t={t} />
-        <SeoForm
-          productId={productId}
-          seoTitle={seoTitle}
-          seoDescription={seoDescription}
-          t={t}
-        />
       </CardContent>
     </Card>
   );
@@ -89,10 +79,7 @@ function MediaSection({
       ) : (
         <ul className="flex flex-col gap-1">
           {order.map((asset, index) => (
-            <li
-              key={asset.id}
-              className="flex items-center justify-between gap-2 text-sm"
-            >
+            <li key={asset.id} className="flex items-center justify-between gap-2 text-sm">
               <span className="text-muted-foreground min-w-0 flex-1 truncate">
                 {t.productDetail.mediaReference}:{" "}
                 {asset.url !== null ? (
@@ -223,13 +210,7 @@ function DetachMediaButton({
   );
 }
 
-function AttachMediaForm({
-  productId,
-  t,
-}: {
-  readonly productId: string;
-  readonly t: Dictionary;
-}) {
+function AttachMediaForm({ productId, t }: { readonly productId: string; readonly t: Dictionary }) {
   const [state, formAction, isPending] = useActionState(attachProductMediaAction, INITIAL_STATE);
   const formId = useId();
   const fieldErrors = state.status === "error" ? state.fieldErrors : {};
@@ -253,69 +234,6 @@ function AttachMediaForm({
         </div>
         <Button type="submit" size="sm" variant="outline" loading={isPending} disabled={isPending}>
           {isPending ? t.productMediaForm.attaching : t.productMediaForm.attach}
-        </Button>
-      </div>
-      {state.status === "error" && (
-        <p role="alert" className="text-destructive text-xs">
-          {state.message}
-        </p>
-      )}
-      {state.status === "success" && (
-        <p role="status" className="text-muted-foreground flex items-center gap-1 text-xs">
-          <CheckIcon aria-hidden="true" className="size-3.5" />
-          {t.productWriteCommon.saved}
-        </p>
-      )}
-    </form>
-  );
-}
-
-function SeoForm({
-  productId,
-  seoTitle,
-  seoDescription,
-  t,
-}: {
-  readonly productId: string;
-  readonly seoTitle: string | null;
-  readonly seoDescription: string | null;
-  readonly t: Dictionary;
-}) {
-  const [state, formAction, isPending] = useActionState(setProductSeoAction, INITIAL_STATE);
-  const formId = useId();
-  const fieldErrors = state.status === "error" ? state.fieldErrors : {};
-
-  return (
-    <form action={formAction} className="flex flex-col gap-2">
-      <input type="hidden" name="productId" value={productId} />
-      <p className="text-muted-foreground text-xs font-medium">{t.productSeoForm.title}</p>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${formId}-title`} className="text-xs">
-          {t.productSeoForm.seoTitle}
-        </Label>
-        <Input
-          id={`${formId}-title`}
-          name="title"
-          defaultValue={seoTitle ?? ""}
-          className="h-8 text-xs"
-          aria-invalid={fieldErrors["title"] !== undefined || undefined}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${formId}-description`} className="text-xs">
-          {t.productSeoForm.seoDescription}
-        </Label>
-        <Input
-          id={`${formId}-description`}
-          name="description"
-          defaultValue={seoDescription ?? ""}
-          className="h-8 text-xs"
-          aria-invalid={fieldErrors["description"] !== undefined || undefined}
-        />
-      </div>
-      <div>
-        <Button type="submit" size="sm" variant="outline" loading={isPending} disabled={isPending}>
-          {isPending ? t.productSeoForm.saving : t.productSeoForm.save}
         </Button>
       </div>
       {state.status === "error" && (

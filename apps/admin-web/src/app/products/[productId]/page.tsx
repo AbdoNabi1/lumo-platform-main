@@ -3,20 +3,15 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { AlertTriangleIcon, ArrowLeftIcon, LockIcon, SearchXIcon } from "lucide-react";
-import { Button, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
+import { Button, Card, CardContent } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
 import {
   ProductInventoryCard,
   ProductInventoryCardSkeleton,
 } from "@/components/products/product-inventory-card";
-import { ProductEditForm } from "@/components/products/product-edit-form";
 import { ProductLifecycleActions } from "@/components/products/product-lifecycle-actions";
-import { ProductMediaSeoCard } from "@/components/products/product-media-seo-card";
-import { ProductOrganizationCard } from "@/components/products/product-organization-card";
+import { ProductMediaCard } from "@/components/products/product-media-card";
 import { ProductStatusBadge } from "@/components/products/product-status-badge";
-import { ProductVariantsCard } from "@/components/products/product-variants-card";
-import { fetchBrandsPage } from "@/lib/api/brands";
-import { fetchCategoriesPage } from "@/lib/api/categories";
 import { fetchMediaDownloadUrl } from "@/lib/api/media";
 import { fetchProduct } from "@/lib/api/products";
 import { getCurrentUser } from "@/lib/auth/current-user";
@@ -90,19 +85,6 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
     }),
   );
 
-  // T5.7: brand/category pickers on `ProductOrganizationCard` need the lists to render `<select>`/
-  // checklist options — fetched server-side here (never from the Client Component, per the
-  // repo-wide "never call the runtime API from browser JS" rule) and passed down as plain DTO
-  // arrays. Capped to the first page (100): a search-as-you-type picker is out of scope for this
-  // task. A failed fetch degrades to an empty list rather than fabricating options — the card still
-  // renders the product's actual assigned id(s) as an "unlisted" option either way.
-  const [brandsResult, categoriesResult] = await Promise.all([
-    fetchBrandsPage({ first: 100 }),
-    fetchCategoriesPage({ first: 100 }),
-  ]);
-  const brands = brandsResult.outcome === "ok" ? brandsResult.items : [];
-  const categories = categoriesResult.outcome === "ok" ? categoriesResult.items : [];
-
   return (
     <AppShell t={t} locale={locale} activeNavId="products" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
@@ -136,51 +118,11 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
           </div>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-3 [&>*]:min-w-0">
-          <div className="flex flex-col gap-6 xl:col-span-2">
-            <ProductVariantsCard
-              productId={product.id}
-              variants={product.variants}
-              t={t}
-              locale={locale}
-            />
-            <Suspense fallback={<ProductInventoryCardSkeleton t={t} />}>
-              <ProductInventoryCard productId={product.id} t={t} />
-            </Suspense>
-          </div>
-
-          <div className="flex flex-col gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>{t.productEdit.title}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ProductEditForm
-                  productId={product.id}
-                  name={product.name}
-                  slug={product.slug}
-                  t={t}
-                />
-              </CardContent>
-            </Card>
-            <ProductOrganizationCard
-              productId={product.id}
-              brandId={product.brandId}
-              categoryIds={product.categoryIds}
-              options={product.options}
-              brands={brands}
-              categories={categories}
-              t={t}
-            />
-            <ProductMediaSeoCard
-              productId={product.id}
-              mediaAssets={mediaAssets}
-              seoTitle={product.seoTitle}
-              seoDescription={product.seoDescription}
-              t={t}
-            />
-          </div>
-        </div>
+        {/* Task 6 replaces this with <ProductEditor>. */}
+        <ProductMediaCard productId={product.id} mediaAssets={mediaAssets} t={t} />
+        <Suspense fallback={<ProductInventoryCardSkeleton t={t} />}>
+          <ProductInventoryCard productId={product.id} t={t} />
+        </Suspense>
       </div>
     </AppShell>
   );

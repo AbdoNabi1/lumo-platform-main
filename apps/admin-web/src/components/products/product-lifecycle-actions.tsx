@@ -1,13 +1,11 @@
 "use client";
 
 import { useActionState, useId } from "react";
-import { Button, Input, Label } from "@platform/ui";
+import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from "@platform/ui";
 import {
   archiveProductAction,
   deleteProductAction,
-  publishProductAction,
   schedulePublishProductAction,
-  unpublishProductAction,
 } from "@/app/products/actions";
 import type { FormState } from "@/lib/api/mutation";
 import type { Dictionary } from "@/messages/en";
@@ -17,8 +15,8 @@ const INITIAL_STATE: FormState = { status: "idle" };
 type ActionFn = (previous: FormState, formData: FormData) => Promise<FormState>;
 
 /**
- * One lifecycle transition button — publish/unpublish/archive/delete all need nothing but the
- * product id, so they share this shell. `confirmMessage`, when set, guards the submit with a
+ * One lifecycle transition button — archive/delete need nothing but the product id, so they
+ * share this shell. `confirmMessage`, when set, guards the submit with a
  * native `window.confirm` (archive/delete only) since these are one-click, hard-to-undo actions.
  */
 function LifecycleActionButton({
@@ -118,11 +116,11 @@ function SchedulePublishForm({
 }
 
 /**
- * The lifecycle action bar (T5.1) — publish/schedule/unpublish/archive/delete had no UI at all
- * before this. Gated by `status` on a best-effort basis (`ProductStatusBadge`'s known statuses:
- * draft/scheduled/published/archived): never offer a transition the state machine plainly cannot
- * take from here. A transition this gating still gets wrong surfaces as a normal form error
- * (`toFormState`) rather than being silently swallowed.
+ * The "More actions" card (T5.1, trimmed by Plan 2C-2). Publish, unpublish and unlist moved into
+ * the editor's status select; what remains has no place in a plain Save: schedule, archive and
+ * delete. Gated by `status` on a best-effort basis: never offer a transition the state machine
+ * plainly cannot take from here. A transition this gating still gets wrong surfaces as a normal
+ * form error (`toFormState`) rather than being silently swallowed.
  */
 export function ProductLifecycleActions({
   productId,
@@ -133,57 +131,44 @@ export function ProductLifecycleActions({
   readonly status: string;
   readonly t: Dictionary;
 }) {
-  const canPublish = status === "draft";
   const canSchedule = status === "draft";
-  const canUnpublish = status === "scheduled" || status === "published";
-  const canArchive = status === "draft" || status === "scheduled" || status === "published";
-  // Deleting a live (published/scheduled) product without unpublishing first is exactly the kind
-  // of "obviously-wrong action" the brief says not to offer — an operator can still unpublish
-  // then delete in two clicks.
+  const canArchive =
+    status === "draft" || status === "scheduled" || status === "published" || status === "unlisted";
+  // Deleting a live (published/scheduled/unlisted) product is exactly the kind of "obviously-wrong
+  // action" worth not offering — archive it first, then delete.
   const canDelete = status === "draft" || status === "archived";
 
-  if (!canPublish && !canSchedule && !canUnpublish && !canArchive && !canDelete) {
+  if (!canSchedule && !canArchive && !canDelete) {
     return null;
   }
 
   return (
-    <div className="flex flex-wrap items-start gap-3">
-      {canPublish && (
-        <LifecycleActionButton
-          productId={productId}
-          action={publishProductAction}
-          label={t.productLifecycle.publish}
-          pendingLabel={t.productLifecycle.publishing}
-        />
-      )}
-      {canSchedule && <SchedulePublishForm productId={productId} t={t} />}
-      {canUnpublish && (
-        <LifecycleActionButton
-          productId={productId}
-          action={unpublishProductAction}
-          label={t.productLifecycle.unpublish}
-          pendingLabel={t.productLifecycle.unpublishing}
-        />
-      )}
-      {canArchive && (
-        <LifecycleActionButton
-          productId={productId}
-          action={archiveProductAction}
-          label={t.productLifecycle.archive}
-          pendingLabel={t.productLifecycle.archiving}
-          confirmMessage={t.productLifecycle.confirmArchive}
-        />
-      )}
-      {canDelete && (
-        <LifecycleActionButton
-          productId={productId}
-          action={deleteProductAction}
-          label={t.productLifecycle.delete}
-          pendingLabel={t.productLifecycle.deleting}
-          variant="destructive"
-          confirmMessage={t.productLifecycle.confirmDelete}
-        />
-      )}
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>{t.productEditor.moreActions}</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-wrap items-start gap-3">
+        {canSchedule && <SchedulePublishForm productId={productId} t={t} />}
+        {canArchive && (
+          <LifecycleActionButton
+            productId={productId}
+            action={archiveProductAction}
+            label={t.productLifecycle.archive}
+            pendingLabel={t.productLifecycle.archiving}
+            confirmMessage={t.productLifecycle.confirmArchive}
+          />
+        )}
+        {canDelete && (
+          <LifecycleActionButton
+            productId={productId}
+            action={deleteProductAction}
+            label={t.productLifecycle.delete}
+            pendingLabel={t.productLifecycle.deleting}
+            variant="destructive"
+            confirmMessage={t.productLifecycle.confirmDelete}
+          />
+        )}
+      </CardContent>
+    </Card>
   );
 }
