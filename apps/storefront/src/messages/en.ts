@@ -40,6 +40,7 @@ export const en = {
     priceUnavailable: "Price unavailable",
     priceFrom: "From {price}",
     inStock: "{count} in stock",
+    inStockNoCount: "In stock",
     outOfStock: "Out of stock",
     availabilityUnknown: "Availability unknown",
     backToShop: "Back to shop",

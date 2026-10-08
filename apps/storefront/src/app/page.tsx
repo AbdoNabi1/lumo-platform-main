@@ -57,7 +57,7 @@ export default async function Home() {
                 key={product.id}
                 product={product}
                 price={priceOf(product)}
-                availability={availabilityBook?.resolve(product.id) ?? { status: "unknown" }}
+                availability={availabilityBook?.resolveProduct(product) ?? { status: "unknown" }}
                 t={t}
                 locale={locale}
               />

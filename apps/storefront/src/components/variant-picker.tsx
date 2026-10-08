@@ -19,12 +19,16 @@ import type { Dictionary } from "@/messages/en";
  */
 export function VariantPicker({
   product,
-  outOfStock,
+  availabilityByVariant,
   t,
   locale,
 }: {
   readonly product: ProductSummary;
-  readonly outOfStock: boolean;
+  /**
+   * Plan 2B-1: each variant's stock — a count, or `"unlimited"` for one that sells past zero. A
+   * variant missing from the map has unknown stock and is never blocked on that account.
+   */
+  readonly availabilityByVariant: Readonly<Record<string, number | "unlimited">>;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
@@ -41,6 +45,9 @@ export function VariantPicker({
             (option) => candidate.selection?.[option.name] === chosen[option.name],
           ),
         );
+
+  const stock = variant === undefined ? undefined : availabilityByVariant[variant.id];
+  const outOfStock = stock !== undefined && stock !== "unlimited" && stock <= 0;
 
   return (
     <div className="flex flex-col gap-3">
@@ -82,11 +89,18 @@ export function VariantPicker({
         </p>
       )}
 
+      {outOfStock && (
+        <p role="status" className="text-destructive text-sm">
+          {t.product.outOfStock}
+        </p>
+      )}
+
       <AddToCartButton
         productId={product.id}
         variantId={variant?.id}
         currency={variant?.currency ?? product.variants[0]?.currency ?? ""}
         outOfStock={outOfStock || variant === undefined}
+        sellableWhenOutOfStock={stock === "unlimited"}
         t={t}
       />
     </div>

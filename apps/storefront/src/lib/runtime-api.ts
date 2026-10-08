@@ -29,6 +29,8 @@ export interface ProductVariantSummary {
   readonly title: string | null;
   /** Plan 2C-1: the struck-through "was" price (always above the price); null when unset. */
   readonly compareAtAmountMinor: number | null;
+  /** Plan 2B-1: untracked, or keeps selling past zero — the storefront never shows "out of stock" for it. */
+  readonly sellableWhenOutOfStock: boolean;
 }
 
 export interface ProductOptionSummary {
@@ -77,6 +79,8 @@ export interface PriceSummary {
 export interface InventoryItemSummary {
   readonly id: string;
   readonly productId: string;
+  /** Plan 2B-1: the variant this stock belongs to; null on a legacy product-level row. */
+  readonly variantId: string | null;
   readonly warehouseId: string;
   readonly onHand: number;
   readonly reserved: number;

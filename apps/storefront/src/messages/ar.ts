@@ -45,6 +45,7 @@ export const ar: Dictionary = {
     priceUnavailable: "السعر غير متاح",
     priceFrom: "يبدأ من {price}",
     inStock: "متوفر {count}",
+    inStockNoCount: "متوفر",
     outOfStock: "نفد المخزون",
     availabilityUnknown: "التوفر غير معروف",
     backToShop: "العودة إلى المتجر",

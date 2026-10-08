@@ -13,6 +13,7 @@ const addToCart =
       quantity: number,
       variantId: string | undefined,
       currency: string,
+      sellableWhenOutOfStock?: boolean,
     ) => Promise<CartActionResult>
   >();
 vi.mock("@/app/cart/actions", () => ({
@@ -21,7 +22,11 @@ vi.mock("@/app/cart/actions", () => ({
     quantity: number,
     variantId: string | undefined,
     currency: string,
-  ) => addToCart(productId, quantity, variantId, currency),
+    sellableWhenOutOfStock?: boolean,
+  ) =>
+    sellableWhenOutOfStock === undefined
+      ? addToCart(productId, quantity, variantId, currency)
+      : addToCart(productId, quantity, variantId, currency, sellableWhenOutOfStock),
 }));
 
 beforeEach(() => {
@@ -49,6 +54,7 @@ function shirt(overrides: Partial<ProductSummary> = {}): ProductSummary {
         selection: { Size: "S" },
         title: "S",
         compareAtAmountMinor: 14000,
+        sellableWhenOutOfStock: false,
       },
       {
         id: "v-l",
@@ -58,6 +64,7 @@ function shirt(overrides: Partial<ProductSummary> = {}): ProductSummary {
         selection: { Size: "L" },
         title: "L",
         compareAtAmountMinor: null,
+        sellableWhenOutOfStock: false,
       },
     ],
     ...overrides,
@@ -66,7 +73,7 @@ function shirt(overrides: Partial<ProductSummary> = {}): ProductSummary {
 
 describe("VariantPicker", () => {
   it("starts on each option's first value, follows the choice for the price, and adds THAT variant", async () => {
-    render(<VariantPicker product={shirt()} outOfStock={false} t={en} locale="en" />);
+    render(<VariantPicker product={shirt()} availabilityByVariant={{}} t={en} locale="en" />);
 
     expect(screen.getByText("$100.00")).toBeInTheDocument();
 
@@ -80,7 +87,7 @@ describe("VariantPicker", () => {
   });
 
   it("strikes through the chosen variant's own compare-at price, and only that one (Plan 2C-1)", () => {
-    render(<VariantPicker product={shirt()} outOfStock={false} t={en} locale="en" />);
+    render(<VariantPicker product={shirt()} availabilityByVariant={{}} t={en} locale="en" />);
 
     // S has a compare-at price, L does not.
     expect(screen.getByText("$140.00").tagName).toBe("S");
@@ -89,7 +96,7 @@ describe("VariantPicker", () => {
   });
 
   it("adds the default (first) variant without any interaction", async () => {
-    render(<VariantPicker product={shirt()} outOfStock={false} t={en} locale="en" />);
+    render(<VariantPicker product={shirt()} availabilityByVariant={{}} t={en} locale="en" />);
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
 
@@ -111,10 +118,11 @@ describe("VariantPicker", () => {
           selection: { Size: "S", Color: "Red" },
           title: "S / Red",
           compareAtAmountMinor: null,
+          sellableWhenOutOfStock: false,
         },
       ],
     });
-    render(<VariantPicker product={product} outOfStock={false} t={en} locale="en" />);
+    render(<VariantPicker product={product} availabilityByVariant={{}} t={en} locale="en" />);
 
     fireEvent.change(screen.getByLabelText("Choose Color"), { target: { value: "Blue" } });
 
@@ -138,10 +146,11 @@ describe("VariantPicker", () => {
           selection: null,
           title: null,
           compareAtAmountMinor: null,
+          sellableWhenOutOfStock: false,
         },
       ],
     });
-    render(<VariantPicker product={mug} outOfStock={false} t={en} locale="en" />);
+    render(<VariantPicker product={mug} availabilityByVariant={{}} t={en} locale="en" />);
 
     expect(screen.getByText("$50.00")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -150,21 +159,75 @@ describe("VariantPicker", () => {
   });
 
   it("takes its labels from the Arabic dictionary", () => {
-    render(<VariantPicker product={shirt()} outOfStock={false} t={ar} locale="ar" />);
+    render(<VariantPicker product={shirt()} availabilityByVariant={{}} t={ar} locale="ar" />);
 
     expect(screen.getByLabelText("اختر Size")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: ar.product.addToCart })).toBeInTheDocument();
   });
 
-  it("is disabled when the product is out of stock", () => {
-    render(<VariantPicker product={shirt()} outOfStock t={en} locale="en" />);
+  it("is disabled when the chosen variant is out of stock", () => {
+    render(
+      <VariantPicker
+        product={shirt()}
+        availabilityByVariant={{ "v-s": 0, "v-l": 0 }}
+        t={en}
+        locale="en"
+      />,
+    );
 
     expect(screen.getByRole("button", { name: en.product.addToCart })).toBeDisabled();
   });
 
+  it("is out of stock for the chosen size only (Plan 2B-1)", () => {
+    render(
+      <VariantPicker
+        product={shirt()}
+        availabilityByVariant={{ "v-s": 0, "v-l": 3 }}
+        t={en}
+        locale="en"
+      />,
+    );
+
+    // S (the first value) is chosen: sold out.
+    expect(screen.getByRole("button", { name: en.product.addToCart })).toBeDisabled();
+    expect(screen.getByText(en.product.outOfStock)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Choose Size"), { target: { value: "L" } });
+
+    expect(screen.getByRole("button", { name: en.product.addToCart })).toBeEnabled();
+    expect(screen.queryByText(en.product.outOfStock)).not.toBeInTheDocument();
+  });
+
+  it("never disables a variant that sells past zero, and tells the cart so (Plan 2B-1)", async () => {
+    render(
+      <VariantPicker
+        product={shirt()}
+        availabilityByVariant={{ "v-s": "unlimited", "v-l": 0 }}
+        t={en}
+        locale="en"
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: en.product.addToCart });
+    expect(button).toBeEnabled();
+    expect(screen.queryByText(en.product.outOfStock)).not.toBeInTheDocument();
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-s", "USD", true),
+    );
+  });
+
+  it("does not disable a variant whose stock is unknown", () => {
+    render(
+      <VariantPicker product={shirt()} availabilityByVariant={{ "v-l": 0 }} t={en} locale="en" />,
+    );
+
+    expect(screen.getByRole("button", { name: en.product.addToCart })).toBeEnabled();
+  });
+
   it("asks the shopper to choose when the server answers choose-variant", async () => {
     addToCart.mockResolvedValue({ ok: false, reason: "choose-variant" });
-    render(<VariantPicker product={shirt()} outOfStock={false} t={en} locale="en" />);
+    render(<VariantPicker product={shirt()} availabilityByVariant={{}} t={en} locale="en" />);
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
 

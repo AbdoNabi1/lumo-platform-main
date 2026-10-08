@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatCurrency,
+  formatCurrencyCompact,
   formatDelta,
   formatNumber,
   formatPercent,
@@ -22,6 +23,23 @@ describe("formatCurrency", () => {
     expect(formatCurrency("ar", 12_834_000, "USD")).not.toBe(
       formatCurrency("en", 12_834_000, "USD"),
     );
+  });
+
+  it("uses the currency's own minor-unit exponent (Plan 2B-1)", () => {
+    expect(formatCurrency("en", 15050, "EGP")).toContain("150.50");
+    expect(formatCurrency("en", 12345, "KWD")).toContain("12.345");
+    const yen = formatCurrency("en", 500, "JPY");
+    expect(yen).toContain("500");
+    expect(yen).not.toContain(".");
+  });
+});
+
+describe("formatCurrencyCompact", () => {
+  it("scales by the currency's own exponent, not a fixed 100", () => {
+    // 80,000.000 KWD and 80,000 JPY both read as 80K; a fixed /100 would read 800K and 800.
+    expect(formatCurrencyCompact("en", 80_000_000, "KWD")).toContain("80K");
+    expect(formatCurrencyCompact("en", 80_000, "JPY")).toContain("80K");
+    expect(formatCurrencyCompact("en", 8_000_000, "USD")).toContain("80K");
   });
 });
 

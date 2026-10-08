@@ -105,6 +105,11 @@ export interface PublicVariantDto {
    * Cost, barcode and weight are deliberately NOT here — they are staff-only (see `toProductDto`).
    */
   readonly compareAtAmountMinor: number | null;
+  /**
+   * Plan 2B-1: true when the variant is untracked or keeps selling past zero, so the storefront never
+   * shows "out of stock" for it. Only this DERIVED flag is public; the two switches behind it are not.
+   */
+  readonly sellableWhenOutOfStock: boolean;
 }
 
 export interface PublicProductDto {
@@ -148,6 +153,8 @@ export interface PublicPriceDto {
 export interface PublicInventoryDto {
   readonly id: string;
   readonly productId: string;
+  /** Plan 2B-1: the variant this stock belongs to; null on a legacy product-level row. */
+  readonly variantId: string | null;
   readonly warehouseId: string;
   readonly onHand: number;
   readonly reserved: number;
@@ -180,6 +187,7 @@ function toProductDto(product: Product): PublicProductDto {
       selection: variant.selection?.values ?? null,
       title: variantTitleOf(options, variant.selection?.values ?? null),
       compareAtAmountMinor: variant.attributes.compareAtPrice?.amountMinor ?? null,
+      sellableWhenOutOfStock: !variant.isStockLimited(),
     })),
   };
 }
@@ -227,6 +235,7 @@ function toInventoryDto(item: InventoryItem): PublicInventoryDto {
   return {
     id: item.id.value,
     productId: item.product.value,
+    variantId: item.variantRef,
     warehouseId: item.warehouseId.value,
     onHand: item.stockLevel.onHand,
     reserved: item.stockLevel.reserved,

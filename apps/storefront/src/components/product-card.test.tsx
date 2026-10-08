@@ -118,6 +118,21 @@ describe("ProductCard", () => {
     expect(screen.getByText(en.product.outOfStock)).toBeInTheDocument();
   });
 
+  it("shows a plain in-stock badge, with no count, when the product sells past zero (Plan 2B-1)", () => {
+    render(
+      <ProductCard
+        product={product}
+        price={{ status: "unavailable" }}
+        availability={{ status: "ok", available: Number.POSITIVE_INFINITY }}
+        t={en}
+        locale="en"
+      />,
+    );
+    expect(screen.getByText(en.product.inStockNoCount)).toBeInTheDocument();
+    expect(screen.queryByText(en.product.outOfStock)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Infinity|∞/)).not.toBeInTheDocument();
+  });
+
   it("shows an add-to-cart action when a price is resolved", () => {
     render(
       <ProductCard

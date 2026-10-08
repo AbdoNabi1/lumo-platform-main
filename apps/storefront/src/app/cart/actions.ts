@@ -75,11 +75,14 @@ export async function addToCart(
   quantity: number,
   variantId: string | undefined,
   currency: string,
+  sellableWhenOutOfStock = false,
 ): Promise<CartActionResult> {
   if (currency.length === 0) return { ok: false, reason: "unavailable" };
 
-  const availabilityBook = await AvailabilityBook.load();
-  const availability = availabilityBook?.resolve(productId);
+  // Plan 2B-1: the stock snapshot is the VARIANT's, and is left out for a variant that sells past
+  // zero (it has no meaningful "available"). Still a display hint only — the server never trusts it.
+  const availabilityBook = sellableWhenOutOfStock ? null : await AvailabilityBook.load();
+  const availability = availabilityBook?.resolve(productId, variantId);
   const inventoryAvailable = availability?.status === "ok" ? availability.available : undefined;
 
   const sessionRef = await currentOrNewSessionRef();

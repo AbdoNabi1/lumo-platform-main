@@ -68,6 +68,7 @@ function variant(overrides: Partial<ProductVariantSummary> = {}): ProductVariant
     selection: null,
     title: null,
     compareAtAmountMinor: null,
+    sellableWhenOutOfStock: false,
     ...overrides,
   };
 }
@@ -262,8 +263,24 @@ describe("priceOf (Plan 2C-1: the variant is the only price source)", () => {
 describe("AvailabilityBook", () => {
   it("sums availability across warehouses for the same product", async () => {
     getInventory.mockResolvedValue([
-      { id: "i1", productId: "prod-1", warehouseId: "w1", onHand: 10, reserved: 2, available: 8 },
-      { id: "i2", productId: "prod-1", warehouseId: "w2", onHand: 5, reserved: 0, available: 5 },
+      {
+        id: "i1",
+        productId: "prod-1",
+        variantId: null,
+        warehouseId: "w1",
+        onHand: 10,
+        reserved: 2,
+        available: 8,
+      },
+      {
+        id: "i2",
+        productId: "prod-1",
+        variantId: null,
+        warehouseId: "w2",
+        onHand: 5,
+        reserved: 0,
+        available: 5,
+      },
     ]);
     const book = await AvailabilityBook.load();
     expect(book?.resolve("prod-1")).toEqual({ status: "ok", available: 13 });
@@ -278,6 +295,89 @@ describe("AvailabilityBook", () => {
   it("returns null when the API call fails", async () => {
     getInventory.mockResolvedValue(null);
     expect(await AvailabilityBook.load()).toBeNull();
+  });
+});
+
+describe("AvailabilityBook — per variant (Plan 2B-1)", () => {
+  const row = (
+    id: string,
+    variantId: string | null,
+    available: number,
+    productId = "prod-1",
+  ): InventoryItemSummary => ({
+    id,
+    productId,
+    variantId,
+    warehouseId: "w1",
+    onHand: available,
+    reserved: 0,
+    available,
+  });
+
+  it("resolves one variant from its own rows only", async () => {
+    getInventory.mockResolvedValue([row("a", "v-m", 5), row("b", "v-l", 2), row("c", "v-m", 1)]);
+    const book = await AvailabilityBook.load();
+
+    expect(book?.resolve("prod-1", "v-m")).toEqual({ status: "ok", available: 6 });
+    expect(book?.resolve("prod-1", "v-l")).toEqual({ status: "ok", available: 2 });
+  });
+
+  it("reads a variant-less (legacy) row as the variant's stock when it is the product's only kind of row", async () => {
+    getInventory.mockResolvedValue([row("a", null, 7)]);
+    const book = await AvailabilityBook.load();
+
+    expect(book?.resolve("prod-1", "v-only")).toEqual({ status: "ok", available: 7 });
+  });
+
+  it("does not let a legacy row stand in for a variant when the product has other variants' rows", async () => {
+    getInventory.mockResolvedValue([row("a", null, 7), row("b", "v-m", 5)]);
+    const book = await AvailabilityBook.load();
+
+    expect(book?.resolve("prod-1", "v-l")).toEqual({ status: "ok", available: 0 });
+    expect(book?.resolve("prod-1", "v-m")).toEqual({ status: "ok", available: 5 });
+  });
+
+  it("is unknown for a variant of a product with no rows at all", async () => {
+    getInventory.mockResolvedValue([row("a", "v-m", 5, "other")]);
+    const book = await AvailabilityBook.load();
+
+    expect(book?.resolve("prod-1", "v-m")).toEqual({ status: "unknown" });
+  });
+
+  describe("resolveProduct", () => {
+    const variants = (...flags: boolean[]) =>
+      flags.map((sellableWhenOutOfStock, index) =>
+        variant({ id: `v-${index}`, sellableWhenOutOfStock }),
+      );
+
+    it("is unlimited when any variant sells past zero", async () => {
+      getInventory.mockResolvedValue([row("a", "v-0", 0)]);
+      const book = await AvailabilityBook.load();
+
+      expect(book?.resolveProduct({ id: "prod-1", variants: variants(false, true) })).toEqual({
+        status: "ok",
+        available: Number.POSITIVE_INFINITY,
+      });
+    });
+
+    it("otherwise sums the product's variants", async () => {
+      getInventory.mockResolvedValue([row("a", "v-0", 3), row("b", "v-1", 4)]);
+      const book = await AvailabilityBook.load();
+
+      expect(book?.resolveProduct({ id: "prod-1", variants: variants(false, false) })).toEqual({
+        status: "ok",
+        available: 7,
+      });
+    });
+
+    it("is unknown when the product has no rows at all", async () => {
+      getInventory.mockResolvedValue([]);
+      const book = await AvailabilityBook.load();
+
+      expect(book?.resolveProduct({ id: "prod-1", variants: variants(false) })).toEqual({
+        status: "unknown",
+      });
+    });
   });
 });
 

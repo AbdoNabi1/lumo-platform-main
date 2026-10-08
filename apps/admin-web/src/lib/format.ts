@@ -1,4 +1,5 @@
 import type { Locale } from "./i18n";
+import { currencyExponent } from "./products/money";
 
 /**
  * Locale-aware formatting. Everything numeric on the dashboard goes through here so the
@@ -6,13 +7,15 @@ import type { Locale } from "./i18n";
  * and correctly placed currency symbols — rather than English strings in a flipped layout.
  */
 
+/** Plan 2B-1: scales by the currency's own minor-unit exponent (EGP 2, JPY 0, KWD 3), not a fixed 100. */
 export function formatCurrency(locale: Locale, amountMinor: number, currency: string): string {
+  const digits = currencyExponent(currency);
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amountMinor / 100);
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(amountMinor / 10 ** digits);
 }
 
 /** Compact currency for axis ticks — "$80K" / "٨٠ ألف US$". */
@@ -26,7 +29,7 @@ export function formatCurrencyCompact(
     currency,
     notation: "compact",
     maximumFractionDigits: 0,
-  }).format(amountMinor / 100);
+  }).format(amountMinor / 10 ** currencyExponent(currency));
 }
 
 export function formatNumber(locale: Locale, value: number): string {

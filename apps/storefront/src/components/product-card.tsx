@@ -54,6 +54,7 @@ export function ProductCard({
             variantId={product.variants[0]?.id}
             currency={product.variants[0]?.currency ?? ""}
             outOfStock={outOfStock}
+            sellableWhenOutOfStock={product.variants[0]?.sellableWhenOutOfStock}
             t={t}
           />
         </CardFooter>
@@ -105,6 +106,10 @@ export function AvailabilityBadge({
   }
   if (availability.available <= 0) {
     return <Badge variant="destructive">{t.product.outOfStock}</Badge>;
+  }
+  // Plan 2B-1: a product that sells past zero has no meaningful count to show.
+  if (availability.available === Number.POSITIVE_INFINITY) {
+    return <Badge variant="success">{t.product.inStockNoCount}</Badge>;
   }
   return (
     <Badge variant="success">

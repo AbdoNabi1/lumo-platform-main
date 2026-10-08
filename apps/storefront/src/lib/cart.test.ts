@@ -156,6 +156,7 @@ describe("resolveCurrentCart", () => {
             selection: null,
             title: null,
             compareAtAmountMinor: null,
+            sellableWhenOutOfStock: false,
           },
         ],
       }),

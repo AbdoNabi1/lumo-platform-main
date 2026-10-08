@@ -176,18 +176,26 @@ export function priceOf(product: Pick<ProductSummary, "variants">): PriceResolut
 export type AvailabilityResolution =
   { readonly status: "ok"; readonly available: number } | { readonly status: "unknown" };
 
-/** A lookup table of every product's total availability (summed across warehouses). */
-export class AvailabilityBook {
-  private readonly byProduct = new Map<string, number>();
+/** One stock row as the public inventory route returns it (Plan 2B-1 added `variantId`). */
+interface AvailabilityRow {
+  readonly productId: string;
+  readonly variantId: string | null;
+  readonly available: number;
+}
 
-  private constructor(
-    items: readonly { readonly productId: string; readonly available: number }[],
-  ) {
+/**
+ * A lookup table of every product's availability (summed across warehouses), per variant since
+ * Plan 2B-1. Rows are summed across warehouses, so the legacy-row rule below is applied per
+ * product, not per warehouse (the backend's `resolveStockRow` applies it per warehouse).
+ */
+export class AvailabilityBook {
+  private readonly byProduct = new Map<string, AvailabilityRow[]>();
+
+  private constructor(items: readonly AvailabilityRow[]) {
     for (const item of items) {
-      this.byProduct.set(
-        item.productId,
-        (this.byProduct.get(item.productId) ?? 0) + item.available,
-      );
+      const rows = this.byProduct.get(item.productId);
+      if (rows === undefined) this.byProduct.set(item.productId, [item]);
+      else rows.push(item);
     }
   }
 
@@ -197,9 +205,28 @@ export class AvailabilityBook {
     return new AvailabilityBook(items);
   }
 
-  resolve(productId: string): AvailabilityResolution {
-    const available = this.byProduct.get(productId);
-    if (available === undefined) return { status: "unknown" };
-    return { status: "ok", available };
+  /**
+   * Plan 2B-1: one variant's availability (same legacy rule as the backend's `resolveStockRow`):
+   * the variant's own rows; else the product's variant-less rows, but only when ALL of the
+   * product's rows are variant-less; else zero. Without a `variantId`, the product's total.
+   */
+  resolve(productId: string, variantId?: string): AvailabilityResolution {
+    const rows = this.byProduct.get(productId) ?? [];
+    if (rows.length === 0) return { status: "unknown" };
+    const sum = (list: readonly AvailabilityRow[]) =>
+      list.reduce((total, row) => total + row.available, 0);
+    if (variantId === undefined) return { status: "ok", available: sum(rows) };
+    const exact = rows.filter((row) => row.variantId === variantId);
+    if (exact.length > 0) return { status: "ok", available: sum(exact) };
+    const legacyOnly = rows.every((row) => row.variantId === null);
+    return { status: "ok", available: legacyOnly ? sum(rows) : 0 };
+  }
+
+  /** The product as a whole: unlimited if any variant sells past zero; else the sum of its variants. */
+  resolveProduct(product: Pick<ProductSummary, "id" | "variants">): AvailabilityResolution {
+    if (product.variants.some((variant) => variant.sellableWhenOutOfStock)) {
+      return { status: "ok", available: Number.POSITIVE_INFINITY };
+    }
+    return this.resolve(product.id);
   }
 }

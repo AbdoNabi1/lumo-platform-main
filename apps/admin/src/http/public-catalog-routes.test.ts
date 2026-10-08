@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { wireCatalog, type WiredCatalog } from "@platform/catalog";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
+import { wireInventory } from "@platform/inventory";
 import { wirePricing, type WiredPricing } from "@platform/pricing";
 import type { WiredAdmin } from "../composition";
 import { publicCatalogRoutes } from "./public-catalog-routes";
@@ -186,6 +187,7 @@ describe("public catalog routes — DTO boundary", () => {
         selection: null,
         title: null,
         compareAtAmountMinor: null,
+        sellableWhenOutOfStock: false,
       },
     ]);
   });
@@ -633,5 +635,91 @@ describe("public catalog routes — only listed products are listed, sellable on
     const wire = JSON.stringify(response.body);
     expect(wire).not.toContain("6221234567890");
     expect(wire).not.toContain('"cost');
+  });
+});
+
+describe("public stock per variant (Plan 2B-1)", () => {
+  const tenantId = "tenant-local";
+  function inventoryFixture() {
+    let n = 0;
+    const idGenerator: IdGenerator = { generate: () => `inv-id-${(n += 1)}` };
+    return wireInventory({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
+  }
+
+  it("GET /public/inventory rows carry the variant they belong to", async () => {
+    const inventory = inventoryFixture();
+    for (const [variantId, quantity] of [
+      ["v-m", 5],
+      ["v-l", 2],
+    ] as const) {
+      unwrap(
+        await inventory.inventory.receive({
+          tenantId,
+          productId: "p1",
+          variantId,
+          warehouseId: "wh-1",
+          quantity,
+        }),
+        "receive",
+      );
+    }
+    unwrap(
+      await inventory.inventory.receive({
+        tenantId,
+        productId: "p2",
+        warehouseId: "wh-1",
+        quantity: 3,
+      }),
+      "receive legacy",
+    );
+    const admin = {
+      publicReads: { inventory: inventory.inventory },
+    } as unknown as WiredAdmin;
+
+    const response = await invoke(admin, "/public/inventory");
+
+    const rows = (response.body as { items: { productId: string; variantId: string | null }[] })
+      .items;
+    expect(
+      rows
+        .filter((row) => row.productId === "p1")
+        .map((row) => row.variantId)
+        .sort(),
+    ).toEqual(["v-l", "v-m"]);
+    expect(rows.find((row) => row.productId === "p2")?.variantId).toBeNull();
+  });
+
+  it("the public variant says whether it sells past zero, and never exposes the raw switches", async () => {
+    const catalog = catalogFixture();
+    const created = unwrap<{ id: string }>(
+      await catalog.products.create({
+        sku: "SW-1",
+        name: "Switches",
+        slug: "switches",
+        variants: [
+          { sku: "SW-1-A", priceAmountMinor: 1000, currency: "USD" },
+          { sku: "SW-1-B", priceAmountMinor: 1000, currency: "USD", tracksInventory: false },
+          { sku: "SW-1-C", priceAmountMinor: 1000, currency: "USD", inventoryPolicy: "continue" },
+        ],
+        tenantId,
+      }),
+      "create product",
+    );
+    unwrap(await catalog.products.publish({ productId: created.id, tenantId }), "publish");
+
+    const response = await invoke(stubAdmin(catalog), "/public/products/:slug", {
+      slug: "switches",
+    });
+
+    const variants = (response.body as { variants: Record<string, unknown>[] }).variants;
+    expect(variants.map((variant) => variant["sellableWhenOutOfStock"])).toEqual([
+      false,
+      true,
+      true,
+    ]);
+    for (const variant of variants) {
+      expect(Object.keys(variant)).not.toContain("tracksInventory");
+      expect(Object.keys(variant)).not.toContain("inventoryPolicy");
+    }
   });
 });

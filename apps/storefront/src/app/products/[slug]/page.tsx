@@ -104,7 +104,18 @@ export default async function ProductDetailPage({
     resolveCurrentCustomer((await cookies()).get(CUSTOMER_SESSION_COOKIE)?.value),
   ]);
   const price = priceOf(product);
-  const availability = availabilityBook?.resolve(product.id) ?? { status: "unknown" as const };
+  const availability = availabilityBook?.resolveProduct(product) ?? { status: "unknown" as const };
+  // Plan 2B-1: each size has its own stock. A variant that sells past zero is "unlimited"; one with
+  // no inventory row at all is left out (unknown stock never blocks a sale on its own).
+  const availabilityByVariant: Record<string, number | "unlimited"> = {};
+  for (const variant of product.variants) {
+    if (variant.sellableWhenOutOfStock) {
+      availabilityByVariant[variant.id] = "unlimited";
+      continue;
+    }
+    const stock = availabilityBook?.resolve(product.id, variant.id);
+    if (stock?.status === "ok") availabilityByVariant[variant.id] = stock.available;
+  }
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 p-8">
@@ -147,7 +158,7 @@ export default async function ProductDetailPage({
           {price.status === "ok" && (
             <VariantPicker
               product={product}
-              outOfStock={availability.status === "ok" && availability.available <= 0}
+              availabilityByVariant={availabilityByVariant}
               t={t}
               locale={locale}
             />
