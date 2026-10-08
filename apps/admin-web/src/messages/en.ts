@@ -654,6 +654,8 @@ export const en = {
     create: "Save product",
     unsaved: "Unsaved changes",
     partiallySaved: "Some changes were saved before an error. Review and save again.",
+    pageOutOfDate: "This page is out of date. Reload and try again.",
+    shopLocation: "Shop location",
     titleCard: "Title and description",
     title: "Title",
     description: "Description",

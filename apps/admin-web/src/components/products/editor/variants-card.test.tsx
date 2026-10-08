@@ -79,46 +79,6 @@ afterEach(() => {
 });
 
 describe("VariantsCard", () => {
-  it("starts with an invitation to add options, then shows one option row", () => {
-    render(<VariantsCard product={product()} t={en} locale="en" />);
-
-    fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
-
-    expect(screen.getAllByLabelText(t.optionName)).toHaveLength(1);
-    expect(screen.getAllByLabelText(t.optionValues)).toHaveLength(1);
-  });
-
-  it("previews how many variants the typed options add and remove", () => {
-    render(<VariantsCard product={product()} t={en} locale="en" />);
-    fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
-
-    fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: "Size" } });
-    fireEvent.change(screen.getByLabelText(t.optionValues), { target: { value: "S, M, L" } });
-
-    expect(
-      screen.getByText(t.matrixPreview.replace("{adds}", "2").replace("{removes}", "0")),
-    ).toBeInTheDocument();
-  });
-
-  it("confirms before removing variants, and does not submit when cancelled", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<VariantsCard product={sized} t={en} locale="en" />);
-
-    fireEvent.change(screen.getByLabelText(t.optionValues), { target: { value: "S, L" } });
-    fireEvent.click(screen.getByRole("button", { name: t.saveOptions }));
-
-    expect(confirm).toHaveBeenCalledWith(t.confirmRemoveVariants.replace("{count}", "1"));
-    expect(saveProductOptionsAction).not.toHaveBeenCalled();
-
-    confirm.mockReturnValue(true);
-    fireEvent.click(screen.getByRole("button", { name: t.saveOptions }));
-    await waitFor(() => expect(saveProductOptionsAction).toHaveBeenCalledTimes(1));
-    const formData = saveProductOptionsAction.mock.calls[0]![1];
-    expect(formData.get("productId")).toBe("p1");
-    expect(formData.getAll("optionName")).toEqual(["Size"]);
-    expect(formData.getAll("optionValues")).toEqual(["S, L"]);
-  });
-
   it("lists one row per variant with its title, price, SKU and an edit button", () => {
     render(<VariantsCard product={sized} t={en} locale="en" />);
 
@@ -173,18 +133,5 @@ describe("VariantsCard", () => {
     expect(
       within(several).getByRole("button", { name: en.productVariantsForm.remove }),
     ).toBeInTheDocument();
-  });
-
-  it("stops offering more option rows at the limit of three", () => {
-    const three = product({
-      options: [
-        { name: "A", values: ["1"] },
-        { name: "B", values: ["1"] },
-        { name: "C", values: ["1"] },
-      ],
-    });
-    render(<VariantsCard product={three} t={en} locale="en" />);
-
-    expect(screen.getByRole("button", { name: t.addAnotherOption })).toBeDisabled();
   });
 });

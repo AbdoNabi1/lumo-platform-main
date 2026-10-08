@@ -23,9 +23,18 @@ const api = vi.hoisted(() => ({
   attachProductMedia: vi.fn(),
   detachProductMedia: vi.fn(),
   reorderProductMedia: vi.fn(),
+  fetchProductInventory: vi.fn(),
+}));
+
+const inventory = vi.hoisted(() => ({
+  fetchWarehouses: vi.fn(),
+  registerWarehouse: vi.fn(),
+  receiveStock: vi.fn(),
+  adjustStock: vi.fn(),
 }));
 
 vi.mock("@/lib/api/products", () => api);
+vi.mock("@/lib/api/inventory", () => inventory);
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
@@ -36,12 +45,8 @@ vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined }),
 }));
 
-const {
-  createProductAction,
-  saveProductAction,
-  saveProductOptionsAction,
-  updateVariantDetailsAction,
-} = await import("./actions");
+const { createProductAction, saveProductAction, updateVariantDetailsAction } =
+  await import("./actions");
 
 const ok = { outcome: "ok", data: {} } as const;
 const idle: FormState = { status: "idle" };
@@ -98,6 +103,8 @@ function formFor(p: ProductDetailDto, overrides: Record<string, string | string[
     costPerItem: "",
     currency: v.currency,
     taxable: "on",
+    tracksInventory: v.tracksInventory ? "on" : [],
+    continueSelling: v.inventoryPolicy === "continue" ? "on" : [],
     sku: v.sku,
     barcode: "",
     requiresShipping: "on",
@@ -119,8 +126,15 @@ function formFor(p: ProductDetailDto, overrides: Record<string, string | string[
   return formData;
 }
 
+const shop = { id: "w1", code: "SHOP", name: "Shop", status: "active" };
+
 beforeEach(() => {
-  for (const fn of Object.values(api)) fn.mockReset();
+  for (const fn of [...Object.values(api), ...Object.values(inventory)]) fn.mockReset();
+  inventory.fetchWarehouses.mockResolvedValue({ outcome: "ok", items: [shop] });
+  api.fetchProductInventory.mockResolvedValue({ outcome: "ok", rows: [] });
+  for (const name of ["registerWarehouse", "receiveStock", "adjustStock"] as const) {
+    inventory[name].mockResolvedValue(ok);
+  }
   for (const name of [
     "updateProduct",
     "updateProductVariant",
@@ -387,20 +401,57 @@ describe("createProductAction", () => {
   });
 });
 
-describe("saveProductOptionsAction", () => {
-  function optionsForm(rows: [string, string][]): FormData {
-    const formData = new FormData();
-    formData.append("productId", "p1");
-    for (const [name, values] of rows) {
-      formData.append("optionName", name);
-      formData.append("optionValues", values);
-    }
-    return formData;
+describe("saveProductAction — options, variant prices and stock (Plan 2B-2)", () => {
+  /** The page form for `p` plus an options section and one row per resulting variant. */
+  function optionsForm(
+    p: ProductDetailDto,
+    options: { name: string; values: string[] }[],
+    rows: { key: string; price: string; available?: string }[],
+    overrides: Record<string, string | string[]> = {},
+  ): FormData {
+    const fields: Record<string, string | string[]> = { optionsPresent: "1", ...overrides };
+    options.forEach((option, index) => {
+      fields[`optionName-${index}`] = option.name;
+      fields[`optionValue-${index}`] = option.values;
+    });
+    rows.forEach((row, index) => {
+      fields[`row-${index}-key`] = row.key;
+      fields[`row-${index}-price`] = row.price;
+      if (row.available !== undefined) fields[`row-${index}-available`] = row.available;
+    });
+    return formFor(p, fields);
   }
 
-  it("runs the planner's operations in order and keeps the existing variant's values", async () => {
+  const sizeRows = [
+    { key: "Size=S", price: "150" },
+    { key: "Size=M", price: "175" },
+  ];
+  const sizeOption = [{ name: "Size", values: ["S", "M"] }];
+  const added = { outcome: "ok", data: { productId: "p1", variantId: "v-new" } } as const;
+
+  const multi = () =>
+    product({
+      options: [{ name: "Size", values: ["S", "M"] }],
+      variants: [
+        variant({ selection: { Size: "S" } }),
+        variant({ id: "v2", sku: "SKU-2", selection: { Size: "M" }, priceAmountMinor: 17500 }),
+      ],
+    });
+
+  /** The calls that only set a price (the planner's own calls carry a `selection`). */
+  function priceWrites(variantId: string) {
+    return api.updateProductVariant.mock.calls.filter(
+      (call) => call[1] === variantId && !("selection" in (call[2] as object)),
+    );
+  }
+
+  it("runs the planner's operations in order and prices the new row", async () => {
     use(product());
-    const state = await saveProductOptionsAction(idle, optionsForm([["Size", "S, M"]]));
+    api.addProductVariant.mockResolvedValue(added);
+    const state = await saveProductAction(
+      idle,
+      optionsForm(product(), [{ name: "Size", values: ["S", "M", ""] }], sizeRows),
+    );
 
     expect(state).toEqual({ status: "success" });
     // The planner declares the options first, then assigns, then adds — every step legal.
@@ -410,6 +461,7 @@ describe("saveProductOptionsAction", () => {
       api.addProductVariant.mock.invocationCallOrder[0]!,
     ];
     expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(api.setProductOptions).toHaveBeenCalledWith("p1", sizeOption, expect.any(String));
     expect(api.updateProductVariant).toHaveBeenCalledWith(
       "p1",
       "v1",
@@ -418,56 +470,385 @@ describe("saveProductOptionsAction", () => {
     );
     expect(api.addProductVariant).toHaveBeenCalledWith(
       "p1",
-      expect.objectContaining({ selection: { Size: "M" } }),
+      expect.objectContaining({ selection: { Size: "M" }, priceAmountMinor: 15000 }),
+      expect.any(String),
+    );
+    // 175 differs from the copied first price → one price write for the new variant.
+    expect(priceWrites("v-new")).toHaveLength(1);
+    expect(priceWrites("v-new")[0]![2]).toMatchObject({ priceAmountMinor: 17500, currency: "EGP" });
+    // 150 equals S's current price → no price write for S.
+    expect(priceWrites("v1")).toHaveLength(0);
+  });
+
+  it("writes the price of an existing row only when it changed", async () => {
+    use(product());
+    api.addProductVariant.mockResolvedValue(added);
+    await saveProductAction(
+      idle,
+      optionsForm(product(), sizeOption, [
+        { key: "Size=S", price: "160" },
+        { key: "Size=M", price: "150" },
+      ]),
+    );
+
+    expect(priceWrites("v1")).toHaveLength(1);
+    expect(priceWrites("v1")[0]![2]).toMatchObject({ priceAmountMinor: 16000 });
+    expect(priceWrites("v-new")).toHaveLength(0);
+  });
+
+  it("refuses a stale page before writing anything", async () => {
+    use(product());
+    const state = await saveProductAction(
+      idle,
+      optionsForm(
+        product(),
+        sizeOption,
+        [
+          { key: "Size=S", price: "150" },
+          { key: "Size=L", price: "175" },
+        ],
+        { title: "Renamed" },
+      ),
+    );
+
+    expect(state).toEqual({
+      status: "error",
+      message: en.productEditor.pageOutOfDate,
+      fieldErrors: {},
+    });
+    for (const write of [
+      api.updateProduct,
+      api.updateProductVariant,
+      api.addProductVariant,
+      api.setProductOptions,
+      api.removeProductVariant,
+      inventory.receiveStock,
+      inventory.adjustStock,
+    ]) {
+      expect(write).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses a page whose row count no longer matches", async () => {
+    use(product());
+    const state = await saveProductAction(idle, optionsForm(product(), sizeOption, [sizeRows[0]!]));
+    expect(state.status).toBe("error");
+    if (state.status === "error") expect(state.message).toBe(en.productEditor.pageOutOfDate);
+    expect(api.setProductOptions).not.toHaveBeenCalled();
+  });
+
+  it("sets stock per row from the available quantity", async () => {
+    use(product());
+    api.addProductVariant.mockResolvedValue(added);
+    api.fetchProductInventory.mockResolvedValue({
+      outcome: "ok",
+      rows: [{ warehouseId: "w1", variantId: "v1", onHand: 2, reserved: 0, available: 2 }],
+    });
+    const state = await saveProductAction(
+      idle,
+      optionsForm(product(), sizeOption, [
+        { key: "Size=S", price: "150", available: "5" },
+        { key: "Size=M", price: "150", available: "3" },
+      ]),
+    );
+
+    expect(state).toEqual({ status: "success" });
+    expect(inventory.adjustStock).toHaveBeenCalledWith(
+      { productId: "p1", variantId: "v1", warehouseId: "w1", onHand: 5 },
+      expect.any(String),
+    );
+    expect(inventory.receiveStock).toHaveBeenCalledWith(
+      { productId: "p1", variantId: "v-new", warehouseId: "w1", quantity: 3 },
       expect.any(String),
     );
   });
 
+  it("keeps reserved units on top of the typed available quantity", async () => {
+    use(multi());
+    api.fetchProductInventory.mockResolvedValue({
+      outcome: "ok",
+      rows: [{ warehouseId: "w1", variantId: "v2", onHand: 10, reserved: 2, available: 8 }],
+    });
+    await saveProductAction(
+      idle,
+      optionsForm(multi(), sizeOption, [
+        { key: "Size=S", price: "150" },
+        { key: "Size=M", price: "175", available: "7" },
+      ]),
+    );
+    expect(inventory.adjustStock).toHaveBeenCalledWith(
+      { productId: "p1", variantId: "v2", warehouseId: "w1", onHand: 9 },
+      expect.any(String),
+    );
+  });
+
+  it("changes nothing for a blank available quantity or an untracked variant", async () => {
+    const untracked = product({
+      options: [{ name: "Size", values: ["S", "M"] }],
+      variants: [
+        variant({ selection: { Size: "S" }, tracksInventory: false }),
+        variant({ id: "v2", sku: "SKU-2", selection: { Size: "M" } }),
+      ],
+    });
+    use(untracked);
+    await saveProductAction(
+      idle,
+      optionsForm(untracked, sizeOption, [
+        { key: "Size=S", price: "150", available: "9" },
+        { key: "Size=M", price: "150", available: "" },
+      ]),
+    );
+    expect(inventory.receiveStock).not.toHaveBeenCalled();
+    expect(inventory.adjustStock).not.toHaveBeenCalled();
+  });
+
+  it("registers the shop location before the first stock write when there is none", async () => {
+    use(multi());
+    inventory.fetchWarehouses.mockResolvedValue({ outcome: "ok", items: [] });
+    inventory.registerWarehouse.mockResolvedValue({
+      outcome: "ok",
+      data: { warehouseId: "w-new" },
+    });
+    await saveProductAction(
+      idle,
+      optionsForm(multi(), sizeOption, [
+        { key: "Size=S", price: "150", available: "4" },
+        { key: "Size=M", price: "175" },
+      ]),
+    );
+
+    expect(inventory.registerWarehouse).toHaveBeenCalledWith(
+      { code: "SHOP", name: en.productEditor.shopLocation },
+      expect.any(String),
+    );
+    expect(inventory.receiveStock).toHaveBeenCalledWith(
+      { productId: "p1", variantId: "v1", warehouseId: "w-new", quantity: 4 },
+      expect.any(String),
+    );
+    expect(inventory.registerWarehouse.mock.invocationCallOrder[0]).toBeLessThan(
+      inventory.receiveStock.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("registers no location when no stock write is needed", async () => {
+    use(multi());
+    inventory.fetchWarehouses.mockResolvedValue({ outcome: "ok", items: [] });
+    await saveProductAction(
+      idle,
+      optionsForm(multi(), sizeOption, [
+        { key: "Size=S", price: "150", available: "0" },
+        { key: "Size=M", price: "175" },
+      ]),
+    );
+    expect(inventory.registerWarehouse).not.toHaveBeenCalled();
+  });
+
+  it("never writes stock when the shop has several locations", async () => {
+    use(multi());
+    inventory.fetchWarehouses.mockResolvedValue({
+      outcome: "ok",
+      items: [shop, { ...shop, id: "w2", code: "B" }],
+    });
+    const state = await saveProductAction(
+      idle,
+      optionsForm(multi(), sizeOption, [
+        { key: "Size=S", price: "150", available: "5" },
+        { key: "Size=M", price: "175", available: "6" },
+      ]),
+    );
+    expect(state).toEqual({ status: "success" });
+    for (const write of [
+      inventory.receiveStock,
+      inventory.adjustStock,
+      inventory.registerWarehouse,
+    ]) {
+      expect(write).not.toHaveBeenCalled();
+    }
+  });
+
+  it("saves the single variant's tracking switches", async () => {
+    use(product());
+    await saveProductAction(
+      idle,
+      formFor(product(), { tracksInventory: [], continueSelling: "on" }),
+    );
+
+    expect(api.updateProductVariant).toHaveBeenCalledWith(
+      "p1",
+      "v1",
+      expect.objectContaining({ tracksInventory: false, inventoryPolicy: "continue" }),
+      expect.any(String),
+    );
+  });
+
+  it("sets the single variant's stock only while it is tracked", async () => {
+    use(product());
+    await saveProductAction(idle, formFor(product(), { available: "12" }));
+    expect(inventory.receiveStock).toHaveBeenCalledWith(
+      { productId: "p1", variantId: "v1", warehouseId: "w1", quantity: 12 },
+      expect.any(String),
+    );
+
+    inventory.receiveStock.mockClear();
+    await saveProductAction(idle, formFor(product(), { available: "12", tracksInventory: [] }));
+    expect(inventory.receiveStock).not.toHaveBeenCalled();
+    expect(inventory.adjustStock).not.toHaveBeenCalled();
+  });
+
+  it("reads a legacy product-level stock row as the only variant's stock", async () => {
+    use(product());
+    api.fetchProductInventory.mockResolvedValue({
+      outcome: "ok",
+      rows: [{ warehouseId: "w1", variantId: null, onHand: 3, reserved: 0, available: 3 }],
+    });
+    await saveProductAction(idle, formFor(product(), { available: "8" }));
+    expect(inventory.adjustStock).toHaveBeenCalledWith(
+      { productId: "p1", variantId: "v1", warehouseId: "w1", onHand: 8 },
+      expect.any(String),
+    );
+  });
+
+  it("rejects bad row numbers before any call", async () => {
+    use(product());
+    const state = await saveProductAction(
+      idle,
+      optionsForm(
+        product(),
+        sizeOption,
+        [
+          { key: "Size=S", price: "abc", available: "-1" },
+          { key: "Size=M", price: "175", available: "2.5" },
+        ],
+        { title: "Renamed" },
+      ),
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.fieldErrors["row-0-price"]).toBeDefined();
+      expect(state.fieldErrors["row-0-available"]).toBeDefined();
+      expect(state.fieldErrors["row-1-available"]).toBeDefined();
+    }
+    expect(api.updateProduct).not.toHaveBeenCalled();
+    expect(api.setProductOptions).not.toHaveBeenCalled();
+    expect(inventory.fetchWarehouses).not.toHaveBeenCalled();
+  });
+
+  it("makes no option calls when the options are unchanged, but still applies price edits", async () => {
+    use(multi());
+    const state = await saveProductAction(
+      idle,
+      optionsForm(multi(), sizeOption, [
+        { key: "Size=S", price: "150" },
+        { key: "Size=M", price: "180" },
+      ]),
+    );
+
+    expect(state).toEqual({ status: "success" });
+    expect(api.setProductOptions).not.toHaveBeenCalled();
+    expect(api.addProductVariant).not.toHaveBeenCalled();
+    expect(api.removeProductVariant).not.toHaveBeenCalled();
+    expect(api.updateProductVariant).toHaveBeenCalledTimes(1);
+    expect(priceWrites("v2")[0]![2]).toMatchObject({ priceAmountMinor: 18000 });
+  });
+
   it("refuses too many variants without calling the API", async () => {
     use(product());
-    const many = Array.from({ length: 11 }, (_, i) => `v${i}`).join(",");
-    const state = await saveProductOptionsAction(
+    const many = Array.from({ length: 11 }, (_, i) => `v${i}`);
+    const state = await saveProductAction(
       idle,
-      optionsForm([
-        ["A", many],
-        ["B", many],
-      ]),
+      optionsForm(
+        product(),
+        [
+          { name: "A", values: many },
+          { name: "B", values: many },
+        ],
+        [],
+        { title: "Renamed" },
+      ),
     );
     expect(state).toEqual({
       status: "error",
       message: en.productEditor.tooManyVariants,
       fieldErrors: {},
     });
+    expect(api.updateProduct).not.toHaveBeenCalled();
     expect(api.setProductOptions).not.toHaveBeenCalled();
     expect(api.addProductVariant).not.toHaveBeenCalled();
+  });
+
+  it("refuses an option with no values", async () => {
+    use(product());
+    const state = await saveProductAction(
+      idle,
+      optionsForm(product(), [{ name: "Size", values: ["", ""] }], []),
+    );
+    expect(state).toEqual({
+      status: "error",
+      message: en.productEditor.invalidOptions,
+      fieldErrors: {},
+    });
+    expect(api.setProductOptions).not.toHaveBeenCalled();
   });
 
   it("stops at a failing operation and prefixes the message", async () => {
     use(product());
     api.updateProductVariant.mockResolvedValue({ outcome: "error", message: "boom" });
-    const state = await saveProductOptionsAction(idle, optionsForm([["Size", "S, M"]]));
+    const state = await saveProductAction(idle, optionsForm(product(), sizeOption, sizeRows));
 
     expect(state.status).toBe("error");
     if (state.status === "error") {
       expect(state.message.startsWith(en.productEditor.partiallySaved)).toBe(true);
     }
     expect(api.addProductVariant).not.toHaveBeenCalled();
+    expect(inventory.receiveStock).not.toHaveBeenCalled();
   });
 
-  it("treats a form with no option rows as removing every option", async () => {
-    const withOptions = product({
-      options: [{ name: "Size", values: ["S", "M"] }],
-      variants: [
-        variant({ selection: { Size: "S" } }),
-        variant({ id: "v2", sku: "SKU-2", selection: { Size: "M" } }),
-      ],
-    });
-    use(withOptions);
-    const state = await saveProductOptionsAction(idle, optionsForm([]));
+  it("treats a page with no option rows as removing every option", async () => {
+    use(multi());
+    const state = await saveProductAction(idle, optionsForm(multi(), [], []));
 
     expect(state).toEqual({ status: "success" });
     expect(api.removeProductVariant).toHaveBeenCalledWith("p1", "v2", expect.any(String));
     expect(api.setProductOptions).toHaveBeenCalledWith("p1", [], expect.any(String));
+  });
+
+  it("writes in a fixed order: details, options, prices, stock, SEO, brand, categories, status", async () => {
+    use(product());
+    api.addProductVariant.mockResolvedValue(added);
+    await saveProductAction(
+      idle,
+      optionsForm(
+        product(),
+        sizeOption,
+        [
+          { key: "Size=S", price: "150", available: "5" },
+          { key: "Size=M", price: "175" },
+        ],
+        {
+          title: "Renamed",
+          seoTitle: "A title",
+          brandId: "b1",
+          categoryIds: ["c1"],
+          status: "draft",
+        },
+      ),
+    );
+
+    const at = (fn: { mock: { invocationCallOrder: number[] } }, index = 0) =>
+      fn.mock.invocationCallOrder[index]!;
+    const sequence = [
+      at(api.updateProduct),
+      at(api.setProductOptions),
+      at(api.addProductVariant),
+      at(api.updateProductVariant, api.updateProductVariant.mock.calls.length - 1),
+      at(inventory.receiveStock),
+      at(api.setProductSeo),
+      at(api.setProductBrand),
+      at(api.assignProductCategories),
+      at(api.unpublishProduct),
+    ];
+    expect(sequence).toEqual([...sequence].sort((a, b) => a - b));
   });
 });
 
@@ -489,7 +870,7 @@ describe("updateVariantDetailsAction", () => {
     })) {
       formData.append(key, value);
     }
-    // requiresShipping and taxable unchecked → absent → false
+    // requiresShipping, taxable and the inventory switches unchecked → absent → false / deny
 
     const state = await updateVariantDetailsAction(idle, formData);
 
@@ -507,7 +888,32 @@ describe("updateVariantDetailsAction", () => {
         weightGrams: 2000,
         requiresShipping: false,
         taxable: false,
+        tracksInventory: false,
+        inventoryPolicy: "deny",
       },
+      expect.any(String),
+    );
+  });
+
+  it("saves the two inventory switches", async () => {
+    use(product({ variants: [variant({ tracksInventory: false })] }));
+    const formData = new FormData();
+    for (const [key, value] of Object.entries({
+      productId: "p1",
+      variantId: "v1",
+      price: "150",
+      tracksInventory: "on",
+      continueSelling: "on",
+    })) {
+      formData.append(key, value);
+    }
+
+    await updateVariantDetailsAction(idle, formData);
+
+    expect(api.updateProductVariant).toHaveBeenCalledWith(
+      "p1",
+      "v1",
+      expect.objectContaining({ tracksInventory: true, inventoryPolicy: "continue" }),
       expect.any(String),
     );
   });

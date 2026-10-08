@@ -14,6 +14,7 @@ import {
   deleteProduct,
   detachProductMedia,
   fetchProduct,
+  fetchProductInventory,
   publishProduct,
   removeProductVariant,
   reorderProductMedia,
@@ -26,8 +27,12 @@ import {
   updateProduct,
   updateProductVariant,
   type FetchProductResult,
+  type InventoryPolicy,
+  type ProductOptionDto,
   type ProductOptionInput,
+  type ProductDetailDto,
 } from "@/lib/api/products";
+import { adjustStock, fetchWarehouses, receiveStock, registerWarehouse } from "@/lib/api/inventory";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import {
   PRODUCT_FIELD_NAMES,
@@ -40,7 +45,14 @@ import {
   randomToken,
 } from "@/lib/products/handles";
 import { toMinorUnits } from "@/lib/products/money";
-import { planOptionChange } from "@/lib/products/variant-matrix";
+import { stockByVariant, stockChange, type StockLevelDto } from "@/lib/products/stock";
+import {
+  MAX_OPTIONS,
+  planOptionChange,
+  rowKey,
+  type MatrixOperation,
+  type OptionPlan,
+} from "@/lib/products/variant-matrix";
 
 /**
  * `apps/admin-web`'s product write actions (Phase 1 T1.3/T1.4, rebuilt by Plan 2C-2 around the
@@ -99,22 +111,52 @@ function tagsOf(formData: FormData): string[] {
     .filter((tag) => tag.length > 0);
 }
 
-/** The option editor's name/values rows. Zero rows is valid: it means "remove every option". */
-function parseOptions(formData: FormData): readonly ProductOptionInput[] | null {
-  const names = stringFieldValues(formData, "optionName");
-  const valuesList = stringFieldValues(formData, "optionValues");
-  if (names.length !== valuesList.length) return null;
+/** `optionName-<i>` / repeated `optionValue-<i>`; blank rows drop out, blank values are ignored. */
+function parsePageOptions(formData: FormData): ProductOptionInput[] {
   const options: ProductOptionInput[] = [];
-  for (let index = 0; index < names.length; index += 1) {
-    const name = (names[index] ?? "").trim();
-    const values = (valuesList[index] ?? "")
-      .split(",")
+  for (let index = 0; index < MAX_OPTIONS; index += 1) {
+    const name = stringField(formData, `optionName-${index}`).trim();
+    const values = stringFieldValues(formData, `optionValue-${index}`)
       .map((value) => value.trim())
       .filter((value) => value.length > 0);
-    if (name.length === 0 || values.length === 0) return null;
+    if (name.length === 0 && values.length === 0) continue;
     options.push({ name, values });
   }
   return options;
+}
+
+function sameOptions(
+  posted: readonly ProductOptionInput[],
+  current: readonly ProductOptionDto[],
+): boolean {
+  return (
+    posted.length === current.length &&
+    posted.every((option, index) => {
+      const other = current[index];
+      return (
+        other !== undefined &&
+        option.name === other.name &&
+        option.values.length === other.values.length &&
+        option.values.every((value, position) => value === other.values[position])
+      );
+    })
+  );
+}
+
+/** Blank → null (no change); a whole number ≥ 0; otherwise `undefined` (invalid). */
+function optionalWholeNumber(formData: FormData, name: string): number | null | undefined {
+  const raw = stringField(formData, name).trim();
+  if (raw.length === 0) return null;
+  if (!/^\d+$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+/** The id the API echoes for a created record (`{ variantId }`, `{ warehouseId }`), if readable. */
+function idOf(data: unknown, key: "variantId" | "warehouseId"): string | null {
+  if (typeof data !== "object" || data === null) return null;
+  const value = (data as Record<string, unknown>)[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 async function localeDictionary() {
@@ -147,6 +189,8 @@ interface ParsedVariantFields {
   readonly weightGrams: number | null;
   readonly requiresShipping: boolean;
   readonly taxable: boolean;
+  readonly tracksInventory: boolean;
+  readonly inventoryPolicy: InventoryPolicy;
 }
 
 /** Reads the single-variant inputs; a bad amount or weight lands in `errors` and `values` is null. */
@@ -183,6 +227,8 @@ function parseVariantFields(
       weightGrams: weight,
       requiresShipping: checkbox(formData, "requiresShipping"),
       taxable: checkbox(formData, "taxable"),
+      tracksInventory: checkbox(formData, "tracksInventory"),
+      inventoryPolicy: checkbox(formData, "continueSelling") ? "continue" : "deny",
     },
     errors,
   };
@@ -213,15 +259,172 @@ const SEO_FIELD_NAMES: Readonly<Record<string, string>> = {
 };
 
 interface SaveStep {
+  /** API field names → input names. A step that knows its inputs only at run time fills it then. */
   readonly names: Readonly<Record<string, string>>;
   readonly run: () => Promise<MutationResult<unknown>>;
+  /** For steps that can write nothing, or part of their work: whether anything was saved. */
+  readonly wroteSomething?: () => boolean;
+}
+
+type OkPlan = Extract<OptionPlan, { readonly ok: true }>;
+
+/**
+ * Runs the planner's operations in order; every intermediate state is legal for the domain. Stops
+ * at the first failure; what ran stays saved. `added` maps a new row's key to the id the API gave
+ * it (`POST /variants` answers `{ productId, variantId }`).
+ */
+async function applyOptionPlan(
+  productId: string,
+  product: ProductDetailDto,
+  operations: readonly MatrixOperation[],
+): Promise<{
+  readonly result: MutationResult<unknown>;
+  readonly ran: boolean;
+  readonly added: ReadonlyMap<string, string>;
+}> {
+  const added = new Map<string, string>();
+  let ran = false;
+  for (const operation of operations) {
+    let result: MutationResult<unknown>;
+    if (operation.kind === "remove") {
+      result = await removeProductVariant(productId, operation.variantId, newIdempotencyKey());
+    } else if (operation.kind === "setOptions") {
+      result = await setProductOptions(productId, operation.options, newIdempotencyKey());
+    } else if (operation.kind === "assign") {
+      const variant = product.variants.find((candidate) => candidate.id === operation.variantId);
+      if (variant === undefined) {
+        result = { outcome: "not_found" };
+      } else {
+        result = await updateProductVariant(
+          productId,
+          variant.id,
+          {
+            sku: variant.sku,
+            priceAmountMinor: variant.priceAmountMinor,
+            currency: variant.currency,
+            selection: operation.selection,
+          },
+          newIdempotencyKey(),
+        );
+      }
+    } else {
+      result = await addProductVariant(
+        productId,
+        {
+          sku: operation.sku,
+          priceAmountMinor: operation.priceAmountMinor,
+          currency: operation.currency,
+          selection: operation.selection,
+        },
+        newIdempotencyKey(),
+      );
+      if (result.outcome === "ok") {
+        const variantId = idOf(result.data, "variantId");
+        if (variantId !== null) added.set(rowKey(operation.selection), variantId);
+      }
+    }
+    if (result.outcome !== "ok") return { result, ran, added };
+    ran = true;
+  }
+  return { result: { outcome: "ok", data: null }, ran, added };
+}
+
+/** One stock edit the merchant typed: the input it came from, and which variant it is for. */
+interface StockEdit {
+  readonly field: string;
+  readonly desired: number;
+  readonly variantId: () => string | null;
 }
 
 /**
- * Plan 2C-2 — the editor's single Save. Re-reads the product, then calls only the endpoints whose
- * values changed, in a fixed order (details → variant → SEO → brand → categories → status), and
- * stops at the first failure. Everything before the failure stays saved (each call is idempotent),
- * so the page revalidates to show it.
+ * The only-location rule (checkout supports one location today): none yet → the first write
+ * registers "Shop location"; one → use it; several → write nothing. Edits are what the merchant
+ * typed as AVAILABLE; `stockChange` turns each into a receive or an adjust.
+ */
+async function applyStockEdits(
+  productId: string,
+  product: ProductDetailDto,
+  edits: readonly StockEdit[],
+  shopLocationName: string,
+  names: Record<string, string>,
+): Promise<{ readonly result: MutationResult<unknown>; readonly wrote: boolean }> {
+  let wrote = false;
+  const failure = (
+    result: MutationResult<unknown>,
+  ): { readonly result: MutationResult<unknown>; readonly wrote: boolean } => ({ result, wrote });
+
+  const warehouses = await fetchWarehouses();
+  if (warehouses.outcome === "unauthorized") return failure({ outcome: "unauthorized" });
+  if (warehouses.outcome === "error") {
+    return failure({ outcome: "error", message: warehouses.message });
+  }
+  if (warehouses.items.length > 1) return failure({ outcome: "ok", data: null });
+
+  const location = warehouses.items[0];
+  let levels: Record<string, StockLevelDto> = {};
+  if (location !== undefined) {
+    const inventory = await fetchProductInventory(productId);
+    if (inventory.outcome === "unauthorized") return failure({ outcome: "unauthorized" });
+    if (inventory.outcome === "error") {
+      return failure({ outcome: "error", message: inventory.message });
+    }
+    levels = stockByVariant(
+      inventory.rows.filter((row) => row.warehouseId === location.id),
+      product.variants,
+    );
+  }
+
+  let warehouseId = location?.id ?? null;
+  for (const edit of edits) {
+    const variantId = edit.variantId();
+    if (variantId === null) {
+      return failure({ outcome: "error", message: "The variant id was not returned" });
+    }
+    const change = stockChange(edit.desired, levels[variantId] ?? null);
+    if (change.kind === "none" || change.kind === "invalid") continue;
+
+    if (warehouseId === null) {
+      const registered = await registerWarehouse(
+        { code: "SHOP", name: shopLocationName },
+        newIdempotencyKey(),
+      );
+      if (registered.outcome !== "ok") return failure(registered);
+      wrote = true;
+      warehouseId = idOf(registered.data, "warehouseId");
+      if (warehouseId === null) {
+        return failure({ outcome: "error", message: "The location id was not returned" });
+      }
+    }
+
+    const result =
+      change.kind === "receive"
+        ? await receiveStock(
+            { productId, variantId, warehouseId, quantity: change.quantity },
+            newIdempotencyKey(),
+          )
+        : await adjustStock(
+            { productId, variantId, warehouseId, onHand: change.onHand },
+            newIdempotencyKey(),
+          );
+    if (result.outcome !== "ok") {
+      names["quantity"] = edit.field;
+      names["onHand"] = edit.field;
+      return failure(result);
+    }
+    wrote = true;
+  }
+  return { result: { outcome: "ok", data: null }, wrote };
+}
+
+/**
+ * Plan 2C-2 / 2B-2 — the editor's single Save. Re-reads the product, then calls only the endpoints
+ * whose values changed, in a fixed order (details → options → the variant's fields, or per-row
+ * prices → stock → SEO → brand → categories → status), and stops at the first failure. Everything
+ * before the failure stays saved (each call is idempotent), so the page revalidates to show it.
+ *
+ * Everything the server must decide is validated BEFORE the first write: the options, the rows
+ * (a hidden key per row refuses a stale page rather than writing a price to the wrong size) and
+ * every price and quantity.
  */
 export async function saveProductAction(
   _previous: FormState,
@@ -246,13 +449,63 @@ export async function saveProductAction(
     return toFormState({ outcome: "not_found" }, t);
   }
 
+  // Options: without the options section on the page they are unchanged.
+  const optionsPresent = stringField(formData, "optionsPresent") === "1";
+  const postedOptions = optionsPresent ? parsePageOptions(formData) : null;
+  const nextOptions: readonly ProductOptionInput[] = postedOptions ?? product.options;
+  const optionsChanged = postedOptions !== null && !sameOptions(postedOptions, product.options);
+  // The single variant's own cards are on the page only while there are no options.
+  const singleVariant = hasVariantFields && nextOptions.length === 0;
+  const rowMode = optionsPresent && nextOptions.length > 0;
+
   const fieldErrors: Record<string, string> = {};
   const title = stringField(formData, "title").trim();
   if (title.length === 0) fieldErrors["title"] = t.invalid;
 
   const currency = stringField(formData, "currency").trim() || currentVariant?.currency || "EGP";
-  const parsed = hasVariantFields ? parseVariantFields(formData, currency, t.invalid) : null;
+  const parsed = singleVariant ? parseVariantFields(formData, currency, t.invalid) : null;
   if (parsed !== null) Object.assign(fieldErrors, parsed.errors);
+  const singleAvailable = singleVariant ? optionalWholeNumber(formData, "available") : null;
+  if (singleAvailable === undefined) fieldErrors["available"] = t.invalid;
+
+  let plan: OkPlan | null = null;
+  if (optionsPresent) {
+    const planned = planOptionChange({
+      productSku: product.sku,
+      variants: product.variants,
+      nextOptions,
+    });
+    if (!planned.ok) {
+      return {
+        status: "error",
+        message:
+          planned.reason === "too_many_variants" ? editor.tooManyVariants : editor.invalidOptions,
+        fieldErrors: {},
+      };
+    }
+    plan = planned;
+  }
+
+  // The rows: the page must be the one this server would render, then every number must parse.
+  const rowCurrency = product.variants[0]?.currency ?? currency;
+  const rowPrices: number[] = [];
+  const rowAvailable: (number | null)[] = [];
+  if (plan !== null && rowMode) {
+    const postedKeys = Array.from(formData.keys()).filter((name) => /^row-\d+-key$/.test(name));
+    const stale =
+      postedKeys.length !== plan.rows.length ||
+      plan.rows.some((row, index) => formData.get(`row-${index}-key`) !== rowKey(row.selection));
+    if (stale) return { status: "error", message: editor.pageOutOfDate, fieldErrors: {} };
+
+    plan.rows.forEach((_row, index) => {
+      const price = toMinorUnits(stringField(formData, `row-${index}-price`), rowCurrency);
+      if (price === null) fieldErrors[`row-${index}-price`] = t.invalid;
+      rowPrices.push(price ?? 0);
+      const available = optionalWholeNumber(formData, `row-${index}-available`);
+      if (available === undefined) fieldErrors[`row-${index}-available`] = t.invalid;
+      rowAvailable.push(available ?? null);
+    });
+  }
   if (Object.keys(fieldErrors).length > 0) {
     return { status: "error", message: t.invalid, fieldErrors };
   }
@@ -282,8 +535,30 @@ export async function saveProductAction(
     });
   }
 
-  // 2. The single variant's price, identifiers and shipping.
-  if (parsed !== null && parsed.values !== null && currentVariant !== undefined) {
+  // 2. Options: the planner's operations, in an order every step of which is legal.
+  const optionRun = { ran: false, added: new Map<string, string>() };
+  if (plan !== null && optionsChanged) {
+    const operations = plan.operations;
+    steps.push({
+      names: {},
+      wroteSomething: () => optionRun.ran,
+      run: async () => {
+        const outcome = await applyOptionPlan(productId, product, operations);
+        optionRun.ran = outcome.ran;
+        for (const [key, id] of outcome.added) optionRun.added.set(key, id);
+        return outcome.result;
+      },
+    });
+  }
+  /** A row's variant: the one it keeps, or the one the add just created. */
+  const variantIdOfRow = (index: number): string | null => {
+    const row = plan?.rows[index];
+    if (row === undefined) return null;
+    return row.variantId ?? optionRun.added.get(rowKey(row.selection)) ?? null;
+  };
+
+  // 3. The single variant's fields, or each row's price.
+  if (singleVariant && parsed !== null && parsed.values !== null && currentVariant !== undefined) {
     const values = parsed.values;
     const input = {
       sku: values.sku.length > 0 ? values.sku : currentVariant.sku,
@@ -295,6 +570,8 @@ export async function saveProductAction(
       weightGrams: values.weightGrams,
       requiresShipping: values.requiresShipping,
       taxable: values.taxable,
+      tracksInventory: values.tracksInventory,
+      inventoryPolicy: values.inventoryPolicy,
     };
     if (
       input.sku !== currentVariant.sku ||
@@ -305,7 +582,9 @@ export async function saveProductAction(
       input.barcode !== currentVariant.barcode ||
       input.weightGrams !== currentVariant.weightGrams ||
       input.requiresShipping !== currentVariant.requiresShipping ||
-      input.taxable !== currentVariant.taxable
+      input.taxable !== currentVariant.taxable ||
+      input.tracksInventory !== currentVariant.tracksInventory ||
+      input.inventoryPolicy !== currentVariant.inventoryPolicy
     ) {
       steps.push({
         names: PRODUCT_FIELD_NAMES,
@@ -313,8 +592,108 @@ export async function saveProductAction(
       });
     }
   }
+  if (plan !== null && rowMode) {
+    const rows = plan.rows;
+    const operations = plan.operations;
+    const priceEdits = rows.flatMap((row, index) => {
+      const existing =
+        row.variantId === null
+          ? undefined
+          : product.variants.find((variant) => variant.id === row.variantId);
+      const created =
+        existing !== undefined
+          ? undefined
+          : operations.find(
+              (operation) =>
+                operation.kind === "add" && rowKey(operation.selection) === rowKey(row.selection),
+            );
+      const source = existing ?? (created?.kind === "add" ? created : undefined);
+      const price = rowPrices[index];
+      if (source === undefined || price === undefined || price === source.priceAmountMinor) {
+        return [];
+      }
+      return [{ index, price, sku: source.sku }];
+    });
+    if (priceEdits.length > 0) {
+      const names: Record<string, string> = {};
+      let wrote = false;
+      steps.push({
+        names,
+        wroteSomething: () => wrote,
+        run: async () => {
+          for (const edit of priceEdits) {
+            const variantId = variantIdOfRow(edit.index);
+            if (variantId === null) {
+              return { outcome: "error", message: "The variant id was not returned" };
+            }
+            const result = await updateProductVariant(
+              productId,
+              variantId,
+              { sku: edit.sku, priceAmountMinor: edit.price, currency: rowCurrency },
+              newIdempotencyKey(),
+            );
+            if (result.outcome !== "ok") {
+              names["priceAmountMinor"] = `row-${edit.index}-price`;
+              return result;
+            }
+            wrote = true;
+          }
+          return { outcome: "ok", data: null };
+        },
+      });
+    }
+  }
 
-  // 3. SEO.
+  // 4. Stock: what the merchant typed as AVAILABLE, for the tracked variants.
+  const stockEdits: StockEdit[] = [];
+  if (rowMode) {
+    rowAvailable.forEach((desired, index) => {
+      const keptId = plan?.rows[index]?.variantId ?? null;
+      const tracked =
+        keptId === null ||
+        (product.variants.find((variant) => variant.id === keptId)?.tracksInventory ?? true);
+      if (desired !== null && tracked) {
+        stockEdits.push({
+          field: `row-${index}-available`,
+          desired,
+          variantId: () => variantIdOfRow(index),
+        });
+      }
+    });
+  } else if (
+    singleVariant &&
+    parsed?.values?.tracksInventory === true &&
+    singleAvailable !== null &&
+    singleAvailable !== undefined &&
+    currentVariant !== undefined
+  ) {
+    stockEdits.push({
+      field: "available",
+      desired: singleAvailable,
+      variantId: () => currentVariant.id,
+    });
+  }
+  if (stockEdits.length > 0) {
+    const names: Record<string, string> = {};
+    let wrote = false;
+    steps.push({
+      names,
+      wroteSomething: () => wrote,
+      run: async () => {
+        const outcome = await applyStockEdits(
+          productId,
+          product,
+          stockEdits,
+          editor.shopLocation,
+          names,
+        );
+        wrote = outcome.wrote;
+        return outcome.result;
+      },
+    });
+  }
+
+  // 5. SEO.
   const seoTitle = optionalText(formData, "seoTitle");
   const seoDescription = optionalText(formData, "seoDescription");
   if (
@@ -332,7 +711,7 @@ export async function saveProductAction(
     });
   }
 
-  // 4. Brand.
+  // 6. Brand.
   const brandId = optionalText(formData, "brandId");
   if (brandId !== product.brandId) {
     steps.push({
@@ -341,7 +720,7 @@ export async function saveProductAction(
     });
   }
 
-  // 5. Categories.
+  // 7. Categories.
   const categoryIds = stringFieldValues(formData, "categoryIds").filter((id) => id.length > 0);
   if ([...categoryIds].sort().join(",") !== [...product.categoryIds].sort().join(",")) {
     steps.push({
@@ -350,7 +729,7 @@ export async function saveProductAction(
     });
   }
 
-  // 6. Status — last, so a publish never goes live ahead of the content that backs it. The select
+  // 8. Status — last, so a publish never goes live ahead of the content that backs it. The select
   // is not rendered for archived/scheduled products, so `statusCall` ignores those.
   const moveStatus = statusCall(productId, product.status, stringField(formData, "status"));
   if (moveStatus !== null) steps.push({ names: {}, run: moveStatus });
@@ -358,15 +737,17 @@ export async function saveProductAction(
   let savedSomething = false;
   for (const step of steps) {
     const result = await step.run();
+    const wrote =
+      step.wroteSomething === undefined ? result.outcome === "ok" : step.wroteSomething();
     if (result.outcome !== "ok") {
       revalidateProduct(productId);
       const state = renameFieldErrors(toFormState(result, t), step.names);
-      if (savedSomething && state.status === "error") {
+      if ((savedSomething || wrote) && state.status === "error") {
         return { ...state, message: `${editor.partiallySaved} ${state.message}` };
       }
       return state;
     }
-    savedSomething = true;
+    if (wrote) savedSomething = true;
   }
 
   revalidateProduct(productId);
@@ -482,94 +863,6 @@ export async function createProductAction(
   redirect(partial ? `/products/${id}?saved=partial` : `/products/${id}`);
 }
 
-/**
- * Plan 2C-2 — the option editor. Plans the change client-side-identically (`planOptionChange`) and
- * runs its operations in order; every intermediate state is legal for the domain. Stops at the
- * first failure; what ran stays saved.
- */
-export async function saveProductOptionsAction(
-  _previous: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const dictionary = await localeDictionary();
-  const t = dictionary.formErrors;
-  const editor = dictionary.productEditor;
-
-  const productId = stringField(formData, "productId");
-  if (productId.length === 0) return { status: "error", message: t.invalid, fieldErrors: {} };
-  const options = parseOptions(formData);
-  if (options === null) {
-    return { status: "error", message: editor.invalidOptions, fieldErrors: {} };
-  }
-
-  const fetched = await fetchProduct(productId);
-  if (fetched.outcome !== "ok") return toFormState(fetchFailure(fetched), t);
-  const product = fetched.product;
-
-  const plan = planOptionChange({
-    productSku: product.sku,
-    variants: product.variants,
-    nextOptions: options,
-  });
-  if (!plan.ok) {
-    return {
-      status: "error",
-      message: plan.reason === "too_many_variants" ? editor.tooManyVariants : editor.invalidOptions,
-      fieldErrors: {},
-    };
-  }
-
-  let ran = false;
-  for (const operation of plan.operations) {
-    let result: MutationResult<unknown>;
-    if (operation.kind === "remove") {
-      result = await removeProductVariant(productId, operation.variantId, newIdempotencyKey());
-    } else if (operation.kind === "setOptions") {
-      result = await setProductOptions(productId, operation.options, newIdempotencyKey());
-    } else if (operation.kind === "assign") {
-      const variant = product.variants.find((candidate) => candidate.id === operation.variantId);
-      if (variant === undefined) {
-        result = { outcome: "not_found" };
-      } else {
-        result = await updateProductVariant(
-          productId,
-          variant.id,
-          {
-            sku: variant.sku,
-            priceAmountMinor: variant.priceAmountMinor,
-            currency: variant.currency,
-            selection: operation.selection,
-          },
-          newIdempotencyKey(),
-        );
-      }
-    } else {
-      result = await addProductVariant(
-        productId,
-        {
-          sku: operation.sku,
-          priceAmountMinor: operation.priceAmountMinor,
-          currency: operation.currency,
-          selection: operation.selection,
-        },
-        newIdempotencyKey(),
-      );
-    }
-    if (result.outcome !== "ok") {
-      revalidateProduct(productId);
-      const state = toFormState(result, t);
-      if (ran && state.status === "error") {
-        return { ...state, message: `${editor.partiallySaved} ${state.message}` };
-      }
-      return state;
-    }
-    ran = true;
-  }
-
-  revalidateProduct(productId);
-  return { status: "success" };
-}
-
 /** Plan 2C-2 — the variant dialog: the full attribute set for one variant, in its own currency. */
 export async function updateVariantDetailsAction(
   _previous: FormState,
@@ -607,6 +900,8 @@ export async function updateVariantDetailsAction(
       weightGrams: values.weightGrams,
       requiresShipping: values.requiresShipping,
       taxable: values.taxable,
+      tracksInventory: values.tracksInventory,
+      inventoryPolicy: values.inventoryPolicy,
     },
     newIdempotencyKey(),
   );

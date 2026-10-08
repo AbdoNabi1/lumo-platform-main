@@ -601,6 +601,8 @@ export const ar: Dictionary = {
     create: "حفظ المنتج",
     unsaved: "تغييرات غير محفوظة",
     partiallySaved: "اتحفظ جزء من التغييرات قبل ما يحصل خطأ. راجع واحفظ تاني.",
+    pageOutOfDate: "الصفحة دي قديمة. اعمل reload وجرّب تاني.",
+    shopLocation: "المتجر",
     titleCard: "العنوان والوصف",
     title: "العنوان",
     description: "الوصف",
