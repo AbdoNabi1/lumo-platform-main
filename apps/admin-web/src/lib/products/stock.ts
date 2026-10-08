@@ -49,3 +49,62 @@ export function stockByVariant(
   }
   return result;
 }
+
+/** What the product page shows and lets the merchant edit about stock (Plan 2B-2). */
+export interface StockView {
+  /** The one location quantities belong to; `null` until the first save registers it. */
+  readonly location: { readonly id: string; readonly name: string } | null;
+  /** More than one location: quantities are read-only here (checkout supports one today). */
+  readonly multipleLocations: boolean;
+  /** The stock read failed: show the quantities read-only, never as zeros that Save would write. */
+  readonly readOnlyReason: "unavailable" | null;
+  readonly byVariant: Readonly<Record<string, StockLevelDto>>;
+}
+
+interface LocationLike {
+  readonly id: string;
+  readonly name: string;
+  readonly status: string;
+}
+
+/** The stock locations quantities can go to: a deactivated warehouse is not one. */
+export function activeLocations<T extends LocationLike>(warehouses: readonly T[]): T[] {
+  return warehouses.filter((warehouse) => warehouse.status === "active");
+}
+
+/**
+ * The product page's stock view from the tenant's warehouses and this product's stock rows:
+ * one location → its quantities; none → nothing yet (the first save registers one); several →
+ * the first, for display only, with quantities read-only (checkout supports one location today).
+ */
+export function buildStockView(
+  warehouses: readonly LocationLike[],
+  rows: readonly ({
+    readonly warehouseId: string;
+    readonly variantId: string | null;
+  } & StockLevelDto)[],
+  variants: readonly { readonly id: string }[],
+): StockView {
+  const locations = activeLocations(warehouses);
+  const [first] = locations;
+  if (first === undefined) {
+    return { location: null, multipleLocations: false, readOnlyReason: null, byVariant: {} };
+  }
+  return {
+    location: { id: first.id, name: first.name },
+    multipleLocations: locations.length > 1,
+    readOnlyReason: null,
+    byVariant: stockByVariant(
+      rows.filter((row) => row.warehouseId === first.id),
+      variants,
+    ),
+  };
+}
+
+/** The view when the stock could not be read: read-only, never zeros that Save would write. */
+export const UNAVAILABLE_STOCK: StockView = {
+  location: null,
+  multipleLocations: false,
+  readOnlyReason: "unavailable",
+  byVariant: {},
+};

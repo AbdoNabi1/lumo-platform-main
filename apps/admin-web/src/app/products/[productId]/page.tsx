@@ -1,26 +1,22 @@
 import type { ReactNode } from "react";
-import { Suspense } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { AlertTriangleIcon, ArrowLeftIcon, LockIcon, SearchXIcon } from "lucide-react";
 import { Button, Card, CardContent } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
-import {
-  ProductInventoryCard,
-  ProductInventoryCardSkeleton,
-} from "@/components/products/product-inventory-card";
 import { ProductEditor } from "@/components/products/editor/product-editor";
-import { VariantsCard } from "@/components/products/editor/variants-card";
 import { ProductLifecycleActions } from "@/components/products/product-lifecycle-actions";
 import { ProductMediaCard } from "@/components/products/product-media-card";
 import { ProductStatusBadge } from "@/components/products/product-status-badge";
 import { fetchBrandsPage } from "@/lib/api/brands";
 import { fetchCategoriesPage } from "@/lib/api/categories";
 import { fetchMediaDownloadUrl } from "@/lib/api/media";
-import { fetchProduct } from "@/lib/api/products";
+import { fetchWarehouses } from "@/lib/api/inventory";
+import { fetchProduct, fetchProductInventory } from "@/lib/api/products";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { formatDateTime } from "@/lib/format";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { buildStockView, UNAVAILABLE_STOCK } from "@/lib/products/stock";
 
 interface ProductDetailPageProps {
   readonly params: Promise<{ readonly productId: string }>;
@@ -29,9 +25,9 @@ interface ProductDetailPageProps {
 
 /**
  * The Product Detail screen (Phase A.30), rebuilt in Plan 2C-2 as the one-page, one-save editor.
- * Resolves the real `GET /products/:productId` endpoint. Inventory gets its own `<Suspense>` boundary (separate bounded context) so a slow/failed
- * Inventory read never blocks the rest of the product from rendering — same streaming discipline
- * as the Order Detail screen.
+ * Resolves the real `GET /products/:productId` endpoint. Plan 2B-2 reads the stock (locations and
+ * this product's rows) here too, so the quantities sit in the editor itself; a failed stock read
+ * degrades to read-only quantities rather than blocking the product.
  */
 export default async function ProductDetailPage({ params, searchParams }: ProductDetailPageProps) {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
@@ -101,6 +97,16 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
   const brands = brandsResult.outcome === "ok" ? brandsResult.items : [];
   const categories = categoriesResult.outcome === "ok" ? categoriesResult.items : [];
 
+  // Never default a failed read to zeros: Save would write them. Read-only quantities instead.
+  const [warehousesResult, inventoryResult] = await Promise.all([
+    fetchWarehouses(),
+    fetchProductInventory(product.id),
+  ]);
+  const stock =
+    warehousesResult.outcome === "ok" && inventoryResult.outcome === "ok"
+      ? buildStockView(warehousesResult.items, inventoryResult.rows, product.variants)
+      : UNAVAILABLE_STOCK;
+
   return (
     <AppShell t={t} locale={locale} activeNavId="products" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
@@ -144,14 +150,9 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
           defaultCurrency={product.variants[0]?.currency ?? "EGP"}
           t={t}
           locale={locale}
+          stock={stock}
           slots={{
-            variants: <VariantsCard product={product} t={t} locale={locale} />,
             media: <ProductMediaCard productId={product.id} mediaAssets={mediaAssets} t={t} />,
-            stock: (
-              <Suspense fallback={<ProductInventoryCardSkeleton t={t} />}>
-                <ProductInventoryCard productId={product.id} t={t} />
-              </Suspense>
-            ),
             dangerZone: (
               <ProductLifecycleActions productId={product.id} status={product.status} t={t} />
             ),

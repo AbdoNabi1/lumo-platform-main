@@ -1,6 +1,13 @@
 "use client";
 
-import { useActionState, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useActionState,
+  useCallback,
+  useEffect,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { Button, Card, CardContent } from "@platform/ui";
 import { createProductAction, saveProductAction } from "@/app/products/actions";
 import type { BrandDto } from "@/lib/api/brands";
@@ -9,15 +16,17 @@ import type { FormState } from "@/lib/api/mutation";
 import type { ProductDetailDto } from "@/lib/api/products";
 import type { Locale } from "@/lib/i18n";
 import { fromMinorUnits } from "@/lib/products/money";
+import type { StockView } from "@/lib/products/stock";
 import type { Dictionary } from "@/messages/en";
 import { PRODUCT_FORM_ID } from "./field";
-import { InventoryIdentifiersCard } from "./inventory-identifiers-card";
+import { InventoryCard } from "./inventory-card";
 import { OrganizationCard } from "./organization-card";
 import { PricingCard } from "./pricing-card";
 import { SeoCard } from "./seo-card";
 import { ShippingCard } from "./shipping-card";
 import { StatusCard } from "./status-card";
 import { TitleDescriptionCard } from "./title-description-card";
+import { VariantsCard } from "./variants-card";
 
 export { PRODUCT_FORM_ID };
 
@@ -33,27 +42,35 @@ export interface ProductEditorProps {
   readonly defaultCurrency: string;
   readonly t: Dictionary;
   readonly locale: Locale;
+  /** Quantities and the one location they belong to (Plan 2B-2). */
+  readonly stock: StockView;
   /** Cards that own their own forms. They sit between the form cards without nesting forms. */
   readonly slots: {
-    readonly variants?: ReactNode;
     readonly media?: ReactNode;
-    readonly stock?: ReactNode;
     readonly dangerZone?: ReactNode;
   };
 }
 
 /**
- * Plan 2C-2 — the one-page product editor with one Save. The `<form id="product-editor">` holds
- * only hidden ids; every input in a form card joins it with `form="product-editor"`, so cards that
- * own a form of their own (variants, media, stock) can sit between them without nesting forms.
+ * Plan 2C-2 / 2B-2 — the one-page product editor with one Save. The `<form id="product-editor">`
+ * holds only hidden ids; every input in a form card joins it with `form="product-editor"`, so cards
+ * that own a form of their own (media) can sit between them without nesting forms. The options
+ * editor, the variants table and the inventory card all join it: options, prices, quantities and
+ * every other field save together.
  */
 export function ProductEditor(props: ProductEditorProps) {
-  const { mode, product, brands, categories, defaultCurrency, t, locale, slots } = props;
+  const { mode, product, brands, categories, defaultCurrency, t, locale, stock, slots } = props;
   const action = mode === "create" ? createProductAction : saveProductAction;
   const [state, formAction, isPending] = useActionState(action, INITIAL_STATE);
   const [dirty, setDirty] = useState(false);
   const [title, setTitle] = useState(product?.name ?? "");
   const [description, setDescription] = useState(product?.description ?? "");
+  const [pendingRemovals, setPendingRemovals] = useState(0);
+  const [optionCount, setOptionCount] = useState(product?.options.length ?? 0);
+  const onPlanChange = useCallback(
+    (summary: { adds: number; removes: number }) => setPendingRemovals(summary.removes),
+    [],
+  );
 
   useEffect(() => {
     if (state.status === "success") setDirty(false);
@@ -69,18 +86,45 @@ export function ProductEditor(props: ProductEditorProps) {
   const editor = t.productEditor;
   const currency = variant?.currency ?? defaultCurrency;
 
-  // Only the editor's own inputs count: the variants, media and stock cards submit their own forms,
-  // so typing there must not claim the page has unsaved changes.
+  // Only the editor's own inputs count: the media card and the variant dialog submit their own
+  // forms, so typing there must not claim the page has unsaved changes.
   function markDirty(event: FormEvent): void {
     const target = event.target as { readonly form?: HTMLFormElement | null };
     if (target.form?.id === PRODUCT_FORM_ID) setDirty(true);
   }
 
+  // The single variant's own cards (price, inventory, shipping) give way to the table the moment
+  // options are typed; the server decides by the options it receives.
+  const showSingleVariantCards = hasVariantFields && optionCount === 0;
+  // A fresh server state (after a save) starts the card over from it.
+  const variantsKey =
+    product === null
+      ? ""
+      : JSON.stringify([
+          product.options,
+          product.variants.map((v) => [v.id, v.selection, v.priceAmountMinor, v.tracksInventory]),
+          stock.byVariant,
+          stock.location?.id ?? null,
+        ]);
+
   const saveLabel = isPending ? editor.saving : mode === "create" ? editor.create : editor.save;
 
   return (
     <div onInput={markDirty} onChange={markDirty} className="flex flex-col gap-6">
-      <form id={PRODUCT_FORM_ID} action={formAction}>
+      <form
+        id={PRODUCT_FORM_ID}
+        action={formAction}
+        onSubmit={(event) => {
+          if (
+            pendingRemovals > 0 &&
+            !window.confirm(
+              editor.confirmRemoveVariants.replace("{count}", String(pendingRemovals)),
+            )
+          ) {
+            event.preventDefault();
+          }
+        }}
+      >
         {product !== null && <input type="hidden" name="productId" value={product.id} />}
         {variant !== undefined && <input type="hidden" name="variantId" value={variant.id} />}
         {hasVariantFields && <input type="hidden" name="hasVariantFields" value="1" />}
@@ -109,7 +153,7 @@ export function ProductEditor(props: ProductEditorProps) {
             t={t}
           />
           {slots.media}
-          {hasVariantFields ? (
+          {showSingleVariantCards && (
             <>
               <PricingCard
                 initial={{
@@ -130,13 +174,7 @@ export function ProductEditor(props: ProductEditorProps) {
                 t={t}
                 locale={locale}
               />
-              <InventoryIdentifiersCard
-                sku={variant?.sku ?? ""}
-                barcode={variant?.barcode ?? ""}
-                isCreate={mode === "create"}
-                errors={errors}
-                t={t}
-              />
+              <InventoryCard variant={variant} stock={stock} mode={mode} errors={errors} t={t} />
               <ShippingCard
                 requiresShipping={variant?.requiresShipping ?? true}
                 weightGrams={variant?.weightGrams ?? null}
@@ -144,22 +182,25 @@ export function ProductEditor(props: ProductEditorProps) {
                 t={t}
               />
             </>
+          )}
+          {mode === "edit" && product !== null ? (
+            <VariantsCard
+              key={variantsKey}
+              product={product}
+              stock={stock}
+              t={t}
+              locale={locale}
+              errors={errors}
+              onPlanChange={onPlanChange}
+              onOptionCountChange={setOptionCount}
+            />
           ) : (
             <Card>
               <CardContent className="text-muted-foreground py-6 text-sm">
-                {editor.pricesOnVariants}
+                {editor.optionsAfterCreate}
               </CardContent>
             </Card>
           )}
-          {slots.variants ??
-            (mode === "create" && (
-              <Card>
-                <CardContent className="text-muted-foreground py-6 text-sm">
-                  {editor.optionsAfterCreate}
-                </CardContent>
-              </Card>
-            ))}
-          {slots.stock}
           <SeoCard
             title={title}
             description={description}

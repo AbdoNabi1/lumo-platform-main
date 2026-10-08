@@ -45,7 +45,12 @@ import {
   randomToken,
 } from "@/lib/products/handles";
 import { toMinorUnits } from "@/lib/products/money";
-import { stockByVariant, stockChange, type StockLevelDto } from "@/lib/products/stock";
+import {
+  activeLocations,
+  stockByVariant,
+  stockChange,
+  type StockLevelDto,
+} from "@/lib/products/stock";
 import {
   MAX_OPTIONS,
   planOptionChange,
@@ -358,9 +363,10 @@ async function applyStockEdits(
   if (warehouses.outcome === "error") {
     return failure({ outcome: "error", message: warehouses.message });
   }
-  if (warehouses.items.length > 1) return failure({ outcome: "ok", data: null });
+  const locations = activeLocations(warehouses.items);
+  if (locations.length > 1) return failure({ outcome: "ok", data: null });
 
-  const location = warehouses.items[0];
+  const location = locations[0];
   let levels: Record<string, StockLevelDto> = {};
   if (location !== undefined) {
     const inventory = await fetchProductInventory(productId);
@@ -763,7 +769,8 @@ export async function createProductAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const t = await formErrorDictionary();
+  const dictionary = await localeDictionary();
+  const t = dictionary.formErrors;
 
   const fieldErrors: Record<string, string> = {};
   const title = stringField(formData, "title").trim();
@@ -772,6 +779,8 @@ export async function createProductAction(
   if (currency.length === 0) fieldErrors["currency"] = t.invalid;
   const parsed = parseVariantFields(formData, currency, t.invalid);
   Object.assign(fieldErrors, parsed.errors);
+  const openingQuantity = optionalWholeNumber(formData, "available");
+  if (openingQuantity === undefined) fieldErrors["available"] = t.invalid;
   if (Object.keys(fieldErrors).length > 0 || parsed.values === null) {
     return { status: "error", message: t.invalid, fieldErrors };
   }
@@ -803,6 +812,8 @@ export async function createProductAction(
         weightGrams: values.weightGrams,
         requiresShipping: values.requiresShipping,
         taxable: values.taxable,
+        tracksInventory: values.tracksInventory,
+        inventoryPolicy: values.inventoryPolicy,
       },
     ],
   });
@@ -830,6 +841,24 @@ export async function createProductAction(
   }
 
   const followUps: (() => Promise<MutationResult<unknown>>)[] = [];
+  // The opening quantity goes first, like the stock step of a save. The create answers with the
+  // product aggregate, so the new variant's id is read back with one fetch.
+  if (values.tracksInventory && openingQuantity !== null && openingQuantity !== undefined) {
+    const desired = openingQuantity;
+    followUps.push(async () => {
+      const created = await fetchProduct(id);
+      if (created.outcome !== "ok") return fetchFailure(created);
+      const variantId = created.product.variants[0]?.id ?? null;
+      const outcome = await applyStockEdits(
+        id,
+        created.product,
+        [{ field: "available", desired, variantId: () => variantId }],
+        dictionary.productEditor.shopLocation,
+        {},
+      );
+      return outcome.result;
+    });
+  }
   const seoTitle = optionalText(formData, "seoTitle");
   const seoDescription = optionalText(formData, "seoDescription");
   if (seoTitle !== null || seoDescription !== null) {

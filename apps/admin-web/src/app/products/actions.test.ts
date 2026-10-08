@@ -393,6 +393,79 @@ describe("createProductAction", () => {
     expect(target).toBe("NEXT_REDIRECT:/products/new-1?saved=partial");
   });
 
+  it("creates the variant with the tracking switches from the inventory card", async () => {
+    await redirectOf(createProductAction(idle, createForm({ continueSelling: "on" })));
+    let input = api.createProduct.mock.calls[0]![0] as { variants: Record<string, unknown>[] };
+    expect(input.variants[0]).toMatchObject({ tracksInventory: true, inventoryPolicy: "continue" });
+
+    api.createProduct.mockClear();
+    await redirectOf(createProductAction(idle, createForm({ tracksInventory: [] })));
+    input = api.createProduct.mock.calls[0]![0] as { variants: Record<string, unknown>[] };
+    expect(input.variants[0]).toMatchObject({ tracksInventory: false, inventoryPolicy: "deny" });
+  });
+
+  describe("an opening quantity", () => {
+    beforeEach(() => {
+      api.fetchProduct.mockResolvedValue({
+        outcome: "ok",
+        product: product({ id: "new-1", variants: [variant({ id: "v-first" })] }),
+      });
+    });
+
+    it("is received on the shop location against the variant the create made", async () => {
+      const target = await redirectOf(createProductAction(idle, createForm({ available: "6" })));
+
+      expect(target).toBe("NEXT_REDIRECT:/products/new-1");
+      expect(api.fetchProduct).toHaveBeenCalledWith("new-1");
+      expect(inventory.receiveStock).toHaveBeenCalledWith(
+        { productId: "new-1", variantId: "v-first", warehouseId: "w1", quantity: 6 },
+        expect.any(String),
+      );
+    });
+
+    it("registers the shop location first when there is none", async () => {
+      inventory.fetchWarehouses.mockResolvedValue({ outcome: "ok", items: [] });
+      inventory.registerWarehouse.mockResolvedValue({
+        outcome: "ok",
+        data: { warehouseId: "w-new" },
+      });
+      await redirectOf(createProductAction(idle, createForm({ available: "6" })));
+
+      expect(inventory.registerWarehouse).toHaveBeenCalledWith(
+        { code: "SHOP", name: en.productEditor.shopLocation },
+        expect.any(String),
+      );
+      expect(inventory.receiveStock).toHaveBeenCalledWith(
+        expect.objectContaining({ warehouseId: "w-new", quantity: 6 }),
+        expect.any(String),
+      );
+    });
+
+    it("is skipped when blank, zero, or when the product is not tracked", async () => {
+      await redirectOf(createProductAction(idle, createForm({ available: "" })));
+      await redirectOf(createProductAction(idle, createForm({ available: "0" })));
+      await redirectOf(
+        createProductAction(idle, createForm({ available: "6", tracksInventory: [] })),
+      );
+
+      expect(inventory.receiveStock).not.toHaveBeenCalled();
+      expect(inventory.registerWarehouse).not.toHaveBeenCalled();
+    });
+
+    it("rejects a bad quantity before creating anything", async () => {
+      const state = await createProductAction(idle, createForm({ available: "-3" }));
+      expect(state.status).toBe("error");
+      if (state.status === "error") expect(state.fieldErrors["available"]).toBeDefined();
+      expect(api.createProduct).not.toHaveBeenCalled();
+    });
+
+    it("flags the redirect as partial when the quantity could not be saved", async () => {
+      inventory.receiveStock.mockResolvedValue({ outcome: "error", message: "boom" });
+      const target = await redirectOf(createProductAction(idle, createForm({ available: "6" })));
+      expect(target).toBe("NEXT_REDIRECT:/products/new-1?saved=partial");
+    });
+  });
+
   it("rejects a blank title without calling the API", async () => {
     const state = await createProductAction(idle, createForm({ title: " " }));
     expect(state.status).toBe("error");
@@ -664,6 +737,25 @@ describe("saveProductAction — options, variant prices and stock (Plan 2B-2)", 
     ]) {
       expect(write).not.toHaveBeenCalled();
     }
+  });
+
+  it("does not count a deactivated warehouse as a location", async () => {
+    use(multi());
+    inventory.fetchWarehouses.mockResolvedValue({
+      outcome: "ok",
+      items: [shop, { ...shop, id: "w2", code: "B", status: "inactive" }],
+    });
+    await saveProductAction(
+      idle,
+      optionsForm(multi(), sizeOption, [
+        { key: "Size=S", price: "150", available: "5" },
+        { key: "Size=M", price: "175" },
+      ]),
+    );
+    expect(inventory.receiveStock).toHaveBeenCalledWith(
+      expect.objectContaining({ warehouseId: "w1", quantity: 5 }),
+      expect.any(String),
+    );
   });
 
   it("saves the single variant's tracking switches", async () => {
