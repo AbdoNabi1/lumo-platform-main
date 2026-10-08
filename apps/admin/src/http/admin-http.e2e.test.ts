@@ -539,6 +539,8 @@ describe("GET /products (list) and /products/:productId (detail)", () => {
           weightGrams: null,
           requiresShipping: true,
           taxable: true,
+          tracksInventory: true,
+          inventoryPolicy: "deny",
         },
       ],
       mediaAssetIds: [],
@@ -680,7 +682,9 @@ describe("GET /products/:productId/inventory", () => {
       headers: authed,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual([{ warehouseId: "wh-1", onHand: 10, reserved: 0, available: 10 }]);
+    expect(res.json()).toEqual([
+      { warehouseId: "wh-1", variantId: null, onHand: 10, reserved: 0, available: 10 },
+    ]);
   });
 });
 

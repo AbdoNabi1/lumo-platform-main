@@ -3,6 +3,7 @@ export type { InventoryWiringDeps, WiredInventory } from "./composition";
 export { InventoryController } from "./interfaces/inventory.controller";
 export { WarehouseController } from "./interfaces/warehouse.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
+export type { WarehouseOutput } from "./application/warehouse.use-cases";
 export { InventoryItem } from "./domain/inventory-item";
 export type { InventoryItemRepository } from "./domain/inventory-item-repository";
 export { Warehouse } from "./domain/warehouse";

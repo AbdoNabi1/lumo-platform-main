@@ -4,8 +4,9 @@ import type { OrderDraft } from "@platform/checkout";
 import type { RateLimiter } from "@platform/contracts";
 import type { Brand, Category, Product } from "@platform/catalog";
 import type { Customer } from "@platform/identity";
-import type { InventoryItem } from "@platform/inventory";
+import type { InventoryItem, WarehouseOutput } from "@platform/inventory";
 import type { Order } from "@platform/orders";
+import type { Paginated } from "@platform/types";
 import { UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
@@ -89,6 +90,9 @@ const variantAttributesBody = {
   weightGrams: z.number().int().min(0).max(1_000_000).nullable().optional(),
   requiresShipping: z.boolean().optional(),
   taxable: z.boolean().optional(),
+  // Plan 2B-1 — Shopify "Track quantity" and "Continue selling when out of stock".
+  tracksInventory: z.boolean().optional(),
+  inventoryPolicy: z.enum(["deny", "continue"]).optional(),
 };
 const productDetailsBody = {
   description: z.string().max(20_000).nullable().optional(),
@@ -598,35 +602,45 @@ const createPricingRuleBody = z.object({
 
 const receiveStockBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   quantity: z.number().int().positive(),
 });
 const adjustInventoryBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   onHand: z.number().int().min(0),
 });
 const reserveStockBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   quantity: z.number().int().positive(),
   reference: z.string().min(1),
 });
 const releaseReservationBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   reservationId: z.string().min(1),
 });
 const commitReservationBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   reservationId: z.string().min(1),
 });
 const transferStockBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   sourceWarehouseId: z.string().min(1),
   destinationWarehouseId: z.string().min(1),
   quantity: z.number().int().positive(),
+});
+const listWarehousesQuery = z.object({
+  first: z.coerce.number().int().min(1).max(100).optional(),
+  after: z.string().min(1).optional(),
 });
 const registerWarehouseBody = z.object({ code: z.string().min(1), name: z.string().min(1) });
 const warehouseIdParams = z.object({ warehouseId: z.string().min(1) });
@@ -650,6 +664,10 @@ export interface ProductVariantDto {
   readonly weightGrams: number | null;
   readonly requiresShipping: boolean;
   readonly taxable: boolean;
+  /** Plan 2B-1: Shopify "Track quantity". */
+  readonly tracksInventory: boolean;
+  /** Plan 2B-1: Shopify "Continue selling when out of stock". */
+  readonly inventoryPolicy: "deny" | "continue";
 }
 
 export interface ProductOptionDto {
@@ -729,6 +747,8 @@ function toProductDetailDto(product: Product): ProductDetailDto {
       weightGrams: variant.attributes.weightGrams,
       requiresShipping: variant.attributes.requiresShipping,
       taxable: variant.attributes.taxable,
+      tracksInventory: variant.attributes.tracksInventory,
+      inventoryPolicy: variant.attributes.inventoryPolicy,
     })),
     mediaAssetIds: product.media.map((media) => media.assetId),
   };
@@ -741,6 +761,8 @@ function toProductDetailDto(product: Product): ProductDetailDto {
  */
 export interface ProductInventoryRowDto {
   readonly warehouseId: string;
+  /** Plan 2B-1: the variant this stock belongs to; null on a legacy product-level row. */
+  readonly variantId: string | null;
   readonly onHand: number;
   readonly reserved: number;
   readonly available: number;
@@ -749,6 +771,7 @@ export interface ProductInventoryRowDto {
 function toProductInventoryRowDto(item: InventoryItem): ProductInventoryRowDto {
   return {
     warehouseId: item.warehouseId.value,
+    variantId: item.variantRef,
     onHand: item.stockLevel.onHand,
     reserved: item.stockLevel.reserved,
     available: item.stockLevel.available,
@@ -1859,6 +1882,34 @@ export function adminRoutes(
       schema: { body: transferStockBody },
       handle: ({ body, context }) =>
         admin.inventory.transferStock(context.principal, { ...body, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/warehouses",
+      version: 1,
+      permission: "inventory:read",
+      summary: "List warehouses (stock locations)",
+      schema: { querystring: listWarehousesQuery },
+      handle: async ({ query, context }): Promise<AdminResponse> => {
+        const response = await admin.inventory.listWarehouses(context.principal, {
+          ...query,
+          tenantId: context.tenantId,
+        });
+        if (response.status !== 200) return response;
+        const page = response.body as Paginated<WarehouseOutput>;
+        return {
+          status: 200,
+          body: {
+            items: page.items.map((w) => ({
+              id: w.warehouseId,
+              code: w.code,
+              name: w.name,
+              status: w.status,
+            })),
+            pageInfo: page.pageInfo,
+          },
+        };
+      },
     }),
     defineRoute({
       method: "POST",

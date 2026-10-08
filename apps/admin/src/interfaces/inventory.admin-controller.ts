@@ -98,6 +98,15 @@ export class InventoryAdminController {
     return this.warehouse.register(input);
   }
 
+  async listWarehouses(
+    principal: Principal,
+    input: Parameters<WarehouseController["list"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "inventory:read");
+    if (denied) return denied;
+    return this.warehouse.list(input);
+  }
+
   async deactivateWarehouse(
     principal: Principal,
     input: Parameters<WarehouseController["deactivate"]>[0],

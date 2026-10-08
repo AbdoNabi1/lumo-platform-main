@@ -2,7 +2,7 @@ import type { UseCase } from "@platform/application";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { Guard, isDomainError, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
-import { err, ok, type Result } from "@platform/types";
+import { err, ok, type Paginated, type Result } from "@platform/types";
 import { ConflictError, type DomainError } from "@platform/utils";
 import { NotFoundError } from "@platform/utils";
 import { Warehouse } from "../domain/warehouse";
@@ -68,6 +68,44 @@ export class RegisterWarehouse implements UseCase<
         name: warehouse.name,
         status: warehouse.status,
       });
+    });
+  }
+}
+
+export interface ListWarehousesInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
+  readonly first?: number;
+  readonly after?: string;
+}
+
+/** Plan 2B-1: the tenant's stock locations, so a screen can show names instead of ids. */
+export class ListWarehouses implements UseCase<
+  ListWarehousesInput,
+  Paginated<WarehouseOutput>,
+  DomainError
+> {
+  private readonly warehouses: WarehouseRepository;
+
+  constructor(deps: { readonly warehouses: WarehouseRepository }) {
+    this.warehouses = deps.warehouses;
+  }
+
+  async execute(
+    input: ListWarehousesInput,
+  ): Promise<Result<Paginated<WarehouseOutput>, DomainError>> {
+    const page = await this.warehouses.list(
+      { first: input.first ?? 50, ...(input.after === undefined ? {} : { after: input.after }) },
+      input.tenantId,
+    );
+    return ok({
+      items: page.items.map((warehouse) => ({
+        warehouseId: warehouse.id.toString(),
+        code: warehouse.code,
+        name: warehouse.name,
+        status: warehouse.status,
+      })),
+      pageInfo: page.pageInfo,
     });
   }
 }

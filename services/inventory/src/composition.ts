@@ -20,7 +20,11 @@ import { ReceiveStock } from "./application/receive-stock.use-case";
 import { ReleaseReservation } from "./application/release-reservation.use-case";
 import { ReserveStock } from "./application/reserve-stock.use-case";
 import { TransferStock } from "./application/transfer-stock.use-case";
-import { DeactivateWarehouse, RegisterWarehouse } from "./application/warehouse.use-cases";
+import {
+  DeactivateWarehouse,
+  ListWarehouses,
+  RegisterWarehouse,
+} from "./application/warehouse.use-cases";
 import type { InventoryItemRepository } from "./domain/inventory-item-repository";
 import type { WarehouseRepository } from "./domain/warehouse-repository";
 import { InMemoryInventoryItemRepository } from "./infrastructure/in-memory-inventory-item-repository";
@@ -129,6 +133,7 @@ function buildControllers(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
     }),
+    listWarehouses: new ListWarehouses({ warehouses }),
   });
 
   return { inventory: controller, warehouse: warehouseController };
