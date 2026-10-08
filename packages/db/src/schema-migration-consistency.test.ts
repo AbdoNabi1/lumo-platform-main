@@ -266,3 +266,31 @@ describe("cart.cart_items and orders.order_items — variant lines (Plan 2A)", (
     expect(allSql).toContain("NULLS NOT DISTINCT");
   });
 });
+
+describe("catalog.products and catalog.product_variants — product details (Plan 2C-1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("products gained description, product_type and tags", () => {
+    const actual = columnsEverAddedTo("catalog", "products", allSql);
+    for (const column of ["description", "product_type", "tags"]) {
+      expect(actual.has(column), `expected "catalog"."products"."${column}"`).toBe(true);
+    }
+  });
+
+  it("product_variants gained the Shopify variant attributes", () => {
+    const actual = columnsEverAddedTo("catalog", "product_variants", allSql);
+    for (const column of [
+      "compare_at_amount_minor",
+      "cost_amount_minor",
+      "barcode",
+      "weight_grams",
+      "requires_shipping",
+      "taxable",
+    ]) {
+      expect(actual.has(column), `expected "catalog"."product_variants"."${column}"`).toBe(true);
+    }
+  });
+});

@@ -9,13 +9,16 @@ model Product {
   sku          String
   name         String
   slug         String
-  publishState String    @map("publish_state") // draft | scheduled | published | archived (domain-enforced)
+  publishState String    @map("publish_state") // draft | scheduled | published | unlisted | archived (domain-enforced)
   scheduledAt  DateTime? @map("scheduled_at")
   brandId      String?   @map("brand_id") @db.Uuid // bare ref into Brand — never an FK (same package, still D-002)
   categoryRefs String[]  @map("category_refs") // bare refs into Category — never FKs
   options      Json      @default("[]") // ProductOption[] — written null-free
-  seo          Json?     // Seo — null when unset
+  seo          Json? // Seo — null when unset
   mediaRefs    String[]  @map("media_refs") // bare asset ids into Media — never FKs
+  description  String? // Plan 2C-1 — plain text
+  productType  String?   @map("product_type")
+  tags         String[]  @default([])
   version      Int       @default(0)
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
@@ -33,14 +36,20 @@ model Product {
 
 /// Owned by the Product aggregate (same-aggregate FK is allowed; cross-context refs are not).
 model ProductVariant {
-  id               String  @id @db.Uuid
-  tenantId         String  @map("tenant_id")
-  productId        String  @map("product_id") @db.Uuid
-  sku              String
-  priceAmountMinor Int     @map("price_amount_minor")
-  currency         String
-  selection        Json?   // VariantSelection.values — null when the product declares no options
-  mediaRef         String? @map("media_ref") // bare id into Media context — never an FK
+  id                   String  @id @db.Uuid
+  tenantId             String  @map("tenant_id")
+  productId            String  @map("product_id") @db.Uuid
+  sku                  String
+  priceAmountMinor     Int     @map("price_amount_minor")
+  currency             String
+  selection            Json? // VariantSelection.values — null when the product declares no options
+  mediaRef             String? @map("media_ref") // bare id into Media context — never an FK
+  compareAtAmountMinor Int?    @map("compare_at_amount_minor") // Plan 2C-1
+  costAmountMinor      Int?    @map("cost_amount_minor") // staff-only
+  barcode              String?
+  weightGrams          Int?    @map("weight_grams")
+  requiresShipping     Boolean @default(true) @map("requires_shipping")
+  taxable              Boolean @default(true)
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
