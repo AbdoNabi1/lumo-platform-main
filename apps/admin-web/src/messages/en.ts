@@ -720,14 +720,6 @@ export const en = {
     variants: "Variants",
     variantSku: "SKU",
     variantPrice: "Price",
-    variantOptions: "Options",
-    noOptions: "No option matrix — single variant.",
-    options: "Options",
-    noOptionsDeclared: "No configurable options declared.",
-    categories: "Categories",
-    noCategories: "Not assigned to any category.",
-    brand: "Brand",
-    noBrand: "No brand assigned.",
     media: "Media",
     noMedia: "No media attached.",
     mediaReference: "Asset reference",
@@ -741,8 +733,6 @@ export const en = {
     },
     noInventory: "No stock recorded for this product in any warehouse.",
     inventoryUnavailable: "Couldn't load inventory for this product.",
-    seo: "SEO",
-    noSeo: "No SEO overrides set.",
     notFound: "This product doesn't exist or you don't have access to it.",
     error: "Couldn't load this product. Try refreshing the page.",
     unauthorized: "Sign in to view this product.",
@@ -750,25 +740,6 @@ export const en = {
   productCreate: {
     title: "New product",
     subtitle: "Add a product with at least one variant.",
-    sku: "SKU",
-    name: "Name",
-    slug: "Slug",
-    variants: "Variants",
-    variantSku: "Variant SKU",
-    variantPrice: "Price (minor units)",
-    variantCurrency: "Currency",
-    addVariant: "Add variant",
-    removeVariant: "Remove variant",
-    submit: "Create product",
-    submitting: "Creating…",
-  },
-  productEdit: {
-    title: "Name and slug",
-    name: "Name",
-    slug: "Slug",
-    submit: "Save changes",
-    submitting: "Saving…",
-    success: "Saved.",
   },
   /** Shared success note across every product write mini-form below (T5.1). */
   productWriteCommon: {
@@ -797,14 +768,9 @@ export const en = {
     warehouseIdHint: "No warehouse list is wired yet — enter the warehouse's id directly.",
   },
   productLifecycle: {
-    title: "Lifecycle",
-    publish: "Publish",
-    publishing: "Publishing…",
     schedulePublish: "Schedule publish",
     scheduling: "Scheduling…",
     scheduledAtLabel: "Publish at",
-    unpublish: "Unpublish",
-    unpublishing: "Unpublishing…",
     archive: "Archive",
     archiving: "Archiving…",
     delete: "Delete",
@@ -813,58 +779,17 @@ export const en = {
     confirmDelete: "Delete this product? This cannot be undone.",
   },
   productVariantsForm: {
-    addTitle: "Add variant",
-    sku: "SKU",
-    price: "Price (minor units)",
-    currency: "Currency",
-    selection: "Options (e.g. Color:Red, Size:M)",
-    add: "Add variant",
-    adding: "Adding…",
-    edit: "Edit",
-    save: "Save",
-    saving: "Saving…",
-    cancel: "Cancel",
     remove: "Remove",
     removing: "Removing…",
     confirmRemove: "Remove this variant?",
   },
-  productOptionsForm: {
-    title: "Configurable options",
-    optionName: "Option name",
-    optionValues: "Values (comma-separated)",
-    addOption: "Add option",
-    removeOption: "Remove option",
-    save: "Save options",
-    saving: "Saving…",
-  },
-  productSeoForm: {
-    title: "SEO",
-    seoTitle: "Title",
-    seoDescription: "Description",
-    save: "Save SEO",
-    saving: "Saving…",
-  },
   /**
-   * T5.7 — now backed by real `<select>`/checklist pickers (`fetchBrandsPage`/`fetchCategoriesPage`
-   * passed down from the Product Detail server component), closing the gap `docs/plans/
-   * BLOCKERS.md`'s T5.1 entry left open. A currently-assigned id that isn't in the fetched page is
-   * still rendered as its own option (labelled with the raw id) so a save never silently drops it.
+   * Plan 2C-2 — the editor's vendor select keeps one label from the old brand form: an assigned
+   * brand that isn't in the fetched first page still renders as its own option (labelled with the
+   * raw id) so a save never silently drops it.
    */
   productBrandForm: {
-    title: "Brand",
-    brandId: "Brand",
-    none: "No brand",
     unlistedOption: "{id} (not in the first page)",
-    save: "Save brand",
-    saving: "Saving…",
-  },
-  productCategoriesForm: {
-    title: "Categories",
-    categoryIds: "Categories",
-    noCategoriesAvailable: "No categories exist yet.",
-    unlistedOption: "{id} (not in the first page)",
-    save: "Save categories",
-    saving: "Saving…",
   },
   categoriesPage: {
     title: "Categories",

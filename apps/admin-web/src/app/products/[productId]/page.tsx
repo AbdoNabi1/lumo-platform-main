@@ -9,9 +9,13 @@ import {
   ProductInventoryCard,
   ProductInventoryCardSkeleton,
 } from "@/components/products/product-inventory-card";
+import { ProductEditor } from "@/components/products/editor/product-editor";
+import { VariantsCard } from "@/components/products/editor/variants-card";
 import { ProductLifecycleActions } from "@/components/products/product-lifecycle-actions";
 import { ProductMediaCard } from "@/components/products/product-media-card";
 import { ProductStatusBadge } from "@/components/products/product-status-badge";
+import { fetchBrandsPage } from "@/lib/api/brands";
+import { fetchCategoriesPage } from "@/lib/api/categories";
 import { fetchMediaDownloadUrl } from "@/lib/api/media";
 import { fetchProduct } from "@/lib/api/products";
 import { getCurrentUser } from "@/lib/auth/current-user";
@@ -20,20 +24,22 @@ import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i1
 
 interface ProductDetailPageProps {
   readonly params: Promise<{ readonly productId: string }>;
+  readonly searchParams: Promise<{ readonly saved?: string }>;
 }
 
 /**
- * The Product Detail screen (Phase A.30). Resolves the real `GET /products/:productId` endpoint.
- * Inventory gets its own `<Suspense>` boundary (separate bounded context) so a slow/failed
+ * The Product Detail screen (Phase A.30), rebuilt in Plan 2C-2 as the one-page, one-save editor.
+ * Resolves the real `GET /products/:productId` endpoint. Inventory gets its own `<Suspense>` boundary (separate bounded context) so a slow/failed
  * Inventory read never blocks the rest of the product from rendering — same streaming discipline
  * as the Order Detail screen.
  */
-export default async function ProductDetailPage({ params }: ProductDetailPageProps) {
+export default async function ProductDetailPage({ params, searchParams }: ProductDetailPageProps) {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
   const user = await getCurrentUser();
   const { productId } = await params;
+  const { saved } = await searchParams;
 
   const result = await fetchProduct(productId);
 
@@ -85,6 +91,16 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
     }),
   );
 
+  // The editor's vendor select and categories checklist need the lists — fetched here, server-side
+  // (never from the Client Component), and capped to the first page (100). A failed fetch degrades
+  // to an empty list; the editor still renders the product's own assigned ids as options.
+  const [brandsResult, categoriesResult] = await Promise.all([
+    fetchBrandsPage({ first: 100 }),
+    fetchCategoriesPage({ first: 100 }),
+  ]);
+  const brands = brandsResult.outcome === "ok" ? brandsResult.items : [];
+  const categories = categoriesResult.outcome === "ok" ? categoriesResult.items : [];
+
   return (
     <AppShell t={t} locale={locale} activeNavId="products" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
@@ -112,17 +128,35 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
               )}
             </p>
           )}
-
-          <div className="mt-4">
-            <ProductLifecycleActions productId={product.id} status={product.status} t={t} />
-          </div>
         </div>
 
-        {/* Task 6 replaces this with <ProductEditor>. */}
-        <ProductMediaCard productId={product.id} mediaAssets={mediaAssets} t={t} />
-        <Suspense fallback={<ProductInventoryCardSkeleton t={t} />}>
-          <ProductInventoryCard productId={product.id} t={t} />
-        </Suspense>
+        {saved === "partial" && (
+          <p role="status" className="text-muted-foreground text-sm">
+            {t.productEditor.partiallySaved}
+          </p>
+        )}
+
+        <ProductEditor
+          mode="edit"
+          product={product}
+          brands={brands}
+          categories={categories}
+          defaultCurrency={product.variants[0]?.currency ?? "EGP"}
+          t={t}
+          locale={locale}
+          slots={{
+            variants: <VariantsCard product={product} t={t} locale={locale} />,
+            media: <ProductMediaCard productId={product.id} mediaAssets={mediaAssets} t={t} />,
+            stock: (
+              <Suspense fallback={<ProductInventoryCardSkeleton t={t} />}>
+                <ProductInventoryCard productId={product.id} t={t} />
+              </Suspense>
+            ),
+            dangerZone: (
+              <ProductLifecycleActions productId={product.id} status={product.status} t={t} />
+            ),
+          }}
+        />
       </div>
     </AppShell>
   );
