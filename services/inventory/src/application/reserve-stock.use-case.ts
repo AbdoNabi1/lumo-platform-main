@@ -13,6 +13,8 @@ export interface ReserveStockInput {
   readonly tenantId: string;
   readonly productId: string;
   readonly warehouseId: string;
+  /** Plan 2B-1: the variant whose stock this is; absent = the product's only row (legacy). */
+  readonly variantId?: string;
   readonly quantity: number;
   /** The reserving order/cart reference (bare id). */
   readonly reference: string;
@@ -54,6 +56,7 @@ export class ReserveStock implements UseCase<ReserveStockInput, ReserveStockOutp
         warehouse.value.value,
         input.tenantId,
         tx,
+        input.variantId,
       );
       if (item === null) {
         return err(new NotFoundError("Inventory item not found"));

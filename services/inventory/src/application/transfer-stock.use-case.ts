@@ -13,6 +13,8 @@ export interface TransferStockInput {
   /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
   readonly tenantId: string;
   readonly productId: string;
+  /** Plan 2B-1: the variant whose stock this is; absent = the product's only row (legacy). */
+  readonly variantId?: string;
   readonly sourceWarehouseId: string;
   readonly destinationWarehouseId: string;
   readonly quantity: number;
@@ -65,6 +67,7 @@ export class TransferStock implements UseCase<
         source.value.value,
         input.tenantId,
         tx,
+        input.variantId,
       );
       if (sourceItem === null) {
         return err(new NotFoundError("Source inventory item not found"));
@@ -76,11 +79,13 @@ export class TransferStock implements UseCase<
           destination.value.value,
           input.tenantId,
           tx,
+          input.variantId,
         )) ??
         InventoryItem.create(
           UniqueEntityId.from(this.deps.idGenerator.generate()),
           product.value,
           destination.value,
+          input.variantId ?? null,
         );
 
       try {

@@ -14,6 +14,8 @@ export interface ReceiveStockInput {
   readonly tenantId: string;
   readonly productId: string;
   readonly warehouseId: string;
+  /** Plan 2B-1: the variant whose stock this is; absent = the product's only row (legacy). */
+  readonly variantId?: string;
   readonly quantity: number;
 }
 
@@ -50,6 +52,7 @@ export class ReceiveStock implements UseCase<ReceiveStockInput, ReceiveStockOutp
         warehouse.value.value,
         input.tenantId,
         tx,
+        input.variantId,
       );
       const item =
         existing ??
@@ -57,6 +60,7 @@ export class ReceiveStock implements UseCase<ReceiveStockInput, ReceiveStockOutp
           UniqueEntityId.from(this.deps.idGenerator.generate()),
           product.value,
           warehouse.value,
+          input.variantId ?? null,
         );
 
       item.receive(quantity.value, this.deps.idGenerator.generate(), this.deps.clock.now());

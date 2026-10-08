@@ -16,6 +16,7 @@ import type { WarehouseId } from "./value-objects/warehouse-id";
 interface InventoryItemProps {
   readonly product: ProductRef;
   readonly warehouseId: WarehouseId;
+  readonly variantRef: string | null;
   stockLevel: StockLevel;
   readonly reservations: Reservation[];
 }
@@ -25,9 +26,14 @@ interface InventoryItemProps {
  * (carrying the reason + resulting levels). Invariant violations throw `BusinessRuleError`.
  */
 export class InventoryItem extends AggregateRoot<InventoryItemProps> {
-  static create(id: UniqueEntityId, product: ProductRef, warehouseId: WarehouseId): InventoryItem {
+  static create(
+    id: UniqueEntityId,
+    product: ProductRef,
+    warehouseId: WarehouseId,
+    variantRef: string | null = null,
+  ): InventoryItem {
     return new InventoryItem(
-      { product, warehouseId, stockLevel: StockLevel.zero(), reservations: [] },
+      { product, warehouseId, variantRef, stockLevel: StockLevel.zero(), reservations: [] },
       id,
     );
   }
@@ -43,9 +49,10 @@ export class InventoryItem extends AggregateRoot<InventoryItemProps> {
     stockLevel: StockLevel,
     reservations: readonly Reservation[],
     version: number,
+    variantRef: string | null = null,
   ): InventoryItem {
     return new InventoryItem(
-      { product, warehouseId, stockLevel, reservations: [...reservations] },
+      { product, warehouseId, variantRef, stockLevel, reservations: [...reservations] },
       id,
       version,
     );
@@ -112,6 +119,15 @@ export class InventoryItem extends AggregateRoot<InventoryItemProps> {
 
   get warehouseId(): WarehouseId {
     return this.props.warehouseId;
+  }
+
+  /**
+   * Plan 2B-1: the Catalog variant this stock belongs to (bare id, never an FK). `null` on a legacy
+   * product-level row written before variants were tracked; such a row is read as the stock of a
+   * product's only variant (see `InventoryItemRepository.findByProductAndWarehouse`).
+   */
+  get variantRef(): string | null {
+    return this.props.variantRef;
   }
 
   get stockLevel(): StockLevel {

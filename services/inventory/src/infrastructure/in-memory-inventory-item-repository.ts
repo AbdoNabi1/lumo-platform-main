@@ -3,6 +3,7 @@ import { buildPaginatedPage, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
 import type { InventoryItem } from "../domain/inventory-item";
 import type { InventoryItemRepository } from "../domain/inventory-item-repository";
+import { resolveStockRow } from "../domain/resolve-stock-row";
 
 export interface InMemoryInventoryItemRepositoryDeps {
   readonly outbox: OutboxWriter;
@@ -42,13 +43,13 @@ export class InMemoryInventoryItemRepository implements InventoryItemRepository 
     productId: string,
     warehouseId: string,
     tenantId: string,
+    _tx?: unknown,
+    variantId?: string,
   ): Promise<InventoryItem | null> {
-    for (const item of this.store.get(tenantId)?.values() ?? []) {
-      if (item.product.value === productId && item.warehouseId.value === warehouseId) {
-        return item;
-      }
-    }
-    return null;
+    const rows = [...(this.store.get(tenantId)?.values() ?? [])].filter(
+      (item) => item.product.value === productId && item.warehouseId.value === warehouseId,
+    );
+    return resolveStockRow(rows, variantId);
   }
 
   async findByProduct(productId: string, tenantId: string): Promise<readonly InventoryItem[]> {

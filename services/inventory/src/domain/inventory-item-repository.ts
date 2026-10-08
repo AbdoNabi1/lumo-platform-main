@@ -5,12 +5,20 @@ import type { InventoryItem } from "./inventory-item";
 export interface InventoryItemRepository {
   save(item: InventoryItem, tenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tenantId: string, tx?: unknown): Promise<InventoryItem | null>;
-  /** Looks up the item for a product at a warehouse (the natural key). */
+  /**
+   * Plan 2B-1 lookup rule (mirrors `Cart.findLine`, Plan 2A):
+   *  - with `variantId`: that variant's row; if it has none, the product's legacy row
+   *    (`variantRef` null) at this warehouse — but only when that legacy row is the product's ONLY
+   *    row there (a live product's stock written before variants were tracked);
+   *  - without `variantId`: the product's only row at this warehouse; with several rows a product
+   *    id alone names nothing, so `null`.
+   */
   findByProductAndWarehouse(
     productId: string,
     warehouseId: string,
     tenantId: string,
     tx?: unknown,
+    variantId?: string,
   ): Promise<InventoryItem | null>;
   /** All items for a product, across every warehouse (Phase A.30 admin Products screen). */
   findByProduct(

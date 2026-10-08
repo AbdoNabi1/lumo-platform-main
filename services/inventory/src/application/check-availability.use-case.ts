@@ -10,6 +10,8 @@ export interface CheckAvailabilityInput {
   readonly tenantId: string;
   readonly productId: string;
   readonly warehouseId: string;
+  /** Plan 2B-1: the variant whose stock this is; absent = the product's only row (legacy). */
+  readonly variantId?: string;
 }
 
 export interface CheckAvailabilityOutput {
@@ -52,6 +54,8 @@ export class CheckAvailability implements UseCase<
       product.value.value,
       warehouse.value.value,
       input.tenantId,
+      undefined,
+      input.variantId,
     );
     if (item === null) {
       return err(new NotFoundError("Inventory item not found"));

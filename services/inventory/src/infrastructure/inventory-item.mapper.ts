@@ -11,6 +11,8 @@ export interface InventoryItemRow {
   readonly id: string;
   readonly productRef: string;
   readonly warehouseId: string;
+  /** Plan 2B-1: bare Catalog variant id; `null` = a legacy product-level row. */
+  readonly variantRef?: string | null; // required once the Prisma side lands (Task 2)
   readonly onHand: number;
   readonly reserved: number;
   readonly version: number;
@@ -44,6 +46,7 @@ export class InventoryItemMapper {
         ),
       ),
       row.version,
+      row.variantRef ?? null,
     );
   }
 
@@ -53,6 +56,7 @@ export class InventoryItemMapper {
       tenantId,
       productRef: item.product.value,
       warehouseId: item.warehouseId.value,
+      variantRef: item.variantRef,
       onHand: item.stockLevel.onHand,
       reserved: item.stockLevel.reserved,
       version: 1,
