@@ -694,16 +694,10 @@ export const en = {
     weightUnit: "Unit",
     grams: "g",
     kilograms: "kg",
-    pricesOnVariants:
-      "This product has variants. Set prices, SKUs and weights on each variant below.",
     variantsCard: "Variants",
     addOptions: "Add options like size or color",
     optionName: "Option name",
-    optionValues: "Values (comma-separated)",
     addAnotherOption: "Add another option",
-    removeOption: "Remove option",
-    saveOptions: "Save options",
-    matrixPreview: "Will add {adds} and remove {removes} variants.",
     confirmRemoveVariants: "This removes {count} variants. Continue?",
     tooManyVariants: "Up to 100 variants per product.",
     invalidOptions:
@@ -734,22 +728,10 @@ export const en = {
     sku: "SKU",
     slug: "Slug",
     scheduledFor: "Scheduled for {date}",
-    variants: "Variants",
-    variantSku: "SKU",
-    variantPrice: "Price",
     media: "Media",
     noMedia: "No media attached.",
     mediaReference: "Asset reference",
     mediaDownloadUnavailable: "Download link unavailable",
-    inventory: "Inventory",
-    inventoryColumns: {
-      warehouse: "Warehouse",
-      onHand: "On hand",
-      reserved: "Reserved",
-      available: "Available",
-    },
-    noInventory: "No stock recorded for this product in any warehouse.",
-    inventoryUnavailable: "Couldn't load inventory for this product.",
     notFound: "This product doesn't exist or you don't have access to it.",
     error: "Couldn't load this product. Try refreshing the page.",
     unauthorized: "Sign in to view this product.",
@@ -761,28 +743,6 @@ export const en = {
   /** Shared success note across every product write mini-form below (T5.1). */
   productWriteCommon: {
     saved: "Saved.",
-  },
-  /**
-   * T5.5 — `ProductInventoryTable`'s per-row "Receive"/"Adjust" inline forms plus the standalone
-   * "receive at a warehouse" form (`components/products/product-inventory-table.tsx`). No
-   * `GET /warehouses` route exists (`docs/plans/BLOCKERS.md`'s T5.5 entry), so `warehouseId` is a
-   * plain text input — same fallback `productBrandForm`'s brand id field used before T5.7 wired a
-   * real `GET /brands` route and turned that field into a `<select>`.
-   */
-  inventoryRowForm: {
-    actions: "Actions",
-    receive: "Receive",
-    adjust: "Adjust",
-    quantity: "Quantity",
-    onHand: "On hand",
-    confirmReceive: "Receive stock",
-    receiving: "Receiving…",
-    confirmAdjust: "Save adjustment",
-    adjusting: "Saving…",
-    cancel: "Cancel",
-    receiveNewTitle: "Receive stock at a warehouse",
-    warehouseId: "Warehouse ID",
-    warehouseIdHint: "No warehouse list is wired yet — enter the warehouse's id directly.",
   },
   productLifecycle: {
     schedulePublish: "Schedule publish",
