@@ -23,6 +23,15 @@ export interface ProductVariantSummary {
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
+  /** Plan 2A: the variant's position in the option matrix (`{ Size: "L" }`); null for a plain variant. */
+  readonly selection: Readonly<Record<string, string>> | null;
+  /** Plan 2A: human label in the product's option order (`"Red / L"`); null when no selection. */
+  readonly title: string | null;
+}
+
+export interface ProductOptionSummary {
+  readonly name: string;
+  readonly values: readonly string[];
 }
 
 export interface ProductSummary {
@@ -31,6 +40,8 @@ export interface ProductSummary {
   readonly name: string;
   readonly slug: string;
   readonly status: string;
+  /** Plan 2A: the options a shopper picks from, in display order; empty for a single-variant product. */
+  readonly options: readonly ProductOptionSummary[];
   readonly variants: readonly ProductVariantSummary[];
 }
 
@@ -79,6 +90,11 @@ export interface ProductReviewSummary {
 
 export interface CartItemSummary {
   readonly productId: string;
+  /** Plan 2A: the variant this line sells, with its snapshot; all null on a line added before variants. */
+  readonly variantId: string | null;
+  readonly sku: string | null;
+  readonly title: string | null;
+  readonly variantTitle: string | null;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
@@ -341,6 +357,8 @@ export interface CurrentCartResponse {
 export interface AddCartItemInput {
   readonly sessionRef: string;
   readonly productId: string;
+  /** Plan 2A: the size/colour being bought. Omitted only for a single-variant product. */
+  readonly variantId?: string;
   readonly quantity: number;
   readonly inventoryAvailable?: number;
 }
@@ -386,10 +404,11 @@ export function changeCartItemQuantity(
   sessionRef: string,
   productId: string,
   quantity: number,
+  variantId?: string,
 ): Promise<{ readonly status: number; readonly body: CartSummary | null }> {
   return postItem<CartSummary>(
     `/api/v1/public/carts/${encodeURIComponent(cartId)}/items/quantity`,
-    { sessionRef, productId, quantity },
+    { sessionRef, productId, quantity, ...(variantId === undefined ? {} : { variantId }) },
   );
 }
 
@@ -397,10 +416,12 @@ export function removeCartItem(
   cartId: string,
   sessionRef: string,
   productId: string,
+  variantId?: string,
 ): Promise<{ readonly status: number; readonly body: CartSummary | null }> {
   return postItem<CartSummary>(`/api/v1/public/carts/${encodeURIComponent(cartId)}/items/remove`, {
     sessionRef,
     productId,
+    ...(variantId === undefined ? {} : { variantId }),
   });
 }
 
@@ -720,6 +741,11 @@ export interface CheckoutAddressInput {
 
 export interface CheckoutSessionItemSummary {
   readonly productId: string;
+  /** Plan 2A: the variant snapshot carried from the Cart line; null on a line added before variants. */
+  readonly variantId?: string | null;
+  readonly sku?: string | null;
+  readonly title?: string | null;
+  readonly variantTitle?: string | null;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
 }

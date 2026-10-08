@@ -52,6 +52,7 @@ function product(overrides: Partial<ProductSummary> = {}): ProductSummary {
     name: "Wooden Blocks",
     slug: "wooden-blocks",
     status: "published",
+    options: [],
     variants: [],
     ...overrides,
   };

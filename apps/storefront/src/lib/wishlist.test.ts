@@ -28,6 +28,7 @@ function product(overrides: Partial<ProductSummary> = {}): ProductSummary {
     name: "Wooden Blocks",
     slug: "wooden-blocks",
     status: "published",
+    options: [],
     variants: [],
     ...overrides,
   };
@@ -61,7 +62,18 @@ describe("resolveMyWishlist", () => {
       body: wishlist([{ ...ITEM, productRef: "variant-9" }]),
     });
     getProducts.mockResolvedValue([
-      product({ variants: [{ id: "variant-9", sku: "V-9", priceAmountMinor: 100, currency: "USD" }] }),
+      product({
+        variants: [
+          {
+            id: "variant-9",
+            sku: "V-9",
+            priceAmountMinor: 100,
+            currency: "USD",
+            selection: null,
+            title: null,
+          },
+        ],
+      }),
     ]);
 
     const result = await resolveMyWishlist("session-1");

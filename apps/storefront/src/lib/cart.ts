@@ -54,6 +54,10 @@ export const CHECKOUT_SESSION_COOKIE_OPTIONS = {
 
 export interface ResolvedCartLine {
   readonly productId: string;
+  /** Plan 2A: the variant this line sells; null on a legacy line (addressed by product). */
+  readonly variantId: string | null;
+  /** Plan 2A: the variant's label (`"L"`, `"Red / L"`); null when the line has none. */
+  readonly variantTitle: string | null;
   /** `null` when no Catalog product/variant with this id could be resolved — never fabricated. */
   readonly name: string | null;
   readonly slug: string | null;
@@ -88,7 +92,10 @@ function resolveLine(item: CartItemSummary, products: readonly ProductSummary[])
   const product = resolveProduct(item.productId, products);
   return {
     productId: item.productId,
-    name: product?.name ?? null,
+    variantId: item.variantId,
+    variantTitle: item.variantTitle,
+    // The name snapshotted when the line was added wins; Catalog only fills in for a legacy line.
+    name: item.title ?? product?.name ?? null,
     slug: product?.slug ?? null,
     quantity: item.quantity,
     unitPriceAmountMinor: item.unitPriceAmountMinor,

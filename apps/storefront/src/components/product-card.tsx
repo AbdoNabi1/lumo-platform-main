@@ -44,9 +44,18 @@ export function ProductCard({
           <AvailabilityBadge availability={availability} t={t} locale={locale} />
         </CardContent>
       </Link>
-      {price.status === "ok" && (
+      {/*
+       * Plan 2A: a quick add can only name a variant when there is exactly one. A product with
+       * several (sizes, colours) is bought from its detail page, where the shopper picks one.
+       */}
+      {price.status === "ok" && product.variants.length <= 1 && (
         <CardFooter>
-          <AddToCartButton productId={product.id} outOfStock={outOfStock} t={t} />
+          <AddToCartButton
+            productId={product.id}
+            variantId={product.variants[0]?.id}
+            outOfStock={outOfStock}
+            t={t}
+          />
         </CardFooter>
       )}
     </Card>

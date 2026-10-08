@@ -25,10 +25,12 @@ export type CartActionResult =
   | { readonly ok: true }
   | {
       readonly ok: false;
-      /** `"unavailable"`: no authoritative Pricing snapshot for this product. `"ownership"`: the
+      /** `"unavailable"`: no authoritative Pricing snapshot for this product. `"choose-variant"`
+       * (Plan 2A): the product has several variants and none was named (API `VARIANT_REQUIRED`).
+       * `"ownership"`: the
        * Runtime API 404'd — a stale/cleared session cookie no longer matches any cart it can
        * resolve. `"network"`: the Runtime API is unreachable or returned an unexpected status. */
-      readonly reason: "unavailable" | "ownership" | "network";
+      readonly reason: "unavailable" | "choose-variant" | "ownership" | "network";
     };
 
 /** Reads the guest session cookie, minting and persisting a new opaque id if none exists yet. Never called from a read path — only from a mutation that is about to need one. */
@@ -57,7 +59,20 @@ async function existingSessionRef(): Promise<string | undefined> {
  * sent to the Cart API: the public HTTP route now re-resolves the price itself, server-side, from
  * Pricing's published-price data, and rejects any request that tries to supply one.
  */
-export async function addToCart(productId: string, quantity: number): Promise<CartActionResult> {
+/** The Runtime API answers a multi-variant add with no variant as 422 with code VARIANT_REQUIRED. */
+function isVariantRequired(body: unknown): boolean {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    (body as { code?: unknown }).code === "VARIANT_REQUIRED"
+  );
+}
+
+export async function addToCart(
+  productId: string,
+  quantity: number,
+  variantId?: string,
+): Promise<CartActionResult> {
   const [priceBook, availabilityBook] = await Promise.all([
     PriceBook.load(),
     AvailabilityBook.load(),
@@ -88,10 +103,14 @@ export async function addToCart(productId: string, quantity: number): Promise<Ca
   const added = await addCartItem(cartId, {
     sessionRef,
     productId,
+    ...(variantId === undefined ? {} : { variantId }),
     quantity,
     inventoryAvailable,
   });
   if (added.status === 404) return { ok: false, reason: "ownership" };
+  if (added.status === 422 && isVariantRequired(added.body)) {
+    return { ok: false, reason: "choose-variant" };
+  }
   if (added.status < 200 || added.status >= 300) return { ok: false, reason: "network" };
 
   revalidatePath("/cart");
@@ -102,11 +121,12 @@ export async function changeQuantity(
   cartId: string,
   productId: string,
   quantity: number,
+  variantId?: string,
 ): Promise<CartActionResult> {
   const sessionRef = await existingSessionRef();
   if (sessionRef === undefined) return { ok: false, reason: "ownership" };
 
-  const result = await changeCartItemQuantity(cartId, sessionRef, productId, quantity);
+  const result = await changeCartItemQuantity(cartId, sessionRef, productId, quantity, variantId);
   if (result.status === 404) return { ok: false, reason: "ownership" };
   if (result.status < 200 || result.status >= 300) return { ok: false, reason: "network" };
 
@@ -114,11 +134,15 @@ export async function changeQuantity(
   return { ok: true };
 }
 
-export async function removeItem(cartId: string, productId: string): Promise<CartActionResult> {
+export async function removeItem(
+  cartId: string,
+  productId: string,
+  variantId?: string,
+): Promise<CartActionResult> {
   const sessionRef = await existingSessionRef();
   if (sessionRef === undefined) return { ok: false, reason: "ownership" };
 
-  const result = await removeCartItem(cartId, sessionRef, productId);
+  const result = await removeCartItem(cartId, sessionRef, productId, variantId);
   if (result.status === 404) return { ok: false, reason: "ownership" };
   if (result.status < 200 || result.status >= 300) return { ok: false, reason: "network" };
 

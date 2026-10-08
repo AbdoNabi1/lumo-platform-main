@@ -28,6 +28,9 @@ function cart(overrides: Partial<CartSummary> = {}): CartSummary {
   };
 }
 
+/** A cart line written before variants were tracked (Plan 2A): the four variant fields are null. */
+const LEGACY_LINE = { variantId: null, sku: null, title: null, variantTitle: null } as const;
+
 function product(overrides: Partial<ProductSummary> = {}): ProductSummary {
   return {
     id: "prod-1",
@@ -35,6 +38,7 @@ function product(overrides: Partial<ProductSummary> = {}): ProductSummary {
     name: "Wooden Blocks",
     slug: "wooden-blocks",
     status: "published",
+    options: [],
     variants: [],
     ...overrides,
   };
@@ -49,6 +53,7 @@ describe("resolveCurrentCart", () => {
           items: [
             {
               productId: "prod-1",
+              ...LEGACY_LINE,
               quantity: 2,
               unitPriceAmountMinor: 1500,
               currency: "USD",
@@ -70,6 +75,8 @@ describe("resolveCurrentCart", () => {
     expect(result.lines).toEqual([
       {
         productId: "prod-1",
+        variantId: null,
+        variantTitle: null,
         name: "Wooden Blocks",
         slug: "wooden-blocks",
         quantity: 2,
@@ -80,6 +87,42 @@ describe("resolveCurrentCart", () => {
     ]);
   });
 
+  it("Plan 2A: a variant line keeps its variant id and label, and its snapshotted title wins over Catalog's", async () => {
+    getCurrentCart.mockResolvedValue({
+      status: 200,
+      body: {
+        cart: cart({
+          items: [
+            {
+              productId: "prod-1",
+              variantId: "variant-l",
+              sku: "SKU-1-L",
+              title: "Wooden Blocks (as sold)",
+              variantTitle: "L",
+              quantity: 1,
+              unitPriceAmountMinor: 1200,
+              currency: "USD",
+              lineTotalAmountMinor: 1200,
+            },
+          ],
+        }),
+      },
+    });
+    getProducts.mockResolvedValue([product({ id: "prod-1" })]);
+
+    const result = await resolveCurrentCart("session-1");
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.lines[0]).toMatchObject({
+      productId: "prod-1",
+      variantId: "variant-l",
+      variantTitle: "L",
+      name: "Wooden Blocks (as sold)",
+      slug: "wooden-blocks",
+    });
+  });
+
   it("resolves a line by variant id when the product id itself doesn't match", async () => {
     getCurrentCart.mockResolvedValue({
       status: 200,
@@ -88,6 +131,7 @@ describe("resolveCurrentCart", () => {
           items: [
             {
               productId: "variant-1",
+              ...LEGACY_LINE,
               quantity: 1,
               unitPriceAmountMinor: 999,
               currency: "USD",
@@ -100,7 +144,16 @@ describe("resolveCurrentCart", () => {
     getProducts.mockResolvedValue([
       product({
         id: "prod-1",
-        variants: [{ id: "variant-1", sku: "SKU-1-A", priceAmountMinor: 999, currency: "USD" }],
+        variants: [
+          {
+            id: "variant-1",
+            sku: "SKU-1-A",
+            priceAmountMinor: 999,
+            currency: "USD",
+            selection: null,
+            title: null,
+          },
+        ],
       }),
     ]);
 
@@ -119,6 +172,7 @@ describe("resolveCurrentCart", () => {
           items: [
             {
               productId: "gone",
+              ...LEGACY_LINE,
               quantity: 1,
               unitPriceAmountMinor: 500,
               currency: "USD",
@@ -145,6 +199,7 @@ describe("resolveCurrentCart", () => {
           items: [
             {
               productId: "prod-1",
+              ...LEGACY_LINE,
               quantity: 1,
               unitPriceAmountMinor: 500,
               currency: "USD",

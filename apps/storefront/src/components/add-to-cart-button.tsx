@@ -15,24 +15,31 @@ import type { Dictionary } from "@/messages/en";
  */
 export function AddToCartButton({
   productId,
+  variantId,
   outOfStock,
   t,
 }: {
   readonly productId: string;
+  /** Plan 2A: the variant being bought; omitted only for a product the server can default (one variant). */
+  readonly variantId?: string;
   readonly outOfStock: boolean;
   readonly t: Dictionary;
 }) {
   const [isPending, startTransition] = useTransition();
-  const [result, setResult] = useState<"idle" | "ok" | "unavailable" | "error">("idle");
+  const [result, setResult] = useState<"idle" | "ok" | "unavailable" | "choose-variant" | "error">(
+    "idle",
+  );
 
   function onClick(): void {
     startTransition(async () => {
-      const response = await addToCart(productId, 1);
+      const response = await addToCart(productId, 1, variantId);
       if (response.ok) {
         setResult("ok");
         return;
       }
-      setResult(response.reason === "unavailable" ? "unavailable" : "error");
+      if (response.reason === "unavailable") setResult("unavailable");
+      else if (response.reason === "choose-variant") setResult("choose-variant");
+      else setResult("error");
     });
   }
 
@@ -57,6 +64,9 @@ export function AddToCartButton({
       )}
       {result === "unavailable" && (
         <p className="text-destructive text-xs">{t.product.addToCartUnavailable}</p>
+      )}
+      {result === "choose-variant" && (
+        <p className="text-destructive text-xs">{t.product.chooseVariant}</p>
       )}
       {result === "error" && <p className="text-destructive text-xs">{t.product.addToCartError}</p>}
     </div>

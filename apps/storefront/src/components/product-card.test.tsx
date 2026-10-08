@@ -16,6 +16,7 @@ const product: PublishedProduct = {
   name: "Wooden Blocks",
   slug: "wooden-blocks",
   status: "published",
+  options: [],
   variants: [],
 };
 

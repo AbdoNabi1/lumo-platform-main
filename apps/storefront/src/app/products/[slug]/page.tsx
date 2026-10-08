@@ -2,13 +2,13 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertTriangleIcon, ArrowLeftIcon, PackageIcon } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, Separator } from "@platform/ui";
-import { AddToCartButton } from "@/components/add-to-cart-button";
+import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import { AddToWishlistButton } from "@/components/add-to-wishlist-button";
 import { AvailabilityBadge, PriceLabel } from "@/components/product-card";
 import { ProductReviews } from "@/components/product-reviews";
 import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
+import { VariantPicker } from "@/components/variant-picker";
 import { WriteReviewForm } from "@/components/write-review-form";
 import { AvailabilityBook, PriceBook, resolveProductBySlug } from "@/lib/catalog";
 import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
@@ -20,8 +20,10 @@ const PRODUCT_REVIEWS_PAGE_SIZE = 10;
 
 /**
  * Product Detail. Only fields the public `/public/products` DTO actually carries are shown —
- * `name`, `sku`, `slug`, `variants[].{id,sku}`, plus price (Pricing's product-level, real
- * `getPrices()`) and availability (Inventory, summed across warehouses). The DTO has no
+ * `name`, `sku`, `slug`, `options`, `variants[].{id,sku,selection,title,price}`, plus availability
+ * (Inventory, summed across warehouses). Plan 2A: the shopper buys a VARIANT, so the price shown
+ * (and added to the cart) follows the variant picked in {@link VariantPicker}; the product-level
+ * Pricing row only gates whether the product is offered at all. The DTO has no
  * description, image/media, brand, or category fields, so none are rendered — see the Phase 2
  * report for the full list of fields evaluated and why each was included or omitted.
  *
@@ -114,15 +116,16 @@ export default async function ProductDetailPage({
           </p>
 
           <div className="flex items-center gap-3">
-            <PriceLabel price={price} t={t} locale={locale} />
+            {price.status !== "ok" && <PriceLabel price={price} t={t} locale={locale} />}
             <AvailabilityBadge availability={availability} t={t} locale={locale} />
           </div>
 
           {price.status === "ok" && (
-            <AddToCartButton
-              productId={product.id}
+            <VariantPicker
+              product={product}
               outOfStock={availability.status === "ok" && availability.available <= 0}
               t={t}
+              locale={locale}
             />
           )}
 
@@ -132,28 +135,7 @@ export default async function ProductDetailPage({
            * fail on click. An `"error"` resolution renders nothing either: when the session cannot
            * be verified, the safe default is to withhold the control, not to guess.
            */}
-          {customer.status === "signed-in" && (
-            <AddToWishlistButton productRef={product.id} t={t} />
-          )}
-
-          {product.variants.length > 0 && (
-            <>
-              <Separator />
-              <div className="flex flex-col gap-2">
-                <h2 className="text-sm font-semibold">{t.product.variants}</h2>
-                <ul className="flex flex-col gap-2">
-                  {product.variants.map((variant) => (
-                    <li
-                      key={variant.id}
-                      className="border-border rounded-md border px-3 py-2 text-sm"
-                    >
-                      {t.product.variantSku.replace("{sku}", variant.sku)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </>
-          )}
+          {customer.status === "signed-in" && <AddToWishlistButton productRef={product.id} t={t} />}
         </CardContent>
       </Card>
 
