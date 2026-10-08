@@ -16,12 +16,15 @@ import type { Dictionary } from "@/messages/en";
 export function AddToCartButton({
   productId,
   variantId,
+  currency,
   outOfStock,
   t,
 }: {
   readonly productId: string;
   /** Plan 2A: the variant being bought; omitted only for a product the server can default (one variant). */
   readonly variantId?: string;
+  /** Plan 2C-1: the currency of the variant being bought; a new cart is opened in it. Never a price. */
+  readonly currency: string;
   readonly outOfStock: boolean;
   readonly t: Dictionary;
 }) {
@@ -32,7 +35,7 @@ export function AddToCartButton({
 
   function onClick(): void {
     startTransition(async () => {
-      const response = await addToCart(productId, 1, variantId);
+      const response = await addToCart(productId, 1, variantId, currency);
       if (response.ok) {
         setResult("ok");
         return;

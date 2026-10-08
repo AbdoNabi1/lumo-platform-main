@@ -68,8 +68,13 @@ export function VariantPicker({
       })}
 
       {variant !== undefined ? (
-        <p className="text-lg font-semibold">
-          {formatCurrency(locale, variant.priceAmountMinor, variant.currency)}
+        <p className="flex items-baseline gap-2 text-lg font-semibold">
+          <span>{formatCurrency(locale, variant.priceAmountMinor, variant.currency)}</span>
+          {variant.compareAtAmountMinor !== null && (
+            <s className="text-muted-foreground text-sm font-normal">
+              {formatCurrency(locale, variant.compareAtAmountMinor, variant.currency)}
+            </s>
+          )}
         </p>
       ) : (
         <p role="status" className="text-destructive text-sm">
@@ -80,6 +85,7 @@ export function VariantPicker({
       <AddToCartButton
         productId={product.id}
         variantId={variant?.id}
+        currency={variant?.currency ?? product.variants[0]?.currency ?? ""}
         outOfStock={outOfStock || variant === undefined}
         t={t}
       />

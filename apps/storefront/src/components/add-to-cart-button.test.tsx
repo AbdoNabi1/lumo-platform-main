@@ -4,9 +4,22 @@ import { en } from "@/messages/en";
 import type { CartActionResult } from "@/app/cart/actions";
 import { AddToCartButton } from "./add-to-cart-button";
 
-const addToCart = vi.fn<(productId: string, quantity: number) => Promise<CartActionResult>>();
+const addToCart =
+  vi.fn<
+    (
+      productId: string,
+      quantity: number,
+      variantId: string | undefined,
+      currency: string,
+    ) => Promise<CartActionResult>
+  >();
 vi.mock("@/app/cart/actions", () => ({
-  addToCart: (productId: string, quantity: number) => addToCart(productId, quantity),
+  addToCart: (
+    productId: string,
+    quantity: number,
+    variantId: string | undefined,
+    currency: string,
+  ) => addToCart(productId, quantity, variantId, currency),
 }));
 
 beforeEach(() => {
@@ -16,11 +29,11 @@ beforeEach(() => {
 describe("AddToCartButton (Task 9 entry point)", () => {
   it("adds a single unit of the product and shows the success state with a link to the cart", async () => {
     addToCart.mockResolvedValue({ ok: true });
-    render(<AddToCartButton productId="prod-1" outOfStock={false} t={en} />);
+    render(<AddToCartButton productId="prod-1" currency="USD" outOfStock={false} t={en} />);
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
 
-    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-1", 1));
+    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-1", 1, undefined, "USD"));
     expect(await screen.findByText(en.product.addedToCart)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: en.product.viewCart })).toHaveAttribute(
       "href",
@@ -30,7 +43,7 @@ describe("AddToCartButton (Task 9 entry point)", () => {
 
   it("shows the unavailable message when the action reports reason: 'unavailable'", async () => {
     addToCart.mockResolvedValue({ ok: false, reason: "unavailable" });
-    render(<AddToCartButton productId="prod-1" outOfStock={false} t={en} />);
+    render(<AddToCartButton productId="prod-1" currency="USD" outOfStock={false} t={en} />);
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
 
@@ -39,7 +52,7 @@ describe("AddToCartButton (Task 9 entry point)", () => {
 
   it("shows a generic error for ownership/network failures", async () => {
     addToCart.mockResolvedValue({ ok: false, reason: "network" });
-    render(<AddToCartButton productId="prod-1" outOfStock={false} t={en} />);
+    render(<AddToCartButton productId="prod-1" currency="USD" outOfStock={false} t={en} />);
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
 
@@ -47,7 +60,7 @@ describe("AddToCartButton (Task 9 entry point)", () => {
   });
 
   it("is disabled when out of stock and never calls the action", () => {
-    render(<AddToCartButton productId="prod-1" outOfStock t={en} />);
+    render(<AddToCartButton productId="prod-1" currency="USD" outOfStock t={en} />);
 
     const button = screen.getByRole("button", { name: en.product.addToCart });
     expect(button).toBeDisabled();

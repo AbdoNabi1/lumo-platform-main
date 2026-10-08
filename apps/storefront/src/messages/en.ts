@@ -38,6 +38,7 @@ export const en = {
     variants: "Options",
     variantSku: "SKU {sku}",
     priceUnavailable: "Price unavailable",
+    priceFrom: "From {price}",
     inStock: "{count} in stock",
     outOfStock: "Out of stock",
     availabilityUnknown: "Availability unknown",

@@ -3,8 +3,8 @@ import type {
   CollectionSummary,
   CursorPageResult,
   InventoryItemSummary,
-  PriceSummary,
   ProductSummary,
+  ProductVariantSummary,
 } from "./runtime-api";
 
 const getProducts = vi.fn<() => Promise<readonly ProductSummary[] | null>>();
@@ -19,7 +19,6 @@ const getCollectionProducts =
       after?: string,
     ) => Promise<CursorPageResult<ProductSummary> | null>
   >();
-const getPrices = vi.fn<() => Promise<readonly PriceSummary[] | null>>();
 const getInventory = vi.fn<() => Promise<readonly InventoryItemSummary[] | null>>();
 const searchProducts = vi.fn<(query: string) => Promise<readonly ProductSummary[] | null>>();
 
@@ -30,7 +29,6 @@ vi.mock("./runtime-api", () => ({
   getCollectionBySlug: (slug: string) => getCollectionBySlug(slug),
   getCollectionProducts: (slug: string, first?: number, after?: string) =>
     getCollectionProducts(slug, first, after),
-  getPrices: () => getPrices(),
   getInventory: () => getInventory(),
   searchProducts: (query: string) => searchProducts(query),
 }));
@@ -41,7 +39,7 @@ const {
   resolveProductBySlug,
   resolveCollectionBySlug,
   searchPublishedProducts,
-  PriceBook,
+  priceOf,
   AvailabilityBook,
 } = await import("./catalog");
 
@@ -52,8 +50,24 @@ function product(overrides: Partial<ProductSummary> = {}): ProductSummary {
     name: "Wooden Blocks",
     slug: "wooden-blocks",
     status: "published",
+    description: null,
+    productType: null,
+    tags: [],
     options: [],
     variants: [],
+    ...overrides,
+  };
+}
+
+function variant(overrides: Partial<ProductVariantSummary> = {}): ProductVariantSummary {
+  return {
+    id: "var-1",
+    sku: "SKU-1-STD",
+    priceAmountMinor: 1999,
+    currency: "USD",
+    selection: null,
+    title: null,
+    compareAtAmountMinor: null,
     ...overrides,
   };
 }
@@ -65,17 +79,6 @@ function collection(overrides: Partial<CollectionSummary> = {}): CollectionSumma
     slug: "featured-toys",
     status: "published",
     productIds: [],
-    ...overrides,
-  };
-}
-
-function price(overrides: Partial<PriceSummary> = {}): PriceSummary {
-  return {
-    id: "price-1",
-    productId: "prod-1",
-    amountMinor: 1999,
-    currency: "USD",
-    status: "published",
     ...overrides,
   };
 }
@@ -126,6 +129,14 @@ describe("resolveProductBySlug", () => {
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
     expect(result.product.slug).toBe("wooden-blocks");
+  });
+
+  it("resolves an unlisted product by slug — reachable by its link (Plan 2C-1)", async () => {
+    getProductBySlug.mockResolvedValue(product({ slug: "wooden-blocks", status: "unlisted" }));
+    const result = await resolveProductBySlug("wooden-blocks");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.product.status).toBe("unlisted");
   });
 
   it("treats an unpublished product as not-found — a shopper should not see a draft", async () => {
@@ -190,37 +201,61 @@ describe("resolveCollectionBySlug", () => {
   });
 });
 
-describe("PriceBook", () => {
-  it("resolves the one published price for a product", async () => {
-    getPrices.mockResolvedValue([price({ productId: "prod-1", amountMinor: 1999 })]);
-    const book = await PriceBook.load();
-    expect(book?.resolve("prod-1")).toEqual({ status: "ok", amountMinor: 1999, currency: "USD" });
+describe("priceOf (Plan 2C-1: the variant is the only price source)", () => {
+  it("one variant: its price and compare-at", () => {
+    expect(
+      priceOf(
+        product({ variants: [variant({ priceAmountMinor: 1999, compareAtAmountMinor: 2999 })] }),
+      ),
+    ).toEqual({
+      status: "ok",
+      amountMinor: 1999,
+      currency: "USD",
+      compareAtMinor: 2999,
+      varies: false,
+    });
   });
 
-  it("ignores draft prices — never shows a price that isn't published", async () => {
-    getPrices.mockResolvedValue([price({ productId: "prod-1", status: "draft" })]);
-    const book = await PriceBook.load();
-    expect(book?.resolve("prod-1")).toEqual({ status: "unavailable" });
+  it("several variants: the lowest price, flagged as varying", () => {
+    const result = priceOf(
+      product({
+        variants: [
+          variant({ id: "a", priceAmountMinor: 12000 }),
+          variant({ id: "b", priceAmountMinor: 10000 }),
+        ],
+      }),
+    );
+    expect(result).toEqual({
+      status: "ok",
+      amountMinor: 10000,
+      currency: "USD",
+      compareAtMinor: null,
+      varies: true,
+    });
   });
 
-  it("reports 'ambiguous' rather than guessing when two prices are published for one product (CPI-3)", async () => {
-    getPrices.mockResolvedValue([
-      price({ id: "p1", productId: "prod-1", amountMinor: 1999 }),
-      price({ id: "p2", productId: "prod-1", amountMinor: 2499 }),
-    ]);
-    const book = await PriceBook.load();
-    expect(book?.resolve("prod-1")).toEqual({ status: "ambiguous" });
+  it("compare-at is the lowest-priced variant's own, never another variant's", () => {
+    const result = priceOf(
+      product({
+        variants: [
+          variant({ id: "a", priceAmountMinor: 12000, compareAtAmountMinor: 15000 }),
+          variant({ id: "b", priceAmountMinor: 10000, compareAtAmountMinor: null }),
+        ],
+      }),
+    );
+    expect(result.status === "ok" && result.compareAtMinor).toBeNull();
   });
 
-  it("reports 'unavailable' for a product with no price row at all", async () => {
-    getPrices.mockResolvedValue([]);
-    const book = await PriceBook.load();
-    expect(book?.resolve("prod-1")).toEqual({ status: "unavailable" });
+  it("several variants with one price: not varying", () => {
+    const result = priceOf(product({ variants: [variant({ id: "a" }), variant({ id: "b" })] }));
+    expect(result.status === "ok" && result.varies).toBe(false);
   });
 
-  it("returns null when the API call fails, never a fabricated price", async () => {
-    getPrices.mockResolvedValue(null);
-    expect(await PriceBook.load()).toBeNull();
+  it("no variants: unavailable; two currencies: ambiguous", () => {
+    expect(priceOf(product({ variants: [] }))).toEqual({ status: "unavailable" });
+    expect(
+      priceOf(product({ variants: [variant({ id: "a" }), variant({ id: "b", currency: "EGP" })] })),
+    ).toEqual({ status: "ambiguous" });
   });
 });
 

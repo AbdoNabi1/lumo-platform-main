@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -10,7 +11,7 @@ import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
 import { VariantPicker } from "@/components/variant-picker";
 import { WriteReviewForm } from "@/components/write-review-form";
-import { AvailabilityBook, PriceBook, resolveProductBySlug } from "@/lib/catalog";
+import { AvailabilityBook, priceOf, resolveProductBySlug } from "@/lib/catalog";
 import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { getProductReviews } from "@/lib/runtime-api";
@@ -19,13 +20,32 @@ import { getProductReviews } from "@/lib/runtime-api";
 const PRODUCT_REVIEWS_PAGE_SIZE = 10;
 
 /**
+ * Plan 2C-1: an UNLISTED product opens here by its link (and can be bought) but is kept out of
+ * search engines, as it is kept out of every list, search and collection.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  readonly params: Promise<{ readonly slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const result = await resolveProductBySlug(slug);
+  if (result.status !== "ok") return {};
+  return {
+    title: result.product.name,
+    ...(result.product.status === "unlisted" ? { robots: { index: false, follow: false } } : {}),
+  };
+}
+
+/**
  * Product Detail. Only fields the public `/public/products` DTO actually carries are shown —
- * `name`, `sku`, `slug`, `options`, `variants[].{id,sku,selection,title,price}`, plus availability
- * (Inventory, summed across warehouses). Plan 2A: the shopper buys a VARIANT, so the price shown
- * (and added to the cart) follows the variant picked in {@link VariantPicker}; the product-level
- * Pricing row only gates whether the product is offered at all. The DTO has no
- * description, image/media, brand, or category fields, so none are rendered — see the Phase 2
- * report for the full list of fields evaluated and why each was included or omitted.
+ * `name`, `sku`, `slug`, `description` (plain text), `options`,
+ * `variants[].{id,sku,selection,title,price,compareAt}`, plus availability (Inventory, summed
+ * across warehouses). Plan 2A: the shopper buys a VARIANT, so the price shown (and added to the
+ * cart) follows the variant picked in {@link VariantPicker}. Plan 2C-1: that variant price is the
+ * ONLY price source — the Pricing screen is not consulted. The DTO has no image/media, brand, or
+ * category fields, so none are rendered — see the Phase 2 report for the full list of fields
+ * evaluated and why each was included or omitted.
  *
  * T5.18 added a reviews section below the core product card (display only at the time). T5.18-write
  * adds the submission form: rendered only when {@link resolveCurrentCustomer} confirms a REAL
@@ -66,8 +86,7 @@ export default async function ProductDetailPage({
   }
 
   const { product } = result;
-  const [priceBook, availabilityBook, reviewsPage, customer] = await Promise.all([
-    PriceBook.load(),
+  const [availabilityBook, reviewsPage, customer] = await Promise.all([
     AvailabilityBook.load(),
     getProductReviews(product.id, PRODUCT_REVIEWS_PAGE_SIZE, reviewsAfter),
     /**
@@ -84,7 +103,7 @@ export default async function ProductDetailPage({
      */
     resolveCurrentCustomer((await cookies()).get(CUSTOMER_SESSION_COOKIE)?.value),
   ]);
-  const price = priceBook?.resolve(product.id) ?? { status: "unavailable" as const };
+  const price = priceOf(product);
   const availability = availabilityBook?.resolve(product.id) ?? { status: "unknown" as const };
 
   return (
@@ -114,6 +133,11 @@ export default async function ProductDetailPage({
           <p className="text-muted-foreground text-sm">
             {t.product.sku}: {product.sku}
           </p>
+
+          {/* Plan 2C-1: PLAIN TEXT, rendered as text — never as HTML (no dangerouslySetInnerHTML). */}
+          {product.description !== null && (
+            <p className="whitespace-pre-line text-sm">{product.description}</p>
+          )}
 
           <div className="flex items-center gap-3">
             {price.status !== "ok" && <PriceLabel price={price} t={t} locale={locale} />}

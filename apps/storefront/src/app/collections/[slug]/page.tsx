@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import { ProductCard } from "@/components/product-card";
 import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
-import { AvailabilityBook, PriceBook, resolveCollectionBySlug } from "@/lib/catalog";
+import { AvailabilityBook, priceOf, resolveCollectionBySlug } from "@/lib/catalog";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 
 /**
@@ -57,10 +57,7 @@ export default async function CollectionPage({
 
   const { collection, products, pageInfo } = result;
   const isFirstPage = after === undefined;
-  const [priceBook, availabilityBook] = await Promise.all([
-    PriceBook.load(),
-    AvailabilityBook.load(),
-  ]);
+  const availabilityBook = await AvailabilityBook.load();
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 p-8">
@@ -100,7 +97,7 @@ export default async function CollectionPage({
             <ProductCard
               key={product.id}
               product={product}
-              price={priceBook?.resolve(product.id) ?? { status: "unavailable" }}
+              price={priceOf(product)}
               availability={availabilityBook?.resolve(product.id) ?? { status: "unknown" }}
               t={t}
               locale={locale}

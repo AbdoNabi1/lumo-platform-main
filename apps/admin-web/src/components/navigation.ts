@@ -25,7 +25,6 @@ import {
   ShoppingBagIcon,
   StarIcon,
   StoreIcon,
-  TagIcon,
   ToggleLeftIcon,
   UsersIcon,
   WarehouseIcon,
@@ -62,7 +61,8 @@ export const PRIMARY_NAV: readonly NavItem[] = [
   },
   { id: "brands", label: (t) => t.nav.brands, href: "/brands", Icon: AwardIcon },
   { id: "inventory", label: (t) => t.nav.inventory, href: "/inventory", Icon: WarehouseIcon },
-  { id: "pricing", label: (t) => t.nav.pricing, href: "/pricing", Icon: TagIcon },
+  // Plan 2C-1: Pricing hidden — the variant on the product is the only price source. The /pricing
+  // route stays reachable for now (Plan 2C-2 decides what of it survives).
   { id: "customers", label: (t) => t.nav.customers, href: "/customers", Icon: UsersIcon },
   { id: "reviews", label: (t) => t.nav.reviews, href: "/reviews", Icon: StarIcon },
   {

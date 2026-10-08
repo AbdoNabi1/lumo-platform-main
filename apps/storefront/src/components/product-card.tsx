@@ -8,9 +8,8 @@ import type { Dictionary } from "@/messages/en";
 
 /**
  * One product, linking to its detail page, with a guest add-to-cart action (Task 9). Price and
- * availability are passed in already resolved (`PriceBook`/`AvailabilityBook`) rather than
- * re-fetched per card, so a grid of these costs one price call and one inventory call in total,
- * not one per product.
+ * availability are passed in already resolved (`priceOf` from the product's own variants, and `AvailabilityBook`) rather than
+ * re-fetched per card, so a grid of these costs one inventory call in total, not one per product.
  *
  * The card is no longer fully clickable (Productization Phase 8's design) — only the title links
  * to the detail page. A `<button>` cannot legally nest inside an `<a>`, so once a real add-to-cart
@@ -53,6 +52,7 @@ export function ProductCard({
           <AddToCartButton
             productId={product.id}
             variantId={product.variants[0]?.id}
+            currency={product.variants[0]?.currency ?? ""}
             outOfStock={outOfStock}
             t={t}
           />
@@ -72,9 +72,19 @@ export function PriceLabel({
   readonly locale: Locale;
 }) {
   if (price.status === "ok") {
+    // Plan 2C-1: "From …" when the variants are not all priced alike; the compare-at (the lowest
+    // variant's own) is struck through beside it.
+    const amount = formatCurrency(locale, price.amountMinor, price.currency);
     return (
-      <span className="text-sm font-medium">
-        {formatCurrency(locale, price.amountMinor, price.currency)}
+      <span className="flex items-baseline gap-2 text-sm">
+        <span className="font-medium">
+          {price.varies ? t.product.priceFrom.replace("{price}", amount) : amount}
+        </span>
+        {price.compareAtMinor !== null && (
+          <s className="text-muted-foreground">
+            {formatCurrency(locale, price.compareAtMinor, price.currency)}
+          </s>
+        )}
       </span>
     );
   }

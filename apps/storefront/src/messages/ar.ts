@@ -43,6 +43,7 @@ export const ar: Dictionary = {
     variants: "الخيارات",
     variantSku: "رمز المنتج {sku}",
     priceUnavailable: "السعر غير متاح",
+    priceFrom: "يبدأ من {price}",
     inStock: "متوفر {count}",
     outOfStock: "نفد المخزون",
     availabilityUnknown: "التوفر غير معروف",

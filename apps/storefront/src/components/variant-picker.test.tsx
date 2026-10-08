@@ -7,10 +7,21 @@ import type { ProductSummary } from "@/lib/runtime-api";
 import { VariantPicker } from "./variant-picker";
 
 const addToCart =
-  vi.fn<(productId: string, quantity: number, variantId?: string) => Promise<CartActionResult>>();
+  vi.fn<
+    (
+      productId: string,
+      quantity: number,
+      variantId: string | undefined,
+      currency: string,
+    ) => Promise<CartActionResult>
+  >();
 vi.mock("@/app/cart/actions", () => ({
-  addToCart: (productId: string, quantity: number, variantId?: string) =>
-    addToCart(productId, quantity, variantId),
+  addToCart: (
+    productId: string,
+    quantity: number,
+    variantId: string | undefined,
+    currency: string,
+  ) => addToCart(productId, quantity, variantId, currency),
 }));
 
 beforeEach(() => {
@@ -25,6 +36,9 @@ function shirt(overrides: Partial<ProductSummary> = {}): ProductSummary {
     name: "Shirt",
     slug: "shirt",
     status: "published",
+    description: null,
+    productType: null,
+    tags: [],
     options: [{ name: "Size", values: ["S", "L"] }],
     variants: [
       {
@@ -34,6 +48,7 @@ function shirt(overrides: Partial<ProductSummary> = {}): ProductSummary {
         currency: "USD",
         selection: { Size: "S" },
         title: "S",
+        compareAtAmountMinor: 14000,
       },
       {
         id: "v-l",
@@ -42,6 +57,7 @@ function shirt(overrides: Partial<ProductSummary> = {}): ProductSummary {
         currency: "USD",
         selection: { Size: "L" },
         title: "L",
+        compareAtAmountMinor: null,
       },
     ],
     ...overrides,
@@ -60,7 +76,16 @@ describe("VariantPicker", () => {
     expect(screen.queryByText("$100.00")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
-    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-l"));
+    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-l", "USD"));
+  });
+
+  it("strikes through the chosen variant's own compare-at price, and only that one (Plan 2C-1)", () => {
+    render(<VariantPicker product={shirt()} outOfStock={false} t={en} locale="en" />);
+
+    // S has a compare-at price, L does not.
+    expect(screen.getByText("$140.00").tagName).toBe("S");
+    fireEvent.change(screen.getByLabelText("Choose Size"), { target: { value: "L" } });
+    expect(screen.queryByText("$140.00")).not.toBeInTheDocument();
   });
 
   it("adds the default (first) variant without any interaction", async () => {
@@ -68,7 +93,7 @@ describe("VariantPicker", () => {
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
 
-    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-s"));
+    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-s", "USD"));
   });
 
   it("a combination with no variant says so and disables add-to-cart", () => {
@@ -85,6 +110,7 @@ describe("VariantPicker", () => {
           currency: "USD",
           selection: { Size: "S", Color: "Red" },
           title: "S / Red",
+          compareAtAmountMinor: null,
         },
       ],
     });
@@ -111,6 +137,7 @@ describe("VariantPicker", () => {
           currency: "USD",
           selection: null,
           title: null,
+          compareAtAmountMinor: null,
         },
       ],
     });
@@ -119,7 +146,7 @@ describe("VariantPicker", () => {
     expect(screen.getByText("$50.00")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
-    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-mug", 1, "v-mug"));
+    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-mug", 1, "v-mug", "USD"));
   });
 
   it("takes its labels from the Arabic dictionary", () => {

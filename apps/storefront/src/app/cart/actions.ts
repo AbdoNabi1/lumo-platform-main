@@ -2,7 +2,7 @@
 
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { AvailabilityBook, PriceBook } from "@/lib/catalog";
+import { AvailabilityBook } from "@/lib/catalog";
 import { GUEST_SESSION_COOKIE, GUEST_SESSION_COOKIE_OPTIONS } from "@/lib/cart";
 import {
   addCartItem,
@@ -25,7 +25,7 @@ export type CartActionResult =
   | { readonly ok: true }
   | {
       readonly ok: false;
-      /** `"unavailable"`: no authoritative Pricing snapshot for this product. `"choose-variant"`
+      /** `"unavailable"`: the product is not for sale (the server could not resolve a price). `"choose-variant"`
        * (Plan 2A): the product has several variants and none was named (API `VARIANT_REQUIRED`).
        * `"ownership"`: the
        * Runtime API 404'd — a stale/cleared session cookie no longer matches any cart it can
@@ -50,15 +50,6 @@ async function existingSessionRef(): Promise<string | undefined> {
   return jar.get(GUEST_SESSION_COOKIE)?.value;
 }
 
-/**
- * Adds one product to the caller's guest cart, creating the session/cart if this is their first
- * add (Task 9's flow: session → cart-if-necessary → item added → cookie persists → `/cart` shows
- * it). `PriceBook` is still consulted here first — purely as an availability pre-check, so an
- * unpriced/ambiguous product fails fast with a clean UX message instead of a round trip — but
- * (H-01 remediation, Phase 17.1 security follow-up) its resolved amount/currency is no longer
- * sent to the Cart API: the public HTTP route now re-resolves the price itself, server-side, from
- * Pricing's published-price data, and rejects any request that tries to supply one.
- */
 /** The Runtime API answers a multi-variant add with no variant as 422 with code VARIANT_REQUIRED. */
 function isVariantRequired(body: unknown): boolean {
   return (
@@ -68,19 +59,26 @@ function isVariantRequired(body: unknown): boolean {
   );
 }
 
+/**
+ * Adds one product to the caller's guest cart, creating the session/cart if this is their first
+ * add (Task 9's flow: session → cart-if-necessary → item added → cookie persists → `/cart` shows
+ * it).
+ *
+ * Plan 2C-1: the Pricing screen is no longer consulted here. `currency` is the currency of the
+ * variant being bought — only used to open a new cart; it is NEVER a price. The H-01 rule stands:
+ * no price is sent to the Cart API, which resolves it server-side from the Catalog variant and
+ * rejects any request that tries to supply one. A product the server will not sell answers 422,
+ * which surfaces here as `"unavailable"`.
+ */
 export async function addToCart(
   productId: string,
   quantity: number,
-  variantId?: string,
+  variantId: string | undefined,
+  currency: string,
 ): Promise<CartActionResult> {
-  const [priceBook, availabilityBook] = await Promise.all([
-    PriceBook.load(),
-    AvailabilityBook.load(),
-  ]);
-  const price = priceBook?.resolve(productId);
-  if (price === undefined || price.status !== "ok") {
-    return { ok: false, reason: "unavailable" };
-  }
+  if (currency.length === 0) return { ok: false, reason: "unavailable" };
+
+  const availabilityBook = await AvailabilityBook.load();
   const availability = availabilityBook?.resolve(productId);
   const inventoryAvailable = availability?.status === "ok" ? availability.available : undefined;
 
@@ -93,7 +91,7 @@ export async function addToCart(
 
   let cartId = current.body.cart?.id;
   if (cartId === undefined) {
-    const created = await createCart(sessionRef, price.currency);
+    const created = await createCart(sessionRef, currency);
     if (created.status < 200 || created.status >= 300 || created.body === null) {
       return { ok: false, reason: "network" };
     }
@@ -111,6 +109,8 @@ export async function addToCart(
   if (added.status === 422 && isVariantRequired(added.body)) {
     return { ok: false, reason: "choose-variant" };
   }
+  // Any other 422 is the server refusing to sell this product (draft, archived, unknown variant).
+  if (added.status === 422) return { ok: false, reason: "unavailable" };
   if (added.status < 200 || added.status >= 300) return { ok: false, reason: "network" };
 
   revalidatePath("/cart");

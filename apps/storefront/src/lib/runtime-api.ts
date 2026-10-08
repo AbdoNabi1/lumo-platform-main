@@ -27,6 +27,8 @@ export interface ProductVariantSummary {
   readonly selection: Readonly<Record<string, string>> | null;
   /** Plan 2A: human label in the product's option order (`"Red / L"`); null when no selection. */
   readonly title: string | null;
+  /** Plan 2C-1: the struck-through "was" price (always above the price); null when unset. */
+  readonly compareAtAmountMinor: number | null;
 }
 
 export interface ProductOptionSummary {
@@ -40,6 +42,10 @@ export interface ProductSummary {
   readonly name: string;
   readonly slug: string;
   readonly status: string;
+  /** Plan 2C-1: PLAIN TEXT — render as text (`whitespace-pre-line`), never as HTML. */
+  readonly description: string | null;
+  readonly productType: string | null;
+  readonly tags: readonly string[];
   /** Plan 2A: the options a shopper picks from, in display order; empty for a single-variant product. */
   readonly options: readonly ProductOptionSummary[];
   readonly variants: readonly ProductVariantSummary[];
@@ -316,8 +322,9 @@ export function getCollectionProducts(
 /**
  * Prices — Pricing (`GET /public/prices`, Phase 9). Despite the route's summary comment
  * ("list published prices"), `ListPrices` filters only soft-deleted rows, not `status` — this
- * can return `"draft"` prices too. Callers must filter `status === "published"` themselves;
- * see `resolvePublishedPrice` in `lib/catalog.ts`, which is the only place this should happen.
+ * can return `"draft"` prices too. Callers must filter `status === "published"` themselves.
+ * Plan 2C-1: the storefront no longer reads this for display or add-to-cart — a product's price is
+ * its variants' (`priceOf` in `lib/catalog.ts`); the Pricing screen is not a price source.
  */
 export function getPrices(first: number = MAX_PAGE_SIZE): Promise<readonly PriceSummary[] | null> {
   return fetchList<PriceSummary>("/api/v1/public/prices", { first });

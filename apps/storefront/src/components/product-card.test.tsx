@@ -5,9 +5,22 @@ import type { PublishedProduct } from "@/lib/catalog";
 import type { CartActionResult } from "@/app/cart/actions";
 import { ProductCard } from "./product-card";
 
-const addToCart = vi.fn<(productId: string, quantity: number) => Promise<CartActionResult>>();
+const addToCart =
+  vi.fn<
+    (
+      productId: string,
+      quantity: number,
+      variantId: string | undefined,
+      currency: string,
+    ) => Promise<CartActionResult>
+  >();
 vi.mock("@/app/cart/actions", () => ({
-  addToCart: (productId: string, quantity: number) => addToCart(productId, quantity),
+  addToCart: (
+    productId: string,
+    quantity: number,
+    variantId: string | undefined,
+    currency: string,
+  ) => addToCart(productId, quantity, variantId, currency),
 }));
 
 const product: PublishedProduct = {
@@ -16,6 +29,9 @@ const product: PublishedProduct = {
   name: "Wooden Blocks",
   slug: "wooden-blocks",
   status: "published",
+  description: null,
+  productType: null,
+  tags: [],
   options: [],
   variants: [],
 };
@@ -25,7 +41,13 @@ describe("ProductCard", () => {
     render(
       <ProductCard
         product={product}
-        price={{ status: "ok", amountMinor: 1999, currency: "USD" }}
+        price={{
+          status: "ok",
+          amountMinor: 1999,
+          currency: "USD",
+          compareAtMinor: null,
+          varies: false,
+        }}
         availability={{ status: "ok", available: 4 }}
         t={en}
         locale="en"
@@ -41,7 +63,13 @@ describe("ProductCard", () => {
     render(
       <ProductCard
         product={product}
-        price={{ status: "ok", amountMinor: 1999, currency: "USD" }}
+        price={{
+          status: "ok",
+          amountMinor: 1999,
+          currency: "USD",
+          compareAtMinor: null,
+          varies: false,
+        }}
         availability={{ status: "unknown" }}
         t={en}
         locale="en"
@@ -94,7 +122,13 @@ describe("ProductCard", () => {
     render(
       <ProductCard
         product={product}
-        price={{ status: "ok", amountMinor: 1999, currency: "USD" }}
+        price={{
+          status: "ok",
+          amountMinor: 1999,
+          currency: "USD",
+          compareAtMinor: null,
+          varies: false,
+        }}
         availability={{ status: "ok", available: 4 }}
         t={en}
         locale="en"
@@ -120,7 +154,13 @@ describe("ProductCard", () => {
     render(
       <ProductCard
         product={product}
-        price={{ status: "ok", amountMinor: 1999, currency: "USD" }}
+        price={{
+          status: "ok",
+          amountMinor: 1999,
+          currency: "USD",
+          compareAtMinor: null,
+          varies: false,
+        }}
         availability={{ status: "ok", available: 0 }}
         t={en}
         locale="en"
@@ -133,7 +173,13 @@ describe("ProductCard", () => {
     render(
       <ProductCard
         product={product}
-        price={{ status: "ok", amountMinor: 1999, currency: "USD" }}
+        price={{
+          status: "ok",
+          amountMinor: 1999,
+          currency: "USD",
+          compareAtMinor: null,
+          varies: false,
+        }}
         availability={{ status: "ok", available: 4 }}
         t={en}
         locale="en"
@@ -143,5 +189,44 @@ describe("ProductCard", () => {
     const button = screen.getByRole("button", { name: en.product.addToCart });
     expect(link.contains(button)).toBe(false);
     expect(button.closest("a")).toBeNull();
+  });
+
+  it("shows 'From …' when the variants are priced differently (Plan 2C-1)", () => {
+    render(
+      <ProductCard
+        product={product}
+        price={{
+          status: "ok",
+          amountMinor: 10000,
+          currency: "USD",
+          compareAtMinor: null,
+          varies: true,
+        }}
+        availability={{ status: "unknown" }}
+        t={en}
+        locale="en"
+      />,
+    );
+    expect(screen.getByText("From $100.00")).toBeInTheDocument();
+  });
+
+  it("strikes the compare-at price through beside the price (Plan 2C-1)", () => {
+    render(
+      <ProductCard
+        product={product}
+        price={{
+          status: "ok",
+          amountMinor: 1999,
+          currency: "USD",
+          compareAtMinor: 2999,
+          varies: false,
+        }}
+        availability={{ status: "unknown" }}
+        t={en}
+        locale="en"
+      />,
+    );
+    expect(screen.getByText("$19.99")).toBeInTheDocument();
+    expect(screen.getByText("$29.99").tagName).toBe("S");
   });
 });

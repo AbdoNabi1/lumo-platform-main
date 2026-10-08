@@ -6,7 +6,7 @@ import {
   AvailabilityBook,
   listPublishedCollections,
   listPublishedProducts,
-  PriceBook,
+  priceOf,
 } from "@/lib/catalog";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { getCategories } from "@/lib/runtime-api";
@@ -22,14 +22,12 @@ export default async function Home() {
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
 
-  const [productsResult, collectionsResult, categories, priceBook, availabilityBook] =
-    await Promise.all([
-      listPublishedProducts(),
-      listPublishedCollections(),
-      getCategories(),
-      PriceBook.load(),
-      AvailabilityBook.load(),
-    ]);
+  const [productsResult, collectionsResult, categories, availabilityBook] = await Promise.all([
+    listPublishedProducts(),
+    listPublishedCollections(),
+    getCategories(),
+    AvailabilityBook.load(),
+  ]);
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 p-8">
@@ -58,7 +56,7 @@ export default async function Home() {
               <ProductCard
                 key={product.id}
                 product={product}
-                price={priceBook?.resolve(product.id) ?? { status: "unavailable" }}
+                price={priceOf(product)}
                 availability={availabilityBook?.resolve(product.id) ?? { status: "unknown" }}
                 t={t}
                 locale={locale}
