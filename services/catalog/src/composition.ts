@@ -53,6 +53,7 @@ import { SetProductBrand } from "./application/set-product-brand.use-case";
 import { SetProductOptions } from "./application/set-product-options.use-case";
 import { SetProductSeo } from "./application/set-product-seo.use-case";
 import { UnpublishCollection } from "./application/unpublish-collection.use-case";
+import { UnlistProduct } from "./application/unlist-product.use-case";
 import { UnpublishProduct } from "./application/unpublish-product.use-case";
 import { UpdateBrand } from "./application/update-brand.use-case";
 import { UpdateProduct } from "./application/update-product.use-case";
@@ -144,6 +145,7 @@ function buildControllers(
     listProducts: new ListProducts({ products }),
     schedulePublishProduct: new SchedulePublishProduct({ products, unitOfWork, clock }),
     unpublishProduct: new UnpublishProduct({ products, unitOfWork, idGenerator, clock }),
+    unlistProduct: new UnlistProduct({ products, unitOfWork, idGenerator, clock }),
     archiveProduct: new ArchiveProduct({ products, unitOfWork, idGenerator, clock }),
     deleteProduct: new DeleteProduct({ products, unitOfWork, idGenerator, clock }),
     addVariant: new AddVariant({ products, unitOfWork, idGenerator, clock }),

@@ -34,6 +34,7 @@ import type {
   UnpublishProduct,
   UnpublishProductInput,
 } from "../application/unpublish-product.use-case";
+import type { UnlistProduct, UnlistProductInput } from "../application/unlist-product.use-case";
 import type { UpdateProduct, UpdateProductInput } from "../application/update-product.use-case";
 import type { UpdateVariant, UpdateVariantInput } from "../application/update-variant.use-case";
 import { type ControllerResponse, present } from "./presenter";
@@ -47,6 +48,7 @@ export interface ProductControllerDeps {
   readonly listProducts: ListProducts;
   readonly schedulePublishProduct: SchedulePublishProduct;
   readonly unpublishProduct: UnpublishProduct;
+  readonly unlistProduct: UnlistProduct;
   readonly archiveProduct: ArchiveProduct;
   readonly deleteProduct: DeleteProduct;
   readonly addVariant: AddVariant;
@@ -99,6 +101,10 @@ export class ProductController {
 
   async unpublish(input: UnpublishProductInput): Promise<ControllerResponse> {
     return present(await this.deps.unpublishProduct.execute(input), 200);
+  }
+
+  async unlist(input: UnlistProductInput): Promise<ControllerResponse> {
+    return present(await this.deps.unlistProduct.execute(input), 200);
   }
 
   async archive(input: ArchiveProductInput): Promise<ControllerResponse> {

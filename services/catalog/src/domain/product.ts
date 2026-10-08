@@ -169,17 +169,46 @@ export class Product extends AggregateRoot<ProductProps> {
     this.props.scheduledAt = scheduledAt;
   }
 
+  /** Back to draft. An unlisted product was never listed, so only a published one raises an event. */
   unpublish(eventId: string, occurredAt: Date): void {
-    if (!this.props.status.isPublished) {
+    if (!this.props.status.isPublished && !this.props.status.isUnlisted) {
       throw new BusinessRuleError("Only a published product can be unpublished");
     }
+    const wasPublished = this.props.status.isPublished;
     this.props.status = PublishState.draft();
-    this.addDomainEvent(
-      new ProductUnpublished(
-        { eventId, aggregateId: this.id, occurredAt },
-        { sku: this.props.sku.value },
-      ),
-    );
+    if (wasPublished) {
+      this.addDomainEvent(
+        new ProductUnpublished(
+          { eventId, aggregateId: this.id, occurredAt },
+          { sku: this.props.sku.value },
+        ),
+      );
+    }
+  }
+
+  /**
+   * Plan 2C-1 (Shopify "Unlisted"): sellable and reachable by its link, but kept out of lists,
+   * search, collections and the sitemap. Leaving `published` raises the existing
+   * `product.unpublished` — the product left every listing — so no new event type is needed.
+   */
+  unlist(eventId: string, occurredAt: Date): void {
+    if (this.props.status.isUnlisted) {
+      throw new BusinessRuleError("Product is already unlisted");
+    }
+    if (this.props.status.isArchived) {
+      throw new BusinessRuleError("An archived product cannot be unlisted");
+    }
+    const wasPublished = this.props.status.isPublished;
+    this.props.status = PublishState.unlisted();
+    this.props.scheduledAt = null;
+    if (wasPublished) {
+      this.addDomainEvent(
+        new ProductUnpublished(
+          { eventId, aggregateId: this.id, occurredAt },
+          { sku: this.props.sku.value },
+        ),
+      );
+    }
   }
 
   archive(eventId: string, occurredAt: Date): void {
