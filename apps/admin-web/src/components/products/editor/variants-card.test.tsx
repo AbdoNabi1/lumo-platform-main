@@ -34,6 +34,8 @@ const variant = (overrides: Partial<ProductVariantDto> = {}): ProductVariantDto 
   weightGrams: null,
   requiresShipping: true,
   taxable: true,
+  tracksInventory: true,
+  inventoryPolicy: "deny",
   ...overrides,
 });
 

@@ -411,11 +411,40 @@ describe("Plan 2C-2 client fields", () => {
           weightGrams: 250,
           requiresShipping: true,
           taxable: false,
+          tracksInventory: true,
+          inventoryPolicy: "deny",
         },
       ],
     };
     stubOk(dto);
     const result = await fetchProduct("p1");
     expect(result).toEqual({ outcome: "ok", product: dto });
+  });
+});
+
+describe("Plan 2B-1 inventory switches", () => {
+  it("updateProductVariant sends tracksInventory: false and inventoryPolicy", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+
+    await updateProductVariant(
+      "p1",
+      "v1",
+      {
+        sku: "S",
+        priceAmountMinor: 100,
+        currency: "USD",
+        tracksInventory: false,
+        inventoryPolicy: "continue",
+      },
+      "key-sw",
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      tracksInventory: false,
+      inventoryPolicy: "continue",
+    });
   });
 });

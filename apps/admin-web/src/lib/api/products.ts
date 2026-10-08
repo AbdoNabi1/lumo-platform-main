@@ -66,6 +66,9 @@ export async function fetchProductsPage(
   };
 }
 
+/** Plan 2B-1: `deny` stops selling at zero stock; `continue` keeps selling. */
+export type InventoryPolicy = "deny" | "continue";
+
 export interface ProductVariantDto {
   readonly id: string;
   readonly sku: string;
@@ -78,6 +81,10 @@ export interface ProductVariantDto {
   readonly weightGrams: number | null;
   readonly requiresShipping: boolean;
   readonly taxable: boolean;
+  /** Plan 2B-1: Shopify "Track quantity". */
+  readonly tracksInventory: boolean;
+  /** Plan 2B-1: Shopify "Continue selling when out of stock". */
+  readonly inventoryPolicy: InventoryPolicy;
 }
 
 export interface ProductOptionDto {
@@ -136,6 +143,8 @@ export async function fetchProduct(productId: string): Promise<FetchProductResul
 
 export interface ProductInventoryRowDto {
   readonly warehouseId: string;
+  /** Plan 2B-1: the variant this stock belongs to; null on a legacy product-level row. */
+  readonly variantId: string | null;
   readonly onHand: number;
   readonly reserved: number;
   readonly available: number;
@@ -158,6 +167,8 @@ export interface VariantAttributesInput {
   readonly weightGrams?: number | null;
   readonly requiresShipping?: boolean;
   readonly taxable?: boolean;
+  readonly tracksInventory?: boolean;
+  readonly inventoryPolicy?: InventoryPolicy;
 }
 
 export interface CreateProductVariantInput extends VariantAttributesInput {
