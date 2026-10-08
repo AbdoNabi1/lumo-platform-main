@@ -294,3 +294,31 @@ describe("catalog.products and catalog.product_variants — product details (Pla
     }
   });
 });
+
+describe("inventory.inventory_items and catalog.product_variants — stock per variant (Plan 2B-1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("inventory_items gained variant_ref", () => {
+    expect(columnsEverAddedTo("inventory", "inventory_items", allSql).has("variant_ref")).toBe(
+      true,
+    );
+  });
+
+  it("widens the stock key to (tenant, product, variant, warehouse), legacy rows still unique", () => {
+    expect(allSql).toContain(
+      'DROP INDEX IF EXISTS "inventory"."inventory_items_tenant_id_product_ref_warehouse_id_key";',
+    );
+    expect(allSql).toMatch(
+      /inventory_items_tenant_id_product_ref_variant_ref_warehouse_id_key[\s\S]*NULLS NOT DISTINCT/,
+    );
+  });
+
+  it("product_variants gained the two inventory switches", () => {
+    const actual = columnsEverAddedTo("catalog", "product_variants", allSql);
+    expect(actual.has("tracks_inventory")).toBe(true);
+    expect(actual.has("inventory_policy")).toBe(true);
+  });
+});
