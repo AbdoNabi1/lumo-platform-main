@@ -57,6 +57,15 @@ export class ProductsAdminController {
     return this.products.publish(input);
   }
 
+  async unlistProduct(
+    principal: Principal,
+    input: Parameters<ProductController["unlist"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "products:publish");
+    if (denied) return denied;
+    return this.products.unlist(input);
+  }
+
   async schedulePublishProduct(
     principal: Principal,
     input: Parameters<ProductController["schedulePublish"]>[0],

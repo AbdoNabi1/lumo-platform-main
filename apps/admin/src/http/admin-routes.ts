@@ -80,16 +80,34 @@ const placeOrderBody = z.object({
   }),
 });
 
+// Plan 2C-1 — Shopify product data. Every field is optional: omitted keeps the current value, null
+// clears it, so the admin-web forms (which send only sku/price/currency) keep working untouched.
+const variantAttributesBody = {
+  compareAtAmountMinor: z.number().int().min(0).nullable().optional(),
+  costAmountMinor: z.number().int().min(0).nullable().optional(),
+  barcode: z.string().max(64).nullable().optional(),
+  weightGrams: z.number().int().min(0).max(1_000_000).nullable().optional(),
+  requiresShipping: z.boolean().optional(),
+  taxable: z.boolean().optional(),
+};
+const productDetailsBody = {
+  description: z.string().max(20_000).nullable().optional(),
+  productType: z.string().max(255).nullable().optional(),
+  tags: z.array(z.string().max(255)).max(250).optional(),
+};
+
 const createProductBody = z.object({
   sku: z.string().min(1),
   name: z.string().min(1),
   slug: z.string().min(1),
+  ...productDetailsBody,
   variants: z
     .array(
       z.object({
         sku: z.string().min(1),
         priceAmountMinor: z.number().int().positive(),
         currency: z.string().length(3),
+        ...variantAttributesBody,
       }),
     )
     .min(1),
@@ -380,7 +398,11 @@ const markOrderPaidBody = z.object({ paymentRef: z.string().min(1) });
 // -- Catalog: Products/Brands/Categories (Commerce Sprint 1, Sprint 4.2, Sprint 7.0) ------------
 
 const productIdParams = z.object({ productId: z.string().min(1) });
-const updateProductBody = z.object({ name: z.string().min(1), slug: z.string().min(1) });
+const updateProductBody = z.object({
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  ...productDetailsBody,
+});
 const schedulePublishProductBody = z.object({ scheduledAt: z.coerce.date() });
 const listProductsQuery = z.object({
   first: z.coerce.number().int().min(1).max(100).optional(),
@@ -393,11 +415,15 @@ const addVariantBody = z.object({
   priceAmountMinor: z.number().int().positive(),
   currency: z.string().length(3),
   selection: z.record(z.string()).optional(),
+  ...variantAttributesBody,
 });
 const updateVariantBody = z.object({
   sku: z.string().min(1),
   priceAmountMinor: z.number().int().positive(),
   currency: z.string().length(3),
+  // Plan 2C-1: undefined keeps the selection, null clears it.
+  selection: z.record(z.string()).nullable().optional(),
+  ...variantAttributesBody,
 });
 const setProductOptionsBody = z.object({
   options: z.array(
@@ -617,6 +643,13 @@ export interface ProductVariantDto {
   readonly priceAmountMinor: number;
   readonly currency: string;
   readonly selection: Readonly<Record<string, string>> | null;
+  readonly compareAtAmountMinor: number | null;
+  /** Staff-only: the public DTO never carries cost, barcode or weight. */
+  readonly costAmountMinor: number | null;
+  readonly barcode: string | null;
+  readonly weightGrams: number | null;
+  readonly requiresShipping: boolean;
+  readonly taxable: boolean;
 }
 
 export interface ProductOptionDto {
@@ -641,6 +674,9 @@ export interface ProductDetailDto {
   readonly name: string;
   readonly slug: string;
   readonly status: string;
+  readonly description: string | null;
+  readonly productType: string | null;
+  readonly tags: readonly string[];
   readonly scheduledAt: string | null;
   readonly brandId: string | null;
   readonly categoryIds: readonly string[];
@@ -672,6 +708,9 @@ function toProductDetailDto(product: Product): ProductDetailDto {
     name: product.name,
     slug: product.slug.value,
     status: product.status.value,
+    description: product.details.description,
+    productType: product.details.productType,
+    tags: [...product.details.tags],
     scheduledAt: product.scheduledAt?.toISOString() ?? null,
     brandId: product.brand?.brandId ?? null,
     categoryIds: product.categories.map((category) => category.categoryId),
@@ -684,6 +723,12 @@ function toProductDetailDto(product: Product): ProductDetailDto {
       priceAmountMinor: variant.price.amountMinor,
       currency: variant.price.currency,
       selection: variant.selection?.values ?? null,
+      compareAtAmountMinor: variant.attributes.compareAtPrice?.amountMinor ?? null,
+      costAmountMinor: variant.attributes.cost?.amountMinor ?? null,
+      barcode: variant.attributes.barcode,
+      weightGrams: variant.attributes.weightGrams,
+      requiresShipping: variant.attributes.requiresShipping,
+      taxable: variant.attributes.taxable,
     })),
     mediaAssetIds: product.media.map((media) => media.assetId),
   };
@@ -832,7 +877,7 @@ export function adminRoutes(
       version: 1,
       permission: "products:update",
       idempotent: true,
-      summary: "Update a product's name/slug",
+      summary: "Update a product's name, slug and details",
       schema: { params: productIdParams, body: updateProductBody },
       handle: ({ params, body, context }) =>
         admin.products.updateProduct(context.principal, {
@@ -880,6 +925,20 @@ export function adminRoutes(
       schema: { params: productIdParams },
       handle: ({ params, context }) =>
         admin.products.unpublishProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/products/:productId/unlist",
+      version: 1,
+      permission: "products:publish",
+      idempotent: true,
+      summary: "Unlist a product (sellable by direct link only, never listed)",
+      schema: { params: productIdParams },
+      handle: ({ params, context }) =>
+        admin.products.unlistProduct(context.principal, {
           ...params,
           tenantId: context.tenantId,
         }),
@@ -938,7 +997,7 @@ export function adminRoutes(
       version: 1,
       permission: "products:update",
       idempotent: true,
-      summary: "Edit a variant's sku/price",
+      summary: "Edit a variant (sku, price, attributes, option selection)",
       schema: { params: variantIdParams, body: updateVariantBody },
       handle: ({ params, body, context }) =>
         admin.products.updateVariant(context.principal, {
@@ -953,7 +1012,7 @@ export function adminRoutes(
       version: 1,
       permission: "products:update",
       idempotent: true,
-      summary: "Replace a product's declared option set (draft only)",
+      summary: "Replace a product's declared option set",
       schema: { params: productIdParams, body: setProductOptionsBody },
       handle: ({ params, body, context }) =>
         admin.products.setProductOptions(context.principal, {
