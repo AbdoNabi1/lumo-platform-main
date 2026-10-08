@@ -3,6 +3,7 @@ import {
   MAX_VARIANTS,
   combinations,
   planOptionChange,
+  rowKey,
   sameSelection,
   type MatrixOperation,
   type MatrixOption,
@@ -237,6 +238,38 @@ describe("variant matrix (Plan 2C-2)", () => {
       ok: true,
       operations: [{ kind: "setOptions", options: [{ name: "Size", values: ["S", "L"] }] }],
       summary: { adds: 0, removes: 0 },
+      rows: [
+        { selection: { Size: "S" }, variantId: "s" },
+        { selection: { Size: "L" }, variantId: "l" },
+      ],
     });
+  });
+
+  it("returns one row per resulting variant, existing ids kept, new ones null", () => {
+    const plan = planOptionChange({
+      productSku: "P-1",
+      variants: [v("a", null)],
+      nextOptions: [{ name: "Size", values: ["S", "M"] }],
+    });
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(plan.rows).toEqual([
+      { selection: { Size: "S" }, variantId: "a" },
+      { selection: { Size: "M" }, variantId: null },
+    ]);
+  });
+
+  it("returns the kept variant as the single row when there are no options", () => {
+    const plan = planOptionChange({
+      productSku: "P-1",
+      variants: [v("s", { Size: "S" }), v("l", { Size: "L" })],
+      nextOptions: [],
+    });
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(plan.rows).toEqual([{ selection: null, variantId: "s" }]);
+  });
+
+  it("rowKey is stable and order-independent", () => {
+    expect(rowKey({ Size: "S", Color: "Red" })).toBe(rowKey({ Color: "Red", Size: "S" }));
+    expect(rowKey(null)).toBe("default");
   });
 });

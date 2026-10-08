@@ -32,11 +32,18 @@ export type MatrixOperation =
       readonly currency: string;
     };
 
+/** One resulting variant: the existing id it keeps, or `null` for a new one. */
+export interface MatrixRow {
+  readonly selection: Readonly<Record<string, string>> | null;
+  readonly variantId: string | null;
+}
+
 export type OptionPlan =
   | {
       readonly ok: true;
       readonly operations: readonly MatrixOperation[];
       readonly summary: { readonly adds: number; readonly removes: number };
+      readonly rows: readonly MatrixRow[];
     }
   | { readonly ok: false; readonly reason: "too_many_variants" | "invalid_options" };
 
@@ -48,6 +55,15 @@ export function combinations(options: readonly MatrixOption[]): Record<string, s
     );
   }
   return options.length === 0 ? [] : result;
+}
+
+/** A stable key for a row: option names sorted, so key order never matters. */
+export function rowKey(selection: Readonly<Record<string, string>> | null): string {
+  if (selection === null) return "default";
+  return Object.keys(selection)
+    .sort()
+    .map((name) => `${name}=${selection[name]}`)
+    .join("|");
 }
 
 export function sameSelection(
@@ -102,7 +118,12 @@ export function planOptionChange(input: {
       operations.push({ kind: "assign", variantId: keep.id, selection: null });
     }
     operations.push({ kind: "setOptions", options: [] });
-    return { ok: true, operations, summary: { adds: 0, removes: variants.length - 1 } };
+    return {
+      ok: true,
+      operations,
+      summary: { adds: 0, removes: variants.length - 1 },
+      rows: [{ selection: null, variantId: keep.id }],
+    };
   }
 
   // 1. Variants already sitting on a combination keep it.
@@ -173,5 +194,9 @@ export function planOptionChange(input: {
     adds += 1;
   });
 
-  return { ok: true, operations, summary: { adds, removes: toRemove.length } };
+  const rows = combos.map((combo, index) => ({
+    selection: combo,
+    variantId: claimed.get(index)?.id ?? null,
+  }));
+  return { ok: true, operations, summary: { adds, removes: toRemove.length }, rows };
 }
