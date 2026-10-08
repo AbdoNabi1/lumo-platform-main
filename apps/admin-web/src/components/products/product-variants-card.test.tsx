@@ -22,7 +22,19 @@ vi.mock("@/app/products/actions", () => ({
 }));
 
 const variants: readonly ProductVariantDto[] = [
-  { id: "variant-1", sku: "SKU-1", priceAmountMinor: 1999, currency: "USD", selection: null },
+  {
+    id: "variant-1",
+    sku: "SKU-1",
+    priceAmountMinor: 1999,
+    currency: "USD",
+    selection: null,
+    compareAtAmountMinor: null,
+    costAmountMinor: null,
+    barcode: null,
+    weightGrams: null,
+    requiresShipping: true,
+    taxable: true,
+  },
 ];
 
 beforeEach(() => {
@@ -68,9 +80,7 @@ describe("ProductVariantsCard", () => {
 
   it("asks for confirmation before submitting a variant removal", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(
-      <ProductVariantsCard productId="product-1" variants={variants} t={en} locale="en" />,
-    );
+    render(<ProductVariantsCard productId="product-1" variants={variants} t={en} locale="en" />);
 
     fireEvent.click(screen.getByRole("button", { name: en.productVariantsForm.remove }));
 
@@ -81,9 +91,7 @@ describe("ProductVariantsCard", () => {
 
   it("toggles an inline edit row and submits the updated sku/price/currency", async () => {
     updateProductVariantAction.mockResolvedValue({ status: "success" });
-    render(
-      <ProductVariantsCard productId="product-1" variants={variants} t={en} locale="en" />,
-    );
+    render(<ProductVariantsCard productId="product-1" variants={variants} t={en} locale="en" />);
 
     fireEvent.click(screen.getByRole("button", { name: en.productVariantsForm.edit }));
     fireEvent.click(screen.getByRole("button", { name: en.productVariantsForm.save }));
