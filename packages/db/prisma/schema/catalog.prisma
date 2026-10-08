@@ -50,6 +50,8 @@ model ProductVariant {
   weightGrams          Int?    @map("weight_grams")
   requiresShipping     Boolean @default(true) @map("requires_shipping")
   taxable              Boolean @default(true)
+  tracksInventory      Boolean @default(true) @map("tracks_inventory") // Plan 2B-1
+  inventoryPolicy      String  @default("deny") @map("inventory_policy") // deny | continue (domain-enforced)
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 

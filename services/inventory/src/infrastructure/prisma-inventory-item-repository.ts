@@ -5,6 +5,7 @@ import type { CursorPage, Paginated } from "@platform/types";
 import { ConcurrencyError } from "@platform/utils";
 import type { InventoryItem } from "../domain/inventory-item";
 import type { InventoryItemRepository } from "../domain/inventory-item-repository";
+import { resolveStockRow } from "../domain/resolve-stock-row";
 import { InventoryItemMapper } from "./inventory-item.mapper";
 
 export interface PrismaInventoryItemRepositoryDeps {
@@ -78,14 +79,18 @@ export class PrismaInventoryItemRepository implements InventoryItemRepository {
     warehouseId: string,
     tenantId: string,
     tx?: unknown,
+    variantId?: string,
   ): Promise<InventoryItem | null> {
-    const row = await this.scoped(tenantId, tx, (client) =>
-      client.inventoryItem.findFirst({
+    // Plan 2B-1: load every row the product has at this warehouse, then apply the one lookup rule
+    // (shared with the in-memory adapter) — a variant's own row, or the product's only legacy row.
+    const rows = await this.scoped(tenantId, tx, (client) =>
+      client.inventoryItem.findMany({
         where: { tenantId, productRef: productId, warehouseId },
         include: { reservations: true },
       }),
     );
-    return row === null ? null : InventoryItemMapper.toDomain(row, row.reservations);
+    const items = rows.map((row) => InventoryItemMapper.toDomain(row, row.reservations));
+    return resolveStockRow(items, variantId);
   }
 
   async findByProduct(
