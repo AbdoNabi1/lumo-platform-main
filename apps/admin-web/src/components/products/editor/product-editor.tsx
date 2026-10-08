@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, type ReactNode } from "react";
+import { useActionState, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Button, Card, CardContent } from "@platform/ui";
 import { createProductAction, saveProductAction } from "@/app/products/actions";
 import type { BrandDto } from "@/lib/api/brands";
@@ -69,14 +69,17 @@ export function ProductEditor(props: ProductEditorProps) {
   const editor = t.productEditor;
   const currency = variant?.currency ?? defaultCurrency;
 
+  // Only the editor's own inputs count: the variants, media and stock cards submit their own forms,
+  // so typing there must not claim the page has unsaved changes.
+  function markDirty(event: FormEvent): void {
+    const target = event.target as { readonly form?: HTMLFormElement | null };
+    if (target.form?.id === PRODUCT_FORM_ID) setDirty(true);
+  }
+
   const saveLabel = isPending ? editor.saving : mode === "create" ? editor.create : editor.save;
 
   return (
-    <div
-      onInput={() => setDirty(true)}
-      onChange={() => setDirty(true)}
-      className="flex flex-col gap-6"
-    >
+    <div onInput={markDirty} onChange={markDirty} className="flex flex-col gap-6">
       <form id={PRODUCT_FORM_ID} action={formAction}>
         {product !== null && <input type="hidden" name="productId" value={product.id} />}
         {variant !== undefined && <input type="hidden" name="variantId" value={variant.id} />}

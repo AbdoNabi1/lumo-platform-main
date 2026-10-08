@@ -125,6 +125,21 @@ describe("ProductEditor", () => {
     expect(screen.getByText(t.unsaved)).toBeInTheDocument();
   });
 
+  it("ignores typing in cards that submit their own forms", () => {
+    render(
+      <ProductEditor
+        mode="edit"
+        product={single}
+        {...base}
+        slots={{ variants: <input aria-label="option values" /> }}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("option values"), { target: { value: "S, M" } });
+
+    expect(screen.queryByText(t.unsaved)).not.toBeInTheDocument();
+  });
+
   it("creates through createProductAction with its own button label", async () => {
     render(<ProductEditor mode="create" product={null} {...base} />);
 
