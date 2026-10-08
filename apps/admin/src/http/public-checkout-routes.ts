@@ -111,6 +111,11 @@ export interface PublicCheckoutSessionDto {
   readonly currency: string;
   readonly items: readonly {
     readonly productId: string;
+    /** Plan 2A: the variant sold, with its snapshot; all null on a line added before variants. */
+    readonly variantId: string | null;
+    readonly sku: string | null;
+    readonly title: string | null;
+    readonly variantTitle: string | null;
     readonly quantity: number;
     readonly unitPriceAmountMinor: number;
   }[];
@@ -148,6 +153,10 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
     currency: session.currency,
     items: session.items.map((item) => ({
       productId: item.productRef,
+      variantId: item.variantRef ?? null,
+      sku: item.sku ?? null,
+      title: item.title ?? null,
+      variantTitle: item.variantTitle ?? null,
       quantity: item.quantity,
       unitPriceAmountMinor: item.unitPriceAmountMinor,
     })),
@@ -299,6 +308,15 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           quantity: item.quantity.value,
           unitPriceAmountMinor: item.unitPrice.amountMinor,
           currency: item.unitPrice.currency,
+          // Plan 2A: carry the variant snapshot; every key is absent on a legacy line.
+          ...(item.variantRef === undefined
+            ? {}
+            : {
+                variantId: item.variantRef,
+                sku: item.sku,
+                title: item.title,
+                variantTitle: item.variantTitle,
+              }),
         }));
         const result = await admin.publicReads.checkout.loadItems({
           tenantId: context.tenantId,

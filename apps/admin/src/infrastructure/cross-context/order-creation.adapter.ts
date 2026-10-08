@@ -37,10 +37,10 @@ type OrderCreationInput = Parameters<OrderCreationPort["create"]>[0];
  *   checkout cannot complete an order today; that is a known, deliberate C-2 scope boundary that
  *   needs a product decision (e.g. "require account creation before order creation" or "widen
  *   Orders to accept a nullable customerRef") before it can be closed.
- * - `CheckoutItem.productRef` is mapped to BOTH `productId` and `name` in Orders' item input.
- *   `CheckoutItem` carries no display-name field of its own (widening it is out of scope here), so
- *   order line items will show a product ref instead of a friendly name until a future task
- *   threads a real name through Cart -> Checkout snapshots.
+ * - **Order line names (Plan 2A).** A line that carries the product title snapshotted at cart-add
+ *   time (`CheckoutItem.title`) is named by it, and also passes its `variantRef`, `sku` and
+ *   `variantTitle`. Only a LEGACY line (added before variants were tracked, so with no title) still
+ *   falls back to the product ref as its name, exactly as before.
  * - `CheckoutAddress.line2` is dropped: Orders' `CreateOrderFromCheckoutAddressInput` has no
  *   `line2` field to receive it.
  *
@@ -96,10 +96,18 @@ export class OrderCreationAdapter implements OrderCreationPort {
       currency: input.currency,
       items: input.items.map((item) => ({
         productId: item.productRef,
-        // CheckoutItem carries no display name — see class doc comment.
-        name: item.productRef,
+        // The real product title when the line carries one; legacy lines keep the ref — see the
+        // class doc comment.
+        name: item.title ?? item.productRef,
         unitPriceAmountMinor: item.unitPriceAmountMinor,
         quantity: item.quantity,
+        ...(item.variantRef === undefined
+          ? {}
+          : {
+              variantRef: item.variantRef,
+              sku: item.sku,
+              variantTitle: item.variantTitle,
+            }),
       })),
       billingAddress: {
         line1: input.billingAddress.line1,

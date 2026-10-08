@@ -55,6 +55,11 @@ export interface LoadItemsInput {
     readonly quantity: number;
     readonly unitPriceAmountMinor: number;
     readonly currency: string;
+    /** Plan 2A: the variant snapshot copied from the Cart line; all four absent on a legacy line. */
+    readonly variantId?: string;
+    readonly sku?: string;
+    readonly title?: string;
+    readonly variantTitle?: string | null;
   }[];
 }
 
@@ -76,6 +81,14 @@ export class LoadItems implements UseCase<LoadItemsInput, CheckoutDetailsOutput,
         raw.quantity,
         raw.unitPriceAmountMinor,
         raw.currency,
+        raw.variantId === undefined
+          ? undefined
+          : {
+              variantRef: raw.variantId,
+              sku: raw.sku ?? "",
+              title: raw.title ?? "",
+              variantTitle: raw.variantTitle ?? null,
+            },
       );
       if (!item.ok) return err(item.error);
       items.push(item.value);

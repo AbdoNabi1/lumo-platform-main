@@ -28,6 +28,10 @@ export interface OrderItemRow {
   readonly name: string;
   readonly unitPriceAmountMinor: number;
   readonly quantity: number;
+  /** Plan 2A: nullable columns; null/absent on orders placed before variants were tracked. */
+  readonly variantRef?: string | null;
+  readonly sku?: string | null;
+  readonly variantTitle?: string | null;
 }
 export interface OrderEventRow {
   readonly id: string;
@@ -76,6 +80,13 @@ export class OrderMapper {
             item.productRef,
             item.name,
             must(Money.create(item.unitPriceAmountMinor, row.currency), "item unit price"),
+            item.variantRef === undefined || item.variantRef === null
+              ? undefined
+              : {
+                  variantRef: item.variantRef,
+                  sku: item.sku ?? "",
+                  variantTitle: item.variantTitle ?? null,
+                },
           ),
           "product snapshot",
         ),
@@ -165,6 +176,9 @@ export class OrderMapper {
       name: item.snapshot.name,
       unitPriceAmountMinor: item.snapshot.unitPrice.amountMinor,
       quantity: item.quantity,
+      variantRef: item.snapshot.variantRef ?? null,
+      sku: item.snapshot.sku ?? null,
+      variantTitle: item.snapshot.variantTitle ?? null,
     }));
   }
 

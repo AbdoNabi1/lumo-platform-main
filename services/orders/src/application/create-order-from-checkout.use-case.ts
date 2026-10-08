@@ -24,6 +24,10 @@ export interface CreateOrderFromCheckoutItemInput {
   readonly name: string;
   readonly unitPriceAmountMinor: number;
   readonly quantity: number;
+  /** Plan 2A: the variant sold (all three together, or none for a legacy line). */
+  readonly variantRef?: string;
+  readonly sku?: string;
+  readonly variantTitle?: string | null;
 }
 
 export interface CreateOrderFromCheckoutTotalsInput {
@@ -97,7 +101,18 @@ export class CreateOrderFromCheckout implements UseCase<
       }
       const unitPrice = Money.create(item.unitPriceAmountMinor, input.currency);
       if (!unitPrice.ok) return err(unitPrice.error);
-      const snapshot = ProductSnapshot.create(item.productId, item.name, unitPrice.value);
+      const snapshot = ProductSnapshot.create(
+        item.productId,
+        item.name,
+        unitPrice.value,
+        item.variantRef === undefined
+          ? undefined
+          : {
+              variantRef: item.variantRef,
+              sku: item.sku ?? "",
+              variantTitle: item.variantTitle ?? null,
+            },
+      );
       if (!snapshot.ok) return err(snapshot.error);
       items.push(
         OrderItem.create(

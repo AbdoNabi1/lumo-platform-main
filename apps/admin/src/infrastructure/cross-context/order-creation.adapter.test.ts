@@ -47,6 +47,9 @@ interface CreateFromCheckoutCall {
     readonly name: string;
     readonly unitPriceAmountMinor: number;
     readonly quantity: number;
+    readonly variantRef?: string;
+    readonly sku?: string;
+    readonly variantTitle?: string | null;
   }[];
   readonly billingAddress: {
     readonly line1: string;
@@ -331,5 +334,48 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
         idempotencyKey: "idem-1",
       }),
     ).rejects.toThrow(/checkout-bad-1/);
+  });
+});
+
+describe("OrderCreationAdapter — order line names and variants (Plan 2A)", () => {
+  it("names a line by its product title and passes the variant, SKU and variant title", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+    const variantLine = must(
+      CheckoutItem.create("product-shirt", 1, 12000, "USD", {
+        variantRef: "variant-l",
+        sku: "SHIRT-L",
+        title: "Shirt",
+        variantTitle: "L",
+      }),
+    );
+
+    await adapter.create(guestInput({ customerRef: "customer-1", items: [variantLine] }));
+
+    expect(calls[0]?.items[0]).toEqual({
+      productId: "product-shirt",
+      name: "Shirt",
+      unitPriceAmountMinor: 12000,
+      quantity: 1,
+      variantRef: "variant-l",
+      sku: "SHIRT-L",
+      variantTitle: "L",
+    });
+  });
+
+  it("a legacy line (no title, no variant) keeps the product ref as its name and sends no variant", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(
+      guestInput({ customerRef: "customer-1", items: [checkoutItem("product-1", 2, 1000, "USD")] }),
+    );
+
+    expect(calls[0]?.items[0]).toEqual({
+      productId: "product-1",
+      name: "product-1",
+      unitPriceAmountMinor: 1000,
+      quantity: 2,
+    });
   });
 });

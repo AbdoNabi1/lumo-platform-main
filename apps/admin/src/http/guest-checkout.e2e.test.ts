@@ -12,7 +12,12 @@ import type {
 } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { createAdminHttpApi } from "./server";
-import { httpDriver, seedSingleVariantProduct, type SeededProduct } from "./testing/seed-catalog";
+import {
+  httpDriver,
+  seedCatalogProduct,
+  seedSingleVariantProduct,
+  type SeededProduct,
+} from "./testing/seed-catalog";
 
 /**
  * WP-1 (G-52), the transport half. `public-checkout-routes.test.ts` drives the guest flow through
@@ -131,7 +136,12 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
   const address = { line1: "1 Main St", city: "Springfield", postalCode: "00000", country: "US" };
 
   /** cart → checkout → everything up to (not including) complete, all as the anonymous storefront. */
-  async function readyCheckout(tenant: string, sessionRef: string, email?: string) {
+  async function readyCheckout(
+    tenant: string,
+    sessionRef: string,
+    email?: string,
+    line?: { readonly productId: string; readonly variantId?: string },
+  ) {
     const h = storefront(tenant);
     const cart = ok<{ id: string }>(
       await post("/public/carts", h, { sessionRef, currency: "USD" }),
@@ -140,7 +150,8 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     ok(
       await post(`/public/carts/${cart.id}/items`, h, {
         sessionRef,
-        productId: seeded.get(tenant)?.productId ?? "not-seeded",
+        productId: line?.productId ?? seeded.get(tenant)?.productId ?? "not-seeded",
+        ...(line?.variantId === undefined ? {} : { variantId: line.variantId }),
         quantity: 1,
       }),
       "add item",
@@ -200,6 +211,53 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     expect(body.contactEmail).toBe("guest@example.com");
     // The order is real: tenant A's staff can read it, attached to a customer.
     expect((await orderCustomerRef("tok-a", body.orderRef as string)).length).toBeGreaterThan(0);
+  });
+
+  // Plan 2A, end to end over HTTP: the size chosen at add-to-cart is what the order records — the
+  // product's NAME (not its id), the size, the SKU, and that size's own price.
+  it("a size chosen at add-to-cart reaches the order as name, size, SKU and that size's price", async () => {
+    const driver = httpDriver(async (method, url, payload) =>
+      method === "GET" ? get(url, admin("tok-a")) : post(url, admin("tok-a"), payload ?? {}),
+    );
+    const shirt = await seedCatalogProduct(driver, {
+      sku: "SHIRT",
+      name: "Shirt",
+      options: [{ name: "Size", values: ["S", "L"] }],
+      variants: [
+        { sku: "SHIRT-S", priceAmountMinor: 10000, selection: { Size: "S" } },
+        { sku: "SHIRT-L", priceAmountMinor: 12000, selection: { Size: "L" } },
+      ],
+    });
+    const large = shirt.variants.find((v) => v.sku === "SHIRT-L");
+    if (large === undefined) throw new Error("variant L missing");
+
+    const checkout = await readyCheckout("tenant-a", "sess-variant", "guest@example.com", {
+      productId: shirt.productId,
+      variantId: large.id,
+    });
+    const done = await checkout.complete();
+
+    expect(done.statusCode).toBe(200);
+    const orderRef = (done.json() as { orderRef: string }).orderRef;
+    const order = ok<{
+      items: readonly {
+        productId: string;
+        name: string;
+        variantRef: string | null;
+        sku: string | null;
+        variantTitle: string | null;
+        unitPriceMinor: number;
+      }[];
+    }>(await get(`/orders/${orderRef}`, admin("tok-a")), "get order");
+    expect(order.items).toHaveLength(1);
+    expect(order.items[0]).toMatchObject({
+      productId: shirt.productId,
+      name: "Shirt",
+      variantRef: large.id,
+      sku: "SHIRT-L",
+      variantTitle: "L",
+      unitPriceMinor: 12000,
+    });
   });
 
   it("completing without a contact email is a 422 over the wire, not a 500, and creates no order", async () => {

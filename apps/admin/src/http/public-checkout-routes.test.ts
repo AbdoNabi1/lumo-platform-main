@@ -412,7 +412,16 @@ describe("public checkout routes — full guest lifecycle", () => {
       "load items",
     );
     expect(withItems.items).toEqual([
-      { productId: product.productId, quantity: 2, unitPriceAmountMinor: 1999 },
+      {
+        productId: product.productId,
+        // Plan 2A: the variant snapshot copied from the Cart line.
+        variantId: product.variantId,
+        sku: "P-1-STD",
+        title: "Product P-1",
+        variantTitle: null,
+        quantity: 2,
+        unitPriceAmountMinor: 1999,
+      },
     ]);
 
     await admin.billingAddress(started.id, { sessionRef, ...address });

@@ -423,6 +423,10 @@ describe("GET /orders/:orderId (detail)", () => {
         id: expect.any(String),
         productId: "p-1",
         name: "Toy Wagon",
+        // Plan 2A: a legacy line (placed without a variant) carries all three as null.
+        variantRef: null,
+        sku: null,
+        variantTitle: null,
         unitPriceMinor: 1999,
         quantity: 2,
         lineTotalMinor: 3998,

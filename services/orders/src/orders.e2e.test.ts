@@ -193,4 +193,48 @@ describe("orders (end to end)", () => {
     const response = await app.orders.getOrder({ tenantId: "tenant-a", orderId });
     expect(response.status).toBe(200);
   });
+
+  it("Plan 2A: a variant line keeps its sku and variantTitle; a legacy line has none", async () => {
+    const app = wire();
+    const placed = await app.orders.place({
+      ...sampleOrder,
+      items: [
+        {
+          productId: "product-1",
+          name: "Shirt",
+          unitPriceAmountMinor: 12000,
+          quantity: 1,
+          variantRef: "variant-l",
+          sku: "SHIRT-L",
+          variantTitle: "L",
+        },
+        { productId: "product-2", name: "Blocks", unitPriceAmountMinor: 500, quantity: 1 },
+      ],
+    });
+    expect(placed.status).toBe(201);
+    const orderId = (placed.body as { orderId: string }).orderId;
+
+    const response = await app.orders.getOrder({ tenantId: "tenant-a", orderId });
+    const order = response.body as {
+      items: readonly {
+        snapshot: {
+          name: string;
+          variantRef: string | undefined;
+          sku: string | undefined;
+          variantTitle: string | null | undefined;
+        };
+      }[];
+    };
+    expect(
+      order.items.map((i) => [
+        i.snapshot.name,
+        i.snapshot.variantRef,
+        i.snapshot.sku,
+        i.snapshot.variantTitle,
+      ]),
+    ).toEqual([
+      ["Shirt", "variant-l", "SHIRT-L", "L"],
+      ["Blocks", undefined, undefined, undefined],
+    ]);
+  });
 });

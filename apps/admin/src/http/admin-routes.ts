@@ -169,6 +169,10 @@ export interface OrderDetailItemDto {
   readonly id: string;
   readonly productId: string;
   readonly name: string;
+  /** Plan 2A: the variant sold; all null on an order placed before variants were tracked. */
+  readonly variantRef: string | null;
+  readonly sku: string | null;
+  readonly variantTitle: string | null;
   readonly unitPriceMinor: number;
   readonly quantity: number;
   readonly lineTotalMinor: number;
@@ -233,6 +237,9 @@ function toOrderDetailDto(order: Order): OrderDetailDto {
       id: item.id.toString(),
       productId: item.snapshot.productId,
       name: item.snapshot.name,
+      variantRef: item.snapshot.variantRef ?? null,
+      sku: item.snapshot.sku ?? null,
+      variantTitle: item.snapshot.variantTitle ?? null,
       unitPriceMinor: item.snapshot.unitPrice.amountMinor,
       quantity: item.quantity,
       lineTotalMinor: item.lineTotal.amountMinor,

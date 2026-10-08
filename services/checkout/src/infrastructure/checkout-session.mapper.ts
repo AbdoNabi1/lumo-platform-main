@@ -14,6 +14,11 @@ interface CheckoutItemJson {
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
+  /** Plan 2A: optional keys inside the existing JSON — no migration; absent on legacy lines. */
+  readonly variantRef?: string;
+  readonly sku?: string;
+  readonly title?: string;
+  readonly variantTitle?: string | null;
 }
 interface CheckoutAddressJson {
   readonly line1: string;
@@ -87,6 +92,14 @@ export class CheckoutSessionMapper {
           item.quantity,
           item.unitPriceAmountMinor,
           item.currency,
+          item.variantRef === undefined
+            ? undefined
+            : {
+                variantRef: item.variantRef,
+                sku: item.sku ?? "",
+                title: item.title ?? "",
+                variantTitle: item.variantTitle ?? null,
+              },
         ),
         "checkout item",
       ),
@@ -165,6 +178,14 @@ export class CheckoutSessionMapper {
         quantity: item.quantity,
         unitPriceAmountMinor: item.unitPriceAmountMinor,
         currency: item.currency,
+        ...(item.variantRef === undefined
+          ? {}
+          : {
+              variantRef: item.variantRef,
+              sku: item.sku ?? "",
+              title: item.title ?? "",
+              variantTitle: item.variantTitle ?? null,
+            }),
       })),
       billingAddress:
         session.billingAddress === undefined ? {} : toAddressJson(session.billingAddress),
