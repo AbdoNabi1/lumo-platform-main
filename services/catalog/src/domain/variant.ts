@@ -2,6 +2,9 @@ import { Entity, type Money, type UniqueEntityId, ValidationError } from "@platf
 import type { Sku } from "./value-objects/sku";
 import type { VariantSelection } from "./value-objects/variant-selection";
 
+/** Shopify "Continue selling when out of stock": `deny` stops at zero, `continue` sells past it. */
+export type InventoryPolicy = "deny" | "continue";
+
 /** Plan 2C-1: Shopify's variant fields beyond price (price card, inventory card, shipping card). */
 export interface VariantAttributes {
   /** Shown struck through on the storefront; must be HIGHER than the price, same currency. */
@@ -13,6 +16,10 @@ export interface VariantAttributes {
   /** Shopify "physical product": false for a service or digital good (no shipping). */
   readonly requiresShipping: boolean;
   readonly taxable: boolean;
+  /** Shopify "Track quantity". Off: sold without counting stock (made to order, digital, services). */
+  readonly tracksInventory: boolean;
+  /** Shopify "Continue selling when out of stock": `continue` sells past zero; `deny` stops at zero. */
+  readonly inventoryPolicy: InventoryPolicy;
 }
 
 export const DEFAULT_VARIANT_ATTRIBUTES: VariantAttributes = Object.freeze({
@@ -22,6 +29,8 @@ export const DEFAULT_VARIANT_ATTRIBUTES: VariantAttributes = Object.freeze({
   weightGrams: null,
   requiresShipping: true,
   taxable: true,
+  tracksInventory: true,
+  inventoryPolicy: "deny",
 });
 
 export const MAX_BARCODE_LENGTH = 64;
@@ -49,6 +58,9 @@ export function assertValidAttributes(price: Money, attributes: VariantAttribute
     (!Number.isInteger(weightGrams) || weightGrams < 0 || weightGrams > MAX_WEIGHT_GRAMS)
   ) {
     issues.push({ field: "weightGrams", message: `must be a whole number 0-${MAX_WEIGHT_GRAMS}` });
+  }
+  if (attributes.inventoryPolicy !== "deny" && attributes.inventoryPolicy !== "continue") {
+    issues.push({ field: "inventoryPolicy", message: 'must be "deny" or "continue"' });
   }
   if (issues.length > 0) throw new ValidationError("Invalid variant", issues);
 }
@@ -108,5 +120,12 @@ export class Variant extends Entity<VariantProps> {
 
   get attributes(): VariantAttributes {
     return this.props.attributes;
+  }
+
+  /** Plan 2B-1: only a tracked variant that stops at zero is limited by its stock. */
+  isStockLimited(): boolean {
+    return (
+      this.props.attributes.tracksInventory && this.props.attributes.inventoryPolicy === "deny"
+    );
   }
 }

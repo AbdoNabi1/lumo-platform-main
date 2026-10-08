@@ -1,7 +1,11 @@
 import { Money } from "@platform/domain";
 import { err, ok, type Result } from "@platform/types";
 import { ValidationError } from "@platform/utils";
-import { DEFAULT_VARIANT_ATTRIBUTES, type VariantAttributes } from "../domain/variant";
+import {
+  DEFAULT_VARIANT_ATTRIBUTES,
+  type InventoryPolicy,
+  type VariantAttributes,
+} from "../domain/variant";
 
 /**
  * Plan 2C-1: the optional variant attributes every variant-writing use case accepts. For each
@@ -15,6 +19,10 @@ export interface VariantAttributesInput {
   readonly weightGrams?: number | null;
   readonly requiresShipping?: boolean;
   readonly taxable?: boolean;
+  /** Plan 2B-1: Shopify "Track quantity". */
+  readonly tracksInventory?: boolean;
+  /** Plan 2B-1: Shopify "Continue selling when out of stock". */
+  readonly inventoryPolicy?: InventoryPolicy;
 }
 
 function moneyOrKeep(
@@ -63,5 +71,7 @@ export function toVariantAttributes(
     weightGrams: input.weightGrams === undefined ? base.weightGrams : input.weightGrams,
     requiresShipping: input.requiresShipping ?? base.requiresShipping,
     taxable: input.taxable ?? base.taxable,
+    tracksInventory: input.tracksInventory ?? base.tracksInventory,
+    inventoryPolicy: input.inventoryPolicy ?? base.inventoryPolicy,
   });
 }

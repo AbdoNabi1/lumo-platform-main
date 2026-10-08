@@ -15,7 +15,7 @@ import { Seo } from "../domain/value-objects/seo";
 import { Sku } from "../domain/value-objects/sku";
 import { Slug } from "../domain/value-objects/slug";
 import { VariantSelection } from "../domain/value-objects/variant-selection";
-import { Variant } from "../domain/variant";
+import { type InventoryPolicy, Variant } from "../domain/variant";
 
 export interface ProductRow {
   readonly id: string;
@@ -47,6 +47,8 @@ export interface VariantRow {
   readonly weightGrams: number | null;
   readonly requiresShipping: boolean;
   readonly taxable: boolean;
+  readonly tracksInventory: boolean;
+  readonly inventoryPolicy: string;
 }
 export interface CategoryRow {
   readonly id: string;
@@ -122,6 +124,9 @@ export class ProductMapper {
             weightGrams: v.weightGrams ?? null,
             requiresShipping: v.requiresShipping ?? true,
             taxable: v.taxable ?? true,
+            tracksInventory: v.tracksInventory ?? true,
+            // `assertValidAttributes` (run by `Variant.create`) rejects a corrupt value.
+            inventoryPolicy: (v.inventoryPolicy ?? "deny") as InventoryPolicy,
           },
         ),
       ),
@@ -182,6 +187,8 @@ export class ProductMapper {
       weightGrams: v.attributes.weightGrams,
       requiresShipping: v.attributes.requiresShipping,
       taxable: v.attributes.taxable,
+      tracksInventory: v.attributes.tracksInventory,
+      inventoryPolicy: v.attributes.inventoryPolicy,
     }));
   }
 }

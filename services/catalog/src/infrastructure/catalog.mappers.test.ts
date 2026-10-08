@@ -29,6 +29,8 @@ describe("ProductMapper — product details and variant attributes (Plan 2C-1)",
         weightGrams: 250,
         requiresShipping: false,
         taxable: false,
+        tracksInventory: true,
+        inventoryPolicy: "deny",
       },
     );
     const product = Product.create(
@@ -110,9 +112,66 @@ describe("ProductMapper — product details and variant attributes (Plan 2C-1)",
       weightGrams: null,
       requiresShipping: true,
       taxable: true,
+      tracksInventory: true,
+      inventoryPolicy: "deny",
     };
     const product = ProductMapper.toDomain(legacyProduct, [legacyVariant]);
     expect(product.details).toEqual(ProductDetails.empty());
     expect(product.variants[0]?.attributes).toEqual(DEFAULT_VARIANT_ATTRIBUTES);
+  });
+});
+
+describe("ProductMapper — inventory switches (Plan 2B-1)", () => {
+  const productRow: ProductRow = {
+    id: "22222222-2222-4222-8222-222222222222",
+    sku: "P-1",
+    name: "Tee",
+    slug: "tee",
+    publishState: "published",
+    scheduledAt: null,
+    brandId: null,
+    categoryRefs: [],
+    options: [],
+    seo: null,
+    mediaRefs: [],
+    deletedAt: null,
+    version: 1,
+    description: null,
+    productType: null,
+    tags: [],
+  };
+  const variantRow: VariantRow = {
+    id: "33333333-3333-4333-8333-333333333333",
+    sku: "SKU-1",
+    priceAmountMinor: 1999,
+    currency: "USD",
+    selection: null,
+    compareAtAmountMinor: null,
+    costAmountMinor: null,
+    barcode: null,
+    weightGrams: null,
+    requiresShipping: true,
+    taxable: true,
+    tracksInventory: false,
+    inventoryPolicy: "continue",
+  };
+
+  it("round-trips both switches through the rows", () => {
+    const product = ProductMapper.toDomain(productRow, [variantRow]);
+    const attributes = product.variants[0]?.attributes;
+    expect(attributes?.tracksInventory).toBe(false);
+    expect(attributes?.inventoryPolicy).toBe("continue");
+
+    const [row] = ProductMapper.toVariantRows(product, "tenant-1");
+    expect(row).toMatchObject({ tracksInventory: false, inventoryPolicy: "continue" });
+  });
+
+  it("maps a row without the switches (written before the migration) to the defaults", () => {
+    const { tracksInventory: _tracks, inventoryPolicy: _policy, ...legacy } = variantRow;
+    const product = ProductMapper.toDomain(productRow, [legacy as unknown as VariantRow]);
+    const attributes = product.variants[0]?.attributes;
+    expect(attributes?.tracksInventory).toBe(true);
+    expect(attributes?.inventoryPolicy).toBe("deny");
+    expect(product.variants[0]?.isStockLimited()).toBe(true);
   });
 });

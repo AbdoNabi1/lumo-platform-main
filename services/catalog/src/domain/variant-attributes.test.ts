@@ -5,6 +5,7 @@ import { ProductOption } from "./value-objects/product-option";
 import { Sku } from "./value-objects/sku";
 import { Slug } from "./value-objects/slug";
 import { VariantSelection } from "./value-objects/variant-selection";
+import { toVariantAttributes } from "../application/variant-attributes-input";
 import { DEFAULT_VARIANT_ATTRIBUTES, Variant, type VariantAttributes } from "./variant";
 
 function must<T>(result: { ok: true; value: T } | { ok: false; error: unknown }): T {
@@ -148,5 +149,64 @@ describe("Product.updateVariant with changes (Plan 2C-1)", () => {
         Variant.create(UniqueEntityId.from("v-2"), sku("S-2"), money(1000, "EGP")),
       ]),
     ).toThrow(BusinessRuleError);
+  });
+});
+
+describe("Variant inventory switches (Plan 2B-1)", () => {
+  const make = (overrides: Partial<VariantAttributes> = {}) =>
+    Variant.create(UniqueEntityId.from("v-1"), sku("S-1"), money(1000), null, attrs(overrides));
+
+  it("defaults to tracked and stopping at zero, so it is stock-limited", () => {
+    const variant = Variant.create(UniqueEntityId.from("v-1"), sku("S-1"), money(1000));
+    expect(variant.attributes.tracksInventory).toBe(true);
+    expect(variant.attributes.inventoryPolicy).toBe("deny");
+    expect(variant.isStockLimited()).toBe(true);
+  });
+
+  it("is not stock-limited when untracked, or when it continues selling past zero", () => {
+    expect(make({ tracksInventory: false }).isStockLimited()).toBe(false);
+    expect(make({ inventoryPolicy: "continue" }).isStockLimited()).toBe(false);
+    expect(make({ tracksInventory: false, inventoryPolicy: "continue" }).isStockLimited()).toBe(
+      false,
+    );
+  });
+
+  it("rejects an unknown inventory policy, naming the field", () => {
+    try {
+      make({ inventoryPolicy: "sometimes" as never });
+      throw new Error("expected a ValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).fields.map((issue) => issue.field)).toContain(
+        "inventoryPolicy",
+      );
+    }
+  });
+});
+
+describe("toVariantAttributes with the inventory switches (Plan 2B-1)", () => {
+  it("keeps the base when neither switch is given", () => {
+    const base = attrs({ tracksInventory: false, inventoryPolicy: "continue" });
+    const result = toVariantAttributes({}, "USD", base);
+    expect(result.ok && result.value.tracksInventory).toBe(false);
+    expect(result.ok && result.value.inventoryPolicy).toBe("continue");
+  });
+
+  it("changes only the switch that is given", () => {
+    const result = toVariantAttributes(
+      { tracksInventory: false },
+      "USD",
+      DEFAULT_VARIANT_ATTRIBUTES,
+    );
+    expect(result.ok && result.value).toEqual({
+      ...DEFAULT_VARIANT_ATTRIBUTES,
+      tracksInventory: false,
+    });
+  });
+
+  it("sets the inventory policy", () => {
+    const result = toVariantAttributes({ inventoryPolicy: "continue" }, "USD");
+    expect(result.ok && result.value.inventoryPolicy).toBe("continue");
+    expect(result.ok && result.value.tracksInventory).toBe(true);
   });
 });
