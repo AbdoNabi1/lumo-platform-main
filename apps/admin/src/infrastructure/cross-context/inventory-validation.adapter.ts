@@ -1,9 +1,11 @@
+import type { Product, ProductController } from "@platform/catalog";
 import type {
   CheckoutItem,
   InventoryValidationPort,
   InventoryValidationResult,
 } from "@platform/checkout";
 import type { InventoryController, WarehouseRepository } from "@platform/inventory";
+import { variantOf } from "./variant-of";
 
 interface CheckAvailabilityBody {
   readonly available: number;
@@ -27,20 +29,29 @@ interface CheckAvailabilityBody {
  * would surface as an unhandled 500 instead of the reason making it into the response. Real
  * multi-warehouse stock routing is out of scope for this adapter and is not implemented.
  *
+ * Plan 2B-1: stock is the VARIANT's. Each item's variant is resolved from Catalog (the named one,
+ * or the product's only variant — never a guess), its two inventory switches decide whether stock
+ * limits the sale at all (`isStockLimited`: tracked and stopping at zero), and the stock itself is
+ * read with that `variantId`. A variant that is not stock-limited never blocks checkout, even with
+ * no stock row at all; a product that cannot be loaded is never assumed to have stock.
+ *
  * Takes `InventoryController` narrowed via `Pick` to `checkAvailability` — the only method this
  * adapter calls — rather than the full 9-use-case controller: the real, production
  * `InventoryController` still satisfies this structurally, so `wireAdmin` passes it unchanged,
  * while tests can supply a lightweight fake instead of constructing every other use case.
  */
 export class InventoryValidationAdapter implements InventoryValidationPort {
+  private readonly products: Pick<ProductController, "get">;
   private readonly inventory: Pick<InventoryController, "checkAvailability">;
   private readonly warehouses: WarehouseRepository;
 
   /** ADR-0014 (WP-10, T10.3): stateless per tenant — `InventoryValidationPort.validate` carries `tenantId` per call. */
   constructor(
+    products: Pick<ProductController, "get">,
     inventory: Pick<InventoryController, "checkAvailability">,
     warehouses: WarehouseRepository,
   ) {
+    this.products = products;
     this.inventory = inventory;
     this.warehouses = warehouses;
   }
@@ -71,9 +82,19 @@ export class InventoryValidationAdapter implements InventoryValidationPort {
     const warehouseId = warehouse.id.value;
 
     for (const item of items) {
+      const productResponse = await this.products.get({ productId: item.productRef, tenantId });
+      if (productResponse.status !== 200) {
+        return { valid: false, reason: `product "${item.productRef}" not found` };
+      }
+      const variant = variantOf(productResponse.body as Product, item.variantRef);
+      if (variant === undefined) {
+        return { valid: false, reason: `no matching variant for product "${item.productRef}"` };
+      }
+      if (!variant.isStockLimited()) continue;
       const response = await this.inventory.checkAvailability({
         tenantId,
         productId: item.productRef,
+        variantId: variant.id.toString(),
         warehouseId,
       });
       if (response.status !== 200) {

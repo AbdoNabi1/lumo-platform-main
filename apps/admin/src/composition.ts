@@ -727,6 +727,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     inventoryPort:
       deps.inventoryPort ??
       new OrdersInventoryAdapter(
+        catalog.products,
         inventory.inventory,
         inventory.warehouseRepository,
         inventory.inventoryItemRepository,
@@ -797,7 +798,11 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       deps.pricingValidation ?? new CatalogPricingValidationAdapter(catalog.products),
     inventoryValidation:
       deps.inventoryValidation ??
-      new InventoryValidationAdapter(inventory.inventory, inventory.warehouseRepository),
+      new InventoryValidationAdapter(
+        catalog.products,
+        inventory.inventory,
+        inventory.warehouseRepository,
+      ),
     promotionValidation:
       deps.promotionValidation ??
       new PromotionValidationAdapter(catalog.products, promotions.promotions),

@@ -4,6 +4,7 @@ import type {
   PricingValidationPort,
   PricingValidationResult,
 } from "@platform/checkout";
+import { variantOf } from "./variant-of";
 
 /**
  * Plan 2C-1 (closes G-94): the staff checkout `/validate` price check reads the Catalog VARIANT —
@@ -36,12 +37,7 @@ export class CatalogPricingValidationAdapter implements PricingValidationPort {
       if (!product.status.isSellable || product.deleted) {
         return { valid: false, reason: `product "${item.productRef}" is not for sale` };
       }
-      const variant =
-        item.variantRef === undefined
-          ? product.variants.length === 1
-            ? product.variants[0]
-            : undefined
-          : product.variants.find((v) => v.id.toString() === item.variantRef);
+      const variant = variantOf(product, item.variantRef);
       if (variant === undefined) {
         return { valid: false, reason: `no matching variant for product "${item.productRef}"` };
       }

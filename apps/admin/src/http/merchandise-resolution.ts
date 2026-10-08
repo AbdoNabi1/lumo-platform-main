@@ -1,6 +1,7 @@
 import type { Product } from "@platform/catalog";
 import { ValidationError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
+import { variantOf } from "../infrastructure/cross-context/variant-of";
 import type { PageResponse } from "./public-catalog-routes";
 
 export type MerchandiseResolution =
@@ -44,12 +45,7 @@ export async function resolveMerchandise(
   const product = response.body as Product;
   // Plan 2C-1: sellable = published, or unlisted (reachable by its link, never listed).
   if (!product.status.isSellable || product.deleted) return { status: "unavailable" };
-  const variant =
-    input.variantId === undefined
-      ? product.variants.length === 1
-        ? product.variants[0]
-        : undefined
-      : product.variants.find((v) => v.id.value === input.variantId);
+  const variant = variantOf(product, input.variantId);
   if (variant === undefined) {
     return input.variantId === undefined ? { status: "choose_variant" } : { status: "unavailable" };
   }

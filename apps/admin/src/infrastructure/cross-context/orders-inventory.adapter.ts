@@ -1,13 +1,15 @@
+import type { Product, ProductController } from "@platform/catalog";
 import type {
   InventoryController,
   InventoryItemRepository,
   WarehouseRepository,
 } from "@platform/inventory";
 import type { InventoryPort, OrderController } from "@platform/orders";
+import { variantOf } from "./variant-of";
 
 interface OrderLinesBody {
   readonly items: readonly {
-    readonly snapshot: { readonly productId: string };
+    readonly snapshot: { readonly productId: string; readonly variantRef?: string | null };
     readonly quantity: number;
   }[];
 }
@@ -59,6 +61,14 @@ interface OrderLinesBody {
  * several of them with no single one able to stand for "the reservation"). `orderId` is already the
  * stable, natural correlation key Orders itself treats as canonical.
  *
+ * Plan 2B-1: stock is the VARIANT's. Per line, the variant is resolved from Catalog (the snapshot's
+ * `variantRef`, else the product's only variant — never a guess; an unresolvable one throws like
+ * the other gaps above). A variant that does not track quantity is not reserved. A `continue`
+ * ("keep selling when out of stock") line reserves only what is in stock, and never fails for lack
+ * of it; a `deny` line reserves its full quantity and fails when it cannot. A `continue` line
+ * reserves only what is in stock; the oversold remainder is not tracked as negative stock (gap
+ * recorded by Plan 2B-1).
+ *
  * Cross-context self-reference note: this adapter needs to read the SAME order's line items that
  * `wireOrders` itself manages, but it is also one of `wireOrders`'s own inputs (it becomes
  * `ordersDeps.inventoryPort`) — the real `OrderController` does not exist yet at the point this
@@ -72,6 +82,7 @@ interface OrderLinesBody {
  * surface, resolved entirely inside the single `wireOrders` call with no cross-context cycle.
  */
 export class OrdersInventoryAdapter implements InventoryPort {
+  private readonly products: Pick<ProductController, "get">;
   private readonly inventory: Pick<InventoryController, "reserve">;
   private readonly warehouses: WarehouseRepository;
   private readonly items: Pick<
@@ -81,6 +92,7 @@ export class OrdersInventoryAdapter implements InventoryPort {
   private readonly orders: Pick<OrderController, "getOrder">;
   /** ADR-0014 (WP-10, T10.3): stateless per tenant — `InventoryPort.requestReservation` carries `tenantId` per call. */
   constructor(
+    products: Pick<ProductController, "get">,
     inventory: Pick<InventoryController, "reserve">,
     warehouses: WarehouseRepository,
     items: Pick<
@@ -89,6 +101,7 @@ export class OrdersInventoryAdapter implements InventoryPort {
     >,
     orders: Pick<OrderController, "getOrder">,
   ) {
+    this.products = products;
     this.inventory = inventory;
     this.warehouses = warehouses;
     this.items = items;
@@ -124,14 +137,33 @@ export class OrdersInventoryAdapter implements InventoryPort {
     const warehouseId = warehouse.id.value;
 
     for (const item of items) {
+      const productId = item.snapshot.productId;
+      const productResponse = await this.products.get({ productId, tenantId });
+      if (productResponse.status !== 200) {
+        throw new Error(
+          `OrdersInventoryAdapter: cannot load product "${productId}" for order "${orderId}" ` +
+            `(status ${productResponse.status})`,
+        );
+      }
+      const variant = variantOf(productResponse.body as Product, item.snapshot.variantRef);
+      if (variant === undefined) {
+        throw new Error(
+          `OrdersInventoryAdapter: no matching variant for product "${productId}" on order "${orderId}"`,
+        );
+      }
+      if (!variant.attributes.tracksInventory) continue;
+      const variantId = variant.id.toString();
+
       // Idempotency guard (see class doc): `ReserveStock` itself is not idempotent by `reference`,
       // so a retried `requestReservation(orderId)` must not blindly re-call `reserve()` — that would
       // either double-decrement real stock or hard-fail a legitimate retry. Skip this line if it was
       // already reserved under this exact `orderId` on a prior attempt.
       const inventoryItem = await this.items.findByProductAndWarehouse(
-        item.snapshot.productId,
+        productId,
         warehouseId,
         tenantId,
+        undefined,
+        variantId,
       );
       if (inventoryItem !== null) {
         const existing = await this.items.findByReservationReference(
@@ -144,16 +176,24 @@ export class OrdersInventoryAdapter implements InventoryPort {
         }
       }
 
+      // "Continue selling": reserve what is in stock, never fail for the rest. "Deny": all of it.
+      const quantity =
+        variant.attributes.inventoryPolicy === "continue"
+          ? Math.min(item.quantity, inventoryItem?.stockLevel.available ?? 0)
+          : item.quantity;
+      if (quantity === 0) continue;
+
       const response = await this.inventory.reserve({
         tenantId,
-        productId: item.snapshot.productId,
+        productId,
+        variantId,
         warehouseId,
-        quantity: item.quantity,
+        quantity,
         reference: orderId,
       });
       if (response.status !== 201) {
         throw new Error(
-          `OrdersInventoryAdapter: reservation failed for product "${item.snapshot.productId}" ` +
+          `OrdersInventoryAdapter: reservation failed for product "${productId}" ` +
             `on order "${orderId}" (status ${response.status}): ${JSON.stringify(response.body)}`,
         );
       }
