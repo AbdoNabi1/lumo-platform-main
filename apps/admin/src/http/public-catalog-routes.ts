@@ -4,6 +4,7 @@ import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { InventoryItem } from "@platform/inventory";
 import type { Price } from "@platform/pricing";
 import type { Paginated } from "@platform/types";
+import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { variantTitleOf } from "./merchandise-resolution";
 
@@ -99,6 +100,11 @@ export interface PublicVariantDto {
   readonly selection: Readonly<Record<string, string>> | null;
   /** Plan 2A: human label in the product's option order (`"Red / L"`); `null` when no selection. */
   readonly title: string | null;
+  /**
+   * Plan 2C-1: the struck-through "was" price, always above `priceAmountMinor`; `null` when unset.
+   * Cost, barcode and weight are deliberately NOT here — they are staff-only (see `toProductDto`).
+   */
+  readonly compareAtAmountMinor: number | null;
 }
 
 export interface PublicProductDto {
@@ -107,6 +113,10 @@ export interface PublicProductDto {
   readonly name: string;
   readonly slug: string;
   readonly status: string;
+  /** Plan 2C-1: plain text — the storefront renders it as text, never as HTML. */
+  readonly description: string | null;
+  readonly productType: string | null;
+  readonly tags: readonly string[];
   /** Plan 2A: the declared options the shopper picks from, in display order. */
   readonly options: readonly { readonly name: string; readonly values: readonly string[] }[];
   readonly variants: readonly PublicVariantDto[];
@@ -144,7 +154,12 @@ export interface PublicInventoryDto {
   readonly available: number;
 }
 
-/** Public product projection — identity, naming, publish state, and purchasable variants only. */
+/**
+ * Public product projection — identity, naming, publish state, descriptive text, and purchasable
+ * variants only. Of a variant's Plan 2C-1 `attributes` ONLY `compareAtPrice` is exposed: `cost` is
+ * merchant margin, and barcode / weight / shipping flags are not something the storefront needs.
+ * Adding a field here is a deliberate act (see the "SECURITY" test in `public-catalog-routes.test.ts`).
+ */
 function toProductDto(product: Product): PublicProductDto {
   const options = product.options.map((o) => ({ name: o.name, values: [...o.values] }));
   return {
@@ -153,6 +168,9 @@ function toProductDto(product: Product): PublicProductDto {
     name: product.name,
     slug: product.slug.value,
     status: product.status.value,
+    description: product.details.description,
+    productType: product.details.productType,
+    tags: [...product.details.tags],
     options,
     variants: product.variants.map((variant) => ({
       id: variant.id.value,
@@ -161,6 +179,7 @@ function toProductDto(product: Product): PublicProductDto {
       currency: variant.price.currency,
       selection: variant.selection?.values ?? null,
       title: variantTitleOf(options, variant.selection?.values ?? null),
+      compareAtAmountMinor: variant.attributes.compareAtPrice?.amountMinor ?? null,
     })),
   };
 }
@@ -235,6 +254,33 @@ function publishedOnly(response: PageResponse): PageResponse {
   };
 }
 
+/**
+ * Plan 2C-1: lists and search show only LISTED products (published — never draft, unlisted or
+ * archived). Until now the API returned drafts and archived products too and the storefront hid
+ * them client-side. As with `publishedOnly` above, `pageInfo` still describes the unfiltered page,
+ * so a page can hold fewer items than `first` while `hasNextPage` is true: follow the cursor.
+ */
+function listedProductsOnly(response: PageResponse): PageResponse {
+  if (response.status < 200 || response.status >= 300) return response;
+  const page = response.body as Paginated<Product>;
+  return {
+    status: response.status,
+    body: {
+      ...page,
+      items: page.items.filter((product) => product.status.isListed && !product.deleted),
+    },
+  };
+}
+
+/**
+ * The 404 for a product that exists but is not for sale (draft, archived, deleted). Built exactly
+ * as `GetProductBySlug` builds it for a missing slug, so the two are indistinguishable on the wire.
+ */
+const PRODUCT_NOT_FOUND_RESPONSE: PageResponse = {
+  status: 404,
+  body: toErrorEnvelope(new NotFoundError("Product not found")),
+};
+
 export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
   return [
     defineRoute({
@@ -243,7 +289,8 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       version: 1,
       permission: "products:read",
       public: true,
-      summary: "Public: list products (cursor pagination, optional substring `query` search)",
+      summary:
+        "Public: list listed (published) products (cursor pagination, optional substring `query` search)",
       schema: { querystring: publicProductsQuery },
       // ADR-0014: ListProductsInput now requires tenantId, from the already-verified
       // context.tenantId (packages/http's tenant-resolution chain) — this route is `public: true`
@@ -251,7 +298,9 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       // packages/http/src/server.ts's "nothing below runs tenant-less, public routes included".
       handle: async ({ query, context }) =>
         mapPage(
-          await admin.publicReads.products.list({ ...query, tenantId: context.tenantId }),
+          listedProductsOnly(
+            await admin.publicReads.products.list({ ...query, tenantId: context.tenantId }),
+          ),
           toProductDto,
         ),
     }),
@@ -261,7 +310,7 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       version: 1,
       permission: "products:read",
       public: true,
-      summary: "Public: get one product by slug",
+      summary: "Public: get one sellable (published or unlisted) product by slug",
       schema: { params: slugParams },
       handle: async ({ params, context }) => {
         const response = await admin.publicReads.products.getBySlug({
@@ -269,7 +318,10 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
           tenantId: context.tenantId,
         });
         if (response.status !== 200) return response;
-        return { status: 200, body: toProductDto(response.body as Product) };
+        const product = response.body as Product;
+        // Plan 2C-1: published and unlisted open by link; draft/archived/deleted look like a missing slug.
+        if (!product.status.isSellable || product.deleted) return PRODUCT_NOT_FOUND_RESPONSE;
+        return { status: 200, body: toProductDto(product) };
       },
     }),
     defineRoute({

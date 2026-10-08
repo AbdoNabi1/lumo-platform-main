@@ -332,3 +332,35 @@ describe("staff cart — variants are what is sold (Plan 2A)", () => {
     expect((noVariant.body as { code: string }).code).toBe("VARIANT_REQUIRED");
   });
 });
+
+describe("public cart — unlisted products are sellable, drafts are not (Plan 2C-1)", () => {
+  it("an unlisted product can be added to the cart (200); a draft one cannot (422)", async () => {
+    const admin = buildAdmin();
+    const driver = controllerDriver(admin.publicReads.products, T);
+
+    const unlisted = await seedSingleVariantProduct(driver, "UNLISTED", 7000);
+    unwrap(
+      await admin.publicReads.products.unlist({ productId: unlisted.productId, tenantId: T }),
+      "unlist",
+    );
+    const draft = await seedCatalogProduct(driver, {
+      sku: "DRAFT",
+      variants: [{ sku: "DRAFT-STD", priceAmountMinor: 3000 }],
+      publish: false,
+    });
+
+    const g = guest(admin);
+    const cartId = await g.open();
+
+    const cart = unwrap<PublicCartDto>(
+      await g.add(cartId, { productId: unlisted.productId, quantity: 1 }),
+      "add unlisted",
+    );
+    expect(cart.items.map((i) => [i.productId, i.unitPriceAmountMinor])).toEqual([
+      [unlisted.productId, 7000],
+    ]);
+
+    const refused = await g.add(cartId, { productId: draft.productId, quantity: 1 });
+    expect(refused.status).toBe(422);
+  });
+});

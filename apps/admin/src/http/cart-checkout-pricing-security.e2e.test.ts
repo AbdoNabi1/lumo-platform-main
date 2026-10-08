@@ -120,55 +120,11 @@ function seedProduct(
   );
 }
 
-async function createPrice(
-  admin: WiredAdmin,
-  productId: string,
-  amountMinor: number,
-  currency = "USD",
-): Promise<string> {
-  const created = await admin.pricing.createPrice(staff, {
-    tenantId: "tenant-local",
-    priceListId: "price-list-1",
-    productId,
-    amountMinor,
-    currency,
-  });
-  if (created.status < 200 || created.status >= 300) {
-    throw new Error(`createPrice failed (${created.status}): ${JSON.stringify(created.body)}`);
-  }
-  return (created.body as { id: string }).id;
-}
-
-/**
- * Creates and publishes a real `Price` through the admin Pricing facade (never fabricated repository
- * state). Since Plan 2A the cart no longer reads Pricing; this survives ONLY for the staff-only
- * `/validate` route, whose `PricingValidationAdapter` still compares the cart's snapshot to the
- * Pricing row (an open gap, recorded in docs/KNOWN_GAPS.md).
- */
-async function seedPublishedPrice(
-  admin: WiredAdmin,
-  productId: string,
-  amountMinor: number,
-  currency = "USD",
-): Promise<void> {
-  const id = await createPrice(admin, productId, amountMinor, currency);
-  const published = await admin.pricing.publishPrice(staff, {
-    tenantId: "tenant-local",
-    priceId: id,
-  });
-  if (published.status < 200 || published.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,
-    );
-  }
-}
-
 /**
  * Registers a warehouse and receives stock through the admin Inventory facade (Phase 3 Task 10) —
  * `validate` below now runs the REAL `InventoryValidationAdapter`, which requires exactly one
  * warehouse to be registered (the adapter's disclosed single-warehouse-tenant limitation) before
- * it will check any product's stock at all. Never fabricates repository state directly, same
- * convention as `seedPublishedPrice` above.
+ * it will check any product's stock at all. Never fabricates repository state directly.
  */
 async function seedInventory(
   admin: WiredAdmin,
@@ -770,10 +726,9 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
   it("Attack D — a forged raw items[] body is ignored; items are always re-derived from the named Cart", async () => {
     const admin = buildAdmin();
     const REAL_PRICE = 1999;
+    // Plan 2C-1: `/validate` checks the snapshot against the Catalog variant (the one price source),
+    // so the seeded product alone is enough — no Pricing row is needed.
     const product = await seedProduct(admin, REAL_PRICE);
-    // The staff-only `/validate` route still checks the snapshot against a Pricing row (see
-    // `seedPublishedPrice`), so keep one matching the variant's price for this one test.
-    await seedPublishedPrice(admin, product.productId, REAL_PRICE, "USD");
     await seedInventory(admin, product.productId, 10);
 
     const cart = cartRoutes(admin);

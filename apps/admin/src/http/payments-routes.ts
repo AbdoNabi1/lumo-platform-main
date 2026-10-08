@@ -237,7 +237,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
        * mask a same-key-different-amount tamper attempt instead of rejecting it — the domain-level
        * check (`PaymentIntent.requestRefund`) already does the correct thing. A missing/empty key
        * fails closed (422 VALIDATION, this repo's existing convention for a boundary validation
-       * failure — `pricing-resolution.ts`'s `priceUnresolvedResponse`) rather than silently
+       * failure — `merchandise-resolution.ts`'s `merchandiseUnresolvedResponse`) rather than silently
        * defaulting to unsafe no-dedup behavior, per this mutation's real external PSP effect.
        */
       handle: ({ params, body, context }) => {

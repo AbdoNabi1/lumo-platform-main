@@ -32,7 +32,7 @@ export function variantTitleOf(
 /**
  * Plan 2A: the price and snapshot of the exact variant being sold (Shopify's merchandise). The
  * price is the VARIANT's, read server-side from Catalog — never from the caller, and no longer the
- * product-level Pricing row (`resolvePrice`), which cannot price two sizes differently.
+ * product-level Pricing row (the retired `resolvePrice`), which cannot price two sizes differently.
  */
 export async function resolveMerchandise(
   admin: WiredAdmin,
@@ -42,7 +42,8 @@ export async function resolveMerchandise(
   const response = await admin.publicReads.products.get({ productId: input.productId, tenantId });
   if (response.status !== 200) return { status: "unavailable" };
   const product = response.body as Product;
-  if (!product.status.isPublished || product.deleted) return { status: "unavailable" };
+  // Plan 2C-1: sellable = published, or unlisted (reachable by its link, never listed).
+  if (!product.status.isSellable || product.deleted) return { status: "unavailable" };
   const variant =
     input.variantId === undefined
       ? product.variants.length === 1

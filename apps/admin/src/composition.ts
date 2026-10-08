@@ -109,13 +109,13 @@ import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-in
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
+import { CatalogPricingValidationAdapter } from "./infrastructure/cross-context/catalog-pricing-validation.adapter";
 import {
   CheckoutPaymentInitiationAdapter,
   CheckoutPaymentMethodsAdapter,
 } from "./infrastructure/cross-context/checkout-payment.adapters";
 import { PaymentsNotificationAdapter } from "./infrastructure/cross-context/payments-notification.adapter";
 import { PaymentsOrdersAdapter } from "./infrastructure/cross-context/payments-orders.adapter";
-import { PricingValidationAdapter } from "./infrastructure/cross-context/pricing-validation.adapter";
 import { PromotionValidationAdapter } from "./infrastructure/cross-context/promotion-validation.adapter";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
 import { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email-adapter";
@@ -773,11 +773,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // doesn't exist yet. Moved here (alongside `catalog`/`inventory`/`pricing` above, all wired
   // early for the same reason) from its previous position after `checkout` further down.
   const promotions = wirePromotions(deps);
-  // Phase 3 Task 9 (C-3, closes H-1): a real PricingValidationPort over Pricing's own
-  // published-price data, wired here (after `pricing` above) rather than left to `wireCheckout`'s
-  // own `deps.pricingValidation ?? new InMemoryPricingValidationAdapter()` fallback — the
-  // fallback there stays reachable for callers who want to override it (e.g. tests), but
-  // `wireAdmin` itself no longer boots Checkout against the offline stub by default.
+  // Phase 3 Task 9 (C-3, closes H-1), re-pointed by Plan 2C-1 (closes G-94): a real
+  // PricingValidationPort over the Catalog VARIANT price — the one price source, the same one the
+  // cart routes charge — wired here rather than left to `wireCheckout`'s own
+  // `deps.pricingValidation ?? new InMemoryPricingValidationAdapter()` fallback. The fallback there
+  // stays reachable for callers who want to override it (e.g. tests), but `wireAdmin` itself no
+  // longer boots Checkout against the offline stub by default.
   //
   // Phase 3 Task 10 (C-3): same treatment for InventoryValidationPort, wired here (after
   // `inventory` above) rather than left to `wireCheckout`'s own
@@ -793,7 +794,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const checkoutDeps = {
     ...deps,
     pricingValidation:
-      deps.pricingValidation ?? new PricingValidationAdapter(pricing.priceRepository),
+      deps.pricingValidation ?? new CatalogPricingValidationAdapter(catalog.products),
     inventoryValidation:
       deps.inventoryValidation ??
       new InventoryValidationAdapter(inventory.inventory, inventory.warehouseRepository),
