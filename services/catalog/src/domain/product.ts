@@ -20,7 +20,8 @@ import { PublishState } from "./value-objects/publish-state";
 import type { Seo } from "./value-objects/seo";
 import type { Sku } from "./value-objects/sku";
 import type { Slug } from "./value-objects/slug";
-import type { Variant } from "./variant";
+import type { VariantSelection } from "./value-objects/variant-selection";
+import type { Variant, VariantChanges } from "./variant";
 
 interface ProductProps {
   readonly sku: Sku;
@@ -54,6 +55,10 @@ export class Product extends AggregateRoot<ProductProps> {
   static create(id: UniqueEntityId, props: NewProduct, eventId: string, occurredAt: Date): Product {
     if (props.variants.length === 0) {
       throw new BusinessRuleError("A product must have at least one variant");
+    }
+    const currencies = new Set(props.variants.map((v) => v.price.currency));
+    if (currencies.size > 1) {
+      throw new BusinessRuleError("All variants of a product must use the same currency");
     }
     const product = new Product(
       {
@@ -196,20 +201,8 @@ export class Product extends AggregateRoot<ProductProps> {
     if (this.props.variants.some((v) => v.sku.value === variant.sku.value)) {
       throw new BusinessRuleError(`Duplicate variant SKU: ${variant.sku.value}`);
     }
-    const selection = variant.selection;
-    if (selection !== null) {
-      for (const [optionName, value] of Object.entries(selection.values)) {
-        const option = this.props.options.find((o) => o.name === optionName);
-        if (!option || !option.values.includes(value)) {
-          throw new BusinessRuleError(
-            `Variant selection ${optionName}=${value} does not match a declared product option`,
-          );
-        }
-      }
-      if (this.props.variants.some((v) => v.selection !== null && v.selection.matches(selection))) {
-        throw new BusinessRuleError("Another variant already has this exact option selection");
-      }
-    }
+    if (variant.selection !== null) this.assertSelectionAllowed(variant.selection);
+    this.assertSameCurrency(variant.price.currency);
     this.props.variants.push(variant);
     this.addDomainEvent(
       new ProductVariantAdded(
@@ -242,13 +235,12 @@ export class Product extends AggregateRoot<ProductProps> {
   }
 
   /**
-   * In-place sku/price edit for an existing variant (Sprint 7.0 `UpdateVariant`) — `selection`
-   * never changes (mutating it could silently violate the unique-selection invariant above).
+   * Edits a variant in place (Sprint 7.0, widened by Plan 2C-1): SKU, price, attributes, and the
+   * selection, which is re-checked against the declared options and the other variants.
    */
   updateVariant(
     variantId: string,
-    sku: Sku,
-    price: Variant["price"],
+    changes: VariantChanges,
     eventId: string,
     occurredAt: Date,
   ): void {
@@ -257,11 +249,15 @@ export class Product extends AggregateRoot<ProductProps> {
       throw new BusinessRuleError(`Variant not found: ${variantId}`);
     }
     if (
-      this.props.variants.some((v) => v.id.toString() !== variantId && v.sku.value === sku.value)
+      this.props.variants.some(
+        (v) => v.id.toString() !== variantId && v.sku.value === changes.sku.value,
+      )
     ) {
-      throw new BusinessRuleError(`Duplicate variant SKU: ${sku.value}`);
+      throw new BusinessRuleError(`Duplicate variant SKU: ${changes.sku.value}`);
     }
-    variant.update(sku, price);
+    if (changes.selection !== null) this.assertSelectionAllowed(changes.selection, variantId);
+    this.assertSameCurrency(changes.price.currency, variantId);
+    variant.apply(changes);
     this.addDomainEvent(
       new ProductVariantUpdated({ eventId, aggregateId: this.id, occurredAt }, { variantId }),
     );
@@ -344,6 +340,39 @@ export class Product extends AggregateRoot<ProductProps> {
     }
     this.props.deleted = true;
     this.addDomainEvent(new ProductDeleted({ eventId, aggregateId: this.id, occurredAt }));
+  }
+
+  /** A selection must name declared option values, and no OTHER variant may already hold it. */
+  private assertSelectionAllowed(selection: VariantSelection, exceptVariantId?: string): void {
+    for (const [optionName, value] of Object.entries(selection.values)) {
+      const option = this.props.options.find((o) => o.name === optionName);
+      if (!option || !option.values.includes(value)) {
+        throw new BusinessRuleError(
+          `Variant selection ${optionName}=${value} does not match a declared product option`,
+        );
+      }
+    }
+    if (
+      this.props.variants.some(
+        (v) =>
+          v.id.toString() !== exceptVariantId &&
+          v.selection !== null &&
+          v.selection.matches(selection),
+      )
+    ) {
+      throw new BusinessRuleError("Another variant already has this exact option selection");
+    }
+  }
+
+  /** Plan 2C-1: one product, one currency (a cart holds one currency). */
+  private assertSameCurrency(currency: string, exceptVariantId?: string): void {
+    if (
+      this.props.variants.some(
+        (v) => v.id.toString() !== exceptVariantId && v.price.currency !== currency,
+      )
+    ) {
+      throw new BusinessRuleError("All variants of a product must use the same currency");
+    }
   }
 
   get sku(): Sku {

@@ -8,8 +8,9 @@ import type { ProductRepository } from "../domain/product-repository";
 import { Sku } from "../domain/value-objects/sku";
 import { VariantSelection } from "../domain/value-objects/variant-selection";
 import { Variant } from "../domain/variant";
+import { toVariantAttributes, type VariantAttributesInput } from "./variant-attributes-input";
 
-export interface AddVariantInput {
+export interface AddVariantInput extends VariantAttributesInput {
   readonly productId: string;
   readonly sku: string;
   readonly priceAmountMinor: number;
@@ -44,6 +45,8 @@ export class AddVariant implements UseCase<AddVariantInput, AddVariantOutput, Do
     if (!sku.ok) return err(sku.error);
     const price = Money.create(input.priceAmountMinor, input.currency);
     if (!price.ok) return err(price.error);
+    const attributes = toVariantAttributes(input, input.currency);
+    if (!attributes.ok) return err(attributes.error);
     let selection: VariantSelection | null = null;
     if (input.selection !== undefined) {
       const created = VariantSelection.create(input.selection);
@@ -58,8 +61,14 @@ export class AddVariant implements UseCase<AddVariantInput, AddVariantOutput, Do
       }
 
       const variantId = UniqueEntityId.from(this.deps.idGenerator.generate());
-      const variant = Variant.create(variantId, sku.value, price.value, selection);
       try {
+        const variant = Variant.create(
+          variantId,
+          sku.value,
+          price.value,
+          selection,
+          attributes.value,
+        );
         product.addVariant(variant, this.deps.idGenerator.generate(), this.deps.clock.now());
       } catch (error) {
         if (isDomainError(error)) return err(error);

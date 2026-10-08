@@ -1,18 +1,22 @@
 import type { UseCase } from "@platform/application";
 import type { Clock, IdGenerator } from "@platform/contracts";
-import { Money } from "@platform/domain";
+import { BusinessRuleError, Money } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, isDomainError, NotFoundError } from "@platform/utils";
 import type { ProductRepository } from "../domain/product-repository";
 import { Sku } from "../domain/value-objects/sku";
+import { VariantSelection } from "../domain/value-objects/variant-selection";
+import { toVariantAttributes, type VariantAttributesInput } from "./variant-attributes-input";
 
-export interface UpdateVariantInput {
+export interface UpdateVariantInput extends VariantAttributesInput {
   readonly productId: string;
   readonly variantId: string;
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
+  /** Plan 2C-1: `undefined` keeps the selection, `null` clears it. */
+  readonly selection?: Readonly<Record<string, string>> | null;
   /** ADR-0014: the caller's verified tenant. */
   readonly tenantId: string;
 }
@@ -29,7 +33,10 @@ export interface UpdateVariantDeps {
   readonly clock: Clock;
 }
 
-/** In-place sku/price edit for an existing variant (Sprint 7.0 — `selection` never changes). */
+/**
+ * In-place edit of an existing variant (Sprint 7.0 sku/price; Plan 2C-1 attributes and selection).
+ * Anything the input leaves out keeps its current value.
+ */
 export class UpdateVariant implements UseCase<
   UpdateVariantInput,
   UpdateVariantOutput,
@@ -52,11 +59,23 @@ export class UpdateVariant implements UseCase<
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }
+      const current = product.variants.find((v) => v.id.toString() === input.variantId);
+      if (current === undefined) {
+        return err(new BusinessRuleError(`Variant not found: ${input.variantId}`));
+      }
+      const attributes = toVariantAttributes(input, input.currency, current.attributes);
+      if (!attributes.ok) return err(attributes.error);
+      let selection = current.selection;
+      if (input.selection === null) selection = null;
+      else if (input.selection !== undefined) {
+        const created = VariantSelection.create(input.selection);
+        if (!created.ok) return err(created.error);
+        selection = created.value;
+      }
       try {
         product.updateVariant(
           input.variantId,
-          sku.value,
-          price.value,
+          { sku: sku.value, price: price.value, selection, attributes: attributes.value },
           this.deps.idGenerator.generate(),
           this.deps.clock.now(),
         );

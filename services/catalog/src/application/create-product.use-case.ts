@@ -4,15 +4,16 @@ import { Money, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { usageResourceRegistry, type UsageRecorderPort } from "@platform/usage";
-import { type DomainError, ValidationError } from "@platform/utils";
+import { type DomainError, isDomainError, ValidationError } from "@platform/utils";
 import { Product } from "../domain/product";
 import type { ProductRepository } from "../domain/product-repository";
 import { MediaRef } from "../domain/value-objects/media-ref";
 import { Sku } from "../domain/value-objects/sku";
 import { Slug } from "../domain/value-objects/slug";
 import { Variant } from "../domain/variant";
+import { toVariantAttributes, type VariantAttributesInput } from "./variant-attributes-input";
 
-export interface VariantInput {
+export interface VariantInput extends VariantAttributesInput {
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
@@ -81,19 +82,36 @@ export class CreateProduct implements UseCase<
       );
     }
 
+    if (new Set(input.variants.map((v) => v.currency)).size > 1) {
+      return err(
+        new ValidationError("All variants of a product must use the same currency", [
+          { field: "variants", message: "must share one currency" },
+        ]),
+      );
+    }
+
     const variants: Variant[] = [];
     for (const variant of input.variants) {
       const variantSku = Sku.create(variant.sku);
       if (!variantSku.ok) return err(variantSku.error);
       const price = Money.create(variant.priceAmountMinor, variant.currency);
       if (!price.ok) return err(price.error);
-      variants.push(
-        Variant.create(
-          UniqueEntityId.from(this.deps.idGenerator.generate()),
-          variantSku.value,
-          price.value,
-        ),
-      );
+      const attributes = toVariantAttributes(variant, variant.currency);
+      if (!attributes.ok) return err(attributes.error);
+      try {
+        variants.push(
+          Variant.create(
+            UniqueEntityId.from(this.deps.idGenerator.generate()),
+            variantSku.value,
+            price.value,
+            null,
+            attributes.value,
+          ),
+        );
+      } catch (error) {
+        if (isDomainError(error)) return err(error);
+        throw error;
+      }
     }
 
     const media: MediaRef[] = [];
