@@ -3,6 +3,7 @@ import { BusinessRuleError, Money, UniqueEntityId } from "@platform/domain";
 import { Product } from "./product";
 import { CategoryRef } from "./value-objects/category-ref";
 import { MediaRef } from "./value-objects/media-ref";
+import { ProductDetails } from "./value-objects/product-details";
 import { ProductOption } from "./value-objects/product-option";
 import { Sku } from "./value-objects/sku";
 import { Slug } from "./value-objects/slug";
@@ -200,12 +201,49 @@ describe("Product", () => {
     );
   });
 
-  it("options are mutable only while draft", () => {
+  // Plan 2C-1: Shopify lets a merchant add a size to a live product. The old draft-only rule is gone;
+  // the remaining guard is that no variant may be left pointing at a removed option value.
+  it("options can change after publishing", () => {
     const product = productFixture();
     product.publish("evt-1", new Date(0));
     const option = ProductOption.create("Size", ["S", "M"]);
     if (!option.ok) throw new Error("invalid fixture");
-    expect(() => product.setOptions([option.value])).toThrow(BusinessRuleError);
+    product.setOptions([option.value]);
+    expect(product.options.map((o) => o.name)).toEqual(["Size"]);
+  });
+
+  it("options cannot drop a value a variant still uses", () => {
+    const product = productFixture();
+    const sizes = ProductOption.create("Size", ["S", "M"]);
+    const onlyS = ProductOption.create("Size", ["S"]);
+    const m = VariantSelection.create({ Size: "M" });
+    if (!sizes.ok || !onlyS.ok || !m.ok) throw new Error("invalid fixture");
+    product.setOptions([sizes.value]);
+    product.addVariant(
+      Variant.create(UniqueEntityId.from("variant-2"), sku("SKU-2"), money(1999), m.value),
+      "evt-1",
+      new Date(0),
+    );
+    expect(() => product.setOptions([onlyS.value])).toThrow(BusinessRuleError);
+  });
+
+  it("keeps details and replaces them with setDetails", () => {
+    const product = productFixture();
+    expect(product.details.tags).toEqual([]);
+    expect(product.details.description).toBeNull();
+    expect(product.details.productType).toBeNull();
+    product.pullDomainEvents();
+    const details = ProductDetails.create({
+      description: "d",
+      productType: "Shirts",
+      tags: ["a"],
+    });
+    if (!details.ok) throw new Error("invalid fixture");
+    product.setDetails(details.value);
+    expect(product.details.description).toBe("d");
+    expect(product.details.productType).toBe("Shirts");
+    expect(product.details.tags).toEqual(["a"]);
+    expect(product.pullDomainEvents()).toHaveLength(0);
   });
 
   it("assigns categories and emits product.categorized", () => {

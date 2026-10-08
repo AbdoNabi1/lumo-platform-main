@@ -15,6 +15,7 @@ import { ListProducts } from "./list-products.use-case";
 import { MoveCategory } from "./move-category.use-case";
 import { ReorderCollectionProducts } from "./reorder-collection-products.use-case";
 import { SetProductBrand } from "./set-product-brand.use-case";
+import { UpdateProduct } from "./update-product.use-case";
 import { CatalogEventTranslator } from "../infrastructure/catalog-event-translator";
 import { InMemoryBrandRepository } from "../infrastructure/in-memory-brand-repository";
 import { InMemoryCategoryRepository } from "../infrastructure/in-memory-category-repository";
@@ -114,6 +115,58 @@ describe("Catalog application use-cases (Commerce Sprint 1, Sprint 4.2, Sprint 7
       tenantId: "tenant-1",
     });
     expect(added.ok).toBe(true);
+  });
+
+  it("updates product details: keeps what is omitted, clears null, rejects invalid (Plan 2C-1)", async () => {
+    const h = harness();
+    const created = await new CreateProduct(h).execute({
+      sku: "SKU-D",
+      name: "Shirt",
+      slug: "shirt",
+      description: "Soft cotton.",
+      tags: ["summer"],
+      variants: [{ sku: "SKU-D-V1", priceAmountMinor: 1500, currency: "USD" }],
+      tenantId: "tenant-1",
+    });
+    if (!created.ok) throw new Error("fixture failed");
+    const id = created.value.id;
+
+    const renamed = await new UpdateProduct(h).execute({
+      productId: id,
+      name: "Shirt 2",
+      slug: "shirt",
+      tenantId: "tenant-1",
+    });
+    expect(renamed.ok).toBe(true);
+    let product = await h.products.findById(id, "tenant-1");
+    expect(product?.details.description).toBe("Soft cotton.");
+    expect(product?.details.tags).toEqual(["summer"]);
+
+    const cleared = await new UpdateProduct(h).execute({
+      productId: id,
+      name: "Shirt 2",
+      slug: "shirt",
+      description: null,
+      productType: "Shirts",
+      tenantId: "tenant-1",
+    });
+    expect(cleared.ok).toBe(true);
+    product = await h.products.findById(id, "tenant-1");
+    expect(product?.details.description).toBeNull();
+    expect(product?.details.productType).toBe("Shirts");
+    expect(product?.details.tags).toEqual(["summer"]);
+
+    const invalid = await new UpdateProduct(h).execute({
+      productId: id,
+      name: "Should not stick",
+      slug: "shirt",
+      description: "x".repeat(20_001),
+      tenantId: "tenant-1",
+    });
+    expect(invalid.ok).toBe(false);
+    if (!invalid.ok) expect(invalid.error.code).toBe("VALIDATION");
+    product = await h.products.findById(id, "tenant-1");
+    expect(product?.name).toBe("Shirt 2");
   });
 
   it("assigns categories only when every category exists", async () => {

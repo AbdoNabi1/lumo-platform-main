@@ -15,6 +15,7 @@ import { ProductVariantUpdated } from "./events/product-variant-updated.event";
 import type { BrandRef } from "./value-objects/brand-ref";
 import type { CategoryRef } from "./value-objects/category-ref";
 import type { MediaRef } from "./value-objects/media-ref";
+import { ProductDetails } from "./value-objects/product-details";
 import type { ProductOption } from "./value-objects/product-option";
 import { PublishState } from "./value-objects/publish-state";
 import type { Seo } from "./value-objects/seo";
@@ -36,6 +37,7 @@ interface ProductProps {
   variants: Variant[];
   media: readonly MediaRef[];
   deleted: boolean;
+  details: ProductDetails;
 }
 
 export interface NewProduct {
@@ -44,12 +46,14 @@ export interface NewProduct {
   readonly slug: Slug;
   readonly variants: readonly Variant[];
   readonly media?: readonly MediaRef[];
+  readonly details?: ProductDetails;
 }
 
 /**
  * Catalog product aggregate. Created as a draft; Commerce Sprint 1 added the publish/schedule/
  * unpublish/archive state machine, variant matrix, brand/category/option/seo, and Sprint 4.2
- * added the media lifecycle. `options` are mutable only while draft (Commerce Sprint 1 §invariant).
+ * added the media lifecycle. Plan 2C-1 added `details` (description/type/tags), a one-currency rule
+ * for the variants, and lets `options` change in any status (Commerce Sprint 1 had draft-only).
  */
 export class Product extends AggregateRoot<ProductProps> {
   static create(id: UniqueEntityId, props: NewProduct, eventId: string, occurredAt: Date): Product {
@@ -74,6 +78,7 @@ export class Product extends AggregateRoot<ProductProps> {
         variants: [...props.variants],
         media: props.media ?? [],
         deleted: false,
+        details: props.details ?? ProductDetails.empty(),
       },
       id,
     );
@@ -105,6 +110,7 @@ export class Product extends AggregateRoot<ProductProps> {
     media: readonly MediaRef[],
     deleted: boolean,
     version: number,
+    details: ProductDetails = ProductDetails.empty(),
   ): Product {
     return new Product(
       {
@@ -120,6 +126,7 @@ export class Product extends AggregateRoot<ProductProps> {
         variants: [...variants],
         media: [...media],
         deleted,
+        details,
       },
       id,
       version,
@@ -263,12 +270,29 @@ export class Product extends AggregateRoot<ProductProps> {
     );
   }
 
-  /** Replaces the declared option set. Mutable only while draft (no event — internal config). */
+  /**
+   * Replaces the declared option set — in ANY status since Plan 2C-1 (Shopify lets a merchant add a
+   * size to a live product). Refused only when a variant would be left on a removed option value.
+   */
   setOptions(options: readonly ProductOption[]): void {
-    if (!this.props.status.isDraft) {
-      throw new BusinessRuleError("Options are mutable only while the product is draft");
+    for (const variant of this.props.variants) {
+      if (variant.selection === null) continue;
+      for (const [name, value] of Object.entries(variant.selection.values)) {
+        const option = options.find((o) => o.name === name);
+        if (!option || !option.values.includes(value)) {
+          throw new BusinessRuleError(
+            `Variant ${variant.sku.value} uses ${name}=${value}, which these options remove — ` +
+              "change or remove that variant first",
+          );
+        }
+      }
     }
     this.props.options = [...options];
+  }
+
+  /** Plan 2C-1. No event of its own — `UpdateProduct` already raises `product.updated`. */
+  setDetails(details: ProductDetails): void {
+    this.props.details = details;
   }
 
   /** No event — SEO metadata is internal config, not a downstream-relevant fact. */
@@ -409,6 +433,10 @@ export class Product extends AggregateRoot<ProductProps> {
 
   get seo(): Seo | null {
     return this.props.seo;
+  }
+
+  get details(): ProductDetails {
+    return this.props.details;
   }
 
   get variants(): readonly Variant[] {

@@ -8,6 +8,7 @@ import { type DomainError, isDomainError, ValidationError } from "@platform/util
 import { Product } from "../domain/product";
 import type { ProductRepository } from "../domain/product-repository";
 import { MediaRef } from "../domain/value-objects/media-ref";
+import { ProductDetails } from "../domain/value-objects/product-details";
 import { Sku } from "../domain/value-objects/sku";
 import { Slug } from "../domain/value-objects/slug";
 import { Variant } from "../domain/variant";
@@ -25,6 +26,10 @@ export interface CreateProductInput {
   readonly slug: string;
   readonly variants: readonly VariantInput[];
   readonly mediaAssetIds?: readonly string[];
+  /** Plan 2C-1 — optional descriptive fields. */
+  readonly description?: string | null;
+  readonly productType?: string | null;
+  readonly tags?: readonly string[];
   /** ADR-0014: the caller's verified tenant. */
   readonly tenantId: string;
 }
@@ -121,11 +126,25 @@ export class CreateProduct implements UseCase<
       media.push(ref.value);
     }
 
+    const details = ProductDetails.create({
+      description: input.description ?? null,
+      productType: input.productType ?? null,
+      tags: input.tags ?? [],
+    });
+    if (!details.ok) return err(details.error);
+
     return this.deps.unitOfWork.run<Result<CreateProductOutput, DomainError>>(async (tx) => {
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const product = Product.create(
         id,
-        { sku: sku.value, name: input.name, slug: slug.value, variants, media },
+        {
+          sku: sku.value,
+          name: input.name,
+          slug: slug.value,
+          variants,
+          media,
+          details: details.value,
+        },
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
