@@ -4,7 +4,7 @@ import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { mapPage } from "./public-catalog-routes";
-import { resolvePrice, priceUnresolvedResponse } from "./pricing-resolution";
+import { merchandiseUnresolvedResponse, resolveMerchandise } from "./merchandise-resolution";
 
 const createCartBody = z.object({
   customerRef: z.string().min(1).optional(),
@@ -23,6 +23,11 @@ const cartListQuery = z.object({
 
 export interface CartItemDto {
   readonly productRef: string;
+  /** Plan 2A: the variant this line sells, with its snapshot; all null on lines added before variants. */
+  readonly variantRef: string | null;
+  readonly sku: string | null;
+  readonly title: string | null;
+  readonly variantTitle: string | null;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
@@ -57,6 +62,10 @@ function toCartDto(cart: Cart): CartDto {
     isGuest: cart.isGuest,
     items: cart.items.map((item) => ({
       productRef: item.productRef.value,
+      variantRef: item.variantRef ?? null,
+      sku: item.sku ?? null,
+      title: item.title ?? null,
+      variantTitle: item.variantTitle ?? null,
       quantity: item.quantity.value,
       unitPriceAmountMinor: item.unitPrice.amountMinor,
       currency: item.unitPrice.currency,
@@ -71,26 +80,34 @@ function toCartDto(cart: Cart): CartDto {
  * `unitPriceAmountMinor`/`currency` are deliberately NOT accepted here (Phase 17.2 security
  * follow-up to H-01 — same defect on the admin-authenticated surface, same fix). `.strict()` means
  * a request still carrying either field fails zod validation (422) at the boundary; the price is
- * always resolved server-side from Pricing, see {@link resolvePrice} (`./pricing-resolution.ts`).
+ * always resolved server-side from the chosen variant in Catalog (Plan 2A), see
+ * {@link resolveMerchandise} (`./merchandise-resolution.ts`).
  */
 const addItemBody = z
   .object({
     productId: z.string().min(1),
+    variantId: z.string().min(1).optional(),
     quantity: z.number().int().positive(),
     inventoryAvailable: z.number().int().min(0).optional(),
     metadata: z.record(z.unknown()).optional(),
   })
   .strict();
-const removeItemBody = z.object({ productId: z.string().min(1) });
+const removeItemBody = z.object({
+  productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
+});
 const changeQuantityBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   quantity: z.number().int().positive(),
 });
 /** Same H-01-style remediation as {@link addItemBody} — `unitPriceAmountMinor`/`currency` are never accepted. */
 const replaceVariantBody = z
   .object({
     oldProductId: z.string().min(1),
+    oldVariantId: z.string().min(1).optional(),
     newProductId: z.string().min(1),
+    newVariantId: z.string().min(1).optional(),
     quantity: z.number().int().positive(),
     inventoryAvailable: z.number().int().min(0).optional(),
     metadata: z.record(z.unknown()).optional(),
@@ -125,13 +142,24 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Add a line to a cart (merges quantity if the product is already present)",
       schema: { params: cartIdParams, body: addItemBody },
       handle: async ({ params, body, context }): Promise<AdminResponse> => {
-        const price = await resolvePrice(admin, body.productId, context.tenantId);
-        if (price.status !== "ok") return priceUnresolvedResponse();
+        const { variantId, ...line } = body;
+        const merchandise = await resolveMerchandise(
+          admin,
+          { productId: body.productId, variantId },
+          context.tenantId,
+        );
+        if (merchandise.status !== "ok") return merchandiseUnresolvedResponse(merchandise);
         return admin.cart.addItem(context.principal, {
           cartId: params.cartId,
-          ...body,
-          unitPriceAmountMinor: price.amountMinor,
-          currency: price.currency,
+          ...line,
+          unitPriceAmountMinor: merchandise.amountMinor,
+          currency: merchandise.currency,
+          merchandise: {
+            variantRef: merchandise.variantId,
+            sku: merchandise.sku,
+            title: merchandise.title,
+            variantTitle: merchandise.variantTitle,
+          },
           tenantId: context.tenantId,
         });
       },
@@ -174,13 +202,24 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Replace a line's product (e.g. a different variant)",
       schema: { params: cartIdParams, body: replaceVariantBody },
       handle: async ({ params, body, context }): Promise<AdminResponse> => {
-        const price = await resolvePrice(admin, body.newProductId, context.tenantId);
-        if (price.status !== "ok") return priceUnresolvedResponse();
+        const { newVariantId, ...line } = body;
+        const merchandise = await resolveMerchandise(
+          admin,
+          { productId: body.newProductId, variantId: newVariantId },
+          context.tenantId,
+        );
+        if (merchandise.status !== "ok") return merchandiseUnresolvedResponse(merchandise);
         return admin.cart.replaceVariant(context.principal, {
           cartId: params.cartId,
-          ...body,
-          unitPriceAmountMinor: price.amountMinor,
-          currency: price.currency,
+          ...line,
+          unitPriceAmountMinor: merchandise.amountMinor,
+          currency: merchandise.currency,
+          newMerchandise: {
+            variantRef: merchandise.variantId,
+            sku: merchandise.sku,
+            title: merchandise.title,
+            variantTitle: merchandise.variantTitle,
+          },
           tenantId: context.tenantId,
         });
       },

@@ -4,7 +4,7 @@ import type { Cart, CartStatus } from "@platform/cart";
 import { logger, NotFoundError, toErrorEnvelope, ValidationError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { PageResponse } from "./public-catalog-routes";
-import { resolvePrice, priceUnresolvedResponse } from "./pricing-resolution";
+import { merchandiseUnresolvedResponse, resolveMerchandise } from "./merchandise-resolution";
 
 const cartIdParams = z.object({ cartId: z.string().min(1) });
 /**
@@ -52,13 +52,15 @@ const createCartBody = z.object({
  * verbatim into the cart line. `.strict()` means an old-shaped request carrying either field now
  * fails zod validation (422) at the Fastify boundary rather than having them silently stripped;
  * the handler below also never reads them off `body` even when invoked directly (bypassing zod,
- * as `public-cart-routes.test.ts` does) — the price is always resolved server-side, see
- * {@link resolvePrice}.
+ * as `public-cart-routes.test.ts` does) — the price is always resolved server-side from the chosen
+ * VARIANT (Plan 2A), see {@link resolveMerchandise}.
  */
 const addItemBody = z
   .object({
     sessionRef: z.string().min(1),
     productId: z.string().min(1),
+    /** Plan 2A: the size/color being bought. Optional only for a single-variant product. */
+    variantId: z.string().min(1).optional(),
     quantity: z.number().int().positive(),
     inventoryAvailable: z.number().int().min(0).optional(),
     metadata: z.record(z.unknown()).optional(),
@@ -67,9 +69,14 @@ const addItemBody = z
 const changeQuantityBody = z.object({
   sessionRef: z.string().min(1),
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   quantity: z.number().int().positive(),
 });
-const removeItemBody = z.object({ sessionRef: z.string().min(1), productId: z.string().min(1) });
+const removeItemBody = z.object({
+  sessionRef: z.string().min(1),
+  productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
+});
 const sessionRefOnlyBody = z.object({ sessionRef: z.string().min(1) });
 
 /**
@@ -107,6 +114,11 @@ const sessionRefOnlyBody = z.object({ sessionRef: z.string().min(1) });
 
 export interface PublicCartItemDto {
   readonly productId: string;
+  /** Plan 2A: the variant this line sells, with its snapshot; all null on lines added before variants. */
+  readonly variantId: string | null;
+  readonly sku: string | null;
+  readonly title: string | null;
+  readonly variantTitle: string | null;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
@@ -139,6 +151,10 @@ function toCartDto(cart: Cart): PublicCartDto {
     isGuest: cart.isGuest,
     items: cart.items.map((item) => ({
       productId: item.productRef.value,
+      variantId: item.variantRef ?? null,
+      sku: item.sku ?? null,
+      title: item.title ?? null,
+      variantTitle: item.variantTitle ?? null,
       quantity: item.quantity.value,
       unitPriceAmountMinor: item.unitPrice.amountMinor,
       currency: item.unitPrice.currency,
@@ -268,17 +284,27 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
           context.tenantId,
         );
         if (!owned.ok) return owned.response;
-        const price = await resolvePrice(admin, body.productId, context.tenantId);
-        if (price.status !== "ok") return priceUnresolvedResponse();
+        const merchandise = await resolveMerchandise(
+          admin,
+          { productId: body.productId, variantId: body.variantId },
+          context.tenantId,
+        );
+        if (merchandise.status !== "ok") return merchandiseUnresolvedResponse(merchandise);
         const result = await admin.publicReads.cart.add({
           tenantId: context.tenantId,
           cartId: params.cartId,
           productId: body.productId,
           quantity: body.quantity,
-          unitPriceAmountMinor: price.amountMinor,
-          currency: price.currency,
+          unitPriceAmountMinor: merchandise.amountMinor,
+          currency: merchandise.currency,
           inventoryAvailable: body.inventoryAvailable,
           metadata: body.metadata,
+          merchandise: {
+            variantRef: merchandise.variantId,
+            sku: merchandise.sku,
+            title: merchandise.title,
+            variantTitle: merchandise.variantTitle,
+          },
         });
         if (result.status < 200 || result.status >= 300) return result;
         return mapItem<Cart, PublicCartDto>(
@@ -308,6 +334,7 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
           tenantId: context.tenantId,
           cartId: params.cartId,
           productId: body.productId,
+          variantId: body.variantId,
           quantity: body.quantity,
         });
         if (result.status < 200 || result.status >= 300) return result;
@@ -338,6 +365,7 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
           tenantId: context.tenantId,
           cartId: params.cartId,
           productId: body.productId,
+          variantId: body.variantId,
         });
         if (result.status < 200 || result.status >= 300) return result;
         return mapItem<Cart, PublicCartDto>(

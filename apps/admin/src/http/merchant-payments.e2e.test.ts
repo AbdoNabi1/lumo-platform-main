@@ -22,6 +22,7 @@ import {
 } from "@platform/psp-paymob";
 import { logger } from "@platform/utils";
 import { createAdminHttpApi } from "./server";
+import { httpDriver, seedSingleVariantProduct, type SeededProduct } from "./testing/seed-catalog";
 
 /**
  * WP-13 through the REAL admin pipeline (`createAdminHttpApi`, `tenantMode: "multi"` — so
@@ -202,12 +203,12 @@ const ALL_SECRETS = [CREDS.a.secretKey, CREDS.a.hmacSecret, CREDS.b.secretKey, C
 describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
   let app: FastifyInstance;
   let logLines: string[];
-  let seeded: Set<string>;
+  let seeded: Map<string, SeededProduct>;
 
   beforeEach(async () => {
     calls = [];
     logLines = [];
-    seeded = new Set();
+    seeded = new Map();
     for (const level of ["debug", "info", "warn", "error"] as const) {
       vi.spyOn(logger, level).mockImplementation((message: string, context?: object) => {
         logLines.push(`${message} ${JSON.stringify(context ?? {})}`);
@@ -259,20 +260,30 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
     return res.json() as T;
   }
 
-  async function seedPrice(token: string): Promise<void> {
-    // One published price per merchant is enough (a second would make the product ambiguous).
-    if (seeded.has(token)) return;
-    seeded.add(token);
-    const created = ok<{ id: string }>(
-      await post("/prices", admin(token), {
-        priceListId: "price-list-1",
-        productId: "product-1",
-        amountMinor: 1999,
-        currency: "USD",
-      }),
-      "create price",
+  /** The tenant a staff token belongs to (see `sessions`). */
+  function tenantOf(token: string): string {
+    const tenant = sessions[token]?.claims?.["tenant_id"];
+    if (typeof tenant !== "string") throw new Error(`no tenant for token ${token}`);
+    return tenant;
+  }
+
+  /**
+   * One published product (1999) per merchant, made by that merchant's staff through the real
+   * product routes — the cart prices a line from this variant (Plan 2A), not from a Pricing row.
+   */
+  async function seedProduct(token: string): Promise<void> {
+    const tenant = tenantOf(token);
+    if (seeded.has(tenant)) return;
+    const driver = httpDriver(async (method, url, payload) =>
+      method === "GET" ? get(url, admin(token)) : post(url, admin(token), payload ?? {}),
     );
-    ok(await post(`/prices/${created.id}/publish`, admin(token), {}), "publish price");
+    seeded.set(tenant, await seedSingleVariantProduct(driver, "P-1", 1999));
+  }
+
+  function productOf(tenant: string): SeededProduct {
+    const product = seeded.get(tenant);
+    if (product === undefined) throw new Error(`no product seeded for ${tenant}`);
+    return product;
   }
 
   async function configureMerchant(
@@ -294,7 +305,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
     ok(
       await post(`/public/carts/${cart.id}/items`, h, {
         sessionRef,
-        productId: "product-1",
+        productId: productOf(tenant).productId,
         quantity: 1,
       }),
       "add item",
@@ -413,7 +424,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
   // ─────────────────────────────────────────────────────────────────────────────────────────────
 
   it("the merchant configures methods; the shopper is offered exactly those, with no credential anywhere", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     const configured = await enableAll("tok-a");
     expect(configured.statusCode).toBe(200);
 
@@ -438,7 +449,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
   it.each(["stripe", "paymob", "cod"] as const)(
     "the shopper selecting %s at checkout invokes THAT adapter — through the checkout API",
     async (selected) => {
-      await seedPrice("tok-a");
+      await seedProduct("tok-a");
       await enableAll("tok-a");
 
       const { opened } = await paid("tenant-a", `sess-${selected}`, selected);
@@ -456,7 +467,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
   );
 
   it("a provider registered at composition time with NO core edit reaches the shopper end to end — configured, offered, selected, paid through, with that merchant's own credential", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     const configured = await configureMerchant("tok-a", {
       enabledMethods: ["stripe", ACME_KEY],
       providerSettings: {
@@ -501,7 +512,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
   });
 
   it("a method the merchant has not enabled cannot be selected — and nothing is chosen in its place", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     await configureMerchant("tok-a", { enabledMethods: ["stripe"] });
 
     const checkout = await readyCheckout("tenant-a", "sess-unoffered", "cod");
@@ -515,7 +526,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
   });
 
   it("initiating payment accepts no method or amount of its own — the body is strict", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     await enableAll("tok-a");
     const checkout = await readyCheckout("tenant-a", "sess-strict", "cod");
     ok(await checkout.complete(), "complete");
@@ -532,7 +543,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
   });
 
   it("cannot open payment before the checkout is completed, nor for someone else's session", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     await enableAll("tok-a");
     const checkout = await readyCheckout("tenant-a", "sess-early", "cod");
 
@@ -545,7 +556,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
   });
 
   it("initiating twice resumes the same payment intent — no second charge is opened", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     await enableAll("tok-a");
     const { checkout, opened } = await paid("tenant-a", "sess-twice", "paymob");
 
@@ -557,8 +568,8 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
 
   describe("two merchants, two Paymob credentials", () => {
     it("each charge uses its own merchant's credential; a merchant cannot see the other's methods", async () => {
-      await seedPrice("tok-a");
-      await seedPrice("tok-b");
+      await seedProduct("tok-a");
+      await seedProduct("tok-b");
       await enableAll("tok-a", CREDS.a);
       await enableAll("tok-b", CREDS.b);
 
@@ -574,8 +585,8 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
     });
 
     it("a merchant that never configured Paymob cannot use it, however the request is shaped", async () => {
-      await seedPrice("tok-a");
-      await seedPrice("tok-b");
+      await seedProduct("tok-a");
+      await seedProduct("tok-b");
       await enableAll("tok-a", CREDS.a); // tenant-b has only the default (Stripe)
 
       const checkout = await readyCheckout("tenant-b", "sess-b-paymob", "paymob");
@@ -587,7 +598,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
 
   describe("cash on delivery", () => {
     it("is unpaid until an explicit confirmed collection — and only that marks it paid", async () => {
-      await seedPrice("tok-a");
+      await seedProduct("tok-a");
       await enableAll("tok-a");
       const { opened, amountMinor } = await paid("tenant-a", "sess-cod", "cod");
       const id = opened.paymentIntentId;
@@ -624,7 +635,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
     });
 
     it("another merchant's staff cannot confirm a collection for it", async () => {
-      await seedPrice("tok-a");
+      await seedProduct("tok-a");
       await enableAll("tok-a");
       const { opened, amountMinor } = await paid("tenant-a", "sess-cod-x", "cod");
 
@@ -641,7 +652,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
 
   describe("Paymob webhook: signature and idempotency", () => {
     async function paidPaymob(tenant: string, token: string, creds: typeof CREDS.a, ref: string) {
-      await seedPrice(token);
+      await seedProduct(token);
       await enableAll(token, creds);
       const { opened, amountMinor } = await paid(tenant, ref, "paymob");
       const order = calls.filter((c) => c.op === "createIntent").length; // placeholder for clarity
@@ -704,7 +715,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
     });
 
     it("a callback signed with merchant A's secret is rejected when delivered to merchant B", async () => {
-      await seedPrice("tok-b");
+      await seedProduct("tok-b");
       await enableAll("tok-b", CREDS.b);
       const a = await paidPaymob("tenant-a", "tok-a", CREDS.a, "sess-wh-a");
       const cb = signedCallback({
@@ -814,7 +825,7 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
   });
 
   it("no merchant credential appears in any log line the pipeline emitted", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     await enableAll("tok-a");
     await configureMerchant("tok-a", {
       providerSettings: {

@@ -12,6 +12,7 @@ import type {
 } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { createAdminHttpApi } from "./server";
+import { httpDriver, seedSingleVariantProduct, type SeededProduct } from "./testing/seed-catalog";
 
 /**
  * WP-1 (G-52), the transport half. `public-checkout-routes.test.ts` drives the guest flow through
@@ -65,8 +66,10 @@ const idGenerator = { generate: () => `id-${(n += 1)}` };
 
 describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
   let app: FastifyInstance;
+  let seeded: Map<string, SeededProduct>;
 
   beforeEach(async () => {
+    seeded = new Map();
     const fx = infra();
     app = await createAdminHttpApi({
       tenantMode: "multi",
@@ -112,18 +115,17 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     return res.json() as T;
   }
 
-  /** A published price for `product-1` in one tenant, made by that tenant's staff. */
-  async function seedPrice(token: string): Promise<void> {
-    const created = ok<{ id: string }>(
-      await post("/prices", admin(token), {
-        priceListId: "price-list-1",
-        productId: "product-1",
-        amountMinor: 1999,
-        currency: "USD",
-      }),
-      "create price",
+  /**
+   * A published product (1999) in one tenant, made by that tenant's staff through the real product
+   * routes — the cart prices a line from this variant (Plan 2A), not from a Pricing row.
+   */
+  async function seedProduct(token: string): Promise<void> {
+    const tenant = sessions[token]?.claims?.["tenant_id"];
+    if (typeof tenant !== "string") throw new Error(`no tenant for token ${token}`);
+    const driver = httpDriver(async (method, url, payload) =>
+      method === "GET" ? get(url, admin(token)) : post(url, admin(token), payload ?? {}),
     );
-    ok(await post(`/prices/${created.id}/publish`, admin(token), {}), "publish price");
+    seeded.set(tenant, await seedSingleVariantProduct(driver, "P-1", 1999));
   }
 
   const address = { line1: "1 Main St", city: "Springfield", postalCode: "00000", country: "US" };
@@ -138,7 +140,7 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     ok(
       await post(`/public/carts/${cart.id}/items`, h, {
         sessionRef,
-        productId: "product-1",
+        productId: seeded.get(tenant)?.productId ?? "not-seeded",
         quantity: 1,
       }),
       "add item",
@@ -186,7 +188,7 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
   }
 
   it("a guest completes cart → checkout → complete over HTTP and an order exists afterwards", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     const checkout = await readyCheckout("tenant-a", "sess-1", "guest@example.com");
 
     const done = await checkout.complete();
@@ -201,7 +203,7 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
   });
 
   it("completing without a contact email is a 422 over the wire, not a 500, and creates no order", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     const checkout = await readyCheckout("tenant-a", "sess-2");
 
     const done = await checkout.complete();
@@ -220,8 +222,8 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
   });
 
   it("the same guest email in tenant A and tenant B resolves to two different customers", async () => {
-    await seedPrice("tok-a");
-    await seedPrice("tok-b");
+    await seedProduct("tok-a");
+    await seedProduct("tok-b");
     const inA = await (await readyCheckout("tenant-a", "sess-a", "shared@example.com")).complete();
     const inB = await (await readyCheckout("tenant-b", "sess-b", "shared@example.com")).complete();
     const orderA = (inA.json() as { orderRef: string }).orderRef;
@@ -244,7 +246,7 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
   });
 
   it("T1.8: a guest checking out with a REGISTERED customer's email attaches the order but gains no identity — the public principal is unchanged", async () => {
-    await seedPrice("tok-a");
+    await seedProduct("tok-a");
     const h = storefront("tenant-a");
     ok(
       await post("/public/auth/register", h, {

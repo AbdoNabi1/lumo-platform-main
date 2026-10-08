@@ -3,7 +3,7 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireCart, type WiredCart } from "@platform/cart";
 import { wireIdentity, type WiredIdentity } from "@platform/identity";
-import { wirePricing, type WiredPricing } from "@platform/pricing";
+import { wireCatalog, type WiredCatalog } from "@platform/catalog";
 import { wireSecurity, type WiredSecurity } from "@platform/security";
 import { wireWishlist, type WiredWishlist } from "@platform/wishlist";
 import type { WiredAdmin } from "../composition";
@@ -13,6 +13,12 @@ import { CustomerGuard } from "../interfaces/customer-guard";
 import { LoggingSignupEmailAdapter } from "../infrastructure/logging-signup-email-adapter";
 import { publicAuthRoutes } from "./public-auth-routes";
 import { publicWishlistRoutes, type PublicWishlistDto } from "./public-wishlist-routes";
+import {
+  controllerDriver,
+  seedCatalogProduct,
+  seedSingleVariantProduct,
+  type SeededProduct,
+} from "./testing/seed-catalog";
 
 /**
  * The customer wishlist surface (T5.17 Part B) over REAL compositions, reached through real
@@ -34,7 +40,7 @@ function sequentialIds(prefix: string): IdGenerator {
 interface Harness {
   readonly admin: WiredAdmin;
   readonly cart: WiredCart;
-  readonly pricing: WiredPricing;
+  readonly catalog: WiredCatalog;
   readonly wishlist: WiredWishlist;
 }
 
@@ -47,7 +53,7 @@ function harness(): Harness {
   const security: WiredSecurity = wireSecurity(deps);
   const identity: WiredIdentity = wireIdentity(deps);
   const cart = wireCart(deps);
-  const pricing = wirePricing(deps);
+  const catalog = wireCatalog(deps);
   const wishlist = wireWishlist(deps);
 
   const credentials: CustomerCredentialsPort = {
@@ -73,14 +79,14 @@ function harness(): Harness {
     customerAuth,
     publicReads: {
       cart: cart.cart,
-      prices: pricing.prices,
+      products: catalog.products,
       security: security.security,
       customers: identity.customers,
       wishlist: wishlist.wishlist,
     },
   } as unknown as WiredAdmin;
 
-  return { admin, cart, pricing, wishlist };
+  return { admin, cart, catalog, wishlist };
 }
 
 interface Response {
@@ -345,19 +351,13 @@ describe("POST /public/wishlists/me/items/share", () => {
 });
 
 describe("POST /public/wishlists/me/items/move-to-cart", () => {
-  /** Same real create-then-publish path `public-cart-routes.test.ts`'s `seedPublishedPrice` uses. */
-  async function publishedPrice(productRef: string, amountMinor: number): Promise<void> {
-    const created = await h.pricing.prices.create({
-      tenantId: "tenant-local",
-      priceListId: "price-list-1",
-      productId: productRef,
+  /** Same real create-and-publish path `public-cart-routes.test.ts` uses (Plan 2A: Catalog, not Pricing). */
+  function publishedProduct(amountMinor: number): Promise<SeededProduct> {
+    return seedSingleVariantProduct(
+      controllerDriver(h.catalog.products, "tenant-local"),
+      "P-1",
       amountMinor,
-      currency: "USD",
-    });
-    expect(created.status).toBeLessThan(300);
-    const { id } = created.body as { id: string };
-    const published = await h.pricing.prices.publish({ tenantId: "tenant-local", priceId: id });
-    expect(published.status).toBeLessThan(300);
+    );
   }
 
   async function guestCart(sessionRef: string): Promise<void> {
@@ -371,13 +371,16 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
 
   it("adds the item to the REAL cart and only then removes it from the wishlist", async () => {
     const { sessionId } = await signIn("a@example.com");
-    await publishedPrice("prod-1", 1500);
+    const product = await publishedProduct(1500);
     await guestCart("guest-1");
-    await wish("POST", "/public/wishlists/me/items", { sessionId, body: { productRef: "prod-1" } });
+    await wish("POST", "/public/wishlists/me/items", {
+      sessionId,
+      body: { productRef: product.productId },
+    });
 
     const response = await wish("POST", "/public/wishlists/me/items/move-to-cart", {
       sessionId,
-      body: { productRef: "prod-1", sessionRef: "guest-1" },
+      body: { productRef: product.productId, sessionRef: "guest-1" },
     });
 
     expect(response.status).toBe(200);
@@ -385,21 +388,24 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
     // The cart genuinely holds it — this is what routing through the stub `CartPort` would NOT do.
     const cart = await h.cart.cart.getCurrent({ tenantId: "tenant-local", sessionRef: "guest-1" });
     const items = (cart.body as { items: readonly { productRef: { value: string } }[] }).items;
-    expect(items.map((i) => i.productRef.value)).toEqual(["prod-1"]);
+    expect(items.map((i) => i.productRef.value)).toEqual([product.productId]);
   });
 
   it("re-derives the price server-side — the caller never chooses it (H-01)", async () => {
     const { sessionId } = await signIn("a@example.com");
-    await publishedPrice("prod-1", 1500);
+    const product = await publishedProduct(1500);
     await guestCart("guest-1");
-    await wish("POST", "/public/wishlists/me/items", { sessionId, body: { productRef: "prod-1" } });
+    await wish("POST", "/public/wishlists/me/items", {
+      sessionId,
+      body: { productRef: product.productId },
+    });
 
     await wish("POST", "/public/wishlists/me/items/move-to-cart", {
       sessionId,
       // A price the caller would love to pay. The schema is `.strict()` and the handler reads
-      // neither field; the authoritative published price is used regardless.
+      // neither field; the variant's authoritative price is used regardless.
       body: {
-        productRef: "prod-1",
+        productRef: product.productId,
         sessionRef: "guest-1",
         unitPriceAmountMinor: 1,
         currency: "USD",
@@ -411,7 +417,7 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
     expect(items[0]?.unitPrice.amountMinor).toBe(1500);
   });
 
-  it("keeps the item on the wishlist when no price can be resolved (no silent loss)", async () => {
+  it("keeps the item on the wishlist when the product cannot be resolved (no silent loss)", async () => {
     const { sessionId } = await signIn("a@example.com");
     await guestCart("guest-1");
     await wish("POST", "/public/wishlists/me/items", { sessionId, body: { productRef: "prod-1" } });
@@ -427,14 +433,47 @@ describe("POST /public/wishlists/me/items/move-to-cart", () => {
     expect(still.items.map((i) => i.productRef)).toEqual(["prod-1"]);
   });
 
-  it("keeps the item on the wishlist when the caller has no cart", async () => {
+  // Replaces nothing: a new Plan 2A case. A wishlist stores a product, not a size, so moving a
+  // multi-variant product must ask the shopper to choose rather than guess a variant.
+  it("keeps the item on the wishlist when the product has several variants (VARIANT_REQUIRED, no silent loss)", async () => {
     const { sessionId } = await signIn("a@example.com");
-    await publishedPrice("prod-1", 1500);
-    await wish("POST", "/public/wishlists/me/items", { sessionId, body: { productRef: "prod-1" } });
+    const shirt = await seedCatalogProduct(controllerDriver(h.catalog.products, "tenant-local"), {
+      sku: "SHIRT",
+      options: [{ name: "Size", values: ["S", "L"] }],
+      variants: [
+        { sku: "SHIRT-S", priceAmountMinor: 1000, selection: { Size: "S" } },
+        { sku: "SHIRT-L", priceAmountMinor: 1200, selection: { Size: "L" } },
+      ],
+    });
+    await guestCart("guest-1");
+    await wish("POST", "/public/wishlists/me/items", {
+      sessionId,
+      body: { productRef: shirt.productId },
+    });
 
     const response = await wish("POST", "/public/wishlists/me/items/move-to-cart", {
       sessionId,
-      body: { productRef: "prod-1", sessionRef: "guest-none" },
+      body: { productRef: shirt.productId, sessionRef: "guest-1" },
+    });
+
+    expect(response.status).toBe(422);
+    expect((response.body as { code: string }).code).toBe("VARIANT_REQUIRED");
+    const still = (await wish("GET", "/public/wishlists/me", { sessionId }))
+      .body as PublicWishlistDto;
+    expect(still.items.map((i) => i.productRef)).toEqual([shirt.productId]);
+  });
+
+  it("keeps the item on the wishlist when the caller has no cart", async () => {
+    const { sessionId } = await signIn("a@example.com");
+    const product = await publishedProduct(1500);
+    await wish("POST", "/public/wishlists/me/items", {
+      sessionId,
+      body: { productRef: product.productId },
+    });
+
+    const response = await wish("POST", "/public/wishlists/me/items/move-to-cart", {
+      sessionId,
+      body: { productRef: product.productId, sessionRef: "guest-none" },
     });
 
     expect(response.status).toBe(404);

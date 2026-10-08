@@ -9,6 +9,7 @@ import {
   variantTitleOf,
 } from "./merchandise-resolution";
 import { publicCatalogRoutes, type PublicProductDto } from "./public-catalog-routes";
+import { controllerDriver, seedCatalogProduct, type SeededProduct } from "./testing/seed-catalog";
 
 /**
  * Plan 2A: the variant is what is sold. These tests drive the REAL `wireCatalog` composition
@@ -25,13 +26,6 @@ function catalogFixture(): WiredCatalog {
   return wireCatalog({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
 }
 
-function unwrap<T>(response: { status: number; body: unknown }, action: string): T {
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`${action} failed (${response.status}): ${JSON.stringify(response.body)}`);
-  }
-  return response.body as T;
-}
-
 function adminOf(catalog: WiredCatalog): WiredAdmin {
   return { publicReads: { products: catalog.products } } as unknown as WiredAdmin;
 }
@@ -45,100 +39,45 @@ interface Seeded {
 
 async function seed(): Promise<Seeded> {
   const catalog = catalogFixture();
+  const driver = controllerDriver(catalog.products, T);
 
   // Product A: one variant, 10000 EGP.
-  const a = unwrap<{ id: string }>(
-    await catalog.products.create({
-      sku: "MUG",
-      name: "Mug",
-      slug: "mug",
-      variants: [{ sku: "MUG-STD", priceAmountMinor: 10000, currency: "EGP" }],
-      tenantId: T,
-    }),
-    "create A",
-  );
-  unwrap(await catalog.products.publish({ productId: a.id, tenantId: T }), "publish A");
-  const aProduct = unwrap<{ variants: readonly { id: { value: string } }[] }>(
-    await catalog.products.get({ productId: a.id, tenantId: T }),
-    "get A",
-  );
-
-  // Product B: Size [S, L]; S = 10000, L = 12000. `create` cannot carry a selection, so it is born
-  // with a placeholder variant that is removed once the two real ones exist.
-  const b = unwrap<{ id: string }>(
-    await catalog.products.create({
-      sku: "SHIRT",
-      name: "Shirt",
-      slug: "shirt",
-      variants: [{ sku: "SHIRT-BASE", priceAmountMinor: 1, currency: "EGP" }],
-      tenantId: T,
-    }),
-    "create B",
-  );
-  unwrap(
-    await catalog.products.setOptions({
-      productId: b.id,
-      options: [{ name: "Size", values: ["S", "L"] }],
-      tenantId: T,
-    }),
-    "options B",
-  );
-  const s = unwrap<{ variantId: string }>(
-    await catalog.products.addVariant({
-      productId: b.id,
-      sku: "SHIRT-S",
-      priceAmountMinor: 10000,
-      currency: "EGP",
-      selection: { Size: "S" },
-      tenantId: T,
-    }),
-    "variant S",
-  );
-  const l = unwrap<{ variantId: string }>(
-    await catalog.products.addVariant({
-      productId: b.id,
-      sku: "SHIRT-L",
-      priceAmountMinor: 12000,
-      currency: "EGP",
-      selection: { Size: "L" },
-      tenantId: T,
-    }),
-    "variant L",
-  );
-  const bBefore = unwrap<{
-    variants: readonly { id: { value: string }; sku: { value: string } }[];
-  }>(await catalog.products.get({ productId: b.id, tenantId: T }), "get B");
-  const base = bBefore.variants.find((v) => v.sku.value === "SHIRT-BASE");
-  if (base === undefined) throw new Error("placeholder variant missing");
-  unwrap(
-    await catalog.products.removeVariant({
-      productId: b.id,
-      variantId: base.id.value,
-      tenantId: T,
-    }),
-    "remove placeholder",
-  );
-  unwrap(await catalog.products.publish({ productId: b.id, tenantId: T }), "publish B");
-
+  const a = await seedCatalogProduct(driver, {
+    sku: "MUG",
+    name: "Mug",
+    currency: "EGP",
+    variants: [{ sku: "MUG-STD", priceAmountMinor: 10000 }],
+  });
+  // Product B: Size [S, L]; S = 10000, L = 12000.
+  const b = await seedCatalogProduct(driver, {
+    sku: "SHIRT",
+    name: "Shirt",
+    currency: "EGP",
+    options: [{ name: "Size", values: ["S", "L"] }],
+    variants: [
+      { sku: "SHIRT-S", priceAmountMinor: 10000, selection: { Size: "S" } },
+      { sku: "SHIRT-L", priceAmountMinor: 12000, selection: { Size: "L" } },
+    ],
+  });
   // A draft product (never published).
-  const draft = unwrap<{ id: string }>(
-    await catalog.products.create({
-      sku: "DRAFT",
-      name: "Draft",
-      slug: "draft",
-      variants: [{ sku: "DRAFT-STD", priceAmountMinor: 500, currency: "EGP" }],
-      tenantId: T,
-    }),
-    "create draft",
-  );
+  const draft = await seedCatalogProduct(driver, {
+    sku: "DRAFT",
+    name: "Draft",
+    currency: "EGP",
+    variants: [{ sku: "DRAFT-STD", priceAmountMinor: 500 }],
+    publish: false,
+  });
 
-  const aVariant = aProduct.variants[0];
-  if (aVariant === undefined) throw new Error("A has no variant");
+  const idOf = (product: SeededProduct, sku: string): string => {
+    const variant = product.variants.find((v) => v.sku === sku);
+    if (variant === undefined) throw new Error(`seeded variant ${sku} missing`);
+    return variant.id;
+  };
   return {
     admin: adminOf(catalog),
-    a: { id: a.id, variantId: aVariant.id.value },
-    b: { id: b.id, s: s.variantId, l: l.variantId },
-    draft,
+    a: { id: a.productId, variantId: a.variantId },
+    b: { id: b.productId, s: idOf(b, "SHIRT-S"), l: idOf(b, "SHIRT-L") },
+    draft: { id: draft.productId },
   };
 }
 

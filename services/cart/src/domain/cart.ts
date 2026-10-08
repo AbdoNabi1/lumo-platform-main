@@ -84,7 +84,7 @@ export class Cart extends AggregateRoot<CartProps> {
   /** `lineKey` is the variant ref of a variant line, or the product id of a legacy (variant-less) line. */
   removeItem(lineKey: string): void {
     this.ensureActive();
-    const item = this.props.items.find((i) => i.lineKey === lineKey);
+    const item = this.findLine(lineKey);
     if (item === undefined) {
       throw new BusinessRuleError("Item not found in cart");
     }
@@ -94,7 +94,7 @@ export class Cart extends AggregateRoot<CartProps> {
   /** `lineKey` is the variant ref of a variant line, or the product id of a legacy (variant-less) line. */
   changeItemQuantity(lineKey: string, quantity: Quantity): void {
     this.ensureActive();
-    const item = this.props.items.find((i) => i.lineKey === lineKey);
+    const item = this.findLine(lineKey);
     if (item === undefined) {
       throw new BusinessRuleError("Item not found in cart");
     }
@@ -117,7 +117,8 @@ export class Cart extends AggregateRoot<CartProps> {
     if (unitPrice.currency !== this.props.currency) {
       throw new BusinessRuleError("Item currency does not match the cart currency");
     }
-    const index = this.props.items.findIndex((i) => i.lineKey === oldLineKey);
+    const target = this.findLine(oldLineKey);
+    const index = target === undefined ? -1 : this.props.items.indexOf(target);
     if (index === -1) {
       throw new BusinessRuleError("Item not found in cart");
     }
@@ -286,6 +287,18 @@ export class Cart extends AggregateRoot<CartProps> {
 
   get items(): readonly CartItem[] {
     return this.props.items;
+  }
+
+  /**
+   * Plan 2A: finds a line by its key. A caller that only knows the PRODUCT (a client older than
+   * variants, mid-deploy) still reaches its line when that is unambiguous — exactly one line of that
+   * product. With two sizes of one product the product id alone names nothing, so it finds none.
+   */
+  private findLine(lineKey: string): CartItem | undefined {
+    const exact = this.props.items.find((i) => i.lineKey === lineKey);
+    if (exact !== undefined) return exact;
+    const sameProduct = this.props.items.filter((i) => i.productRef.value === lineKey);
+    return sameProduct.length === 1 ? sameProduct[0] : undefined;
   }
 
   private ensureActive(): void {

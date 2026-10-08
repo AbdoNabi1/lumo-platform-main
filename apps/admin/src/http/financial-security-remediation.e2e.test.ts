@@ -8,6 +8,11 @@ import { adminRoutes } from "./admin-routes";
 import { cartRoutes } from "./cart-routes";
 import { checkoutRoutes } from "./checkout-routes";
 import { paymentsRoutes } from "./payments-routes";
+import {
+  controllerDriver,
+  seedSingleVariantProduct,
+  type SeededProduct,
+} from "./testing/seed-catalog";
 
 /**
  * Phase A.1 — Financial Security Audit exploit-proof + regression suite.
@@ -80,33 +85,13 @@ function unwrap<T>(response: Response, action: string): T {
   return response.body as T;
 }
 
-async function seedPublishedPrice(
-  admin: WiredAdmin,
-  productId: string,
-  amountMinor: number,
-  currency = "USD",
-): Promise<void> {
-  const created = await admin.pricing.createPrice(staff, {
-    tenantId: "tenant-local",
-    priceListId: "price-list-1",
-    productId,
+/** One published single-variant Catalog product at `amountMinor` — what the cart prices a line from (Plan 2A). */
+function seedProduct(admin: WiredAdmin, amountMinor: number): Promise<SeededProduct> {
+  return seedSingleVariantProduct(
+    controllerDriver(admin.publicReads.products, "tenant-local"),
+    "P-1",
     amountMinor,
-    currency,
-  });
-  if (created.status < 200 || created.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: create failed (${created.status}): ${JSON.stringify(created.body)}`,
-    );
-  }
-  const published = await admin.pricing.publishPrice(staff, {
-    tenantId: "tenant-local",
-    priceId: (created.body as { id: string }).id,
-  });
-  if (published.status < 200 || published.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,
-    );
-  }
+  );
 }
 
 const ADDRESS = { line1: "1 Main St", city: "Town", postalCode: "12345", country: "US" };
@@ -118,7 +103,7 @@ async function buildRecalculatedCheckout(
   quantity: number,
 ): Promise<{ checkoutSessionId: string }> {
   // Cart's own price-forgery boundary was already closed by Phase 17.2 — `addItem` there resolves
-  // price server-side (`resolvePrice()`) only at the HTTP-route layer, not on the admin-controller
+  // price server-side (`resolveMerchandise()`) only at the HTTP-route layer, not on the admin-controller
   // method directly, so this setup goes through the real `cart-routes.ts` route handlers.
   const cart = cartRoutes(admin);
   const createCart = byPathAndMethod(cart, "POST", "/carts");
@@ -178,8 +163,8 @@ async function buildRecalculatedCheckout(
 describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a real quote", () => {
   it("legitimate flow: the standard-method rate (500) is the one applied to totals", async () => {
     const admin = buildAdmin();
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 1);
 
     const selected = unwrap<{ checkoutSessionId: string }>(
       await admin.checkout.selectShipping(customer, {
@@ -211,8 +196,8 @@ describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a
 
   it("Attack (F-01): a forged rateAmountMinor smuggled past Zod is ignored — the real quoted rate is used instead", async () => {
     const admin = buildAdmin();
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 1);
     const routes = checkoutRoutes(admin);
     const selectShipping = byPathAndMethod(
       routes,
@@ -250,8 +235,8 @@ describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a
 
   it("an unknown/unavailable shipping method is rejected (422), never silently priced at 0", async () => {
     const admin = buildAdmin();
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 1);
 
     const selected = await admin.checkout.selectShipping(customer, {
       tenantId: "tenant-local",
@@ -277,8 +262,8 @@ describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a
 
 describe("Phase A.1 — F-02: order total is always re-derived from Checkout's order draft", () => {
   async function buildOrderDraftReadyCheckout(admin: WiredAdmin) {
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 2);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 2);
     unwrap(
       await admin.checkout.selectShipping(customer, {
         tenantId: "tenant-local",
@@ -396,8 +381,8 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
   async function buildRealOrder(
     admin: WiredAdmin,
   ): Promise<{ orderId: string; realAmountMinor: number }> {
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 1);
     unwrap(
       await admin.checkout.selectShipping(customer, {
         tenantId: "tenant-local",

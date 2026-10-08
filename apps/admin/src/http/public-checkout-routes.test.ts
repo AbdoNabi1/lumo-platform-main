@@ -12,14 +12,20 @@ import { publicCartRoutes } from "./public-cart-routes";
 import { publicLoyaltyRoutes } from "./public-loyalty-routes";
 import { publicWishlistRoutes } from "./public-wishlist-routes";
 import { publicCheckoutRoutes, type PublicCheckoutSessionDto } from "./public-checkout-routes";
+import {
+  controllerDriver,
+  seedSingleVariantProduct,
+  type SeededProduct,
+} from "./testing/seed-catalog";
 
 /**
  * Public Checkout HTTP surface (Phase 2 — Public checkout). Drives the REAL `wireAdmin()`
  * composition (in-memory branch) through the actual `RouteDefinition.handle()` boundary — same
  * technique `public-cart-routes.test.ts` and `cart-checkout-pricing-security.e2e.test.ts` use.
  * `wireAdmin` is used (rather than `wireCheckout`/`wireCart` standalone) because the `items` route
- * re-derives line items from a real Cart, whose price in turn comes from a real, published Price —
- * exercising the same server-side price resolution the guest cart surface already relies on.
+ * re-derives line items from a real Cart, whose price in turn comes from a real, published Catalog
+ * variant (Plan 2A) — exercising the same server-side price resolution the guest cart surface
+ * already relies on.
  *
  * `complete()` for a guest session is a real success path since WP-1 (G-52): the session carries a
  * contact email, `OrderCreationAdapter` resolves a guest customer from it, and an order exists
@@ -41,34 +47,13 @@ function buildAdmin(): WiredAdmin {
   return wireAdmin({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
 }
 
-async function seedPublishedPrice(
-  admin: WiredAdmin,
-  productId: string,
-  amountMinor: number,
-  currency = "USD",
-): Promise<void> {
-  const created = await admin.pricing.createPrice(staff, {
-    tenantId: "tenant-local",
-    priceListId: "price-list-1",
-    productId,
+/** One published single-variant Catalog product — what the cart prices a line from (Plan 2A). */
+function seedProduct(admin: WiredAdmin, amountMinor: number): Promise<SeededProduct> {
+  return seedSingleVariantProduct(
+    controllerDriver(admin.publicReads.products, "tenant-local"),
+    "P-1",
     amountMinor,
-    currency,
-  });
-  if (created.status < 200 || created.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: create failed (${created.status}): ${JSON.stringify(created.body)}`,
-    );
-  }
-  const { id } = created.body as { id: string };
-  const published = await admin.pricing.publishPrice(staff, {
-    tenantId: "tenant-local",
-    priceId: id,
-  });
-  if (published.status < 200 || published.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,
-    );
-  }
+  );
 }
 
 interface Response {
@@ -284,21 +269,22 @@ const address = {
   country: "US",
 };
 
-const seededAdmins = new WeakSet<WiredAdmin>();
+const seededProducts = new WeakMap<WiredAdmin, SeededProduct>();
 
 /**
  * Drives a guest session all the way to "ready to complete" (items, both addresses, shipping,
- * payment, totals) and — when `email` is given — a contact email. Seeds the one published price the
+ * payment, totals) and — when `email` is given — a contact email. Seeds the one published product the
  * cart needs, once per admin.
  */
 async function readyGuestCheckout(rawAdmin: WiredAdmin, sessionRef: string, email?: string) {
-  if (!seededAdmins.has(rawAdmin)) {
-    await seedPublishedPrice(rawAdmin, "product-1", 1999);
-    seededAdmins.add(rawAdmin);
+  let product = seededProducts.get(rawAdmin);
+  if (product === undefined) {
+    product = await seedProduct(rawAdmin, 1999);
+    seededProducts.set(rawAdmin, product);
   }
   const admin = routesFor(rawAdmin);
   const cart = unwrap<{ id: string }>(await admin.createCart(sessionRef), "create cart");
-  await admin.addCartItem(cart.id, sessionRef, "product-1", 1);
+  await admin.addCartItem(cart.id, sessionRef, product.productId, 1);
   const started = unwrap<PublicCheckoutSessionDto>(
     await admin.start({ sessionRef, cartRef: cart.id, currency: "USD" }),
     "start checkout",
@@ -400,12 +386,12 @@ describe("public checkout routes — route inventory", () => {
 describe("public checkout routes — full guest lifecycle", () => {
   it("start → items → addresses → shipping → tax → payment → recalculate → payment-intent-request", async () => {
     const rawAdmin = buildAdmin();
-    await seedPublishedPrice(rawAdmin, "product-1", 1999);
+    const product = await seedProduct(rawAdmin, 1999);
     const admin = routesFor(rawAdmin);
     const sessionRef = "session-guest";
 
     const cart = unwrap<{ id: string }>(await admin.createCart(sessionRef), "create cart");
-    await admin.addCartItem(cart.id, sessionRef, "product-1", 2);
+    await admin.addCartItem(cart.id, sessionRef, product.productId, 2);
 
     const started = unwrap<PublicCheckoutSessionDto>(
       await admin.start({ sessionRef, cartRef: cart.id, currency: "USD" }),
@@ -426,7 +412,7 @@ describe("public checkout routes — full guest lifecycle", () => {
       "load items",
     );
     expect(withItems.items).toEqual([
-      { productId: "product-1", quantity: 2, unitPriceAmountMinor: 1999 },
+      { productId: product.productId, quantity: 2, unitPriceAmountMinor: 1999 },
     ]);
 
     await admin.billingAddress(started.id, { sessionRef, ...address });
@@ -739,13 +725,13 @@ describe("public checkout routes — ownership", () => {
 
   it("a cart owned by another session cannot be loaded into the caller's checkout session", async () => {
     const rawAdmin = buildAdmin();
-    await seedPublishedPrice(rawAdmin, "product-1", 500);
+    const product = await seedProduct(rawAdmin, 500);
     const admin = routesFor(rawAdmin);
     const victimCart = unwrap<{ id: string }>(
       await admin.createCart("session-victim"),
       "victim cart",
     );
-    await admin.addCartItem(victimCart.id, "session-victim", "product-1", 1);
+    await admin.addCartItem(victimCart.id, "session-victim", product.productId, 1);
     const attackerCart = unwrap<{ id: string }>(
       await admin.createCart("session-attacker"),
       "attacker cart",

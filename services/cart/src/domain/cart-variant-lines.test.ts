@@ -109,4 +109,28 @@ describe("cart lines keyed by variant (Plan 2A)", () => {
       ["v-l", 1],
     ]);
   });
+
+  it("a product id alone reaches the line when the product has exactly one line (older clients)", () => {
+    const cart = emptyCart();
+    cart.addItem(UniqueEntityId.from("i1"), ref("p-shirt"), qty(1), egp(10000), {
+      merchandise: shirtS,
+    });
+    cart.changeItemQuantity("p-shirt", qty(3));
+    expect(cart.items[0]?.quantity.value).toBe(3);
+    cart.removeItem("p-shirt");
+    expect(cart.items).toHaveLength(0);
+  });
+
+  it("a product id alone names nothing once the product has two lines", () => {
+    const cart = emptyCart();
+    cart.addItem(UniqueEntityId.from("i1"), ref("p-shirt"), qty(1), egp(10000), {
+      merchandise: shirtS,
+    });
+    cart.addItem(UniqueEntityId.from("i2"), ref("p-shirt"), qty(1), egp(12000), {
+      merchandise: shirtL,
+    });
+    expect(() => cart.removeItem("p-shirt")).toThrow("Item not found in cart");
+    expect(() => cart.changeItemQuantity("p-shirt", qty(2))).toThrow("Item not found in cart");
+    expect(cart.items).toHaveLength(2);
+  });
 });

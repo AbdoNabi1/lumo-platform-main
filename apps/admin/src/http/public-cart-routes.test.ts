@@ -1,25 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { wireCart, type WiredCart } from "@platform/cart";
+import { wireCatalog, type WiredCatalog } from "@platform/catalog";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import { wirePricing, type WiredPricing } from "@platform/pricing";
 import { ValidationError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { publicCartRoutes, type PublicCartDto } from "./public-cart-routes";
+import {
+  controllerDriver,
+  seedCatalogProduct,
+  seedSingleVariantProduct,
+  type SeededProduct,
+} from "./testing/seed-catalog";
 
 /**
  * Public Cart HTTP surface (Phase 17.1 — Guest Cart Foundation; H-01 security remediation).
  * Drives the REAL `wireCart` composition (in-memory branch) through the actual
  * `RouteDefinition.handle()` boundary — same technique the pre-existing Phase 3 test used,
  * extended to cover every guest write route this phase adds plus the ownership matrix Task 10
- * requires. Two independent `wireCart()`/`wirePricing()` instances simulate two tenants (the
+ * requires. Two independent `wireCart()`/`wireCatalog()` instances simulate two tenants (the
  * in-memory branch has no tenant field of its own — see `in-memory-cart-repository.test.ts`'s doc
  * comment — so tenant isolation for the guest-cart flow is exercised here, at the composition
  * boundary, rather than inside the repository).
  *
- * Since H-01, `POST .../items` resolves its price server-side from a REAL `wirePricing()`
- * composition rather than trusting the request body — every test that adds an item now seeds a
- * published `Price` first via {@link seedPublishedPrice}, and assertions compare against that
+ * Since H-01, `POST .../items` resolves its price server-side rather than trusting the request body.
+ * Since Plan 2A that price is the VARIANT's own price in Catalog (one price source), so every test
+ * that adds an item first seeds a real, published Catalog product through
+ * {@link seedSingleVariantProduct} (`./testing/seed-catalog`), and assertions compare against that
  * seeded amount rather than a value the test merely hopes the route echoes back.
  */
 
@@ -31,42 +38,29 @@ function cartFixture(): WiredCart {
   return wireCart({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
 }
 
-function pricingFixture(): WiredPricing {
+function catalogFixture(): WiredCatalog {
   let n = 0;
-  const idGenerator: IdGenerator = { generate: () => `price-id-${(n += 1)}` };
-  return wirePricing({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
+  const idGenerator: IdGenerator = { generate: () => `catalog-id-${(n += 1)}` };
+  return wireCatalog({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
 }
 
-/** Creates and publishes a real `Price` through `wirePricing`'s own use cases (never fabricated repository state) — the only way a product's price becomes `"ok"`-resolvable by the route under test. */
-async function seedPublishedPrice(
-  pricing: WiredPricing,
-  productId: string,
+/** One published single-variant product in `catalog` (tenant-local), priced `amountMinor`. */
+function seed(
+  catalog: WiredCatalog,
+  sku: string,
   amountMinor: number,
   currency = "USD",
-): Promise<void> {
-  const created = await pricing.prices.create({
-    tenantId: "tenant-local",
-    priceListId: "price-list-1",
-    productId,
+): Promise<SeededProduct> {
+  return seedSingleVariantProduct(
+    controllerDriver(catalog.products, "tenant-local"),
+    sku,
     amountMinor,
     currency,
-  });
-  if (created.status < 200 || created.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: create failed (${created.status}): ${JSON.stringify(created.body)}`,
-    );
-  }
-  const { id } = created.body as { id: string };
-  const published = await pricing.prices.publish({ tenantId: "tenant-local", priceId: id });
-  if (published.status < 200 || published.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,
-    );
-  }
+  );
 }
 
-function stubAdmin(cart: WiredCart, pricing: WiredPricing): WiredAdmin {
-  return { publicReads: { cart: cart.cart, prices: pricing.prices } } as unknown as WiredAdmin;
+function stubAdmin(cart: WiredCart, catalog: WiredCatalog): WiredAdmin {
+  return { publicReads: { cart: cart.cart, products: catalog.products } } as unknown as WiredAdmin;
 }
 
 interface Response {
@@ -161,7 +155,7 @@ async function createGuestCart(
 
 describe("public cart routes — route inventory", () => {
   it("exposes exactly the guest-safe surface — no lock/unlock/checkout/expire/abandon/save/restore/merge/replaceVariant/assignCustomer", () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const paths = admin.routes.map((r) => `${r.method} ${r.path}`).sort();
 
     expect(paths).toEqual(
@@ -181,10 +175,10 @@ describe("public cart routes — route inventory", () => {
 
 describe("public cart routes — full guest lifecycle (Task 12 flow)", () => {
   it("create → current → add → current → quantity → current → remove → current → clear", async () => {
-    const pricing = pricingFixture();
-    await seedPublishedPrice(pricing, "product-1", 1500);
-    await seedPublishedPrice(pricing, "product-2", 500);
-    const admin = routesFor(stubAdmin(cartFixture(), pricing));
+    const catalog = catalogFixture();
+    const p1 = await seed(catalog, "P-1", 1500);
+    const p2 = await seed(catalog, "P-2", 500);
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
     const sessionRef = "session-flow";
 
     const created = await createGuestCart(admin, sessionRef);
@@ -198,11 +192,12 @@ describe("public cart routes — full guest lifecycle (Task 12 flow)", () => {
     expect(empty.cart?.id).toBe(created.id);
 
     const added = unwrap<PublicCartDto>(
-      await admin.addItem(created.id, { sessionRef, productId: "product-1", quantity: 2 }),
+      await admin.addItem(created.id, { sessionRef, productId: p1.productId, quantity: 2 }),
       "add item",
     );
     expect(added.items).toHaveLength(1);
     expect(added.items[0]?.unitPriceAmountMinor).toBe(1500);
+    expect(added.items[0]?.variantId).toBe(p1.variantId);
     expect(added.subtotalAmountMinor).toBe(3000);
 
     const afterAdd = unwrap<{ cart: PublicCartDto | null }>(
@@ -212,19 +207,28 @@ describe("public cart routes — full guest lifecycle (Task 12 flow)", () => {
     expect(afterAdd.cart?.items).toHaveLength(1);
 
     const requantified = unwrap<PublicCartDto>(
-      await admin.changeQuantity(created.id, { sessionRef, productId: "product-1", quantity: 5 }),
+      await admin.changeQuantity(created.id, {
+        sessionRef,
+        productId: p1.productId,
+        variantId: p1.variantId,
+        quantity: 5,
+      }),
       "change quantity",
     );
     expect(requantified.items[0]?.quantity).toBe(5);
 
     const removed = unwrap<PublicCartDto>(
-      await admin.removeItem(created.id, { sessionRef, productId: "product-1" }),
+      await admin.removeItem(created.id, {
+        sessionRef,
+        productId: p1.productId,
+        variantId: p1.variantId,
+      }),
       "remove item",
     );
     expect(removed.items).toEqual([]);
 
     const readded = unwrap<PublicCartDto>(
-      await admin.addItem(created.id, { sessionRef, productId: "product-2", quantity: 1 }),
+      await admin.addItem(created.id, { sessionRef, productId: p2.productId, quantity: 1 }),
       "re-add item",
     );
     expect(readded.items).toHaveLength(1);
@@ -241,7 +245,7 @@ describe("public cart routes — full guest lifecycle (Task 12 flow)", () => {
   });
 
   it("current cart is a clean empty state (never a fabricated cart) when the session has never shopped", async () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
 
     const response = unwrap<{ cart: PublicCartDto | null }>(
       await admin.getCurrent("session-never-seen"),
@@ -252,17 +256,21 @@ describe("public cart routes — full guest lifecycle (Task 12 flow)", () => {
   });
 });
 
-describe("public cart routes — server-side price resolution (H-01)", () => {
-  it("resolves the real published price for productId + quantity — never a hardcoded assumption", async () => {
-    const pricing = pricingFixture();
+describe("public cart routes — server-side price resolution (H-01, Plan 2A: the variant's price)", () => {
+  it("resolves the real variant price for productId + quantity — never a hardcoded assumption", async () => {
+    const catalog = catalogFixture();
     const EXPECTED_AMOUNT_MINOR = 4321;
     const EXPECTED_CURRENCY = "USD";
-    await seedPublishedPrice(pricing, "p1", EXPECTED_AMOUNT_MINOR, EXPECTED_CURRENCY);
-    const admin = routesFor(stubAdmin(cartFixture(), pricing));
+    const p1 = await seed(catalog, "P-1", EXPECTED_AMOUNT_MINOR, EXPECTED_CURRENCY);
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
     const cart = await createGuestCart(admin, "session-a");
 
     const added = unwrap<PublicCartDto>(
-      await admin.addItem(cart.id, { sessionRef: "session-a", productId: "p1", quantity: 3 }),
+      await admin.addItem(cart.id, {
+        sessionRef: "session-a",
+        productId: p1.productId,
+        quantity: 3,
+      }),
       "add item",
     );
 
@@ -272,10 +280,10 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
   });
 
   it("a direct HTTP caller supplying unitPriceAmountMinor/currency cannot influence the resulting cart item price", async () => {
-    const pricing = pricingFixture();
+    const catalog = catalogFixture();
     const REAL_AMOUNT_MINOR = 1999;
-    await seedPublishedPrice(pricing, "p1", REAL_AMOUNT_MINOR, "USD");
-    const admin = routesFor(stubAdmin(cartFixture(), pricing));
+    const p1 = await seed(catalog, "P-1", REAL_AMOUNT_MINOR);
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
     const cart = await createGuestCart(admin, "session-a");
 
     // `handle()` is called directly here (bypassing zod, same as every other test in this file —
@@ -284,7 +292,7 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
     const added = unwrap<PublicCartDto>(
       await admin.addItem(cart.id, {
         sessionRef: "session-a",
-        productId: "p1",
+        productId: p1.productId,
         quantity: 1,
         unitPriceAmountMinor: 1,
         currency: "USD",
@@ -299,16 +307,16 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
   it.each([0, 1, 999_999_999])(
     "tampered unitPriceAmountMinor=%i never reaches the cart item",
     async (tamperedAmount) => {
-      const pricing = pricingFixture();
+      const catalog = catalogFixture();
       const REAL_AMOUNT_MINOR = 2500;
-      await seedPublishedPrice(pricing, "p1", REAL_AMOUNT_MINOR, "USD");
-      const admin = routesFor(stubAdmin(cartFixture(), pricing));
+      const p1 = await seed(catalog, "P-1", REAL_AMOUNT_MINOR);
+      const admin = routesFor(stubAdmin(cartFixture(), catalog));
       const cart = await createGuestCart(admin, "session-a");
 
       const added = unwrap<PublicCartDto>(
         await admin.addItem(cart.id, {
           sessionRef: "session-a",
-          productId: "p1",
+          productId: p1.productId,
           quantity: 1,
           unitPriceAmountMinor: tamperedAmount,
           currency: "USD",
@@ -323,15 +331,15 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
   it.each(["EUR", "GBP"])(
     "a tampered currency=%s never overrides the resolved currency",
     async (tamperedCurrency) => {
-      const pricing = pricingFixture();
-      await seedPublishedPrice(pricing, "p1", 1000, "USD");
-      const admin = routesFor(stubAdmin(cartFixture(), pricing));
+      const catalog = catalogFixture();
+      const p1 = await seed(catalog, "P-1", 1000);
+      const admin = routesFor(stubAdmin(cartFixture(), catalog));
       const cart = await createGuestCart(admin, "session-a");
 
       const added = unwrap<PublicCartDto>(
         await admin.addItem(cart.id, {
           sessionRef: "session-a",
-          productId: "p1",
+          productId: p1.productId,
           quantity: 1,
           unitPriceAmountMinor: 1000,
           currency: tamperedCurrency,
@@ -344,7 +352,7 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
   );
 
   it("the addItem schema rejects unitPriceAmountMinor/currency outright (.strict()) rather than silently stripping them", () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const schema = admin.addItemSchema();
 
     const result = schema?.safeParse({
@@ -359,7 +367,7 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
   });
 
   it("the addItem schema still accepts the legitimate shape (productId + quantity, no price fields)", () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const schema = admin.addItemSchema();
 
     const result = schema?.safeParse({
@@ -371,8 +379,8 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
     expect(result?.success).toBe(true);
   });
 
-  it("no published price for the product ⇒ 422, no cart item created", async () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+  it("an unknown product ⇒ 422, no cart item created", async () => {
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const cart = await createGuestCart(admin, "session-a");
 
     const response = await admin.addItem(cart.id, {
@@ -389,52 +397,87 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
     expect(afterAttempt.items).toEqual([]);
   });
 
-  it("a draft (unpublished) price is not resolvable — behaves the same as no price at all", async () => {
-    const pricing = pricingFixture();
-    await pricing.prices.create({
-      tenantId: "tenant-local",
-      priceListId: "price-list-1",
-      productId: "p1",
-      amountMinor: 1000,
-      currency: "USD",
-    }); // created but never published
-    const admin = routesFor(stubAdmin(cartFixture(), pricing));
+  it("an unknown variantId on a real product ⇒ 422, no cart item created", async () => {
+    const catalog = catalogFixture();
+    const p1 = await seed(catalog, "P-1", 1000);
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
     const cart = await createGuestCart(admin, "session-a");
 
     const response = await admin.addItem(cart.id, {
       sessionRef: "session-a",
-      productId: "p1",
+      productId: p1.productId,
+      variantId: "no-such-variant",
+      quantity: 1,
+    });
+
+    expect(response.status).toBe(422);
+    const afterAttempt = unwrap<PublicCartDto>(
+      await admin.getById(cart.id, "session-a"),
+      "read after failed add",
+    );
+    expect(afterAttempt.items).toEqual([]);
+  });
+
+  it("a draft (unpublished) product is not sellable — behaves the same as an unknown product", async () => {
+    const catalog = catalogFixture();
+    const draft = await seedCatalogProduct(controllerDriver(catalog.products, "tenant-local"), {
+      sku: "DRAFT-1",
+      variants: [{ sku: "DRAFT-1-STD", priceAmountMinor: 1000 }],
+      publish: false,
+    });
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
+    const cart = await createGuestCart(admin, "session-a");
+
+    const response = await admin.addItem(cart.id, {
+      sessionRef: "session-a",
+      productId: draft.productId,
       quantity: 1,
     });
 
     expect(response.status).toBe(422);
   });
 
-  it("more than one published price for the same product resolves as ambiguous ⇒ 422, never guessed at", async () => {
-    const pricing = pricingFixture();
-    await seedPublishedPrice(pricing, "p1", 1000, "USD");
-    await seedPublishedPrice(pricing, "p1", 2000, "USD");
-    const admin = routesFor(stubAdmin(cartFixture(), pricing));
+  // Replaces the old "more than one published price for the same product ⇒ ambiguous ⇒ 422" case.
+  // Obsolete since Plan 2A: Pricing is no longer the cart's price source, so two published Price
+  // rows can no longer make a line ambiguous — the only remaining "which price?" question is "which
+  // variant?", which is this case.
+  it("a multi-variant product with no variantId ⇒ 422 VARIANT_REQUIRED, never a guessed variant", async () => {
+    const catalog = catalogFixture();
+    const shirt = await seedCatalogProduct(controllerDriver(catalog.products, "tenant-local"), {
+      sku: "SHIRT",
+      options: [{ name: "Size", values: ["S", "L"] }],
+      variants: [
+        { sku: "SHIRT-S", priceAmountMinor: 1000, selection: { Size: "S" } },
+        { sku: "SHIRT-L", priceAmountMinor: 2000, selection: { Size: "L" } },
+      ],
+    });
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
     const cart = await createGuestCart(admin, "session-a");
 
     const response = await admin.addItem(cart.id, {
       sessionRef: "session-a",
-      productId: "p1",
+      productId: shirt.productId,
       quantity: 1,
     });
 
     expect(response.status).toBe(422);
+    expect((response.body as { code: string }).code).toBe("VARIANT_REQUIRED");
+    const afterAttempt = unwrap<PublicCartDto>(
+      await admin.getById(cart.id, "session-a"),
+      "read after failed add",
+    );
+    expect(afterAttempt.items).toEqual([]);
   });
 
   it("a resolved price whose currency differs from the cart's currency is rejected via the existing currency-mismatch error, not silently coerced", async () => {
-    const pricing = pricingFixture();
-    await seedPublishedPrice(pricing, "p1", 1000, "EUR");
-    const admin = routesFor(stubAdmin(cartFixture(), pricing));
+    const catalog = catalogFixture();
+    const p1 = await seed(catalog, "P-1", 1000, "EUR");
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
     const cart = await createGuestCart(admin, "session-a"); // created with currency "USD"
 
     const response = await admin.addItem(cart.id, {
       sessionRef: "session-a",
-      productId: "p1",
+      productId: p1.productId,
       quantity: 1,
     });
 
@@ -449,20 +492,25 @@ describe("public cart routes — server-side price resolution (H-01)", () => {
 
 describe("public cart routes — ownership (Task 10)", () => {
   it("session A can create, read, and mutate its own cart", async () => {
-    const pricing = pricingFixture();
-    await seedPublishedPrice(pricing, "p1", 100);
-    const admin = routesFor(stubAdmin(cartFixture(), pricing));
+    const catalog = catalogFixture();
+    const p1 = await seed(catalog, "P-1", 100);
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
     const cart = await createGuestCart(admin, "session-a");
 
     expect((await admin.getById(cart.id, "session-a")).status).toBe(200);
     expect(
-      (await admin.addItem(cart.id, { sessionRef: "session-a", productId: "p1", quantity: 1 }))
-        .status,
+      (
+        await admin.addItem(cart.id, {
+          sessionRef: "session-a",
+          productId: p1.productId,
+          quantity: 1,
+        })
+      ).status,
     ).toBe(200);
   });
 
   it("session B cannot read session A's cart — resolves to 404, not 403", async () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const cart = await createGuestCart(admin, "session-a");
 
     const response = await admin.getById(cart.id, "session-b");
@@ -471,11 +519,15 @@ describe("public cart routes — ownership (Task 10)", () => {
   });
 
   it("session B cannot mutate session A's cart (add/quantity/remove/clear all 404)", async () => {
-    const pricing = pricingFixture();
-    await seedPublishedPrice(pricing, "p1", 100);
-    const admin = routesFor(stubAdmin(cartFixture(), pricing));
+    const catalog = catalogFixture();
+    const p1 = await seed(catalog, "P-1", 100);
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
     const cart = await createGuestCart(admin, "session-a");
-    await admin.addItem(cart.id, { sessionRef: "session-a", productId: "p1", quantity: 1 });
+    await admin.addItem(cart.id, {
+      sessionRef: "session-a",
+      productId: p1.productId,
+      quantity: 1,
+    });
 
     const addAttempt = await admin.addItem(cart.id, {
       sessionRef: "session-b",
@@ -484,12 +536,14 @@ describe("public cart routes — ownership (Task 10)", () => {
     });
     const quantityAttempt = await admin.changeQuantity(cart.id, {
       sessionRef: "session-b",
-      productId: "p1",
+      productId: p1.productId,
+      variantId: p1.variantId,
       quantity: 9,
     });
     const removeAttempt = await admin.removeItem(cart.id, {
       sessionRef: "session-b",
-      productId: "p1",
+      productId: p1.productId,
+      variantId: p1.variantId,
     });
     const clearAttempt = await admin.clear(cart.id, { sessionRef: "session-b" });
 
@@ -508,7 +562,7 @@ describe("public cart routes — ownership (Task 10)", () => {
   });
 
   it("a forged/random session cannot mutate a real cart", async () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const cart = await createGuestCart(admin, "session-a");
 
     const response = await admin.addItem(cart.id, {
@@ -539,7 +593,7 @@ describe("public cart routes — ownership (Task 10)", () => {
     // exposure this fix targeted) — what's verified here is still the original defense-in-depth
     // backstop: even if an empty string somehow reached the ownership check, it still can't match
     // any real cart's `sessionRef` and still 404s, never granting access.
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const cart = await createGuestCart(admin, "session-a");
 
     await expect(admin.getById(cart.id, "")).rejects.toThrow(ValidationError);
@@ -553,7 +607,7 @@ describe("public cart routes — ownership (Task 10)", () => {
   });
 
   it("an unknown cart id and a cross-owned cart id return byte-identical 404 envelopes (no existence leak)", async () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const cart = await createGuestCart(admin, "session-a");
 
     const unknown = await admin.getById("no-such-cart", "session-b");
@@ -567,7 +621,7 @@ describe("public cart routes — ownership (Task 10)", () => {
 
 describe("public cart routes — customerRef cannot be spoofed (Task 10)", () => {
   it("a client-supplied customerRef on create is ignored — the cart is still a guest cart", async () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
 
     const created = unwrap<PublicCartDto>(
       await admin.createCart({
@@ -582,7 +636,7 @@ describe("public cart routes — customerRef cannot be spoofed (Task 10)", () =>
   });
 
   it("no mutation route accepts a customerRef field at all (assignCustomer is not exposed)", () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     expect(
       admin.routes.some(
         (r) => r.path.includes("assign") || r.summary.toLowerCase().includes("customer"),
@@ -593,8 +647,8 @@ describe("public cart routes — customerRef cannot be spoofed (Task 10)", () =>
 
 describe("public cart routes — tenant isolation", () => {
   it("a cart created under one tenant's composition is invisible to another tenant's composition, even with the correct sessionRef", async () => {
-    const tenantAAdmin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
-    const tenantBAdmin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const tenantAAdmin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
+    const tenantBAdmin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const cart = await createGuestCart(tenantAAdmin, "session-shared-id");
 
     const crossTenantRead = await tenantBAdmin.getById(cart.id, "session-shared-id");
@@ -603,14 +657,14 @@ describe("public cart routes — tenant isolation", () => {
   });
 
   it("the same sessionRef colliding across two tenants does not bypass isolation", async () => {
-    const tenantAPricing = pricingFixture();
-    await seedPublishedPrice(tenantAPricing, "tenant-a-only-product", 100);
-    const tenantAAdmin = routesFor(stubAdmin(cartFixture(), tenantAPricing));
-    const tenantBAdmin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const tenantACatalog = catalogFixture();
+    const tenantAProduct = await seed(tenantACatalog, "TENANT-A-ONLY", 100);
+    const tenantAAdmin = routesFor(stubAdmin(cartFixture(), tenantACatalog));
+    const tenantBAdmin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const cartA = await createGuestCart(tenantAAdmin, "session-collide");
     await tenantAAdmin.addItem(cartA.id, {
       sessionRef: "session-collide",
-      productId: "tenant-a-only-product",
+      productId: tenantAProduct.productId,
       quantity: 1,
     });
 
@@ -627,14 +681,14 @@ describe("public cart routes — tenant isolation", () => {
 
 describe("public cart routes — DTO boundary (regression, carried from Productization Phase 3)", () => {
   it("projects a cart with items to a flat, primitive-only DTO", async () => {
-    const pricing = pricingFixture();
-    await seedPublishedPrice(pricing, "product-1", 1500);
-    const admin = routesFor(stubAdmin(cartFixture(), pricing));
+    const catalog = catalogFixture();
+    const p1 = await seed(catalog, "P-1", 1500);
+    const admin = routesFor(stubAdmin(cartFixture(), catalog));
     const created = await createGuestCart(admin, "session-1");
 
     const response = await admin.addItem(created.id, {
       sessionRef: "session-1",
-      productId: "product-1",
+      productId: p1.productId,
       quantity: 2,
     });
 
@@ -646,7 +700,11 @@ describe("public cart routes — DTO boundary (regression, carried from Producti
       isGuest: true,
       items: [
         {
-          productId: "product-1",
+          productId: p1.productId,
+          variantId: p1.variantId,
+          sku: "P-1-STD",
+          title: "Product P-1",
+          variantTitle: null,
           quantity: 2,
           unitPriceAmountMinor: 1500,
           currency: "USD",
@@ -659,7 +717,7 @@ describe("public cart routes — DTO boundary (regression, carried from Producti
   });
 
   it("never puts aggregate internals on the wire (props / _id / _domainEvents / _version)", async () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
     const created = await createGuestCart(admin, "session-1");
 
     const serialized = JSON.stringify(await admin.getById(created.id, "session-1"));
@@ -670,7 +728,7 @@ describe("public cart routes — DTO boundary (regression, carried from Producti
   });
 
   it("returns 404 for a cart that doesn't exist — never a fabricated empty cart", async () => {
-    const admin = routesFor(stubAdmin(cartFixture(), pricingFixture()));
+    const admin = routesFor(stubAdmin(cartFixture(), catalogFixture()));
 
     const response = await admin.getById("missing-cart", "any-session");
 

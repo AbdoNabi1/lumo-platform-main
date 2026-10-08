@@ -6,7 +6,7 @@ import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { PageResponse } from "./public-catalog-routes";
 import { resolveCustomerSessionId } from "./public-auth-routes";
-import { priceUnresolvedResponse, resolvePrice } from "./pricing-resolution";
+import { merchandiseUnresolvedResponse, resolveMerchandise } from "./merchandise-resolution";
 
 /**
  * The **customer's own wishlist** surface (T5.17 Part B) — the first feature built on the customer
@@ -268,9 +268,9 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
        *
        * So the route composes the two REAL operations instead, in the safe order — add to the cart
        * first, and only remove from the wishlist once the add has actually succeeded, so a failure
-       * leaves the item where it was rather than losing it. `resolvePrice` re-derives the price
-       * server-side (H-01: no caller ever chooses a cart line's price), reusing the same helper
-       * `public-cart-routes.ts` uses.
+       * leaves the item where it was rather than losing it. `resolveMerchandise` re-derives the
+       * variant's price server-side (H-01: no caller ever chooses a cart line's price), reusing the
+       * same helper `public-cart-routes.ts` uses.
        *
        * Cart ownership is proven by `sessionRef` exactly as every other public cart route proves it,
        * because a customer's cart is still keyed by `sessionRef`: `CartRepository` has no
@@ -291,16 +291,27 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
           return { status: 404, body: toErrorEnvelope(new NotFoundError("Cart not found")) };
         }
 
-        const price = await resolvePrice(admin, body.productRef, context.tenantId);
-        if (price.status !== "ok") return priceUnresolvedResponse();
+        // Plan 2A: a product with several variants answers VARIANT_REQUIRED — the shopper must pick a size.
+        const merchandise = await resolveMerchandise(
+          admin,
+          { productId: body.productRef },
+          context.tenantId,
+        );
+        if (merchandise.status !== "ok") return merchandiseUnresolvedResponse(merchandise);
 
         const added = await admin.publicReads.cart.add({
           tenantId: context.tenantId,
           cartId: cart.id.toString(),
           productId: body.productRef,
           quantity: 1,
-          unitPriceAmountMinor: price.amountMinor,
-          currency: price.currency,
+          unitPriceAmountMinor: merchandise.amountMinor,
+          currency: merchandise.currency,
+          merchandise: {
+            variantRef: merchandise.variantId,
+            sku: merchandise.sku,
+            title: merchandise.title,
+            variantTitle: merchandise.variantTitle,
+          },
         });
         if (added.status < 200 || added.status >= 300) return added;
 
