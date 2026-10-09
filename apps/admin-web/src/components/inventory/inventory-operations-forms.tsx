@@ -4,8 +4,6 @@ import { useActionState, useId } from "react";
 import { Button, Input, Label } from "@platform/ui";
 import {
   commitReservationAction,
-  deactivateWarehouseAction,
-  registerWarehouseAction,
   releaseReservationAction,
   reserveStockAction,
   transferStockAction,
@@ -39,81 +37,6 @@ function FormSuccess({ state, t }: { readonly state: FormState; readonly t: Dict
     <p role="status" className="text-muted-foreground text-xs">
       {t.productWriteCommon.saved}
     </p>
-  );
-}
-
-export function RegisterWarehouseForm({ t }: { readonly t: Dictionary }) {
-  const [state, formAction, isPending] = useActionState(registerWarehouseAction, INITIAL_STATE);
-  const formId = useId();
-  const fieldErrors = state.status === "error" ? state.fieldErrors : {};
-
-  return (
-    <form action={formAction} className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="flex flex-col gap-1">
-          <Label htmlFor={`${formId}-code`} className="text-xs">
-            {t.inventoryPage.warehouseCodeLabel}
-          </Label>
-          <Input
-            id={`${formId}-code`}
-            name="code"
-            className="h-9 w-40 text-sm"
-            aria-invalid={fieldErrors["code"] !== undefined || undefined}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor={`${formId}-name`} className="text-xs">
-            {t.inventoryPage.warehouseNameLabel}
-          </Label>
-          <Input
-            id={`${formId}-name`}
-            name="name"
-            className="h-9 w-56 text-sm"
-            aria-invalid={fieldErrors["name"] !== undefined || undefined}
-          />
-        </div>
-        <Button type="submit" size="sm" loading={isPending} disabled={isPending}>
-          {isPending ? t.inventoryPage.registering : t.inventoryPage.register}
-        </Button>
-      </div>
-      <FormError state={state} />
-      <FormSuccess state={state} t={t} />
-    </form>
-  );
-}
-
-export function DeactivateWarehouseForm({ t }: { readonly t: Dictionary }) {
-  const [state, formAction, isPending] = useActionState(deactivateWarehouseAction, INITIAL_STATE);
-  const formId = useId();
-  const fieldErrors = state.status === "error" ? state.fieldErrors : {};
-
-  return (
-    <form action={formAction} className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="flex flex-col gap-1">
-          <Label htmlFor={`${formId}-warehouseId`} className="text-xs">
-            {t.inventoryPage.warehouseIdLabel}
-          </Label>
-          <Input
-            id={`${formId}-warehouseId`}
-            name="warehouseId"
-            className="h-9 w-56 text-sm"
-            aria-invalid={fieldErrors["warehouseId"] !== undefined || undefined}
-          />
-        </div>
-        <Button
-          type="submit"
-          size="sm"
-          variant="destructive"
-          loading={isPending}
-          disabled={isPending}
-        >
-          {isPending ? t.inventoryPage.deactivating : t.inventoryPage.deactivate}
-        </Button>
-      </div>
-      <FormError state={state} />
-      <FormSuccess state={state} t={t} />
-    </form>
   );
 }
 

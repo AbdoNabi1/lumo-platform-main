@@ -14,9 +14,10 @@ import {
   transferStock,
 } from "@/lib/api/inventory";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { handleFromTitle, randomToken } from "@/lib/products/handles";
 
 /**
- * T5.5's 8 Inventory/Warehouse write actions. Kept in this route's own `app/inventory/actions.ts`
+ * T5.5's Inventory/Warehouse write actions (the location ones are by name since Plan 2B-3). Kept in this route's own `app/inventory/actions.ts`
  * (not `app/products/actions.ts`), even though `receiveStockAction`/`adjustStockAction` render
  * inside `ProductInventoryCard` on the Product Detail page — per the task brief, Server Actions
  * don't need to live under the route that renders them, and this keeps `products/actions.ts` from
@@ -232,29 +233,39 @@ export async function transferStockAction(
   return toFormState(result, t);
 }
 
-export async function registerWarehouseAction(
+/**
+ * Plan 2B-3 — adds a stock location by name. The code the API still requires is derived from the
+ * name (`handleFromTitle`, upper-cased), or `LOC-XXXX` for a name with no Latin letters; if that
+ * code is already taken, one more attempt appends a short random suffix.
+ */
+export async function addLocationAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
   const t = await formErrorDictionary();
-  const code = stringField(formData, "code");
-  const name = stringField(formData, "name");
+  const name = stringField(formData, "name").trim();
 
-  if (code.length === 0 || name.length === 0) {
-    const fieldErrors: Record<string, string> = {};
-    if (code.length === 0) fieldErrors["code"] = t.invalid;
-    if (name.length === 0) fieldErrors["name"] = t.invalid;
-    return { status: "error", message: t.invalid, fieldErrors };
+  if (name.length === 0) {
+    return { status: "error", message: t.invalid, fieldErrors: { name: t.invalid } };
   }
 
-  const result = await registerWarehouse({ code, name }, newIdempotencyKey());
+  const derived = handleFromTitle(name).toUpperCase();
+  const code = derived.length > 0 ? derived : `LOC-${randomToken(4).toUpperCase()}`;
+  let result = await registerWarehouse({ code, name }, newIdempotencyKey());
+  if (result.outcome === "conflict") {
+    result = await registerWarehouse(
+      { code: `${code}-${randomToken(4).toUpperCase()}`, name },
+      newIdempotencyKey(),
+    );
+  }
   if (result.outcome === "ok") {
+    revalidatePath("/inventory");
     return { status: "success" };
   }
   return toFormState(result, t);
 }
 
-export async function deactivateWarehouseAction(
+export async function deactivateLocationAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
@@ -267,6 +278,7 @@ export async function deactivateWarehouseAction(
 
   const result = await deactivateWarehouse(warehouseId, newIdempotencyKey());
   if (result.outcome === "ok") {
+    revalidatePath("/inventory");
     return { status: "success" };
   }
   return toFormState(result, t);
