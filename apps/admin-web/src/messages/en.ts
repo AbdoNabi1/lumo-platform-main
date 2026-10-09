@@ -664,6 +664,8 @@ export const en = {
     deleteOption: "Delete option",
     mergesIntoOption: "Will be added to the existing {name} option",
     addValue: "Add a value to {name}",
+    addValueShort: "Add value",
+    newOptionHint: "Another size or color? Add it to the existing option with “Add value” instead.",
     newVariant: "New",
     variant: "Variant",
     available: "Available",

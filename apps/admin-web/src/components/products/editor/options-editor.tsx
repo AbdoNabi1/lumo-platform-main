@@ -162,6 +162,11 @@ export function OptionsEditor({
                 value={row.name}
                 onChange={(event) => update(row.key, { name: event.target.value })}
               />
+              {row.name.trim().length === 0 &&
+                filledValues(row).length === 0 &&
+                rows.some((other) => other.key !== row.key && filledValues(other).length > 0) && (
+                  <p className="text-muted-foreground text-xs">{editor.newOptionHint}</p>
+                )}
               {sameNameAs(rows, row) !== undefined && (
                 <p className="text-muted-foreground text-xs">
                   {editor.mergesIntoOption.replace("{name}", sameNameAs(rows, row)!.name.trim())}
@@ -257,6 +262,7 @@ export function OptionsEditor({
                 }}
               >
                 <PlusIcon aria-hidden="true" />
+                <span aria-hidden="true">{editor.addValueShort}</span>
               </Button>
               <Button
                 type="button"

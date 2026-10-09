@@ -152,4 +152,15 @@ describe("OptionsEditor", () => {
     expect(screen.getByLabelText(t.optionName)).toHaveValue("Size");
     expect(valueInputs().at(-1)).toHaveFocus();
   });
+
+  it("tells the merchant to add a value, not a new option, for another size", () => {
+    setup([{ name: "Size", values: ["29"] }]);
+
+    expect(
+      screen.getByRole("button", { name: t.addValue.replace("{name}", "Size") }),
+    ).toHaveTextContent(t.addValueShort);
+    fireEvent.click(screen.getByRole("button", { name: t.addAnotherOption }));
+
+    expect(screen.getByText(t.newOptionHint)).toBeInTheDocument();
+  });
 });

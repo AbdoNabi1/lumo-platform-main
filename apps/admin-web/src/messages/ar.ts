@@ -611,6 +611,8 @@ export const ar: Dictionary = {
     deleteOption: "احذف الخيار",
     mergesIntoOption: "هيتضاف للخيار {name} الموجود",
     addValue: "أضف قيمة لـ {name}",
+    addValueShort: "أضف قيمة",
+    newOptionHint: "مقاس أو لون زيادة؟ ضيفه للخيار الموجود من زرار «أضف قيمة» بدل خيار جديد.",
     newVariant: "جديد",
     variant: "المتغيّر",
     available: "المتاح",
