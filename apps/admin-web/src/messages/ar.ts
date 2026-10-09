@@ -609,6 +609,8 @@ export const ar: Dictionary = {
     done: "تم",
     edit: "تعديل",
     deleteOption: "احذف الخيار",
+    mergesIntoOption: "هيتضاف للخيار {name} الموجود",
+    addValue: "أضف قيمة لـ {name}",
     newVariant: "جديد",
     variant: "المتغيّر",
     available: "المتاح",

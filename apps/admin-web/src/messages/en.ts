@@ -662,6 +662,8 @@ export const en = {
     done: "Done",
     edit: "Edit",
     deleteOption: "Delete option",
+    mergesIntoOption: "Will be added to the existing {name} option",
+    addValue: "Add a value to {name}",
     newVariant: "New",
     variant: "Variant",
     available: "Available",

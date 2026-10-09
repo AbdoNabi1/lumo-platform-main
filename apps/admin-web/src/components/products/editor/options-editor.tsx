@@ -30,6 +30,13 @@ function filledValues(row: OptionRow): string[] {
   return row.values.map((value) => value.text.trim()).filter((text) => text.length > 0);
 }
 
+/** Another option with the same name (case and spaces ignored) — the one this row merges into. */
+function sameNameAs(rows: readonly OptionRow[], row: OptionRow): OptionRow | undefined {
+  const name = row.name.trim().toLowerCase();
+  if (name.length === 0) return undefined;
+  return rows.find((other) => other.key !== row.key && other.name.trim().toLowerCase() === name);
+}
+
 function optionsOf(rows: readonly OptionRow[]): MatrixOption[] {
   return rows
     .map((row) => ({ name: row.name.trim(), values: filledValues(row) }))
@@ -58,6 +65,7 @@ export function OptionsEditor({
     return counter.current;
   };
   const listId = useId();
+  const [focusRow, setFocusRow] = useState<number | null>(null);
 
   const [rows, setRows] = useState<readonly OptionRow[]>(() =>
     initial.map((option) => ({
@@ -99,6 +107,33 @@ export function OptionsEditor({
     });
   }
 
+  /**
+   * Done. A second option named like an existing one ("Size" twice) would be refused as a duplicate,
+   * so its values join the existing option instead — what the merchant meant.
+   */
+  function finish(row: OptionRow): void {
+    setRows((current) => {
+      const target = sameNameAs(current, row);
+      if (target === undefined) {
+        return current.map((r) => (r.key === row.key ? { ...r, editing: false } : r));
+      }
+      const merged = [...new Set([...filledValues(target), ...filledValues(row)])];
+      return current
+        .filter((r) => r.key !== row.key)
+        .map((r) =>
+          r.key === target.key
+            ? {
+                ...r,
+                values: withTrailingBlank(
+                  merged.map((text) => ({ key: nextKey(), text })),
+                  nextKey,
+                ),
+              }
+            : r,
+        );
+    });
+  }
+
   function addOption(): void {
     setRows((current) => [
       ...current,
@@ -127,6 +162,11 @@ export function OptionsEditor({
                 value={row.name}
                 onChange={(event) => update(row.key, { name: event.target.value })}
               />
+              {sameNameAs(rows, row) !== undefined && (
+                <p className="text-muted-foreground text-xs">
+                  {editor.mergesIntoOption.replace("{name}", sameNameAs(rows, row)!.name.trim())}
+                </p>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -139,6 +179,16 @@ export function OptionsEditor({
                       name={`optionValue-${index}`}
                       form={PRODUCT_FORM_ID}
                       value={value.text}
+                      ref={
+                        isTrailing && focusRow === row.key
+                          ? (element: HTMLInputElement | null) => {
+                              // "Add value" opened this option: put the cursor in its empty field, once.
+                              if (element === null) return;
+                              element.focus();
+                              setFocusRow(null);
+                            }
+                          : undefined
+                      }
                       onChange={(event) => setValue(row, value.key, event.target.value)}
                       onKeyDown={(event) => {
                         // Enter would submit the whole page; here it should only finish the value.
@@ -174,7 +224,7 @@ export function OptionsEditor({
                 type="button"
                 size="sm"
                 disabled={row.name.trim().length === 0 || filledValues(row).length === 0}
-                onClick={() => update(row.key, { editing: false })}
+                onClick={() => finish(row)}
               >
                 {editor.done}
               </Button>
@@ -195,14 +245,28 @@ export function OptionsEditor({
                 ))}
               </div>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => update(row.key, { editing: true })}
-            >
-              {editor.edit}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-label={editor.addValue.replace("{name}", row.name)}
+                onClick={() => {
+                  setFocusRow(row.key);
+                  update(row.key, { editing: true });
+                }}
+              >
+                <PlusIcon aria-hidden="true" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => update(row.key, { editing: true })}
+              >
+                {editor.edit}
+              </Button>
+            </div>
             {/* Folded, not forgotten: the option still travels with the page's Save. */}
             <input
               type="hidden"

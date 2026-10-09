@@ -128,4 +128,28 @@ describe("OptionsEditor", () => {
 
     expect(notPrevented).toBe(false);
   });
+
+  it("merges a second option with an existing name into the first on Done", () => {
+    const { onChange, container } = setup([{ name: "Size", values: ["29"] }]);
+    fireEvent.click(screen.getByRole("button", { name: t.addAnotherOption }));
+    fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: " size " } });
+    fireEvent.change(valueInputs()[0]!, { target: { value: "22" } });
+
+    expect(screen.getByText(t.mergesIntoOption.replace("{name}", "Size"))).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: t.done }));
+
+    expect(onChange).toHaveBeenLastCalledWith([{ name: "Size", values: ["29", "22"] }]);
+    const names = container.querySelectorAll('input[name^="optionName-"]');
+    expect(names).toHaveLength(1);
+  });
+
+  it("offers an add-value button on a folded option", () => {
+    setup([{ name: "Size", values: ["S"] }]);
+
+    fireEvent.click(screen.getByRole("button", { name: t.addValue.replace("{name}", "Size") }));
+
+    expect(screen.getByLabelText(t.optionName)).toHaveValue("Size");
+    expect(valueInputs().at(-1)).toHaveFocus();
+  });
 });
