@@ -65,10 +65,10 @@ const multi: ProductDetailDto = {
 };
 
 const stock: StockView = {
-  location: { id: "w1", name: "Shop" },
-  multipleLocations: false,
+  locations: [{ id: "w1", name: "Shop" }],
+  defaultLocationId: "w1",
   readOnlyReason: null,
-  byVariant: { v1: { onHand: 5, reserved: 0, available: 5 } },
+  byLocation: { w1: { v1: { onHand: 5, reserved: 0, available: 5 } } },
 };
 
 const base = {
@@ -115,7 +115,7 @@ describe("ProductEditor", () => {
     // The options section and the inventory card join the same Save.
     expect(formData.get("optionsPresent")).toBe("1");
     expect(formData.get("tracksInventory")).toBe("on");
-    expect(formData.get("available")).toBe("5");
+    expect(formData.get("available-w1")).toBe("5");
   });
 
   it("shows the variants table instead of the single-variant cards when the product has options", () => {
@@ -132,7 +132,7 @@ describe("ProductEditor", () => {
     render(<ProductEditor mode="edit" product={single} {...base} />);
 
     expect(screen.getByRole("switch", { name: t.inventoryTracked })).toBeInTheDocument();
-    expect(screen.getByLabelText(t.quantity)).toHaveValue(5);
+    expect(screen.getByLabelText(`${t.quantity}: Shop`)).toHaveValue(5);
     expect(screen.getAllByText(t.inventoryCard)).toHaveLength(1);
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
@@ -252,7 +252,7 @@ describe("ProductEditor", () => {
         mode="create"
         product={null}
         {...base}
-        stock={{ location: null, multipleLocations: false, readOnlyReason: null, byVariant: {} }}
+        stock={{ locations: [], defaultLocationId: null, readOnlyReason: null, byLocation: {} }}
       />,
     );
     expect(screen.getByText(t.shopLocation)).toBeInTheDocument();

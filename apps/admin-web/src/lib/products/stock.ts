@@ -50,15 +50,16 @@ export function stockByVariant(
   return result;
 }
 
-/** What the product page shows and lets the merchant edit about stock (Plan 2B-2). */
+/** What the product page shows and lets the merchant edit about stock (Plan 2B-2, per location since 2B-3). */
 export interface StockView {
-  /** The one location quantities belong to; `null` until the first save registers it. */
-  readonly location: { readonly id: string; readonly name: string } | null;
-  /** More than one location: quantities are read-only here (checkout supports one today). */
-  readonly multipleLocations: boolean;
+  /** The active locations quantities can go to, in the order the API lists them. Empty until the first save registers one. */
+  readonly locations: readonly { readonly id: string; readonly name: string }[];
+  /** The location the variants table starts on: the one holding the most of this product, else the first. */
+  readonly defaultLocationId: string | null;
   /** The stock read failed: show the quantities read-only, never as zeros that Save would write. */
   readonly readOnlyReason: "unavailable" | null;
-  readonly byVariant: Readonly<Record<string, StockLevelDto>>;
+  /** Location id → variant id → that variant's quantities there. */
+  readonly byLocation: Readonly<Record<string, Readonly<Record<string, StockLevelDto>>>>;
 }
 
 interface LocationLike {
@@ -73,9 +74,9 @@ export function activeLocations<T extends LocationLike>(warehouses: readonly T[]
 }
 
 /**
- * The product page's stock view from the tenant's warehouses and this product's stock rows:
- * one location → its quantities; none → nothing yet (the first save registers one); several →
- * the first, for display only, with quantities read-only (checkout supports one location today).
+ * The product page's stock view from the tenant's warehouses and this product's stock rows: every
+ * active location with its own quantities (the legacy-row rule applies per location). The default
+ * location is the one holding the most of this product, else the first.
  */
 export function buildStockView(
   warehouses: readonly LocationLike[],
@@ -86,25 +87,30 @@ export function buildStockView(
   variants: readonly { readonly id: string }[],
 ): StockView {
   const locations = activeLocations(warehouses);
-  const [first] = locations;
-  if (first === undefined) {
-    return { location: null, multipleLocations: false, readOnlyReason: null, byVariant: {} };
+  const byLocation: Record<string, Readonly<Record<string, StockLevelDto>>> = {};
+  let defaultLocationId: string | null = null;
+  let best = -1;
+  for (const location of locations) {
+    const own = rows.filter((row) => row.warehouseId === location.id);
+    byLocation[location.id] = stockByVariant(own, variants);
+    const total = own.reduce((sum, row) => sum + row.available, 0);
+    if (total > best) {
+      best = total;
+      defaultLocationId = location.id;
+    }
   }
   return {
-    location: { id: first.id, name: first.name },
-    multipleLocations: locations.length > 1,
+    locations: locations.map((location) => ({ id: location.id, name: location.name })),
+    defaultLocationId,
     readOnlyReason: null,
-    byVariant: stockByVariant(
-      rows.filter((row) => row.warehouseId === first.id),
-      variants,
-    ),
+    byLocation,
   };
 }
 
 /** The view when the stock could not be read: read-only, never zeros that Save would write. */
 export const UNAVAILABLE_STOCK: StockView = {
-  location: null,
-  multipleLocations: false,
+  locations: [],
+  defaultLocationId: null,
   readOnlyReason: "unavailable",
-  byVariant: {},
+  byLocation: {},
 };

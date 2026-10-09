@@ -123,7 +123,7 @@ export function InventoryBody({
 
 /**
  * Plan 2B-2 / 2C-4 — the single-variant Inventory card, as in Shopify: the "Inventory tracked"
- * switch in the header, a quantity table next to the location's name, and chips for SKU, barcode
+ * switch in the header, a quantity table with one row per location, and chips for SKU, barcode
  * and "sell when out of stock". Stock quantities are edited as AVAILABLE; the page's Save turns
  * that into a receive or an adjust.
  */
@@ -134,7 +134,7 @@ export function InventoryCard({
   errors,
   mode,
 }: {
-  /** `undefined` while creating: there is no variant, no stock and no location yet. */
+  /** `undefined` while creating: there is no variant and no stock yet. */
   readonly variant: ProductVariantDto | undefined;
   readonly stock: StockView;
   readonly t: Dictionary;
@@ -143,14 +143,26 @@ export function InventoryCard({
 }) {
   const editor = t.productEditor;
   const headingId = useId();
-  const level = variant === undefined ? undefined : stock.byVariant[variant.id];
+  // One row per active location (Plan 2B-3); a shop with none yet shows the one row the first save
+  // will register, posted as the lone `available`.
+  const rows: readonly { readonly id: string | null; readonly name: string }[] =
+    stock.locations.length > 0 ? stock.locations : [{ id: null, name: editor.shopLocation }];
+  const levelAt = (locationId: string | null) =>
+    variant === undefined || locationId === null
+      ? undefined
+      : stock.byLocation[locationId]?.[variant.id];
   // Controlled, so a failed Save does not reset what was typed (React 19 resets uncontrolled
-  // inputs when a form action finishes).
+  // inputs when a form action finishes). Keyed by location so each keeps its own number.
   const [tracked, setTracked] = useState(variant?.tracksInventory ?? true);
-  const [quantity, setQuantity] = useState(level === undefined ? "" : String(level.available));
-  const readOnly = stock.multipleLocations || stock.readOnlyReason !== null;
-  const locationName = stock.location?.name ?? editor.shopLocation;
-  const availableError = errors["available"];
+  const [quantities, setQuantities] = useState<Readonly<Record<string, string>>>(() =>
+    Object.fromEntries(
+      rows.map((row) => {
+        const level = levelAt(row.id);
+        return [row.id ?? "", level === undefined ? "" : String(level.available)];
+      }),
+    ),
+  );
+  const readOnly = stock.readOnlyReason !== null;
 
   const quantityTable = (
     <>
@@ -161,39 +173,48 @@ export function InventoryCard({
             {editor.quantity}
           </span>
         </div>
-        <div className="grid grid-cols-[1fr_10rem] items-center gap-3 px-3 py-2">
-          <span className="text-sm font-medium">{locationName}</span>
-          {readOnly ? (
-            <span className="text-sm sm:text-end">
-              {stock.readOnlyReason === null ? (level?.available ?? 0) : "—"}
-            </span>
-          ) : (
-            <div className="flex flex-col gap-1">
-              <Input
-                name="available"
-                form={PRODUCT_FORM_ID}
-                type="number"
-                min={0}
-                step={1}
-                inputMode="numeric"
-                aria-labelledby={headingId}
-                aria-invalid={availableError !== undefined ? true : undefined}
-                aria-describedby={availableError !== undefined ? `${headingId}-error` : undefined}
-                value={quantity}
-                onChange={(event) => setQuantity(event.target.value)}
-              />
-              {availableError !== undefined && (
-                <p id={`${headingId}-error`} className="text-destructive text-xs">
-                  {availableError}
-                </p>
+        {rows.map((row) => {
+          const fieldName = row.id === null ? "available" : `available-${row.id}`;
+          const error = errors[fieldName];
+          const errorId = `${headingId}-${row.id ?? "shop"}-error`;
+          return (
+            <div
+              key={row.id ?? "shop"}
+              className="grid grid-cols-[1fr_10rem] items-center gap-3 px-3 py-2"
+            >
+              <span className="text-sm font-medium">{row.name}</span>
+              {readOnly ? (
+                <span className="text-sm sm:text-end">—</span>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <Input
+                    name={fieldName}
+                    form={PRODUCT_FORM_ID}
+                    type="number"
+                    min={0}
+                    step={1}
+                    inputMode="numeric"
+                    aria-label={row.id !== null ? `${editor.quantity}: ${row.name}` : undefined}
+                    aria-labelledby={row.id === null ? headingId : undefined}
+                    aria-invalid={error !== undefined ? true : undefined}
+                    aria-describedby={error !== undefined ? errorId : undefined}
+                    value={quantities[row.id ?? ""] ?? ""}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setQuantities((current) => ({ ...current, [row.id ?? ""]: next }));
+                    }}
+                  />
+                  {error !== undefined && (
+                    <p id={errorId} className="text-destructive text-xs">
+                      {error}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </div>
+          );
+        })}
       </div>
-      {stock.multipleLocations && (
-        <p className="text-muted-foreground text-xs">{editor.multipleLocations}</p>
-      )}
       {stock.readOnlyReason !== null && (
         <p role="note" className="text-muted-foreground text-xs">
           {editor.stockUnavailable}

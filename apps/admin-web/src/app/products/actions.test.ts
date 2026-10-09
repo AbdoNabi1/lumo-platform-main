@@ -440,6 +440,44 @@ describe("createProductAction", () => {
       );
     });
 
+    describe("with several locations (Plan 2B-3)", () => {
+      beforeEach(() => {
+        inventory.fetchWarehouses.mockResolvedValue({
+          outcome: "ok",
+          items: [shop, { ...shop, id: "w2", code: "B", name: "Warehouse" }],
+        });
+      });
+
+      it("sets opening quantities per location when creating a product", async () => {
+        api.fetchProduct.mockResolvedValue({
+          outcome: "ok",
+          product: product({ id: "new-1", variants: [variant({ id: "v-first" })] }),
+        });
+        await redirectOf(
+          createProductAction(idle, createForm({ "available-w1": "3", "available-w2": "7" })),
+        );
+
+        expect(inventory.receiveStock).toHaveBeenCalledWith(
+          { productId: "new-1", variantId: "v-first", warehouseId: "w1", quantity: 3 },
+          expect.any(String),
+        );
+        expect(inventory.receiveStock).toHaveBeenCalledWith(
+          { productId: "new-1", variantId: "v-first", warehouseId: "w2", quantity: 7 },
+          expect.any(String),
+        );
+      });
+
+      it("creates nothing when an opening quantity names an unknown location", async () => {
+        const state = await createProductAction(idle, createForm({ "available-w9": "3" }));
+
+        expect(state.status).toBe("error");
+        if (state.status === "error") {
+          expect(state.fieldErrors["available-w9"]).toBeDefined();
+        }
+        expect(api.createProduct).not.toHaveBeenCalled();
+      });
+    });
+
     it("registers the shop location first when there is none", async () => {
       inventory.fetchWarehouses.mockResolvedValue({ outcome: "ok", items: [] });
       inventory.registerWarehouse.mockResolvedValue({
@@ -733,27 +771,183 @@ describe("saveProductAction — options, variant prices and stock (Plan 2B-2)", 
     expect(inventory.registerWarehouse).not.toHaveBeenCalled();
   });
 
-  it("never writes stock when the shop has several locations", async () => {
-    use(multi());
-    inventory.fetchWarehouses.mockResolvedValue({
-      outcome: "ok",
-      items: [shop, { ...shop, id: "w2", code: "B" }],
-    });
-    const state = await saveProductAction(
-      idle,
-      optionsForm(multi(), sizeOption, [
-        { key: "Size=S", price: "150", available: "5" },
-        { key: "Size=M", price: "175", available: "6" },
-      ]),
-    );
-    expect(state).toEqual({ status: "success" });
-    for (const write of [
+  describe("several locations (Plan 2B-3)", () => {
+    const w2 = { ...shop, id: "w2", code: "B", name: "Warehouse" };
+    const writes = () => [
       inventory.receiveStock,
       inventory.adjustStock,
       inventory.registerWarehouse,
-    ]) {
-      expect(write).not.toHaveBeenCalled();
-    }
+    ];
+    beforeEach(() => {
+      inventory.fetchWarehouses.mockResolvedValue({ outcome: "ok", items: [shop, w2] });
+    });
+
+    it("writes the table's quantities at the location named in stockLocationId", async () => {
+      use(multi());
+      api.fetchProductInventory.mockResolvedValue({
+        outcome: "ok",
+        rows: [
+          { warehouseId: "w1", variantId: "v1", onHand: 9, reserved: 0, available: 9 },
+          { warehouseId: "w2", variantId: "v1", onHand: 2, reserved: 0, available: 2 },
+        ],
+      });
+      const state = await saveProductAction(
+        idle,
+        optionsForm(
+          multi(),
+          sizeOption,
+          [
+            { key: "Size=S", price: "150", available: "4" },
+            { key: "Size=M", price: "175", available: "6" },
+          ],
+          { stockLocationId: "w2" },
+        ),
+      );
+
+      expect(state).toEqual({ status: "success" });
+      expect(inventory.adjustStock).toHaveBeenCalledWith(
+        { productId: "p1", variantId: "v1", warehouseId: "w2", onHand: 4 },
+        expect.any(String),
+      );
+      expect(inventory.receiveStock).toHaveBeenCalledWith(
+        { productId: "p1", variantId: "v2", warehouseId: "w2", quantity: 6 },
+        expect.any(String),
+      );
+      expect(inventory.registerWarehouse).not.toHaveBeenCalled();
+    });
+
+    it("refuses an unknown stockLocationId before any write", async () => {
+      use(multi());
+      const state = await saveProductAction(
+        idle,
+        optionsForm(
+          multi(),
+          sizeOption,
+          [
+            { key: "Size=S", price: "999", available: "4" },
+            { key: "Size=M", price: "175" },
+          ],
+          { stockLocationId: "w-other-tenant", title: "Renamed" },
+        ),
+      );
+
+      expect(state.status).toBe("error");
+      if (state.status === "error") {
+        expect(state.fieldErrors["stockLocationId"]).toBeDefined();
+      }
+      for (const write of writes()) expect(write).not.toHaveBeenCalled();
+      expect(api.updateProduct).not.toHaveBeenCalled();
+      expect(api.updateProductVariant).not.toHaveBeenCalled();
+    });
+
+    it("refuses a deactivated stockLocationId before any write", async () => {
+      use(multi());
+      inventory.fetchWarehouses.mockResolvedValue({
+        outcome: "ok",
+        items: [shop, { ...w2, status: "inactive" }],
+      });
+      const state = await saveProductAction(
+        idle,
+        optionsForm(
+          multi(),
+          sizeOption,
+          [
+            { key: "Size=S", price: "150", available: "4" },
+            { key: "Size=M", price: "175" },
+          ],
+          { stockLocationId: "w2" },
+        ),
+      );
+
+      expect(state.status).toBe("error");
+      if (state.status === "error") {
+        expect(state.fieldErrors["stockLocationId"]).toBeDefined();
+      }
+      for (const write of writes()) expect(write).not.toHaveBeenCalled();
+    });
+
+    it("refuses a quantity that names no location when there are several, instead of guessing", async () => {
+      use(multi());
+      const state = await saveProductAction(
+        idle,
+        optionsForm(multi(), sizeOption, [
+          { key: "Size=S", price: "150", available: "4" },
+          { key: "Size=M", price: "175" },
+        ]),
+      );
+
+      expect(state.status).toBe("error");
+      if (state.status === "error") {
+        expect(state.fieldErrors["stockLocationId"]).toBeDefined();
+      }
+      for (const write of writes()) expect(write).not.toHaveBeenCalled();
+    });
+
+    it("writes a single variant's quantity at each location it names, one change per location", async () => {
+      use(product());
+      api.fetchProductInventory.mockResolvedValue({
+        outcome: "ok",
+        rows: [{ warehouseId: "w2", variantId: "v1", onHand: 1, reserved: 0, available: 1 }],
+      });
+      const state = await saveProductAction(
+        idle,
+        formFor(product(), { "available-w1": "2", "available-w2": "5" }),
+      );
+
+      expect(state).toEqual({ status: "success" });
+      expect(inventory.receiveStock).toHaveBeenCalledWith(
+        { productId: "p1", variantId: "v1", warehouseId: "w1", quantity: 2 },
+        expect.any(String),
+      );
+      expect(inventory.adjustStock).toHaveBeenCalledWith(
+        { productId: "p1", variantId: "v1", warehouseId: "w2", onHand: 5 },
+        expect.any(String),
+      );
+    });
+
+    it("refuses a single-variant quantity for a location that is not this shop's, before any write", async () => {
+      use(product());
+      const state = await saveProductAction(
+        idle,
+        formFor(product(), { "available-w1": "2", "available-w9": "5", title: "Renamed" }),
+      );
+
+      expect(state.status).toBe("error");
+      if (state.status === "error") {
+        expect(state.fieldErrors["available-w9"]).toBeDefined();
+        expect(state.fieldErrors["available-w1"]).toBeUndefined();
+      }
+      for (const write of writes()) expect(write).not.toHaveBeenCalled();
+      expect(api.updateProduct).not.toHaveBeenCalled();
+    });
+
+    it("reports a malformed per-location quantity on that field, before any call", async () => {
+      use(product());
+      const state = await saveProductAction(
+        idle,
+        formFor(product(), { "available-w1": "2", "available-w2": "-4" }),
+      );
+
+      expect(state.status).toBe("error");
+      if (state.status === "error") {
+        expect(state.fieldErrors["available-w2"]).toBeDefined();
+      }
+      expect(inventory.fetchWarehouses).not.toHaveBeenCalled();
+    });
+
+    it("leaves a blank or unchanged location alone", async () => {
+      use(product());
+      api.fetchProductInventory.mockResolvedValue({
+        outcome: "ok",
+        rows: [{ warehouseId: "w2", variantId: "v1", onHand: 5, reserved: 0, available: 5 }],
+      });
+      await saveProductAction(
+        idle,
+        formFor(product(), { "available-w1": "", "available-w2": "5" }),
+      );
+
+      for (const write of writes()) expect(write).not.toHaveBeenCalled();
+    });
   });
 
   it("does not count a deactivated warehouse as a location", async () => {

@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useId, useMemo, useState } from "react";
 import {
+  Label,
   Badge,
   Button,
   Card,
@@ -87,11 +88,23 @@ export function VariantsCard({
   // Typed prices and quantities, by row key. Controlled, so a failed Save does not reset them
   // (React 19 resets uncontrolled inputs when a form action finishes), and a value typed in
   // "Size=S" stays with it while other rows come and go.
-  const [edits, setEdits] = useState<
-    Readonly<Record<string, { price?: string; available?: string }>>
-  >({});
-  function edit(key: string, patch: { price?: string; available?: string }): void {
+  const [edits, setEdits] = useState<Readonly<Record<string, { price?: string }>>>({});
+  function edit(key: string, patch: { price?: string }): void {
     setEdits((current) => ({ ...current, [key]: { ...current[key], ...patch } }));
+  }
+  // Plan 2B-3: the Available column belongs to the chosen location. Typed quantities are kept per
+  // location (and per row), so switching locations back and forth loses nothing; only the chosen
+  // location's inputs are posted, together with its id in `stockLocationId`.
+  const locationSelectId = useId();
+  const [locationId, setLocationId] = useState<string | null>(stock.defaultLocationId);
+  const [typedAvailable, setTypedAvailable] = useState<
+    Readonly<Record<string, Readonly<Record<string, string>>>>
+  >({});
+  function typeAvailable(location: string, key: string, value: string): void {
+    setTypedAvailable((current) => ({
+      ...current,
+      [location]: { ...current[location], [key]: value },
+    }));
   }
   const editing = product.variants.find((variant) => variant.id === editingId);
 
@@ -119,7 +132,9 @@ export function VariantsCard({
   }, [options.length, onOptionCountChange]);
 
   const first = product.variants[0];
-  const readOnly = stock.multipleLocations || stock.readOnlyReason !== null;
+  const readOnly = stock.readOnlyReason !== null;
+  const locationKey = locationId ?? "";
+  const levelsHere = locationId === null ? undefined : stock.byLocation[locationId];
 
   return (
     <Card>
@@ -138,6 +153,33 @@ export function VariantsCard({
 
         {plan.ok && options.length > 0 && first !== undefined && (
           <>
+            {stock.locations.length > 0 && locationId !== null && (
+              <div className="flex flex-col gap-1">
+                {stock.locations.length > 1 && (
+                  <>
+                    <Label htmlFor={locationSelectId}>{editor.location}</Label>
+                    <select
+                      id={locationSelectId}
+                      value={locationId}
+                      onChange={(event) => setLocationId(event.target.value)}
+                      className="border-input bg-card text-foreground hover:border-foreground/40 duration-(--duration-fast) h-9 w-full max-w-xs rounded-xl border px-3.5 text-sm transition-colors ease-out"
+                    >
+                      {stock.locations.map((location) => (
+                        <option key={location.id} value={location.id}>
+                          {location.name}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                <input
+                  type="hidden"
+                  name="stockLocationId"
+                  value={locationId}
+                  form={PRODUCT_FORM_ID}
+                />
+              </div>
+            )}
             <Table aria-label={editor.variantsCard}>
               <TableHeader>
                 <TableRow>
@@ -160,9 +202,10 @@ export function VariantsCard({
                   const title = options
                     .map((option) => row.selection?.[option.name] ?? "")
                     .join(" / ");
-                  const level = existing === undefined ? undefined : stock.byVariant[existing.id];
+                  const level = existing === undefined ? undefined : levelsHere?.[existing.id];
                   const key = rowKey(row.selection);
                   const typedRow = edits[key];
+                  const typedHere = typedAvailable[locationKey]?.[key];
                   const priceError = errors[`row-${index}-price`];
                   const availableError = errors[`row-${index}-available`];
                   return (
@@ -220,10 +263,12 @@ export function VariantsCard({
                               aria-invalid={availableError !== undefined ? true : undefined}
                               placeholder="0"
                               value={
-                                typedRow?.available ??
+                                typedHere ??
                                 (existing === undefined ? "" : String(level?.available ?? 0))
                               }
-                              onChange={(event) => edit(key, { available: event.target.value })}
+                              onChange={(event) =>
+                                typeAvailable(locationKey, key, event.target.value)
+                              }
                             />
                             {availableError !== undefined && (
                               <p className="text-destructive mt-1 text-xs">{availableError}</p>
@@ -248,9 +293,6 @@ export function VariantsCard({
                 })}
               </TableBody>
             </Table>
-            {stock.multipleLocations && (
-              <p className="text-muted-foreground text-xs">{editor.multipleLocations}</p>
-            )}
             {stock.readOnlyReason !== null && (
               <p role="note" className="text-muted-foreground text-xs">
                 {editor.stockUnavailable}

@@ -625,7 +625,7 @@ export const ar: Dictionary = {
     sellWhenOutOfStock: "البيع عند نفاد المخزون",
     notPhysicalHint: "الزبون مش هيدخل عنوان شحن عند الدفع.",
     quantity: "الكمية",
-    multipleLocations: "الكميات بتتظبط لكل مخزن من صفحة المخزون.",
+    location: "المخزن",
     stockUnavailable: "ما قدرناش نجيب الكميات، فهي للعرض بس. اعمل reload عشان تعدّلها.",
     titleCard: "العنوان والوصف",
     title: "العنوان",

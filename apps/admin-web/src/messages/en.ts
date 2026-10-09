@@ -678,7 +678,7 @@ export const en = {
     sellWhenOutOfStock: "Sell when out of stock",
     notPhysicalHint: "Customers won't enter shipping details at checkout.",
     quantity: "Quantity",
-    multipleLocations: "Quantities are managed per location on the Inventory page.",
+    location: "Location",
     stockUnavailable: "Stock could not be loaded; quantities are read-only. Reload to edit them.",
     titleCard: "Title and description",
     title: "Title",

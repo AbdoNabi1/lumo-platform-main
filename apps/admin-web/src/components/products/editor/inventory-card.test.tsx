@@ -24,12 +24,14 @@ const variant: ProductVariantDto = {
 };
 
 const stock = (overrides: Partial<StockView> = {}): StockView => ({
-  location: { id: "w1", name: "Cairo warehouse" },
-  multipleLocations: false,
+  locations: [{ id: "w1", name: "Cairo warehouse" }],
+  defaultLocationId: "w1",
   readOnlyReason: null,
-  byVariant: { v1: { onHand: 9, reserved: 2, available: 7 } },
+  byLocation: { w1: { v1: { onHand: 9, reserved: 2, available: 7 } } },
   ...overrides,
 });
+
+const noLocation = { locations: [], defaultLocationId: null, byLocation: {} } as const;
 
 function renderCard(props: Partial<Parameters<typeof InventoryCard>[0]> = {}) {
   return render(
@@ -44,6 +46,8 @@ const formData = (container: HTMLElement) => new FormData(container.querySelecto
 const chip = (label: string) =>
   screen.getByRole("button", { name: (name) => name.startsWith(label), hidden: true });
 const tracked = () => screen.getByRole("switch", { name: t.inventoryTracked });
+/** The quantity input of one named location (Plan 2B-3: one per location). */
+const qty = (location: string) => screen.getByLabelText(`${t.quantity}: ${location}`);
 
 describe("InventoryCard", () => {
   it("has the 'inventory tracked' switch in its header, on while the variant is tracked", () => {
@@ -59,34 +63,35 @@ describe("InventoryCard", () => {
     renderCard();
 
     expect(screen.getByText("Cairo warehouse")).toBeInTheDocument();
-    const available = screen.getByLabelText(t.quantity);
-    expect(available).toHaveAttribute("name", "available");
+    const available = qty("Cairo warehouse");
+    expect(available).toHaveAttribute("name", "available-w1");
     expect(available).toHaveAttribute("form", "product-editor");
     expect(available).toHaveValue(7);
     expect(available).toBeVisible();
   });
 
   it("names the location after the shop when none exists yet", () => {
-    renderCard({ stock: stock({ location: null, byVariant: {} }) });
+    renderCard({ stock: stock(noLocation) });
 
     expect(screen.getByText(t.shopLocation)).toBeInTheDocument();
     expect(screen.getByLabelText(t.quantity)).toHaveValue(null);
+    expect(screen.getByLabelText(t.quantity)).toHaveAttribute("name", "available");
   });
 
   it("hides the quantity table when tracking is switched off, keeps what was typed, and posts no tracksInventory", () => {
     const { container } = renderCard();
-    fireEvent.change(screen.getByLabelText(t.quantity), { target: { value: "12" } });
+    fireEvent.change(qty("Cairo warehouse"), { target: { value: "12" } });
 
     fireEvent.click(tracked());
 
     expect(tracked()).not.toBeChecked();
     expect(formData(container).get("tracksInventory")).toBeNull();
-    expect(screen.getByLabelText(t.quantity)).not.toBeVisible();
+    expect(qty("Cairo warehouse")).not.toBeVisible();
     expect(chip(t.sellWhenOutOfStock)).not.toBeVisible();
 
     fireEvent.click(tracked());
-    expect(screen.getByLabelText(t.quantity)).toHaveValue(12);
-    expect(screen.getByLabelText(t.quantity)).toBeVisible();
+    expect(qty("Cairo warehouse")).toHaveValue(12);
+    expect(qty("Cairo warehouse")).toBeVisible();
     expect(chip(t.sellWhenOutOfStock)).toBeVisible();
   });
 
@@ -145,16 +150,44 @@ describe("InventoryCard", () => {
     expect(screen.getByRole("switch", { name: t.sellWhenOutOfStock })).toBeChecked();
   });
 
-  it("makes the quantity read-only, with the reason, for several locations", () => {
-    renderCard({ stock: stock({ multipleLocations: true }) });
+  it("with two locations, shows a row and a field per location, each with its own quantity", () => {
+    const { container } = renderCard({
+      stock: stock({
+        locations: [
+          { id: "w1", name: "Cairo warehouse" },
+          { id: "w2", name: "Alex warehouse" },
+        ],
+        byLocation: {
+          w1: { v1: { onHand: 9, reserved: 2, available: 7 } },
+          w2: { v1: { onHand: 3, reserved: 0, available: 3 } },
+        },
+      }),
+    });
 
-    expect(screen.queryByLabelText(t.quantity)).not.toBeInTheDocument();
-    expect(screen.getByText("7")).toBeInTheDocument();
-    expect(screen.getByText(t.multipleLocations)).toBeInTheDocument();
+    expect(screen.getByText("Cairo warehouse")).toBeInTheDocument();
+    expect(screen.getByText("Alex warehouse")).toBeInTheDocument();
+    expect(qty("Cairo warehouse")).toHaveAttribute("name", "available-w1");
+    expect(qty("Cairo warehouse")).toHaveValue(7);
+    expect(qty("Alex warehouse")).toHaveAttribute("name", "available-w2");
+    expect(qty("Alex warehouse")).toHaveValue(3);
+    expect(formData(container).get("available")).toBeNull();
+  });
+
+  it("a location with no stock row yet starts blank", () => {
+    renderCard({
+      stock: stock({
+        locations: [
+          { id: "w1", name: "Cairo warehouse" },
+          { id: "w2", name: "Alex warehouse" },
+        ],
+      }),
+    });
+
+    expect(qty("Alex warehouse")).toHaveValue(null);
   });
 
   it("makes the quantity read-only when stock could not be loaded, never showing zero", () => {
-    renderCard({ stock: stock({ readOnlyReason: "unavailable", byVariant: {}, location: null }) });
+    renderCard({ stock: stock({ readOnlyReason: "unavailable", ...noLocation }) });
 
     expect(screen.queryByLabelText(t.quantity)).not.toBeInTheDocument();
     expect(screen.getByText(t.stockUnavailable)).toBeInTheDocument();
@@ -164,7 +197,7 @@ describe("InventoryCard", () => {
   it("starts a new product tracked, on the shop location, with a blank quantity and an auto SKU", () => {
     renderCard({
       variant: undefined,
-      stock: stock({ location: null, byVariant: {} }),
+      stock: stock(noLocation),
       mode: "create",
     });
 
@@ -175,9 +208,9 @@ describe("InventoryCard", () => {
   });
 
   it("marks the quantity the server rejected", () => {
-    renderCard({ errors: { available: "Check the highlighted fields." } });
+    renderCard({ errors: { "available-w1": "Check the highlighted fields." } });
 
-    expect(screen.getByLabelText(t.quantity)).toHaveAttribute("aria-invalid", "true");
+    expect(qty("Cairo warehouse")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText("Check the highlighted fields.")).toBeInTheDocument();
   });
 });

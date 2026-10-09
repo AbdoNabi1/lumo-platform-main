@@ -125,8 +125,8 @@ export function ProductEditor(props: ProductEditorProps) {
       : JSON.stringify([
           product.options,
           product.variants.map((v) => [v.id, v.selection, v.priceAmountMinor, v.tracksInventory]),
-          stock.byVariant,
-          stock.location?.id ?? null,
+          stock.byLocation,
+          stock.defaultLocationId,
         ]);
 
   // Only a product the store shows can be previewed; `storefrontUrl` is null when it is not set.

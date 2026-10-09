@@ -68,12 +68,26 @@ const sized = product({
 const level = (available: number) => ({ onHand: available, reserved: 0, available });
 
 const stockView = (overrides: Partial<StockView> = {}): StockView => ({
-  location: { id: "w1", name: "Shop" },
-  multipleLocations: false,
+  locations: [{ id: "w1", name: "Shop" }],
+  defaultLocationId: "w1",
   readOnlyReason: null,
-  byVariant: { s: level(4), m: level(5), l: level(6) },
+  byLocation: { w1: { s: level(4), m: level(5), l: level(6) } },
   ...overrides,
 });
+
+/** Two active locations: Shop (w1) and Warehouse (w2), each with its own quantities. */
+const twoLocations = (): StockView =>
+  stockView({
+    locations: [
+      { id: "w1", name: "Shop" },
+      { id: "w2", name: "Warehouse" },
+    ],
+    defaultLocationId: "w1",
+    byLocation: {
+      w1: { s: level(4), m: level(5), l: level(6) },
+      w2: { s: level(40), m: level(50), l: level(60) },
+    },
+  });
 
 function renderCard(
   p: ProductDetailDto,
@@ -170,17 +184,68 @@ describe("VariantsCard", () => {
     expect(field(container, "row-1-available")).not.toBeNull();
   });
 
-  it("shows read-only quantities, with the reason, for several locations", () => {
-    const { container } = renderCard(sized, { stock: stockView({ multipleLocations: true }) });
+  it("with two locations, a location select lists both names and starts on the default one", () => {
+    const { container } = renderCard(sized, { stock: twoLocations() });
 
-    expect(field(container, "row-0-available")).toBeNull();
-    expect(within(rowsOf()[0]!).getByText("4")).toBeInTheDocument();
-    expect(screen.getByText(t.multipleLocations)).toBeInTheDocument();
+    const select = screen.getByLabelText(t.location);
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Shop", "Warehouse"]);
+    expect(select).toHaveValue("w1");
+    expect(field(container, "row-0-available")).toHaveValue(4);
+    expect(field(container, "stockLocationId")).toHaveValue("w1");
+    expect(field(container, "stockLocationId")).toHaveAttribute("form", "product-editor");
+  });
+
+  it("changing the location switches the Available column and the posted stockLocationId", () => {
+    const { container } = renderCard(sized, { stock: twoLocations() });
+
+    fireEvent.change(screen.getByLabelText(t.location), { target: { value: "w2" } });
+
+    expect(field(container, "row-0-available")).toHaveValue(40);
+    expect(field(container, "row-1-available")).toHaveValue(50);
+    expect(field(container, "stockLocationId")).toHaveValue("w2");
+  });
+
+  it("keeps a quantity typed for one location while another is shown", () => {
+    const { container } = renderCard(sized, { stock: twoLocations() });
+    fireEvent.change(field(container, "row-0-available")!, { target: { value: "9" } });
+
+    fireEvent.change(screen.getByLabelText(t.location), { target: { value: "w2" } });
+    expect(field(container, "row-0-available")).toHaveValue(40);
+    fireEvent.change(screen.getByLabelText(t.location), { target: { value: "w1" } });
+
+    expect(field(container, "row-0-available")).toHaveValue(9);
+  });
+
+  it("with one location, shows no select but still posts its stockLocationId", () => {
+    const { container } = renderCard(sized);
+
+    expect(screen.queryByLabelText(t.location)).not.toBeInTheDocument();
+    expect(field(container, "stockLocationId")).toHaveValue("w1");
+    expect(field(container, "row-0-available")).toHaveValue(4);
+  });
+
+  it("with no location yet, posts no stockLocationId and the quantities start blank", () => {
+    const { container } = renderCard(sized, {
+      stock: stockView({ locations: [], defaultLocationId: null, byLocation: {} }),
+    });
+
+    expect(screen.queryByLabelText(t.location)).not.toBeInTheDocument();
+    expect(field(container, "stockLocationId")).toBeNull();
+    expect(field(container, "row-0-available")).toHaveValue(0);
   });
 
   it("shows read-only dashes, not zeros, when stock could not be loaded", () => {
     const { container } = renderCard(sized, {
-      stock: stockView({ readOnlyReason: "unavailable", byVariant: {}, location: null }),
+      stock: stockView({
+        readOnlyReason: "unavailable",
+        byLocation: {},
+        locations: [],
+        defaultLocationId: null,
+      }),
     });
 
     expect(field(container, "row-0-available")).toBeNull();

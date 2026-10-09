@@ -406,17 +406,68 @@ async function applyOptionPlan(
   return { result: { outcome: "ok", data: null }, ran, added };
 }
 
-/** One stock edit the merchant typed: the input it came from, and which variant it is for. */
+/**
+ * One stock edit the merchant typed: the input it came from, which variant it is for, and the
+ * location it goes to (`null` = the shop has no location yet; the first write registers one).
+ */
 interface StockEdit {
   readonly field: string;
   readonly desired: number;
   readonly variantId: () => string | null;
+  readonly locationId: string | null;
+}
+
+/** A stock input as posted, before its location is checked. `posted` is the location id it names, if any. */
+interface PostedStock {
+  readonly field: string;
+  readonly posted: string | null;
+}
+
+type LocationOutcome =
+  | { readonly ok: true; readonly byField: ReadonlyMap<string, string | null> }
+  | { readonly ok: false; readonly result: MutationResult<unknown> }
+  | { readonly ok: false; readonly fieldErrors: Record<string, string> };
+
+/**
+ * Plan 2B-3 — decides which location each stock input goes to, BEFORE anything is written. A posted
+ * id must be an active location of this tenant (read from `fetchWarehouses`, never trusted). An
+ * input that names none (a page rendered before the shop had a location) goes to the only active
+ * location, or to `null` when there is none (the first write registers "Shop location"); with
+ * several it is ambiguous and is refused rather than guessed.
+ */
+async function resolveStockLocations(
+  inputs: readonly PostedStock[],
+  invalid: string,
+  idField: (input: PostedStock) => string,
+): Promise<LocationOutcome> {
+  const warehouses = await fetchWarehouses();
+  if (warehouses.outcome !== "ok") return { ok: false, result: warehouses };
+  const active = activeLocations(warehouses.items);
+  const byField = new Map<string, string | null>();
+  const fieldErrors: Record<string, string> = {};
+  for (const input of inputs) {
+    if (input.posted !== null) {
+      if (active.some((location) => location.id === input.posted)) {
+        byField.set(input.field, input.posted);
+      } else {
+        fieldErrors[idField(input)] = invalid;
+      }
+    } else if (active.length === 0) {
+      byField.set(input.field, null);
+    } else if (active.length === 1 && active[0] !== undefined) {
+      byField.set(input.field, active[0].id);
+    } else {
+      fieldErrors[idField(input)] = invalid;
+    }
+  }
+  if (Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
+  return { ok: true, byField };
 }
 
 /**
- * The only-location rule (checkout supports one location today): none yet → the first write
- * registers "Shop location"; one → use it; several → write nothing. Edits are what the merchant
- * typed as AVAILABLE; `stockChange` turns each into a receive or an adjust.
+ * Writes the typed quantities, each to its own location. Edits are what the merchant typed as
+ * AVAILABLE; `stockChange` turns each into a receive or an adjust against that location's current
+ * level. An edit with no location registers "Shop location" once, on the first write that needs it.
  */
 async function applyStockEdits(
   productId: string,
@@ -430,48 +481,50 @@ async function applyStockEdits(
     result: MutationResult<unknown>,
   ): { readonly result: MutationResult<unknown>; readonly wrote: boolean } => ({ result, wrote });
 
-  const warehouses = await fetchWarehouses();
-  if (warehouses.outcome === "unauthorized") return failure({ outcome: "unauthorized" });
-  if (warehouses.outcome === "error") {
-    return failure({ outcome: "error", message: warehouses.message });
-  }
-  const locations = activeLocations(warehouses.items);
-  if (locations.length > 1) return failure({ outcome: "ok", data: null });
-
-  const location = locations[0];
-  let levels: Record<string, StockLevelDto> = {};
-  if (location !== undefined) {
+  const levelsAt: Record<string, Record<string, StockLevelDto>> = {};
+  if (edits.some((edit) => edit.locationId !== null)) {
     const inventory = await fetchProductInventory(productId);
     if (inventory.outcome === "unauthorized") return failure({ outcome: "unauthorized" });
     if (inventory.outcome === "error") {
       return failure({ outcome: "error", message: inventory.message });
     }
-    levels = stockByVariant(
-      inventory.rows.filter((row) => row.warehouseId === location.id),
-      product.variants,
-    );
+    for (const edit of edits) {
+      const at = edit.locationId;
+      if (at !== null && levelsAt[at] === undefined) {
+        levelsAt[at] = stockByVariant(
+          inventory.rows.filter((row) => row.warehouseId === at),
+          product.variants,
+        );
+      }
+    }
   }
 
-  let warehouseId = location?.id ?? null;
+  let shopWarehouseId: string | null = null;
   for (const edit of edits) {
     const variantId = edit.variantId();
     if (variantId === null) {
       return failure({ outcome: "error", message: "The variant id was not returned" });
     }
-    const change = stockChange(edit.desired, levels[variantId] ?? null);
+    const current =
+      edit.locationId === null ? null : (levelsAt[edit.locationId]?.[variantId] ?? null);
+    const change = stockChange(edit.desired, current);
     if (change.kind === "none" || change.kind === "invalid") continue;
 
+    let warehouseId = edit.locationId;
     if (warehouseId === null) {
-      const registered = await registerWarehouse(
-        { code: "SHOP", name: shopLocationName },
-        newIdempotencyKey(),
-      );
-      if (registered.outcome !== "ok") return failure(registered);
-      wrote = true;
-      warehouseId = idOf(registered.data, "warehouseId");
-      if (warehouseId === null) {
-        return failure({ outcome: "error", message: "The location id was not returned" });
+      if (shopWarehouseId === null) {
+        const registered = await registerWarehouse(
+          { code: "SHOP", name: shopLocationName },
+          newIdempotencyKey(),
+        );
+        if (registered.outcome !== "ok") return failure(registered);
+        wrote = true;
+        shopWarehouseId = idOf(registered.data, "warehouseId");
+        if (shopWarehouseId === null) {
+          return failure({ outcome: "error", message: "The location id was not returned" });
+        }
       }
+      warehouseId = shopWarehouseId;
     }
 
     const result =
@@ -492,6 +545,39 @@ async function applyStockEdits(
     wrote = true;
   }
   return { result: { outcome: "ok", data: null }, wrote };
+}
+
+/**
+ * The single variant's posted quantities: one `available-<locationId>` per location the page showed,
+ * or the lone `available` of a page rendered before the shop had a location. A malformed number is
+ * returned as `undefined` so the caller can name the field.
+ */
+function singleStockInputs(
+  formData: FormData,
+): {
+  readonly field: string;
+  readonly posted: string | null;
+  readonly value: number | null | undefined;
+}[] {
+  const inputs: {
+    field: string;
+    posted: string | null;
+    value: number | null | undefined;
+  }[] = [];
+  for (const name of Array.from(formData.keys())) {
+    const match = /^available-(.+)$/.exec(name);
+    if (match?.[1] !== undefined) {
+      inputs.push({ field: name, posted: match[1], value: optionalWholeNumber(formData, name) });
+    }
+  }
+  if (formData.has("available")) {
+    inputs.push({
+      field: "available",
+      posted: null,
+      value: optionalWholeNumber(formData, "available"),
+    });
+  }
+  return inputs;
 }
 
 /**
@@ -543,8 +629,10 @@ export async function saveProductAction(
   const currency = stringField(formData, "currency").trim() || currentVariant?.currency || "EGP";
   const parsed = singleVariant ? parseVariantFields(formData, currency, t.invalid) : null;
   if (parsed !== null) Object.assign(fieldErrors, parsed.errors);
-  const singleAvailable = singleVariant ? optionalWholeNumber(formData, "available") : null;
-  if (singleAvailable === undefined) fieldErrors["available"] = t.invalid;
+  const singleInputs = singleVariant ? singleStockInputs(formData) : [];
+  for (const input of singleInputs) {
+    if (input.value === undefined) fieldErrors[input.field] = t.invalid;
+  }
 
   let plan: OkPlan | null = null;
   if (optionsPresent) {
@@ -586,6 +674,54 @@ export async function saveProductAction(
   }
   if (Object.keys(fieldErrors).length > 0) {
     return { status: "error", message: t.invalid, fieldErrors };
+  }
+
+  // Stock (Plan 2B-3): what was typed as AVAILABLE for the tracked variants, and the location each
+  // quantity goes to — settled now, so a location that is not one of this shop's active ones stops
+  // the save before the first write. The table edits the location in `stockLocationId`; the single
+  // variant posts one `available-<locationId>` per location.
+  const tableLocation = rowMode ? stringField(formData, "stockLocationId").trim() : "";
+  const stockDrafts: (PostedStock & {
+    readonly desired: number;
+    readonly rowIndex: number | null;
+  })[] = [];
+  if (rowMode) {
+    rowAvailable.forEach((desired, index) => {
+      const keptId = plan?.rows[index]?.variantId ?? null;
+      const tracked =
+        keptId === null ||
+        (product.variants.find((variant) => variant.id === keptId)?.tracksInventory ?? true);
+      if (desired !== null && tracked) {
+        stockDrafts.push({
+          field: `row-${index}-available`,
+          posted: tableLocation === "" ? null : tableLocation,
+          desired,
+          rowIndex: index,
+        });
+      }
+    });
+  } else if (singleVariant && parsed?.values?.tracksInventory === true) {
+    for (const input of singleInputs) {
+      if (input.value !== null && input.value !== undefined) {
+        stockDrafts.push({
+          field: input.field,
+          posted: input.posted,
+          desired: input.value,
+          rowIndex: null,
+        });
+      }
+    }
+  }
+  let stockAt: ReadonlyMap<string, string | null> = new Map();
+  if (stockDrafts.length > 0) {
+    const resolved = await resolveStockLocations(stockDrafts, t.invalid, (input) =>
+      input.field.startsWith("row-") ? "stockLocationId" : input.field,
+    );
+    if (!resolved.ok) {
+      if ("result" in resolved) return toFormState(resolved.result, t);
+      return { status: "error", message: t.invalid, fieldErrors: resolved.fieldErrors };
+    }
+    stockAt = resolved.byField;
   }
 
   // The vendor: a blank one that the editor flagged (`vendorKeep`: the product has a brand it could
@@ -734,35 +870,30 @@ export async function saveProductAction(
     }
   }
 
-  // 4. Stock: what the merchant typed as AVAILABLE, for the tracked variants.
-  const stockEdits: StockEdit[] = [];
-  if (rowMode) {
-    rowAvailable.forEach((desired, index) => {
-      const keptId = plan?.rows[index]?.variantId ?? null;
-      const tracked =
-        keptId === null ||
-        (product.variants.find((variant) => variant.id === keptId)?.tracksInventory ?? true);
-      if (desired !== null && tracked) {
-        stockEdits.push({
-          field: `row-${index}-available`,
-          desired,
+  // 4. Stock: the quantities settled above, each to its own location.
+  const stockEdits: StockEdit[] = stockDrafts.flatMap((draft) => {
+    const locationId = stockAt.get(draft.field) ?? null;
+    if (draft.rowIndex !== null) {
+      const index = draft.rowIndex;
+      return [
+        {
+          field: draft.field,
+          desired: draft.desired,
           variantId: () => variantIdOfRow(index),
-        });
-      }
-    });
-  } else if (
-    singleVariant &&
-    parsed?.values?.tracksInventory === true &&
-    singleAvailable !== null &&
-    singleAvailable !== undefined &&
-    currentVariant !== undefined
-  ) {
-    stockEdits.push({
-      field: "available",
-      desired: singleAvailable,
-      variantId: () => currentVariant.id,
-    });
-  }
+          locationId,
+        },
+      ];
+    }
+    if (currentVariant === undefined) return [];
+    return [
+      {
+        field: draft.field,
+        desired: draft.desired,
+        variantId: () => currentVariant.id,
+        locationId,
+      },
+    ];
+  });
   if (stockEdits.length > 0) {
     const names: Record<string, string> = {};
     let wrote = false;
@@ -884,12 +1015,32 @@ export async function createProductAction(
   if (currency.length === 0) fieldErrors["currency"] = t.invalid;
   const parsed = parseVariantFields(formData, currency, t.invalid);
   Object.assign(fieldErrors, parsed.errors);
-  const openingQuantity = optionalWholeNumber(formData, "available");
-  if (openingQuantity === undefined) fieldErrors["available"] = t.invalid;
+  const openingInputs = singleStockInputs(formData);
+  for (const input of openingInputs) {
+    if (input.value === undefined) fieldErrors[input.field] = t.invalid;
+  }
   if (Object.keys(fieldErrors).length > 0 || parsed.values === null) {
     return { status: "error", message: t.invalid, fieldErrors };
   }
   const values = parsed.values;
+
+  // The opening quantities (Plan 2B-3), each to its location — settled before the product exists.
+  const openingDrafts = values.tracksInventory
+    ? openingInputs.flatMap((input) =>
+        input.value === null || input.value === undefined
+          ? []
+          : [{ field: input.field, posted: input.posted, desired: input.value }],
+      )
+    : [];
+  let openingAt: ReadonlyMap<string, string | null> = new Map();
+  if (openingDrafts.length > 0) {
+    const resolved = await resolveStockLocations(openingDrafts, t.invalid, (input) => input.field);
+    if (!resolved.ok) {
+      if ("result" in resolved) return toFormState(resolved.result, t);
+      return { status: "error", message: t.invalid, fieldErrors: resolved.fieldErrors };
+    }
+    openingAt = resolved.byField;
+  }
 
   // Resolved before the product exists: an unreadable brand list creates nothing.
   const chosen = await chooseVendor(stringField(formData, "vendor").trim());
@@ -953,8 +1104,7 @@ export async function createProductAction(
   const followUps: (() => Promise<MutationResult<unknown>>)[] = [];
   // The opening quantity goes first, like the stock step of a save. The create answers with the
   // product aggregate, so the new variant's id is read back with one fetch.
-  if (values.tracksInventory && openingQuantity !== null && openingQuantity !== undefined) {
-    const desired = openingQuantity;
+  if (openingDrafts.length > 0) {
     followUps.push(async () => {
       const created = await fetchProduct(id);
       if (created.outcome !== "ok") return fetchFailure(created);
@@ -962,7 +1112,12 @@ export async function createProductAction(
       const outcome = await applyStockEdits(
         id,
         created.product,
-        [{ field: "available", desired, variantId: () => variantId }],
+        openingDrafts.map((draft) => ({
+          field: draft.field,
+          desired: draft.desired,
+          variantId: () => variantId,
+          locationId: openingAt.get(draft.field) ?? null,
+        })),
         dictionary.productEditor.shopLocation,
         {},
       );

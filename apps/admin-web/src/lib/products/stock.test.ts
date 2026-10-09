@@ -56,7 +56,7 @@ describe("stockByVariant (Plan 2B-1 legacy rule)", () => {
   });
 });
 
-describe("buildStockView (Plan 2B-2)", () => {
+describe("buildStockView (Plan 2B-2, per location since 2B-3)", () => {
   const warehouse = (id: string, status = "active") => ({ id, name: `Name ${id}`, status });
   const row = (warehouseId: string, variantId: string | null, onHand: number) => ({
     warehouseId,
@@ -70,35 +70,62 @@ describe("buildStockView (Plan 2B-2)", () => {
     expect(
       buildStockView([warehouse("w1")], [row("w1", "m", 3), row("w9", "m", 99)], [{ id: "m" }]),
     ).toEqual({
-      location: { id: "w1", name: "Name w1" },
-      multipleLocations: false,
+      locations: [{ id: "w1", name: "Name w1" }],
+      defaultLocationId: "w1",
       readOnlyReason: null,
-      byVariant: { m: { onHand: 3, reserved: 0, available: 3 } },
+      byLocation: { w1: { m: { onHand: 3, reserved: 0, available: 3 } } },
     });
   });
 
   it("no location yet: nothing to show, and the first save registers one", () => {
     expect(buildStockView([], [], [{ id: "m" }])).toEqual({
-      location: null,
-      multipleLocations: false,
+      locations: [],
+      defaultLocationId: null,
       readOnlyReason: null,
-      byVariant: {},
+      byLocation: {},
     });
   });
 
-  it("several locations: the first, for display only, flagged read-only", () => {
+  it("two active locations and one inactive: two locations, each keyed with its own quantities", () => {
+    const view = buildStockView(
+      [warehouse("w1"), warehouse("w2"), warehouse("w3", "inactive")],
+      [row("w1", "m", 3), row("w2", "m", 8), row("w3", "m", 50)],
+      [{ id: "m" }, { id: "l" }],
+    );
+    expect(view.locations).toEqual([
+      { id: "w1", name: "Name w1" },
+      { id: "w2", name: "Name w2" },
+    ]);
+    expect(view.byLocation["w1"]?.["m"]?.available).toBe(3);
+    expect(view.byLocation["w2"]?.["m"]?.available).toBe(8);
+    expect(view.byLocation["w3"]).toBeUndefined();
+  });
+
+  it("applies the legacy-row rule per location", () => {
     const view = buildStockView(
       [warehouse("w1"), warehouse("w2")],
-      [row("w1", "m", 3)],
+      [row("w1", null, 9), row("w2", "only", 4)],
+      [{ id: "only" }],
+    );
+    expect(view.byLocation["w1"]?.["only"]?.available).toBe(9);
+    expect(view.byLocation["w2"]?.["only"]?.available).toBe(4);
+  });
+
+  it("the default location is the one holding the most of this product, else the first", () => {
+    const rich = buildStockView(
+      [warehouse("w1"), warehouse("w2")],
+      [row("w1", "m", 3), row("w2", "m", 8)],
       [{ id: "m" }],
     );
-    expect(view.multipleLocations).toBe(true);
-    expect(view.location).toEqual({ id: "w1", name: "Name w1" });
+    expect(rich.defaultLocationId).toBe("w2");
+
+    const empty = buildStockView([warehouse("w1"), warehouse("w2")], [], [{ id: "m" }]);
+    expect(empty.defaultLocationId).toBe("w1");
   });
 
   it("ignores a deactivated warehouse", () => {
     const view = buildStockView([warehouse("w1"), warehouse("w2", "inactive")], [], [{ id: "m" }]);
-    expect(view.multipleLocations).toBe(false);
+    expect(view.locations).toHaveLength(1);
     expect(activeLocations([warehouse("w1"), warehouse("w2", "inactive")])).toHaveLength(1);
   });
 });
