@@ -6,6 +6,7 @@ import { Badge, Button, Input, Label } from "@platform/ui";
 import { MAX_OPTIONS, type MatrixOption } from "@/lib/products/variant-matrix";
 import type { Dictionary } from "@/messages/en";
 import { PRODUCT_FORM_ID } from "./field";
+import { OptionNamePicker } from "./option-name-picker";
 
 interface ValueRow {
   readonly key: number;
@@ -66,6 +67,8 @@ export function OptionsEditor({
   };
   const listId = useId();
   const [focusRow, setFocusRow] = useState<number | null>(null);
+  // A custom option opened with no name puts the cursor in its name field, once.
+  const [focusNameRow, setFocusNameRow] = useState<number | null>(null);
 
   const [rows, setRows] = useState<readonly OptionRow[]>(() =>
     initial.map((option) => ({
@@ -134,17 +137,26 @@ export function OptionsEditor({
     });
   }
 
-  function addOption(): void {
+  /** A new option, already named when it came from the menu; the cursor goes to the field that is still empty. */
+  function addOption(name: string): void {
+    const key = nextKey();
     setRows((current) => [
       ...current,
-      { key: nextKey(), name: "", values: withTrailingBlank([], nextKey), editing: true },
+      { key, name, values: withTrailingBlank([], nextKey), editing: true },
     ]);
+    if (name.trim().length > 0) setFocusRow(key);
+    else setFocusNameRow(key);
+  }
+
+  /** The suggested values for an option by its name ("Size", "المقاس", "Color", …), if any. */
+  function suggestionsFor(name: string): readonly string[] {
+    return editor.valueSuggestions[name.trim().toLowerCase()] ?? [];
   }
 
   return (
     <div className="flex flex-col gap-3">
       <datalist id={listId}>
-        {editor.optionSuggestions.map((suggestion) => (
+        {editor.recommendedOptions.map((suggestion) => (
           <option key={suggestion} value={suggestion} />
         ))}
       </datalist>
@@ -159,6 +171,15 @@ export function OptionsEditor({
                 name={`optionName-${index}`}
                 form={PRODUCT_FORM_ID}
                 list={listId}
+                ref={
+                  focusNameRow === row.key
+                    ? (element: HTMLInputElement | null) => {
+                        if (element === null) return;
+                        element.focus();
+                        setFocusNameRow(null);
+                      }
+                    : undefined
+                }
                 value={row.name}
                 onChange={(event) => update(row.key, { name: event.target.value })}
               />
@@ -175,6 +196,13 @@ export function OptionsEditor({
             </div>
 
             <div className="flex flex-col gap-2">
+              {suggestionsFor(row.name).length > 0 && (
+                <datalist id={`${listId}-values-${row.key}`}>
+                  {suggestionsFor(row.name).map((suggestion) => (
+                    <option key={suggestion} value={suggestion} />
+                  ))}
+                </datalist>
+              )}
               {row.values.map((value, position) => {
                 const isTrailing = position === row.values.length - 1;
                 return (
@@ -183,6 +211,11 @@ export function OptionsEditor({
                       aria-label={editor.optionValue}
                       name={`optionValue-${index}`}
                       form={PRODUCT_FORM_ID}
+                      list={
+                        suggestionsFor(row.name).length > 0
+                          ? `${listId}-values-${row.key}`
+                          : undefined
+                      }
                       value={value.text}
                       ref={
                         isTrailing && focusRow === row.key
@@ -294,16 +327,13 @@ export function OptionsEditor({
       )}
 
       <div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={addOption}
+        <OptionNamePicker
+          used={rows.map((row) => row.name)}
+          onPick={addOption}
+          t={t}
+          triggerLabel={rows.length === 0 ? editor.addOptions : editor.addAnotherOption}
           disabled={rows.length >= MAX_OPTIONS}
-        >
-          <PlusIcon aria-hidden="true" />
-          {rows.length === 0 ? editor.addOptions : editor.addAnotherOption}
-        </Button>
+        />
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { OptionsEditor } from "./options-editor";
 
@@ -13,18 +14,29 @@ function setup(initial: { name: string; values: string[] }[] = []) {
 
 const valueInputs = () => screen.getAllByLabelText(t.optionValue);
 
+/** Opens the add-options menu and picks "Create custom option", optionally after typing a name. */
+function createCustomOption(name = "") {
+  fireEvent.click(screen.getByRole("button", { name: /^Add (options|another option)/ }));
+  if (name !== "") {
+    fireEvent.change(screen.getByLabelText(t.searchOptions), { target: { value: name } });
+  }
+  fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
+}
+
 describe("OptionsEditor", () => {
   it("opens a new option in editing state with suggestions and one empty value", () => {
     const { container } = setup();
 
     fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
 
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
+
     const name = screen.getByLabelText(t.optionName);
     const list = container.querySelector("datalist");
     expect(list).not.toBeNull();
     expect(name).toHaveAttribute("list", list!.id);
     expect(Array.from(list!.querySelectorAll("option")).map((option) => option.value)).toEqual([
-      ...t.optionSuggestions,
+      ...t.recommendedOptions,
     ]);
     expect(valueInputs()).toHaveLength(1);
     expect(valueInputs()[0]).toHaveValue("");
@@ -33,6 +45,7 @@ describe("OptionsEditor", () => {
   it("appends an empty value as you type, and reports only the filled ones", () => {
     const { onChange } = setup();
     fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
     fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: "Size" } });
 
     fireEvent.change(valueInputs()[0]!, { target: { value: "S" } });
@@ -59,6 +72,7 @@ describe("OptionsEditor", () => {
   it("collapses to chips on Done, and Done waits for a name and a value", () => {
     setup();
     fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
     const done = screen.getByRole("button", { name: t.done });
     expect(done).toBeDisabled();
 
@@ -93,6 +107,7 @@ describe("OptionsEditor", () => {
   it("submits an option being edited through its own inputs, joined to the page form", () => {
     const { container } = setup();
     fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
 
     expect(screen.getByLabelText(t.optionName)).toHaveAttribute("name", "optionName-0");
     expect(screen.getByLabelText(t.optionName)).toHaveAttribute("form", "product-editor");
@@ -109,6 +124,7 @@ describe("OptionsEditor", () => {
     const add = screen.getByRole("button", { name: t.addAnotherOption });
     expect(add).toBeEnabled();
     fireEvent.click(add);
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
     expect(screen.getByRole("button", { name: t.addAnotherOption })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: t.deleteOption }));
@@ -123,6 +139,7 @@ describe("OptionsEditor", () => {
   it("does not submit the page when Enter is pressed in a value", () => {
     setup();
     fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
 
     const notPrevented = fireEvent.keyDown(valueInputs()[0]!, { key: "Enter" });
 
@@ -132,6 +149,7 @@ describe("OptionsEditor", () => {
   it("merges a second option with an existing name into the first on Done", () => {
     const { onChange, container } = setup([{ name: "Size", values: ["29"] }]);
     fireEvent.click(screen.getByRole("button", { name: t.addAnotherOption }));
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
     fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: " size " } });
     fireEvent.change(valueInputs()[0]!, { target: { value: "22" } });
 
@@ -160,7 +178,99 @@ describe("OptionsEditor", () => {
       screen.getByRole("button", { name: t.addValue.replace("{name}", "Size") }),
     ).toHaveTextContent(t.addValueShort);
     fireEvent.click(screen.getByRole("button", { name: t.addAnotherOption }));
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
 
     expect(screen.getByText(t.newOptionHint)).toBeInTheDocument();
+  });
+
+  it("picking a recommended option adds it already named, with the cursor in its first value", () => {
+    const { onChange } = setup([{ name: "Size", values: ["S"] }]);
+    fireEvent.click(screen.getByRole("button", { name: t.addAnotherOption }));
+
+    // Size is used, so it is not offered again.
+    expect(screen.queryByRole("button", { name: "Size" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Color" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(t.optionName)).toHaveValue("Color");
+    expect(valueInputs()).toHaveLength(1);
+    expect(valueInputs()[0]).toHaveFocus();
+    fireEvent.change(valueInputs()[0]!, { target: { value: "Red" } });
+    expect(onChange).toHaveBeenLastCalledWith([
+      { name: "Size", values: ["S"] },
+      { name: "Color", values: ["Red"] },
+    ]);
+  });
+
+  it("Create custom option with a typed name opens that option, with the cursor in its first value", () => {
+    setup();
+
+    createCustomOption("Fabric");
+
+    expect(screen.getByLabelText(t.optionName)).toHaveValue("Fabric");
+    expect(valueInputs()[0]).toHaveFocus();
+  });
+
+  it("Create custom option with nothing typed opens an unnamed option, with the cursor in the name", () => {
+    setup();
+
+    createCustomOption();
+
+    expect(screen.getByLabelText(t.optionName)).toHaveValue("");
+    expect(screen.getByLabelText(t.optionName)).toHaveFocus();
+  });
+
+  it("suggests values for a Size option in a datalist its value fields use", () => {
+    const { container } = setup();
+    createCustomOption();
+    fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: " Size " } });
+
+    const list = container.querySelector<HTMLDataListElement>('datalist[id$="-values-1"]');
+    expect(list).not.toBeNull();
+    expect(Array.from(list!.querySelectorAll("option")).map((o) => o.value)).toEqual([
+      "XS",
+      "S",
+      "M",
+      "L",
+      "XL",
+      "XXL",
+    ]);
+    expect(valueInputs()[0]).toHaveAttribute("list", list!.id);
+  });
+
+  it("suggests common colors for a Color option, and nothing for another name", () => {
+    const { container } = setup();
+    createCustomOption();
+    fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: "color" } });
+    const list = container.querySelector<HTMLDataListElement>('datalist[id$="-values-1"]');
+    expect(Array.from(list!.querySelectorAll("option")).map((o) => o.value)).toContain("Red");
+
+    fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: "Fabric" } });
+    expect(container.querySelector('datalist[id$="-values-1"]')).toBeNull();
+    expect(valueInputs()[0]).not.toHaveAttribute("list");
+  });
+
+  it("suggests values for the Arabic names too", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <OptionsEditor initial={[{ name: "المقاس", values: ["S"] }]} onChange={onChange} t={ar} />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: ar.productEditor.addValue.replace("{name}", "المقاس") }),
+    );
+
+    const list = container.querySelector<HTMLDataListElement>('datalist[id$="-values-1"]');
+    expect(Array.from(list!.querySelectorAll("option")).map((o) => o.value)).toContain("XL");
+  });
+
+  it("disables the menu's button at three options", () => {
+    setup([
+      { name: "A", values: ["1"] },
+      { name: "B", values: ["1"] },
+      { name: "C", values: ["1"] },
+    ]);
+
+    expect(screen.getByRole("button", { name: t.addAnotherOption })).toBeDisabled();
   });
 });

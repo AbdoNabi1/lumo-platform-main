@@ -141,6 +141,8 @@ describe("ProductEditor", () => {
     const { container } = render(<ProductEditor mode="edit" product={single} {...base} />);
 
     fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
+
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
     fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: "Size" } });
     fireEvent.change(screen.getAllByLabelText(t.optionValue)[0]!, { target: { value: "S" } });
 

@@ -139,6 +139,7 @@ describe("VariantsCard", () => {
   it("builds the table live as options are typed: existing price kept, new rows marked New", () => {
     const { container } = renderCard(product());
     fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
     fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: "Size" } });
     fireEvent.change(screen.getAllByLabelText(t.optionValue)[0]!, { target: { value: "S" } });
     fireEvent.change(screen.getAllByLabelText(t.optionValue)[1]!, { target: { value: "M" } });
@@ -290,6 +291,7 @@ describe("VariantsCard", () => {
   it("does not complain while a new option has a name but no value yet", () => {
     renderCard(product());
     fireEvent.click(screen.getByRole("button", { name: t.addOptions }));
+    fireEvent.click(screen.getByRole("button", { name: t.createCustomOption }));
     fireEvent.change(screen.getByLabelText(t.optionName), { target: { value: "Size" } });
 
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
