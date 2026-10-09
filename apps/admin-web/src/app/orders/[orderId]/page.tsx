@@ -135,7 +135,12 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
             />
 
             <Suspense fallback={<OrderPaymentCardSkeleton t={t} />}>
-              <OrderPaymentCard paymentRef={order.paymentRef} t={t} locale={locale} />
+              <OrderPaymentCard
+                orderId={order.id}
+                paymentRef={order.paymentRef}
+                t={t}
+                locale={locale}
+              />
             </Suspense>
 
             <Suspense fallback={<OrderFulfillmentCardSkeleton t={t} />}>

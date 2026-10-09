@@ -272,6 +272,36 @@ describe("a provider that lacks a capability is refused the operation, never sil
     expect((collected.body as { status: string }).status).toBe("captured");
   });
 
+  // Plan 3A (Task 4): the answer to "does confirming the cash mark the ORDER paid?". Payments does not
+  // touch Orders; it publishes the same `payments.payment_intent.captured` event a card capture does,
+  // and Orders' `PaymentCapturedConsumer` turns that event into `MarkOrderPaid`. This pins the
+  // Payments half: nothing is published while the cash is uncollected, and the collection publishes it.
+  it("built-in cash on delivery: the confirmed collection publishes the captured event that marks the order paid, and nothing before it does", async () => {
+    const app = wire([], newLedger());
+    await app.payments.updateMerchantPaymentSettings({
+      tenantId: "tenant-a",
+      enabledMethods: ["cod"],
+    });
+    const created = await createIntent(app, "cod");
+    const id = (created.body as { paymentIntentId: string }).paymentIntentId;
+
+    await app.payments.captureLifecycle({ tenantId: "tenant-a", paymentIntentId: id });
+    await app.drainOutbox();
+    expect(app.deliveredEventTypes).not.toContain("payments.payment_intent.captured");
+
+    await app.payments.confirmCodCollection({
+      tenantId: "tenant-a",
+      paymentIntentId: id,
+      collectedAmountMinor: 1000,
+      currency: "EGP",
+    });
+    await app.drainOutbox();
+
+    expect(
+      app.deliveredEventTypes.filter((type) => type === "payments.payment_intent.captured"),
+    ).toHaveLength(1);
+  });
+
   it("operator confirmation is available to ANY provider that settles at pay time without webhooks — not to a provider named cod", async () => {
     const ledger = newLedger();
     const app = wire(

@@ -92,6 +92,8 @@ async function placeAnOrder(placeOrder: PlaceOrder): Promise<string> {
 async function orderAwaitingCapture(
   orders: InMemoryOrderRepository,
   orderId: string,
+  /** Where the order stops: `created` is what checkout leaves behind; `payment_requested` is what a capture needs. */
+  stopAt: "created" | "payment_requested" = "payment_requested",
 ): Promise<void> {
   const price = Money.create(1999, "USD");
   if (!price.ok) throw new Error("invalid fixture");
@@ -123,9 +125,11 @@ async function orderAwaitingCapture(
     "evt-create",
     new Date(0),
   );
-  order.confirm("evt-1", new Date(0));
-  order.markAwaitingPayment("evt-2", new Date(0));
-  order.requestPayment("payment-requested-ref", "evt-3", new Date(0));
+  if (stopAt === "payment_requested") {
+    order.confirm("evt-1", new Date(0));
+    order.markAwaitingPayment("evt-2", new Date(0));
+    order.requestPayment("payment-requested-ref", "evt-3", new Date(0));
+  }
   await orders.save(order, "tenant-a");
 }
 
@@ -189,6 +193,22 @@ describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
 
     const order = await orders.findById(orderId, "tenant-a");
     expect(order?.status).toBe("payment_received");
+  });
+
+  // Plan 3A (Task 4), pinned so the gap is on record: checkout leaves an order at `created`, nothing
+  // advances it to `payment_requested` by itself, and a capture — a card's or a confirmed cash
+  // collection's, it is the same event — only pays an order that has reached that step. Until it has,
+  // the consumer throws (retry, then DLQ) and the order stays unpaid.
+  it("does NOT pay a checkout order that is still at created: the capture is refused and the order stays unpaid (the COD gap)", async () => {
+    const { consumer, orders } = wire();
+    const orderId = "order-saga-created";
+    await orderAwaitingCapture(orders, orderId, "created");
+
+    await expect(consumer.handle(capturedEvent(orderId))).rejects.toThrow(
+      /cannot be paid from status "created"/,
+    );
+
+    expect((await orders.findById(orderId, "tenant-a"))?.status).toBe("created");
   });
 
   it("treats a duplicate capture for an already-payment_received checkout/saga order as idempotent success (Sprint A1)", async () => {

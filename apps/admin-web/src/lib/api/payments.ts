@@ -3,6 +3,8 @@ import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 export interface PaymentIntentDto {
   readonly id: string;
   readonly orderRef: string;
+  /** The method the shopper selected, by its registered key ("cod", "stripe", "paymob"…). */
+  readonly provider: string;
   readonly status: string;
   readonly currency: string;
   readonly amountMinor: number;
@@ -97,6 +99,24 @@ export function updateEnabledPaymentMethods(
   return mutateAdminApi(
     "/api/v1/payments/settings",
     { method: "PUT", body: { enabledMethods: methods }, idempotencyKey },
+    isUnknown,
+  );
+}
+
+/**
+ * Confirms that the cash for a cash-on-delivery payment was collected — the only action that marks
+ * such a payment paid. The caller passes the amount and currency read from the payment intent itself
+ * (never from a form); the API accepts only a full collection.
+ */
+export function confirmCodCollection(
+  paymentIntentId: string,
+  collectedAmountMinor: number,
+  currency: string,
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(
+    `/api/v1/payment-intents/${encodeURIComponent(paymentIntentId)}/cod-collection`,
+    { method: "POST", body: { collectedAmountMinor, currency }, idempotencyKey },
     isUnknown,
   );
 }
