@@ -116,7 +116,7 @@ describe("ProductEditor", () => {
     const { container } = render(<ProductEditor mode="edit" product={multi} {...base} />);
 
     expect(screen.queryByLabelText(t.price)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(t.trackQuantity)).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: t.inventoryTracked })).not.toBeInTheDocument();
     expect(screen.queryByText(t.shippingCard)).not.toBeInTheDocument();
     expect(container.querySelector('input[name="hasVariantFields"]')).toBeNull();
     expect(screen.getByRole("table")).toBeInTheDocument();
@@ -125,7 +125,7 @@ describe("ProductEditor", () => {
   it("shows the inventory card, and no separate stock card, for a product without options", () => {
     render(<ProductEditor mode="edit" product={single} {...base} />);
 
-    expect(screen.getByLabelText(t.trackQuantity)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: t.inventoryTracked })).toBeInTheDocument();
     expect(screen.getByLabelText(t.quantity)).toHaveValue(5);
     expect(screen.getAllByText(t.inventoryCard)).toHaveLength(1);
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
@@ -139,7 +139,7 @@ describe("ProductEditor", () => {
     fireEvent.change(screen.getAllByLabelText(t.optionValue)[0]!, { target: { value: "S" } });
 
     expect(screen.queryByLabelText(t.price)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(t.trackQuantity)).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: t.inventoryTracked })).not.toBeInTheDocument();
     expect(screen.getByRole("table")).toBeInTheDocument();
     // The server decides by the options it receives; the static marker stays harmless.
     expect(container.querySelector('input[name="hasVariantFields"]')).not.toBeNull();

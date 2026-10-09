@@ -258,10 +258,16 @@ describe("VariantsCard", () => {
 
     fireEvent.click(within(rows[0]!).getByRole("button", { name: t.edit }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByLabelText(t.trackQuantity)).toBeChecked();
-    expect(within(dialog).getByLabelText(t.continueSelling)).not.toBeChecked();
+    expect(within(dialog).getByRole("switch", { name: t.inventoryTracked })).toBeChecked();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: (name) => name.startsWith(t.sellWhenOutOfStock) }),
+    );
+    expect(within(dialog).getByRole("switch", { name: t.sellWhenOutOfStock })).not.toBeChecked();
 
-    fireEvent.click(within(dialog).getByLabelText(t.continueSelling));
+    fireEvent.click(within(dialog).getByRole("switch", { name: t.sellWhenOutOfStock }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: (name) => name.startsWith(t.barcode) }),
+    );
     fireEvent.change(within(dialog).getByLabelText(t.barcode), { target: { value: "999" } });
     fireEvent.click(within(dialog).getByRole("button", { name: t.save }));
 
@@ -274,7 +280,49 @@ describe("VariantsCard", () => {
     expect(formData.get("taxable")).toBe("on");
     expect(formData.get("tracksInventory")).toBe("on");
     expect(formData.get("continueSelling")).toBe("on");
+    // Every other field the dialog posted before still goes out, closed chips included.
+    for (const name of ["price", "compareAtPrice", "costPerItem", "sku", "weight", "weightUnit"]) {
+      expect(formData.has(name)).toBe(true);
+    }
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("opens the cost chip in the dialog when the variant has a cost, and the price field is a money input", async () => {
+    renderCard(
+      product({
+        options: [{ name: "Size", values: ["S"] }],
+        variants: [variant({ selection: { Size: "S" }, costAmountMinor: 700 })],
+      }),
+    );
+    fireEvent.click(within(screen.getByRole("table")).getByRole("button", { name: t.edit }));
+
+    const dialog = await screen.findByRole("dialog");
+    const cost = within(dialog).getByRole("button", {
+      name: (name) => name.startsWith(t.costPerItem),
+    });
+    expect(cost).toHaveAttribute("aria-expanded", "true");
+    expect(cost).toHaveTextContent("· $7.00");
+    expect(within(dialog).getByLabelText(t.costPerItem)).toHaveValue("7.00");
+    expect(within(dialog).getByLabelText(t.price)).toHaveAttribute("name", "price");
+    // Price, compare-at and cost are each a money input with the currency symbol as a prefix.
+    expect(within(dialog).getAllByText("$")).toHaveLength(3);
+  });
+
+  it("switches the dialog off physical with the physical-product switch, and posts nothing for it", async () => {
+    renderCard(
+      product({
+        options: [{ name: "Size", values: ["S"] }],
+        variants: [variant({ selection: { Size: "S" } })],
+      }),
+    );
+    fireEvent.click(within(screen.getByRole("table")).getByRole("button", { name: t.edit }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.click(within(dialog).getByRole("switch", { name: t.physicalProduct }));
+    fireEvent.click(within(dialog).getByRole("button", { name: t.save }));
+
+    await waitFor(() => expect(updateVariantDetailsAction).toHaveBeenCalledTimes(1));
+    expect(updateVariantDetailsAction.mock.calls[0]![1].get("requiresShipping")).toBeNull();
   });
 
   it("offers Remove in the dialog only when the product has more than one variant", async () => {

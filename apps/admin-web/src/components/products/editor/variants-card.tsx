@@ -30,9 +30,12 @@ import { fromMinorUnits } from "@/lib/products/money";
 import type { StockView } from "@/lib/products/stock";
 import { planOptionChange, rowKey, type MatrixOption } from "@/lib/products/variant-matrix";
 import type { Dictionary } from "@/messages/en";
-import { CheckboxRow, Field, NativeSelect, PRODUCT_FORM_ID } from "./field";
+import { Switch } from "./controls";
+import { PRODUCT_FORM_ID } from "./field";
+import { InventoryBody } from "./inventory-card";
 import { OptionsEditor } from "./options-editor";
-import { weightDefaults } from "./shipping-card";
+import { PricingFields } from "./pricing-card";
+import { ShippingBody } from "./shipping-card";
 
 const INITIAL_STATE: FormState = { status: "idle" };
 const NO_ERRORS: Readonly<Record<string, string>> = {};
@@ -269,6 +272,7 @@ export function VariantsCard({
             variant={editing}
             onClose={() => setEditingId(null)}
             t={t}
+            locale={locale}
           />
         )}
       </Dialog>
@@ -281,17 +285,20 @@ function VariantDialog({
   variant,
   onClose,
   t,
+  locale,
 }: {
   readonly product: ProductDetailDto;
   readonly variant: ProductVariantDto;
   readonly onClose: () => void;
   readonly t: Dictionary;
+  readonly locale: Locale;
 }) {
   const editor = t.productEditor;
   const [state, formAction, isPending] = useActionState(updateVariantDetailsAction, INITIAL_STATE);
   const errors = state.status === "error" ? state.fieldErrors : {};
   const { currency } = variant;
-  const weight = weightDefaults(variant.weightGrams);
+  const [tracked, setTracked] = useState(variant.tracksInventory);
+  const [physical, setPhysical] = useState(variant.requiresShipping);
 
   useEffect(() => {
     if (state.status === "success") onClose();
@@ -312,87 +319,65 @@ function VariantDialog({
         <input type="hidden" name="productId" value={product.id} />
         <input type="hidden" name="variantId" value={variant.id} />
 
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label={editor.price} name="price" error={errors["price"]}>
-            {(control) => (
-              <Input
-                {...control}
-                inputMode="decimal"
-                defaultValue={fromMinorUnits(variant.priceAmountMinor, currency)}
-              />
-            )}
-          </Field>
-          <Field
-            label={editor.compareAtPrice}
-            name="compareAtPrice"
-            error={errors["compareAtPrice"]}
-          >
-            {(control) => (
-              <Input
-                {...control}
-                inputMode="decimal"
-                defaultValue={
-                  variant.compareAtAmountMinor === null
-                    ? ""
-                    : fromMinorUnits(variant.compareAtAmountMinor, currency)
-                }
-              />
-            )}
-          </Field>
-          <Field label={editor.costPerItem} name="costPerItem" error={errors["costPerItem"]}>
-            {(control) => (
-              <Input
-                {...control}
-                inputMode="decimal"
-                defaultValue={
-                  variant.costAmountMinor === null
-                    ? ""
-                    : fromMinorUnits(variant.costAmountMinor, currency)
-                }
-              />
-            )}
-          </Field>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label={editor.sku} name="sku" error={errors["sku"]}>
-            {(control) => <Input {...control} defaultValue={variant.sku} />}
-          </Field>
-          <Field label={editor.barcode} name="barcode" error={errors["barcode"]}>
-            {(control) => <Input {...control} defaultValue={variant.barcode ?? ""} />}
-          </Field>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-[1fr_8rem]">
-          <Field label={editor.weight} name="weight" error={errors["weight"]}>
-            {(control) => <Input {...control} inputMode="decimal" defaultValue={weight.value} />}
-          </Field>
-          <Field label={editor.weightUnit} name="weightUnit">
-            {(control) => (
-              <NativeSelect {...control} defaultValue={weight.unit}>
-                <option value="g">{editor.grams}</option>
-                <option value="kg">{editor.kilograms}</option>
-              </NativeSelect>
-            )}
-          </Field>
-        </div>
-
-        <CheckboxRow
-          name="requiresShipping"
-          label={editor.physicalProduct}
-          defaultChecked={variant.requiresShipping}
+        <PricingFields
+          initial={{
+            price: fromMinorUnits(variant.priceAmountMinor, currency),
+            compareAtPrice:
+              variant.compareAtAmountMinor === null
+                ? ""
+                : fromMinorUnits(variant.compareAtAmountMinor, currency),
+            costPerItem:
+              variant.costAmountMinor === null
+                ? ""
+                : fromMinorUnits(variant.costAmountMinor, currency),
+            currency,
+            taxable: variant.taxable,
+          }}
+          errors={errors}
+          t={t}
+          locale={locale}
+          form={undefined}
+          currencyEditable={false}
         />
-        <CheckboxRow name="taxable" label={editor.chargeTax} defaultChecked={variant.taxable} />
-        <CheckboxRow
-          name="tracksInventory"
-          label={editor.trackQuantity}
-          defaultChecked={variant.tracksInventory}
-        />
-        <CheckboxRow
-          name="continueSelling"
-          label={editor.continueSelling}
-          defaultChecked={variant.inventoryPolicy === "continue"}
-        />
+
+        <section className="border-border flex flex-col gap-4 border-t pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-semibold">{editor.inventoryCard}</h4>
+            <Switch
+              name="tracksInventory"
+              label={editor.inventoryTracked}
+              checked={tracked}
+              onCheckedChange={setTracked}
+            />
+          </div>
+          <InventoryBody
+            tracked={tracked}
+            variant={variant}
+            mode="edit"
+            errors={errors}
+            t={t}
+            form={undefined}
+          />
+        </section>
+
+        <section className="border-border flex flex-col gap-4 border-t pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-semibold">{editor.shippingCard}</h4>
+            <Switch
+              name="requiresShipping"
+              label={editor.physicalProduct}
+              checked={physical}
+              onCheckedChange={setPhysical}
+            />
+          </div>
+          <ShippingBody
+            physical={physical}
+            weightGrams={variant.weightGrams}
+            errors={errors}
+            t={t}
+            form={undefined}
+          />
+        </section>
 
         {state.status === "error" && (
           <p role="alert" className="text-destructive text-sm">
