@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { CheckCircle2Icon, PackageXIcon } from "lucide-react";
-import { Card, CardContent } from "@platform/ui";
+import Link from "next/link";
+import { Button, Card, CardContent } from "@platform/ui";
 import { ClearCheckoutSessionCookie } from "@/components/clear-checkout-session-cookie";
 import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
@@ -45,6 +46,8 @@ export default async function CheckoutConfirmationPage() {
       : null;
   const totals = session?.body?.totals ?? null;
   const currency = session?.body?.currency;
+  // Cash on delivery: nothing was charged online, so say what is due when the order arrives.
+  const payOnDelivery = session?.body?.selectedPaymentMethod === "cod";
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 p-8">
@@ -87,6 +90,17 @@ export default async function CheckoutConfirmationPage() {
                 </div>
               )}
             </dl>
+            {payOnDelivery && totals !== null && currency !== undefined && (
+              <p className="text-md max-w-md font-medium">
+                {t.checkout.confirmation.codNotice.replace(
+                  "{total}",
+                  formatCurrency(locale, totals.grandTotalMinor, currency),
+                )}
+              </p>
+            )}
+            <Button asChild>
+              <Link href="/">{t.checkout.confirmation.continueShopping}</Link>
+            </Button>
           </CardContent>
         </Card>
       )}

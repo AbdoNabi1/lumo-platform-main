@@ -237,6 +237,8 @@ export const ar: Dictionary = {
       orderReference: "رقم الطلب المرجعي",
       total: "الإجمالي",
       backToShop: "العودة إلى المتجر",
+      codNotice: "هتدفع {total} كاش لما الطلب يوصلك.",
+      continueShopping: "متابعة التسوق",
       missingTitle: "لا يوجد ما يمكن تأكيده",
       missingBody: "تعذّر العثور على طلب لتأكيده هنا.",
     },

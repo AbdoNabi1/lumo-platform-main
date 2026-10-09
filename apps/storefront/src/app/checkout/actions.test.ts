@@ -90,6 +90,7 @@ function session(overrides: Partial<CheckoutSessionSummary> = {}): CheckoutSessi
     billingAddress: null,
     contactEmail: null,
     selectedShippingMethod: null,
+    selectedPaymentMethod: null,
     orderRef: null,
     ...overrides,
   };

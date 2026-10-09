@@ -234,6 +234,8 @@ export const en = {
       orderReference: "Order reference",
       total: "Total",
       backToShop: "Back to shop",
+      codNotice: "You'll pay {total} in cash when your order arrives.",
+      continueShopping: "Continue shopping",
       missingTitle: "Nothing to confirm",
       missingBody: "We couldn't find an order to confirm here.",
     },

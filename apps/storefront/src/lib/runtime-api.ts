@@ -789,6 +789,8 @@ export interface CheckoutSessionSummary {
   /** The receipt address a guest gave (WP-1, G-52) — `null` until set. Completing needs it. */
   readonly contactEmail: string | null;
   readonly selectedShippingMethod: string | null;
+  /** The payment method the shopper selected ("cod", "stripe"…), or null before they choose. */
+  readonly selectedPaymentMethod: string | null;
   readonly orderRef: string | null;
 }
 
