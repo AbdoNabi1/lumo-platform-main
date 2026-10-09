@@ -27,10 +27,13 @@ const startCheckoutBody = z
 const itemsBody = z.object({ sessionRef: z.string().min(1), cartId: z.string().min(1) }).strict();
 const addressBody = z.object({
   sessionRef: z.string().min(1),
+  /** Plan 3A: who receives the order; the domain trims, bounds and normalizes them. */
+  name: z.string().max(120).optional(),
+  phone: z.string().max(32).optional(),
   line1: z.string().min(1),
   line2: z.string().optional(),
   city: z.string().min(1),
-  postalCode: z.string().min(1),
+  postalCode: z.string().max(32).optional(),
   country: z.string().min(1),
 });
 /**
@@ -98,6 +101,8 @@ const completeBody = z.object({
  */
 
 export interface PublicAddressDto {
+  readonly name: string | null;
+  readonly phone: string | null;
   readonly line1: string;
   readonly line2?: string;
   readonly city: string;
@@ -137,6 +142,8 @@ export interface PublicCheckoutSessionDto {
 
 function toAddressDto(address: CheckoutAddress): PublicAddressDto {
   return {
+    name: address.name ?? null,
+    phone: address.phone ?? null,
     line1: address.line1,
     line2: address.line2,
     city: address.city,
@@ -350,10 +357,12 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         const result = await admin.publicReads.checkout.setBillingAddress({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
+          name: body.name,
+          phone: body.phone,
           line1: body.line1,
           line2: body.line2,
           city: body.city,
-          postalCode: body.postalCode,
+          postalCode: body.postalCode ?? "",
           country: body.country,
         });
         if (result.status < 200 || result.status >= 300) return result;
@@ -383,10 +392,12 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         const result = await admin.publicReads.checkout.setShippingAddress({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
+          name: body.name,
+          phone: body.phone,
           line1: body.line1,
           line2: body.line2,
           city: body.city,
-          postalCode: body.postalCode,
+          postalCode: body.postalCode ?? "",
           country: body.country,
         });
         if (result.status < 200 || result.status >= 300) return result;

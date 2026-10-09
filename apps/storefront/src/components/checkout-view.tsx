@@ -64,7 +64,8 @@ const EMPTY_ADDRESS: CheckoutAddressInput = {
 };
 
 function addressFromDto(address: CheckoutSessionSummary["shippingAddress"]): CheckoutAddressInput {
-  return address ?? EMPTY_ADDRESS;
+  if (address === null) return EMPTY_ADDRESS;
+  return { ...address, name: address.name ?? undefined, phone: address.phone ?? undefined };
 }
 
 function errorBody(reason: ErrorReason, t: Dictionary): string {

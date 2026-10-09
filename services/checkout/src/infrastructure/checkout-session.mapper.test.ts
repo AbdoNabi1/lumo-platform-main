@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { CheckoutSession } from "../domain/checkout-session";
+import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
 import { CheckoutSessionMapper, type CheckoutSessionRow } from "./checkout-session.mapper";
@@ -88,5 +89,47 @@ describe("CheckoutSessionMapper — variant lines (Plan 2A)", () => {
     const line = CheckoutSessionMapper.toDomain(row).items[0];
     expect(line?.variantRef).toBeUndefined();
     expect(line?.title).toBeUndefined();
+  });
+});
+
+describe("CheckoutSessionMapper — recipient name and phone (Plan 3A)", () => {
+  function sessionWithShipping(extra: { name?: string; phone?: string }): CheckoutSession {
+    const session = guest();
+    const address = CheckoutAddress.create({
+      line1: "1 Main St",
+      city: "Cairo",
+      postalCode: "",
+      country: "EG",
+      ...extra,
+    });
+    if (!address.ok) throw new Error("invalid fixture");
+    session.setShippingAddress(address.value);
+    return session;
+  }
+
+  it("round-trips the name, phone and an empty postal code through the stored JSON", () => {
+    const row = asRow(
+      CheckoutSessionMapper.toRow(
+        sessionWithShipping({ name: "Mona Ali", phone: "+201012345678" }),
+        "t1",
+      ),
+    );
+    expect(row.shippingAddress).toMatchObject({ name: "Mona Ali", phone: "+201012345678" });
+
+    const back = CheckoutSessionMapper.toDomain(row).shippingAddress;
+    expect(back?.name).toBe("Mona Ali");
+    expect(back?.phone).toBe("+201012345678");
+    expect(back?.postalCode).toBe("");
+  });
+
+  it("reads a stored address written before the keys existed with neither", () => {
+    const row = {
+      ...asRow(CheckoutSessionMapper.toRow(guest(), "t1")),
+      shippingAddress: { line1: "1 Main St", city: "Cairo", postalCode: "11511", country: "EG" },
+    };
+    const back = CheckoutSessionMapper.toDomain(row).shippingAddress;
+    expect(back?.name).toBeUndefined();
+    expect(back?.phone).toBeUndefined();
+    expect(back?.line1).toBe("1 Main St");
   });
 });

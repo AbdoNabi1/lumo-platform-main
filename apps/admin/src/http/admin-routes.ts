@@ -207,6 +207,13 @@ export interface OrderAddressDto {
   readonly country: string;
 }
 
+/** An order's address as staff see it (Plan 3A): the recipient and phone, and the second line, are null when absent. */
+export interface OrderRecipientAddressDto extends OrderAddressDto {
+  readonly recipientName: string | null;
+  readonly phone: string | null;
+  readonly line2: string | null;
+}
+
 export interface OrderTotalsDto {
   readonly subtotalMinor: number;
   readonly taxMinor: number;
@@ -231,13 +238,25 @@ export interface OrderDetailDto {
   readonly totalMinor: number;
   readonly createdAt: string;
   readonly items: readonly OrderDetailItemDto[];
-  readonly shippingAddress: OrderAddressDto;
-  readonly billingAddress: OrderAddressDto | null;
+  readonly shippingAddress: OrderRecipientAddressDto;
+  readonly billingAddress: OrderRecipientAddressDto | null;
   readonly totals: OrderTotalsDto | null;
   readonly checkoutRef: string | null;
   readonly paymentRef: string | null;
   readonly fulfillmentRef: string | null;
   readonly history: readonly OrderHistoryEntryDto[];
+}
+
+function toOrderRecipientAddressDto(address: Order["shippingAddress"]): OrderRecipientAddressDto {
+  return {
+    recipientName: address.recipientName ?? null,
+    phone: address.phone ?? null,
+    line1: address.line1,
+    line2: address.line2 ?? null,
+    city: address.city,
+    postalCode: address.postalCode,
+    country: address.country,
+  };
 }
 
 function toOrderDetailDto(order: Order): OrderDetailDto {
@@ -266,21 +285,9 @@ function toOrderDetailDto(order: Order): OrderDetailDto {
       quantity: item.quantity,
       lineTotalMinor: item.lineTotal.amountMinor,
     })),
-    shippingAddress: {
-      line1: order.shippingAddress.line1,
-      city: order.shippingAddress.city,
-      postalCode: order.shippingAddress.postalCode,
-      country: order.shippingAddress.country,
-    },
+    shippingAddress: toOrderRecipientAddressDto(order.shippingAddress),
     billingAddress:
-      billingAddress === undefined
-        ? null
-        : {
-            line1: billingAddress.line1,
-            city: billingAddress.city,
-            postalCode: billingAddress.postalCode,
-            country: billingAddress.country,
-          },
+      billingAddress === undefined ? null : toOrderRecipientAddressDto(billingAddress),
     totals:
       totals === undefined
         ? null

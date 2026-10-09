@@ -13,10 +13,18 @@ import { OrderTotalsSnapshot } from "../domain/value-objects/order-totals-snapsh
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
 
 export interface CreateOrderFromCheckoutAddressInput {
+  /** Plan 3A: who receives the order, and the second address line. */
+  readonly name?: string;
+  readonly phone?: string;
+  readonly line2?: string;
   readonly line1: string;
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+}
+
+function toExtra(address: CreateOrderFromCheckoutAddressInput) {
+  return { recipientName: address.name, phone: address.phone, line2: address.line2 };
 }
 
 export interface CreateOrderFromCheckoutItemInput {
@@ -128,6 +136,7 @@ export class CreateOrderFromCheckout implements UseCase<
       input.billingAddress.city,
       input.billingAddress.postalCode,
       input.billingAddress.country,
+      toExtra(input.billingAddress),
     );
     if (!billingAddress.ok) return err(billingAddress.error);
     const shippingAddress = AddressSnapshot.create(
@@ -135,6 +144,7 @@ export class CreateOrderFromCheckout implements UseCase<
       input.shippingAddress.city,
       input.shippingAddress.postalCode,
       input.shippingAddress.country,
+      toExtra(input.shippingAddress),
     );
     if (!shippingAddress.ok) return err(shippingAddress.error);
 

@@ -43,6 +43,18 @@ export interface OrderAddressRow {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3A: nullable; null/absent on orders placed before the recipient was captured. */
+  readonly recipientName?: string | null;
+  readonly phone?: string | null;
+  readonly line2?: string | null;
+}
+
+function toExtra(address: OrderAddressRow) {
+  return {
+    recipientName: address.recipientName ?? undefined,
+    phone: address.phone ?? undefined,
+    line2: address.line2 ?? undefined,
+  };
 }
 export interface OrderTotalsJson {
   readonly subtotalMinor: number;
@@ -107,7 +119,13 @@ export class OrderMapper {
       row.currency,
       orderItems,
       must(
-        AddressSnapshot.create(address.line1, address.city, address.postalCode, address.country),
+        AddressSnapshot.create(
+          address.line1,
+          address.city,
+          address.postalCode,
+          address.country,
+          toExtra(address),
+        ),
         "shipping address",
       ),
       history,
@@ -122,6 +140,7 @@ export class OrderMapper {
                   row.billingAddress.city,
                   row.billingAddress.postalCode,
                   row.billingAddress.country,
+                  toExtra(row.billingAddress),
                 ),
                 "billing address",
               ),
@@ -151,6 +170,9 @@ export class OrderMapper {
               city: order.billingAddress.city,
               postalCode: order.billingAddress.postalCode,
               country: order.billingAddress.country,
+              recipientName: order.billingAddress.recipientName ?? null,
+              phone: order.billingAddress.phone ?? null,
+              line2: order.billingAddress.line2 ?? null,
             },
       totals:
         order.totals === undefined
@@ -201,6 +223,9 @@ export class OrderMapper {
       city: order.shippingAddress.city,
       postalCode: order.shippingAddress.postalCode,
       country: order.shippingAddress.country,
+      recipientName: order.shippingAddress.recipientName ?? null,
+      phone: order.shippingAddress.phone ?? null,
+      line2: order.shippingAddress.line2 ?? null,
     };
   }
 }

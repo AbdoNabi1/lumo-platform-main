@@ -101,6 +101,13 @@ export interface OrderAddressDto {
   readonly country: string;
 }
 
+/** Plan 3A: an order's address as staff read it — who receives it and how to reach them; null when absent. */
+export interface OrderRecipientAddressDto extends OrderAddressDto {
+  readonly recipientName: string | null;
+  readonly phone: string | null;
+  readonly line2: string | null;
+}
+
 export interface OrderTotalsDto {
   readonly subtotalMinor: number;
   readonly taxMinor: number;
@@ -124,8 +131,8 @@ export interface OrderDetailDto {
   readonly totalMinor: number;
   readonly createdAt: string;
   readonly items: readonly OrderDetailItemDto[];
-  readonly shippingAddress: OrderAddressDto;
-  readonly billingAddress: OrderAddressDto | null;
+  readonly shippingAddress: OrderRecipientAddressDto;
+  readonly billingAddress: OrderRecipientAddressDto | null;
   readonly totals: OrderTotalsDto | null;
   readonly checkoutRef: string | null;
   readonly paymentRef: string | null;
@@ -268,7 +275,11 @@ export function refundOrder(
   orderId: string,
   idempotencyKey: string,
 ): Promise<MutationResult<unknown>> {
-  return mutateAdminApi(orderPath(orderId, "/refund"), { method: "POST", idempotencyKey }, isUnknown);
+  return mutateAdminApi(
+    orderPath(orderId, "/refund"),
+    { method: "POST", idempotencyKey },
+    isUnknown,
+  );
 }
 
 /**

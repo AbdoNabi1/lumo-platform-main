@@ -72,6 +72,9 @@ model OrderShippingAddress {
   city       String
   postalCode String @map("postal_code")
   country    String
+  recipientName String? @map("recipient_name") // Plan 3A
+  phone         String? // Plan 3A
+  line2         String? // Plan 3A
 
   @@map("order_shipping_addresses")
   @@schema("orders")

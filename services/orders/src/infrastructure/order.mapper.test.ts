@@ -4,6 +4,7 @@ import { Order } from "../domain/order";
 import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
+import { OrderTotalsSnapshot } from "../domain/value-objects/order-totals-snapshot";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
 import { OrderMapper } from "./order.mapper";
 
@@ -82,5 +83,119 @@ describe("OrderMapper — variant lines (Plan 2A)", () => {
       OrderMapper.toAddressRow(order, "t1"),
     );
     expect(back.items[0]?.snapshot.variantRef).toBeUndefined();
+  });
+});
+
+function orderWithRecipient(): Order {
+  const recipient = must(
+    AddressSnapshot.create("1 Main St", "Cairo", "", "EG", {
+      recipientName: "Mona Ali",
+      phone: "+201012345678",
+      line2: "Flat 4",
+    }),
+  );
+  return Order.createFromCheckout(
+    UniqueEntityId.from("order-2"),
+    must(OrderNumber.create("ORD-2")),
+    "customer-1",
+    "EGP",
+    [
+      OrderItem.create(
+        UniqueEntityId.from("item-3"),
+        must(ProductSnapshot.create("p-mug", "Mug", must(Money.create(5000, "EGP")))),
+        1,
+      ),
+    ],
+    recipient,
+    recipient,
+    OrderTotalsSnapshot.create({
+      subtotalMinor: 5000,
+      taxMinor: 0,
+      shippingMinor: 0,
+      discountMinor: 0,
+      totalMinor: 5000,
+      currency: "EGP",
+    }),
+    "checkout-1",
+    "evt-2",
+    new Date(0),
+  );
+}
+
+describe("OrderMapper — recipient name, phone and line 2 (Plan 3A)", () => {
+  it("writes the three columns on the shipping address row", () => {
+    expect(OrderMapper.toAddressRow(orderWithRecipient(), "t1")).toMatchObject({
+      recipientName: "Mona Ali",
+      phone: "+201012345678",
+      line2: "Flat 4",
+      postalCode: "",
+    });
+  });
+
+  it("carries the same three keys in the billing address JSON", () => {
+    expect(OrderMapper.toOrderRow(orderWithRecipient(), "t1").billingAddress).toMatchObject({
+      recipientName: "Mona Ali",
+      phone: "+201012345678",
+      line2: "Flat 4",
+    });
+  });
+
+  it("writes null for all three when the address has none", () => {
+    expect(OrderMapper.toAddressRow(orderWithLines(), "t1")).toMatchObject({
+      recipientName: null,
+      phone: null,
+      line2: null,
+    });
+  });
+
+  it("round-trips the shipping and billing recipient through the row shapes", () => {
+    const order = orderWithRecipient();
+    const back = OrderMapper.toDomain(
+      { ...OrderMapper.toOrderRow(order, "t1"), version: 1 },
+      OrderMapper.toItemRows(order, "t1"),
+      OrderMapper.toEventRows(order, "t1"),
+      OrderMapper.toAddressRow(order, "t1"),
+    );
+    for (const address of [back.shippingAddress, back.billingAddress]) {
+      expect(address?.recipientName).toBe("Mona Ali");
+      expect(address?.phone).toBe("+201012345678");
+      expect(address?.line2).toBe("Flat 4");
+    }
+  });
+
+  it("reads an order placed before this plan (all three columns null) unchanged", () => {
+    const order = orderWithLines();
+    const legacyAddress = {
+      ...OrderMapper.toAddressRow(order, "t1"),
+      recipientName: null,
+      phone: null,
+      line2: null,
+    };
+    const back = OrderMapper.toDomain(
+      { ...OrderMapper.toOrderRow(order, "t1"), version: 1 },
+      OrderMapper.toItemRows(order, "t1"),
+      OrderMapper.toEventRows(order, "t1"),
+      legacyAddress,
+    );
+    expect(back.shippingAddress.recipientName).toBeUndefined();
+    expect(back.shippingAddress.phone).toBeUndefined();
+    expect(back.shippingAddress.line2).toBeUndefined();
+    expect(back.shippingAddress.line1).toBe("1 Main St");
+  });
+
+  it("reads a legacy billing JSON that has none of the three keys", () => {
+    const order = orderWithLines();
+    const back = OrderMapper.toDomain(
+      {
+        ...OrderMapper.toOrderRow(order, "t1"),
+        version: 1,
+        billingAddress: { line1: "2 Side St", city: "Giza", postalCode: "12511", country: "EG" },
+      },
+      OrderMapper.toItemRows(order, "t1"),
+      OrderMapper.toEventRows(order, "t1"),
+      OrderMapper.toAddressRow(order, "t1"),
+    );
+    expect(back.billingAddress?.line1).toBe("2 Side St");
+    expect(back.billingAddress?.phone).toBeUndefined();
   });
 });

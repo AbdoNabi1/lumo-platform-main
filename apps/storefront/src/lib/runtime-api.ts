@@ -743,12 +743,22 @@ export function createProductReview(
 }
 
 export interface CheckoutAddressInput {
+  /** Plan 3A: who receives the order and how to reach them. */
+  readonly name?: string;
+  readonly phone?: string;
   readonly line1: string;
   readonly line2?: string;
   readonly city: string;
+  /** May be empty. */
   readonly postalCode: string;
   readonly country: string;
 }
+
+/** An address as the session returns it to its owner: the recipient keys are null when never given. */
+export type CheckoutAddressSummary = Omit<CheckoutAddressInput, "name" | "phone"> & {
+  readonly name?: string | null;
+  readonly phone?: string | null;
+};
 
 export interface CheckoutSessionItemSummary {
   readonly productId: string;
@@ -774,8 +784,8 @@ export interface CheckoutSessionSummary {
   readonly currency: string;
   readonly items: readonly CheckoutSessionItemSummary[];
   readonly totals: CheckoutTotalsSummary | null;
-  readonly shippingAddress: CheckoutAddressInput | null;
-  readonly billingAddress: CheckoutAddressInput | null;
+  readonly shippingAddress: CheckoutAddressSummary | null;
+  readonly billingAddress: CheckoutAddressSummary | null;
   /** The receipt address a guest gave (WP-1, G-52) — `null` until set. Completing needs it. */
   readonly contactEmail: string | null;
   readonly selectedShippingMethod: string | null;

@@ -21,6 +21,9 @@ interface CheckoutItemJson {
   readonly variantTitle?: string | null;
 }
 interface CheckoutAddressJson {
+  /** Plan 3A: optional keys inside the existing JSON — no migration; absent on legacy sessions. */
+  readonly name?: string;
+  readonly phone?: string;
   readonly line1: string;
   readonly line2?: string;
   readonly city: string;
@@ -229,6 +232,8 @@ export class CheckoutSessionMapper {
 
 function toAddressJson(address: CheckoutAddress): CheckoutAddressJson {
   return {
+    name: address.name,
+    phone: address.phone,
     line1: address.line1,
     line2: address.line2,
     city: address.city,

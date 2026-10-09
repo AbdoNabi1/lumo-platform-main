@@ -23,6 +23,10 @@ export interface PlaceOrderItemInput {
 }
 
 export interface PlaceOrderAddressInput {
+  /** Plan 3A: who receives the order, and the second address line. */
+  readonly name?: string;
+  readonly phone?: string;
+  readonly line2?: string;
   readonly line1: string;
   readonly city: string;
   readonly postalCode: string;
@@ -108,6 +112,11 @@ export class PlaceOrder implements UseCase<PlaceOrderInput, PlaceOrderOutput, Do
       input.shippingAddress.city,
       input.shippingAddress.postalCode,
       input.shippingAddress.country,
+      {
+        recipientName: input.shippingAddress.name,
+        phone: input.shippingAddress.phone,
+        line2: input.shippingAddress.line2,
+      },
     );
     if (!address.ok) return err(address.error);
 

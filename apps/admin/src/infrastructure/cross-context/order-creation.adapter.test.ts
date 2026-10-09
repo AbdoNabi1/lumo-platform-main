@@ -52,13 +52,19 @@ interface CreateFromCheckoutCall {
     readonly variantTitle?: string | null;
   }[];
   readonly billingAddress: {
+    readonly name?: string;
+    readonly phone?: string;
     readonly line1: string;
+    readonly line2?: string;
     readonly city: string;
     readonly postalCode: string;
     readonly country: string;
   };
   readonly shippingAddress: {
+    readonly name?: string;
+    readonly phone?: string;
     readonly line1: string;
+    readonly line2?: string;
     readonly city: string;
     readonly postalCode: string;
     readonly country: string;
@@ -254,7 +260,7 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
     ]);
   });
 
-  it("drops CheckoutAddress.line2 (Orders' address input has no field for it)", async () => {
+  it("passes the recipient name, phone and line2 through on both addresses (Plan 3A)", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
     const adapter = new OrderCreationAdapter(orders, fakeCustomers().customers);
@@ -266,20 +272,28 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
       currency: "USD",
       items: [checkoutItem("product-1", 1, 1000, "USD")],
       billingAddress: checkoutAddress({ line1: "Billing St", line2: "Apt 4" }),
-      shippingAddress: checkoutAddress({ line1: "Shipping St", line2: "Unit 9" }),
+      shippingAddress: checkoutAddress({
+        line1: "Shipping St",
+        line2: "Unit 9",
+        name: "Mona Ali",
+        phone: "+201012345678",
+      }),
       totals: checkoutTotals(),
       idempotencyKey: "idem-1",
     });
 
     expect(calls[0]?.billingAddress).toEqual({
       line1: "Billing St",
+      line2: "Apt 4",
       city: "Springfield",
       postalCode: "00000",
       country: "US",
     });
-    expect((calls[0]?.billingAddress as { line2?: string }).line2).toBeUndefined();
     expect(calls[0]?.shippingAddress).toEqual({
+      name: "Mona Ali",
+      phone: "+201012345678",
       line1: "Shipping St",
+      line2: "Unit 9",
       city: "Springfield",
       postalCode: "00000",
       country: "US",

@@ -32,3 +32,32 @@ describe("AddressSnapshot", () => {
     expect(AddressSnapshot.create("1 Main St", "", "12345", "US").ok).toBe(false);
   });
 });
+
+describe("AddressSnapshot — recipient extras (Plan 3A)", () => {
+  it("accepts an empty postal code but still requires line1, city and country", () => {
+    expect(AddressSnapshot.create("1 Main St", "Town", "", "US").ok).toBe(true);
+    expect(AddressSnapshot.create("", "Town", "", "US").ok).toBe(false);
+    expect(AddressSnapshot.create("1 Main St", " ", "", "US").ok).toBe(false);
+    expect(AddressSnapshot.create("1 Main St", "Town", "", "").ok).toBe(false);
+  });
+
+  it("round-trips the recipient name, phone and second line", () => {
+    const result = AddressSnapshot.create("1 Main St", "Town", "12345", "US", {
+      recipientName: "Mona Ali",
+      phone: "+201012345678",
+      line2: "Flat 4",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.recipientName).toBe("Mona Ali");
+    expect(result.value.phone).toBe("+201012345678");
+    expect(result.value.line2).toBe("Flat 4");
+  });
+
+  it("leaves the extras undefined when none are passed (existing call sites)", () => {
+    const result = AddressSnapshot.create("1 Main St", "Town", "12345", "US");
+    expect(result.ok && result.value.recipientName).toBeUndefined();
+    expect(result.ok && result.value.phone).toBeUndefined();
+    expect(result.ok && result.value.line2).toBeUndefined();
+  });
+});

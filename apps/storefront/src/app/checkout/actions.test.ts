@@ -167,6 +167,25 @@ describe("status → reason mapping (shared by every mutating action)", () => {
   });
 });
 
+describe("the recipient on the shipping address (Plan 3A)", () => {
+  it("forwards the name and phone to the runtime API untouched", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    setCheckoutShippingAddress.mockResolvedValue({ status: 200, body: session() });
+
+    await actions.setShippingAddress("checkout-1", {
+      ...address,
+      name: "Mona Ali",
+      phone: "+201012345678",
+    });
+
+    expect(setCheckoutShippingAddress).toHaveBeenCalledWith(
+      "checkout-1",
+      "session-a",
+      expect.objectContaining({ name: "Mona Ali", phone: "+201012345678" }),
+    );
+  });
+});
+
 describe("every mutating action requires an existing guest session — none mints one", () => {
   it.each([
     ["setShippingAddress", () => actions.setShippingAddress("checkout-1", address)],

@@ -41,8 +41,8 @@ type OrderCreationInput = Parameters<OrderCreationPort["create"]>[0];
  *   time (`CheckoutItem.title`) is named by it, and also passes its `variantRef`, `sku` and
  *   `variantTitle`. Only a LEGACY line (added before variants were tracked, so with no title) still
  *   falls back to the product ref as its name, exactly as before.
- * - `CheckoutAddress.line2` is dropped: Orders' `CreateOrderFromCheckoutAddressInput` has no
- *   `line2` field to receive it.
+ * - **Recipient (Plan 3A).** `CheckoutAddress.name`, `phone` and `line2` travel to Orders' address
+ *   input (`name`, `phone`, `line2`); Orders persists them as `recipient_name`, `phone` and `line2`.
  *
  * Residual idempotency risk — documented, not closed here, and WIDER than a crash window (an
  * earlier revision of this comment understated it; corrected per the C-2 final review):
@@ -110,14 +110,19 @@ export class OrderCreationAdapter implements OrderCreationPort {
             }),
       })),
       billingAddress: {
+        name: input.billingAddress.name,
+        phone: input.billingAddress.phone,
         line1: input.billingAddress.line1,
-        // line2 dropped — Orders' address input has no field for it, see class doc comment.
+        line2: input.billingAddress.line2,
         city: input.billingAddress.city,
         postalCode: input.billingAddress.postalCode,
         country: input.billingAddress.country,
       },
       shippingAddress: {
+        name: input.shippingAddress.name,
+        phone: input.shippingAddress.phone,
         line1: input.shippingAddress.line1,
+        line2: input.shippingAddress.line2,
         city: input.shippingAddress.city,
         postalCode: input.shippingAddress.postalCode,
         country: input.shippingAddress.country,

@@ -440,8 +440,9 @@ describe("public checkout routes — full guest lifecycle", () => {
       await admin.shippingAddress(started.id, { sessionRef, ...address }),
       "set shipping address",
     );
-    expect(withShippingAddress.billingAddress).toEqual(address);
-    expect(withShippingAddress.shippingAddress).toEqual(address);
+    // Plan 3A: the DTO now always carries the recipient keys; null when none were given.
+    expect(withShippingAddress.billingAddress).toEqual({ ...address, name: null, phone: null });
+    expect(withShippingAddress.shippingAddress).toEqual({ ...address, name: null, phone: null });
 
     const quoted = unwrap<{ quotes: readonly { method: string; rateAmountMinor: number }[] }>(
       await admin.shippingQuote(started.id, { sessionRef }),
@@ -570,6 +571,73 @@ describe("public checkout routes — full guest lifecycle", () => {
  * half of this (the real pipeline's anonymous, tenant-bound principal, ADR-0015) is in
  * `guest-checkout.e2e.test.ts`.
  */
+describe("public checkout routes — recipient name and phone (Plan 3A)", () => {
+  it("returns the name and phone on the caller's own session, and null when none were given", async () => {
+    const rawAdmin = buildAdmin();
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(
+      rawAdmin,
+      "session-recipient",
+    );
+
+    // The base fixture address carries neither: both come back null.
+    const plain = unwrap<PublicCheckoutSessionDto>(
+      await admin.get(checkoutId, sessionRef),
+      "get checkout",
+    );
+    expect(plain.shippingAddress).toMatchObject({ name: null, phone: null });
+
+    const withRecipient = unwrap<PublicCheckoutSessionDto>(
+      await admin.shippingAddress(checkoutId, {
+        sessionRef,
+        ...address,
+        name: "Mona Ali",
+        phone: "٠١٠ ١٢٣٤ ٥٦٧٨",
+        postalCode: "",
+      }),
+      "shipping address",
+    );
+    expect(withRecipient.shippingAddress).toMatchObject({
+      name: "Mona Ali",
+      phone: "01012345678",
+      postalCode: "",
+    });
+    const reread = unwrap<PublicCheckoutSessionDto>(
+      await admin.get(checkoutId, sessionRef),
+      "get checkout",
+    );
+    expect(reread.shippingAddress).toMatchObject({ name: "Mona Ali", phone: "01012345678" });
+  });
+
+  it("accepts an address with no postalCode key at all", async () => {
+    const rawAdmin = buildAdmin();
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(rawAdmin, "session-no-zip");
+    const { postalCode: _omitted, ...withoutPostalCode } = address;
+
+    const response = await admin.shippingAddress(checkoutId, { sessionRef, ...withoutPostalCode });
+
+    expect(
+      unwrap<PublicCheckoutSessionDto>(response, "shipping address").shippingAddress,
+    ).toMatchObject({ postalCode: "" });
+  });
+
+  it("refuses a malformed phone with a 422 that names the field", async () => {
+    const rawAdmin = buildAdmin();
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(
+      rawAdmin,
+      "session-bad-phone",
+    );
+
+    const response = await admin.shippingAddress(checkoutId, {
+      sessionRef,
+      ...address,
+      phone: "12ab",
+    });
+
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body)).toContain("phone");
+  });
+});
+
 describe("public checkout routes — a guest cannot escalate through a registered customer's email (T1.8)", () => {
   const VICTIM = { email: "victim@example.com", name: "Vera Victim", password: "correct-horse" };
 

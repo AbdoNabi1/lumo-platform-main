@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
-import type { OrderAddressDto } from "@/lib/api/orders";
+import type { OrderRecipientAddressDto } from "@/lib/api/orders";
 import type { Dictionary } from "@/messages/en";
 
 export function OrderAddressesCard({
@@ -7,13 +7,16 @@ export function OrderAddressesCard({
   billingAddress,
   t,
 }: {
-  readonly shippingAddress: OrderAddressDto;
-  readonly billingAddress: OrderAddressDto | null;
+  readonly shippingAddress: OrderRecipientAddressDto;
+  readonly billingAddress: OrderRecipientAddressDto | null;
   readonly t: Dictionary;
 }) {
   const billingMatchesShipping =
     billingAddress !== null &&
+    billingAddress.recipientName === shippingAddress.recipientName &&
+    billingAddress.phone === shippingAddress.phone &&
     billingAddress.line1 === shippingAddress.line1 &&
+    billingAddress.line2 === shippingAddress.line2 &&
     billingAddress.city === shippingAddress.city &&
     billingAddress.postalCode === shippingAddress.postalCode &&
     billingAddress.country === shippingAddress.country;
@@ -43,14 +46,27 @@ export function OrderAddressesCard({
   );
 }
 
-function AddressBlock({ address }: { readonly address: OrderAddressDto }) {
+/** Absent fields render nothing — no blank lines for a missing name, second line or phone. */
+function AddressBlock({ address }: { readonly address: OrderRecipientAddressDto }) {
+  const cityLine = [address.city, address.postalCode].filter((part) => part !== "").join(", ");
   return (
     <address className="text-sm not-italic">
+      {address.recipientName !== null && (
+        <p>
+          <strong>{address.recipientName}</strong>
+        </p>
+      )}
       <p>{address.line1}</p>
-      <p>
-        {address.city}, {address.postalCode}
-      </p>
+      {address.line2 !== null && address.line2 !== "" && <p>{address.line2}</p>}
+      <p>{cityLine}</p>
       <p>{address.country}</p>
+      {address.phone !== null && (
+        <p>
+          <a href={`tel:${address.phone}`} dir="ltr" className="underline">
+            {address.phone}
+          </a>
+        </p>
+      )}
     </address>
   );
 }

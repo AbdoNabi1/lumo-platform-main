@@ -311,6 +311,10 @@ interface OrderRowBillingAddress {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3A: absent on billing JSON written before the recipient was captured. */
+  readonly recipientName?: string | null;
+  readonly phone?: string | null;
+  readonly line2?: string | null;
 }
 interface OrderRowTotals {
   readonly subtotalMinor: number;

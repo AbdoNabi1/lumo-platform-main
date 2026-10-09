@@ -156,6 +156,7 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     sessionRef: string,
     email?: string,
     line?: { readonly productId: string; readonly variantId?: string; readonly quantity?: number },
+    shippingExtra: Record<string, string> = {},
   ) {
     const h = storefront(tenant);
     const cart = ok<{ id: string }>(
@@ -178,7 +179,10 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     const base = `/public/checkouts/${started.id}`;
     ok(await post(`${base}/items`, h, { sessionRef, cartId: cart.id }), "load items");
     ok(await post(`${base}/billing-address`, h, { sessionRef, ...address }), "billing");
-    ok(await post(`${base}/shipping-address`, h, { sessionRef, ...address }), "shipping");
+    ok(
+      await post(`${base}/shipping-address`, h, { sessionRef, ...address, ...shippingExtra }),
+      "shipping",
+    );
     ok(
       await post(`${base}/shipping-selection`, h, { sessionRef, method: "standard" }),
       "shipping method",
@@ -226,6 +230,40 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     expect(body.contactEmail).toBe("guest@example.com");
     // The order is real: tenant A's staff can read it, attached to a customer.
     expect((await orderCustomerRef("tok-a", body.orderRef as string)).length).toBeGreaterThan(0);
+  });
+
+  // Plan 3A, end to end over HTTP: the recipient typed at checkout is what staff read on the order.
+  it("the shipping address's name, phone and second line reach the order staff read", async () => {
+    await seedProduct("tok-a");
+    const checkout = await readyCheckout(
+      "tenant-a",
+      "sess-recipient",
+      "guest@example.com",
+      undefined,
+      {
+        name: "Mona Ali",
+        phone: "٠١٠ ١٢٣٤ ٥٦٧٨",
+        line2: "Flat 4",
+        postalCode: "",
+      },
+    );
+
+    const done = await checkout.complete();
+
+    expect(done.statusCode).toBe(200);
+    const orderRef = (done.json() as { orderRef: string }).orderRef;
+    const order = ok<{
+      shippingAddress: Record<string, unknown>;
+      billingAddress: Record<string, unknown>;
+    }>(await get(`/orders/${orderRef}`, admin("tok-a")), "get order");
+    expect(order.shippingAddress).toMatchObject({
+      recipientName: "Mona Ali",
+      phone: "01012345678",
+      line2: "Flat 4",
+      postalCode: "",
+    });
+    // The billing address in this checkout carries none of the three: null, never missing.
+    expect(order.billingAddress).toMatchObject({ recipientName: null, phone: null, line2: null });
   });
 
   // Plan 2A, end to end over HTTP: the size chosen at add-to-cart is what the order records — the
