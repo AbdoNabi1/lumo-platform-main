@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { en } from "@/messages/en";
+import { ar } from "@/messages/ar";
 import type { CheckoutSessionSummary } from "@/lib/runtime-api";
 import type {
   CheckoutActionResult,
   PaymentInitiationResult,
   ShippingQuoteActionResult,
 } from "@/app/checkout/actions";
-import { ar } from "@/messages/ar";
 import { CheckoutView } from "./checkout-view";
+
+/** Every action call, in order, so a test can assert the exact sequence a submit runs. */
+const calls: string[] = [];
 
 const setContactEmail = vi.fn<(id: string, email: string) => Promise<CheckoutActionResult>>();
 const setShippingAddress = vi.fn<(id: string, address: unknown) => Promise<CheckoutActionResult>>();
@@ -39,558 +42,643 @@ const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
 const assign = vi.fn();
+/** jsdom has no layout, so no `scrollIntoView`; browsers always do. */
+const scrollIntoView = vi.fn();
+
+const OK: CheckoutActionResult = { ok: true, checkoutSessionId: "checkout-1" };
+const QUOTES = [
+  { method: "standard", rateAmountMinor: 500 },
+  { method: "express", rateAmountMinor: 1500 },
+];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  calls.length = 0;
+  window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
   Object.defineProperty(window, "location", { value: { assign }, writable: true });
+  for (const [name, mock] of Object.entries({
+    setContactEmail,
+    setShippingAddress,
+    selectShipping,
+    setBillingAddress,
+    selectPayment,
+    recalculate,
+    requestTax,
+    completeCheckout,
+  })) {
+    mock.mockImplementation(async () => {
+      calls.push(name);
+      return OK;
+    });
+  }
+  requestShippingQuote.mockImplementation(async () => {
+    calls.push("requestShippingQuote");
+    return { ok: true, checkoutSessionId: "checkout-1", quotes: QUOTES };
+  });
+  initiatePayment.mockImplementation(async () => {
+    calls.push("initiatePayment");
+    return { ok: true, next: "confirmation" };
+  });
 });
 
 function session(overrides: Partial<CheckoutSessionSummary> = {}): CheckoutSessionSummary {
   return {
     id: "checkout-1",
     status: "started",
-    currency: "USD",
-    items: [{ productId: "p1", quantity: 1, unitPriceAmountMinor: 1000 }],
+    currency: "EGP",
+    items: [
+      {
+        productId: "p1",
+        title: "Linen Shirt",
+        variantTitle: "L",
+        quantity: 2,
+        unitPriceAmountMinor: 12000,
+      },
+    ],
     totals: null,
     shippingAddress: null,
     billingAddress: null,
-    // Most tests are about later steps, so the default session already has its contact email.
-    contactEmail: "guest@example.com",
+    contactEmail: null,
     selectedShippingMethod: null,
     orderRef: null,
     ...overrides,
   };
 }
 
-const METHODS = ["stripe", "cod"] as const;
-const address = { line1: "1 Main St", city: "Springfield", postalCode: "00000", country: "US" };
+const METHODS = ["cod", "stripe"] as const;
+const saved = {
+  name: "Mona Ali",
+  phone: "01012345678",
+  line1: "1 Main St",
+  city: "Cairo",
+  postalCode: "",
+  country: "EG",
+};
 
-describe("CheckoutView — step derivation from the session (never skips a server-known step)", () => {
-  it("starts at the shipping-address step for a fresh session", () => {
-    render(<CheckoutView session={session()} t={en} locale="en" paymentMethods={METHODS} />);
-
-    expect(screen.getByLabelText(en.checkout.address.line1)).toBeInTheDocument();
-  });
-
-  it("resumes at the shipping-method step when the session already has a shipping address but no quotes loaded yet", () => {
-    render(
-      <CheckoutView
-        session={session({ shippingAddress: address })}
-        t={en}
-        locale="en"
-        paymentMethods={METHODS}
-      />,
-    );
-
-    // No local quotes yet (a fresh mount never re-derives past what the session can prove), so it
-    // falls back to asking for the address again rather than fabricating a quote list.
-    expect(screen.getByLabelText(en.checkout.address.line1)).toBeInTheDocument();
-  });
-
-  it("resumes at the billing-address step when a shipping method is already selected", () => {
-    render(
-      <CheckoutView
-        session={session({ shippingAddress: address, selectedShippingMethod: "standard" })}
-        t={en}
-        locale="en"
-        paymentMethods={METHODS}
-      />,
-    );
-
-    expect(screen.getByText(en.checkout.sameAsShipping)).toBeInTheDocument();
-  });
-
-  it("resumes at the payment step once billing address and shipping method are both set", () => {
-    render(
-      <CheckoutView
-        session={session({
-          shippingAddress: address,
-          billingAddress: address,
-          selectedShippingMethod: "standard",
-        })}
-        t={en}
-        locale="en"
-        paymentMethods={METHODS}
-      />,
-    );
-
-    expect(screen.getByRole("radio", { name: en.checkout.paymentMethod.cod })).toBeInTheDocument();
-  });
-});
-
-describe("CheckoutView — contact step (WP-1, G-52)", () => {
-  it("starts at the contact step when the session has no contact email — before any address", () => {
-    render(
-      <CheckoutView
-        session={session({ contactEmail: null })}
-        t={en}
-        locale="en"
-        paymentMethods={METHODS}
-      />,
-    );
-
-    expect(screen.getByLabelText(en.checkout.contact.label)).toBeInTheDocument();
-    expect(screen.queryByLabelText(en.checkout.address.line1)).not.toBeInTheDocument();
-  });
-
-  it("submits the email, and stays on the contact step with an alert when it is rejected", async () => {
-    setContactEmail.mockResolvedValue({ ok: false, reason: "validation" });
-    render(
-      <CheckoutView
-        session={session({ contactEmail: null })}
-        t={en}
-        locale="en"
-        paymentMethods={METHODS}
-      />,
-    );
-
-    fireEvent.change(screen.getByLabelText(en.checkout.contact.label), {
-      target: { value: "a@b" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: en.checkout.address.continue }));
-
-    await waitFor(() => expect(setContactEmail).toHaveBeenCalledWith("checkout-1", "a@b"));
-    expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.validationErrorBody);
-    expect(screen.getByLabelText(en.checkout.contact.label)).toBeInTheDocument();
-  });
-
-  it("a signed-in customer's account email is applied once, with no re-entry", async () => {
-    setContactEmail.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    render(
-      <CheckoutView
-        session={session({ contactEmail: null })}
-        t={en}
-        locale="en"
-        accountEmail="member@example.com"
-        paymentMethods={METHODS}
-      />,
-    );
-
-    await waitFor(() =>
-      expect(setContactEmail).toHaveBeenCalledWith("checkout-1", "member@example.com"),
-    );
-    expect(setContactEmail).toHaveBeenCalledTimes(1);
-  });
-
-  it("falls back to a pre-filled field when applying the account email fails", async () => {
-    setContactEmail.mockResolvedValue({ ok: false, reason: "network" });
-    render(
-      <CheckoutView
-        session={session({ contactEmail: null })}
-        t={en}
-        locale="en"
-        accountEmail="member@example.com"
-        paymentMethods={METHODS}
-      />,
-    );
-
-    await waitFor(() => expect(setContactEmail).toHaveBeenCalledTimes(1));
-    expect(screen.getByLabelText(en.checkout.contact.label)).toHaveValue("member@example.com");
-  });
-
-  it("does not re-apply anything once the session already has a contact email", () => {
-    render(
-      <CheckoutView
-        session={session()}
-        t={en}
-        locale="en"
-        accountEmail="member@example.com"
-        paymentMethods={METHODS}
-      />,
-    );
-
-    expect(setContactEmail).not.toHaveBeenCalled();
-    expect(screen.getByLabelText(en.checkout.address.line1)).toBeInTheDocument();
-  });
-});
-
-describe("CheckoutView — shipping address step", () => {
-  it("submits the address then requests a shipping quote, advancing to the shipping-method step", async () => {
-    setShippingAddress.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    requestShippingQuote.mockResolvedValue({
-      ok: true,
-      checkoutSessionId: "checkout-1",
-      quotes: [{ method: "standard", rateAmountMinor: 500 }],
-    });
-    render(<CheckoutView session={session()} t={en} locale="en" paymentMethods={METHODS} />);
-
-    fireEvent.change(screen.getByLabelText(en.checkout.address.line1), {
-      target: { value: "1 Main St" },
-    });
-    fireEvent.change(screen.getByLabelText(en.checkout.address.city), {
-      target: { value: "Springfield" },
-    });
-    fireEvent.change(screen.getByLabelText(en.checkout.address.postalCode), {
-      target: { value: "00000" },
-    });
-    fireEvent.change(screen.getByLabelText(en.checkout.address.country), {
-      target: { value: "US" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: en.checkout.address.continue }));
-
-    await waitFor(() =>
-      expect(setShippingAddress).toHaveBeenCalledWith(
-        "checkout-1",
-        expect.objectContaining({ line1: "1 Main St", city: "Springfield" }),
-      ),
-    );
-    await waitFor(() => expect(requestShippingQuote).toHaveBeenCalledWith("checkout-1"));
-    expect(await screen.findByText("standard")).toBeInTheDocument();
-  });
-
-  it("shows a validation error and stays on the address step when the address is rejected", async () => {
-    setShippingAddress.mockResolvedValue({ ok: false, reason: "validation" });
-    render(<CheckoutView session={session()} t={en} locale="en" paymentMethods={METHODS} />);
-
-    fireEvent.change(screen.getByLabelText(en.checkout.address.line1), {
-      target: { value: "1 Main St" },
-    });
-    fireEvent.change(screen.getByLabelText(en.checkout.address.city), {
-      target: { value: "Springfield" },
-    });
-    fireEvent.change(screen.getByLabelText(en.checkout.address.postalCode), {
-      target: { value: "00000" },
-    });
-    fireEvent.change(screen.getByLabelText(en.checkout.address.country), {
-      target: { value: "US" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: en.checkout.address.continue }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.validationErrorBody);
-    expect(requestShippingQuote).not.toHaveBeenCalled();
-  });
-});
-
-describe("CheckoutView — an ownership failure renders the recoverable back-to-cart affordance, not a crash", () => {
-  it("shows the ownership error message on a failed step", async () => {
-    setShippingAddress.mockResolvedValue({ ok: false, reason: "ownership" });
-    render(<CheckoutView session={session()} t={en} locale="en" paymentMethods={METHODS} />);
-
-    fireEvent.change(screen.getByLabelText(en.checkout.address.line1), {
-      target: { value: "1 Main St" },
-    });
-    fireEvent.change(screen.getByLabelText(en.checkout.address.city), {
-      target: { value: "Springfield" },
-    });
-    fireEvent.change(screen.getByLabelText(en.checkout.address.postalCode), {
-      target: { value: "00000" },
-    });
-    fireEvent.change(screen.getByLabelText(en.checkout.address.country), {
-      target: { value: "US" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: en.checkout.address.continue }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.ownershipErrorBody);
-  });
-});
-
-describe("CheckoutView — review step", () => {
-  it("selecting payment advances to review, which recalculates and renders totals from the session", async () => {
-    selectPayment.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    recalculate.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    render(
-      <CheckoutView
-        session={session({
-          shippingAddress: address,
-          billingAddress: address,
-          selectedShippingMethod: "standard",
-          totals: { subtotalMinor: 1000, shippingMinor: 500, taxMinor: 100, grandTotalMinor: 1600 },
-        })}
-        t={en}
-        locale="en"
-        paymentMethods={METHODS}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("radio", { name: en.checkout.paymentMethod.stripe }));
-    fireEvent.click(screen.getByRole("button", { name: en.checkout.paymentContinue }));
-
-    await waitFor(() =>
-      expect(selectPayment).toHaveBeenCalledWith("checkout-1", "stripe", "stripe"),
-    );
-    await waitFor(() => expect(recalculate).toHaveBeenCalledWith("checkout-1"));
-    expect(
-      await screen.findByRole("button", { name: en.checkout.review.placeOrder }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("$16.00")).toBeInTheDocument();
-  });
-
-  it("placing the order requests tax, recalculates, completes, opens the payment, and navigates to confirmation", async () => {
-    selectPayment.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    recalculate.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    requestTax.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    completeCheckout.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    initiatePayment.mockResolvedValue({ ok: true, next: "confirmation" });
-    render(
-      <CheckoutView
-        session={session({
-          shippingAddress: address,
-          billingAddress: address,
-          selectedShippingMethod: "standard",
-          totals: { subtotalMinor: 1000, shippingMinor: 500, taxMinor: 100, grandTotalMinor: 1600 },
-        })}
-        t={en}
-        locale="en"
-        paymentMethods={METHODS}
-      />,
-    );
-    fireEvent.click(screen.getByRole("radio", { name: en.checkout.paymentMethod.cod }));
-    fireEvent.click(screen.getByRole("button", { name: en.checkout.paymentContinue }));
-    await waitFor(() => expect(selectPayment).toHaveBeenCalled());
-    const placeOrder = await screen.findByRole("button", { name: en.checkout.review.placeOrder });
-    // Waits for the review-entry effect's own `recalculate` call (and its transition) to fully
-    // settle before interacting further — clicking while that transition is still in flight is a
-    // real race: `isPending` can briefly read `false` between the payment-selection transition
-    // ending and this effect's own transition starting.
-    await waitFor(() => expect(recalculate).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(placeOrder).not.toBeDisabled());
-
-    fireEvent.click(placeOrder);
-
-    await waitFor(() => expect(requestTax).toHaveBeenCalledWith("checkout-1"));
-    await waitFor(() => expect(recalculate).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(completeCheckout).toHaveBeenCalledWith("checkout-1"));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/checkout/confirmation"));
-  });
-});
-
-const PAYMENT_READY = () =>
-  session({
-    shippingAddress: address,
-    billingAddress: address,
-    selectedShippingMethod: "standard",
-    totals: { subtotalMinor: 1000, shippingMinor: 500, taxMinor: 100, grandTotalMinor: 1600 },
-  });
-
-/** Walks a payment-ready session through choosing `label` and reaching a settled review step. */
-async function reachReview(label: string, paymentMethods: readonly string[]) {
-  selectPayment.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-  recalculate.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-  requestTax.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-  completeCheckout.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-  render(
-    <CheckoutView session={PAYMENT_READY()} t={en} locale="en" paymentMethods={paymentMethods} />,
+function renderView(
+  props: {
+    session?: CheckoutSessionSummary;
+    paymentMethods?: readonly string[] | null;
+    accountEmail?: string | null;
+  } = {},
+) {
+  return render(
+    <CheckoutView
+      session={props.session ?? session()}
+      t={en}
+      locale="en"
+      accountEmail={props.accountEmail ?? null}
+      paymentMethods={props.paymentMethods === undefined ? METHODS : props.paymentMethods}
+    />,
   );
-  fireEvent.click(screen.getByRole("radio", { name: label }));
-  fireEvent.click(screen.getByRole("button", { name: en.checkout.paymentContinue }));
-  const placeOrder = await screen.findByRole("button", { name: en.checkout.review.placeOrder });
-  await waitFor(() => expect(recalculate).toHaveBeenCalledTimes(1));
-  await waitFor(() => expect(placeOrder).not.toBeDisabled());
-  return placeOrder;
 }
 
-describe("CheckoutView — payment step renders the merchant's real methods (WP-13 T13.6)", () => {
-  it("offers exactly the methods the API returned — no invented card option when only COD is enabled", () => {
-    render(<CheckoutView session={PAYMENT_READY()} t={en} locale="en" paymentMethods={["cod"]} />);
+const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+const submit = () => screen.getByRole("button", { name: /Complete order|Pay now/ });
 
-    expect(screen.getAllByRole("radio")).toHaveLength(1);
-    expect(screen.getByRole("radio", { name: en.checkout.paymentMethod.cod })).toBeInTheDocument();
-    expect(screen.queryByText(en.checkout.paymentMethod.stripe)).not.toBeInTheDocument();
-  });
+function type(label: string, value: string): void {
+  fireEvent.change(field(label), { target: { value } });
+}
 
-  it("preselects nothing and cannot continue until the shopper chooses (no client-side default)", () => {
-    render(
-      <CheckoutView
-        session={PAYMENT_READY()}
-        t={en}
-        locale="en"
-        paymentMethods={["stripe", "paymob"]}
-      />,
-    );
+/** Fills the contact and delivery sections with a complete, valid address. */
+function fillEverything(overrides: Record<string, string> = {}): void {
+  const values = {
+    email: "guest@example.com",
+    name: "Mona Ali",
+    line1: "1 Main St",
+    city: "Cairo",
+    phone: "٠١٠ ١٢٣٤ ٥٦٧٨",
+    ...overrides,
+  };
+  type(en.checkout.contact.label, values.email);
+  type(en.checkout.address.name, values.name);
+  type(en.checkout.address.line1, values.line1);
+  type(en.checkout.address.city, values.city);
+  type(en.checkout.address.phone, values.phone);
+}
 
-    for (const radio of screen.getAllByRole("radio")) expect(radio).not.toBeChecked();
-    expect(screen.getByRole("button", { name: en.checkout.paymentContinue })).toBeDisabled();
-  });
+describe("CheckoutView — one page (Plan 3A)", () => {
+  it("renders contact, delivery, shipping method, payment and billing on one page, with no stepper", () => {
+    renderView();
 
-  it("the shopper's click selects THAT method — the second in the list sends its provider, not the first and not stripe", async () => {
-    selectPayment.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    recalculate.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    render(
-      <CheckoutView
-        session={PAYMENT_READY()}
-        t={en}
-        locale="en"
-        paymentMethods={["stripe", "paymob", "cod"]}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("radio", { name: en.checkout.paymentMethod.paymob }));
-    fireEvent.click(screen.getByRole("button", { name: en.checkout.paymentContinue }));
-
-    await waitFor(() => expect(selectPayment).toHaveBeenCalledTimes(1));
-    expect(selectPayment).toHaveBeenCalledWith("checkout-1", "paymob", "paymob");
-  });
-
-  it("fails closed with a clear message — and no way to advance — when the merchant enabled nothing", () => {
-    render(<CheckoutView session={PAYMENT_READY()} t={en} locale="en" paymentMethods={[]} />);
-
-    expect(screen.getByRole("alert")).toHaveTextContent(en.checkout.paymentNoMethods);
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: en.checkout.paymentContinue })).toBeNull();
-  });
-
-  it("fails closed with a distinct message when the method list could not be loaded", () => {
-    render(<CheckoutView session={PAYMENT_READY()} t={en} locale="en" paymentMethods={null} />);
-
-    expect(screen.getByRole("alert")).toHaveTextContent(en.checkout.paymentMethodsUnavailable);
-    expect(screen.queryByRole("button", { name: en.checkout.paymentContinue })).toBeNull();
-  });
-
-  it("renders an unknown provider key as-is (API data is never translated or dropped)", () => {
-    render(
-      <CheckoutView
-        session={PAYMENT_READY()}
-        t={en}
-        locale="en"
-        paymentMethods={["mystery-pay"]}
-      />,
-    );
-
-    expect(screen.getByRole("radio", { name: "mystery-pay" })).toBeInTheDocument();
-  });
-
-  it.each([
-    ["en", en],
-    ["ar", ar],
-  ] as const)("renders every method label and the empty state in %s", (locale, dictionary) => {
-    const { unmount } = render(
-      <CheckoutView
-        session={PAYMENT_READY()}
-        t={dictionary}
-        locale={locale}
-        paymentMethods={["stripe", "paymob", "cod"]}
-      />,
-    );
-    for (const key of ["stripe", "paymob", "cod"] as const) {
-      expect(
-        screen.getByRole("radio", { name: dictionary.checkout.paymentMethod[key] }),
-      ).toBeInTheDocument();
+    for (const heading of [
+      en.checkout.sections.contact,
+      en.checkout.sections.delivery,
+      en.checkout.sections.shippingMethod,
+      en.checkout.sections.payment,
+      en.checkout.sections.billing,
+    ]) {
+      expect(screen.getByRole("heading", { level: 2, name: heading })).toBeInTheDocument();
     }
-    unmount();
+    expect(document.querySelectorAll("form")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /Complete order|Pay now/ })).toHaveLength(1);
+  });
 
-    render(
-      <CheckoutView session={PAYMENT_READY()} t={dictionary} locale={locale} paymentMethods={[]} />,
+  it("labels the delivery fields, with the postal code optional and the phone required", () => {
+    renderView();
+
+    expect(field(en.checkout.address.country).tagName).toBe("SELECT");
+    expect(field(en.checkout.address.country).value).toBe("EG");
+    expect(field(en.checkout.address.name)).toBeRequired();
+    expect(field(en.checkout.address.line1)).toBeRequired();
+    expect(field(en.checkout.address.city)).toBeRequired();
+    expect(field(en.checkout.address.postalCode)).not.toBeRequired();
+    const phone = field(en.checkout.address.phone);
+    expect(phone).toBeRequired();
+    expect(phone).toHaveAttribute("type", "tel");
+    expect(phone).toHaveAttribute("dir", "ltr");
+    expect(screen.getByText(en.checkout.address.phoneHint)).toBeInTheDocument();
+  });
+
+  it("offers the twenty countries, named in the page's language", () => {
+    renderView();
+
+    const options = within(field(en.checkout.address.country)).getAllByRole("option");
+    expect(options.map((option) => option.getAttribute("value"))).toEqual(
+      expect.arrayContaining(["EG", "SA", "AE", "US", "GB", "CA", "DZ"]),
     );
-    expect(screen.getByRole("alert")).toHaveTextContent(dictionary.checkout.paymentNoMethods);
+    expect(screen.getByRole("option", { name: en.checkout.countries.EG })).toBeInTheDocument();
   });
 });
 
-describe("CheckoutView — after the order is placed, COD and a hosted checkout diverge explicitly", () => {
-  it("initiates payment only AFTER completing the checkout", async () => {
-    initiatePayment.mockResolvedValue({ ok: true, next: "confirmation" });
-    const placeOrder = await reachReview(en.checkout.paymentMethod.cod, ["cod"]);
+describe("CheckoutView — contact", () => {
+  it("asks for an email when the shopper is not signed in", () => {
+    renderView();
 
-    fireEvent.click(placeOrder);
-
-    await waitFor(() => expect(initiatePayment).toHaveBeenCalledWith("checkout-1"));
-    expect(completeCheckout.mock.invocationCallOrder[0]).toBeLessThan(
-      initiatePayment.mock.invocationCallOrder[0]!,
-    );
+    expect(field(en.checkout.contact.label)).toHaveAttribute("type", "email");
+    expect(field(en.checkout.contact.label)).toBeRequired();
   });
 
-  it("cash on delivery lands on the confirmation page and never leaves the site", async () => {
-    initiatePayment.mockResolvedValue({ ok: true, next: "confirmation" });
-    const placeOrder = await reachReview(en.checkout.paymentMethod.cod, ["cod"]);
+  it("shows a signed-in customer's email as text with no field, and applies it once", async () => {
+    renderView({ accountEmail: "me@example.com" });
 
-    fireEvent.click(placeOrder);
+    expect(screen.getByText(`${en.checkout.signedInAs} me@example.com`)).toBeInTheDocument();
+    expect(screen.queryByLabelText(en.checkout.contact.label)).not.toBeInTheDocument();
+    await waitFor(() => expect(setContactEmail).toHaveBeenCalledTimes(1));
+    expect(setContactEmail).toHaveBeenCalledWith("checkout-1", "me@example.com");
+  });
+
+  it("does not re-apply the account email when the session already has it", () => {
+    renderView({
+      accountEmail: "me@example.com",
+      session: session({ contactEmail: "me@example.com" }),
+    });
+
+    expect(setContactEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("CheckoutView — shipping methods follow a complete address", () => {
+  it("shows a hint, and no methods, until the address is complete", () => {
+    renderView();
+
+    expect(screen.getByText(en.checkout.shippingMethodHint)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("radio", { name: new RegExp(en.checkout.shippingMethodLabel.standard) }),
+    ).not.toBeInTheDocument();
+    expect(setShippingAddress).not.toHaveBeenCalled();
+  });
+
+  it("saves the address, quotes it and pre-selects the first method once it is complete", async () => {
+    renderView();
+    fillEverything();
+
+    fireEvent.blur(field(en.checkout.address.phone));
+
+    const standard = await screen.findByRole(
+      "radio",
+      { name: new RegExp(en.checkout.shippingMethodLabel.standard) },
+      { timeout: 3000 },
+    );
+    expect(standard).toBeChecked();
+    expect(
+      screen.getByRole("radio", { name: new RegExp(en.checkout.shippingMethodLabel.express) }),
+    ).not.toBeChecked();
+    expect(setShippingAddress).toHaveBeenCalledWith("checkout-1", {
+      name: "Mona Ali",
+      phone: "01012345678",
+      line1: "1 Main St",
+      line2: "",
+      city: "Cairo",
+      postalCode: "",
+      country: "EG",
+    });
+    expect(selectShipping).toHaveBeenCalledTimes(1);
+    expect(selectShipping).toHaveBeenCalledWith("checkout-1", "standard");
+    expect(recalculate).toHaveBeenCalled();
+    expect(screen.queryByText(en.checkout.shippingMethodHint)).not.toBeInTheDocument();
+  });
+
+  it("does not save while the address is incomplete or the phone is invalid", async () => {
+    renderView();
+    fillEverything({ phone: "12ab" });
+
+    fireEvent.blur(field(en.checkout.address.phone));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    expect(setShippingAddress).not.toHaveBeenCalled();
+  });
+
+  it("selecting another method selects it and recalculates", async () => {
+    renderView();
+    fillEverything();
+    fireEvent.blur(field(en.checkout.address.phone));
+    const express = await screen.findByRole(
+      "radio",
+      { name: new RegExp(en.checkout.shippingMethodLabel.express) },
+      { timeout: 3000 },
+    );
+    selectShipping.mockClear();
+    recalculate.mockClear();
+
+    fireEvent.click(express);
+
+    await waitFor(() => expect(selectShipping).toHaveBeenCalledWith("checkout-1", "express"));
+    await waitFor(() => expect(recalculate).toHaveBeenCalled());
+  });
+
+  it("resumes with the methods listed when the session already holds a complete address", async () => {
+    renderView({
+      session: session({
+        contactEmail: "guest@example.com",
+        shippingAddress: saved,
+        selectedShippingMethod: "standard",
+      }),
+    });
+
+    expect(
+      await screen.findByRole("radio", {
+        name: new RegExp(en.checkout.shippingMethodLabel.standard),
+      }),
+    ).toBeChecked();
+    expect(setShippingAddress).not.toHaveBeenCalled();
+    expect(selectShipping).not.toHaveBeenCalled();
+  });
+});
+
+describe("CheckoutView — pre-filling from the session", () => {
+  it("fills every field from what the server already holds", () => {
+    renderView({
+      session: session({
+        contactEmail: "guest@example.com",
+        shippingAddress: { ...saved, line2: "Flat 4", postalCode: "11511" },
+      }),
+    });
+
+    expect(field(en.checkout.contact.label).value).toBe("guest@example.com");
+    expect(field(en.checkout.address.name).value).toBe("Mona Ali");
+    expect(field(en.checkout.address.phone).value).toBe("01012345678");
+    expect(field(en.checkout.address.line1).value).toBe("1 Main St");
+    expect(field(en.checkout.address.line2).value).toBe("Flat 4");
+    expect(field(en.checkout.address.postalCode).value).toBe("11511");
+  });
+
+  it("pre-selects nothing for a free-text country the list does not hold, and requires a choice", () => {
+    renderView({ session: session({ shippingAddress: { ...saved, country: "Egypt" } }) });
+
+    expect(field(en.checkout.address.country).value).toBe("");
+    expect(field(en.checkout.address.country)).toBeRequired();
+  });
+});
+
+describe("CheckoutView — payment methods", () => {
+  it("offers exactly the merchant's methods in API order, the first pre-selected", () => {
+    renderView({ paymentMethods: ["cod", "stripe"] });
+
+    const radios = screen.getAllByRole("radio", { name: /Cash on delivery|Card/ });
+    expect(radios).toHaveLength(2);
+    expect(radios[0]).toBeChecked();
+    expect(radios[1]).not.toBeChecked();
+    expect(screen.getByText(en.checkout.paymentSecure)).toBeInTheDocument();
+  });
+
+  it("describes the selected method", () => {
+    renderView({ paymentMethods: ["cod", "stripe"] });
+    expect(screen.getByText(en.checkout.paymentDescription.offline)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: en.checkout.paymentMethod.stripe }));
+
+    expect(screen.getByText(en.checkout.paymentDescription.online)).toBeInTheDocument();
+  });
+
+  it("shows no invented card option when only cash on delivery is enabled", () => {
+    renderView({ paymentMethods: ["cod"] });
+
+    expect(screen.getAllByRole("radio", { name: /Cash on delivery/ })).toHaveLength(1);
+    expect(screen.queryByRole("radio", { name: en.checkout.paymentMethod.stripe })).toBeNull();
+  });
+
+  it("renders an unknown provider key as-is", () => {
+    renderView({ paymentMethods: ["fawry"] });
+
+    expect(screen.getByRole("radio", { name: "fawry" })).toBeInTheDocument();
+  });
+
+  it("fails closed, with the submit disabled, when the merchant enabled nothing", () => {
+    renderView({ paymentMethods: [] });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(en.checkout.paymentNoMethods);
+    expect(submit()).toBeDisabled();
+  });
+
+  it("fails closed with a distinct message when the list could not be loaded", () => {
+    renderView({ paymentMethods: null });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(en.checkout.paymentMethodsUnavailable);
+    expect(submit()).toBeDisabled();
+  });
+
+  it("labels the button Complete order for cash on delivery and Pay now for a card", () => {
+    renderView({ paymentMethods: ["cod", "stripe"] });
+    expect(screen.getByRole("button", { name: en.checkout.completeOrder })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: en.checkout.paymentMethod.stripe }));
+
+    expect(screen.getByRole("button", { name: en.checkout.paymentPayNow })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en.checkout.completeOrder })).toBeNull();
+  });
+});
+
+describe("CheckoutView — billing address", () => {
+  it("defaults to the shipping address, with no extra fields", () => {
+    renderView();
+
+    expect(screen.getByRole("radio", { name: en.checkout.sameAsShipping })).toBeChecked();
+    expect(screen.getAllByLabelText(en.checkout.address.line1)).toHaveLength(1);
+  });
+
+  it("reveals a second set of fields, with the phone optional, for a different billing address", () => {
+    renderView();
+
+    fireEvent.click(screen.getByRole("radio", { name: en.checkout.differentBilling }));
+
+    expect(screen.getAllByLabelText(en.checkout.address.line1)).toHaveLength(2);
+    expect(screen.getByLabelText(en.checkout.address.phoneOptional)).not.toBeRequired();
+  });
+});
+
+describe("CheckoutView — Complete order runs everything in order", () => {
+  it("sets contact, shipping, billing, payment, tax, totals, completes, then opens the payment", async () => {
+    renderView();
+    fillEverything();
+
+    fireEvent.click(submit());
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/checkout/confirmation"));
-    expect(assign).not.toHaveBeenCalled();
+    const first = (name: string) => calls.indexOf(name);
+    expect(first("setContactEmail")).toBeLessThan(first("setShippingAddress"));
+    expect(first("setShippingAddress")).toBeLessThan(first("requestShippingQuote"));
+    expect(first("requestShippingQuote")).toBeLessThan(first("selectShipping"));
+    expect(calls.slice(-6)).toEqual([
+      "setBillingAddress",
+      "selectPayment",
+      "requestTax",
+      "recalculate",
+      "completeCheckout",
+      "initiatePayment",
+    ]);
+    expect(setContactEmail).toHaveBeenCalledWith("checkout-1", "guest@example.com");
+    expect(selectPayment).toHaveBeenCalledWith("checkout-1", "cod", "cod");
   });
 
+  it("normalizes the phone before sending, and sends the shipping address as billing when it is the same", async () => {
+    renderView();
+    fillEverything();
+
+    fireEvent.click(submit());
+
+    await waitFor(() => expect(setBillingAddress).toHaveBeenCalled());
+    const sent = setShippingAddress.mock.calls[0]?.[1];
+    expect(sent).toMatchObject({ phone: "01012345678" });
+    expect(setBillingAddress.mock.calls[0]?.[1]).toEqual(sent);
+  });
+
+  it("sends the separate billing address when one is chosen", async () => {
+    renderView();
+    fillEverything();
+    fireEvent.click(screen.getByRole("radio", { name: en.checkout.differentBilling }));
+    const [, billingLine1] = screen.getAllByLabelText(en.checkout.address.line1);
+    const [, billingCity] = screen.getAllByLabelText(en.checkout.address.city);
+    fireEvent.change(billingLine1 as HTMLInputElement, { target: { value: "9 Bill St" } });
+    fireEvent.change(billingCity as HTMLInputElement, { target: { value: "Giza" } });
+
+    fireEvent.click(submit());
+
+    await waitFor(() => expect(setBillingAddress).toHaveBeenCalled());
+    expect(setBillingAddress.mock.calls[0]?.[1]).toMatchObject({
+      line1: "9 Bill St",
+      city: "Giza",
+    });
+  });
+
+  it("does not repeat the contact or address calls the page already made", async () => {
+    renderView({
+      session: session({
+        contactEmail: "guest@example.com",
+        shippingAddress: saved,
+        selectedShippingMethod: "standard",
+      }),
+    });
+    await screen.findByRole("radio", {
+      name: new RegExp(en.checkout.shippingMethodLabel.standard),
+    });
+
+    fireEvent.click(submit());
+
+    await waitFor(() => expect(initiatePayment).toHaveBeenCalled());
+    expect(setContactEmail).not.toHaveBeenCalled();
+    expect(setShippingAddress).not.toHaveBeenCalled();
+  });
+
+  it("stops at the first failure: a billing failure calls neither selectPayment nor completeCheckout", async () => {
+    setBillingAddress.mockResolvedValue({ ok: false, reason: "validation" });
+    renderView();
+    fillEverything();
+
+    fireEvent.click(submit());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.validationErrorBody);
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(selectPayment).not.toHaveBeenCalled();
+    expect(completeCheckout).not.toHaveBeenCalled();
+    expect(initiatePayment).not.toHaveBeenCalled();
+    // Everything typed is still there.
+    expect(field(en.checkout.address.name).value).toBe("Mona Ali");
+    expect(field(en.checkout.address.line1).value).toBe("1 Main St");
+    expect(field(en.checkout.contact.label).value).toBe("guest@example.com");
+  });
+
+  it("shows an ownership failure from the first step and does nothing after it", async () => {
+    setContactEmail.mockResolvedValue({ ok: false, reason: "ownership" });
+    renderView();
+    fillEverything();
+
+    fireEvent.click(submit());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.ownershipErrorBody);
+    expect(setShippingAddress).not.toHaveBeenCalled();
+  });
+
+  it("blocks an invalid phone with a field message and calls nothing", () => {
+    renderView();
+    fillEverything({ phone: "12ab" });
+
+    fireEvent.click(submit());
+
+    expect(screen.getByText(en.checkout.address.phoneInvalid)).toBeInTheDocument();
+    expect(field(en.checkout.address.phone)).toHaveAttribute("aria-invalid", "true");
+    expect(calls).toEqual([]);
+  });
+
+  it("blocks a missing required field and calls nothing", () => {
+    renderView();
+    fillEverything({ name: "" });
+
+    fireEvent.click(submit());
+
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("CheckoutView — after the order is placed, cash and a hosted checkout diverge", () => {
   it("a hosted-checkout method sends the shopper to the returned handle, not to confirmation", async () => {
     initiatePayment.mockResolvedValue({
       ok: true,
       next: "redirect",
-      url: "https://accept.paymob.example/pay?token=t1",
+      url: "https://pay.example.com/s/abc",
     });
-    const placeOrder = await reachReview(en.checkout.paymentMethod.paymob, ["paymob"]);
+    renderView({ paymentMethods: ["stripe"] });
+    fillEverything();
 
-    fireEvent.click(placeOrder);
+    fireEvent.click(submit());
 
-    await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith("https://accept.paymob.example/pay?token=t1"),
-    );
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://pay.example.com/s/abc"));
     expect(push).not.toHaveBeenCalled();
   });
 
   it("shows an alert — and goes nowhere — when a redirect was required but there is no usable handle", async () => {
     initiatePayment.mockResolvedValue({ ok: false, reason: "handoff" });
-    const placeOrder = await reachReview(en.checkout.paymentMethod.paymob, ["paymob"]);
+    renderView({ paymentMethods: ["stripe"] });
+    fillEverything();
 
-    fireEvent.click(placeOrder);
+    fireEvent.click(submit());
 
     expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.paymentHandoffError);
-    expect(push).not.toHaveBeenCalled();
     expect(assign).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
   });
 
-  it("a failed initiation shows the order-placed error, and the retry step never completes the order again", async () => {
+  it("a placed order shows only Pay now, and paying again never completes the order twice", async () => {
     initiatePayment.mockResolvedValue({ ok: false, reason: "network" });
-    const placeOrder = await reachReview(en.checkout.paymentMethod.cod, ["cod"]);
-    fireEvent.click(placeOrder);
-    expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.paymentOpenError);
-    completeCheckout.mockClear();
-    cleanup();
+    renderView({
+      session: session({
+        status: "completed",
+        orderRef: "order-1",
+        contactEmail: "guest@example.com",
+        shippingAddress: saved,
+        selectedShippingMethod: "standard",
+      }),
+    });
 
-    // The completed session now carries an orderRef (revalidate re-renders the page with it), so a
-    // reload lands on the retry step, which only opens the payment.
-    initiatePayment.mockResolvedValue({ ok: true, next: "confirmation" });
-    render(
-      <CheckoutView
-        session={{ ...PAYMENT_READY(), orderRef: "order-1" }}
-        t={en}
-        locale="en"
-        paymentMethods={["cod"]}
-      />,
-    );
+    expect(screen.queryByLabelText(en.checkout.contact.label)).toBeNull();
+    expect(screen.queryByLabelText(en.checkout.address.line1)).toBeNull();
+    expect(screen.queryByRole("button", { name: en.checkout.completeOrder })).toBeNull();
+
     fireEvent.click(screen.getByRole("button", { name: en.checkout.paymentPayNow }));
 
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/checkout/confirmation"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.paymentOpenError);
     expect(completeCheckout).not.toHaveBeenCalled();
-  });
-
-  it("an already-completed session resumes at 'pay now', never back at method selection", () => {
-    render(
-      <CheckoutView
-        session={{ ...PAYMENT_READY(), orderRef: "order-1" }}
-        t={en}
-        locale="en"
-        paymentMethods={["cod", "stripe"]}
-      />,
-    );
-
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: en.checkout.paymentPayNow })).toBeInTheDocument();
+    expect(setContactEmail).not.toHaveBeenCalled();
+    expect(initiatePayment).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("CheckoutView — out of stock at placement (Plan 2B-3)", () => {
-  it("shows the out-of-stock message with a way back to the cart, and does not open a payment", async () => {
-    selectPayment.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    recalculate.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
-    requestTax.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
+  it("shows the message with a way back to the cart, and does not open a payment", async () => {
     completeCheckout.mockResolvedValue({ ok: false, reason: "out-of-stock" });
-    render(<CheckoutView session={PAYMENT_READY()} t={en} locale="en" paymentMethods={["cod"]} />);
-    fireEvent.click(screen.getByRole("radio", { name: en.checkout.paymentMethod.cod }));
-    fireEvent.click(screen.getByRole("button", { name: en.checkout.paymentContinue }));
-    const placeOrder = await screen.findByRole("button", { name: en.checkout.review.placeOrder });
-    await waitFor(() => expect(placeOrder).not.toBeDisabled());
+    renderView();
+    fillEverything();
 
-    fireEvent.click(placeOrder);
+    fireEvent.click(submit());
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(en.checkout.outOfStock);
-    expect(screen.getByRole("link", { name: en.checkout.backToCart })).toHaveAttribute(
+    expect(within(alert).getByRole("link", { name: en.checkout.backToCart })).toHaveAttribute(
       "href",
       "/cart",
     );
     expect(initiatePayment).not.toHaveBeenCalled();
   });
+});
 
-  it("has the message in both languages", () => {
-    expect(en.checkout.outOfStock.length).toBeGreaterThan(0);
-    expect(ar.checkout.outOfStock.length).toBeGreaterThan(0);
-    expect(ar.checkout.backToCart.length).toBeGreaterThan(0);
+describe("CheckoutView — order summary", () => {
+  it("lists each line with its variant, quantity and line total", () => {
+    renderView();
+
+    const summary = screen.getByRole("complementary");
+    expect(within(summary).getByText("Linen Shirt")).toBeInTheDocument();
+    expect(within(summary).getByText("L")).toBeInTheDocument();
+    expect(within(summary).getByLabelText(`${en.checkout.summary.quantity} 2`)).toHaveTextContent(
+      "2",
+    );
+    expect(within(summary).getAllByText(/240/).length).toBeGreaterThan(0);
+  });
+
+  it("asks for the shipping address, and totals the subtotal, until a method is selected", () => {
+    renderView();
+
+    const summary = screen.getByRole("complementary");
+    expect(within(summary).getByText(en.checkout.summary.enterShippingAddress)).toBeInTheDocument();
+    expect(within(summary).queryByText(en.checkout.summary.taxes)).toBeNull();
+    expect(within(summary).getByText(en.checkout.summary.total)).toBeInTheDocument();
+  });
+
+  it("shows the server's shipping, taxes and total once they exist", () => {
+    renderView({
+      session: session({
+        contactEmail: "guest@example.com",
+        shippingAddress: saved,
+        selectedShippingMethod: "standard",
+        totals: {
+          subtotalMinor: 24000,
+          shippingMinor: 500,
+          taxMinor: 2400,
+          grandTotalMinor: 26900,
+        },
+      }),
+    });
+
+    const summary = screen.getByRole("complementary");
+    expect(within(summary).getByText(en.checkout.summary.taxes)).toBeInTheDocument();
+    expect(within(summary).queryByText(en.checkout.summary.enterShippingAddress)).toBeNull();
+    expect(within(summary).getAllByText(/269/).length).toBeGreaterThan(0);
+  });
+
+  it("also offers the summary as a collapsible block above the form on small screens", () => {
+    renderView();
+
+    expect(screen.getByText(en.checkout.summary.show)).toBeInTheDocument();
+  });
+});
+
+describe("CheckoutView — messages", () => {
+  it("has every checkout key in Arabic too", () => {
+    const missing: string[] = [];
+    const walk = (reference: unknown, translated: unknown, path: string): void => {
+      if (typeof reference === "object" && reference !== null) {
+        for (const key of Object.keys(reference)) {
+          const next = (translated as Record<string, unknown> | undefined)?.[key];
+          if (next === undefined) missing.push(`${path}.${key}`);
+          else walk((reference as Record<string, unknown>)[key], next, `${path}.${key}`);
+        }
+      }
+    };
+    walk(en.checkout, ar.checkout, "checkout");
+    expect(missing).toEqual([]);
+  });
+
+  it("names all twenty countries in Arabic", () => {
+    expect(Object.keys(ar.checkout.countries)).toHaveLength(20);
+    expect(ar.checkout.countries.EG).toBe("مصر");
   });
 });

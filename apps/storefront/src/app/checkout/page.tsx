@@ -47,7 +47,7 @@ export default async function CheckoutPage() {
   const paymentMethods = await getPaymentMethods();
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 p-8">
+    <main className="mx-auto flex min-h-dvh max-w-5xl flex-col gap-6 p-8">
       <SiteHeader t={t} locale={locale} />
 
       <Link href="/cart" className="text-muted-foreground inline-flex items-center gap-1.5 text-sm">
