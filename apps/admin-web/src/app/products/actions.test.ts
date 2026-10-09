@@ -51,8 +51,12 @@ vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined }),
 }));
 
-const { createProductAction, saveProductAction, updateVariantDetailsAction } =
-  await import("./actions");
+const {
+  createProductAction,
+  duplicateProductAction,
+  saveProductAction,
+  updateVariantDetailsAction,
+} = await import("./actions");
 
 const ok = { outcome: "ok", data: {} } as const;
 const idle: FormState = { status: "idle" };
@@ -1245,5 +1249,286 @@ describe("the vendor field (Plan 2C-4)", () => {
       expect(state.status).toBe("error");
       expect(api.createProduct).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("duplicateProductAction (Plan 2C-4)", () => {
+  const richVariant = variant({
+    compareAtAmountMinor: 20000,
+    costAmountMinor: 9000,
+    barcode: "123",
+    weightGrams: 250,
+    requiresShipping: false,
+    taxable: false,
+    tracksInventory: true,
+    inventoryPolicy: "continue",
+  });
+  const source = (overrides: Partial<ProductDetailDto> = {}): ProductDetailDto =>
+    product({
+      description: "Soft and cuddly",
+      productType: "Toy",
+      tags: ["plush", "gift"],
+      brandId: "b1",
+      categoryIds: ["c1", "c2"],
+      seoTitle: "Plush Bear | Shop",
+      seoDescription: "The softest bear",
+      mediaAssetIds: ["m1", "m2"],
+      variants: [richVariant],
+      ...overrides,
+    });
+  /** What the API answers for the new product right after it is created: one plain variant. */
+  const freshCopy = product({
+    id: "new-1",
+    sku: "P-COPY01",
+    slug: "plush-bear-copy",
+    status: "draft",
+    variants: [variant({ id: "cv1", sku: "P-COPY01-1" })],
+  });
+
+  function serve(original: ProductDetailDto): void {
+    api.fetchProduct.mockImplementation((id: string) =>
+      Promise.resolve({ outcome: "ok", product: id === original.id ? original : freshCopy }),
+    );
+  }
+
+  beforeEach(() => {
+    api.createProduct.mockResolvedValue({ outcome: "ok", data: { id: "new-1" } });
+    api.attachProductMedia.mockResolvedValue(ok);
+  });
+
+  function formForProduct(productId = "p1"): FormData {
+    const formData = new FormData();
+    formData.append("productId", productId);
+    return formData;
+  }
+
+  async function redirectOf(promise: Promise<unknown>): Promise<string> {
+    try {
+      await promise;
+    } catch (error) {
+      return (error as Error).message;
+    }
+    return "";
+  }
+
+  it("creates a draft copy named after the original, with a fresh product and variant SKU", async () => {
+    serve(source());
+
+    const target = await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+    expect(target).toBe("NEXT_REDIRECT:/products/new-1");
+    expect(api.createProduct).toHaveBeenCalledTimes(1);
+    const input = api.createProduct.mock.calls[0]![0];
+    expect(input).toMatchObject({
+      name: en.productEditor.copyOf.replace("{name}", "Plush Bear"),
+      slug: "plush-bear-copy",
+      description: "Soft and cuddly",
+      productType: "Toy",
+      tags: ["plush", "gift"],
+    });
+    expect(input.sku).toMatch(/^P-[A-Z0-9]{6}$/);
+    expect(input.sku).not.toBe("P-ABC123");
+    expect(input.variants).toHaveLength(1);
+    expect(input.variants[0].sku).toBe(`${input.sku}-1`);
+    expect(input.variants[0].sku).not.toBe("SKU-1");
+  });
+
+  it("copies the variant's price and attributes, and leaves the copy a draft", async () => {
+    serve(source());
+
+    await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+    expect(api.createProduct.mock.calls[0]![0].variants[0]).toMatchObject({
+      priceAmountMinor: 15000,
+      currency: "EGP",
+      compareAtAmountMinor: 20000,
+      costAmountMinor: 9000,
+      barcode: "123",
+      weightGrams: 250,
+      requiresShipping: false,
+      taxable: false,
+      tracksInventory: true,
+      inventoryPolicy: "continue",
+    });
+    expect(api.publishProduct).not.toHaveBeenCalled();
+    expect(api.unlistProduct).not.toHaveBeenCalled();
+    expect(api.setProductOptions).not.toHaveBeenCalled();
+  });
+
+  it("copies the description's neighbours: brand, categories, SEO and media", async () => {
+    serve(source());
+
+    await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+    expect(api.setProductBrand).toHaveBeenCalledWith("new-1", "b1", expect.any(String));
+    expect(api.assignProductCategories).toHaveBeenCalledWith(
+      "new-1",
+      ["c1", "c2"],
+      expect.any(String),
+    );
+    expect(api.setProductSeo).toHaveBeenCalledWith(
+      "new-1",
+      { title: "Plush Bear | Shop", description: "The softest bear" },
+      expect.any(String),
+    );
+    expect(api.attachProductMedia.mock.calls.map((call) => call[1])).toEqual(["m1", "m2"]);
+    expect(api.attachProductMedia.mock.calls.every((call) => call[0] === "new-1")).toBe(true);
+  });
+
+  it("does not copy stock", async () => {
+    serve(source());
+
+    await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+    expect(inventory.registerWarehouse).not.toHaveBeenCalled();
+    expect(inventory.receiveStock).not.toHaveBeenCalled();
+    expect(inventory.adjustStock).not.toHaveBeenCalled();
+    expect(api.fetchProductInventory).not.toHaveBeenCalled();
+  });
+
+  it("skips the follow-ups the original does not have", async () => {
+    serve(
+      source({
+        brandId: null,
+        categoryIds: [],
+        seoTitle: null,
+        seoDescription: null,
+        mediaAssetIds: [],
+      }),
+    );
+
+    await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+    expect(api.setProductBrand).not.toHaveBeenCalled();
+    expect(api.assignProductCategories).not.toHaveBeenCalled();
+    expect(api.setProductSeo).not.toHaveBeenCalled();
+    expect(api.attachProductMedia).not.toHaveBeenCalled();
+  });
+
+  it("retries once with a random suffix when the -copy handle is taken", async () => {
+    serve(source());
+    api.createProduct
+      .mockResolvedValueOnce({ outcome: "conflict", message: "slug taken" })
+      .mockResolvedValueOnce({ outcome: "ok", data: { id: "new-1" } });
+
+    const target = await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+    expect(target).toBe("NEXT_REDIRECT:/products/new-1");
+    expect(api.createProduct).toHaveBeenCalledTimes(2);
+    expect(api.createProduct.mock.calls[1]![0].slug).toMatch(/^plush-bear-copy-[a-z0-9]{4}$/);
+  });
+
+  it("reports a second conflict instead of retrying again", async () => {
+    serve(source());
+    api.createProduct.mockResolvedValue({ outcome: "conflict", message: "slug taken" });
+
+    const state = await duplicateProductAction(idle, formForProduct());
+
+    expect(api.createProduct).toHaveBeenCalledTimes(2);
+    expect(state).toMatchObject({ status: "error", message: "slug taken" });
+  });
+
+  describe("a product with options", () => {
+    const sized = () =>
+      source({
+        options: [{ name: "Size", values: ["S", "M"] }],
+        variants: [
+          variant({ id: "s", sku: "SKU-S", selection: { Size: "S" }, priceAmountMinor: 15000 }),
+          variant({
+            id: "m",
+            sku: "SKU-M",
+            selection: { Size: "M" },
+            priceAmountMinor: 25000,
+            costAmountMinor: 11000,
+          }),
+        ],
+      });
+
+    beforeEach(() => {
+      api.addProductVariant.mockResolvedValue({ outcome: "ok", data: { variantId: "cv2" } });
+    });
+
+    it("rebuilds the options on the copy with the option planner, then prices every row from the original", async () => {
+      serve(sized());
+
+      const target = await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+      expect(target).toBe("NEXT_REDIRECT:/products/new-1");
+      // The copy is read back, then given the original's options.
+      expect(api.fetchProduct).toHaveBeenCalledWith("new-1");
+      expect(api.setProductOptions).toHaveBeenCalledWith(
+        "new-1",
+        [{ name: "Size", values: ["S", "M"] }],
+        expect.any(String),
+      );
+      expect(api.addProductVariant).toHaveBeenCalledTimes(1);
+      expect(api.addProductVariant.mock.calls[0]![1]).toMatchObject({
+        selection: { Size: "M" },
+      });
+
+      // Each row ends up with the price of the original variant that has the same selection.
+      const priced = api.updateProductVariant.mock.calls.filter(
+        (call) =>
+          (call[2] as { compareAtAmountMinor?: unknown }).compareAtAmountMinor !== undefined,
+      );
+      const byVariant = Object.fromEntries(
+        priced.map((call) => [
+          call[1] as string,
+          (call[2] as { priceAmountMinor: number }).priceAmountMinor,
+        ]),
+      );
+      expect(byVariant).toEqual({ cv1: 15000, cv2: 25000 });
+      expect(
+        (priced.find((call) => call[1] === "cv2")![2] as { costAmountMinor: number })
+          .costAmountMinor,
+      ).toBe(11000);
+    });
+
+    it("runs the option calls before the pricing", async () => {
+      serve(sized());
+
+      await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+      const optionsAt = api.setProductOptions.mock.invocationCallOrder[0]!;
+      const addAt = api.addProductVariant.mock.invocationCallOrder[0]!;
+      const lastPriceAt = Math.max(...api.updateProductVariant.mock.invocationCallOrder);
+      expect(optionsAt).toBeLessThan(addAt);
+      expect(addAt).toBeLessThan(lastPriceAt);
+    });
+
+    it("still redirects to the copy, flagged partial, when an option call fails", async () => {
+      serve(sized());
+      api.setProductOptions.mockResolvedValue({ outcome: "error", message: "boom" });
+
+      const target = await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+      expect(target).toBe("NEXT_REDIRECT:/products/new-1?saved=partial");
+    });
+  });
+
+  it("still redirects to the copy, flagged partial, when a later step fails", async () => {
+    serve(source());
+    api.setProductBrand.mockResolvedValue({ outcome: "error", message: "boom" });
+
+    const target = await redirectOf(duplicateProductAction(idle, formForProduct()));
+
+    expect(target).toBe("NEXT_REDIRECT:/products/new-1?saved=partial");
+  });
+
+  it("makes no copy of a product that cannot be read", async () => {
+    api.fetchProduct.mockResolvedValue({ outcome: "not_found" });
+
+    const state = await duplicateProductAction(idle, formForProduct());
+
+    expect(state.status).toBe("error");
+    expect(api.createProduct).not.toHaveBeenCalled();
+  });
+
+  it("rejects a form with no product id without calling the API", async () => {
+    const state = await duplicateProductAction(idle, new FormData());
+
+    expect(state.status).toBe("error");
+    expect(api.fetchProduct).not.toHaveBeenCalled();
+    expect(api.createProduct).not.toHaveBeenCalled();
   });
 });

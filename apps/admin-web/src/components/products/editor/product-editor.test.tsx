@@ -9,12 +9,15 @@ import { ProductEditor } from "./product-editor";
 type Action = (previous: FormState, formData: FormData) => Promise<FormState>;
 const saveProductAction = vi.fn<Action>();
 const createProductAction = vi.fn<Action>();
+const duplicateProductAction = vi.fn<Action>();
 
 vi.mock("@/app/products/actions", () => ({
   saveProductAction: (previous: FormState, formData: FormData) =>
     saveProductAction(previous, formData),
   createProductAction: (previous: FormState, formData: FormData) =>
     createProductAction(previous, formData),
+  duplicateProductAction: (previous: FormState, formData: FormData) =>
+    duplicateProductAction(previous, formData),
 }));
 
 const single: ProductDetailDto = {
@@ -75,6 +78,7 @@ const base = {
   t: en,
   locale: "en",
   stock,
+  storefrontUrl: null,
   slots: {},
 } as const;
 
@@ -83,6 +87,8 @@ const t = en.productEditor;
 beforeEach(() => {
   saveProductAction.mockReset();
   createProductAction.mockReset();
+  duplicateProductAction.mockReset();
+  duplicateProductAction.mockResolvedValue({ status: "success" });
   saveProductAction.mockResolvedValue({ status: "success" });
   createProductAction.mockResolvedValue({ status: "success" });
 });
@@ -145,9 +151,11 @@ describe("ProductEditor", () => {
     expect(container.querySelector('input[name="hasVariantFields"]')).not.toBeNull();
   });
 
-  it("has no other form than the page's own while no dialog is open", () => {
+  it("has only the page's form and the Duplicate form, never nested, while no dialog is open", () => {
     const { container } = render(<ProductEditor mode="edit" product={multi} {...base} />);
-    expect(container.querySelectorAll("form")).toHaveLength(1);
+
+    expect(container.querySelectorAll("form")).toHaveLength(2);
+    expect(container.querySelector("form form")).toBeNull();
   });
 
   it("asks before saving a change that removes variants, and submits nothing when declined", async () => {
@@ -250,5 +258,108 @@ describe("ProductEditor", () => {
     expect(screen.getByText(t.shopLocation)).toBeInTheDocument();
     expect(screen.getByLabelText(t.quantity)).toHaveValue(null);
     expect(screen.getByText(t.optionsAfterCreate)).toBeInTheDocument();
+  });
+
+  describe("Preview", () => {
+    const previewOf = (status: string, storefrontUrl: string | null) =>
+      render(
+        <ProductEditor
+          mode="edit"
+          product={{ ...single, status }}
+          {...base}
+          storefrontUrl={storefrontUrl}
+        />,
+      );
+
+    it.each(["published", "unlisted"])(
+      "links a %s product to its page in the store, in a new tab",
+      (status) => {
+        previewOf(status, "https://shop.example.com");
+
+        const link = screen.getByRole("link", { name: t.preview });
+        expect(link).toHaveAttribute("href", "https://shop.example.com/products/plush-bear");
+        expect(link).toHaveAttribute("target", "_blank");
+        expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      },
+    );
+
+    it.each(["draft", "scheduled", "archived"])("is absent for a %s product", (status) => {
+      previewOf(status, "https://shop.example.com");
+
+      expect(screen.queryByRole("link", { name: t.preview })).not.toBeInTheDocument();
+    });
+
+    it("is absent when the store's address is not set", () => {
+      previewOf("published", null);
+
+      expect(screen.queryByRole("link", { name: t.preview })).not.toBeInTheDocument();
+    });
+
+    it("does not double the slash after a store address that ends with one", () => {
+      previewOf("published", "https://shop.example.com/");
+
+      expect(screen.getByRole("link", { name: t.preview })).toHaveAttribute(
+        "href",
+        "https://shop.example.com/products/plush-bear",
+      );
+    });
+
+    it("is absent while creating", () => {
+      render(
+        <ProductEditor
+          mode="create"
+          product={null}
+          {...base}
+          storefrontUrl="https://shop.example.com"
+        />,
+      );
+
+      expect(screen.queryByRole("link", { name: t.preview })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Duplicate", () => {
+    it("is a small form of its own, outside the page's form, that posts the product id", async () => {
+      render(<ProductEditor mode="edit" product={single} {...base} />);
+
+      const button = screen.getByRole("button", { name: t.duplicate });
+      const form = button.closest("form");
+      expect(form).not.toBeNull();
+      expect(form!.id).not.toBe("product-editor");
+      expect(form!.querySelector('input[name="productId"]')).toHaveValue("p1");
+
+      fireEvent.click(button);
+
+      await waitFor(() => expect(duplicateProductAction).toHaveBeenCalledTimes(1));
+      expect(duplicateProductAction.mock.calls[0]![1].get("productId")).toBe("p1");
+      expect(saveProductAction).not.toHaveBeenCalled();
+    });
+
+    it("shows the message when the copy could not be made", async () => {
+      duplicateProductAction.mockResolvedValue({
+        status: "error",
+        message: "Something went wrong.",
+        fieldErrors: {},
+      });
+      render(<ProductEditor mode="edit" product={single} {...base} />);
+
+      fireEvent.click(screen.getByRole("button", { name: t.duplicate }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong.");
+    });
+
+    it("is absent while creating", () => {
+      render(<ProductEditor mode="create" product={null} {...base} />);
+
+      expect(screen.queryByRole("button", { name: t.duplicate })).not.toBeInTheDocument();
+    });
+
+    it("does not count as an unsaved change", () => {
+      render(<ProductEditor mode="edit" product={single} {...base} />);
+
+      fireEvent.click(screen.getByRole("button", { name: t.duplicate }));
+
+      expect(screen.queryByText(t.unsaved)).not.toBeInTheDocument();
+    });
   });
 });

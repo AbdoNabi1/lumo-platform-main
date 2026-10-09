@@ -31,6 +31,7 @@ import {
   type ProductOptionDto,
   type ProductOptionInput,
   type ProductDetailDto,
+  type ProductVariantDto,
 } from "@/lib/api/products";
 import { createBrand, fetchBrandsPage, type BrandDto } from "@/lib/api/brands";
 import { adjustStock, fetchWarehouses, receiveStock, registerWarehouse } from "@/lib/api/inventory";
@@ -993,6 +994,162 @@ export async function createProductAction(
   }
   const moveStatus = statusCall(id, "draft", stringField(formData, "status"));
   if (moveStatus !== null) followUps.push(moveStatus);
+
+  let partial = false;
+  for (const run of followUps) {
+    const followUp = await run();
+    if (followUp.outcome !== "ok") {
+      partial = true;
+      break;
+    }
+  }
+
+  revalidatePath("/products");
+  redirect(partial ? `/products/${id}?saved=partial` : `/products/${id}`);
+}
+
+/** What a copy keeps of a variant: every attribute but its SKU (made fresh) and its stock. */
+function attributesOf(variant: ProductVariantDto) {
+  return {
+    compareAtAmountMinor: variant.compareAtAmountMinor,
+    costAmountMinor: variant.costAmountMinor,
+    barcode: variant.barcode,
+    weightGrams: variant.weightGrams,
+    requiresShipping: variant.requiresShipping,
+    taxable: variant.taxable,
+    tracksInventory: variant.tracksInventory,
+    inventoryPolicy: variant.inventoryPolicy,
+  };
+}
+
+/**
+ * Plan 2C-4 — "Duplicate": a draft copy of a product, as Shopify makes one. Re-reads the original,
+ * creates the copy from its first variant with a fresh product SKU and variant SKU (a taken
+ * `-copy` handle retries once with a random suffix), then follows up the way `createProductAction`
+ * does: the options and every variant's price and attributes (through the same option planner and
+ * `applyOptionPlan` a save uses), brand, categories, SEO and media. Stock is not copied. A failure
+ * after the copy exists still redirects to it, flagged `?saved=partial`.
+ */
+export async function duplicateProductAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const dictionary = await localeDictionary();
+  const t = dictionary.formErrors;
+
+  const productId = stringField(formData, "productId");
+  if (productId.length === 0) return { status: "error", message: t.invalid, fieldErrors: {} };
+
+  const fetched = await fetchProduct(productId);
+  if (fetched.outcome !== "ok") return toFormState(fetchFailure(fetched), t);
+  const source = fetched.product;
+  const first = source.variants[0];
+  if (first === undefined) return { status: "error", message: t.invalid, fieldErrors: {} };
+
+  const productSku = generateProductSku();
+  const inputFor = (slug: string) => ({
+    sku: productSku,
+    name: dictionary.productEditor.copyOf.replace("{name}", source.name),
+    slug,
+    description: source.description,
+    productType: source.productType,
+    tags: [...source.tags],
+    variants: [
+      {
+        sku: `${productSku}-1`,
+        priceAmountMinor: first.priceAmountMinor,
+        currency: first.currency,
+        ...attributesOf(first),
+      },
+    ],
+  });
+
+  let result = await createProduct(inputFor(`${source.slug}-copy`), newIdempotencyKey());
+  if (result.outcome === "conflict") {
+    result = await createProduct(
+      inputFor(`${source.slug}-copy-${randomToken(4)}`),
+      newIdempotencyKey(),
+    );
+  }
+  if (result.outcome !== "ok") return toFormState(result, t);
+
+  const id = result.data.id;
+  if (id.length === 0) {
+    revalidatePath("/products");
+    redirect("/products");
+  }
+
+  const followUps: (() => Promise<MutationResult<unknown>>)[] = [];
+  if (source.options.length > 0) {
+    followUps.push(async () => {
+      const created = await fetchProduct(id);
+      if (created.outcome !== "ok") return fetchFailure(created);
+      const copy = created.product;
+      const planned = planOptionChange({
+        productSku: copy.sku,
+        variants: copy.variants,
+        nextOptions: source.options,
+      });
+      if (!planned.ok) return { outcome: "error", message: "The options could not be copied" };
+      const applied = await applyOptionPlan(id, copy, planned.operations);
+      if (applied.result.outcome !== "ok") return applied.result;
+
+      for (const row of planned.rows) {
+        const key = rowKey(row.selection);
+        const original = source.variants.find((variant) => rowKey(variant.selection) === key);
+        const kept =
+          row.variantId === null
+            ? undefined
+            : copy.variants.find((variant) => variant.id === row.variantId);
+        const added = planned.operations.find(
+          (operation) => operation.kind === "add" && rowKey(operation.selection) === key,
+        );
+        const variantId = row.variantId ?? applied.added.get(key);
+        const sku = kept?.sku ?? (added?.kind === "add" ? added.sku : undefined);
+        if (original === undefined || variantId === undefined || sku === undefined) {
+          return { outcome: "error", message: "The variant id was not returned" };
+        }
+        const priced = await updateProductVariant(
+          id,
+          variantId,
+          {
+            sku,
+            priceAmountMinor: original.priceAmountMinor,
+            currency: original.currency,
+            ...attributesOf(original),
+          },
+          newIdempotencyKey(),
+        );
+        if (priced.outcome !== "ok") return priced;
+      }
+      return { outcome: "ok", data: null };
+    });
+  }
+  if (source.brandId !== null) {
+    const brandId = source.brandId;
+    followUps.push(() => setProductBrand(id, brandId, newIdempotencyKey()));
+  }
+  if (source.categoryIds.length > 0) {
+    followUps.push(() => assignProductCategories(id, source.categoryIds, newIdempotencyKey()));
+  }
+  if (source.seoTitle !== null || source.seoDescription !== null) {
+    followUps.push(() =>
+      setProductSeo(
+        id,
+        { title: source.seoTitle ?? undefined, description: source.seoDescription ?? undefined },
+        newIdempotencyKey(),
+      ),
+    );
+  }
+  if (source.mediaAssetIds.length > 0) {
+    followUps.push(async () => {
+      for (const assetId of source.mediaAssetIds) {
+        const attached = await attachProductMedia(id, assetId, newIdempotencyKey());
+        if (attached.outcome !== "ok") return attached;
+      }
+      return { outcome: "ok", data: null };
+    });
+  }
 
   let partial = false;
   for (const run of followUps) {

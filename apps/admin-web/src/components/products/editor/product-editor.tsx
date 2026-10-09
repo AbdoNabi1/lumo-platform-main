@@ -8,8 +8,13 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { Button, Card, CardContent } from "@platform/ui";
-import { createProductAction, saveProductAction } from "@/app/products/actions";
+import {
+  createProductAction,
+  duplicateProductAction,
+  saveProductAction,
+} from "@/app/products/actions";
 import type { BrandDto } from "@/lib/api/brands";
 import type { CategoryDto } from "@/lib/api/categories";
 import type { FormState } from "@/lib/api/mutation";
@@ -44,6 +49,12 @@ export interface ProductEditorProps {
   readonly locale: Locale;
   /** Quantities and the one location they belong to (Plan 2B-2). */
   readonly stock: StockView;
+  /**
+   * The store's public address, read from `STOREFRONT_URL` by the product page at request time.
+   * `null` hides Preview. Not a `NEXT_PUBLIC_` variable: those are inlined at build time, and this
+   * app's image is built without build args.
+   */
+  readonly storefrontUrl: string | null;
   /** Cards that own their own forms. They sit between the form cards without nesting forms. */
   readonly slots: {
     readonly media?: ReactNode;
@@ -59,7 +70,18 @@ export interface ProductEditorProps {
  * every other field save together.
  */
 export function ProductEditor(props: ProductEditorProps) {
-  const { mode, product, brands, categories, defaultCurrency, t, locale, stock, slots } = props;
+  const {
+    mode,
+    product,
+    brands,
+    categories,
+    defaultCurrency,
+    t,
+    locale,
+    stock,
+    storefrontUrl,
+    slots,
+  } = props;
   const action = mode === "create" ? createProductAction : saveProductAction;
   const [state, formAction, isPending] = useActionState(action, INITIAL_STATE);
   const [dirty, setDirty] = useState(false);
@@ -107,6 +129,14 @@ export function ProductEditor(props: ProductEditorProps) {
           stock.location?.id ?? null,
         ]);
 
+  // Only a product the store shows can be previewed; `storefrontUrl` is null when it is not set.
+  const previewHref =
+    product !== null &&
+    storefrontUrl !== null &&
+    (product.status === "published" || product.status === "unlisted")
+      ? `${storefrontUrl.replace(/\/+$/, "")}/products/${product.slug}`
+      : null;
+
   const saveLabel = isPending ? editor.saving : mode === "create" ? editor.create : editor.save;
 
   return (
@@ -131,8 +161,21 @@ export function ProductEditor(props: ProductEditorProps) {
       </form>
 
       <div className="bg-background/95 sticky top-0 z-10 flex flex-wrap items-center justify-end gap-3 py-2 backdrop-blur">
+        {product !== null && (
+          <div className="me-auto flex flex-wrap items-center gap-2">
+            {previewHref !== null && (
+              <Button variant="outline" size="sm" asChild>
+                <a href={previewHref} target="_blank" rel="noopener noreferrer">
+                  <ExternalLinkIcon aria-hidden="true" />
+                  {editor.preview}
+                </a>
+              </Button>
+            )}
+            <DuplicateForm productId={product.id} label={editor.duplicate} />
+          </div>
+        )}
         {state.status === "error" && (
-          <p role="alert" className="text-destructive me-auto text-sm">
+          <p role="alert" className="text-destructive text-sm">
             {state.message}
           </p>
         )}
@@ -229,5 +272,33 @@ export function ProductEditor(props: ProductEditorProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Duplicate: a small form of its own. It sits beside the editor's `<form>`, never inside it, so
+ * making a copy does not submit (or lose) what is typed on the page.
+ */
+function DuplicateForm({
+  productId,
+  label,
+}: {
+  readonly productId: string;
+  readonly label: string;
+}) {
+  const [state, formAction, isPending] = useActionState(duplicateProductAction, INITIAL_STATE);
+  return (
+    <form action={formAction} className="flex items-center gap-2">
+      <input type="hidden" name="productId" value={productId} />
+      <Button type="submit" variant="outline" size="sm" loading={isPending} disabled={isPending}>
+        <CopyIcon aria-hidden="true" />
+        {label}
+      </Button>
+      {state.status === "error" && (
+        <p role="alert" className="text-destructive text-xs">
+          {state.message}
+        </p>
+      )}
+    </form>
   );
 }

@@ -107,6 +107,10 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
       ? buildStockView(warehousesResult.items, inventoryResult.rows, product.variants)
       : UNAVAILABLE_STOCK;
 
+  // Read here, per request: a `NEXT_PUBLIC_` variable would be frozen at build time, and this app's
+  // image is built without build args. Unset or blank hides the editor's Preview button.
+  const storefrontUrl = process.env["STOREFRONT_URL"]?.trim() || null;
+
   return (
     <AppShell t={t} locale={locale} activeNavId="products" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
@@ -151,6 +155,7 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
           t={t}
           locale={locale}
           stock={stock}
+          storefrontUrl={storefrontUrl}
           slots={{
             media: <ProductMediaCard productId={product.id} mediaAssets={mediaAssets} t={t} />,
             dangerZone: (

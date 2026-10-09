@@ -65,6 +65,7 @@ export default async function NewProductPage() {
           t={t}
           locale={locale}
           stock={stock}
+          storefrontUrl={null}
           slots={{}}
         />
       </div>
