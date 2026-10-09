@@ -185,6 +185,7 @@ describe("ProductEditor", () => {
     const confirm = vi.spyOn(window, "confirm");
     render(<ProductEditor mode="edit" product={multi} {...base} />);
 
+    fireEvent.change(screen.getByLabelText(t.title), { target: { value: "Plush Bear XL" } });
     fireEvent.click(screen.getByRole("button", { name: t.save }));
 
     await waitFor(() => expect(saveProductAction).toHaveBeenCalledTimes(1));
@@ -199,6 +200,7 @@ describe("ProductEditor", () => {
     });
     render(<ProductEditor mode="edit" product={single} {...base} />);
 
+    fireEvent.change(screen.getByLabelText(t.price), { target: { value: "abc" } });
     fireEvent.click(screen.getByRole("button", { name: t.save }));
 
     expect(await screen.findByText("Enter a valid price")).toBeInTheDocument();
@@ -213,6 +215,35 @@ describe("ProductEditor", () => {
     fireEvent.change(screen.getByLabelText(t.barcode), { target: { value: "123" } });
 
     expect(screen.getByText(t.unsaved)).toBeInTheDocument();
+  });
+
+  it("keeps Save off until something changes, and off again once the change is undone", () => {
+    render(<ProductEditor mode="edit" product={single} {...base} />);
+    const save = screen.getByRole("button", { name: t.save });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(t.title), { target: { value: "Plush Bear XL" } });
+    expect(save).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText(t.title), { target: { value: "Plush Bear" } });
+    expect(save).toBeDisabled();
+  });
+
+  it("turns Save on for a change made by a click, not only by typing", async () => {
+    render(<ProductEditor mode="edit" product={multi} {...base} />);
+    fireEvent.click(screen.getAllByRole("button", { name: t.edit })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: t.removeValue.replace("{value}", "M") }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: t.save })).toBeEnabled());
+  });
+
+  it("turns Save off again after a successful save", async () => {
+    render(<ProductEditor mode="edit" product={single} {...base} />);
+    fireEvent.change(screen.getByLabelText(t.title), { target: { value: "Plush Bear XL" } });
+    fireEvent.click(screen.getByRole("button", { name: t.save }));
+
+    await waitFor(() => expect(saveProductAction).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: t.save })).toBeDisabled());
   });
 
   it("ignores typing in cards that submit their own forms", () => {

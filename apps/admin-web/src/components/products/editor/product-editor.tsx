@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  useActionState,
-  useCallback,
-  useEffect,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { useActionState, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { Button, Card, CardContent } from "@platform/ui";
 import {
@@ -69,6 +62,18 @@ export interface ProductEditorProps {
  * editor, the variants table and the inventory card all join it: options, prices, quantities and
  * every other field save together.
  */
+/** Every field joined to the page's form, in page order — two equal snapshots mean nothing changed. */
+function formSnapshot(): string {
+  const form = document.getElementById(PRODUCT_FORM_ID);
+  if (!(form instanceof HTMLFormElement)) return "";
+  return JSON.stringify(
+    [...new FormData(form)].map(([name, value]) => [
+      name,
+      typeof value === "string" ? value : value.name,
+    ]),
+  );
+}
+
 export function ProductEditor(props: ProductEditorProps) {
   const {
     mode,
@@ -94,9 +99,14 @@ export function ProductEditor(props: ProductEditorProps) {
     [],
   );
 
+  // What the page's fields held when it was loaded or last saved. Save stays off until the fields
+  // differ from it, and goes off again when a change is undone.
+  const saved = useRef<string | null>(null);
   useEffect(() => {
-    if (state.status === "success") setDirty(false);
-  }, [state]);
+    if (state.status === "error") return;
+    saved.current = formSnapshot();
+    setDirty(false);
+  }, [state, product]);
 
   const errors: Readonly<Record<string, string>> =
     state.status === "error" ? state.fieldErrors : {};
@@ -108,12 +118,32 @@ export function ProductEditor(props: ProductEditorProps) {
   const editor = t.productEditor;
   const currency = variant?.currency ?? defaultCurrency;
 
-  // Only the editor's own inputs count: the media card and the variant dialog submit their own
-  // forms, so typing there must not claim the page has unsaved changes.
-  function markDirty(event: FormEvent): void {
-    const target = event.target as { readonly form?: HTMLFormElement | null };
-    if (target.form?.id === PRODUCT_FORM_ID) setDirty(true);
-  }
+  // Only the editor's own fields count: the media card and the variant dialog submit their own
+  // forms, so typing there never changes the snapshot. Typing is compared at once; a click (Done,
+  // remove a value, a switch) is compared again after React has drawn its result.
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = root.current;
+    if (element === null) return;
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const compare = () => {
+      if (saved.current !== null) setDirty(formSnapshot() !== saved.current);
+    };
+    const recheck = () => {
+      compare();
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        compare();
+      }, 0);
+      timers.add(timer);
+    };
+    const events = ["input", "change", "click", "keyup"] as const;
+    for (const name of events) element.addEventListener(name, recheck);
+    return () => {
+      for (const name of events) element.removeEventListener(name, recheck);
+      for (const timer of timers) clearTimeout(timer);
+    };
+  }, []);
 
   // The single variant's own cards (price, inventory, shipping) give way to the table the moment
   // options are typed; the server decides by the options it receives.
@@ -140,7 +170,7 @@ export function ProductEditor(props: ProductEditorProps) {
   const saveLabel = isPending ? editor.saving : mode === "create" ? editor.create : editor.save;
 
   return (
-    <div onInput={markDirty} onChange={markDirty} className="flex flex-col gap-6">
+    <div ref={root} className="flex flex-col gap-6">
       <form
         id={PRODUCT_FORM_ID}
         action={formAction}
@@ -182,7 +212,12 @@ export function ProductEditor(props: ProductEditorProps) {
           </p>
         )}
         {dirty && <span className="text-muted-foreground text-sm">{editor.unsaved}</span>}
-        <Button type="submit" form={PRODUCT_FORM_ID} loading={isPending}>
+        <Button
+          type="submit"
+          form={PRODUCT_FORM_ID}
+          loading={isPending}
+          disabled={!dirty || isPending}
+        >
           {saveLabel}
         </Button>
       </div>
