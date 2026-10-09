@@ -160,7 +160,9 @@ export function ProductEditor(props: ProductEditorProps) {
         {hasVariantFields && <input type="hidden" name="hasVariantFields" value="1" />}
       </form>
 
-      <div className="bg-background/95 sticky top-0 z-10 flex flex-wrap items-center justify-end gap-3 py-2 backdrop-blur">
+      {/* top-16: below the app shell's sticky 64px header (h-16, z-30). At top-0 the header
+          covered this bar once the page scrolled, so clicking Save hit the header instead. */}
+      <div className="bg-background/95 sticky top-16 z-20 flex flex-wrap items-center justify-end gap-3 py-2 backdrop-blur">
         {product !== null && (
           <div className="me-auto flex flex-wrap items-center gap-2">
             {previewHref !== null && (
