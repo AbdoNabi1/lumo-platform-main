@@ -676,6 +676,7 @@ export const ar: Dictionary = {
     categories: "الفئات",
     tags: "العلامات (Tags)",
     tagsHint: "افصل بين العلامات بفاصلة.",
+    removeTag: "احذف {tag}",
     moreActions: "إجراءات أخرى",
   },
   productDetail: {

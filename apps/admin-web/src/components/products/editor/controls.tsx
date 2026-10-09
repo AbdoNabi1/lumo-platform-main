@@ -187,6 +187,7 @@ export function TagsInput({
   form,
   label,
   hint,
+  error,
   removeLabel,
 }: {
   readonly name: string;
@@ -194,11 +195,17 @@ export function TagsInput({
   readonly form?: string | undefined;
   readonly label: string;
   readonly hint?: string | undefined;
+  readonly error?: string | undefined;
   /** Contains `{tag}`, replaced by the tag being removed: "Remove {tag}". */
   readonly removeLabel: string;
 }) {
   const id = useId();
   const hintId = `${id}-hint`;
+  const errorId = `${id}-error`;
+  const describedBy =
+    [error === undefined ? null : errorId, hint === undefined ? null : hintId]
+      .filter((value) => value !== null)
+      .join(" ") || undefined;
   const [tags, setTags] = useState<readonly string[]>(defaultTags);
   const [draft, setDraft] = useState("");
 
@@ -248,7 +255,8 @@ export function TagsInput({
           id={id}
           type="text"
           value={draft}
-          aria-describedby={hint === undefined ? undefined : hintId}
+          aria-invalid={error === undefined ? undefined : true}
+          aria-describedby={describedBy}
           className="min-w-24 flex-1 bg-transparent text-sm outline-none"
           onChange={(event) => {
             const typed = event.target.value;
@@ -265,6 +273,11 @@ export function TagsInput({
       {hint !== undefined && (
         <p id={hintId} className="text-muted-foreground text-xs">
           {hint}
+        </p>
+      )}
+      {error !== undefined && (
+        <p id={errorId} className="text-destructive text-xs">
+          {error}
         </p>
       )}
     </div>

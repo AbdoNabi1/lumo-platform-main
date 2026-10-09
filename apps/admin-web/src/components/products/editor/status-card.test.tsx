@@ -1,34 +1,58 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { en } from "@/messages/en";
 import { StatusCard } from "./status-card";
 
 const t = en.productEditor;
 
+function renderCard(status: string) {
+  return render(
+    <form id="product-editor">
+      <StatusCard status={status} errors={{}} t={en} />
+    </form>,
+  );
+}
+
+const trigger = () => screen.getByRole("button", { name: (name) => name.startsWith(t.statusCard) });
+const formData = (container: HTMLElement) => new FormData(container.querySelector("form")!);
+
 describe("StatusCard", () => {
-  it("offers exactly active, draft and unlisted, each with its hint", () => {
-    render(<StatusCard status="draft" errors={{}} t={en} />);
+  it("offers exactly active, draft and unlisted, each with its description", async () => {
+    renderCard("draft");
 
-    const select = screen.getByRole("combobox", { name: t.statusCard });
-    const options = within(select).getAllByRole("option");
-    expect(options.map((option) => [option.getAttribute("value"), option.textContent])).toEqual([
-      ["published", en.productStatus.published],
-      ["draft", en.productStatus.draft],
-      ["unlisted", en.productStatus.unlisted],
-    ]);
     expect(en.productStatus.published).toBe("Active");
-    expect(screen.getByText(t.statusDraftHint)).toBeInTheDocument();
+    expect(trigger()).toHaveTextContent(en.productStatus.draft);
+    fireEvent.keyDown(trigger(), { key: "Enter" });
 
-    fireEvent.change(select, { target: { value: "unlisted" } });
-    expect(screen.getByText(t.statusUnlistedHint)).toBeInTheDocument();
-    fireEvent.change(select, { target: { value: "published" } });
-    expect(screen.getByText(t.statusPublishedHint)).toBeInTheDocument();
+    const items = await screen.findAllByRole("menuitemradio");
+    expect(items.map((item) => item.textContent)).toEqual([
+      `${en.productStatus.published}${t.statusPublishedHint}`,
+      `${en.productStatus.draft}${t.statusDraftHint}`,
+      `${en.productStatus.unlisted}${t.statusUnlistedHint}`,
+    ]);
+    expect(items.map((item) => item.getAttribute("aria-checked"))).toEqual([
+      "false",
+      "true",
+      "false",
+    ]);
   });
 
-  it.each(["archived", "scheduled"])("renders no select for a %s product", (status) => {
-    render(<StatusCard status={status} errors={{}} t={en} />);
+  it("posts the chosen status under the same name as before", async () => {
+    const { container } = renderCard("draft");
+    expect(formData(container).get("status")).toBe("draft");
 
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    fireEvent.keyDown(trigger(), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: /Unlisted/ }));
+
+    expect(formData(container).get("status")).toBe("unlisted");
+    expect(trigger()).toHaveTextContent(en.productStatus.unlisted);
+  });
+
+  it.each(["archived", "scheduled"])("renders no picker for a %s product", (status) => {
+    const { container } = renderCard(status);
+
+    expect(screen.queryByRole("button", { name: /^Status/ })).not.toBeInTheDocument();
+    expect(formData(container).get("status")).toBeNull();
     expect(screen.getByText(t.statusLocked)).toBeInTheDocument();
     expect(
       screen.getByText((en.productStatus as Record<string, string>)[status]!),

@@ -1,15 +1,19 @@
 "use client";
 
+import { useId } from "react";
 import { Card, CardContent, CardHeader, CardTitle, Input, Label } from "@platform/ui";
 import type { BrandDto } from "@/lib/api/brands";
 import type { CategoryDto } from "@/lib/api/categories";
 import type { Dictionary } from "@/messages/en";
-import { CheckboxRow, Field, NativeSelect, PRODUCT_FORM_ID } from "./field";
+import { TagsInput } from "./controls";
+import { CheckboxRow, Field, PRODUCT_FORM_ID } from "./field";
 
 /**
- * Type, vendor (brand), categories and tags. An assigned brand or category that is not in the
- * fetched first page still renders as its own option, labelled with its id, so a save never
- * silently drops it.
+ * Type, vendor, categories and tags. The vendor is typed (the brands are only suggestions): a name
+ * that matches a brand uses it, a new name makes one, blank clears it. An assigned category that is
+ * not in the fetched first page still renders as its own checkbox, labelled with its id, so a save
+ * never silently drops it. An assigned brand that is not in the first page cannot be named here, so
+ * the field starts blank and posts `vendorKeep`: a blank vendor then means "leave it as it is".
  */
 export function OrganizationCard({
   productType,
@@ -31,7 +35,9 @@ export function OrganizationCard({
   readonly t: Dictionary;
 }) {
   const editor = t.productEditor;
-  const brandListed = brandId === null || brands.some((brand) => brand.id === brandId);
+  const brandsListId = useId();
+  const assignedBrand = brandId === null ? undefined : brands.find((brand) => brand.id === brandId);
+  const brandUnnameable = brandId !== null && assignedBrand === undefined;
   const assigned = new Set(categoryIds);
   const listedCategories = new Set(categories.map((category) => category.id));
   const unlistedCategoryIds = categoryIds.filter((id) => !listedCategories.has(id));
@@ -51,21 +57,24 @@ export function OrganizationCard({
           {(control) => <Input {...control} defaultValue={productType} />}
         </Field>
 
-        <Field label={editor.brand} name="brandId" error={errors["brandId"]} form={PRODUCT_FORM_ID}>
+        <Field label={editor.brand} name="vendor" error={errors["vendor"]} form={PRODUCT_FORM_ID}>
           {(control) => (
-            <NativeSelect {...control} defaultValue={brandId ?? ""}>
-              <option value="">{editor.noBrand}</option>
-              {brands.map((brand) => (
-                <option key={brand.id} value={brand.id}>
-                  {brand.name}
-                </option>
-              ))}
-              {!brandListed && brandId !== null && (
-                <option value={brandId}>
-                  {t.productBrandForm.unlistedOption.replace("{id}", brandId)}
-                </option>
+            <>
+              <Input
+                {...control}
+                list={brandsListId}
+                autoComplete="off"
+                defaultValue={assignedBrand?.name ?? ""}
+              />
+              <datalist id={brandsListId}>
+                {brands.map((brand) => (
+                  <option key={brand.id} value={brand.name} />
+                ))}
+              </datalist>
+              {brandUnnameable && (
+                <input type="hidden" name="vendorKeep" value="1" form={PRODUCT_FORM_ID} />
               )}
-            </NativeSelect>
+            </>
           )}
         </Field>
 
@@ -95,15 +104,16 @@ export function OrganizationCard({
           ))}
         </fieldset>
 
-        <Field
-          label={editor.tags}
+        <TagsInput
+          key={tags.join("\n")}
           name="tags"
-          error={errors["tags"]}
-          hint={editor.tagsHint}
           form={PRODUCT_FORM_ID}
-        >
-          {(control) => <Input {...control} defaultValue={tags.join(", ")} />}
-        </Field>
+          label={editor.tags}
+          hint={editor.tagsHint}
+          error={errors["tags"]}
+          removeLabel={editor.removeTag}
+          defaultTags={tags}
+        />
       </CardContent>
     </Card>
   );

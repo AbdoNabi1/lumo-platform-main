@@ -730,6 +730,7 @@ export const en = {
     categories: "Categories",
     tags: "Tags",
     tagsHint: "Separate tags with commas.",
+    removeTag: "Remove {tag}",
     moreActions: "More actions",
   },
   productDetail: {

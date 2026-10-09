@@ -32,6 +32,7 @@ import {
   type ProductOptionInput,
   type ProductDetailDto,
 } from "@/lib/api/products";
+import { createBrand, fetchBrandsPage, type BrandDto } from "@/lib/api/brands";
 import { adjustStock, fetchWarehouses, receiveStock, registerWarehouse } from "@/lib/api/inventory";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import {
@@ -45,6 +46,7 @@ import {
   randomToken,
 } from "@/lib/products/handles";
 import { toMinorUnits } from "@/lib/products/money";
+import { resolveVendor, type VendorChoice } from "@/lib/products/vendor";
 import {
   activeLocations,
   stockByVariant,
@@ -158,10 +160,79 @@ function optionalWholeNumber(formData: FormData, name: string): number | null | 
 }
 
 /** The id the API echoes for a created record (`{ variantId }`, `{ warehouseId }`), if readable. */
-function idOf(data: unknown, key: "variantId" | "warehouseId"): string | null {
+function idOf(data: unknown, key: "variantId" | "warehouseId" | "id"): string | null {
   if (typeof data !== "object" || data === null) return null;
   const value = (data as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+type BrandsRead =
+  | { readonly ok: true; readonly brands: readonly BrandDto[] }
+  | { readonly ok: false; readonly result: MutationResult<unknown> };
+
+/** The first page of brands: what a typed vendor is matched against (Plan 2C-4). */
+async function readBrands(): Promise<BrandsRead> {
+  const page = await fetchBrandsPage({ first: 100 });
+  if (page.outcome === "ok") return { ok: true, brands: page.items };
+  return {
+    ok: false,
+    result:
+      page.outcome === "unauthorized"
+        ? { outcome: "unauthorized" }
+        : { outcome: "error", message: page.message },
+  };
+}
+
+/**
+ * What a typed vendor needs before the brand can be assigned: nothing for a blank vendor, a read of
+ * the brands otherwise. Done before the first write, so an unreadable brand list changes nothing.
+ */
+async function chooseVendor(
+  vendor: string,
+): Promise<
+  | { readonly ok: true; readonly choice: VendorChoice }
+  | { readonly ok: false; readonly result: MutationResult<unknown> }
+> {
+  if (vendor.length === 0) return { ok: true, choice: { kind: "none" } };
+  const read = await readBrands();
+  if (!read.ok) return read;
+  return { ok: true, choice: resolveVendor(vendor, read.brands) };
+}
+
+/**
+ * The id of the brand a vendor names, creating it when it is new. A create that conflicts means
+ * the slug exists under another spelling of the name: the brands are read once more and the one
+ * with that slug is used; if none is listed the conflict is reported on the vendor field.
+ */
+async function brandIdFor(
+  choice: Exclude<VendorChoice, { readonly kind: "none" }>,
+): Promise<
+  | { readonly ok: true; readonly brandId: string }
+  | { readonly ok: false; readonly result: MutationResult<unknown> }
+> {
+  if (choice.kind === "existing") return { ok: true, brandId: choice.brandId };
+
+  const created = await createBrand({ name: choice.name, slug: choice.slug }, newIdempotencyKey());
+  if (created.outcome === "ok") {
+    const brandId = idOf(created.data, "id");
+    return brandId === null
+      ? { ok: false, result: { outcome: "error", message: "The brand id was not returned" } }
+      : { ok: true, brandId };
+  }
+  if (created.outcome !== "conflict") return { ok: false, result: created };
+
+  const again = await readBrands();
+  if (!again.ok) return again;
+  const match = again.brands.find((brand) => brand.slug === choice.slug);
+  if (match !== undefined) return { ok: true, brandId: match.id };
+  return {
+    ok: false,
+    result: {
+      outcome: "invalid",
+      message: created.message,
+      fields: [{ field: "vendor", message: created.message }],
+    },
+  };
 }
 
 async function localeDictionary() {
@@ -516,6 +587,18 @@ export async function saveProductAction(
     return { status: "error", message: t.invalid, fieldErrors };
   }
 
+  // The vendor: a blank one that the editor flagged (`vendorKeep`: the product has a brand it could
+  // not name) leaves the brand alone. Anything else is resolved now, so an unreadable brand list
+  // stops the save before the first write.
+  const vendor = stringField(formData, "vendor").trim();
+  const keepBrand = vendor.length === 0 && stringField(formData, "vendorKeep") === "1";
+  let vendorChoice: VendorChoice = { kind: "none" };
+  if (!keepBrand) {
+    const chosen = await chooseVendor(vendor);
+    if (!chosen.ok) return toFormState(chosen.result, t);
+    vendorChoice = chosen.choice;
+  }
+
   const steps: SaveStep[] = [];
 
   // 1. Details.
@@ -718,12 +801,33 @@ export async function saveProductAction(
   }
 
   // 6. Brand.
-  const brandId = optionalText(formData, "brandId");
-  if (brandId !== product.brandId) {
-    steps.push({
-      names: {},
-      run: () => setProductBrand(productId, brandId, newIdempotencyKey()),
-    });
+  if (!keepBrand) {
+    if (vendorChoice.kind === "none") {
+      if (product.brandId !== null) {
+        steps.push({
+          names: {},
+          run: () => setProductBrand(productId, null, newIdempotencyKey()),
+        });
+      }
+    } else if (vendorChoice.kind === "existing") {
+      const { brandId } = vendorChoice;
+      if (brandId !== product.brandId) {
+        steps.push({
+          names: {},
+          run: () => setProductBrand(productId, brandId, newIdempotencyKey()),
+        });
+      }
+    } else {
+      const choice = vendorChoice;
+      steps.push({
+        names: {},
+        run: async () => {
+          const brand = await brandIdFor(choice);
+          if (!brand.ok) return brand.result;
+          return setProductBrand(productId, brand.brandId, newIdempotencyKey());
+        },
+      });
+    }
   }
 
   // 7. Categories.
@@ -785,6 +889,11 @@ export async function createProductAction(
     return { status: "error", message: t.invalid, fieldErrors };
   }
   const values = parsed.values;
+
+  // Resolved before the product exists: an unreadable brand list creates nothing.
+  const chosen = await chooseVendor(stringField(formData, "vendor").trim());
+  if (!chosen.ok) return toFormState(chosen.result, t);
+  const vendorChoice = chosen.choice;
 
   const typedHandle = stringField(formData, "handle").trim();
   const handleWasGenerated = typedHandle.length === 0;
@@ -870,8 +979,14 @@ export async function createProductAction(
       ),
     );
   }
-  const brandId = optionalText(formData, "brandId");
-  if (brandId !== null) followUps.push(() => setProductBrand(id, brandId, newIdempotencyKey()));
+  if (vendorChoice.kind !== "none") {
+    const choice = vendorChoice;
+    followUps.push(async () => {
+      const brand = await brandIdFor(choice);
+      if (!brand.ok) return brand.result;
+      return setProductBrand(id, brand.brandId, newIdempotencyKey());
+    });
+  }
   const categoryIds = stringFieldValues(formData, "categoryIds").filter((c) => c.length > 0);
   if (categoryIds.length > 0) {
     followUps.push(() => assignProductCategories(id, categoryIds, newIdempotencyKey()));

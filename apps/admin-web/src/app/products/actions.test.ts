@@ -33,7 +33,13 @@ const inventory = vi.hoisted(() => ({
   adjustStock: vi.fn(),
 }));
 
+const brands = vi.hoisted(() => ({
+  fetchBrandsPage: vi.fn(),
+  createBrand: vi.fn(),
+}));
+
 vi.mock("@/lib/api/products", () => api);
+vi.mock("@/lib/api/brands", () => brands);
 vi.mock("@/lib/api/inventory", () => inventory);
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -114,7 +120,7 @@ function formFor(p: ProductDetailDto, overrides: Record<string, string | string[
     seoDescription: "",
     status: p.status,
     productType: "",
-    brandId: "",
+    vendor: "",
     categoryIds: [],
     tags: "",
     ...overrides,
@@ -126,10 +132,17 @@ function formFor(p: ProductDetailDto, overrides: Record<string, string | string[
   return formData;
 }
 
+const acme = { id: "b1", name: "Acme Toys", slug: "acme-toys" };
+const onePage = { hasNextPage: false, endCursor: null };
+
 const shop = { id: "w1", code: "SHOP", name: "Shop", status: "active" };
 
 beforeEach(() => {
-  for (const fn of [...Object.values(api), ...Object.values(inventory)]) fn.mockReset();
+  for (const fn of [...Object.values(api), ...Object.values(inventory), ...Object.values(brands)]) {
+    fn.mockReset();
+  }
+  brands.fetchBrandsPage.mockResolvedValue({ outcome: "ok", items: [acme], pageInfo: onePage });
+  brands.createBrand.mockResolvedValue({ outcome: "ok", data: { id: "nb1" } });
   inventory.fetchWarehouses.mockResolvedValue({ outcome: "ok", items: [shop] });
   api.fetchProductInventory.mockResolvedValue({ outcome: "ok", rows: [] });
   for (const name of ["registerWarehouse", "receiveStock", "adjustStock"] as const) {
@@ -293,7 +306,7 @@ describe("saveProductAction", () => {
 
     const state = await saveProductAction(
       idle,
-      formFor(product(), { title: "Renamed", brandId: "b1" }),
+      formFor(product(), { title: "Renamed", vendor: "Acme Toys" }),
     );
 
     expect(state.status).toBe("error");
@@ -375,7 +388,7 @@ describe("createProductAction", () => {
     await redirectOf(
       createProductAction(
         idle,
-        createForm({ status: "published", brandId: "b1", categoryIds: ["c1", "c2"] }),
+        createForm({ status: "published", vendor: "Acme Toys", categoryIds: ["c1", "c2"] }),
       ),
     );
     expect(api.publishProduct).toHaveBeenCalledWith("new-1", expect.any(String));
@@ -920,7 +933,7 @@ describe("saveProductAction — options, variant prices and stock (Plan 2B-2)", 
         {
           title: "Renamed",
           seoTitle: "A title",
-          brandId: "b1",
+          vendor: "Acme Toys",
           categoryIds: ["c1"],
           status: "draft",
         },
@@ -1019,5 +1032,218 @@ describe("updateVariantDetailsAction", () => {
     const state = await updateVariantDetailsAction(idle, formData);
     expect(state.status).toBe("error");
     expect(api.updateProductVariant).not.toHaveBeenCalled();
+  });
+});
+
+describe("the vendor field (Plan 2C-4)", () => {
+  const withBrand = () => product({ brandId: "b1" });
+
+  describe("saveProductAction", () => {
+    it("makes no brand call when the typed vendor is the brand the product already has", async () => {
+      use(withBrand());
+
+      const state = await saveProductAction(idle, formFor(withBrand(), { vendor: "acme toys" }));
+
+      expect(state).toEqual({ status: "success" });
+      expect(brands.createBrand).not.toHaveBeenCalled();
+      expect(api.setProductBrand).not.toHaveBeenCalled();
+    });
+
+    it("assigns an existing brand by its name, without creating one", async () => {
+      use(product());
+
+      await saveProductAction(idle, formFor(product(), { vendor: " ACME TOYS " }));
+
+      expect(brands.createBrand).not.toHaveBeenCalled();
+      expect(api.setProductBrand).toHaveBeenCalledWith("p1", "b1", expect.any(String));
+    });
+
+    it("creates a brand for a new name, then assigns the id it answers with", async () => {
+      use(withBrand());
+
+      await saveProductAction(idle, formFor(withBrand(), { vendor: "Nile Kids" }));
+
+      expect(brands.createBrand).toHaveBeenCalledWith(
+        { name: "Nile Kids", slug: "nile-kids" },
+        expect.any(String),
+      );
+      expect(api.setProductBrand).toHaveBeenCalledWith("p1", "nb1", expect.any(String));
+      expect(brands.createBrand.mock.invocationCallOrder[0]).toBeLessThan(
+        api.setProductBrand.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("clears the brand for a blank vendor, and fetches no brands to do it", async () => {
+      use(withBrand());
+
+      await saveProductAction(idle, formFor(withBrand(), { vendor: "" }));
+
+      expect(api.setProductBrand).toHaveBeenCalledWith("p1", null, expect.any(String));
+      expect(brands.fetchBrandsPage).not.toHaveBeenCalled();
+    });
+
+    it("leaves a product with no brand alone for a blank vendor", async () => {
+      use(product());
+
+      await saveProductAction(idle, formFor(product(), { vendor: "" }));
+
+      expect(api.setProductBrand).not.toHaveBeenCalled();
+    });
+
+    it("keeps a brand the editor could not name when the vendor is left blank and flagged", async () => {
+      use(product({ brandId: "far-away" }));
+
+      await saveProductAction(idle, formFor(product({ brandId: "far-away" }), { vendorKeep: "1" }));
+
+      expect(api.setProductBrand).not.toHaveBeenCalled();
+    });
+
+    it("still replaces that brand when a vendor is typed", async () => {
+      use(product({ brandId: "far-away" }));
+
+      await saveProductAction(
+        idle,
+        formFor(product({ brandId: "far-away" }), { vendorKeep: "1", vendor: "Acme Toys" }),
+      );
+
+      expect(api.setProductBrand).toHaveBeenCalledWith("p1", "b1", expect.any(String));
+    });
+
+    it("uses the brand whose slug matches when creating conflicts, after one re-fetch", async () => {
+      use(product());
+      brands.createBrand.mockResolvedValue({ outcome: "conflict", message: "slug taken" });
+      brands.fetchBrandsPage
+        .mockResolvedValueOnce({ outcome: "ok", items: [], pageInfo: onePage })
+        .mockResolvedValueOnce({
+          outcome: "ok",
+          items: [{ id: "b9", name: "Nile-Kids", slug: "nile-kids" }],
+          pageInfo: onePage,
+        });
+
+      const state = await saveProductAction(idle, formFor(product(), { vendor: "Nile Kids" }));
+
+      expect(state).toEqual({ status: "success" });
+      expect(brands.fetchBrandsPage).toHaveBeenCalledTimes(2);
+      expect(api.setProductBrand).toHaveBeenCalledWith("p1", "b9", expect.any(String));
+    });
+
+    it("returns the conflict on the vendor field when no brand has that slug", async () => {
+      use(product());
+      brands.createBrand.mockResolvedValue({ outcome: "conflict", message: "slug taken" });
+
+      const state = await saveProductAction(idle, formFor(product(), { vendor: "Nile Kids" }));
+
+      expect(state.status).toBe("error");
+      if (state.status === "error") expect(state.fieldErrors["vendor"]).toBe("slug taken");
+      expect(api.setProductBrand).not.toHaveBeenCalled();
+      expect(brands.fetchBrandsPage).toHaveBeenCalledTimes(2);
+    });
+
+    it("writes nothing when the brands cannot be read", async () => {
+      use(product());
+      brands.fetchBrandsPage.mockResolvedValue({ outcome: "error", message: "down" });
+
+      const state = await saveProductAction(
+        idle,
+        formFor(product(), { title: "Renamed", vendor: "Acme Toys" }),
+      );
+
+      expect(state.status).toBe("error");
+      expect(api.updateProduct).not.toHaveBeenCalled();
+      expect(api.setProductBrand).not.toHaveBeenCalled();
+    });
+
+    it("keeps the brand step after SEO and before categories", async () => {
+      use(product());
+
+      await saveProductAction(
+        idle,
+        formFor(product(), { vendor: "Nile Kids", seoTitle: "T", categoryIds: ["c1"] }),
+      );
+
+      const order = [
+        api.setProductSeo.mock.invocationCallOrder[0]!,
+        brands.createBrand.mock.invocationCallOrder[0]!,
+        api.setProductBrand.mock.invocationCallOrder[0]!,
+        api.assignProductCategories.mock.invocationCallOrder[0]!,
+      ];
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+    });
+  });
+
+  describe("createProductAction", () => {
+    beforeEach(() => {
+      api.createProduct.mockResolvedValue({ outcome: "ok", data: { id: "new-1" } });
+    });
+
+    function createForm(overrides: Record<string, string | string[]> = {}): FormData {
+      const base = formFor(product(), {
+        title: "Plush Bear",
+        handle: "",
+        sku: "",
+        price: "150.50",
+        status: "draft",
+        ...overrides,
+      });
+      base.delete("productId");
+      base.delete("variantId");
+      return base;
+    }
+
+    async function redirectOf(promise: Promise<unknown>): Promise<string> {
+      try {
+        await promise;
+      } catch (error) {
+        return (error as Error).message;
+      }
+      return "";
+    }
+
+    it("assigns an existing brand by name", async () => {
+      await redirectOf(createProductAction(idle, createForm({ vendor: "acme toys" })));
+
+      expect(brands.createBrand).not.toHaveBeenCalled();
+      expect(api.setProductBrand).toHaveBeenCalledWith("new-1", "b1", expect.any(String));
+    });
+
+    it("creates and assigns a new brand", async () => {
+      const target = await redirectOf(
+        createProductAction(idle, createForm({ vendor: "Nile Kids" })),
+      );
+
+      expect(target).toBe("NEXT_REDIRECT:/products/new-1");
+      expect(brands.createBrand).toHaveBeenCalledWith(
+        { name: "Nile Kids", slug: "nile-kids" },
+        expect.any(String),
+      );
+      expect(api.setProductBrand).toHaveBeenCalledWith("new-1", "nb1", expect.any(String));
+    });
+
+    it("makes no brand call, and reads no brands, for a blank vendor", async () => {
+      await redirectOf(createProductAction(idle, createForm()));
+
+      expect(brands.fetchBrandsPage).not.toHaveBeenCalled();
+      expect(brands.createBrand).not.toHaveBeenCalled();
+      expect(api.setProductBrand).not.toHaveBeenCalled();
+    });
+
+    it("redirects with ?saved=partial when the brand cannot be created", async () => {
+      brands.createBrand.mockResolvedValue({ outcome: "error", message: "boom" });
+
+      const target = await redirectOf(
+        createProductAction(idle, createForm({ vendor: "Nile Kids" })),
+      );
+
+      expect(target).toBe("NEXT_REDIRECT:/products/new-1?saved=partial");
+    });
+
+    it("creates nothing when the brands cannot be read", async () => {
+      brands.fetchBrandsPage.mockResolvedValue({ outcome: "unauthorized" });
+
+      const state = await createProductAction(idle, createForm({ vendor: "Acme Toys" }));
+
+      expect(state.status).toBe("error");
+      expect(api.createProduct).not.toHaveBeenCalled();
+    });
   });
 });

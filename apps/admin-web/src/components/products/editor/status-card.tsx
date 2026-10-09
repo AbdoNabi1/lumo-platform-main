@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import type { Dictionary } from "@/messages/en";
 import { ProductStatusBadge } from "../product-status-badge";
-import { Field, NativeSelect, PRODUCT_FORM_ID } from "./field";
+import { StatusPicker } from "./controls";
+import { PRODUCT_FORM_ID } from "./field";
 
 type EditableStatus = "published" | "draft" | "unlisted";
 
@@ -15,9 +15,9 @@ function isEditable(status: string): status is EditableStatus {
 }
 
 /**
- * Active / Draft / Unlisted. An archived or scheduled product has no select: the domain has no
- * transition from those through a plain Save, so the badge and a pointer to the actions card stand
- * in, and the server ignores `status` for them.
+ * Active / Draft / Unlisted, as a menu that explains each choice. An archived or scheduled product
+ * has no picker: the domain has no transition from those through a plain Save, so the badge and a
+ * pointer to the actions card stand in, and the server ignores `status` for them.
  */
 export function StatusCard({
   status,
@@ -28,13 +28,13 @@ export function StatusCard({
   readonly errors: Readonly<Record<string, string>>;
   readonly t: Dictionary;
 }) {
-  const [selected, setSelected] = useState<EditableStatus>(isEditable(status) ? status : "draft");
   const editor = t.productEditor;
   const hints: Readonly<Record<EditableStatus, string>> = {
     published: editor.statusPublishedHint,
     draft: editor.statusDraftHint,
     unlisted: editor.statusUnlistedHint,
   };
+  const error = errors["status"];
 
   return (
     <Card>
@@ -43,29 +43,20 @@ export function StatusCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {isEditable(status) ? (
-          <Field
-            label={editor.statusCard}
-            name="status"
-            error={errors["status"]}
-            form={PRODUCT_FORM_ID}
-          >
-            {(control) => (
-              <>
-                <NativeSelect
-                  {...control}
-                  value={selected}
-                  onChange={(event) => setSelected(event.target.value as EditableStatus)}
-                >
-                  {EDITABLE.map((value) => (
-                    <option key={value} value={value}>
-                      {t.productStatus[value]}
-                    </option>
-                  ))}
-                </NativeSelect>
-                <p className="text-muted-foreground text-xs">{hints[selected]}</p>
-              </>
-            )}
-          </Field>
+          <>
+            <StatusPicker
+              name="status"
+              label={editor.statusCard}
+              form={PRODUCT_FORM_ID}
+              value={status}
+              options={EDITABLE.map((value) => ({
+                value,
+                label: t.productStatus[value],
+                description: hints[value],
+              }))}
+            />
+            {error !== undefined && <p className="text-destructive text-xs">{error}</p>}
+          </>
         ) : (
           <>
             <div>
