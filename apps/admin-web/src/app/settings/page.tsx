@@ -1,6 +1,13 @@
 import { Suspense } from "react";
 import { cookies } from "next/headers";
-import { AlertTriangleIcon, InfoIcon, LockIcon } from "lucide-react";
+import Link from "next/link";
+import {
+  AlertTriangleIcon,
+  ChevronRightIcon,
+  CreditCardIcon,
+  InfoIcon,
+  LockIcon,
+} from "lucide-react";
 import {
   Badge,
   Card,
@@ -55,6 +62,25 @@ export default async function SettingsPage() {
         </header>
 
         <Card>
+          <CardContent className="p-0">
+            <Link
+              href="/settings/payments"
+              className="hover:bg-muted/50 flex items-center gap-3 p-4"
+            >
+              <CreditCardIcon aria-hidden="true" className="text-muted-foreground size-5" />
+              <span className="flex flex-1 flex-col">
+                <span className="text-sm font-medium">{t.settingsPage.paymentsTitle}</span>
+                <span className="text-muted-foreground text-sm">{t.settingsPage.paymentsBody}</span>
+              </span>
+              <ChevronRightIcon
+                aria-hidden="true"
+                className="text-muted-foreground size-4 rtl:rotate-180"
+              />
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card>
           <CardHeader>
             <CardTitle>{t.settingsPage.frontendSection}</CardTitle>
           </CardHeader>
@@ -82,7 +108,9 @@ export default async function SettingsPage() {
 
             <div className="border-border border-t pt-4">
               <h3 className="text-sm font-semibold">{t.settingsPage.usageSectionTitle}</h3>
-              <p className="text-muted-foreground mt-1 text-sm">{t.settingsPage.usageSectionBody}</p>
+              <p className="text-muted-foreground mt-1 text-sm">
+                {t.settingsPage.usageSectionBody}
+              </p>
               <Suspense fallback={<UsageCountersSkeleton />}>
                 <UsageCountersSection t={t} />
               </Suspense>
@@ -99,10 +127,7 @@ async function UsageCountersSection({ t }: { readonly t: Dictionary }) {
 
   if (result.outcome === "unauthorized") {
     return (
-      <div
-        role="note"
-        className="text-muted-foreground mt-3 flex items-center gap-2 text-sm"
-      >
+      <div role="note" className="text-muted-foreground mt-3 flex items-center gap-2 text-sm">
         <LockIcon aria-hidden="true" className="size-4" />
         {t.settingsPage.usageUnauthorized}
       </div>
@@ -110,10 +135,7 @@ async function UsageCountersSection({ t }: { readonly t: Dictionary }) {
   }
   if (result.outcome === "error") {
     return (
-      <div
-        role="note"
-        className="text-muted-foreground mt-3 flex items-center gap-2 text-sm"
-      >
+      <div role="note" className="text-muted-foreground mt-3 flex items-center gap-2 text-sm">
         <AlertTriangleIcon aria-hidden="true" className="size-4" />
         {t.settingsPage.usageError}
       </div>
@@ -135,7 +157,7 @@ async function UsageCountersSection({ t }: { readonly t: Dictionary }) {
             <TableRow key={counter.resource}>
               <TableCell className="font-medium">{counter.resource}</TableCell>
               <TableCell className="text-end tabular-nums">{counter.amount}</TableCell>
-              <TableCell className="text-end text-muted-foreground">
+              <TableCell className="text-muted-foreground text-end">
                 {counter.unit.length > 0 ? counter.unit : "—"}
               </TableCell>
             </TableRow>
