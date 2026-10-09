@@ -5,6 +5,7 @@ import type {
   InventoryValidationResult,
 } from "@platform/checkout";
 import type { InventoryController, WarehouseRepository } from "@platform/inventory";
+import { pickLocation, type LocationLevel } from "./pick-location";
 import { variantOf } from "./variant-of";
 
 interface CheckAvailabilityBody {
@@ -13,21 +14,18 @@ interface CheckAvailabilityBody {
 
 /**
  * Real `InventoryValidationPort` over Inventory's own stock data (Phase 3 Task 10, C-3) —
- * `ValidateCheckout` calls this instead of the offline `InMemoryInventoryValidationAdapter` stub
+ * `ValidateCheckout` and `CompleteCheckout` call this instead of the offline
+ * `InMemoryInventoryValidationAdapter` stub
  * (`services/checkout/src/infrastructure/in-memory-orchestration-adapters.ts`), which only checked
  * `quantity > 0` and never consulted Inventory at all.
  *
- * Warehouse-resolution gap (disclosed, not solved here): `CheckoutItem` carries only a
- * `productRef` — no warehouse — and no context in this repository (Catalog, Orders, Checkout,
- * Fulfillment) stores or computes a warehouse assignment; there is no "default warehouse"
- * convention anywhere in the codebase. This adapter resolves the warehouse by listing the
- * tenant's warehouses ONCE per `validate()` call (a warehouse assignment is tenant-wide, not
- * per-item) and requires there to be EXACTLY ONE registered: zero or more than one is reported
- * back as `{ valid: false, reason }` — never thrown. `ValidateCheckout`'s call site
- * (`services/checkout/src/application/checkout-orchestration.use-cases.ts`) treats a `false`
- * port response as an ordinary "checkout not valid yet" outcome, not a fault, so throwing here
- * would surface as an unhandled 500 instead of the reason making it into the response. Real
- * multi-warehouse stock routing is out of scope for this adapter and is not implemented.
+ * Plan 2B-3: the shop has several locations. `CheckoutItem` carries no location, so a line is
+ * served by the ACTIVE location holding the most of the variant (`pickLocation`), and it is valid
+ * only when that location alone covers the quantity. Inactive locations never count, and with no
+ * active location a stock-limited line is invalid (an unlimited line still passes). The tenant's
+ * locations are listed ONCE per `validate()` call. Stock split across locations is not combined.
+ * Invalidity is reported back as `{ valid: false, reason }` — never thrown — because a `false` port
+ * response is an ordinary "not valid yet" outcome for both call sites, not a fault.
  *
  * Plan 2B-1: stock is the VARIANT's. Each item's variant is resolved from Catalog (the named one,
  * or the product's only variant — never a guess), its two inventory switches decide whether stock
@@ -64,22 +62,9 @@ export class InventoryValidationAdapter implements InventoryValidationPort {
       return { valid: true };
     }
 
-    // `first: 2` is enough to distinguish "exactly one" from "more than one" without paging
-    // through the whole registry.
-    const page = await this.warehouses.list({ first: 2 }, tenantId);
-    const [warehouse, extra] = page.items;
-    if (warehouse === undefined || extra !== undefined) {
-      return {
-        valid: false,
-        reason:
-          warehouse === undefined
-            ? "cannot resolve a single warehouse for availability checks — no warehouse is " +
-              "registered; multi-warehouse routing is not implemented"
-            : "cannot resolve a single warehouse for availability checks — more than one " +
-              "warehouse is registered; multi-warehouse routing is not implemented",
-      };
-    }
-    const warehouseId = warehouse.id.value;
+    const locations = (await this.warehouses.list({ first: 100 }, tenantId)).items.filter(
+      (warehouse) => warehouse.active,
+    );
 
     for (const item of items) {
       const productResponse = await this.products.get({ productId: item.productRef, tenantId });
@@ -91,25 +76,36 @@ export class InventoryValidationAdapter implements InventoryValidationPort {
         return { valid: false, reason: `no matching variant for product "${item.productRef}"` };
       }
       if (!variant.isStockLimited()) continue;
-      const response = await this.inventory.checkAvailability({
-        tenantId,
-        productId: item.productRef,
-        variantId: variant.id.toString(),
-        warehouseId,
-      });
-      if (response.status !== 200) {
+
+      // A location with no stock row answers 404, which is simply zero there.
+      const levels: LocationLevel[] = [];
+      for (const location of locations) {
+        const response = await this.inventory.checkAvailability({
+          tenantId,
+          productId: item.productRef,
+          variantId: variant.id.toString(),
+          warehouseId: location.id.value,
+        });
+        levels.push({
+          locationId: location.id.value,
+          available:
+            response.status === 200 ? (response.body as CheckAvailabilityBody).available : 0,
+        });
+      }
+
+      const chosen = pickLocation(levels, item.quantity);
+      if (chosen === null) {
         return {
           valid: false,
-          reason: `no inventory record for product "${item.productRef}" at warehouse "${warehouseId}"`,
+          reason: `no active location can supply product "${item.productRef}"`,
         };
       }
-      const { available } = response.body as CheckAvailabilityBody;
-      if (available < item.quantity) {
+      if (!chosen.covers) {
         return {
           valid: false,
           reason:
             `insufficient stock for product "${item.productRef}": requested ${item.quantity}, ` +
-            `${available} available`,
+            `${chosen.available} available`,
         };
       }
     }

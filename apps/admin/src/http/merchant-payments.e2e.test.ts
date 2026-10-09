@@ -23,6 +23,7 @@ import {
 import { logger } from "@platform/utils";
 import { createAdminHttpApi } from "./server";
 import { httpDriver, seedSingleVariantProduct, type SeededProduct } from "./testing/seed-catalog";
+import { httpStockDriver, seedStock } from "./testing/seed-stock";
 
 /**
  * WP-13 through the REAL admin pipeline (`createAdminHttpApi`, `tenantMode: "multi"` — so
@@ -277,7 +278,15 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
     const driver = httpDriver(async (method, url, payload) =>
       method === "GET" ? get(url, admin(token)) : post(url, admin(token), payload ?? {}),
     );
-    seeded.set(tenant, await seedSingleVariantProduct(driver, "P-1", 1999));
+    const product = await seedSingleVariantProduct(driver, "P-1", 1999);
+    // Completing a checkout needs stock somewhere (Plan 2B-3): the shared helper puts it there.
+    await seedStock(
+      httpStockDriver(async (method, url, payload) =>
+        method === "GET" ? get(url, admin(token)) : post(url, admin(token), payload ?? {}),
+      ),
+      { productId: product.productId, variantId: product.variantId, quantity: 100 },
+    );
+    seeded.set(tenant, product);
   }
 
   function productOf(tenant: string): SeededProduct {

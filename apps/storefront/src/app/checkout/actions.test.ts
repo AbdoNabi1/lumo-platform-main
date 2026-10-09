@@ -327,3 +327,45 @@ describe("initiatePayment (WP-13 T13.6) — the COD / hosted-checkout divergence
     expect(await actions.initiatePayment("checkout-1")).toEqual({ ok: false, reason });
   });
 });
+
+describe("completeCheckout — out of stock (Plan 2B-3)", () => {
+  it("maps a 409 whose message starts with OUT_OF_STOCK: to the out-of-stock reason", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue({
+      status: 409,
+      body: {
+        code: "BUSINESS_RULE",
+        message: 'OUT_OF_STOCK: insufficient stock for product "p1": requested 3, 1 available',
+      },
+    });
+
+    const result = await actions.completeCheckout("checkout-1");
+
+    expect(result).toEqual({ ok: false, reason: "out-of-stock" });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("keeps any other 409 as unavailable", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue({
+      status: 409,
+      body: {
+        code: "BUSINESS_RULE",
+        message: "Checkout session is completed and can no longer be modified",
+      },
+    });
+
+    const result = await actions.completeCheckout("checkout-1");
+
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+  });
+
+  it("keeps a 409 with no readable body as unavailable", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue({ status: 409, body: null });
+
+    const result = await actions.completeCheckout("checkout-1");
+
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+  });
+});

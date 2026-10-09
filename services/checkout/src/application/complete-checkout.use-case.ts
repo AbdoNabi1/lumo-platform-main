@@ -5,7 +5,7 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { BusinessRuleError, type DomainError, NotFoundError } from "@platform/utils";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
-import type { OrderCreationPort } from "./ports";
+import type { InventoryValidationPort, OrderCreationPort } from "./ports";
 
 export interface CompleteCheckoutInput {
   /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
@@ -26,6 +26,12 @@ export interface CompleteCheckoutDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   readonly orderCreation: OrderCreationPort;
+  /**
+   * Plan 2B-3: when present, the session's items are checked against stock BEFORE the order is
+   * created, and an insufficient result refuses the completion. Optional so callers that never
+   * wired a stock source (and every earlier test) behave exactly as before.
+   */
+  readonly inventoryValidation?: InventoryValidationPort;
 }
 
 /**
@@ -90,6 +96,18 @@ export class CompleteCheckout implements UseCase<
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;
+      }
+
+      // Plan 2B-3: refuse before the order exists, so a shopper never owns an order for stock that
+      // is not there. The `OUT_OF_STOCK:` prefix is the contract the storefront reads. A session
+      // that already completed returned above, so a retried complete never re-validates.
+      if (this.deps.inventoryValidation !== undefined) {
+        const stock = await this.deps.inventoryValidation.validate(session.items, input.tenantId);
+        if (!stock.valid) {
+          return err(
+            new BusinessRuleError(`OUT_OF_STOCK: ${stock.reason ?? "insufficient stock"}`),
+          );
+        }
       }
 
       const { orderRef } = await this.deps.orderCreation.create({

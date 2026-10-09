@@ -190,6 +190,8 @@ export const en = {
     ownershipErrorBody: "Your checkout session may have expired. Start again from your cart.",
     validationErrorBody: "Something about that step wasn't valid. Check the details and try again.",
     unavailableErrorBody: "This checkout can no longer be changed. Start again from your cart.",
+    outOfStock:
+      "Some items in your cart are no longer available in the quantity you chose. Update your cart and try again.",
     networkErrorBody: "Couldn't reach the checkout service. Try again.",
     confirmation: {
       title: "Thanks for your order",

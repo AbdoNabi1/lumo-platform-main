@@ -42,8 +42,9 @@ export type CheckoutActionResult =
       readonly ok: false;
       /** `"ownership"`: no session cookie, or the Runtime API 404'd (stale/cross-session cookie).
        * `"validation"`: the Runtime API 422'd. `"unavailable"`: the Runtime API 409'd (the session
-       * can no longer be modified). `"network"`: unreachable or an unexpected status. */
-      readonly reason: "ownership" | "validation" | "unavailable" | "network";
+       * can no longer be modified). `"out-of-stock"` (Plan 2B-3): completion refused because a line
+       * is not in stock in the chosen quantity. `"network"`: unreachable or an unexpected status. */
+      readonly reason: "ownership" | "validation" | "unavailable" | "out-of-stock" | "network";
     };
 
 /**
@@ -96,6 +97,12 @@ function mapFailureStatus(status: number): "ownership" | "validation" | "unavail
   if (status === 422) return "validation";
   if (status === 409) return "unavailable";
   return "network";
+}
+
+function isOutOfStock(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false;
+  const { message } = body as { readonly message?: unknown };
+  return typeof message === "string" && message.startsWith("OUT_OF_STOCK:");
 }
 
 /** The existing guest session, if any — mirrors `existingSessionRef()` in `app/cart/actions.ts`. */
@@ -257,6 +264,11 @@ export async function completeCheckout(checkoutSessionId: string): Promise<Check
   const idempotencyKey = crypto.randomUUID();
   const response = await completeCheckoutApi(checkoutSessionId, sessionRef, idempotencyKey);
   if (response.status < 200 || response.status >= 300) {
+    // Plan 2B-3: the API refuses a completion whose stock is not there with a 409 whose message
+    // starts `OUT_OF_STOCK:` — a different outcome from "the session can no longer be modified".
+    if (response.status === 409 && isOutOfStock(response.body)) {
+      return { ok: false, reason: "out-of-stock" };
+    }
     return { ok: false, reason: mapFailureStatus(response.status) };
   }
   revalidatePath("/checkout");

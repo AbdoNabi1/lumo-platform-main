@@ -564,3 +564,33 @@ describe("CheckoutView — after the order is placed, COD and a hosted checkout 
     expect(screen.getByRole("button", { name: en.checkout.paymentPayNow })).toBeInTheDocument();
   });
 });
+
+describe("CheckoutView — out of stock at placement (Plan 2B-3)", () => {
+  it("shows the out-of-stock message with a way back to the cart, and does not open a payment", async () => {
+    selectPayment.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
+    recalculate.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
+    requestTax.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
+    completeCheckout.mockResolvedValue({ ok: false, reason: "out-of-stock" });
+    render(<CheckoutView session={PAYMENT_READY()} t={en} locale="en" paymentMethods={["cod"]} />);
+    fireEvent.click(screen.getByRole("radio", { name: en.checkout.paymentMethod.cod }));
+    fireEvent.click(screen.getByRole("button", { name: en.checkout.paymentContinue }));
+    const placeOrder = await screen.findByRole("button", { name: en.checkout.review.placeOrder });
+    await waitFor(() => expect(placeOrder).not.toBeDisabled());
+
+    fireEvent.click(placeOrder);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(en.checkout.outOfStock);
+    expect(screen.getByRole("link", { name: en.checkout.backToCart })).toHaveAttribute(
+      "href",
+      "/cart",
+    );
+    expect(initiatePayment).not.toHaveBeenCalled();
+  });
+
+  it("has the message in both languages", () => {
+    expect(en.checkout.outOfStock.length).toBeGreaterThan(0);
+    expect(ar.checkout.outOfStock.length).toBeGreaterThan(0);
+    expect(ar.checkout.backToCart.length).toBeGreaterThan(0);
+  });
+});

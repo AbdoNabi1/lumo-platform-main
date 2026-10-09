@@ -18,6 +18,7 @@ import {
   seedSingleVariantProduct,
   type SeededProduct,
 } from "./testing/seed-catalog";
+import { httpStockDriver, seedStock } from "./testing/seed-stock";
 
 /**
  * WP-1 (G-52), the transport half. `public-checkout-routes.test.ts` drives the guest flow through
@@ -130,7 +131,21 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     const driver = httpDriver(async (method, url, payload) =>
       method === "GET" ? get(url, admin(token)) : post(url, admin(token), payload ?? {}),
     );
-    seeded.set(tenant, await seedSingleVariantProduct(driver, "P-1", 1999));
+    const product = await seedSingleVariantProduct(driver, "P-1", 1999);
+    // Completing a checkout needs stock somewhere (Plan 2B-3): the shared helper puts it there.
+    await seedStock(stockDriverFor(token), {
+      productId: product.productId,
+      variantId: product.variantId,
+      quantity: 100,
+    });
+    seeded.set(tenant, product);
+  }
+
+  /** The shared stock helper (Plan 2B-3), driven as the tenant that owns `token`. */
+  function stockDriverFor(token: string) {
+    return httpStockDriver(async (method, url, payload) =>
+      method === "GET" ? get(url, admin(token)) : post(url, admin(token), payload ?? {}),
+    );
   }
 
   const address = { line1: "1 Main St", city: "Springfield", postalCode: "00000", country: "US" };
@@ -140,7 +155,7 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     tenant: string,
     sessionRef: string,
     email?: string,
-    line?: { readonly productId: string; readonly variantId?: string },
+    line?: { readonly productId: string; readonly variantId?: string; readonly quantity?: number },
   ) {
     const h = storefront(tenant);
     const cart = ok<{ id: string }>(
@@ -152,7 +167,7 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
         sessionRef,
         productId: line?.productId ?? seeded.get(tenant)?.productId ?? "not-seeded",
         ...(line?.variantId === undefined ? {} : { variantId: line.variantId }),
-        quantity: 1,
+        quantity: line?.quantity ?? 1,
       }),
       "add item",
     );
@@ -230,6 +245,12 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
     });
     const large = shirt.variants.find((v) => v.sku === "SHIRT-L");
     if (large === undefined) throw new Error("variant L missing");
+    // Completing needs stock at a location (Plan 2B-3): the shared helper receives some of size L.
+    await seedStock(stockDriverFor("tok-a"), {
+      productId: shirt.productId,
+      variantId: large.id,
+      quantity: 100,
+    });
 
     const checkout = await readyCheckout("tenant-a", "sess-variant", "guest@example.com", {
       productId: shirt.productId,
@@ -258,6 +279,74 @@ describe("guest checkout through the real HTTP pipeline (WP-1, G-52)", () => {
       variantTitle: "L",
       unitPriceMinor: 12000,
     });
+  });
+
+  it("stock gate: asking for more than the seeded stock is refused with 409 OUT_OF_STOCK and creates no order (Plan 2B-3)", async () => {
+    const driver = httpDriver(async (method, url, payload) =>
+      method === "GET" ? get(url, admin("tok-a")) : post(url, admin("tok-a"), payload ?? {}),
+    );
+    const scarce = await seedSingleVariantProduct(driver, "SCARCE", 1500);
+    await seedStock(stockDriverFor("tok-a"), {
+      productId: scarce.productId,
+      variantId: scarce.variantId,
+      quantity: 2,
+    });
+
+    const checkout = await readyCheckout("tenant-a", "sess-gate", "guest@example.com", {
+      productId: scarce.productId,
+      variantId: scarce.variantId,
+      quantity: 3,
+    });
+    const done = await checkout.complete();
+
+    expect(done.statusCode).toBe(409);
+    const body = done.json() as { code: string; message: string };
+    expect(body.code).toBe("BUSINESS_RULE");
+    expect(body.message.startsWith("OUT_OF_STOCK:")).toBe(true);
+    const after = ok<{ status: string; orderRef: string | null }>(
+      await get(
+        `/public/checkouts/${checkout.checkoutId}`,
+        storefront("tenant-a", { "x-cart-session": "sess-gate" }),
+      ),
+      "get checkout",
+    );
+    expect(after.status).toBe("started");
+    expect(after.orderRef).toBeNull();
+    const orders = ok<{ items: readonly unknown[] }>(
+      await get("/orders?first=50", admin("tok-a")),
+      "list orders",
+    );
+    expect(orders.items).toHaveLength(0);
+  });
+
+  it("stock gate: the same product with tracksInventory=false completes without any stock (Plan 2B-3)", async () => {
+    const driver = httpDriver(async (method, url, payload) =>
+      method === "GET" ? get(url, admin("tok-a")) : post(url, admin("tok-a"), payload ?? {}),
+    );
+    const untracked = await seedSingleVariantProduct(driver, "SCARCE", 1500);
+    ok(
+      await post(
+        `/products/${untracked.productId}/variants/${untracked.variantId}`,
+        admin("tok-a"),
+        {
+          sku: "SCARCE-STD",
+          priceAmountMinor: 1500,
+          currency: "USD",
+          tracksInventory: false,
+        },
+      ),
+      "stop tracking quantity",
+    );
+
+    const checkout = await readyCheckout("tenant-a", "sess-untracked", "guest@example.com", {
+      productId: untracked.productId,
+      variantId: untracked.variantId,
+      quantity: 3,
+    });
+    const done = await checkout.complete();
+
+    expect(done.statusCode).toBe(200);
+    expect((done.json() as { orderRef: string | null }).orderRef).not.toBeNull();
   });
 
   it("completing without a contact email is a 422 over the wire, not a 500, and creates no order", async () => {

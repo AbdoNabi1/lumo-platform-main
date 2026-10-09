@@ -138,6 +138,12 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       orderCreation,
+      // Only the caller's own adapter gates completion (Plan 2B-3). The offline in-memory stub used
+      // by `ValidateCheckout` when nothing is supplied stays out of it, so in-memory callers keep
+      // completing exactly as before.
+      ...(deps.inventoryValidation === undefined
+        ? {}
+        : { inventoryValidation: deps.inventoryValidation }),
     }),
     failCheckout: new FailCheckout({
       sessions,

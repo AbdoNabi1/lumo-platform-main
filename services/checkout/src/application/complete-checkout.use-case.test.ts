@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { UniqueEntityId } from "@platform/domain";
+import { BusinessRuleError } from "@platform/utils";
 import { CheckoutSession } from "../domain/checkout-session";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
 import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
-import type { OrderCreationPort } from "./ports";
+import type { InventoryValidationPort, OrderCreationPort } from "./ports";
 import { CompleteCheckout } from "./complete-checkout.use-case";
 
 function must<T>(r: { ok: boolean; value?: T }): T {
@@ -340,5 +341,89 @@ describe("CompleteCheckout — guest contact email (WP-1)", () => {
     const inputs = await complete(guestReadySession());
 
     expect(inputs[0]?.contactEmail).toBeUndefined();
+  });
+});
+
+describe("CompleteCheckout — stock gate (Plan 2B-3)", () => {
+  class FakeInventoryValidation implements InventoryValidationPort {
+    callCount = 0;
+    constructor(private readonly result: { valid: boolean; reason?: string }) {}
+
+    async validate(): Promise<{ valid: boolean; reason?: string }> {
+      this.callCount += 1;
+      return this.result;
+    }
+  }
+
+  function build(inventoryValidation?: InventoryValidationPort) {
+    const sessions = new FakeSessionRepository();
+    sessions.seed(readySession());
+    const orderCreation = new FakeOrderCreationPort("order-abc");
+    const useCase = new CompleteCheckout({
+      sessions,
+      unitOfWork: new NoopUnitOfWork(),
+      idGenerator: sequentialIds(),
+      clock,
+      orderCreation,
+      ...(inventoryValidation === undefined ? {} : { inventoryValidation }),
+    });
+    return { sessions, orderCreation, useCase };
+  }
+  const input = { tenantId: "tenant-a", checkoutSessionId: "cs-1", idempotencyKey: "idem-1" };
+
+  it("refuses with an OUT_OF_STOCK business-rule error, creates no order and leaves the session open", async () => {
+    const stock = new FakeInventoryValidation({
+      valid: false,
+      reason: 'insufficient stock for product "p1"',
+    });
+    const { sessions, orderCreation, useCase } = build(stock);
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error).toBeInstanceOf(BusinessRuleError);
+    expect(result.error.message.startsWith("OUT_OF_STOCK:")).toBe(true);
+    expect(result.error.message).toContain("p1");
+    expect(orderCreation.callCount).toBe(0);
+    const persisted = await sessions.findById("cs-1");
+    expect(persisted?.orderRef).toBeNull();
+    expect(persisted?.state.isOpen).toBe(true);
+  });
+
+  it("proceeds exactly as before when the stock is valid", async () => {
+    const stock = new FakeInventoryValidation({ valid: true });
+    const { orderCreation, useCase } = build(stock);
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.value.orderRef).toBe("order-abc");
+    expect(stock.callCount).toBe(1);
+    expect(orderCreation.callCount).toBe(1);
+  });
+
+  it("is unchanged without the dependency", async () => {
+    const { orderCreation, useCase } = build();
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(true);
+    expect(orderCreation.callCount).toBe(1);
+  });
+
+  it("an already completed session returns its order without validating the stock again", async () => {
+    const stock = new FakeInventoryValidation({ valid: true });
+    const { orderCreation, useCase } = build(stock);
+    await useCase.execute(input);
+
+    const again = await useCase.execute(input);
+
+    expect(again.ok).toBe(true);
+    if (!again.ok) throw new Error("expected ok");
+    expect(again.value.orderRef).toBe("order-abc");
+    expect(stock.callCount).toBe(1);
+    expect(orderCreation.callCount).toBe(1);
   });
 });

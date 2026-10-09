@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Badge,
@@ -46,7 +47,13 @@ type Step =
 
 /** `"paymentOpen"` / `"handoff"` only ever follow a PLACED order — see `openPayment`. */
 type ErrorReason =
-  "ownership" | "validation" | "unavailable" | "network" | "paymentOpen" | "handoff";
+  | "ownership"
+  | "validation"
+  | "unavailable"
+  | "out-of-stock"
+  | "network"
+  | "paymentOpen"
+  | "handoff";
 
 const EMPTY_ADDRESS: CheckoutAddressInput = {
   line1: "",
@@ -64,6 +71,7 @@ function errorBody(reason: ErrorReason, t: Dictionary): string {
   if (reason === "ownership") return t.checkout.ownershipErrorBody;
   if (reason === "validation") return t.checkout.validationErrorBody;
   if (reason === "unavailable") return t.checkout.unavailableErrorBody;
+  if (reason === "out-of-stock") return t.checkout.outOfStock;
   if (reason === "paymentOpen") return t.checkout.paymentOpenError;
   if (reason === "handoff") return t.checkout.paymentHandoffError;
   return t.checkout.networkErrorBody;
@@ -314,6 +322,14 @@ export function CheckoutView({
             className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
           >
             {errorBody(error, t)}
+            {error === "out-of-stock" && (
+              <>
+                {" "}
+                <Link href="/cart" className="font-medium underline">
+                  {t.checkout.backToCart}
+                </Link>
+              </>
+            )}
           </div>
         )}
 

@@ -12,6 +12,7 @@ import {
   seedSingleVariantProduct,
   type SeededProduct,
 } from "./testing/seed-catalog";
+import { controllerStockDriver, seedStock } from "./testing/seed-stock";
 
 /**
  * Phase 17.2 — Authenticated Cart & Checkout pricing-manipulation regression suite.
@@ -118,6 +119,21 @@ function seedProduct(
     amountMinor,
     currency,
   );
+}
+
+/**
+ * `seedProduct` plus stock at a location, for the tests that COMPLETE a checkout — completing now
+ * refuses a line nothing can cover (Plan 2B-3). Uses the shared `seed-stock` helper; the tests that
+ * only price a cart, or that seed their own warehouse below, keep using plain `seedProduct`.
+ */
+async function seedSellableProduct(admin: WiredAdmin, amountMinor: number): Promise<SeededProduct> {
+  const product = await seedProduct(admin, amountMinor);
+  await seedStock(controllerStockDriver(admin.inventory, staff, "tenant-local"), {
+    productId: product.productId,
+    variantId: product.variantId,
+    quantity: 100,
+  });
+  return product;
 }
 
 /**
@@ -523,7 +539,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
     const orderCreation = new FakeOrderCreationPort();
     const admin = buildAdmin({ orderCreation });
     const REAL_PRICE = 1999;
-    const product = await seedProduct(admin, REAL_PRICE);
+    const product = await seedSellableProduct(admin, REAL_PRICE);
 
     const cart = cartRoutes(admin);
     const createCart = byPathAndMethod(cart, "POST", "/carts");
@@ -633,7 +649,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
     // No `orderCreation` override — this resolves to the real `OrderCreationAdapter`.
     const admin = buildAdmin();
     const REAL_PRICE = 1999;
-    const product = await seedProduct(admin, REAL_PRICE);
+    const product = await seedSellableProduct(admin, REAL_PRICE);
 
     const cart = cartRoutes(admin);
     const createCart = byPathAndMethod(cart, "POST", "/carts");

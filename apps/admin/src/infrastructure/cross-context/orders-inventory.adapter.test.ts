@@ -12,11 +12,12 @@ import type { CursorPage, Paginated } from "@platform/types";
 import { OrdersInventoryAdapter } from "./orders-inventory.adapter";
 
 /**
- * A minimal `Warehouse`-shaped fixture — only `id.value` is read by `OrdersInventoryAdapter` (same
- * minimal-cast convention as `inventory-validation.adapter.test.ts`'s `warehouseFixture`).
+ * A minimal `Warehouse`-shaped fixture — only `id.value` and `active` are read by
+ * `OrdersInventoryAdapter` (same minimal-cast convention as `inventory-validation.adapter.test.ts`'s
+ * `warehouseFixture`).
  */
-function warehouseFixture(id: string): Warehouse {
-  return { id: { value: id } } as unknown as Warehouse;
+function warehouseFixture(id: string, active = true): Warehouse {
+  return { id: { value: id }, active } as unknown as Warehouse;
 }
 
 /** A fake `WarehouseRepository` — only `list` is exercised by this adapter. */
@@ -119,7 +120,7 @@ interface ReserveCall {
 
 interface FakeItemRecord {
   readonly id: string;
-  readonly available: number;
+  available: number;
   readonly reservations: { readonly reference: string }[];
 }
 
@@ -205,6 +206,9 @@ class FakeInventorySystem {
         const record = this.find(input.productId, input.warehouseId, input.variantId);
         if (record !== undefined) {
           record.reservations.push({ reference: input.reference });
+          // Plan 2B-3: reserving takes stock out of `available`, as the real aggregate does — a
+          // retry must not drift to another location just because this one now holds less.
+          record.available -= input.quantity;
         }
         this.reserveCounter += 1;
         return {
@@ -268,27 +272,15 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
     ]);
   });
 
-  it("zero warehouses registered: throws instead of fabricating a reservationRef", async () => {
+  it("zero active locations: a stock-limited line throws instead of fabricating a reservationRef", async () => {
     const system = new FakeInventorySystem();
     system.registerItem("product-1", "wh-1");
     const warehouses = new FakeWarehouseRepository([]);
     const orders = fakeOrderController({ "order-1": [{ productId: "product-1", quantity: 1 }] });
     const adapter = build(system, warehouses, orders);
 
-    await expect(adapter.requestReservation("order-1", "tenant-a")).rejects.toThrow(/warehouse/i);
-  });
-
-  it("more than one warehouse registered: throws instead of guessing", async () => {
-    const system = new FakeInventorySystem();
-    system.registerItem("product-1", "wh-1");
-    const warehouses = new FakeWarehouseRepository([
-      warehouseFixture("wh-1"),
-      warehouseFixture("wh-2"),
-    ]);
-    const orders = fakeOrderController({ "order-1": [{ productId: "product-1", quantity: 1 }] });
-    const adapter = build(system, warehouses, orders);
-
-    await expect(adapter.requestReservation("order-1", "tenant-a")).rejects.toThrow(/warehouse/i);
+    await expect(adapter.requestReservation("order-1", "tenant-a")).rejects.toThrow(/product-1/);
+    expect(system.reserveCalls).toEqual([]);
   });
 
   it("order not found: throws a clear error rather than reserving nothing silently", async () => {
@@ -395,6 +387,130 @@ describe("OrdersInventoryAdapter (Orders -> Inventory, C-3)", () => {
     await adapter.requestReservation("order-1", "tenant-b");
 
     expect(system.reserveCalls.map((call) => call.tenantId)).toEqual(["tenant-b"]);
+  });
+});
+
+describe("OrdersInventoryAdapter — several locations (Plan 2B-3)", () => {
+  const twoLocations = () =>
+    new FakeWarehouseRepository([warehouseFixture("wh-1"), warehouseFixture("wh-2")]);
+  const order = fakeOrderController({
+    "order-1": [{ productId: "product-1", quantity: 4 }],
+  });
+
+  it("reserves at the location that holds the stock, with that location's warehouseId and the variantId", async () => {
+    const system = new FakeInventorySystem();
+    system.registerItem("product-1", "wh-1", 0, "v-only");
+    system.registerItem("product-1", "wh-2", 9, "v-only");
+    const adapter = build(
+      system,
+      twoLocations(),
+      order,
+      fakeProducts({ "product-1": [{ id: "v-only" }] }),
+    );
+
+    const result = await adapter.requestReservation("order-1", "t");
+
+    expect(result).toEqual({ reservationRef: "order-1" });
+    expect(system.reserveCalls).toEqual([
+      {
+        tenantId: "t",
+        productId: "product-1",
+        variantId: "v-only",
+        warehouseId: "wh-2",
+        quantity: 4,
+        reference: "order-1",
+      },
+    ]);
+  });
+
+  it("ignores an inactive location even when it holds the most stock", async () => {
+    const system = new FakeInventorySystem();
+    system.registerItem("product-1", "wh-1", 5, "v-only");
+    system.registerItem("product-1", "wh-2", 50, "v-only");
+    const adapter = build(
+      system,
+      new FakeWarehouseRepository([warehouseFixture("wh-1"), warehouseFixture("wh-2", false)]),
+      order,
+      fakeProducts({ "product-1": [{ id: "v-only" }] }),
+    );
+
+    await adapter.requestReservation("order-1", "t");
+
+    expect(system.reserveCalls.map((call) => call.warehouseId)).toEqual(["wh-1"]);
+  });
+
+  it("the idempotency skip finds the reservation even when the retry would now pick another location", async () => {
+    const system = new FakeInventorySystem();
+    // wh-2 holds the most (9), so the first call reserves 4 there; wh-2 then holds 5 and wh-1 (6)
+    // would win a fresh pick — the retry must still see the reservation made at wh-2.
+    system.registerItem("product-1", "wh-1", 6, "v-only");
+    system.registerItem("product-1", "wh-2", 9, "v-only");
+    const adapter = build(
+      system,
+      twoLocations(),
+      order,
+      fakeProducts({ "product-1": [{ id: "v-only" }] }),
+    );
+
+    await adapter.requestReservation("order-1", "t");
+    await adapter.requestReservation("order-1", "t");
+
+    expect(system.reserveCalls).toHaveLength(1);
+    expect(system.reserveCalls[0]?.warehouseId).toBe("wh-2");
+  });
+
+  it("a continue line reserves min(quantity, the chosen location's stock) and skips at zero", async () => {
+    const products = fakeProducts({
+      "product-1": [{ id: "v-only", inventoryPolicy: "continue" }],
+    });
+
+    const some = new FakeInventorySystem();
+    some.registerItem("product-1", "wh-1", 1, "v-only");
+    some.registerItem("product-1", "wh-2", 3, "v-only");
+    await build(some, twoLocations(), order, products).requestReservation("order-1", "t");
+    expect(some.reserveCalls.map((call) => [call.warehouseId, call.quantity])).toEqual([
+      ["wh-2", 3],
+    ]);
+
+    const none = new FakeInventorySystem();
+    none.registerItem("product-1", "wh-1", 0, "v-only");
+    none.registerItem("product-1", "wh-2", 0, "v-only");
+    const result = await build(none, twoLocations(), order, products).requestReservation(
+      "order-1",
+      "t",
+    );
+    expect(result).toEqual({ reservationRef: "order-1" });
+    expect(none.reserveCalls).toEqual([]);
+  });
+
+  it("a deny line that no single location covers throws, naming the product, and reserves nothing", async () => {
+    const system = new FakeInventorySystem();
+    system.registerItem("product-1", "wh-1", 2, "v-only");
+    system.registerItem("product-1", "wh-2", 3, "v-only");
+    const adapter = build(
+      system,
+      twoLocations(),
+      order,
+      fakeProducts({ "product-1": [{ id: "v-only" }] }),
+    );
+
+    await expect(adapter.requestReservation("order-1", "t")).rejects.toThrow(/product-1/);
+    expect(system.reserveCalls).toEqual([]);
+  });
+
+  it("an untracked line is not reserved even with zero active locations", async () => {
+    const system = new FakeInventorySystem();
+    const adapter = build(
+      system,
+      new FakeWarehouseRepository([]),
+      order,
+      fakeProducts({ "product-1": [{ id: "v-only", tracksInventory: false }] }),
+    );
+
+    const result = await adapter.requestReservation("order-1", "t");
+
+    expect(result).toEqual({ reservationRef: "order-1" });
+    expect(system.reserveCalls).toEqual([]);
   });
 });
 

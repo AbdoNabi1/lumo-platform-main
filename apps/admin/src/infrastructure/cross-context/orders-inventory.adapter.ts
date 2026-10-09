@@ -5,6 +5,7 @@ import type {
   WarehouseRepository,
 } from "@platform/inventory";
 import type { InventoryPort, OrderController } from "@platform/orders";
+import { pickLocation, type LocationLevel } from "./pick-location";
 import { variantOf } from "./variant-of";
 
 interface OrderLinesBody {
@@ -20,23 +21,19 @@ interface OrderLinesBody {
  * (`services/orders/src/infrastructure/in-memory-port-adapters.ts`), which fabricated a
  * `reservation-{orderId}-{n}` ref without ever touching Inventory's real stock.
  *
- * Warehouse-resolution gap (same one Task 10 already solved for Checkout's
- * `InventoryValidationPort`, reused verbatim — see `inventory-validation.adapter.ts`): the order
- * carries no warehouse, and there is no "default warehouse" convention anywhere in this codebase.
- * This adapter resolves it by listing the tenant's warehouses once per `requestReservation()` call
- * and requires there to be EXACTLY ONE registered.
- *
- * Unlike `InventoryValidationPort` (which reports `{valid: false, reason}` because Checkout's call
- * site treats a `false` response as an ordinary "not valid yet" outcome), `InventoryPort` has no
- * such channel — its contract is `Promise<InventoryReservationResult>`, success or bust. So a
- * zero/multi-warehouse gap here is a request-time failure the caller genuinely needs to see, and
- * this adapter THROWS a clear `Error` instead: fabricating a fake `reservationRef` to paper over an
- * unresolved warehouse would silently corrupt stock tracking, which is strictly worse than a loud
- * failure. Confirmed safe to throw by reading the actual call site
- * (`services/orders/src/application/order-lifecycle.use-cases.ts`'s `RequestFulfillment.execute()`):
- * both port calls run outside any `present()`/domain-error-mapping wrapper, so a thrown `Error`
- * propagates all the way out of `OrderController.requestFulfillment()` as a genuine unhandled
- * error — never silently swallowed, never converted into a fabricated success.
+ * Plan 2B-3: the shop has several locations and the order carries none. For each stock-tracking
+ * line this adapter lists the tenant's ACTIVE locations once per `requestReservation()` call,
+ * reads the variant's stock at each, and reserves at the one holding the most (`pickLocation`,
+ * shared with `InventoryValidationAdapter`). Inactive locations never count. `InventoryPort` has
+ * no `{ valid: false }` channel — its contract is `Promise<InventoryReservationResult>`, success
+ * or bust — so a stock-limited line that no single location covers (or with no active location at
+ * all) THROWS a clear `Error` naming the product: fabricating a fake `reservationRef` would
+ * silently corrupt stock tracking, which is strictly worse than a loud failure. Confirmed safe to
+ * throw by reading the actual call site (`services/orders/src/application/order-lifecycle.use-cases.ts`'s
+ * `RequestFulfillment.execute()`): both port calls run outside any `present()`/domain-error-mapping
+ * wrapper, so a thrown `Error` propagates all the way out of `OrderController.requestFulfillment()`
+ * as a genuine unhandled error — never silently swallowed, never converted into a fabricated
+ * success.
  *
  * Idempotency (the port's documented contract, `services/orders/src/application/ports.ts`): the
  * SAME `orderId` called twice must return the SAME `reservationRef`, never create a second
@@ -51,11 +48,13 @@ interface OrderLinesBody {
  * phase's scope — is exactly this adapter's job).
  *
  * So THIS adapter enforces the contract itself, per line item, before calling `reserve()`:
- * `InventoryItemRepository.findByProductAndWarehouse` resolves the item, then
- * `findByReservationReference(item.id, orderId)` (scaffolding added ahead of any real caller —
+ * `InventoryItemRepository.findByProductAndWarehouse` resolves the item at EACH active location,
+ * then `findByReservationReference(item.id, orderId)` (scaffolding added ahead of any real caller —
  * "not yet wired into any use case" per its own doc — this adapter is the first) checks whether a
- * reservation already exists under this exact `orderId`. Found ⇒ skip re-reserving this line
- * (idempotent no-op); not found ⇒ call `reserve()` as normal. The order-level ref this adapter
+ * reservation already exists under this exact `orderId`. Found at ANY location ⇒ skip re-reserving
+ * this line (idempotent no-op) — not only at the location a fresh pick would choose now, because
+ * reserving lowers that location's stock and a retry could otherwise drift to another one and
+ * reserve the line twice. Not found ⇒ pick a location and call `reserve()` as normal. The order-level ref this adapter
  * returns is `orderId` itself, NOT one of Inventory's per-item `reservationId`s from
  * `ReserveStockOutput` (those are Inventory-internal and, for a multi-item order, there would be
  * several of them with no single one able to stand for "the reservation"). `orderId` is already the
@@ -121,20 +120,10 @@ export class OrdersInventoryAdapter implements InventoryPort {
     }
     const { items } = orderResponse.body as OrderLinesBody;
 
-    // `first: 2` is enough to distinguish "exactly one" from "more than one" without paging
-    // through the whole registry (same convention as `InventoryValidationAdapter`).
-    const page = await this.warehouses.list({ first: 2 }, tenantId);
-    const [warehouse, extra] = page.items;
-    if (warehouse === undefined || extra !== undefined) {
-      throw new Error(
-        warehouse === undefined
-          ? `OrdersInventoryAdapter: cannot resolve a single warehouse for order "${orderId}" — ` +
-              "no warehouse is registered; multi-warehouse routing is not implemented"
-          : `OrdersInventoryAdapter: cannot resolve a single warehouse for order "${orderId}" — ` +
-              "more than one warehouse is registered; multi-warehouse routing is not implemented",
-      );
-    }
-    const warehouseId = warehouse.id.value;
+    // The tenant's active locations, listed once per call (Plan 2B-3).
+    const locations = (await this.warehouses.list({ first: 100 }, tenantId)).items.filter(
+      (warehouse) => warehouse.active,
+    );
 
     for (const item of items) {
       const productId = item.snapshot.productId;
@@ -157,37 +146,56 @@ export class OrdersInventoryAdapter implements InventoryPort {
       // Idempotency guard (see class doc): `ReserveStock` itself is not idempotent by `reference`,
       // so a retried `requestReservation(orderId)` must not blindly re-call `reserve()` — that would
       // either double-decrement real stock or hard-fail a legitimate retry. Skip this line if it was
-      // already reserved under this exact `orderId` on a prior attempt.
-      const inventoryItem = await this.items.findByProductAndWarehouse(
-        productId,
-        warehouseId,
-        tenantId,
-        undefined,
-        variantId,
-      );
-      if (inventoryItem !== null) {
-        const existing = await this.items.findByReservationReference(
-          inventoryItem.id.toString(),
-          orderId,
+      // already reserved under this exact `orderId` on a prior attempt, at whichever location.
+      const levels: LocationLevel[] = [];
+      let alreadyReserved = false;
+      for (const location of locations) {
+        const warehouseId = location.id.value;
+        const inventoryItem = await this.items.findByProductAndWarehouse(
+          productId,
+          warehouseId,
           tenantId,
+          undefined,
+          variantId,
         );
-        if (existing !== null) {
-          continue;
+        if (inventoryItem !== null) {
+          const existing = await this.items.findByReservationReference(
+            inventoryItem.id.toString(),
+            orderId,
+            tenantId,
+          );
+          if (existing !== null) {
+            alreadyReserved = true;
+            break;
+          }
         }
+        levels.push({
+          locationId: warehouseId,
+          available: inventoryItem?.stockLevel.available ?? 0,
+        });
       }
+      if (alreadyReserved) continue;
 
-      // "Continue selling": reserve what is in stock, never fail for the rest. "Deny": all of it.
-      const quantity =
-        variant.attributes.inventoryPolicy === "continue"
-          ? Math.min(item.quantity, inventoryItem?.stockLevel.available ?? 0)
-          : item.quantity;
+      const chosen = pickLocation(levels, item.quantity);
+      const continueSelling = variant.attributes.inventoryPolicy === "continue";
+
+      // "Continue selling": reserve what is in stock, never fail for the rest. "Deny": all of it —
+      // and a deny line that no single location covers fails loudly (see class doc).
+      if (chosen === null || (!continueSelling && !chosen.covers)) {
+        throw new Error(
+          `OrdersInventoryAdapter: no active location can supply product "${productId}" ` +
+            `on order "${orderId}" (requested ${item.quantity}, ` +
+            `${chosen === null ? "no active location" : `${chosen.available} at best`})`,
+        );
+      }
+      const quantity = continueSelling ? Math.min(item.quantity, chosen.available) : item.quantity;
       if (quantity === 0) continue;
 
       const response = await this.inventory.reserve({
         tenantId,
         productId,
         variantId,
-        warehouseId,
+        warehouseId: chosen.locationId,
         quantity,
         reference: orderId,
       });

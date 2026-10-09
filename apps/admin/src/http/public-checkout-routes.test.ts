@@ -17,6 +17,7 @@ import {
   seedSingleVariantProduct,
   type SeededProduct,
 } from "./testing/seed-catalog";
+import { controllerStockDriver, seedStock } from "./testing/seed-stock";
 
 /**
  * Public Checkout HTTP surface (Phase 2 — Public checkout). Drives the REAL `wireAdmin()`
@@ -47,13 +48,23 @@ function buildAdmin(): WiredAdmin {
   return wireAdmin({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
 }
 
-/** One published single-variant Catalog product — what the cart prices a line from (Plan 2A). */
-function seedProduct(admin: WiredAdmin, amountMinor: number): Promise<SeededProduct> {
-  return seedSingleVariantProduct(
+/**
+ * One published single-variant Catalog product — what the cart prices a line from (Plan 2A) — with
+ * stock at a location, because completing a checkout now refuses a line nothing can cover (Plan
+ * 2B-3, via the shared `seed-stock` helper).
+ */
+async function seedProduct(admin: WiredAdmin, amountMinor: number): Promise<SeededProduct> {
+  const product = await seedSingleVariantProduct(
     controllerDriver(admin.publicReads.products, "tenant-local"),
     "P-1",
     amountMinor,
   );
+  await seedStock(controllerStockDriver(admin.inventory, staff, "tenant-local"), {
+    productId: product.productId,
+    variantId: product.variantId,
+    quantity: 100,
+  });
+  return product;
 }
 
 interface Response {
