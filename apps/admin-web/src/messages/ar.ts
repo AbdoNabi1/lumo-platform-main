@@ -187,6 +187,8 @@ export const ar: Dictionary = {
     placedFromStore: "{date} الساعة {time} من المتجر الإلكتروني",
     refund: "استرداد",
     refundUnavailable: "لا يمكن استرداد هذا الطلب حاليًا.",
+    confirmRefund: "هل تريد رد {amount} للعميل؟",
+    confirmRefundCash: "ستعيد النقود للعميل بنفسك؛ هذا الإجراء يسجّل ذلك فقط.",
     moreActions: "إجراءات أخرى",
     cancelOrder: "إلغاء الطلب",
     cancellingOrder: "جارٍ الإلغاء…",

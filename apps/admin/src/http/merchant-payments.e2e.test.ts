@@ -740,6 +740,71 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
       expect((await intentOf("tok-a", id)).status).toBe("cancelled");
     });
 
+    // G-130. Cancelling an order must not leave its fulfillment order open nor its stock held.
+    it("cancelling an order with an open fulfillment cancels the fulfillment and puts the held stock back", async () => {
+      await seedProduct("tok-a");
+      await enableAll("tok-a");
+      const { checkout } = await paid("tenant-a", "sess-cod-cleanup", "cod");
+      const orderRef = ok<{ orderRef: string }>(
+        await get(checkout.base, storefront("tenant-a", { "x-cart-session": "sess-cod-cleanup" })),
+        "get checkout",
+      ).orderRef;
+      const product = productOf("tenant-a");
+      const stock = async () => {
+        const rows = ok<{ warehouseId: string; reserved: number; available: number }[]>(
+          await get(`/products/${product.productId}/inventory`, admin("tok-a")),
+          "product inventory",
+        );
+        const row = rows[0];
+        if (row === undefined) throw new Error("no stock row");
+        return row;
+      };
+      const before = await stock();
+
+      // Stock is held under the ORDER's id — exactly the reference Orders' own reservation uses.
+      const held = await post("/inventory/reserve", admin("tok-a"), {
+        productId: product.productId,
+        variantId: product.variantId,
+        warehouseId: before.warehouseId,
+        quantity: 2,
+        reference: orderRef,
+      });
+      expect(held.statusCode).toBe(201);
+      expect(await stock()).toMatchObject({
+        reserved: before.reserved + 2,
+        available: before.available - 2,
+      });
+
+      // "Fulfill items": a fulfillment order is opened for the order.
+      const opened = await post(
+        "/fulfillments",
+        { ...admin("tok-a"), "idempotency-key": "fulfill-cleanup" },
+        { orderRef, items: [{ productRef: product.productId, quantity: 2 }] },
+      );
+      expect(opened.statusCode).toBe(201);
+      const readFulfillment = async () =>
+        ok<{ status: { value: string } | string }>(
+          await get(`/orders/${orderRef}/fulfillment`, admin("tok-a")),
+          "get fulfillment",
+        );
+      const statusOf = (value: { status: { value: string } | string }) =>
+        typeof value.status === "string" ? value.status : value.status.value;
+      expect(statusOf(await readFulfillment())).toBe("created");
+
+      const cancelled = await post(
+        `/orders/${orderRef}/advance`,
+        { ...admin("tok-a"), "idempotency-key": "cancel-cod-cleanup" },
+        { toStatus: "cancelled" },
+      );
+
+      expect(cancelled.statusCode).toBe(200);
+      expect(statusOf(await readFulfillment())).toBe("cancelled");
+      expect(await stock()).toMatchObject({
+        reserved: before.reserved,
+        available: before.available,
+      });
+    });
+
     it("does not cancel an order once it is paid, and leaves its captured payment alone", async () => {
       await seedProduct("tok-a");
       await enableAll("tok-a");
@@ -772,6 +837,63 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
         "get order",
       );
       expect(order).toMatchObject({ status: "payment_received", paymentStatus: "paid" });
+    });
+
+    // G-127. "Refund" on the order page moves money through Payments: a collected cash payment is
+    // recorded as returned outside the platform (no provider is asked), and only then is the order refunded.
+    it("refunds a collected COD order: the payment is refunded, then the order, and the order says it can no longer be refunded", async () => {
+      await seedProduct("tok-a");
+      await enableAll("tok-a");
+      const { checkout, opened, amountMinor } = await paid("tenant-a", "sess-cod-refund", "cod");
+      const id = opened.paymentIntentId;
+      const orderRef = ok<{ orderRef: string }>(
+        await get(checkout.base, storefront("tenant-a", { "x-cart-session": "sess-cod-refund" })),
+        "get checkout",
+      ).orderRef;
+      const readOrder = async () =>
+        ok<{ status: string; paymentStatus: string; refundable: boolean }>(
+          await get(`/orders/${orderRef}`, admin("tok-a")),
+          "get order",
+        );
+      const refund = (key: string) =>
+        post(`/orders/${orderRef}/refund`, { ...admin("tok-a"), "idempotency-key": key }, {});
+
+      // Unpaid: nothing to refund, and the order says so.
+      expect((await readOrder()).refundable).toBe(false);
+      expect((await refund("refund-unpaid")).statusCode).toBe(409);
+
+      // The cash is collected (captured), but the order is not yet marked paid: still not refundable.
+      await post(`/payment-intents/${id}/cod-collection`, admin("tok-a"), {
+        collectedAmountMinor: amountMinor,
+        currency: "USD",
+      });
+      expect((await refund("refund-not-marked")).statusCode).toBe(409);
+      expect((await intentOf("tok-a", id)).status).toBe("captured");
+
+      await post(
+        `/orders/${orderRef}/mark-paid`,
+        { ...admin("tok-a"), "idempotency-key": "mark-paid-cod-refund" },
+        { paymentRef: id },
+      );
+      expect(await readOrder()).toMatchObject({
+        status: "payment_received",
+        paymentStatus: "paid",
+        refundable: true,
+      });
+
+      // The refund: money first (Payments), then the order.
+      const refunded = await refund("refund-1");
+      expect(refunded.statusCode).toBe(200);
+      expect((await intentOf("tok-a", id)).status).toBe("refunded");
+      expect(await readOrder()).toMatchObject({
+        status: "refunded",
+        paymentStatus: "refunded",
+        refundable: false,
+      });
+
+      // A second refund is refused and moves nothing.
+      expect((await refund("refund-2")).statusCode).toBe(409);
+      expect((await intentOf("tok-a", id)).status).toBe("refunded");
     });
 
     // Plan 3B: the orders list and the order page show Shopify's two statuses — payment and fulfillment —

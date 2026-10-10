@@ -10,17 +10,22 @@ import type { Dictionary } from "@/messages/en";
 const INITIAL_STATE: FormState = { status: "idle" };
 
 /**
- * "Refund" in the order page header — the existing refund flow (`refundOrderAction`, with its confirm).
- * `enabled` is true only when the backend would accept the refund; otherwise the button is shown but
- * disabled, with the reason as its tooltip, so it is never a button that can only fail.
+ * "Refund" in the order page header — the existing refund flow (`refundOrderAction`) behind a
+ * confirmation that names the amount ("Refund $39.98 to the customer?"). The money moves through
+ * Payments on the backend; this button only asks. `enabled` is the backend's own answer
+ * (`order.refundable`); otherwise the button is shown but disabled, with the reason as its tooltip, so
+ * it is never a button that can only fail.
  */
 export function OrderRefundButton({
   orderId,
   enabled,
+  confirmMessage,
   t,
 }: {
   readonly orderId: string;
   readonly enabled: boolean;
+  /** What the confirm dialog says, built by the page (amount, and the cash line for cash on delivery). */
+  readonly confirmMessage: string;
   readonly t: Dictionary;
 }) {
   const [state, formAction, isPending] = useActionState(refundOrderAction, INITIAL_STATE);
@@ -28,7 +33,7 @@ export function OrderRefundButton({
     <form
       action={formAction}
       onSubmit={(event) => {
-        if (!window.confirm(t.orderLifecycle.confirmRefund)) event.preventDefault();
+        if (!window.confirm(confirmMessage)) event.preventDefault();
       }}
       className="flex flex-col items-start gap-1"
     >

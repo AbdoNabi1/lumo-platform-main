@@ -45,6 +45,7 @@ function order(address: Partial<OrderDetailDto["shippingAddress"]> = {}): OrderD
     fulfillmentStatus: "unfulfilled",
     paymentProvider: null,
     shippingMethod: null,
+    refundable: false,
   };
 }
 

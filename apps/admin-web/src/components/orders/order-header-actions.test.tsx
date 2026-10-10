@@ -76,13 +76,20 @@ describe("OrderMoreActions", () => {
 describe("OrderRefundButton", () => {
   it("is enabled when the order can be refunded, and asks before refunding", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<OrderRefundButton orderId="order-1" enabled t={en} />);
+    render(
+      <OrderRefundButton
+        orderId="order-1"
+        enabled
+        confirmMessage="Refund $39.98 to the customer?"
+        t={en}
+      />,
+    );
     const button = screen.getByRole("button", { name: "Refund" });
     expect(button).toBeEnabled();
 
     fireEvent.click(button);
 
-    expect(confirm).toHaveBeenCalledWith(en.orderLifecycle.confirmRefund);
+    expect(confirm).toHaveBeenCalledWith("Refund $39.98 to the customer?");
     await vi.waitFor(() => expect(actions.refundOrderAction).toHaveBeenCalledTimes(1));
     expect((actions.refundOrderAction.mock.calls[0]?.[1] as FormData).get("orderId")).toBe(
       "order-1",
@@ -90,7 +97,7 @@ describe("OrderRefundButton", () => {
   });
 
   it("is disabled, with the reason, when the order cannot be refunded", () => {
-    render(<OrderRefundButton orderId="order-1" enabled={false} t={en} />);
+    render(<OrderRefundButton orderId="order-1" enabled={false} confirmMessage="unused" t={en} />);
 
     const button = screen.getByRole("button", { name: "Refund" });
     expect(button).toBeDisabled();

@@ -586,7 +586,9 @@ interface RefundReservation {
 }
 
 /**
- * Requests a refund from the PSP (`PaymentProvider.refund`), then completes it domain-side.
+ * Requests a refund from the PSP (`PaymentProvider.refund`), then completes it domain-side. For a
+ * provider that is settled by an operator confirming the money (cash on delivery) nothing is asked of
+ * the provider: the refund is recorded as made outside the platform (G-127).
  *
  * Phase A.4 (refund-concurrency remediation): split into three steps, each its own committed
  * transaction, so the PSP is only ever called AFTER a durable, optimistic-lock-protected
@@ -653,7 +655,16 @@ export class RefundPaymentLifecycle implements UseCase<
       return ok({ paymentIntentId: input.paymentIntentId, status });
     }
 
-    if (pspReference === undefined) {
+    // Cash on delivery (G-127): the cash was handed over out of band, so it is returned out of band —
+    // there is no provider to ask, and `CashOnDeliveryProvider.refund` would only refuse. The refund is
+    // RECORDED: the same reservation settled as completed, with the same `refund.transitioned` event a
+    // card refund produces. Decided by the provider's DECLARED capabilities (settles at pay time and
+    // cannot call back), never its name; an unregistered provider has none and still goes to the
+    // resolver below, which fails closed.
+    const capabilities = this.deps.providers.capabilitiesOf(provider);
+    const recordedOutsidePlatform =
+      capabilities !== undefined && isSettledByOperatorConfirmation(capabilities);
+    if (pspReference === undefined || recordedOutsidePlatform) {
       return this.settle(input.paymentIntentId, input.tenantId, refundId, { succeeded: true });
     }
 

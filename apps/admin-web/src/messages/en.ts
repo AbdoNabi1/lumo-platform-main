@@ -195,6 +195,10 @@ export const en = {
     placedFromStore: "{date} at {time} from Online Store",
     refund: "Refund",
     refundUnavailable: "This order can't be refunded yet.",
+    /** The Refund button's confirmation; `{amount}` is the whole order total, formatted. */
+    confirmRefund: "Refund {amount} to the customer?",
+    /** Added under the confirmation for cash on delivery: the platform only records the cash refund. */
+    confirmRefundCash: "You'll return the cash yourself; this records it.",
     moreActions: "More actions",
     cancelOrder: "Cancel order",
     cancellingOrder: "Cancelling…",

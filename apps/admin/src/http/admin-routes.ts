@@ -11,6 +11,7 @@ import {
   type Order,
   type OrderFulfillmentStatus,
   type OrderPaymentStatus,
+  RefundPolicy,
 } from "@platform/orders";
 import type { Paginated } from "@platform/types";
 import { UnexpectedError } from "@platform/utils";
@@ -278,6 +279,20 @@ export interface OrderDetailDto {
   readonly paymentProvider: string | null;
   /** Plan 3B: the shipping method the shopper selected; null on orders placed before it was captured. */
   readonly shippingMethod: string | null;
+  /**
+   * G-127: whether "Refund" can succeed right now — decided here so the page never mirrors the policy:
+   * the order is in a refundable state AND has a captured linked payment (or is a legacy `paid` order,
+   * which never had one).
+   */
+  readonly refundable: boolean;
+}
+
+const orderRefundPolicy = new RefundPolicy();
+
+function isRefundable(order: Order, paymentStatus: string | null): boolean {
+  if (!orderRefundPolicy.canRefund(order.status)) return false;
+  if (order.paymentRef === undefined) return order.status === "paid";
+  return paymentStatus === "captured" || paymentStatus === "refunded";
 }
 
 function toOrderRecipientAddressDto(address: Order["shippingAddress"]): OrderRecipientAddressDto {
@@ -296,6 +311,7 @@ function toOrderDetailDto(
   order: Order,
   fulfillmentStatus: OrderFulfillmentStatus,
   paymentProvider: string | null,
+  linkedPaymentStatus: string | null,
 ): OrderDetailDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
@@ -347,6 +363,7 @@ function toOrderDetailDto(
     fulfillmentStatus,
     paymentProvider,
     shippingMethod: order.totals?.shippingMethod ?? null,
+    refundable: isRefundable(order, linkedPaymentStatus),
   };
 }
 
@@ -1487,13 +1504,16 @@ export function adminRoutes(
         // How the customer pays is cosmetic: a payment that cannot be read shows as a dash, it does
         // not fail the order page.
         let paymentProvider: string | null = null;
+        let linkedPaymentStatus: string | null = null;
         if (order.paymentRef !== undefined) {
           const intent = await admin.orders.paymentIntentOf(context.principal, {
             tenantId: context.tenantId,
             paymentIntentId: order.paymentRef,
           });
           if (intent.status === 200) {
-            paymentProvider = (intent.body as { provider: string }).provider;
+            const linked = intent.body as { provider: string; status: { value: string } };
+            paymentProvider = linked.provider;
+            linkedPaymentStatus = linked.status.value;
           }
         }
         return {
@@ -1502,6 +1522,7 @@ export function adminRoutes(
             order,
             statuses.byOrder.get(order.id.toString()) ?? "unfulfilled",
             paymentProvider,
+            linkedPaymentStatus,
           ),
         };
       },

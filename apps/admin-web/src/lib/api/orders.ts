@@ -162,6 +162,8 @@ export interface OrderDetailDto {
   /** How the customer pays ("cod", "stripe", …), from the linked payment; null until one is linked. */
   readonly paymentProvider: string | null;
   readonly shippingMethod: string | null;
+  /** G-127: whether Refund can succeed right now — decided by the backend, never guessed from the status. */
+  readonly refundable: boolean;
 }
 
 function isOrderDetailDto(value: unknown): value is OrderDetailDto {

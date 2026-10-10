@@ -30,6 +30,8 @@ import type {
   OrderNumberAllocator,
   PaymentPort,
   PaymentVoidPort,
+  FulfillmentCancelPort,
+  StockReleasePort,
   PaymentVerificationPort,
   ShippingPort,
 } from "./application/ports";
@@ -79,6 +81,10 @@ export interface OrdersWiringDeps {
    * cancelling an order touches no payment (the offline in-memory pipelines, unchanged).
    */
   readonly paymentVoid?: PaymentVoidPort;
+  /** G-130: cancels the open fulfillment order of a cancelled order. Optional, like `paymentVoid`. */
+  readonly fulfillmentCancel?: FulfillmentCancelPort;
+  /** G-130: releases the stock held for a cancelled order. Optional, like `paymentVoid`. */
+  readonly stockRelease?: StockReleasePort;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaOrderRepository` + `PrismaUnitOfWork`;
    * absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository built here is a
@@ -141,6 +147,10 @@ function buildController(
       clock: deps.clock,
       notifications,
       ...(deps.paymentVoid !== undefined ? { paymentVoid: deps.paymentVoid } : {}),
+      ...(deps.fulfillmentCancel !== undefined
+        ? { fulfillmentCancel: deps.fulfillmentCancel }
+        : {}),
+      ...(deps.stockRelease !== undefined ? { stockRelease: deps.stockRelease } : {}),
     }),
     requestPaymentCapture: new RequestPaymentCapture({
       orders,

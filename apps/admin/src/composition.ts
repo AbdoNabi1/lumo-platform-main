@@ -40,7 +40,7 @@ import { wireFeatureFlags } from "@platform/feature-flags-service";
 import { wireFeatureRegistry } from "@platform/feature-registry";
 import { wireFinance } from "@platform/finance";
 import type { PostingAccounts } from "@platform/finance";
-import { wireFulfillment } from "@platform/fulfillment";
+import { type FulfillmentController, wireFulfillment } from "@platform/fulfillment";
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
 import {
@@ -60,7 +60,9 @@ import {
   type NotificationPort as OrdersNotificationPort,
   type OrderController,
   type PaymentPort as OrdersPaymentPort,
+  type FulfillmentCancelPort as OrdersFulfillmentCancelPort,
   type PaymentVoidPort as OrdersPaymentVoidPort,
+  type StockReleasePort as OrdersStockReleasePort,
   type PaymentVerificationPort,
   type ShippingPort as OrdersShippingPort,
 } from "@platform/orders";
@@ -110,7 +112,9 @@ import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-in
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
+import { OrdersFulfillmentCancelAdapter } from "./infrastructure/cross-context/orders-fulfillment-cancel.adapter";
 import { OrdersPaymentVoidAdapter } from "./infrastructure/cross-context/orders-payment-void.adapter";
+import { OrdersStockReleaseAdapter } from "./infrastructure/cross-context/orders-stock-release.adapter";
 import { CatalogPricingValidationAdapter } from "./infrastructure/cross-context/catalog-pricing-validation.adapter";
 import {
   CheckoutPaymentInitiationAdapter,
@@ -337,6 +341,10 @@ export interface AdminWiringDeps {
   readonly notifications?: OrdersNotificationPort;
   /** G-126: voids the payment of an order cancelled before it was paid. Defaults to the real adapter over Payments. */
   readonly paymentVoid?: OrdersPaymentVoidPort;
+  /** G-130: cancels the open fulfillment order of a cancelled order. Defaults to the real adapter over Fulfillment. */
+  readonly fulfillmentCancel?: OrdersFulfillmentCancelPort;
+  /** G-130: releases the stock held for a cancelled order. Defaults to the real adapter over Inventory. */
+  readonly stockRelease?: OrdersStockReleasePort;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 5 orchestration ports Checkout's
    * `ValidateCheckout`/`RequestTaxCalculation`/`RequestShippingQuote`/`ValidatePromotion`/
@@ -746,6 +754,26 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       return paymentsControllerCell.controller.captureLifecycle(input);
     },
   };
+  // G-130: Fulfillment is wired AFTER Orders, so cancelling an order reaches it through the same
+  // one-shot lazy cell as Payments above; it is filled right after `wireFulfillment(deps)` below, long
+  // before any order can be cancelled.
+  const fulfillmentControllerCell: {
+    controller?: Pick<FulfillmentController, "getByOrder" | "advance">;
+  } = {};
+  const lazyFulfillmentController: Pick<FulfillmentController, "getByOrder" | "advance"> = {
+    getByOrder: (input) => {
+      if (fulfillmentControllerCell.controller === undefined) {
+        throw new Error("FulfillmentController requested before wireFulfillment() completed");
+      }
+      return fulfillmentControllerCell.controller.getByOrder(input);
+    },
+    advance: (input) => {
+      if (fulfillmentControllerCell.controller === undefined) {
+        throw new Error("FulfillmentController requested before wireFulfillment() completed");
+      }
+      return fulfillmentControllerCell.controller.advance(input);
+    },
+  };
   const ordersDeps = {
     ...deps,
     inventoryPort:
@@ -760,6 +788,16 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     notifications: deps.notifications ?? new OrdersNotificationAdapter(notifications.notifications),
     // G-126: cancelling an unpaid order cancels its payment intent too (best-effort).
     paymentVoid: deps.paymentVoid ?? new OrdersPaymentVoidAdapter(lazyPaymentsController),
+    // G-130: cancelling an order cancels its open fulfillment order and releases its held stock.
+    fulfillmentCancel:
+      deps.fulfillmentCancel ?? new OrdersFulfillmentCancelAdapter(lazyFulfillmentController),
+    stockRelease:
+      deps.stockRelease ??
+      new OrdersStockReleaseAdapter(
+        lazyOrdersController,
+        inventory.inventoryItemRepository,
+        inventory.inventory,
+      ),
     paymentPort:
       deps.paymentPort ??
       new OrdersPaymentAdapter(lazyPaymentsController, async (orderId, tenantId) => {
@@ -878,6 +916,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // `PaymentController` instead of throwing.
   paymentsControllerCell.controller = payments.payments;
   const fulfillment = wireFulfillment(deps);
+  fulfillmentControllerCell.controller = fulfillment.fulfillment;
   const shipping = wireShipping(deps);
   const recommendations = wireRecommendations(deps);
   const reporting = wireReporting(deps);

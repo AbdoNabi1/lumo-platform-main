@@ -8,11 +8,13 @@ import type { Order } from "../domain/order";
 import { canTransition, type OrderEventType } from "../domain/order-event";
 import type { OrderRepository } from "../domain/order-repository";
 import type {
+  FulfillmentCancelPort,
   InventoryPort,
   NotificationPort,
   PaymentPort,
   PaymentVoidPort,
   ShippingPort,
+  StockReleasePort,
 } from "./ports";
 
 /**
@@ -58,6 +60,15 @@ async function notifyBestEffort(
   }
 }
 
+/** Runs one cleanup step; whatever it does or throws, the caller carries on. */
+async function bestEffort(step: () => Promise<void> | undefined): Promise<void> {
+  try {
+    await step();
+  } catch {
+    // Swallowed on purpose: the order is already cancelled.
+  }
+}
+
 export interface AdvanceOrderInput {
   /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
   readonly tenantId: string;
@@ -73,6 +84,10 @@ export interface AdvanceOrderDeps {
   readonly notifications?: NotificationPort;
   /** Voids the order's unpaid payment when it is cancelled (G-126). Optional: without it, cancelling touches no payment. */
   readonly paymentVoid?: PaymentVoidPort;
+  /** Cancels the order's open fulfillment order when it is cancelled (G-130). Optional. */
+  readonly fulfillmentCancel?: FulfillmentCancelPort;
+  /** Releases the stock held for the order when it is cancelled (G-130). Optional. */
+  readonly stockRelease?: StockReleasePort;
 }
 
 /** Generic validated transition — moves an order to any status its current status's transition table allows. */
@@ -84,6 +99,7 @@ export class AdvanceOrder implements UseCase<AdvanceOrderInput, OrderStatusOutpu
   }
 
   async execute(input: AdvanceOrderInput): Promise<Result<OrderStatusOutput, DomainError>> {
+    let cancelled = false;
     let paymentToVoid: string | undefined;
     const result = await this.deps.unitOfWork.run<Result<OrderStatusOutput, DomainError>>(
       async (tx) => {
@@ -101,18 +117,25 @@ export class AdvanceOrder implements UseCase<AdvanceOrderInput, OrderStatusOutpu
 
         await this.deps.orders.save(order, input.tenantId, tx);
         await notifyBestEffort(this.deps.notifications, order, input.tenantId);
-        if (order.status === "cancelled") paymentToVoid = order.paymentRef;
+        if (order.status === "cancelled") {
+          cancelled = true;
+          paymentToVoid = order.paymentRef;
+        }
         return ok({ orderId: order.id.toString(), status: order.status });
       },
     );
     // After the cancellation is committed, never inside its transaction: a rolled-back cancel must
-    // not leave a voided payment behind, and a Payments round-trip must not hold the order's
-    // connection open. Best-effort — the order stays cancelled whatever Payments answers (G-129).
-    if (result.ok && paymentToVoid !== undefined && this.deps.paymentVoid !== undefined) {
-      try {
-        await this.deps.paymentVoid.voidPayment(paymentToVoid, input.tenantId);
-      } catch {
-        // Swallowed on purpose: see above.
+    // not leave a cancelled fulfillment or a voided payment behind, and a cross-context round-trip
+    // must not hold the order's connection open. Each cleanup is best-effort and independent — one
+    // failing never fails the cancellation nor stops the others (G-129 / G-130 record what that leaves).
+    if (result.ok && cancelled) {
+      const orderId = input.orderId;
+      const { fulfillmentCancel, stockRelease, paymentVoid } = this.deps;
+      await bestEffort(() => fulfillmentCancel?.cancelOpenFulfillment(orderId, input.tenantId));
+      await bestEffort(() => stockRelease?.releaseOrderStock(orderId, input.tenantId));
+      if (paymentToVoid !== undefined) {
+        const paymentRef = paymentToVoid;
+        await bestEffort(() => paymentVoid?.voidPayment(paymentRef, input.tenantId));
       }
     }
     return result;

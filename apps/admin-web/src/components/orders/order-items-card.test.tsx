@@ -56,6 +56,7 @@ function order(overrides: Partial<OrderDetailDto> = {}): OrderDetailDto {
     fulfillmentStatus: "unfulfilled",
     paymentProvider: "cod",
     shippingMethod: "standard",
+    refundable: false,
     ...overrides,
   };
 }

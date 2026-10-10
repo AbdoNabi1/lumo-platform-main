@@ -32,6 +32,25 @@ export interface PaymentVoidPort {
   voidPayment(paymentRef: string, tenantId: string): Promise<void>;
 }
 
+/**
+ * Cancels the open fulfillment order of an order that was just cancelled (G-130). Best-effort by
+ * contract: implementers MUST NOT throw for "nothing to cancel" (no fulfillment order, or one already
+ * past the point where Fulfillment allows cancelling it). ADR-0014: `tenantId` is an explicit per-call
+ * parameter.
+ */
+export interface FulfillmentCancelPort {
+  cancelOpenFulfillment(orderId: string, tenantId: string): Promise<void>;
+}
+
+/**
+ * Releases the stock Inventory is holding for an order that was just cancelled (G-130) — every
+ * reservation whose reference is the order's id. Best-effort by contract: implementers MUST NOT throw
+ * for "nothing is reserved". ADR-0014: `tenantId` is an explicit per-call parameter.
+ */
+export interface StockReleasePort {
+  releaseOrderStock(orderId: string, tenantId: string): Promise<void>;
+}
+
 export interface InventoryReservationResult {
   readonly reservationRef: string;
 }

@@ -48,7 +48,10 @@ function controller(
   return new OrdersAdminController({
     orders: unreachable<OrderController>("OrderController"),
     fulfillment: unreachable<Pick<FulfillmentController, "getByOrders">>("FulfillmentController"),
-    payments: unreachable<Pick<PaymentController, "getPaymentIntent">>("PaymentController"),
+    payments:
+      unreachable<Pick<PaymentController, "getPaymentIntent" | "refundLifecycle">>(
+        "PaymentController",
+      ),
     guard,
     ...overrides,
   });
@@ -106,7 +109,9 @@ describe("OrdersAdminController", () => {
     it("asks for orders:read and reads the intent in the caller's tenant", async () => {
       const { guard, asked } = guardAnswering(true);
       const getPaymentIntent = vi.fn().mockResolvedValue({ status: 200, body: {} });
-      const target = controller(guard, { payments: { getPaymentIntent } });
+      const target = controller(guard, {
+        payments: { getPaymentIntent, refundLifecycle: vi.fn() },
+      });
 
       const response = await target.paymentIntentOf(staff, {
         tenantId: "t-1",
@@ -119,6 +124,171 @@ describe("OrdersAdminController", () => {
         tenantId: "t-1",
         paymentIntentId: "intent-1",
       });
+    });
+  });
+
+  // G-127: "Refund" on the order page moves money through Payments, then records the order refund.
+  describe("refundOrder (refund the linked payment first; record the order refund only after it)", () => {
+    const input = { tenantId: "t-1", orderId: "o-1" };
+
+    function setup(options: {
+      order?: { status: string; paymentRef?: string } | null;
+      intent?: { status: string; amountMinor?: number; currency?: string } | null;
+      refundLifecycle?: ReturnType<typeof vi.fn>;
+    }) {
+      const { guard, asked } = guardAnswering(true);
+      const calls: string[] = [];
+      const getOrder = vi.fn().mockImplementation(() => {
+        calls.push("orders.getOrder");
+        return Promise.resolve(
+          options.order === null
+            ? { status: 404, body: { message: "Order not found" } }
+            : {
+                status: 200,
+                body: options.order ?? { status: "payment_received", paymentRef: "intent-1" },
+              },
+        );
+      });
+      const refund = vi.fn().mockImplementation(() => {
+        calls.push("orders.refund");
+        return Promise.resolve({ status: 200, body: { orderId: "o-1", status: "refunded" } });
+      });
+      const getPaymentIntent = vi.fn().mockImplementation(() => {
+        calls.push("payments.getPaymentIntent");
+        return Promise.resolve(
+          options.intent === null
+            ? { status: 404, body: {} }
+            : {
+                status: 200,
+                body: {
+                  status: { value: options.intent?.status ?? "captured" },
+                  amount: {
+                    amountMinor: options.intent?.amountMinor ?? 3998,
+                    currency: options.intent?.currency ?? "EGP",
+                  },
+                },
+              },
+        );
+      });
+      const refundLifecycle =
+        options.refundLifecycle ??
+        vi.fn().mockImplementation(() => {
+          calls.push("payments.refundLifecycle");
+          return Promise.resolve({ status: 200, body: { status: "refunded" } });
+        });
+      const target = controller(guard, {
+        orders: { getOrder, refund } as unknown as OrderController,
+        payments: { getPaymentIntent, refundLifecycle },
+      });
+      return { target, calls, asked, refund, refundLifecycle, getPaymentIntent };
+    }
+
+    it("asks for orders:refund only, refunds the FULL intent amount read server-side, then records the order refund", async () => {
+      const { target, calls, asked, refundLifecycle } = setup({
+        intent: { status: "captured", amountMinor: 3998, currency: "EGP" },
+      });
+
+      const response = await target.refundOrder(staff, input);
+
+      expect(response).toEqual({ status: 200, body: { orderId: "o-1", status: "refunded" } });
+      expect(asked).toEqual(["orders:refund"]);
+      expect(refundLifecycle).toHaveBeenCalledWith({
+        tenantId: "t-1",
+        paymentIntentId: "intent-1",
+        amountMinor: 3998,
+        currency: "EGP",
+        idempotencyKey: "o-1:order-refund",
+      });
+      expect(calls).toEqual([
+        "orders.getOrder",
+        "payments.getPaymentIntent",
+        "payments.refundLifecycle",
+        "orders.refund",
+      ]);
+    });
+
+    it("leaves the order untouched when Payments refuses the refund", async () => {
+      const refundLifecycle = vi.fn().mockResolvedValue({
+        status: 409,
+        body: { message: "Refund exceeds the captured amount" },
+      });
+      const { target, refund } = setup({ refundLifecycle });
+
+      const response = await target.refundOrder(staff, input);
+
+      expect(response.status).toBe(409);
+      expect(refund).not.toHaveBeenCalled();
+    });
+
+    it("leaves the order untouched when the provider fails, and answers 502 without the provider's message", async () => {
+      const refundLifecycle = vi.fn().mockRejectedValue(new Error("psp said: card 4242 declined"));
+      const { target, refund } = setup({ refundLifecycle });
+
+      const response = await target.refundOrder(staff, input);
+
+      expect(response.status).toBe(502);
+      expect(JSON.stringify(response.body)).not.toContain("4242");
+      expect(refund).not.toHaveBeenCalled();
+    });
+
+    it("a legacy paid order has no linked payment: only the order refund is recorded", async () => {
+      const { target, calls } = setup({ order: { status: "paid" } });
+
+      const response = await target.refundOrder(staff, input);
+
+      expect(response.status).toBe(200);
+      expect(calls).toEqual(["orders.getOrder", "orders.refund"]);
+    });
+
+    it("an order the policy refuses never reaches Payments; the standard refusal is Orders' own", async () => {
+      const { target, calls } = setup({
+        order: { status: "payment_requested", paymentRef: "intent-1" },
+      });
+
+      await target.refundOrder(staff, input);
+
+      expect(calls).toEqual(["orders.getOrder", "orders.refund"]);
+    });
+
+    it("refuses a paid-state order that has no payment to refund, changing nothing", async () => {
+      const { target, calls } = setup({ order: { status: "payment_received" } });
+
+      const response = await target.refundOrder(staff, input);
+
+      expect(response.status).toBe(409);
+      expect(calls).toEqual(["orders.getOrder"]);
+    });
+
+    it.each(["created", "cancelled", "partially_refunded", "authorized"])(
+      "refuses when the linked payment is %s: there is no captured money to give back",
+      async (status) => {
+        const { target, calls, refundLifecycle } = setup({ intent: { status } });
+
+        const response = await target.refundOrder(staff, input);
+
+        expect(response.status).toBe(409);
+        expect(refundLifecycle).not.toHaveBeenCalled();
+        expect(calls).not.toContain("orders.refund");
+      },
+    );
+
+    it("resumes: a payment already refunded by an earlier attempt is not refunded twice, and the order refund is recorded", async () => {
+      const { target, calls, refundLifecycle } = setup({ intent: { status: "refunded" } });
+
+      const response = await target.refundOrder(staff, input);
+
+      expect(response.status).toBe(200);
+      expect(refundLifecycle).not.toHaveBeenCalled();
+      expect(calls).toEqual(["orders.getOrder", "payments.getPaymentIntent", "orders.refund"]);
+    });
+
+    it("answers the order lookup's own failure when the order does not exist", async () => {
+      const { target, calls } = setup({ order: null });
+
+      const response = await target.refundOrder(staff, input);
+
+      expect(response.status).toBe(404);
+      expect(calls).toEqual(["orders.getOrder"]);
     });
   });
 });

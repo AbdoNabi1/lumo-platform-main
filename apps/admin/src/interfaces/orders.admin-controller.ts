@@ -1,6 +1,6 @@
 import type { Principal } from "@platform/contracts";
 import type { FulfillmentController } from "@platform/fulfillment";
-import type { OrderController } from "@platform/orders";
+import { type OrderController, RefundPolicy } from "@platform/orders";
 import type { PaymentController } from "@platform/payments";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
@@ -12,8 +12,88 @@ export interface OrdersAdminControllerDeps {
    * reached under `orders:read` — see {@link OrdersAdminController.fulfillmentsOfOrders}.
    */
   readonly fulfillment: Pick<FulfillmentController, "getByOrders">;
-  readonly payments: Pick<PaymentController, "getPaymentIntent">;
+  readonly payments: Pick<PaymentController, "getPaymentIntent" | "refundLifecycle">;
   readonly guard: AdminGuard;
+}
+
+const refundPolicy = new RefundPolicy();
+
+/** What the refund needs from the entities the two contexts answer with; anything else is not read. */
+interface OrderForRefund {
+  readonly status: string;
+  readonly paymentRef?: string;
+}
+interface IntentForRefund {
+  readonly status: { readonly value: string };
+  readonly amount: { readonly amountMinor: number; readonly currency: string };
+}
+
+function conflict(message: string): AdminResponse {
+  return { status: 409, body: { message } };
+}
+
+/**
+ * "Refund" on the order page (G-127), Shopify's model: the money moves through Payments, and only a
+ * refund that succeeded is recorded on the order.
+ *
+ *  1. An order the policy refuses (or a legacy `paid` order, which never had a linked payment) goes
+ *     straight to Orders' own refund, which answers with its standard refusal / records the status.
+ *  2. Otherwise the order's linked payment intent must be `captured`. The amount is read HERE, from
+ *     the intent — the request carries none — and the whole amount is refunded. Card intents go to
+ *     the provider, cash on delivery is recorded as returned outside the platform: that choice is
+ *     Payments' (`RefundPaymentLifecycle`), by the provider's declared capabilities.
+ *  3. The idempotency key is the order's, so a retry — a double click, or a retry after the order
+ *     refund failed to save — never refunds the money twice; an intent that is already `refunded` is
+ *     not refunded again and the order refund is simply recorded.
+ *  4. Only after Payments answered 200 is the order refund recorded. If Payments refuses or throws,
+ *     nothing on the order changes. A provider failure answers 502 with no provider text.
+ *
+ * Authorized as `orders:refund` alone: the payment refund is part of refunding the order, like the
+ * payment reads in `paymentIntentOf` are part of reading it.
+ */
+async function refundOrderThroughPayments(
+  orders: OrderController,
+  payments: Pick<PaymentController, "getPaymentIntent" | "refundLifecycle">,
+  input: Parameters<OrderController["refund"]>[0],
+): Promise<AdminResponse> {
+  const found = await orders.getOrder({ tenantId: input.tenantId, orderId: input.orderId });
+  if (found.status !== 200) return found;
+  const order = found.body as OrderForRefund;
+
+  if (!refundPolicy.canRefund(order.status as Parameters<RefundPolicy["canRefund"]>[0])) {
+    return orders.refund(input);
+  }
+  if (order.paymentRef === undefined) {
+    if (order.status === "paid") return orders.refund(input);
+    return conflict("This order has no payment to refund");
+  }
+
+  const read = await payments.getPaymentIntent({
+    tenantId: input.tenantId,
+    paymentIntentId: order.paymentRef,
+  });
+  if (read.status !== 200) return conflict("The order's payment could not be found");
+  const intent = read.body as IntentForRefund;
+
+  if (intent.status.value !== "refunded") {
+    if (intent.status.value !== "captured") {
+      return conflict("The order's payment has not been captured, so there is nothing to refund");
+    }
+    let refunded: AdminResponse;
+    try {
+      refunded = await payments.refundLifecycle({
+        tenantId: input.tenantId,
+        paymentIntentId: order.paymentRef,
+        amountMinor: intent.amount.amountMinor,
+        currency: intent.amount.currency,
+        idempotencyKey: `${input.orderId}:order-refund`,
+      });
+    } catch {
+      return { status: 502, body: { message: "The refund could not be completed" } };
+    }
+    if (refunded.status !== 200) return refunded;
+  }
+  return orders.refund(input);
 }
 
 /**
@@ -25,7 +105,7 @@ export interface OrdersAdminControllerDeps {
 export class OrdersAdminController {
   private readonly orders: OrderController;
   private readonly fulfillment: Pick<FulfillmentController, "getByOrders">;
-  private readonly payments: Pick<PaymentController, "getPaymentIntent">;
+  private readonly payments: Pick<PaymentController, "getPaymentIntent" | "refundLifecycle">;
   private readonly guard: AdminGuard;
 
   constructor(deps: OrdersAdminControllerDeps) {
@@ -59,7 +139,7 @@ export class OrdersAdminController {
   ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "orders:refund");
     if (denied) return denied;
-    return this.orders.refund(input);
+    return refundOrderThroughPayments(this.orders, this.payments, input);
   }
 
   async createFromCheckout(

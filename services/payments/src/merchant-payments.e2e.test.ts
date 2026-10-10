@@ -416,23 +416,86 @@ describe("cash on delivery is never paid before an explicit collection confirmat
     expect(await status(app, id)).toBe("created");
   });
 
-  it("COD cannot be refunded through the provider port — refusing beats recording a refund nobody made", async () => {
-    const { app, id } = await codIntent();
-    await app.payments.confirmCodCollection({
+  // G-127. Cash handed over on delivery is returned by the merchant, outside the platform: there is no
+  // provider to ask. The refund is RECORDED (the same completed refund a card refund produces), never
+  // sent to a provider that would only refuse it.
+  describe("a collected COD payment is refunded by recording it — no provider call", () => {
+    async function collected() {
+      const wired = await codIntent();
+      const confirmed = await wired.app.payments.confirmCodCollection({
+        tenantId: "tenant-a",
+        paymentIntentId: wired.id,
+        collectedAmountMinor: 5000,
+        currency: "EGP",
+      });
+      expect(confirmed.status).toBe(200);
+      return wired;
+    }
+    const refundEvents = async (app: Wired) => {
+      await app.drainOutbox();
+      return app.deliveredEventTypes.filter((t) => t === "payments.refund.completed");
+    };
+    const full = (id: string, idempotencyKey?: string) => ({
       tenantId: "tenant-a",
       paymentIntentId: id,
-      collectedAmountMinor: 5000,
+      amountMinor: 5000,
       currency: "EGP",
+      ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
     });
 
-    await expect(
-      app.payments.refundLifecycle({
-        tenantId: "tenant-a",
-        paymentIntentId: id,
-        amountMinor: 1000,
-        currency: "EGP",
-      }),
-    ).rejects.toThrow(/cash on delivery/i);
+    it("records a full refund: the intent becomes refunded and the refund event is published once", async () => {
+      const { app, calls, id } = await collected();
+
+      const refunded = await app.payments.refundLifecycle(full(id));
+
+      expect(refunded.status).toBe(200);
+      expect(await status(app, id)).toBe("refunded");
+      expect(await refundEvents(app)).toHaveLength(1);
+      expect(calls.filter((c) => c.op === "refund")).toEqual([]);
+    });
+
+    it("is idempotent: the same key again is a no-op that records and publishes nothing new", async () => {
+      const { app, id } = await collected();
+      await app.payments.refundLifecycle(full(id, "order-1:order-refund"));
+
+      const again = await app.payments.refundLifecycle(full(id, "order-1:order-refund"));
+
+      expect(again.status).toBe(200);
+      expect(await status(app, id)).toBe("refunded");
+      expect(await refundEvents(app)).toHaveLength(1);
+    });
+
+    it("cannot refund more than was collected, nor a second time", async () => {
+      const { app, id } = await collected();
+
+      const over = await app.payments.refundLifecycle({ ...full(id), amountMinor: 5001 });
+      expect(over.status).toBe(409);
+      expect(await status(app, id)).toBe("captured");
+
+      expect((await app.payments.refundLifecycle(full(id))).status).toBe(200);
+      const twice = await app.payments.refundLifecycle(full(id));
+      expect(twice.status).toBe(409);
+      expect(await refundEvents(app)).toHaveLength(1);
+    });
+
+    it("cannot refund cash that was never collected", async () => {
+      const { app, id } = await codIntent();
+
+      const attempt = await app.payments.refundLifecycle(full(id));
+
+      expect(attempt.status).toBe(409);
+      expect(await status(app, id)).toBe("created");
+      expect(await refundEvents(app)).toEqual([]);
+    });
+
+    it("another merchant cannot record a refund for it", async () => {
+      const { app, id } = await collected();
+
+      const attempt = await app.payments.refundLifecycle({ ...full(id), tenantId: "tenant-b" });
+
+      expect(attempt.status).toBe(404);
+      expect(await status(app, id)).toBe("captured");
+    });
   });
 });
 

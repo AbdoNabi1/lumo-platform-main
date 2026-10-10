@@ -24,7 +24,9 @@ export class CashOnDeliveryUnsupportedOperationError extends Error {
  *    collection (`ConfirmCodCollection`), an explicit operator action that is NOT a provider call.
  *    A capture that quietly succeeded would mark an order paid before anyone handed over cash.
  *  - `refund` REFUSES. Cash was paid out of band and can only be returned out of band; reporting
- *    success would record a refund nobody made. (Recording a manual cash refund is a follow-up.)
+ *    success from the PROVIDER would claim it made a refund it cannot make. Recording that the
+ *    merchant returned the cash is `RefundPaymentLifecycle`'s job (G-127): for a provider settled by
+ *    an operator confirming the money it records the refund without calling this method at all.
  *  - `cancel` succeeds: nothing exists at any external system, so "already cancelled / never
  *    captured, no-op" is exactly true.
  *  - `verifyWebhook` is always false: COD has no provider webhooks, so any request claiming to be

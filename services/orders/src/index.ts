@@ -26,6 +26,7 @@ export {
   type PaymentTruthShadowPort,
 } from "./application/payment-truth-shadow";
 export type {
+  FulfillmentCancelPort,
   InventoryPort,
   NotificationPort,
   OrderNumberAllocator,
@@ -33,7 +34,9 @@ export type {
   PaymentVerificationPort,
   PaymentVoidPort,
   ShippingPort,
+  StockReleasePort,
 } from "./application/ports";
 export { ORDERS_PUBLISHED_EVENTS } from "./infrastructure/order-event-translator";
 export { derivePaymentStatus } from "./domain/order-statuses";
+export { RefundPolicy } from "./domain/refund-policy";
 export type { OrderFulfillmentStatus, OrderPaymentStatus } from "./domain/order-statuses";
