@@ -4,6 +4,7 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
 import { MarkOrderPaid } from "./mark-order-paid.use-case";
 import { PlaceOrder } from "./place-order.use-case";
+import { InMemoryOrderNumberAllocator } from "../infrastructure/in-memory-order-number-allocator";
 import { InMemoryOrderRepository } from "../infrastructure/in-memory-order-repository";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { OrderEventTranslator } from "../infrastructure/order-event-translator";
@@ -28,7 +29,13 @@ function wire(shadow?: PaymentTruthShadowPort, paymentVerification?: PaymentVeri
   });
   const orders = new InMemoryOrderRepository({ outbox, context: rootEventContext(idGenerator) });
   const unitOfWork = new InMemoryUnitOfWork();
-  const placeOrder = new PlaceOrder({ orders, unitOfWork, idGenerator, clock });
+  const placeOrder = new PlaceOrder({
+    orders,
+    unitOfWork,
+    idGenerator,
+    clock,
+    orderNumbers: new InMemoryOrderNumberAllocator(),
+  });
   const markOrderPaid = new MarkOrderPaid({
     orders,
     unitOfWork,

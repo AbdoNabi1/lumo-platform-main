@@ -37,7 +37,7 @@ describe("orders (end to end)", () => {
     expect(placed.status).toBe(201);
     const body = placed.body as { orderId: string; orderNumber: string; totalAmountMinor: number };
     expect(body.totalAmountMinor).toBe(3500);
-    expect(body.orderNumber).toMatch(/^ORD-/);
+    expect(body.orderNumber).toBe("1001");
 
     const paid = await app.orders.markPaid({
       tenantId: "tenant-a",

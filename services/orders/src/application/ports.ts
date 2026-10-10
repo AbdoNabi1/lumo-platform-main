@@ -1,3 +1,13 @@
+/**
+ * Hands out a shop's next order number (1001, 1002, …), as the digit string the order stores — the
+ * admin UI shows it as `#1001`. Call it INSIDE the unit of work that saves the order and pass that
+ * transaction as `tx`: the counter then commits or rolls back with the order, so a failed order
+ * creation never burns a number.
+ */
+export interface OrderNumberAllocator {
+  next(tenantId: string, tx?: unknown): Promise<string>;
+}
+
 export interface PaymentCaptureResult {
   readonly paymentRef: string;
 }

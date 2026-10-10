@@ -13,6 +13,7 @@ import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
 import { OrderTotalsSnapshot } from "../domain/value-objects/order-totals-snapshot";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
+import { InMemoryOrderNumberAllocator } from "../infrastructure/in-memory-order-number-allocator";
 import { InMemoryOrderRepository } from "../infrastructure/in-memory-order-repository";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { OrderEventTranslator } from "../infrastructure/order-event-translator";
@@ -48,7 +49,13 @@ function wire() {
   });
   const orders = new InMemoryOrderRepository({ outbox, context: rootEventContext(idGenerator) });
   const unitOfWork = new InMemoryUnitOfWork();
-  const placeOrder = new PlaceOrder({ orders, unitOfWork, idGenerator, clock });
+  const placeOrder = new PlaceOrder({
+    orders,
+    unitOfWork,
+    idGenerator,
+    clock,
+    orderNumbers: new InMemoryOrderNumberAllocator(),
+  });
   const markOrderPaid = new MarkOrderPaid({ orders, unitOfWork, idGenerator, clock });
   const consumer = new PaymentCapturedConsumer({
     markOrderPaid,

@@ -26,10 +26,12 @@ import type { OrderRepository } from "./domain/order-repository";
 import type {
   InventoryPort,
   NotificationPort,
+  OrderNumberAllocator,
   PaymentPort,
   PaymentVerificationPort,
   ShippingPort,
 } from "./application/ports";
+import { InMemoryOrderNumberAllocator } from "./infrastructure/in-memory-order-number-allocator";
 import { InMemoryOrderRepository } from "./infrastructure/in-memory-order-repository";
 import {
   InMemoryInventoryAdapter,
@@ -43,6 +45,7 @@ import {
   ORDERS_PUBLISHED_EVENTS,
   OrderEventTranslator,
 } from "./infrastructure/order-event-translator";
+import { PrismaOrderNumberAllocator } from "./infrastructure/prisma-order-number-allocator";
 import { PrismaOrderRepository } from "./infrastructure/prisma-order-repository";
 import { OrderController } from "./interfaces/order.controller";
 
@@ -87,6 +90,7 @@ export interface WiredOrders {
 function buildController(
   orders: OrderRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
+  orderNumbers: OrderNumberAllocator,
   deps: OrdersWiringDeps,
 ): OrderController {
   const paymentPort = deps.paymentPort ?? new InMemoryPaymentAdapter();
@@ -101,6 +105,7 @@ function buildController(
       unitOfWork,
       idGenerator: deps.idGenerator,
       clock: deps.clock,
+      orderNumbers,
     }),
     markOrderPaid: new MarkOrderPaid({
       orders,
@@ -120,6 +125,7 @@ function buildController(
       unitOfWork,
       idGenerator: deps.idGenerator,
       clock: deps.clock,
+      orderNumbers,
     }),
     advanceOrder: new AdvanceOrder({
       orders,
@@ -172,7 +178,7 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {
-      orders: buildController(orders, unitOfWork, deps),
+      orders: buildController(orders, unitOfWork, new PrismaOrderNumberAllocator(), deps),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -190,7 +196,7 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
 
   const orders = new InMemoryOrderRepository({ outbox: outboxWriter, context });
   const unitOfWork = new InMemoryUnitOfWork();
-  const controller = buildController(orders, unitOfWork, deps);
+  const controller = buildController(orders, unitOfWork, new InMemoryOrderNumberAllocator(), deps);
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];

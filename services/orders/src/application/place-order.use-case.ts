@@ -10,6 +10,7 @@ import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
+import type { OrderNumberAllocator } from "./ports";
 
 export interface PlaceOrderItemInput {
   readonly productId: string;
@@ -53,6 +54,7 @@ export interface PlaceOrderDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  readonly orderNumbers: OrderNumberAllocator;
 }
 
 /** Places an order from caller-supplied line snapshots + a shipping address. */
@@ -120,10 +122,10 @@ export class PlaceOrder implements UseCase<PlaceOrderInput, PlaceOrderOutput, Do
     );
     if (!address.ok) return err(address.error);
 
-    const orderNumber = OrderNumber.create(`ORD-${this.deps.idGenerator.generate()}`);
-    if (!orderNumber.ok) return err(orderNumber.error);
-
     return this.deps.unitOfWork.run<Result<PlaceOrderOutput, DomainError>>(async (tx) => {
+      // Allocated inside the order's transaction: a failed save rolls the counter back too.
+      const orderNumber = OrderNumber.create(await this.deps.orderNumbers.next(input.tenantId, tx));
+      if (!orderNumber.ok) return err(orderNumber.error);
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const order = Order.place(
         id,

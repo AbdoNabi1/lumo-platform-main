@@ -79,3 +79,13 @@ model OrderShippingAddress {
   @@map("order_shipping_addresses")
   @@schema("orders")
 }
+
+/// Plan 3B — the per-shop order number counter (1001, 1002, …). Bumped by one atomic raw upsert in
+/// `PrismaOrderNumberAllocator`, inside the order's transaction; Prisma never reads or writes it.
+model OrderNumberCounter {
+  tenantId   String @id @map("tenant_id")
+  lastNumber Int    @map("last_number")
+
+  @@map("order_number_counters")
+  @@schema("orders")
+}

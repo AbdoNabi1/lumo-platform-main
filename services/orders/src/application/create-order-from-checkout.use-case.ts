@@ -11,6 +11,7 @@ import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
 import { OrderTotalsSnapshot } from "../domain/value-objects/order-totals-snapshot";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
+import type { OrderNumberAllocator } from "./ports";
 
 export interface CreateOrderFromCheckoutAddressInput {
   /** Plan 3A: who receives the order, and the second address line. */
@@ -69,6 +70,7 @@ export interface CreateOrderFromCheckoutDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  readonly orderNumbers: OrderNumberAllocator;
 }
 
 /** Creates an order from Checkout's order-draft snapshot — the only entry point to the full Sprint 4.7 lifecycle. */
@@ -148,13 +150,15 @@ export class CreateOrderFromCheckout implements UseCase<
     );
     if (!shippingAddress.ok) return err(shippingAddress.error);
 
-    const orderNumber = OrderNumber.create(`ORD-${this.deps.idGenerator.generate()}`);
-    if (!orderNumber.ok) return err(orderNumber.error);
-
     const totals = OrderTotalsSnapshot.create({ ...input.totals, currency: input.currency });
 
     return this.deps.unitOfWork.run<Result<CreateOrderFromCheckoutOutput, DomainError>>(
       async (tx) => {
+        // Allocated inside the order's transaction: a failed save rolls the counter back too.
+        const orderNumber = OrderNumber.create(
+          await this.deps.orderNumbers.next(input.tenantId, tx),
+        );
+        if (!orderNumber.ok) return err(orderNumber.error);
         const id = UniqueEntityId.from(this.deps.idGenerator.generate());
         const order = Order.createFromCheckout(
           id,

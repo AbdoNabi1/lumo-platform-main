@@ -28,6 +28,7 @@ export {
 export type {
   InventoryPort,
   NotificationPort,
+  OrderNumberAllocator,
   PaymentPort,
   PaymentVerificationPort,
   ShippingPort,
