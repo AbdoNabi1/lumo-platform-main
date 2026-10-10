@@ -1,10 +1,18 @@
 import type { Principal } from "@platform/contracts";
+import type { FulfillmentController } from "@platform/fulfillment";
 import type { OrderController } from "@platform/orders";
+import type { PaymentController } from "@platform/payments";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
 export interface OrdersAdminControllerDeps {
   readonly orders: OrderController;
+  /**
+   * Plan 3B: the two read-only facts an order screen derives its Shopify-style statuses from. Both are
+   * reached under `orders:read` — see {@link OrdersAdminController.fulfillmentsOfOrders}.
+   */
+  readonly fulfillment: Pick<FulfillmentController, "getByOrders">;
+  readonly payments: Pick<PaymentController, "getPaymentIntent">;
   readonly guard: AdminGuard;
 }
 
@@ -16,10 +24,14 @@ export interface OrdersAdminControllerDeps {
  */
 export class OrdersAdminController {
   private readonly orders: OrderController;
+  private readonly fulfillment: Pick<FulfillmentController, "getByOrders">;
+  private readonly payments: Pick<PaymentController, "getPaymentIntent">;
   private readonly guard: AdminGuard;
 
   constructor(deps: OrdersAdminControllerDeps) {
     this.orders = deps.orders;
+    this.fulfillment = deps.fulfillment;
+    this.payments = deps.payments;
     this.guard = deps.guard;
   }
 
@@ -102,5 +114,31 @@ export class OrdersAdminController {
     const denied = await this.guard.ensure(principal, "orders:read");
     if (denied) return denied;
     return this.orders.listOrders(input);
+  }
+
+  /**
+   * The fulfillment orders of a page of orders, in ONE read (Plan 3B) — what the orders list and the
+   * order page derive `fulfillmentStatus` from. Authorized as `orders:read`, not `fulfillment:read`:
+   * the status is part of what reading an order shows, and a staff member who may read orders must not
+   * see a half-empty list because they lack the separate fulfillment screen's permission. It exposes
+   * the fulfillment orders only to the order routes' own mapping, which keeps nothing but the status.
+   */
+  async fulfillmentsOfOrders(
+    principal: Principal,
+    input: { readonly tenantId: string; readonly orderIds: readonly string[] },
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    return this.fulfillment.getByOrders({ tenantId: input.tenantId, orderRefs: input.orderIds });
+  }
+
+  /** The payment intent linked to an order (Plan 3B) — only its provider is shown on the order page. Authorized as `orders:read`. */
+  async paymentIntentOf(
+    principal: Principal,
+    input: { readonly tenantId: string; readonly paymentIntentId: string },
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    return this.payments.getPaymentIntent(input);
   }
 }

@@ -10,4 +10,13 @@ export interface FulfillmentOrderRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<FulfillmentOrder | null>;
+  /**
+   * Plan 3B — the admin orders list: the CURRENT fulfillment order (the most recently opened) of each
+   * given order, keyed by order ref, in ONE read. Orders with none are absent. Never one query per order.
+   */
+  findByOrderRefs(
+    orderRefs: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, FulfillmentOrder>>;
 }

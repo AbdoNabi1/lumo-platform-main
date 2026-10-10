@@ -120,6 +120,7 @@ export class CompleteCheckout implements UseCase<
         billingAddress: draft.billingAddress,
         shippingAddress: draft.shippingAddress,
         totals: draft.totals,
+        ...(draft.shippingMethod === undefined ? {} : { shippingMethod: draft.shippingMethod }),
         idempotencyKey: input.idempotencyKey,
       });
 

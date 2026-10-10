@@ -15,6 +15,7 @@ import { CreateFulfillment } from "./application/create-fulfillment.use-case";
 import { CreateShipment } from "./application/create-shipment.use-case";
 import { AdvanceFulfillment } from "./application/fulfillment-lifecycle.use-cases";
 import { GetFulfillmentByOrder } from "./application/get-fulfillment-by-order.use-case";
+import { GetFulfillmentsByOrders } from "./application/get-fulfillments-by-orders.use-case";
 import { RecordCarrierWebhook } from "./application/record-carrier-webhook.use-case";
 import { RequestReservation } from "./application/request-reservation.use-case";
 import type { FulfillmentOrderRepository } from "./domain/fulfillment-order-repository";
@@ -92,6 +93,7 @@ function buildController(
       processedCarrierWebhooks,
     }),
     getFulfillmentByOrder: new GetFulfillmentByOrder({ fulfillmentOrders }),
+    getFulfillmentsByOrders: new GetFulfillmentsByOrders({ fulfillmentOrders }),
   });
 }
 

@@ -1,9 +1,36 @@
 import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
+import type { Prisma } from "@prisma/client";
 import type { FulfillmentOrder } from "../domain/fulfillment-order";
 import type { FulfillmentOrderRepository } from "../domain/fulfillment-order-repository";
 import { FulfillmentOrderMapper } from "./fulfillment-order.mapper";
+
+type FulfillmentOrderWithAttempts = Prisma.FulfillmentOrderGetPayload<{
+  include: { attempts: true };
+}>;
+
+/** Rebuilds the aggregate from a row + its attempts (JSON columns need explicit shapes). */
+function hydrate(row: FulfillmentOrderWithAttempts): FulfillmentOrder {
+  return FulfillmentOrderMapper.toDomain(
+    {
+      ...row,
+      items: row.items as { productRef: string; quantity: number }[],
+      carrierReference: row.carrierReference as {
+        carrier: string;
+        carrierShipmentId: string;
+      },
+      // Array-of-objects JSON columns need the `unknown` hop: Prisma's `JsonValue` union has no
+      // structural overlap with a concrete element shape (comparability fails, not just assignability).
+      packages: row.packages as unknown as {
+        reference: string;
+        itemRefs: readonly string[];
+        weightGrams: number;
+      }[],
+    },
+    row.attempts,
+  );
+}
 
 export interface PrismaFulfillmentOrderRepositoryDeps {
   readonly prisma: Database;
@@ -82,6 +109,31 @@ export class PrismaFulfillmentOrderRepository implements FulfillmentOrderReposit
     return this.findOne({ orderRef, tenantId }, tenantId, tx);
   }
 
+  /** One tenant-scoped query for the whole page; newest first, so the first row seen per order ref is its current fulfillment order. */
+  async findByOrderRefs(
+    orderRefs: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, FulfillmentOrder>> {
+    const found = new Map<string, FulfillmentOrder>();
+    if (orderRefs.length === 0) return found;
+    const run = (client: TransactionClient) =>
+      client.fulfillmentOrder.findMany({
+        where: { tenantId, orderRef: { in: [...orderRefs] } },
+        include: { attempts: { orderBy: { occurredAt: "asc" } } },
+        orderBy: { createdAt: "desc" },
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    for (const row of rows) {
+      if (found.has(row.orderRef)) continue;
+      found.set(row.orderRef, hydrate(row));
+    }
+    return found;
+  }
+
   private async findOne(
     where: { readonly tenantId: string } & Record<string, string>,
     tenantId: string,
@@ -96,25 +148,7 @@ export class PrismaFulfillmentOrderRepository implements FulfillmentOrderReposit
       tx !== undefined && tx !== null
         ? await run(tx as TransactionClient)
         : await runReadScoped(this.deps.prisma, tenantId, run);
-    if (row === null) return null;
-    return FulfillmentOrderMapper.toDomain(
-      {
-        ...row,
-        items: row.items as { productRef: string; quantity: number }[],
-        carrierReference: row.carrierReference as {
-          carrier: string;
-          carrierShipmentId: string;
-        },
-        // Array-of-objects JSON columns need the `unknown` hop: Prisma's `JsonValue` union has no
-        // structural overlap with a concrete element shape (comparability fails, not just assignability).
-        packages: row.packages as unknown as {
-          reference: string;
-          itemRefs: readonly string[];
-          weightGrams: number;
-        }[],
-      },
-      row.attempts,
-    );
+    return row === null ? null : hydrate(row);
   }
 
   private requireTx(tx: unknown): TransactionClient {

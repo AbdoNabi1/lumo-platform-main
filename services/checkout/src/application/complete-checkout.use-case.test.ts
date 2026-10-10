@@ -7,6 +7,7 @@ import type { CheckoutSessionRepository } from "../domain/checkout-session-repos
 import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
+import { ShippingSelection } from "../domain/value-objects/selections";
 import type { InventoryValidationPort, OrderCreationPort } from "./ports";
 import { CompleteCheckout } from "./complete-checkout.use-case";
 
@@ -71,10 +72,14 @@ class NoopUnitOfWork {
 
 class FakeOrderCreationPort implements OrderCreationPort {
   callCount = 0;
+  lastInput: Parameters<OrderCreationPort["create"]>[0] | undefined;
   constructor(private readonly orderRef: string) {}
 
-  async create(): Promise<{ readonly orderRef: string }> {
+  async create(
+    input: Parameters<OrderCreationPort["create"]>[0],
+  ): Promise<{ readonly orderRef: string }> {
     this.callCount += 1;
+    this.lastInput = input;
     return { orderRef: this.orderRef };
   }
 }
@@ -87,6 +92,30 @@ function sequentialIds(): IdGenerator {
 const clock: Clock = { now: () => new Date("2026-06-30T00:00:00.000Z") };
 
 describe("CompleteCheckout", () => {
+  it("hands the shopper's selected shipping method to the order (Plan 3B)", async () => {
+    const sessions = new FakeSessionRepository();
+    const session = readySession();
+    session.selectShipping(must(ShippingSelection.create("standard", 500, "USD")));
+    session.recalculateTotals("evt-recalc", new Date(0));
+    sessions.seed(session);
+    const orderCreation = new FakeOrderCreationPort("order-abc");
+    const useCase = new CompleteCheckout({
+      sessions,
+      unitOfWork: new NoopUnitOfWork(),
+      idGenerator: sequentialIds(),
+      clock,
+      orderCreation,
+    });
+
+    await useCase.execute({
+      tenantId: "tenant-a",
+      checkoutSessionId: "cs-1",
+      idempotencyKey: "idem-1",
+    });
+
+    expect(orderCreation.lastInput?.shippingMethod).toBe("standard");
+  });
+
   it("creates the order via OrderCreationPort and completes the session", async () => {
     const sessions = new FakeSessionRepository();
     sessions.seed(readySession());

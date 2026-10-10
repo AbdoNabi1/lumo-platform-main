@@ -5,11 +5,18 @@ import type { RateLimiter } from "@platform/contracts";
 import type { Brand, Category, Product } from "@platform/catalog";
 import type { Customer } from "@platform/identity";
 import type { InventoryItem, WarehouseOutput } from "@platform/inventory";
-import type { Order } from "@platform/orders";
+import type { FulfillmentOrder } from "@platform/fulfillment";
+import {
+  derivePaymentStatus,
+  type Order,
+  type OrderFulfillmentStatus,
+  type OrderPaymentStatus,
+} from "@platform/orders";
 import type { Paginated } from "@platform/types";
 import { UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
+import { deriveFulfillmentStatus } from "./order-fulfillment-status";
 import { analyticsRoutes } from "./analytics-routes";
 import { automationRoutes } from "./automation-routes";
 import { cartRoutes } from "./cart-routes";
@@ -169,9 +176,22 @@ export interface OrderListItemDto {
   readonly currency: string;
   readonly totalMinor: number;
   readonly createdAt: string;
+  /** Plan 3B: the shipping address's recipient name; null when the shopper typed none. */
+  readonly customerName: string | null;
+  /** Plan 3B: the sum of the line quantities. */
+  readonly itemCount: number;
+  /** Plan 3B: the shipping method the shopper selected; null on orders placed before it was captured. */
+  readonly shippingMethod: string | null;
+  /** Plan 3B: Shopify's payment status, derived from the order's history. */
+  readonly paymentStatus: OrderPaymentStatus;
+  /** Plan 3B: Shopify's fulfillment status, derived from the Fulfillment context. */
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
 }
 
-function toOrderListItemDto(order: Order): OrderListItemDto {
+function toOrderListItemDto(
+  order: Order,
+  fulfillmentStatus: OrderFulfillmentStatus,
+): OrderListItemDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
     throw new UnexpectedError(`Corrupt order data: order ${order.id.toString()} has no history`);
@@ -184,6 +204,11 @@ function toOrderListItemDto(order: Order): OrderListItemDto {
     currency: order.currency,
     totalMinor: order.totalAmount().amountMinor,
     createdAt: firstEvent.occurredAt.toISOString(),
+    customerName: order.shippingAddress.recipientName ?? null,
+    itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
+    shippingMethod: order.totals?.shippingMethod ?? null,
+    paymentStatus: derivePaymentStatus(order.history),
+    fulfillmentStatus,
   };
 }
 
@@ -245,6 +270,14 @@ export interface OrderDetailDto {
   readonly paymentRef: string | null;
   readonly fulfillmentRef: string | null;
   readonly history: readonly OrderHistoryEntryDto[];
+  /** Plan 3B: Shopify's payment status, derived from the order's history. */
+  readonly paymentStatus: OrderPaymentStatus;
+  /** Plan 3B: Shopify's fulfillment status, derived from the Fulfillment context. */
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
+  /** Plan 3B: how the customer pays ("cod", "stripe", …), from the linked payment; null until one is linked. */
+  readonly paymentProvider: string | null;
+  /** Plan 3B: the shipping method the shopper selected; null on orders placed before it was captured. */
+  readonly shippingMethod: string | null;
 }
 
 function toOrderRecipientAddressDto(address: Order["shippingAddress"]): OrderRecipientAddressDto {
@@ -259,7 +292,11 @@ function toOrderRecipientAddressDto(address: Order["shippingAddress"]): OrderRec
   };
 }
 
-function toOrderDetailDto(order: Order): OrderDetailDto {
+function toOrderDetailDto(
+  order: Order,
+  fulfillmentStatus: OrderFulfillmentStatus,
+  paymentProvider: string | null,
+): OrderDetailDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
     throw new UnexpectedError(`Corrupt order data: order ${order.id.toString()} has no history`);
@@ -306,7 +343,36 @@ function toOrderDetailDto(order: Order): OrderDetailDto {
       type: entry.type,
       occurredAt: entry.occurredAt.toISOString(),
     })),
+    paymentStatus: derivePaymentStatus(order.history),
+    fulfillmentStatus,
+    paymentProvider,
+    shippingMethod: order.totals?.shippingMethod ?? null,
   };
+}
+
+/**
+ * The Shopify-style fulfillment status of each order on a page, from ONE batched read of the
+ * Fulfillment context (never a call per order). An order with no fulfillment order is "unfulfilled".
+ * A failed read is returned as the response: a list that silently showed every order "unfulfilled"
+ * would be wrong, not just incomplete.
+ */
+async function fulfillmentStatusesOf(
+  admin: WiredAdmin,
+  principal: Parameters<WiredAdmin["orders"]["fulfillmentsOfOrders"]>[0],
+  tenantId: string,
+  orderIds: readonly string[],
+): Promise<
+  | { readonly ok: true; readonly byOrder: ReadonlyMap<string, OrderFulfillmentStatus> }
+  | { readonly ok: false; readonly response: AdminResponse }
+> {
+  if (orderIds.length === 0) return { ok: true, byOrder: new Map() };
+  const response = await admin.orders.fulfillmentsOfOrders(principal, { tenantId, orderIds });
+  if (response.status !== 200) return { ok: false, response };
+  const byOrder = new Map<string, OrderFulfillmentStatus>();
+  for (const fulfillmentOrder of response.body as readonly FulfillmentOrder[]) {
+    byOrder.set(fulfillmentOrder.orderRef, deriveFulfillmentStatus(fulfillmentOrder));
+  }
+  return { ok: true, byOrder };
 }
 
 /**
@@ -1379,14 +1445,24 @@ export function adminRoutes(
       permission: "orders:read",
       summary: "List orders, most recently placed first (cursor-paginated)",
       schema: { querystring: listOrdersQuery },
-      handle: async ({ query, context }) =>
-        mapPage(
-          await admin.orders.listOrders(context.principal, {
-            ...query,
-            tenantId: context.tenantId,
-          }),
-          toOrderListItemDto,
-        ),
+      handle: async ({ query, context }): Promise<AdminResponse> => {
+        const response = await admin.orders.listOrders(context.principal, {
+          ...query,
+          tenantId: context.tenantId,
+        });
+        if (response.status !== 200) return response;
+        const orders = (response.body as Paginated<Order>).items;
+        const statuses = await fulfillmentStatusesOf(
+          admin,
+          context.principal,
+          context.tenantId,
+          orders.map((order) => order.id.toString()),
+        );
+        if (!statuses.ok) return statuses.response;
+        return mapPage(response, (order: Order) =>
+          toOrderListItemDto(order, statuses.byOrder.get(order.id.toString()) ?? "unfulfilled"),
+        );
+      },
     }),
     defineRoute({
       method: "GET",
@@ -1403,7 +1479,31 @@ export function adminRoutes(
         if (response.status !== 200) {
           return response;
         }
-        return { status: 200, body: toOrderDetailDto(response.body as Order) };
+        const order = response.body as Order;
+        const statuses = await fulfillmentStatusesOf(admin, context.principal, context.tenantId, [
+          order.id.toString(),
+        ]);
+        if (!statuses.ok) return statuses.response;
+        // How the customer pays is cosmetic: a payment that cannot be read shows as a dash, it does
+        // not fail the order page.
+        let paymentProvider: string | null = null;
+        if (order.paymentRef !== undefined) {
+          const intent = await admin.orders.paymentIntentOf(context.principal, {
+            tenantId: context.tenantId,
+            paymentIntentId: order.paymentRef,
+          });
+          if (intent.status === 200) {
+            paymentProvider = (intent.body as { provider: string }).provider;
+          }
+        }
+        return {
+          status: 200,
+          body: toOrderDetailDto(
+            order,
+            statuses.byOrder.get(order.id.toString()) ?? "unfulfilled",
+            paymentProvider,
+          ),
+        };
       },
     }),
     defineRoute({

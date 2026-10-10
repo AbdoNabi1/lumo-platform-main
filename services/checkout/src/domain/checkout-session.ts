@@ -20,6 +20,8 @@ export interface OrderDraft {
   readonly billingAddress: CheckoutAddress;
   readonly shippingAddress: CheckoutAddress;
   readonly totals: CheckoutTotals;
+  /** The shipping method the shopper selected (e.g. "standard"); Orders snapshots it with the totals. */
+  readonly shippingMethod?: string;
 }
 
 export interface PaymentIntentRequest {
@@ -299,6 +301,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
       billingAddress: this.props.billingAddress,
       shippingAddress: this.props.shippingAddress,
       totals: this.props.totals,
+      shippingMethod: this.props.shippingSelection?.method,
     };
   }
 

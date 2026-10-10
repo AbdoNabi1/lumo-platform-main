@@ -34,3 +34,5 @@ export type {
   ShippingPort,
 } from "./application/ports";
 export { ORDERS_PUBLISHED_EVENTS } from "./infrastructure/order-event-translator";
+export { derivePaymentStatus } from "./domain/order-statuses";
+export type { OrderFulfillmentStatus, OrderPaymentStatus } from "./domain/order-statuses";

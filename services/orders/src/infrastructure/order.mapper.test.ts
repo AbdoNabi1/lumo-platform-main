@@ -199,3 +199,75 @@ describe("OrderMapper — recipient name, phone and line 2 (Plan 3A)", () => {
     expect(back.billingAddress?.phone).toBeUndefined();
   });
 });
+
+function orderWithShippingMethod(shippingMethod?: string): Order {
+  const address = must(AddressSnapshot.create("1 Main St", "Cairo", "", "EG"));
+  return Order.createFromCheckout(
+    UniqueEntityId.from("order-3"),
+    must(OrderNumber.create("1001")),
+    "customer-1",
+    "EGP",
+    [
+      OrderItem.create(
+        UniqueEntityId.from("item-4"),
+        must(ProductSnapshot.create("p-mug", "Mug", must(Money.create(5000, "EGP")))),
+        1,
+      ),
+    ],
+    address,
+    address,
+    OrderTotalsSnapshot.create({
+      subtotalMinor: 5000,
+      taxMinor: 0,
+      shippingMinor: 3000,
+      discountMinor: 0,
+      totalMinor: 8000,
+      currency: "EGP",
+      ...(shippingMethod === undefined ? {} : { shippingMethod }),
+    }),
+    "checkout-3",
+    "evt-3",
+    new Date(0),
+  );
+}
+
+describe("OrderMapper — shipping method in the totals JSON (Plan 3B)", () => {
+  it("writes the selected shipping method into the totals JSON (no migration: it is a JSON key)", () => {
+    expect(OrderMapper.toOrderRow(orderWithShippingMethod("standard"), "t1").totals).toMatchObject({
+      shippingMinor: 3000,
+      shippingMethod: "standard",
+    });
+  });
+
+  it("round-trips the shipping method", () => {
+    const order = orderWithShippingMethod("express");
+    const back = OrderMapper.toDomain(
+      { ...OrderMapper.toOrderRow(order, "t1"), version: 1 },
+      OrderMapper.toItemRows(order, "t1"),
+      OrderMapper.toEventRows(order, "t1"),
+      OrderMapper.toAddressRow(order, "t1"),
+    );
+    expect(back.totals?.shippingMethod).toBe("express");
+  });
+
+  it("reads totals written before the key existed as having no shipping method", () => {
+    const order = orderWithShippingMethod();
+    const row = OrderMapper.toOrderRow(order, "t1");
+    const legacyTotals = { ...row.totals } as Record<string, unknown>;
+    delete legacyTotals["shippingMethod"];
+    const back = OrderMapper.toDomain(
+      { ...row, totals: legacyTotals as unknown as NonNullable<typeof row.totals>, version: 1 },
+      OrderMapper.toItemRows(order, "t1"),
+      OrderMapper.toEventRows(order, "t1"),
+      OrderMapper.toAddressRow(order, "t1"),
+    );
+    expect(back.totals?.shippingMethod).toBeUndefined();
+    expect(back.totals?.totalMinor).toBe(8000);
+  });
+
+  it("an order with no shipping method writes no key at all", () => {
+    const totals = OrderMapper.toOrderRow(orderWithShippingMethod(), "t1").totals;
+    expect(totals).not.toBeNull();
+    expect(Object.keys(totals ?? {})).not.toContain("shippingMethod");
+  });
+});

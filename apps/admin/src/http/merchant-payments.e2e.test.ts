@@ -699,6 +699,105 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
       expect(settled.paymentRef).toBe(id);
     });
 
+    // Plan 3B: the orders list and the order page show Shopify's two statuses — payment and fulfillment —
+    // derived server-side, plus the customer name, item count and delivery method.
+    it("shows payment and fulfillment status, customer name, item count and delivery method on the list and the order", async () => {
+      await seedProduct("tok-a");
+      await enableAll("tok-a");
+      const { checkout, opened, amountMinor } = await paid("tenant-a", "sess-cod-status", "cod");
+      const id = opened.paymentIntentId;
+      const orderRef = ok<{ orderRef: string }>(
+        await get(checkout.base, storefront("tenant-a", { "x-cart-session": "sess-cod-status" })),
+        "get checkout",
+      ).orderRef;
+      interface Statuses {
+        readonly paymentStatus: string;
+        readonly fulfillmentStatus: string;
+      }
+      const listRow = async () => {
+        const list = ok<{
+          items: readonly (Statuses & Record<string, unknown> & { id: string })[];
+        }>(await get("/orders?first=50", admin("tok-a")), "list orders");
+        const row = list.items.find((item) => item.id === orderRef);
+        if (row === undefined) throw new Error("order missing from the list");
+        return row;
+      };
+      const detail = async () =>
+        ok<
+          Statuses & {
+            orderNumber: string;
+            paymentProvider: string | null;
+            shippingMethod: string | null;
+            items: readonly {
+              productId: string;
+              sku: string | null;
+              variantTitle: string | null;
+            }[];
+          }
+        >(await get(`/orders/${orderRef}`, admin("tok-a")), "get order");
+
+      // A fresh cash-on-delivery order: payment pending, nothing fulfilled, and the list says who/what/how.
+      expect(await listRow()).toMatchObject({
+        orderNumber: "1001",
+        customerName: null, // this checkout typed no recipient name
+        itemCount: 1,
+        shippingMethod: "standard",
+        paymentStatus: "pending",
+        fulfillmentStatus: "unfulfilled",
+      });
+      const fresh = await detail();
+      expect(fresh).toMatchObject({
+        orderNumber: "1001",
+        paymentStatus: "pending",
+        fulfillmentStatus: "unfulfilled",
+        paymentProvider: "cod",
+        shippingMethod: "standard",
+      });
+      expect(fresh.items[0]).toHaveProperty("sku");
+      expect(fresh.items[0]).toHaveProperty("variantTitle");
+
+      // Fulfillment does not wait for payment: opening one makes it "in progress" while payment is still pending.
+      const opening = await post(
+        "/fulfillments",
+        { ...admin("tok-a"), "idempotency-key": "open-fulfillment-status" },
+        { orderRef, items: [{ productRef: fresh.items[0]?.productId, quantity: 1 }] },
+      );
+      expect(opening.statusCode).toBe(201);
+      expect(await listRow()).toMatchObject({
+        paymentStatus: "pending",
+        fulfillmentStatus: "in_progress",
+      });
+      expect(await detail()).toMatchObject({
+        paymentStatus: "pending",
+        fulfillmentStatus: "in_progress",
+      });
+
+      // The confirmed collection and the payment completion turn payment to "paid"; fulfillment is unchanged.
+      ok(
+        await post(`/payment-intents/${id}/cod-collection`, admin("tok-a"), {
+          collectedAmountMinor: amountMinor,
+          currency: "USD",
+        }),
+        "collect",
+      );
+      ok(
+        await post(
+          `/orders/${orderRef}/mark-paid`,
+          { ...admin("tok-a"), "idempotency-key": "mark-paid-status" },
+          { paymentRef: id },
+        ),
+        "mark paid",
+      );
+      expect(await listRow()).toMatchObject({
+        paymentStatus: "paid",
+        fulfillmentStatus: "in_progress",
+      });
+      expect(await detail()).toMatchObject({
+        paymentStatus: "paid",
+        fulfillmentStatus: "in_progress",
+      });
+    });
+
     it("another merchant's staff cannot confirm a collection for it", async () => {
       await seedProduct("tok-a");
       await enableAll("tok-a");

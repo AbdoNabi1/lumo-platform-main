@@ -40,4 +40,19 @@ export class InMemoryFulfillmentOrderRepository implements FulfillmentOrderRepos
     }
     return null;
   }
+
+  /** Insertion order is opening order, so a later fulfillment order for the same order ref wins. */
+  findByOrderRefs(
+    orderRefs: readonly string[],
+    tenantId: string,
+  ): Promise<ReadonlyMap<string, FulfillmentOrder>> {
+    const wanted = new Set(orderRefs);
+    const found = new Map<string, FulfillmentOrder>();
+    for (const fulfillmentOrder of this.store.get(tenantId)?.values() ?? []) {
+      if (wanted.has(fulfillmentOrder.orderRef)) {
+        found.set(fulfillmentOrder.orderRef, fulfillmentOrder);
+      }
+    }
+    return Promise.resolve(found);
+  }
 }

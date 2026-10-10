@@ -63,6 +63,8 @@ export interface OrderTotalsJson {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3B: a JSON key, so no migration; absent (or null) on orders placed before it was captured. */
+  readonly shippingMethod?: string | null;
 }
 
 /** Unwraps a VO `Result`; a failure here means the row violates a domain invariant (corrupt data). */
@@ -144,7 +146,13 @@ export class OrderMapper {
                 ),
                 "billing address",
               ),
-        totals: row.totals === null ? undefined : OrderTotalsSnapshot.create(row.totals),
+        totals:
+          row.totals === null
+            ? undefined
+            : OrderTotalsSnapshot.create({
+                ...row.totals,
+                shippingMethod: row.totals.shippingMethod ?? undefined,
+              }),
         checkoutRef: row.checkoutRef ?? undefined,
         paymentRef: row.paymentRef ?? undefined,
         fulfillmentRef: row.fulfillmentRef ?? undefined,
@@ -184,6 +192,9 @@ export class OrderMapper {
               discountMinor: order.totals.discountMinor,
               totalMinor: order.totals.totalMinor,
               currency: order.totals.currency,
+              ...(order.totals.shippingMethod === undefined
+                ? {}
+                : { shippingMethod: order.totals.shippingMethod }),
             },
       version: 1, // first persisted version; reconstitution reads it back
     };

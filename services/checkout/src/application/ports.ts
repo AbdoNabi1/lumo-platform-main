@@ -110,6 +110,8 @@ export interface OrderCreationPort {
     readonly billingAddress: CheckoutAddress;
     readonly shippingAddress: CheckoutAddress;
     readonly totals: CheckoutTotals;
+    /** The shipping method the shopper selected (Plan 3B); the order snapshots it with the totals. */
+    readonly shippingMethod?: string;
     readonly idempotencyKey: string;
   }): Promise<{ readonly orderRef: string }>;
 }

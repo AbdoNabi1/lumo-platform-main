@@ -41,6 +41,9 @@ type OrderCreationInput = Parameters<OrderCreationPort["create"]>[0];
  *   time (`CheckoutItem.title`) is named by it, and also passes its `variantRef`, `sku` and
  *   `variantTitle`. Only a LEGACY line (added before variants were tracked, so with no title) still
  *   falls back to the product ref as its name, exactly as before.
+ * - **Shipping method (Plan 3B).** The method the shopper selected (`CheckoutSession.shippingSelection`)
+ *   travels as `input.shippingMethod` and is snapshotted into the order's `totals` JSON, so the admin
+ *   can show "Delivery method" without asking Checkout. Orders placed before this have none.
  * - **Recipient (Plan 3A).** `CheckoutAddress.name`, `phone` and `line2` travel to Orders' address
  *   input (`name`, `phone`, `line2`); Orders persists them as `recipient_name`, `phone` and `line2`.
  *
@@ -133,6 +136,9 @@ export class OrderCreationAdapter implements OrderCreationPort {
         shippingMinor: input.totals.shippingMinor,
         discountMinor: input.totals.discountMinor,
         totalMinor: input.totals.totalMinor,
+        // Plan 3B: snapshotted into the order's totals JSON (no migration). Absent when the session
+        // selected no shipping method — never a default.
+        ...(input.shippingMethod === undefined ? {} : { shippingMethod: input.shippingMethod }),
       },
     });
 

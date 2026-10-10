@@ -237,4 +237,40 @@ describe("orders (end to end)", () => {
       ["Blocks", undefined, undefined, undefined],
     ]);
   });
+
+  // Plan 3B: the shopper's selected shipping method is snapshotted into the order's totals JSON.
+  it("snapshots the selected shipping method into the order's totals", async () => {
+    const app = wire();
+    const address = { line1: "1 Main St", city: "Town", postalCode: "12345", country: "US" };
+    const create = (shippingMethod?: string) =>
+      app.orders.createFromCheckout({
+        tenantId: "tenant-a",
+        checkoutRef: "checkout-1",
+        customerRef: "customer-1",
+        currency: "USD",
+        items: [{ productId: "p-1", name: "Toy Wagon", unitPriceAmountMinor: 1500, quantity: 1 }],
+        billingAddress: address,
+        shippingAddress: address,
+        totals: {
+          subtotalMinor: 1500,
+          taxMinor: 0,
+          shippingMinor: 500,
+          discountMinor: 0,
+          totalMinor: 2000,
+          ...(shippingMethod === undefined ? {} : { shippingMethod }),
+        },
+      });
+    const withMethod = await create("standard");
+    const without = await create();
+
+    const read = async (response: { body: unknown }) =>
+      (
+        await app.orders.getOrder({
+          tenantId: "tenant-a",
+          orderId: (response.body as { orderId: string }).orderId,
+        })
+      ).body as { totals?: { shippingMethod?: string } };
+    expect((await read(withMethod)).totals?.shippingMethod).toBe("standard");
+    expect((await read(without)).totals?.shippingMethod).toBeUndefined();
+  });
 });

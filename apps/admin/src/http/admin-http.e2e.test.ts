@@ -283,6 +283,12 @@ describe("GET /orders (list)", () => {
         currency: "USD",
         totalMinor: 1999,
         createdAt: expect.any(String),
+        // Plan 3B: a legacy `place` order has no recipient name, one line, no shipping method, no payment and no fulfillment.
+        customerName: null,
+        itemCount: 1,
+        shippingMethod: null,
+        paymentStatus: "pending",
+        fulfillmentStatus: "unfulfilled",
       });
     }
 

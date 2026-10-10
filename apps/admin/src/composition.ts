@@ -990,7 +990,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       warehouse: inventory.warehouse,
       guard,
     }),
-    orders: new OrdersAdminController({ orders: orders.orders, guard }),
+    orders: new OrdersAdminController({
+      orders: orders.orders,
+      fulfillment: fulfillment.fulfillment,
+      payments: payments.payments,
+      guard,
+    }),
     customers: new CustomersAdminController({ customers: identity.customers, guard }),
     customer360: new Customer360AdminController({
       customer360: customer360.customer360,

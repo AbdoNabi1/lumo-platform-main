@@ -75,6 +75,7 @@ interface CreateFromCheckoutCall {
     readonly shippingMinor: number;
     readonly discountMinor: number;
     readonly totalMinor: number;
+    readonly shippingMethod?: string;
   };
 }
 
@@ -325,6 +326,18 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
       discountMinor: 50,
       totalMinor: 2250,
     });
+  });
+
+  it("snapshots the session's selected shipping method into the order's totals (Plan 3B)", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(guestInput({ customerRef: "customer-1", shippingMethod: "standard" }));
+    await adapter.create(guestInput({ customerRef: "customer-1" }));
+
+    expect(calls[0]?.totals).toMatchObject({ shippingMinor: 200, shippingMethod: "standard" });
+    // A session with no shipping selection sends no key at all — never an empty or default method.
+    expect(Object.keys(calls[1]?.totals ?? {})).not.toContain("shippingMethod");
   });
 
   it("throws, naming the checkout session and response body, on an unexpected non-201 status", async () => {

@@ -62,6 +62,17 @@ class PostgresLikeFulfillmentOrderRepository implements FulfillmentOrderReposito
     return null;
   }
 
+  async findByOrderRefs(
+    orderRefs: readonly string[],
+  ): Promise<ReadonlyMap<string, FulfillmentOrder>> {
+    const found = new Map<string, FulfillmentOrder>();
+    for (const orderRef of orderRefs) {
+      const order = await this.findByOrderRef(orderRef);
+      if (order !== null) found.set(orderRef, order);
+    }
+    return found;
+  }
+
   size(): number {
     return this.rows.size;
   }

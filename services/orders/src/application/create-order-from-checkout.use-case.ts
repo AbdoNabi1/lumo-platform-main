@@ -45,6 +45,8 @@ export interface CreateOrderFromCheckoutTotalsInput {
   readonly shippingMinor: number;
   readonly discountMinor: number;
   readonly totalMinor: number;
+  /** Plan 3B: the shipping method the shopper selected, snapshotted into the order's totals. */
+  readonly shippingMethod?: string;
 }
 
 export interface CreateOrderFromCheckoutInput {

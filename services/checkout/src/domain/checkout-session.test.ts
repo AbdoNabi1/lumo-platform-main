@@ -140,6 +140,23 @@ describe("CheckoutSession", () => {
     expect(draft.totals.totalMinor).toBeGreaterThan(0);
   });
 
+  it("carries the shopper's selected shipping method on the order draft (Plan 3B), none when none was chosen", () => {
+    const withoutMethod = session();
+    withoutMethod.loadItems([item()]);
+    withoutMethod.setBillingAddress(address());
+    withoutMethod.setShippingAddress(address());
+    withoutMethod.recalculateTotals("evt-1", new Date(0));
+    expect(withoutMethod.generateOrderDraft().shippingMethod).toBeUndefined();
+
+    const withMethod = session();
+    withMethod.loadItems([item()]);
+    withMethod.setBillingAddress(address());
+    withMethod.setShippingAddress(address());
+    withMethod.selectShipping(must(ShippingSelection.create("express", 900, "USD")));
+    withMethod.recalculateTotals("evt-2", new Date(0));
+    expect(withMethod.generateOrderDraft().shippingMethod).toBe("express");
+  });
+
   it("generates a payment intent request only once a payment selection and totals are present", () => {
     const cs = session();
     cs.loadItems([item()]);

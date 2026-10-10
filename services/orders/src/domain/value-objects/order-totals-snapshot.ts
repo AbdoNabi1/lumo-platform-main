@@ -7,6 +7,8 @@ interface OrderTotalsSnapshotProps {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3B: the shipping method the shopper selected (e.g. "standard"); absent on older orders. */
+  readonly shippingMethod?: string;
 }
 
 /** An immutable copy of Checkout's assembled totals, captured at order creation — Orders recalculates nothing. */
@@ -37,5 +39,9 @@ export class OrderTotalsSnapshot extends ValueObject<OrderTotalsSnapshotProps> {
 
   get currency(): string {
     return this.props.currency;
+  }
+
+  get shippingMethod(): string | undefined {
+    return this.props.shippingMethod;
   }
 }
