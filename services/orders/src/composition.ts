@@ -29,6 +29,7 @@ import type {
   NotificationPort,
   OrderNumberAllocator,
   PaymentPort,
+  PaymentVoidPort,
   PaymentVerificationPort,
   ShippingPort,
 } from "./application/ports";
@@ -73,6 +74,11 @@ export interface OrdersWiringDeps {
   readonly inventoryPort?: InventoryPort;
   readonly shippingPort?: ShippingPort;
   readonly notifications?: NotificationPort;
+  /**
+   * G-126: voids the payment of an order that is cancelled before it was paid. Optional — absent ⇒
+   * cancelling an order touches no payment (the offline in-memory pipelines, unchanged).
+   */
+  readonly paymentVoid?: PaymentVoidPort;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaOrderRepository` + `PrismaUnitOfWork`;
    * absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository built here is a
@@ -134,6 +140,7 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       notifications,
+      ...(deps.paymentVoid !== undefined ? { paymentVoid: deps.paymentVoid } : {}),
     }),
     requestPaymentCapture: new RequestPaymentCapture({
       orders,

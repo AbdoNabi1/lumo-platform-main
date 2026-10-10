@@ -123,6 +123,10 @@ describe("derivePaymentStatus", () => {
     ],
     ["a cancelled, closed order", ["created", "cancelled", "closed"]],
     ["a legacy placed order that was cancelled", ["placed", "cancelled"]],
+    [
+      "a cash-on-delivery order cancelled while its collection was still pending",
+      ["created", "confirmed", "awaiting_payment", "payment_requested", "cancelled"],
+    ],
   ])("is voided for %s", (_name, types) => {
     expect(derivePaymentStatus(history(...types))).toBe("voided");
   });

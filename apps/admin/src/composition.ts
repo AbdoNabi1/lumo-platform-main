@@ -60,6 +60,7 @@ import {
   type NotificationPort as OrdersNotificationPort,
   type OrderController,
   type PaymentPort as OrdersPaymentPort,
+  type PaymentVoidPort as OrdersPaymentVoidPort,
   type PaymentVerificationPort,
   type ShippingPort as OrdersShippingPort,
 } from "@platform/orders";
@@ -109,6 +110,7 @@ import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-in
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
+import { OrdersPaymentVoidAdapter } from "./infrastructure/cross-context/orders-payment-void.adapter";
 import { CatalogPricingValidationAdapter } from "./infrastructure/cross-context/catalog-pricing-validation.adapter";
 import {
   CheckoutPaymentInitiationAdapter,
@@ -333,6 +335,8 @@ export interface AdminWiringDeps {
   readonly inventoryPort?: OrdersInventoryPort;
   readonly shippingPort?: OrdersShippingPort;
   readonly notifications?: OrdersNotificationPort;
+  /** G-126: voids the payment of an order cancelled before it was paid. Defaults to the real adapter over Payments. */
+  readonly paymentVoid?: OrdersPaymentVoidPort;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 5 orchestration ports Checkout's
    * `ValidateCheckout`/`RequestTaxCalculation`/`RequestShippingQuote`/`ValidatePromotion`/
@@ -692,18 +696,38 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const paymentsControllerCell: {
     controller?: Pick<
       PaymentController,
-      "createIntentLifecycle" | "captureLifecycle" | "getMerchantPaymentSettings"
+      | "createIntentLifecycle"
+      | "captureLifecycle"
+      | "getMerchantPaymentSettings"
+      | "getPaymentIntent"
+      | "advance"
     >;
   } = {};
   const lazyPaymentsController: Pick<
     PaymentController,
-    "createIntentLifecycle" | "captureLifecycle" | "getMerchantPaymentSettings"
+    | "createIntentLifecycle"
+    | "captureLifecycle"
+    | "getMerchantPaymentSettings"
+    | "getPaymentIntent"
+    | "advance"
   > = {
     getMerchantPaymentSettings: (input) => {
       if (paymentsControllerCell.controller === undefined) {
         throw new Error("PaymentController requested before wirePayments() completed");
       }
       return paymentsControllerCell.controller.getMerchantPaymentSettings(input);
+    },
+    getPaymentIntent: (input) => {
+      if (paymentsControllerCell.controller === undefined) {
+        throw new Error("PaymentController requested before wirePayments() completed");
+      }
+      return paymentsControllerCell.controller.getPaymentIntent(input);
+    },
+    advance: (input) => {
+      if (paymentsControllerCell.controller === undefined) {
+        throw new Error("PaymentController requested before wirePayments() completed");
+      }
+      return paymentsControllerCell.controller.advance(input);
     },
     createIntentLifecycle: (input) => {
       if (paymentsControllerCell.controller === undefined) {
@@ -734,6 +758,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
         lazyOrdersController,
       ),
     notifications: deps.notifications ?? new OrdersNotificationAdapter(notifications.notifications),
+    // G-126: cancelling an unpaid order cancels its payment intent too (best-effort).
+    paymentVoid: deps.paymentVoid ?? new OrdersPaymentVoidAdapter(lazyPaymentsController),
     paymentPort:
       deps.paymentPort ??
       new OrdersPaymentAdapter(lazyPaymentsController, async (orderId, tenantId) => {

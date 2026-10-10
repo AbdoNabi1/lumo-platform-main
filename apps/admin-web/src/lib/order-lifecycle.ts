@@ -14,7 +14,7 @@ export const ORDER_LIFECYCLE_TRANSITIONS: Readonly<Record<string, readonly strin
   held: ["resumed", "cancelled"],
   resumed: ["awaiting_payment"],
   awaiting_payment: ["payment_requested", "cancelled"],
-  payment_requested: ["payment_received", "payment_failed"],
+  payment_requested: ["payment_received", "payment_failed", "cancelled"],
   payment_failed: ["payment_requested", "cancelled"],
   payment_received: ["ready_for_fulfillment"],
   ready_for_fulfillment: ["fulfillment_requested"],
@@ -60,8 +60,8 @@ export function canRefundFrom(status: string): boolean {
 /**
  * Whether "Cancel order" should be offered from `status`: exactly when the transition table above
  * allows `cancelled` as a next state — the order page never offers a cancellation the backend would
- * refuse. (Not from `payment_requested`, `payment_received` or later: the table only lets an order be
- * cancelled before a payment has been asked for, or after one failed.)
+ * refuse. That includes `payment_requested` (an unpaid cash-on-delivery order, G-126) but never
+ * `payment_received` or later: a paid order is refunded, not cancelled.
  */
 export function canCancelFrom(status: string): boolean {
   return (ORDER_LIFECYCLE_TRANSITIONS[status] ?? []).includes("cancelled");

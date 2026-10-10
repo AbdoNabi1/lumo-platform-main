@@ -7,7 +7,13 @@ import { ConcurrencyError, type DomainError, NotFoundError } from "@platform/uti
 import type { Order } from "../domain/order";
 import { canTransition, type OrderEventType } from "../domain/order-event";
 import type { OrderRepository } from "../domain/order-repository";
-import type { InventoryPort, NotificationPort, PaymentPort, ShippingPort } from "./ports";
+import type {
+  InventoryPort,
+  NotificationPort,
+  PaymentPort,
+  PaymentVoidPort,
+  ShippingPort,
+} from "./ports";
 
 /**
  * Bounded retry on optimistic-lock conflicts only (Phase A.15, reusing the shape Payments'
@@ -65,6 +71,8 @@ export interface AdvanceOrderDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   readonly notifications?: NotificationPort;
+  /** Voids the order's unpaid payment when it is cancelled (G-126). Optional: without it, cancelling touches no payment. */
+  readonly paymentVoid?: PaymentVoidPort;
 }
 
 /** Generic validated transition — moves an order to any status its current status's transition table allows. */
@@ -76,23 +84,38 @@ export class AdvanceOrder implements UseCase<AdvanceOrderInput, OrderStatusOutpu
   }
 
   async execute(input: AdvanceOrderInput): Promise<Result<OrderStatusOutput, DomainError>> {
-    return this.deps.unitOfWork.run<Result<OrderStatusOutput, DomainError>>(async (tx) => {
-      const order = await this.deps.orders.findById(input.orderId, input.tenantId, tx);
-      if (order === null) {
-        return err(new NotFoundError("Order not found"));
-      }
+    let paymentToVoid: string | undefined;
+    const result = await this.deps.unitOfWork.run<Result<OrderStatusOutput, DomainError>>(
+      async (tx) => {
+        const order = await this.deps.orders.findById(input.orderId, input.tenantId, tx);
+        if (order === null) {
+          return err(new NotFoundError("Order not found"));
+        }
 
+        try {
+          order.transition(input.toStatus, this.deps.idGenerator.generate(), this.deps.clock.now());
+        } catch (error) {
+          if (isDomainError(error)) return err(error);
+          throw error;
+        }
+
+        await this.deps.orders.save(order, input.tenantId, tx);
+        await notifyBestEffort(this.deps.notifications, order, input.tenantId);
+        if (order.status === "cancelled") paymentToVoid = order.paymentRef;
+        return ok({ orderId: order.id.toString(), status: order.status });
+      },
+    );
+    // After the cancellation is committed, never inside its transaction: a rolled-back cancel must
+    // not leave a voided payment behind, and a Payments round-trip must not hold the order's
+    // connection open. Best-effort — the order stays cancelled whatever Payments answers (G-129).
+    if (result.ok && paymentToVoid !== undefined && this.deps.paymentVoid !== undefined) {
       try {
-        order.transition(input.toStatus, this.deps.idGenerator.generate(), this.deps.clock.now());
-      } catch (error) {
-        if (isDomainError(error)) return err(error);
-        throw error;
+        await this.deps.paymentVoid.voidPayment(paymentToVoid, input.tenantId);
+      } catch {
+        // Swallowed on purpose: see above.
       }
-
-      await this.deps.orders.save(order, input.tenantId, tx);
-      await notifyBestEffort(this.deps.notifications, order, input.tenantId);
-      return ok({ orderId: order.id.toString(), status: order.status });
-    });
+    }
+    return result;
   }
 }
 

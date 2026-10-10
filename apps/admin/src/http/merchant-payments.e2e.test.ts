@@ -699,6 +699,81 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
       expect(settled.paymentRef).toBe(id);
     });
 
+    // G-126. Shopify lets staff cancel an order whose payment is still pending. Since Plan 3B a new COD
+    // order waits at payment_requested, which the lifecycle used to refuse to cancel.
+    it("cancels an unpaid order: the order is cancelled, its payment status is voided and its payment intent is cancelled", async () => {
+      await seedProduct("tok-a");
+      await enableAll("tok-a");
+      const { checkout, opened, amountMinor } = await paid("tenant-a", "sess-cod-cancel", "cod");
+      const id = opened.paymentIntentId;
+      const orderRef = ok<{ orderRef: string }>(
+        await get(checkout.base, storefront("tenant-a", { "x-cart-session": "sess-cod-cancel" })),
+        "get checkout",
+      ).orderRef;
+      const readOrder = async () =>
+        ok<{ status: string; paymentStatus: string }>(
+          await get(`/orders/${orderRef}`, admin("tok-a")),
+          "get order",
+        );
+      expect(await readOrder()).toMatchObject({
+        status: "payment_requested",
+        paymentStatus: "pending",
+      });
+      expect((await intentOf("tok-a", id)).status).toBe("created");
+
+      const cancelled = await post(
+        `/orders/${orderRef}/advance`,
+        { ...admin("tok-a"), "idempotency-key": "cancel-cod-pending" },
+        { toStatus: "cancelled" },
+      );
+
+      expect(cancelled.statusCode).toBe(200);
+      expect(await readOrder()).toMatchObject({ status: "cancelled", paymentStatus: "voided" });
+      expect((await intentOf("tok-a", id)).status).toBe("cancelled");
+
+      // The cancelled order's cash can no longer be confirmed as collected.
+      const collected = await post(`/payment-intents/${id}/cod-collection`, admin("tok-a"), {
+        collectedAmountMinor: amountMinor,
+        currency: "USD",
+      });
+      expect(collected.statusCode).not.toBe(200);
+      expect((await intentOf("tok-a", id)).status).toBe("cancelled");
+    });
+
+    it("does not cancel an order once it is paid, and leaves its captured payment alone", async () => {
+      await seedProduct("tok-a");
+      await enableAll("tok-a");
+      const { checkout, opened, amountMinor } = await paid("tenant-a", "sess-cod-paid", "cod");
+      const id = opened.paymentIntentId;
+      const orderRef = ok<{ orderRef: string }>(
+        await get(checkout.base, storefront("tenant-a", { "x-cart-session": "sess-cod-paid" })),
+        "get checkout",
+      ).orderRef;
+      await post(`/payment-intents/${id}/cod-collection`, admin("tok-a"), {
+        collectedAmountMinor: amountMinor,
+        currency: "USD",
+      });
+      await post(
+        `/orders/${orderRef}/mark-paid`,
+        { ...admin("tok-a"), "idempotency-key": "mark-paid-cod-paid" },
+        { paymentRef: id },
+      );
+
+      const refused = await post(
+        `/orders/${orderRef}/advance`,
+        { ...admin("tok-a"), "idempotency-key": "cancel-cod-paid" },
+        { toStatus: "cancelled" },
+      );
+
+      expect(refused.statusCode).not.toBe(200);
+      expect((await intentOf("tok-a", id)).status).toBe("captured");
+      const order = ok<{ status: string; paymentStatus: string }>(
+        await get(`/orders/${orderRef}`, admin("tok-a")),
+        "get order",
+      );
+      expect(order).toMatchObject({ status: "payment_received", paymentStatus: "paid" });
+    });
+
     // Plan 3B: the orders list and the order page show Shopify's two statuses — payment and fulfillment —
     // derived server-side, plus the customer name, item count and delivery method.
     it("shows payment and fulfillment status, customer name, item count and delivery method on the list and the order", async () => {

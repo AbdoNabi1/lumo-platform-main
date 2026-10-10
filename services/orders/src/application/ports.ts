@@ -22,6 +22,16 @@ export interface PaymentPort {
   ): Promise<PaymentCaptureResult>;
 }
 
+/**
+ * Voids the payment that belongs to an order that was just cancelled before it was paid (G-126).
+ * Best-effort by contract: implementers MUST NOT throw for "nothing to void" (already captured,
+ * already cancelled, not found) — the order is cancelled whatever Payments answers. ADR-0014:
+ * `tenantId` is an explicit per-call parameter.
+ */
+export interface PaymentVoidPort {
+  voidPayment(paymentRef: string, tenantId: string): Promise<void>;
+}
+
 export interface InventoryReservationResult {
   readonly reservationRef: string;
 }

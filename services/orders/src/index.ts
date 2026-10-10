@@ -31,6 +31,7 @@ export type {
   OrderNumberAllocator,
   PaymentPort,
   PaymentVerificationPort,
+  PaymentVoidPort,
   ShippingPort,
 } from "./application/ports";
 export { ORDERS_PUBLISHED_EVENTS } from "./infrastructure/order-event-translator";

@@ -76,7 +76,13 @@ describe("OrderHeader (Plan 3B)", () => {
     expect(screen.getByText("More actions")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
 
+    // G-126: an unpaid cash-on-delivery order waits at payment_requested and can be cancelled.
     rerender(<OrderHeader order={order({ status: "payment_requested" })} t={en} locale="en" />);
+    expect(screen.getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Print packing slip" })).toBeInTheDocument();
+
+    // Once the payment is received the order is refunded, never cancelled.
+    rerender(<OrderHeader order={order({ status: "payment_received" })} t={en} locale="en" />);
     expect(screen.queryByRole("button", { name: "Cancel order" })).toBeNull();
     expect(screen.getByRole("button", { name: "Print packing slip" })).toBeInTheDocument();
   });
