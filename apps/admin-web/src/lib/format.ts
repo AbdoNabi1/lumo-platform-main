@@ -78,3 +78,57 @@ export function formatDateTime(locale: Locale, iso: string): string {
     timeStyle: "short",
   }).format(new Date(iso));
 }
+
+/**
+ * A clock time in the locale — "8:27 pm" in English (lowercase day period, as Shopify writes it),
+ * "٨:٢٧ م" in Arabic. Intl separates the day period with a narrow no-break space; a plain space is
+ * what a reader (and a test) expects.
+ */
+export function formatClockTime(locale: Locale, date: Date): string {
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" })
+    .formatToParts(date)
+    .map((part) =>
+      part.type === "dayPeriod" && locale === "en" ? part.value.toLowerCase() : part.value,
+    )
+    .join("")
+    .replace(/[\u202f\u00a0]/g, " ");
+}
+
+export type OrderDateWhen = "today" | "yesterday" | "other";
+
+export interface OrderDateParts {
+  /** Which wording to use: "Today at …", "Yesterday at …", or "{date} at …". */
+  readonly when: OrderDateWhen;
+  /** The short date, "Oct 7" — used when `when` is "other". */
+  readonly date: string;
+  /** The clock time, "8:27 pm". */
+  readonly time: string;
+  /** The full date and time, for a tooltip. */
+  readonly full: string;
+}
+
+/** The runtime's calendar day as a whole number, so "yesterday" is a calendar day, not 24 hours ago. */
+function calendarDay(date: Date): number {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000);
+}
+
+/**
+ * The pieces of a Shopify-style order date ("Today at 8:27 pm", "Yesterday at …", "Oct 7 at …"). The
+ * words around them ("Today", "at") are copy and live in the messages; this only decides which
+ * wording applies and formats the date and time in the page locale. A date in the future (clock skew
+ * between servers) reads as today rather than inventing a label.
+ */
+export function orderDateParts(
+  locale: Locale,
+  iso: string,
+  now: Date = new Date(),
+): OrderDateParts {
+  const placed = new Date(iso);
+  const daysAgo = calendarDay(now) - calendarDay(placed);
+  return {
+    when: daysAgo <= 0 ? "today" : daysAgo === 1 ? "yesterday" : "other",
+    date: formatShortDate(locale, iso),
+    time: formatClockTime(locale, placed),
+    full: formatDateTime(locale, iso),
+  };
+}

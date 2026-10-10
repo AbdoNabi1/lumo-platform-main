@@ -6,6 +6,7 @@ import {
   formatNumber,
   formatPercent,
   formatRelativeMinutes,
+  orderDateParts,
 } from "./format";
 
 /**
@@ -75,5 +76,49 @@ describe("formatRelativeMinutes", () => {
 
   it("localises the phrasing", () => {
     expect(formatRelativeMinutes("ar", 2)).not.toBe(formatRelativeMinutes("en", 2));
+  });
+});
+
+describe("orderDateParts (Plan 3B: Shopify-style relative order dates)", () => {
+  // Built from LOCAL calendar fields, because "today" is the runtime's own calendar day, the same
+  // calendar Intl formats in.
+  const at = (y: number, m: number, d: number, h: number, min: number) =>
+    new Date(y, m - 1, d, h, min).toISOString();
+  const now = new Date(2026, 9, 9, 21, 0); // 9 Oct 2026, 9:00 pm
+
+  it("says today for an order placed earlier the same day", () => {
+    const parts = orderDateParts("en", at(2026, 10, 9, 20, 27), now);
+    expect(parts.when).toBe("today");
+    expect(parts.time).toBe("8:27 pm");
+  });
+
+  it("says yesterday for the previous calendar day, even a few minutes before midnight", () => {
+    expect(orderDateParts("en", at(2026, 10, 8, 23, 58), now).when).toBe("yesterday");
+    expect(orderDateParts("en", at(2026, 10, 8, 0, 5), now).when).toBe("yesterday");
+  });
+
+  it("gives the short date for anything older", () => {
+    const parts = orderDateParts("en", at(2026, 10, 7, 9, 5), now);
+    expect(parts.when).toBe("other");
+    expect(parts.date).toBe("Oct 7");
+    expect(parts.time).toBe("9:05 am");
+  });
+
+  it("treats a date in the future (clock skew) as today rather than inventing a label", () => {
+    expect(orderDateParts("en", at(2026, 10, 9, 23, 59), now).when).toBe("today");
+  });
+
+  it("localises the time and the date for Arabic", () => {
+    const parts = orderDateParts("ar", at(2026, 10, 7, 20, 27), now);
+    expect(parts.when).toBe("other");
+    expect(parts.time).not.toBe("8:27 pm");
+    expect(parts.time).toContain("م"); // the Arabic day period
+    expect(parts.date).not.toBe("Oct 7");
+  });
+
+  it("carries the full date and time for the tooltip", () => {
+    const parts = orderDateParts("en", at(2026, 10, 7, 9, 5), now);
+    expect(parts.full).toContain("Oct 7, 2026");
+    expect(parts.full).toContain("9:05");
   });
 });

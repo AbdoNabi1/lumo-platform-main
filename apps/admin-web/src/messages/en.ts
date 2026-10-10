@@ -147,10 +147,32 @@ export const en = {
     allStatuses: "All statuses",
     columns: {
       order: "Order",
-      customer: "Customer",
       date: "Date",
-      status: "Status",
+      customer: "Customer",
       total: "Total",
+      paymentStatus: "Payment status",
+      fulfillmentStatus: "Fulfillment status",
+      items: "Items",
+      deliveryMethod: "Delivery method",
+    },
+    /** Plan 3B: a customer name is the shipping recipient; an order without one shows this, muted. */
+    noCustomer: "No customer",
+    /** Shopify-style order dates. `{time}` is "8:27 pm"; `{date}` is "Oct 7". */
+    dateToday: "Today at {time}",
+    dateYesterday: "Yesterday at {time}",
+    dateOther: "{date} at {time}",
+    /**
+     * Plural forms by Intl.PluralRules category. English only ever selects one/other; the rest exist
+     * so the Arabic forms line up key for key. `{count}` is the number — the forms that name their
+     * own number ("1 item", "منتج واحد") carry none, which keeps placeholder parity between locales.
+     */
+    itemCount: {
+      zero: "0 items",
+      one: "1 item",
+      two: "2 items",
+      few: "{count} items",
+      many: "{count} items",
+      other: "{count} items",
     },
     previous: "Previous",
     next: "Next",
@@ -162,6 +184,24 @@ export const en = {
     viewOrder: "View order {orderNumber}",
     newOrder: "New order",
     createFromCheckout: "Create from checkout session",
+  },
+  /** Plan 3B: Shopify's two statuses, derived on the server (never stored). */
+  orderPaymentStatus: {
+    pending: "Payment pending",
+    paid: "Paid",
+    refunded: "Refunded",
+    voided: "Voided",
+  },
+  orderFulfillmentStatus: {
+    unfulfilled: "Unfulfilled",
+    in_progress: "In progress",
+    fulfilled: "Fulfilled",
+    delivered: "Delivered",
+  },
+  /** Plan 3B: the shipping methods a shop offers, as the same labels the storefront shows. */
+  shippingMethodLabel: {
+    standard: "Standard shipping",
+    express: "Express shipping",
   },
   orderStatus: {
     placed: "Placed",

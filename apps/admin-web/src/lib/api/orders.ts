@@ -1,5 +1,11 @@
 import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
+/** Plan 3B: Shopify's payment status, derived on the server from the order's history (never stored). */
+export type OrderPaymentStatus = "pending" | "paid" | "refunded" | "voided";
+
+/** Plan 3B: Shopify's fulfillment status, derived on the server from the Fulfillment context. */
+export type OrderFulfillmentStatus = "unfulfilled" | "in_progress" | "fulfilled" | "delivered";
+
 export interface OrderListItemDto {
   readonly id: string;
   readonly orderNumber: string;
@@ -8,6 +14,14 @@ export interface OrderListItemDto {
   readonly currency: string;
   readonly totalMinor: number;
   readonly createdAt: string;
+  /** Plan 3B: the shipping recipient's name; null when the shopper typed none. */
+  readonly customerName: string | null;
+  /** Plan 3B: the sum of the line quantities. */
+  readonly itemCount: number;
+  /** Plan 3B: the shipping method the shopper selected ("standard", …); null on older orders. */
+  readonly shippingMethod: string | null;
+  readonly paymentStatus: OrderPaymentStatus;
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
 }
 
 export interface OrdersPageInfo {
@@ -89,6 +103,10 @@ export interface OrderDetailItemDto {
   readonly id: string;
   readonly productId: string;
   readonly name: string;
+  /** Plan 2A: the variant sold; all null on an order placed before variants were tracked. */
+  readonly variantRef: string | null;
+  readonly sku: string | null;
+  readonly variantTitle: string | null;
   readonly unitPriceMinor: number;
   readonly quantity: number;
   readonly lineTotalMinor: number;
@@ -138,6 +156,12 @@ export interface OrderDetailDto {
   readonly paymentRef: string | null;
   readonly fulfillmentRef: string | null;
   readonly history: readonly OrderHistoryEntryDto[];
+  /** Plan 3B */
+  readonly paymentStatus: OrderPaymentStatus;
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
+  /** How the customer pays ("cod", "stripe", …), from the linked payment; null until one is linked. */
+  readonly paymentProvider: string | null;
+  readonly shippingMethod: string | null;
 }
 
 function isOrderDetailDto(value: unknown): value is OrderDetailDto {

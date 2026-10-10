@@ -169,3 +169,49 @@ export function ReturnStatusBadge({
   const label = (t.returnStatus as Record<string, string>)[status] ?? status;
   return <Badge variant={variant}>{label}</Badge>;
 }
+
+/**
+ * Plan 3B — Shopify's two statuses, derived on the server (`paymentStatus`, `fulfillmentStatus`), shown
+ * the same way on the orders list and the order page. Payment is a warning until it is settled; a
+ * fulfillment is a warning until work starts, then informational, and only a delivery is a success.
+ */
+type BadgeVariant =
+  "neutral" | "accent" | "success" | "warning" | "destructive" | "info" | "outline";
+
+const ORDER_PAYMENT_STATUS_VARIANT: Readonly<Record<string, BadgeVariant>> = {
+  pending: "warning",
+  paid: "neutral",
+  refunded: "outline",
+  voided: "outline",
+};
+
+const ORDER_FULFILLMENT_STATUS_VARIANT: Readonly<Record<string, BadgeVariant>> = {
+  unfulfilled: "warning",
+  in_progress: "info",
+  fulfilled: "neutral",
+  delivered: "success",
+};
+
+export function OrderPaymentStatusBadge({
+  status,
+  t,
+}: {
+  readonly status: string;
+  readonly t: Dictionary;
+}) {
+  const variant = ORDER_PAYMENT_STATUS_VARIANT[status] ?? "neutral";
+  const label = (t.orderPaymentStatus as Record<string, string>)[status] ?? status;
+  return <Badge variant={variant}>{label}</Badge>;
+}
+
+export function OrderFulfillmentStatusBadge({
+  status,
+  t,
+}: {
+  readonly status: string;
+  readonly t: Dictionary;
+}) {
+  const variant = ORDER_FULFILLMENT_STATUS_VARIANT[status] ?? "neutral";
+  const label = (t.orderFulfillmentStatus as Record<string, string>)[status] ?? status;
+  return <Badge variant={variant}>{label}</Badge>;
+}
