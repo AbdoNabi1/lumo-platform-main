@@ -17,7 +17,10 @@ import type { InventoryPort, NotificationPort, PaymentPort, ShippingPort } from 
  * attempts for the same order), so the read-check-write attempt is retried from scratch against
  * the now-current row. Any other error propagates immediately.
  */
-async function withConcurrencyRetry<T>(maxAttempts: number, attempt: () => Promise<T>): Promise<T> {
+export async function withConcurrencyRetry<T>(
+  maxAttempts: number,
+  attempt: () => Promise<T>,
+): Promise<T> {
   for (let i = 1; i <= maxAttempts; i += 1) {
     try {
       return await attempt();

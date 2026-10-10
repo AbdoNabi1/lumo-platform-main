@@ -13,6 +13,10 @@ import type {
   RequestPaymentCapture,
 } from "../application/order-lifecycle.use-cases";
 import type { PlaceOrder, PlaceOrderInput } from "../application/place-order.use-case";
+import type {
+  RecordCheckoutPayment,
+  RecordCheckoutPaymentInput,
+} from "../application/record-checkout-payment.use-case";
 import type { RefundOrder, RefundOrderInput } from "../application/refund-order.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
@@ -24,6 +28,7 @@ export interface OrderControllerDeps {
   readonly advanceOrder: AdvanceOrder;
   readonly requestPaymentCapture: RequestPaymentCapture;
   readonly requestFulfillment: RequestFulfillment;
+  readonly recordCheckoutPayment: RecordCheckoutPayment;
   readonly getOrder: GetOrder;
   readonly listOrders: ListOrders;
 }
@@ -62,6 +67,11 @@ export class OrderController {
 
   async requestFulfillment(input: OrderIdInput): Promise<ControllerResponse> {
     return present(await this.deps.requestFulfillment.execute(input), 200);
+  }
+
+  /** Links the payment Payments opened for a checkout order to that order (closes G-121). */
+  async recordCheckoutPayment(input: RecordCheckoutPaymentInput): Promise<ControllerResponse> {
+    return present(await this.deps.recordCheckoutPayment.execute(input), 200);
   }
 
   async getOrder(input: GetOrderInput): Promise<ControllerResponse> {

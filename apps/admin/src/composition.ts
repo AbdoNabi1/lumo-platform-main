@@ -814,7 +814,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     paymentMethods:
       deps.paymentMethods ?? new CheckoutPaymentMethodsAdapter(lazyPaymentsController),
     paymentInitiation:
-      deps.paymentInitiation ?? new CheckoutPaymentInitiationAdapter(lazyPaymentsController),
+      deps.paymentInitiation ??
+      new CheckoutPaymentInitiationAdapter(lazyPaymentsController, orders.orders),
   });
   checkoutControllerCell.controller = checkout.checkout;
   // Phase 3 Task 13 (C-3): real `ordersPort`/`paymentsNotifications` adapters for Payments'

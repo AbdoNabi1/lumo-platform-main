@@ -7,6 +7,7 @@ import { NotFoundError, type Logger } from "@platform/utils";
 import { Money, UniqueEntityId } from "@platform/domain";
 import { MarkOrderPaid } from "../application/mark-order-paid.use-case";
 import { PlaceOrder } from "../application/place-order.use-case";
+import { RecordCheckoutPayment } from "../application/record-checkout-payment.use-case";
 import { Order } from "../domain/order";
 import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
@@ -57,11 +58,17 @@ function wire() {
     orderNumbers: new InMemoryOrderNumberAllocator(),
   });
   const markOrderPaid = new MarkOrderPaid({ orders, unitOfWork, idGenerator, clock });
+  const recordCheckoutPayment = new RecordCheckoutPayment({
+    orders,
+    unitOfWork,
+    idGenerator,
+    clock,
+  });
   const consumer = new PaymentCapturedConsumer({
     markOrderPaid,
     logger: silentLogger(),
   });
-  return { placeOrder, consumer, orders, outbox: outboxStore };
+  return { placeOrder, consumer, orders, outbox: outboxStore, recordCheckoutPayment };
 }
 
 function capturedEvent(
@@ -202,13 +209,29 @@ describe("PaymentCapturedConsumer (first real cross-context flow)", () => {
     expect(order?.status).toBe("payment_received");
   });
 
-  // Plan 3A (Task 4), pinned so the gap is on record: checkout leaves an order at `created`, nothing
-  // advances it to `payment_requested` by itself, and a capture — a card's or a confirmed cash
-  // collection's, it is the same event — only pays an order that has reached that step. Until it has,
-  // the consumer throws (retry, then DLQ) and the order stays unpaid.
-  it("does NOT pay a checkout order that is still at created: the capture is refused and the order stays unpaid (the COD gap)", async () => {
-    const { consumer, orders } = wire();
+  // Plan 3B (Task 3) closes G-121. Checkout leaves an order at `created`, and a capture — a card's
+  // or a confirmed cash collection's, it is the same event — only pays an order that has reached
+  // `payment_requested`. `RecordCheckoutPayment` (called when the payment is opened) is what takes
+  // it there, so the capture that follows now pays it.
+  it("pays a checkout order whose payment was recorded: created → payment_requested → payment_received (closes G-121)", async () => {
+    const { consumer, orders, recordCheckoutPayment } = wire();
     const orderId = "order-saga-created";
+    await orderAwaitingCapture(orders, orderId, "created");
+    await recordCheckoutPayment.execute({ tenantId: "tenant-a", orderId, paymentRef: "intent-1" });
+
+    await consumer.handle(capturedEvent(orderId));
+
+    const paid = await orders.findById(orderId, "tenant-a");
+    expect(paid?.status).toBe("payment_received");
+    expect(paid?.paymentRef).toBe("intent-1");
+  });
+
+  // The consumer itself is unchanged: an order that was NEVER linked to a payment (e.g. the link was
+  // refused, see `RecordCheckoutPayment`) is still not paid by a capture — it throws (retry, then
+  // DLQ) rather than guess, and the order stays where it was.
+  it("still refuses a capture for a checkout order that was never linked to a payment", async () => {
+    const { consumer, orders } = wire();
+    const orderId = "order-saga-unlinked";
     await orderAwaitingCapture(orders, orderId, "created");
 
     await expect(consumer.handle(capturedEvent(orderId))).rejects.toThrow(

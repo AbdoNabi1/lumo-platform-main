@@ -1,6 +1,12 @@
 import type { PaymentInitiationPort, PaymentMethodPort } from "@platform/checkout";
+import type { OrderController } from "@platform/orders";
 import type { MerchantPaymentSettingsDto, PaymentController } from "@platform/payments";
-import { BusinessRuleError, ValidationError } from "@platform/utils";
+import {
+  BusinessRuleError,
+  type Logger,
+  logger as defaultLogger,
+  ValidationError,
+} from "@platform/utils";
 
 interface CreateIntentBody {
   readonly paymentIntentId: string;
@@ -43,12 +49,28 @@ export class CheckoutPaymentMethodsAdapter implements PaymentMethodPort {
  *
  * A 4xx from Payments (method not enabled/unavailable, invalid amount) becomes a 4xx here — the
  * shopper can change their selection — and anything else is a plain `Error` (a 5xx).
+ *
+ * Plan 3B (closes G-121): right after the intent is opened, Orders is told which payment belongs to
+ * the order (`recordCheckoutPayment`), so the order reaches `payment_requested` and the capture that
+ * follows — a card's, or a confirmed cash collection's — can mark it paid. That link is BEST-EFFORT:
+ * the intent already exists and the shopper's payment must not fail because Orders refused or was
+ * unreachable, so a failure is logged (the order id only — no name, phone or email) and the intent is
+ * returned. The storefront retry path never gets here twice: `InitiatePayment` returns the session's
+ * recorded intent without calling this adapter.
  */
 export class CheckoutPaymentInitiationAdapter implements PaymentInitiationPort {
   private readonly payments: Pick<PaymentController, "createIntentLifecycle">;
+  private readonly orders: Pick<OrderController, "recordCheckoutPayment">;
+  private readonly logger: Logger;
 
-  constructor(payments: Pick<PaymentController, "createIntentLifecycle">) {
+  constructor(
+    payments: Pick<PaymentController, "createIntentLifecycle">,
+    orders: Pick<OrderController, "recordCheckoutPayment">,
+    logger: Logger = defaultLogger,
+  ) {
     this.payments = payments;
+    this.orders = orders;
+    this.logger = logger;
   }
 
   async initiate(input: Parameters<PaymentInitiationPort["initiate"]>[0]) {
@@ -70,11 +92,39 @@ export class CheckoutPaymentInitiationAdapter implements PaymentInitiationPort {
       );
     }
     const body = response.body as CreateIntentBody;
+    await this.linkPaymentToOrder(input.tenantId, input.orderRef, body.paymentIntentId);
     return {
       paymentIntentId: body.paymentIntentId,
       status: body.status,
       provider: body.provider,
       ...(body.clientHandle !== undefined ? { clientHandle: body.clientHandle } : {}),
     };
+  }
+
+  /** Best-effort: never throws, never fails the shopper's payment. Logs the order id and status only. */
+  private async linkPaymentToOrder(
+    tenantId: string,
+    orderId: string,
+    paymentRef: string,
+  ): Promise<void> {
+    try {
+      const linked = await this.orders.recordCheckoutPayment({ tenantId, orderId, paymentRef });
+      if (linked.status !== 200) {
+        this.logger.warn(
+          "CheckoutPaymentInitiationAdapter: could not link the payment to its order",
+          {
+            orderId,
+            status: linked.status,
+          },
+        );
+      }
+    } catch {
+      this.logger.warn(
+        "CheckoutPaymentInitiationAdapter: could not link the payment to its order",
+        {
+          orderId,
+        },
+      );
+    }
   }
 }

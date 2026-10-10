@@ -643,6 +643,62 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
       expect((await intentOf("tok-a", id)).status).toBe("captured");
     });
 
+    // Plan 3B (closes G-121). Opening the payment now tells Orders which payment belongs to the order,
+    // so the order is at `payment_requested` with the intent as its `paymentRef` — the state a capture
+    // needs to mark it paid. Before this link the order sat at `created` and every capture was refused.
+    it("links the payment to its order, so the confirmed collection can mark the order paid", async () => {
+      await seedProduct("tok-a");
+      await enableAll("tok-a");
+      const { checkout, opened, amountMinor } = await paid("tenant-a", "sess-cod-link", "cod");
+      const id = opened.paymentIntentId;
+      const orderRef = ok<{ orderRef: string }>(
+        await get(checkout.base, storefront("tenant-a", { "x-cart-session": "sess-cod-link" })),
+        "get checkout",
+      ).orderRef;
+      const readOrder = async () =>
+        ok<{ status: string; paymentRef: string | null; history: readonly { type: string }[] }>(
+          await get(`/orders/${orderRef}`, admin("tok-a")),
+          "get order",
+        );
+
+      // 1. Initiating the payment linked it: the order carries the intent and sits at payment_requested.
+      const linked = await readOrder();
+      expect(linked.paymentRef).toBe(id);
+      expect(linked.status).toBe("payment_requested");
+      expect(linked.history.map((entry) => entry.type)).toEqual([
+        "created",
+        "confirmed",
+        "awaiting_payment",
+        "payment_requested",
+      ]);
+
+      // Opening the payment again (a double-click, a retry) resumes the same intent and changes nothing.
+      const again = ok<{ paymentIntentId: string }>(await checkout.pay(), "pay again");
+      expect(again.paymentIntentId).toBe(id);
+      expect((await readOrder()).history).toHaveLength(4);
+
+      // 2. The explicit, full-amount collection settles the intent.
+      const collected = await post(`/payment-intents/${id}/cod-collection`, admin("tok-a"), {
+        collectedAmountMinor: amountMinor,
+        currency: "USD",
+      });
+      expect(collected.statusCode).toBe(200);
+      expect((await intentOf("tok-a", id)).status).toBe("captured");
+
+      // 3. The order is paid by the captured payment. In production the worker's PaymentCapturedConsumer
+      // makes this call on the `payments.payment_intent.captured` event; the admin test pipeline runs no
+      // event consumer, so the test makes the same MarkOrderPaid call the consumer makes.
+      const markedPaid = await post(
+        `/orders/${orderRef}/mark-paid`,
+        { ...admin("tok-a"), "idempotency-key": "mark-paid-cod-link" },
+        { paymentRef: id },
+      );
+      expect(markedPaid.statusCode).toBe(200);
+      const settled = await readOrder();
+      expect(settled.status).toBe("payment_received");
+      expect(settled.paymentRef).toBe(id);
+    });
+
     it("another merchant's staff cannot confirm a collection for it", async () => {
       await seedProduct("tok-a");
       await enableAll("tok-a");

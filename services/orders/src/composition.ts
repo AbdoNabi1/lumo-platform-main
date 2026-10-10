@@ -21,6 +21,7 @@ import {
   RequestPaymentCapture,
 } from "./application/order-lifecycle.use-cases";
 import { PlaceOrder } from "./application/place-order.use-case";
+import { RecordCheckoutPayment } from "./application/record-checkout-payment.use-case";
 import { RefundOrder } from "./application/refund-order.use-case";
 import type { OrderRepository } from "./domain/order-repository";
 import type {
@@ -150,6 +151,12 @@ function buildController(
       inventoryPort,
       shippingPort,
       notifications,
+    }),
+    recordCheckoutPayment: new RecordCheckoutPayment({
+      orders,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
     }),
     getOrder: new GetOrder({ orders }),
     listOrders: new ListOrders({ orders }),
