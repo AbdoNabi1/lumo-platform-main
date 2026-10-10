@@ -132,3 +132,8 @@ export function orderDateParts(
     full: formatDateTime(locale, iso),
   };
 }
+
+/** "October 9, 2026" / the Arabic equivalent — the order page header's date. */
+export function formatLongDate(locale: Locale, iso: string): string {
+  return new Intl.DateTimeFormat(locale, { dateStyle: "long" }).format(new Date(iso));
+}

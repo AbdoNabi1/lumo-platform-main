@@ -106,7 +106,9 @@ export class PrismaFulfillmentOrderRepository implements FulfillmentOrderReposit
     tenantId: string,
     tx?: unknown,
   ): Promise<FulfillmentOrder | null> {
-    return this.findOne({ orderRef, tenantId }, tenantId, tx);
+    // The most recently opened one, so this agrees with `findByOrderRefs` (an order can have a
+    // cancelled fulfillment order and a newer one).
+    return this.findOne({ orderRef, tenantId }, tenantId, tx, { createdAt: "desc" });
   }
 
   /** One tenant-scoped query for the whole page; newest first, so the first row seen per order ref is its current fulfillment order. */
@@ -138,11 +140,13 @@ export class PrismaFulfillmentOrderRepository implements FulfillmentOrderReposit
     where: { readonly tenantId: string } & Record<string, string>,
     tenantId: string,
     tx: unknown,
+    orderBy?: { readonly createdAt: "desc" },
   ): Promise<FulfillmentOrder | null> {
     const run = (client: TransactionClient) =>
       client.fulfillmentOrder.findFirst({
         where,
         include: { attempts: { orderBy: { occurredAt: "asc" } } },
+        ...(orderBy === undefined ? {} : { orderBy }),
       });
     const row =
       tx !== undefined && tx !== null

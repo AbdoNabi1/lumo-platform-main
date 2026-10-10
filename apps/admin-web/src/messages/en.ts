@@ -185,6 +185,87 @@ export const en = {
     newOrder: "New order",
     createFromCheckout: "Create from checkout session",
   },
+  /**
+   * Plan 3B — the order page, laid out like Shopify's. Everything here is new copy for that page; the
+   * older `orderDetail` keys it still reuses (customer, addresses, payment reference, confirmations)
+   * stay where they are.
+   */
+  orderPage: {
+    /** "October 9, 2026 at 8:27 pm from Online Store" */
+    placedFromStore: "{date} at {time} from Online Store",
+    refund: "Refund",
+    refundUnavailable: "This order can't be refunded yet.",
+    moreActions: "More actions",
+    cancelOrder: "Cancel order",
+    cancellingOrder: "Cancelling…",
+    confirmCancelOrder: "Cancel this order? This can't be undone.",
+    printPackingSlip: "Print packing slip",
+    fulfillmentTitle: "{status} ({count})",
+    deliveryMethodLine: "Delivery method: {method}",
+    noDeliveryMethod: "Delivery method: not recorded",
+    sku: "SKU: {sku}",
+    unitTimesQuantity: "{price} × {quantity}",
+    fulfillItems: "Fulfill items",
+    fulfillingItems: "Fulfilling…",
+    viewFulfillment: "View fulfillment",
+    productImagePlaceholder: "No image",
+    paymentSubtotal: "Subtotal",
+    paymentShipping: "Shipping",
+    paymentTaxes: "Taxes",
+    paymentDiscount: "Discount",
+    paymentTotal: "Total",
+    paidByCustomer: "Paid by customer",
+    balance: "Balance",
+    paymentMethodLine: "Payment method",
+    noPaymentMethod: "—",
+    paymentMethodName: {
+      cod: "Cash on delivery",
+      stripe: "Card (Stripe)",
+      paymob: "Card (Paymob)",
+    },
+    markAsPaid: "Mark as paid",
+    markingAsPaid: "Saving…",
+    markAsPaidDialogTitle: "Mark as paid",
+    markAsPaidDialogBody: "Enter the reference of the payment you received for this order.",
+    markAsPaidSubmit: "Confirm payment",
+    cancel: "Cancel",
+    contactInformation: "Contact information",
+    noEmail: "No email address",
+    noPhone: "No phone number",
+    copy: "Copy",
+    copied: "Copied",
+    copyEmail: "Copy email address",
+    copyPhone: "Copy phone number",
+    copyAddress: "Copy address",
+    viewMap: "View map",
+    advanced: "Advanced",
+    advancedHint: "Lifecycle controls, returns and shipments.",
+    /** Timeline copy, one line per lifecycle event. `{total}` is the order total; `{method}` how the customer pays. */
+    timeline: {
+      placed: "Order placed",
+      created: "Order placed",
+      confirmed: "Order confirmed",
+      cancelled: "Order cancelled",
+      held: "Order put on hold",
+      resumed: "Order taken off hold",
+      awaiting_payment: "Waiting for payment",
+      payment_requested: "Payment of {total} pending ({method})",
+      payment_requestedNoMethod: "Payment of {total} pending",
+      payment_received: "Payment of {total} received",
+      paid: "Payment of {total} received",
+      payment_failed: "Payment failed",
+      ready_for_fulfillment: "Ready to be fulfilled",
+      fulfillment_requested: "Fulfillment requested",
+      fulfilled: "Order fulfilled",
+      partially_fulfilled: "Order partially fulfilled",
+      delivered: "Order delivered",
+      return_requested: "Return requested",
+      returned: "Order returned",
+      refund_requested: "Refund requested",
+      refunded: "Payment of {total} refunded",
+      closed: "Order closed",
+    },
+  },
   /** Plan 3B: Shopify's two statuses, derived on the server (never stored). */
   orderPaymentStatus: {
     pending: "Payment pending",
@@ -493,7 +574,7 @@ export const en = {
    * T5.4 — the Fulfillment detail screen (`app/orders/[orderId]/fulfillment/page.tsx`), keyed by
    * orderId per `docs/plans/BLOCKERS.md`'s T5.4 ruling (no `GET /fulfillments`/`GET
    * /fulfillments/:fulfillmentOrderId` route exists). `orderDetail`'s existing `fulfillment*` keys
-   * cover the read-only summary (shared with `OrderFulfillmentCard` via `FulfillmentSummary`); the
+   * cover the read-only summary (rendered by `FulfillmentSummary`); the
    * three sections below cover this screen's own chrome, the create-fulfillment item picker, and
    * the gated write actions bar.
    */

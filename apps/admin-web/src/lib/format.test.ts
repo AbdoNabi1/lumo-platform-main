@@ -3,6 +3,7 @@ import {
   formatCurrency,
   formatCurrencyCompact,
   formatDelta,
+  formatLongDate,
   formatNumber,
   formatPercent,
   formatRelativeMinutes,
@@ -120,5 +121,15 @@ describe("orderDateParts (Plan 3B: Shopify-style relative order dates)", () => {
     const parts = orderDateParts("en", at(2026, 10, 7, 9, 5), now);
     expect(parts.full).toContain("Oct 7, 2026");
     expect(parts.full).toContain("9:05");
+  });
+});
+
+describe("formatLongDate (Plan 3B: the order page header)", () => {
+  it("spells out the month, day and year in the page locale", () => {
+    const iso = new Date(2026, 9, 9, 20, 27).toISOString();
+
+    expect(formatLongDate("en", iso)).toBe("October 9, 2026");
+    expect(formatLongDate("ar", iso)).not.toBe("October 9, 2026");
+    expect(formatLongDate("ar", iso)).toContain("أكتوبر");
   });
 });

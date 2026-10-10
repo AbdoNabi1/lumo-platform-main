@@ -56,3 +56,13 @@ export function advanceableStatusesFrom(status: string): readonly string[] {
 export function canRefundFrom(status: string): boolean {
   return status === "paid" || status === "returned" || status === "refund_requested";
 }
+
+/**
+ * Whether "Cancel order" should be offered from `status`: exactly when the transition table above
+ * allows `cancelled` as a next state — the order page never offers a cancellation the backend would
+ * refuse. (Not from `payment_requested`, `payment_received` or later: the table only lets an order be
+ * cancelled before a payment has been asked for, or after one failed.)
+ */
+export function canCancelFrom(status: string): boolean {
+  return (ORDER_LIFECYCLE_TRANSITIONS[status] ?? []).includes("cancelled");
+}

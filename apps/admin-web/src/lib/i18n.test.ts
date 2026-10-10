@@ -21,6 +21,11 @@ function leaves(value: unknown, path: string[] = []): Leaf[] {
 /** Keys whose Arabic value is legitimately identical to English (keyboard glyphs, symbols). */
 const SHARED_VERBATIM = new Set([
   "topbar.searchHint",
+  // Plan 3B — order page templates that carry only placeholders and a symbol, no words: "{status}
+  // ({count})", "{price} × {quantity}", and the em dash for "no payment method". Nothing to translate.
+  "orderPage.fulfillmentTitle",
+  "orderPage.unitTimesQuantity",
+  "orderPage.noPaymentMethod",
   "securityAuditPage.timelineColumns.sequence",
   // The ISO-8601 format token an operator must type literally into the `effectiveFrom`/
   // `effectiveTo` text inputs (`app/pricing/page.tsx`) — a machine format string, not natural

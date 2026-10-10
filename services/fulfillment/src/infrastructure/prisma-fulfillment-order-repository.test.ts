@@ -75,3 +75,26 @@ describe("PrismaFulfillmentOrderRepository.findByOrderRefs", () => {
     expect(findMany).not.toHaveBeenCalled();
   });
 });
+
+describe("PrismaFulfillmentOrderRepository.findByOrderRef", () => {
+  it("returns the most recently opened fulfillment order, so it agrees with the batched read", async () => {
+    const findFirst = vi.fn().mockResolvedValue(row("fo-new", "order-1", "picking_started"));
+    const tx = { fulfillmentOrder: { findFirst } } as unknown as TransactionClient;
+
+    const found = await repo().findByOrderRef("order-1", "tenant-a", tx);
+
+    expect(found?.id.toString()).toBe("fo-new");
+    const args = findFirst.mock.calls[0]?.[0] as FindManyArgs;
+    expect(args.where).toMatchObject({ tenantId: "tenant-a", orderRef: "order-1" });
+    expect(args.orderBy).toEqual({ createdAt: "desc" });
+  });
+
+  it("looking a fulfillment order up by its id is unaffected", async () => {
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const tx = { fulfillmentOrder: { findFirst } } as unknown as TransactionClient;
+
+    expect(await repo().findById("fo-1", "tenant-a", tx)).toBeNull();
+
+    expect((findFirst.mock.calls[0]?.[0] as FindManyArgs).orderBy).toBeUndefined();
+  });
+});

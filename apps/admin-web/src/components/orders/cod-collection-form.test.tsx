@@ -30,19 +30,17 @@ function renderForm() {
 }
 
 describe("CodCollectionForm (Plan 3A)", () => {
-  it("shows the Mark cash as received button", () => {
+  it("shows the Mark as paid button", () => {
     renderForm();
 
-    expect(
-      screen.getByRole("button", { name: en.orderDetail.markCashReceived }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.orderPage.markAsPaid })).toBeInTheDocument();
   });
 
   it("asks first, with the amount in the question, and collects once confirmed", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderForm();
 
-    fireEvent.click(screen.getByRole("button", { name: en.orderDetail.markCashReceived }));
+    fireEvent.click(screen.getByRole("button", { name: en.orderPage.markAsPaid }));
 
     expect(confirm).toHaveBeenCalledWith("Confirm you received EGP 450.00 in cash?");
     await waitFor(() => expect(confirmCodCollectionAction).toHaveBeenCalledTimes(1));
@@ -55,7 +53,7 @@ describe("CodCollectionForm (Plan 3A)", () => {
     vi.spyOn(window, "confirm").mockReturnValue(false);
     renderForm();
 
-    fireEvent.click(screen.getByRole("button", { name: en.orderDetail.markCashReceived }));
+    fireEvent.click(screen.getByRole("button", { name: en.orderPage.markAsPaid }));
 
     expect(confirmCodCollectionAction).not.toHaveBeenCalled();
   });
@@ -64,7 +62,7 @@ describe("CodCollectionForm (Plan 3A)", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderForm();
 
-    fireEvent.click(screen.getByRole("button", { name: en.orderDetail.markCashReceived }));
+    fireEvent.click(screen.getByRole("button", { name: en.orderPage.markAsPaid }));
 
     await waitFor(() => expect(confirmCodCollectionAction).toHaveBeenCalled());
     const posted = confirmCodCollectionAction.mock.calls[0]?.[1];
@@ -80,7 +78,7 @@ describe("CodCollectionForm (Plan 3A)", () => {
     });
     renderForm();
 
-    fireEvent.click(screen.getByRole("button", { name: en.orderDetail.markCashReceived }));
+    fireEvent.click(screen.getByRole("button", { name: en.orderPage.markAsPaid }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The collected amount must equal the amount due",

@@ -204,14 +204,26 @@ export function OrderPaymentStatusBadge({
   return <Badge variant={variant}>{label}</Badge>;
 }
 
+/**
+ * The fulfillment status badge. With `count`, it is the title of the order page's fulfillment card —
+ * "Unfulfilled (3)" — so the status and the number of items travel together.
+ */
 export function OrderFulfillmentStatusBadge({
   status,
   t,
+  count,
 }: {
   readonly status: string;
   readonly t: Dictionary;
+  readonly count?: number;
 }) {
   const variant = ORDER_FULFILLMENT_STATUS_VARIANT[status] ?? "neutral";
   const label = (t.orderFulfillmentStatus as Record<string, string>)[status] ?? status;
-  return <Badge variant={variant}>{label}</Badge>;
+  return (
+    <Badge variant={variant}>
+      {count === undefined
+        ? label
+        : t.orderPage.fulfillmentTitle.replace("{status}", label).replace("{count}", String(count))}
+    </Badge>
+  );
 }
