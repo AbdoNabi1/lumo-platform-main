@@ -10,13 +10,16 @@ interface AddressSnapshotProps {
   readonly country: string;
   readonly recipientName?: string;
   readonly phone?: string;
+  /** Plan 3C: ISO 3166-2 (`EG-C`), for countries with province data. */
+  readonly province?: string;
 }
 
-/** Plan 3A: who receives the order, and the second address line. All optional. */
+/** Plan 3A: who receives the order, and the second address line. Plan 3C: the province. All optional. */
 export interface AddressSnapshotExtra {
   readonly recipientName?: string;
   readonly phone?: string;
   readonly line2?: string;
+  readonly province?: string;
 }
 
 /** An immutable copy of the shipping address captured at placement (snapshot, not a live ref). */
@@ -48,6 +51,7 @@ export class AddressSnapshot extends ValueObject<AddressSnapshotProps> {
         country,
         recipientName: extra?.recipientName,
         phone: extra?.phone,
+        ...(extra?.province === undefined ? {} : { province: extra.province }),
       }),
     );
   }
@@ -78,5 +82,9 @@ export class AddressSnapshot extends ValueObject<AddressSnapshotProps> {
 
   get phone(): string | undefined {
     return this.props.phone;
+  }
+
+  get province(): string | undefined {
+    return this.props.province;
   }
 }

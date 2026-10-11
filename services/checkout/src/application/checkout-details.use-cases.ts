@@ -17,6 +17,7 @@ import {
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
 import { PaymentSelection, ShippingSelection } from "../domain/value-objects/selections";
+import { provinceProblem } from "./address-province";
 import type { PaymentMethodPort, ShippingCalculationPort } from "./ports";
 
 export interface CheckoutDetailsDeps {
@@ -127,6 +128,8 @@ export class SetBillingAddress implements UseCase<
   async execute(input: SetAddressInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
     const address = CheckoutAddress.create(input);
     if (!address.ok) return err(address.error);
+    const problem = provinceProblem(input.country, input.province);
+    if (problem !== null) return err(problem);
 
     return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
       try {
@@ -155,6 +158,8 @@ export class SetShippingAddress implements UseCase<
   async execute(input: SetAddressInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
     const address = CheckoutAddress.create(input);
     if (!address.ok) return err(address.error);
+    const problem = provinceProblem(input.country, input.province);
+    if (problem !== null) return err(problem);
 
     return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
       try {
@@ -251,6 +256,7 @@ export class SelectShipping implements UseCase<
 
       const quotes = await this.deps.shippingCalculation.quote(
         session.shippingAddress,
+        session.items,
         session.currency,
         input.tenantId,
       );
@@ -267,6 +273,7 @@ export class SelectShipping implements UseCase<
         matched.method,
         matched.rateAmountMinor,
         session.currency,
+        { name: matched.name, description: matched.description },
       );
       if (!selection.ok) return err(selection.error);
 

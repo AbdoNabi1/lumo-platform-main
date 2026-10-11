@@ -22,10 +22,17 @@ export interface CreateOrderFromCheckoutAddressInput {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: the governorate / region / emirate (ISO 3166-2). */
+  readonly province?: string;
 }
 
 function toExtra(address: CreateOrderFromCheckoutAddressInput) {
-  return { recipientName: address.name, phone: address.phone, line2: address.line2 };
+  return {
+    recipientName: address.name,
+    phone: address.phone,
+    line2: address.line2,
+    ...(address.province === undefined ? {} : { province: address.province }),
+  };
 }
 
 export interface CreateOrderFromCheckoutItemInput {
@@ -47,6 +54,10 @@ export interface CreateOrderFromCheckoutTotalsInput {
   readonly totalMinor: number;
   /** Plan 3B: the shipping method the shopper selected, snapshotted into the order's totals. */
   readonly shippingMethod?: string;
+  /** Plan 3C: the rate's name as the shopper saw it. */
+  readonly shippingName?: string;
+  /** Plan 3C: whether the tax is already inside the prices. */
+  readonly taxIncluded?: boolean;
 }
 
 export interface CreateOrderFromCheckoutInput {

@@ -11,8 +11,19 @@ import { OrderFulfillmentStatusBadge } from "./order-status-badge";
 /** An order in one of these states is over: nothing is left to fulfill, so no "Fulfill items". */
 const NOTHING_TO_FULFILL: ReadonlySet<string> = new Set(["cancelled", "closed", "refunded"]);
 
-/** The shop's own label for a shipping method; one it has no label for shows as it was recorded. */
-function deliveryMethodLine(method: string | null, t: Dictionary): string {
+/**
+ * What the shopper chose for delivery. An order placed from Plan 3C on recorded the rate's NAME ("Express
+ * 1-2 days"), shown as is; an older one recorded only a method key, which has a label of its own
+ * ("Standard shipping") or shows as it was recorded.
+ */
+function deliveryMethodLine(
+  method: string | null,
+  recordedName: string | null | undefined,
+  t: Dictionary,
+): string {
+  if (recordedName !== null && recordedName !== undefined && recordedName !== "") {
+    return t.orderPage.deliveryMethodLine.replace("{method}", recordedName);
+  }
   if (method === null) return t.orderPage.noDeliveryMethod;
   const name = (t.shippingMethodLabel as Record<string, string>)[method] ?? method;
   return t.orderPage.deliveryMethodLine.replace("{method}", name);
@@ -49,7 +60,7 @@ export function OrderItemsCard({
           <OrderFulfillmentStatusBadge status={order.fulfillmentStatus} count={itemCount} t={t} />
         </CardTitle>
         <p className="text-muted-foreground text-sm">
-          {deliveryMethodLine(order.shippingMethod, t)}
+          {deliveryMethodLine(order.shippingMethod, order.totals?.shippingName, t)}
         </p>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">

@@ -206,6 +206,7 @@ export const ar: Dictionary = {
     paymentSubtotal: "المجموع الفرعي",
     paymentShipping: "الشحن",
     paymentTaxes: "الضرائب",
+    paymentTaxesIncluded: "شامل {tax} ضرايب",
     paymentDiscount: "الخصم",
     paymentTotal: "الإجمالي",
     paidByCustomer: "المدفوع من العميل",

@@ -440,15 +440,29 @@ describe("public checkout routes — full guest lifecycle", () => {
       await admin.shippingAddress(started.id, { sessionRef, ...address }),
       "set shipping address",
     );
-    // Plan 3A: the DTO now always carries the recipient keys; null when none were given.
-    expect(withShippingAddress.billingAddress).toEqual({ ...address, name: null, phone: null });
-    expect(withShippingAddress.shippingAddress).toEqual({ ...address, name: null, phone: null });
+    // Plan 3A: the DTO now always carries the recipient keys; null when none were given. Plan 3C: so does the province.
+    expect(withShippingAddress.billingAddress).toEqual({
+      ...address,
+      name: null,
+      phone: null,
+      province: null,
+    });
+    expect(withShippingAddress.shippingAddress).toEqual({
+      ...address,
+      name: null,
+      phone: null,
+      province: null,
+    });
 
     const quoted = unwrap<{ quotes: readonly { method: string; rateAmountMinor: number }[] }>(
       await admin.shippingQuote(started.id, { sessionRef }),
       "shipping quote",
     );
-    expect(quoted.quotes).toContainEqual({ method: "standard", rateAmountMinor: 500 });
+    expect(quoted.quotes).toContainEqual({
+      method: "standard",
+      name: "Standard",
+      rateAmountMinor: 500,
+    });
 
     const withShipping = unwrap<PublicCheckoutSessionDto>(
       await admin.shippingSelection(started.id, { sessionRef, method: "standard" }),
@@ -457,7 +471,8 @@ describe("public checkout routes — full guest lifecycle", () => {
     expect(withShipping.selectedShippingMethod).toBe("standard");
 
     const taxed = unwrap<{ taxMinor: number }>(await admin.tax(started.id, { sessionRef }), "tax");
-    expect(taxed.taxMinor).toBe(400); // 10% of the 3998 subtotal, InMemoryTaxCalculationAdapter
+    // Plan 3C: the offline stub collects no tax (the real adapter reads the shop's tax settings).
+    expect(taxed.taxMinor).toBe(0);
 
     const withPayment = unwrap<PublicCheckoutSessionDto>(
       await admin.paymentSelection(started.id, {
@@ -476,15 +491,17 @@ describe("public checkout routes — full guest lifecycle", () => {
     expect(recalculated.totals).toEqual({
       subtotalMinor: 3998,
       shippingMinor: 500,
-      taxMinor: 400,
-      grandTotalMinor: 4898,
+      taxMinor: 0,
+      grandTotalMinor: 4498,
+      taxIncluded: true,
+      shippingName: "Standard",
     });
 
     const paymentIntent = unwrap<{ amountMinor: number; currency: string; provider: string }>(
       await admin.paymentIntentRequest(started.id, sessionRef),
       "payment intent request",
     );
-    expect(paymentIntent.amountMinor).toBe(4898);
+    expect(paymentIntent.amountMinor).toBe(4498);
     expect(paymentIntent.currency).toBe("USD");
     expect(paymentIntent.provider).toBe("stripe");
   });

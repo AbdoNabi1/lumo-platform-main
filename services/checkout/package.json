@@ -22,6 +22,7 @@
     "@platform/domain": "workspace:*",
     "@platform/domain-events": "workspace:*",
     "@platform/messaging": "workspace:*",
+    "@platform/regions": "workspace:*",
     "@platform/repository": "workspace:*",
     "@platform/types": "workspace:*",
     "@platform/utils": "workspace:*"

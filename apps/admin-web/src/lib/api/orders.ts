@@ -124,6 +124,11 @@ export interface OrderRecipientAddressDto extends OrderAddressDto {
   readonly recipientName: string | null;
   readonly phone: string | null;
   readonly line2: string | null;
+  /**
+   * Plan 3C: the governorate / region / emirate (ISO 3166-2). Optional because admin-web and the API
+   * deploy separately, so an older API answers without it; null/absent means none recorded.
+   */
+  readonly province?: string | null;
 }
 
 export interface OrderTotalsDto {
@@ -133,6 +138,10 @@ export interface OrderTotalsDto {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3C: true when `taxMinor` is already inside the prices. Absent from an older API: the tax was added. */
+  readonly taxIncluded?: boolean;
+  /** Plan 3C: the shipping rate's name as the shopper saw it; null/absent on older orders. */
+  readonly shippingName?: string | null;
 }
 
 export interface OrderHistoryEntryDto {

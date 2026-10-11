@@ -75,6 +75,7 @@ model OrderShippingAddress {
   recipientName String? @map("recipient_name") // Plan 3A
   phone         String? // Plan 3A
   line2         String? // Plan 3A
+  province      String? // Plan 3C: ISO 3166-2 (EG-C); null before it was captured
 
   @@map("order_shipping_addresses")
   @@schema("orders")

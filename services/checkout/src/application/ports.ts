@@ -28,27 +28,51 @@ export interface InventoryValidationPort {
 
 export interface TaxCalculationResult {
   readonly taxMinor: number;
+  /** Plan 3C: true when the tax is already inside the prices (Shopify "All prices include tax"). */
+  readonly included: boolean;
 }
 
-/** Requests a tax calculation from Finance (ADR-0024) — Checkout stores the returned snapshot verbatim, never computes tax. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
+/**
+ * Requests a tax calculation from Finance (ADR-0024) — Checkout stores the returned snapshot
+ * verbatim, never computes tax. Plan 3C: the destination carries the province (a province rate
+ * replaces the country's), `shippingMinor` is the chosen shipping price (taxed only when the shop
+ * charges tax on shipping), and the implementation resolves each line's `taxable` flag from Catalog —
+ * never from the session. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter.
+ */
 export interface TaxCalculationPort {
   calculate(
     items: readonly CheckoutItem[],
-    shippingAddress: { readonly country: string },
+    destination: { readonly country: string; readonly province?: string | undefined },
+    shippingMinor: number,
     currency: string,
     tenantId: string,
   ): Promise<TaxCalculationResult>;
 }
 
 export interface ShippingQuote {
+  /** The shipping rate's id; the checkout selects by it. */
   readonly method: string;
+  /** What the shopper sees ("Standard"). */
+  readonly name: string;
   readonly rateAmountMinor: number;
+  readonly description?: string | undefined;
 }
 
-/** Requests shipping rate quotes from Shipping — Checkout stores the chosen quote's snapshot verbatim, never computes rates. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
+/**
+ * Requests shipping rate quotes from Shipping — Checkout stores the chosen quote's snapshot verbatim,
+ * never computes rates. Plan 3C: the quote depends on the zone the address falls in and on the
+ * lines (order price, weight, whether anything needs shipping); the implementation resolves each
+ * line's `requiresShipping` and weight from Catalog — never from the session. No quotes means the shop
+ * does not ship to this address. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter.
+ */
 export interface ShippingCalculationPort {
   quote(
-    shippingAddress: { readonly country: string; readonly postalCode: string },
+    shippingAddress: {
+      readonly country: string;
+      readonly province?: string | undefined;
+      readonly postalCode: string;
+    },
+    items: readonly CheckoutItem[],
     currency: string,
     tenantId: string,
   ): Promise<readonly ShippingQuote[]>;

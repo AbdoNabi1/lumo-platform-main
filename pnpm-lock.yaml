@@ -632,6 +632,9 @@ importers:
       '@platform/design':
         specifier: workspace:*
         version: link:../../packages/design
+      '@platform/regions':
+        specifier: workspace:*
+        version: link:../../packages/regions
       '@platform/tracking':
         specifier: workspace:*
         version: link:../../packages/tracking
@@ -2083,6 +2086,9 @@ importers:
       '@platform/messaging':
         specifier: workspace:*
         version: link:../../packages/messaging
+      '@platform/regions':
+        specifier: workspace:*
+        version: link:../../packages/regions
       '@platform/repository':
         specifier: workspace:*
         version: link:../../packages/repository

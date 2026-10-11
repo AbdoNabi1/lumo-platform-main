@@ -34,6 +34,30 @@ describe("countryName", () => {
   });
 });
 
+describe("addressLines — province (Plan 3C)", () => {
+  it("names the governorate in the page language, between the city and the country", () => {
+    expect(addressLines({ ...address, province: "EG-C" }, "en")).toEqual([
+      "Mona Ali",
+      "12 Tahrir St",
+      "Flat 4",
+      "Cairo, 11511",
+      "Cairo",
+      "Egypt",
+      "+201012345678",
+    ]);
+    expect(addressLines({ ...address, province: "EG-GZ" }, "ar")).toContain("الجيزة");
+  });
+
+  it("adds no line for an order without a province", () => {
+    expect(addressLines({ ...address, province: null }, "en")).toHaveLength(6);
+    expect(addressLines(address, "en")).toHaveLength(6);
+  });
+
+  it("shows a code it has no name for as recorded", () => {
+    expect(addressLines({ ...address, province: "EG-ZZ" }, "en")).toContain("EG-ZZ");
+  });
+});
+
 describe("addressLines", () => {
   it("lists the name, street, second line, city with postcode, country name and phone", () => {
     expect(addressLines(address, "en")).toEqual([

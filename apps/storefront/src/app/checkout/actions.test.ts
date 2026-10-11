@@ -234,8 +234,8 @@ describe("requestShippingQuote — carries quotes on success", () => {
   it("returns the quoted methods on success", async () => {
     cookieStore.set("morbeh-storefront-guest-session", "session-a");
     const quotes: readonly ShippingQuoteSummary[] = [
-      { method: "standard", rateAmountMinor: 500 },
-      { method: "express", rateAmountMinor: 1500 },
+      { method: "rate-standard", name: "Standard", rateAmountMinor: 500 },
+      { method: "rate-express", name: "Express", rateAmountMinor: 1500 },
     ];
     requestCheckoutShippingQuote.mockResolvedValue({ status: 200, body: { quotes } });
 

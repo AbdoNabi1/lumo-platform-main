@@ -12,6 +12,7 @@ const config: NextConfig = {
   // Compile workspace packages from source (no pre-build step needed).
   transpilePackages: [
     "@platform/ui",
+    "@platform/regions",
     "@platform/design",
     "@platform/utils",
     "@platform/config",

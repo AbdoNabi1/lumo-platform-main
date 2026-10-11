@@ -216,6 +216,7 @@ export const en = {
     paymentSubtotal: "Subtotal",
     paymentShipping: "Shipping",
     paymentTaxes: "Taxes",
+    paymentTaxesIncluded: "Including {tax} in taxes",
     paymentDiscount: "Discount",
     paymentTotal: "Total",
     paidByCustomer: "Paid by customer",

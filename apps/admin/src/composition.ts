@@ -107,6 +107,10 @@ import { TenantProvisioner } from "./tenant-provisioning";
 import { wireTheme } from "@platform/theme";
 import { wireWishlist, type WishlistController } from "@platform/wishlist";
 import { AllowAllAccessControl } from "./infrastructure/allow-all-access-control";
+import {
+  CheckoutShippingQuoteAdapter,
+  CheckoutTaxCalculationAdapter,
+} from "./infrastructure/cross-context/checkout-shipping-tax.adapters";
 import { InventoryValidationAdapter } from "./infrastructure/cross-context/inventory-validation.adapter";
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
@@ -126,6 +130,7 @@ import { PaymentsOrdersAdapter } from "./infrastructure/cross-context/payments-o
 import { PromotionValidationAdapter } from "./infrastructure/cross-context/promotion-validation.adapter";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
 import { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email-adapter";
+import type { AdminResponse } from "./interfaces/admin-response";
 import { AccessAdminController } from "./interfaces/access.admin-controller";
 import { AdminGuard } from "./interfaces/admin-guard";
 import { CustomerAuthAdminController } from "./interfaces/customer-auth.admin-controller";
@@ -358,6 +363,15 @@ export interface AdminWiringDeps {
   readonly inventoryValidation?: InventoryValidationPort;
   readonly taxCalculation?: TaxCalculationPort;
   readonly shippingCalculation?: ShippingCalculationPort;
+  /**
+   * Plan 3C: wire the REAL shipping and tax adapters into Checkout — the shop's shipping zones and
+   * rates, and its own tax settings, with each line's weight / `taxable` read from Catalog.
+   * Defaults to `true` whenever production persistence (`prisma`) is present, `false` otherwise: tests
+   * and local runs without a database keep Checkout's offline stubs (a fixed Standard 5 / Express 15
+   * quote, no tax) unless they ask for the real ones. An explicit `taxCalculation` /
+   * `shippingCalculation` above always wins. The runtime passes `true` outright.
+   */
+  readonly realShippingAndTax?: boolean;
   readonly promotionValidation?: PromotionValidationPort;
   /**
    * C-2: the outbound seam `CompleteCheckout` uses to materialize an order from a completed
@@ -575,6 +589,12 @@ export interface WiredAdmin {
      * methods are used by `public-cart-routes.ts`, and one seam is easier to audit than two.
      */
     readonly checkout: CheckoutController;
+    /**
+     * Plan 3C: the countries the shop's shipping zones ship to (`{ countries, restOfWorld }`) — all the
+     * storefront's country select needs. A function, not the zones controller: the public side can ask this
+     * one question and nothing else about the shop's shipping setup.
+     */
+    readonly shippableCountries: (tenantId: string) => Promise<AdminResponse>;
     /**
      * Reviews' guest read surface (T5.18 — product review display). Same reasoning as `cart`/
      * `checkout` above: every route in `reviews-routes.ts` goes through the guarded
@@ -839,6 +859,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const customer360 = wireCustomer360(deps);
   const pricing = wirePricing(deps);
   const finance = wireFinance({ ...deps, postingAccounts: DEFAULT_FINANCE_POSTING_ACCOUNTS });
+  // Plan 3C: wired before Checkout, whose real shipping adapter quotes the shop's zones.
+  const shipping = wireShipping(deps);
   const automation = wireAutomation(deps);
   const analytics = wireAnalytics();
   const cart = wireCart(deps);
@@ -865,8 +887,20 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // Task 17a (C-2): a real `OrderCreationPort` adapter over Orders' `CreateOrderFromCheckout`,
   // wired here (after `orders` above) rather than left to `wireCheckout`'s own
   // `deps.orderCreation ?? new InMemoryOrderCreationAdapter()` fallback.
+  const realShippingAndTax = deps.realShippingAndTax ?? deps.prisma !== undefined;
   const checkoutDeps = {
     ...deps,
+    ...(realShippingAndTax
+      ? {
+          // Plan 3C: the shop's own zones/rates and tax settings, lines resolved from Catalog.
+          taxCalculation:
+            deps.taxCalculation ??
+            new CheckoutTaxCalculationAdapter(catalog.products, finance.taxes),
+          shippingCalculation:
+            deps.shippingCalculation ??
+            new CheckoutShippingQuoteAdapter(catalog.products, shipping.zones),
+        }
+      : {}),
     pricingValidation:
       deps.pricingValidation ?? new CatalogPricingValidationAdapter(catalog.products),
     inventoryValidation:
@@ -926,7 +960,6 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   paymentsControllerCell.controller = payments.payments;
   const fulfillment = wireFulfillment(deps);
   fulfillmentControllerCell.controller = fulfillment.fulfillment;
-  const shipping = wireShipping(deps);
   const recommendations = wireRecommendations(deps);
   const reporting = wireReporting(deps);
   const returns = wireReturns(deps);
@@ -1213,6 +1246,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       inventory: inventory.inventory,
       cart: cart.cart,
       checkout: checkout.checkout,
+      shippableCountries: (tenantId) => shipping.zones.shippableCountries({ tenantId }),
       reviews: reviews.reviews,
       security: security.security,
       customers: identity.customers,

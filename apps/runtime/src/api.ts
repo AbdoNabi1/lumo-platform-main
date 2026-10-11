@@ -297,11 +297,13 @@ export function assertProductionDunningNotificationsConfigured(
  * ordersPort, paymentsNotifications), and Task 17a (C-2) wired a 9th, `orderCreation`, over
  * Orders' own `CreateOrderFromCheckout` — `wireAdmin` now wires each of those unconditionally by
  * default, so they no longer appear in `integrationPorts` below at all (re-listing one `undefined`
- * here would just re-stub a port that already has a real adapter and defeat this guard). Four
- * ports remain, for three different reasons:
- *   - `taxCalculation` / `shippingCalculation` are genuinely missing capabilities: nothing in
- *     this codebase computes tax or quotes a shipping rate yet (checkout's figures are a flat 10%
- *     stub and hardcoded numbers, respectively).
+ * here would just re-stub a port that already has a real adapter and defeat this guard).
+ * Plan 3C did the same for the last two checkout ports: `taxCalculation` (the shop's own tax
+ * settings, with each line's `taxable` read from Catalog) and `shippingCalculation` (the shop's own
+ * shipping zones and rates, with weights read from Catalog) are real adapters `wireAdmin` wires
+ * whenever there is a database — and `startApi` below passes `realShippingAndTax: true` outright — so
+ * the flat-10% tax and fixed 5/15 shipping stubs can no longer back a production checkout. Two ports
+ * remain, for two different reasons:
  *   - `shippingPort` is also a genuinely missing capability, found during Phase 3 implementation:
  *     `services/shipping`'s shipment-creation flow requires `weightGrams` per package, and nothing
  *     in Catalog, Orders, or Fulfillment computes or stores a product/order weight anywhere —
@@ -360,14 +362,10 @@ export function assertProductionIntegrationPortsConfigured(
   } else {
     throw new Error(
       `api: ${stubbed.join(", ")} ${stubbed.length === 1 ? "is" : "are"} still offline in-memory ` +
-        "stub(s) (C-03). taxCalculation needs a tax provider integration (e.g. Avalara/TaxJar) or " +
-        "a local tax-authority table — nothing in this codebase computes tax today (checkout's " +
-        "tax figure is a flat 10% stub). shippingCalculation needs a shipping rate source (a " +
-        "carrier rating API or an in-house rate table) — nothing in this codebase quotes a " +
-        "shipping rate today (checkout's shipping figures are hardcoded). shippingPort needs a " +
+        "stub(s) (C-03). shippingPort needs a " +
         "source of package weight/dimensions per product — services/shipping's shipment-creation " +
         "flow requires weightGrams per package and nothing in Catalog, Orders, or Fulfillment " +
-        "computes or stores one. financePort is different in kind from the other three: it is not " +
+        "computes or stores one. financePort is different in kind from shippingPort: it is not " +
         "a missing capability but a deliberate guard against a redundant write path, and that path " +
         "is now fully async and real (WP-11, F-11 closed). Finance's OrdersPaidConsumer, " +
         "PaymentsCapturedConsumer, and RefundsIssuedConsumer are ALL registered with the Kafka " +
@@ -380,7 +378,7 @@ export function assertProductionIntegrationPortsConfigured(
         "Whichever of these remain listed above " +
         "must never back real money, shipping cost, or tax calculation outside " +
         "APP_ENV=local. Wire the real adapter once the underlying capability exists " +
-        "(taxCalculation / shippingCalculation / shippingPort), or pass it " +
+        "(shippingPort), or pass it " +
         "explicitly in createAdminHttpApi's deps; leave financePort unwired unless deliberately " +
         "replacing the async consumer path.",
     );
@@ -449,8 +447,10 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // always wires a real PromotionValidationAdapter over Promotions' own EvaluatePromotions use
     // case by default — there is no offline stub left in production to guard against, so listing
     // it `undefined` here would just re-stub it and defeat the guard below.
-    taxCalculation: undefined,
-    shippingCalculation: undefined,
+    // taxCalculation / shippingCalculation are deliberately absent here (Plan 3C): `wireAdmin` wires
+    // the shop's real tax-settings and shipping-zone adapters (`realShippingAndTax`), so the
+    // flat-10% / fixed-5-and-15 stubs are unreachable in production — listing them `undefined` here
+    // would just re-stub them and defeat the guard below.
     // ordersPort/paymentsNotifications are deliberately absent here (Phase 3 Task 13, C-3):
     // `wireAdmin` now always wires real `PaymentsOrdersAdapter`/`PaymentsNotificationAdapter`
     // adapters over Orders' `getOrder` / Notifications' create -> queue -> send lifecycle by
@@ -506,6 +506,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
 
   const app = await createAdminHttpApi({
     ...integrationPorts,
+    // Plan 3C: the shop's own shipping zones/rates and tax settings back the checkout, never the
+    // offline stubs (also the default whenever `prisma` is present — stated here so it cannot drift).
+    realShippingAndTax: true,
     mfaProviders: runtime.mfaProviders,
     serializer: runtime.serializer,
     idGenerator: runtime.idGenerator,

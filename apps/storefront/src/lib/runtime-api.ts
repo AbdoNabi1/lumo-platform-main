@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { SHOP_ID_HEADER } from "./shop-host";
+import type { ShippableCountries } from "./checkout-address";
 
 const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
 const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
@@ -276,6 +277,24 @@ export async function getPublicStore(): Promise<PublicStore | null> {
     return null;
   }
   return { name: body.name, currency: body.currency };
+}
+
+/**
+ * The countries the shop ships to (`GET /public/shipping/countries`, Plan 3C), from its shipping
+ * zones; `null` when the Runtime API cannot answer.
+ */
+export async function getShippableCountries(): Promise<ShippableCountries | null> {
+  const response = await fetchItem<ShippableCountries>("/api/v1/public/shipping/countries");
+  const body = response.body;
+  if (
+    response.status !== 200 ||
+    body === null ||
+    !Array.isArray(body.countries) ||
+    typeof body.restOfWorld !== "boolean"
+  ) {
+    return null;
+  }
+  return { countries: body.countries, restOfWorld: body.restOfWorld };
 }
 
 /** Products — Catalog (`GET /public/products`, Phase 9). */
@@ -774,6 +793,8 @@ export interface CheckoutAddressInput {
   /** May be empty. */
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: ISO 3166-2 code (e.g. `EG-C`), required for a country with province data. */
+  readonly province?: string | null;
 }
 
 /** An address as the session returns it to its owner: the recipient keys are null when never given. */
@@ -798,6 +819,10 @@ export interface CheckoutTotalsSummary {
   readonly shippingMinor: number;
   readonly taxMinor: number;
   readonly grandTotalMinor: number;
+  /** Plan 3C: the tax is already inside the prices (the total does not add it again). */
+  readonly taxIncluded?: boolean;
+  /** Plan 3C: the name of the shipping rate the shopper chose. */
+  readonly shippingName?: string | null;
 }
 
 export interface CheckoutSessionSummary {
@@ -817,7 +842,11 @@ export interface CheckoutSessionSummary {
 }
 
 export interface ShippingQuoteSummary {
+  /** The id of the shop's rate: what `selectShipping` sends back. */
   readonly method: string;
+  /** Plan 3C: the rate's name as the merchant wrote it. */
+  readonly name: string;
+  readonly description?: string | null;
   readonly rateAmountMinor: number;
 }
 

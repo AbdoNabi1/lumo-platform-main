@@ -29,18 +29,21 @@ export class InMemoryInventoryValidationAdapter implements InventoryValidationPo
   }
 }
 
+/**
+ * Offline stub (tests and local runs only): no tax is collected — the real adapter reads the shop's
+ * tax settings, and with no region configured that is zero too. Local runs no longer add a flat 10%.
+ */
 export class InMemoryTaxCalculationAdapter implements TaxCalculationPort {
-  async calculate(items: readonly CheckoutItem[]): Promise<TaxCalculationResult> {
-    const subtotalMinor = items.reduce((sum, item) => sum + item.lineTotalMinor, 0);
-    return { taxMinor: Math.round(subtotalMinor * 0.1) };
+  async calculate(): Promise<TaxCalculationResult> {
+    return { taxMinor: 0, included: true };
   }
 }
 
 export class InMemoryShippingCalculationAdapter implements ShippingCalculationPort {
   async quote(): Promise<readonly ShippingQuote[]> {
     return [
-      { method: "standard", rateAmountMinor: 500 },
-      { method: "express", rateAmountMinor: 1500 },
+      { method: "standard", name: "Standard", rateAmountMinor: 500 },
+      { method: "express", name: "Express", rateAmountMinor: 1500 },
     ];
   }
 }

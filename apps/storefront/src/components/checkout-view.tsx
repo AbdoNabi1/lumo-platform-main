@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from "@platform/ui";
@@ -17,12 +17,17 @@ import {
   setShippingAddress,
   type CheckoutActionResult,
 } from "@/app/checkout/actions";
+import { hasProvinces, PROVINCES } from "@platform/regions";
 import {
-  CHECKOUT_COUNTRIES,
-  DEFAULT_CHECKOUT_COUNTRY,
-  isCheckoutCountry,
+  countryName,
+  countryOptions,
+  defaultCountry,
+  isCountryCode,
   isValidPhone,
   normalizePhone,
+  provinceLabelKey,
+  type CountryOption,
+  type ShippableCountries,
 } from "@/lib/checkout-address";
 import { formatCurrency } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
@@ -61,6 +66,8 @@ interface AddressForm {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** ISO 3166-2 code, or "" while none is chosen (and always "" for a country without provinces). */
+  readonly province: string;
 }
 
 function formFrom(
@@ -77,6 +84,7 @@ function formFrom(
       postalCode: "",
       // A free-text country from before the list existed matches nothing: the shopper must pick.
       country: defaultCountry,
+      province: "",
     };
   }
   return {
@@ -86,7 +94,8 @@ function formFrom(
     line2: address.line2 ?? "",
     city: address.city,
     postalCode: address.postalCode,
-    country: isCheckoutCountry(address.country) ? address.country : "",
+    country: isCountryCode(address.country) ? address.country : "",
+    province: address.province ?? "",
   };
 }
 
@@ -105,6 +114,7 @@ function toInput(form: AddressForm): CheckoutAddressInput {
     city: form.city.trim(),
     postalCode: form.postalCode.trim(),
     country: form.country,
+    ...(form.province === "" || !hasProvinces(form.country) ? {} : { province: form.province }),
   };
 }
 
@@ -114,6 +124,7 @@ function isShippingComplete(form: AddressForm): boolean {
     form.line1.trim() !== "" &&
     form.city.trim() !== "" &&
     form.country !== "" &&
+    (!hasProvinces(form.country) || form.province !== "") &&
     form.name.trim() !== "" &&
     isValidPhone(form.phone)
   );
@@ -217,10 +228,16 @@ export function CheckoutView({
   locale,
   accountEmail = null,
   paymentMethods,
+  shippableCountries,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly t: Dictionary;
   readonly locale: Locale;
+  /**
+   * The countries the shop's shipping zones cover (`GET /public/shipping/countries`, Plan 3C).
+   * `null` means the list could not be loaded; like a shop that ships nowhere yet, it fails closed.
+   */
+  readonly shippableCountries: ShippableCountries | null;
   /**
    * The signed-in customer's email, resolved SERVER-side from their session (never read from a
    * cookie or typed). When present it is shown as text, applied once, and no field is offered.
@@ -243,6 +260,7 @@ export function CheckoutView({
       locale={locale}
       accountEmail={accountEmail}
       paymentMethods={paymentMethods}
+      shippableCountries={shippableCountries}
     />
   );
 }
@@ -310,14 +328,21 @@ function CheckoutForm({
   locale,
   accountEmail,
   paymentMethods,
+  shippableCountries,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly accountEmail: string | null;
   readonly paymentMethods: readonly string[] | null;
+  readonly shippableCountries: ShippableCountries | null;
 }) {
   const router = useRouter();
+  const countries = useMemo(
+    () => countryOptions(shippableCountries, locale),
+    [shippableCountries, locale],
+  );
+  const initialCountry = defaultCountry(countries);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<ErrorReason | null>(null);
   const [redirecting, setRedirecting] = useState(false);
@@ -325,10 +350,10 @@ function CheckoutForm({
 
   const [email, setEmail] = useState(session.contactEmail ?? accountEmail ?? "");
   const [shipping, setShippingState] = useState<AddressForm>(() =>
-    formFrom(session.shippingAddress, DEFAULT_CHECKOUT_COUNTRY),
+    formFrom(session.shippingAddress, initialCountry),
   );
   const [billing, setBilling] = useState<AddressForm>(() =>
-    formFrom(session.billingAddress, DEFAULT_CHECKOUT_COUNTRY),
+    formFrom(session.billingAddress, initialCountry),
   );
   const [billingMode, setBillingMode] = useState<"same" | "different">(() =>
     session.billingAddress !== null &&
@@ -339,6 +364,8 @@ function CheckoutForm({
       : "same",
   );
   const [quotes, setQuotes] = useState<readonly ShippingQuoteSummary[]>([]);
+  // True once Shipping has answered for the address, so "no rates" is told apart from "not asked yet".
+  const [quotesLoaded, setQuotesLoaded] = useState(false);
   const [selectedMethod, setSelectedMethodState] = useState<string | null>(
     session.selectedShippingMethod,
   );
@@ -419,6 +446,7 @@ function CheckoutForm({
     if (seq !== requestedRef.current) return true;
     if (!quoted.ok) return fail(quoted.reason);
     setQuotes(quoted.quotes);
+    setQuotesLoaded(true);
     return chooseFrom(quoted.quotes);
   }
 
@@ -454,6 +482,7 @@ function CheckoutForm({
         const quoted = await requestShippingQuote(session.id);
         if (!quoted.ok) return fail(quoted.reason);
         setQuotes(quoted.quotes);
+        setQuotesLoaded(true);
         return chooseFrom(quoted.quotes);
       });
   });
@@ -487,6 +516,8 @@ function CheckoutForm({
   const paymentBlocked = paymentMethods === null || paymentMethods.length === 0;
   const offline = chosenPayment !== null && OFFLINE_METHODS.has(chosenPayment);
   const addressComplete = isShippingComplete(shipping);
+  const noDestinations = countries.length === 0;
+  const noRates = addressComplete && quotesLoaded && quotes.length === 0;
 
   function onSelectShippingMethod(method: string): void {
     startTransition(async () => {
@@ -559,14 +590,17 @@ function CheckoutForm({
 
   function onSubmit(event: React.FormEvent): void {
     event.preventDefault();
-    if (isPending || paymentBlocked) return;
+    if (isPending || paymentBlocked || noDestinations || noRates) return;
     const emailValue = (accountEmail ?? email).trim();
     const phoneOk = isValidPhone(shipping.phone);
     setPhoneInvalid(!phoneOk);
     if (emailValue === "" || !isShippingComplete(shipping) || !phoneOk) return;
     if (billingMode === "different") {
       const complete =
-        billing.line1.trim() !== "" && billing.city.trim() !== "" && billing.country !== "";
+        billing.line1.trim() !== "" &&
+        billing.city.trim() !== "" &&
+        billing.country !== "" &&
+        (!hasProvinces(billing.country) || billing.province !== "");
       const billingPhoneOk = billing.phone.trim() === "" || isValidPhone(billing.phone);
       if (!complete || !billingPhoneOk) return;
     }
@@ -628,6 +662,14 @@ function CheckoutForm({
           </Section>
 
           <Section title={t.checkout.sections.delivery}>
+            {noDestinations && (
+              <div
+                role="alert"
+                className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
+              >
+                {t.checkout.noShippingDestinations}
+              </div>
+            )}
             <div
               onBlur={scheduleSync}
               onChange={(event) => {
@@ -643,13 +685,22 @@ function CheckoutForm({
                 }}
                 phoneRequired
                 phoneInvalid={phoneInvalid}
+                countries={countries}
                 t={t}
+                locale={locale}
               />
             </div>
           </Section>
 
           <Section title={t.checkout.sections.shippingMethod}>
-            {!addressComplete || quotes.length === 0 ? (
+            {noRates ? (
+              <div
+                role="alert"
+                className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
+              >
+                {t.checkout.noShippingRates}
+              </div>
+            ) : !addressComplete || quotes.length === 0 ? (
               <p className="text-muted-foreground bg-muted/50 rounded-md px-3 py-3 text-sm">
                 {t.checkout.shippingMethodHint}
               </p>
@@ -666,9 +717,14 @@ function CheckoutForm({
                       checked={selectedMethod === quote.method}
                       onChange={() => onSelectShippingMethod(quote.method)}
                     />
-                    <span className="flex-1">{shippingLabel(quote.method, t)}</span>
+                    <span className="flex flex-1 flex-col gap-0.5">
+                      <span>{quote.name}</span>
+                      {quote.description != null && quote.description !== "" && (
+                        <span className="text-muted-foreground text-xs">{quote.description}</span>
+                      )}
+                    </span>
                     <span className="font-medium">
-                      {formatCurrency(locale, quote.rateAmountMinor, session.currency)}
+                      {priceLabel(quote.rateAmountMinor, session.currency, locale, t)}
                     </span>
                   </ChoiceCard>
                 ))}
@@ -743,7 +799,9 @@ function CheckoutForm({
                 onChange={setBilling}
                 phoneRequired={false}
                 phoneInvalid={false}
+                countries={countries}
                 t={t}
+                locale={locale}
               />
             )}
           </Section>
@@ -755,7 +813,7 @@ function CheckoutForm({
               type="submit"
               size="lg"
               className="w-full"
-              disabled={isPending || paymentBlocked}
+              disabled={isPending || paymentBlocked || noDestinations || noRates}
               loading={isPending}
             >
               {isPending
@@ -812,9 +870,11 @@ function ChoiceCard({
   );
 }
 
-function shippingLabel(method: string, t: Dictionary): string {
-  if (method === "standard" || method === "express") return t.checkout.shippingMethodLabel[method];
-  return method;
+/** A shipping price: "Free" when the rate costs nothing, like Shopify. */
+function priceLabel(amountMinor: number, currency: string, locale: Locale, t: Dictionary): string {
+  return amountMinor === 0
+    ? t.checkout.summary.free
+    : formatCurrency(locale, amountMinor, currency);
 }
 
 /**
@@ -842,15 +902,26 @@ function AddressFields({
   onChange,
   phoneRequired,
   phoneInvalid,
+  countries,
   t,
+  locale,
 }: {
   readonly idPrefix: string;
   readonly value: AddressForm;
   readonly onChange: (value: AddressForm) => void;
   readonly phoneRequired: boolean;
   readonly phoneInvalid: boolean;
+  readonly countries: readonly CountryOption[];
   readonly t: Dictionary;
+  readonly locale: Locale;
 }) {
+  const provinceKey = provinceLabelKey(value.country);
+  const provinces = [...(PROVINCES[value.country] ?? [])].sort((a, b) =>
+    a[locale].localeCompare(b[locale], locale),
+  );
+  // A country saved on the session that the shop's zones no longer name stays visible, so the
+  // shopper sees what is selected; Shipping then answers "not available" for it.
+  const known = countries.some((option) => option.code === value.country);
   function text(key: keyof AddressForm) {
     return (event: React.ChangeEvent<HTMLInputElement>) =>
       onChange({ ...value, [key]: event.target.value });
@@ -867,16 +938,39 @@ function AddressFields({
           required
           autoComplete="country"
           value={value.country}
-          onChange={(event) => onChange({ ...value, country: event.target.value })}
+          onChange={(event) => onChange({ ...value, country: event.target.value, province: "" })}
         >
           {value.country === "" && <option value="">{t.checkout.address.selectCountry}</option>}
-          {CHECKOUT_COUNTRIES.map((code) => (
-            <option key={code} value={code}>
-              {t.checkout.countries[code]}
+          {value.country !== "" && !known && (
+            <option value={value.country}>{countryName(value.country, locale)}</option>
+          )}
+          {countries.map((option) => (
+            <option key={option.code} value={option.code}>
+              {option.name}
             </option>
           ))}
         </select>
       </div>
+      {provinceKey !== null && (
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={id("province")}>{t.checkout.address[provinceKey]}</Label>
+          <select
+            id={id("province")}
+            className={SELECT_CLASS}
+            required
+            autoComplete="address-level1"
+            value={value.province}
+            onChange={(event) => onChange({ ...value, province: event.target.value })}
+          >
+            {value.province === "" && <option value="">{t.checkout.address.selectProvince}</option>}
+            {provinces.map((province) => (
+              <option key={province.code} value={province.code}>
+                {province[locale]}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="flex flex-col gap-1">
         <Label htmlFor={id("name")}>{t.checkout.address.name}</Label>
         <Input
@@ -1051,22 +1145,34 @@ function SummaryBody({
           value={
             shippingMinor === null
               ? t.checkout.summary.enterShippingAddress
-              : formatCurrency(locale, shippingMinor, session.currency)
+              : priceLabel(shippingMinor, session.currency, locale, t)
           }
           muted={shippingMinor === null}
         />
-        {session.totals !== null && (
-          <SummaryRow
-            label={t.checkout.summary.taxes}
-            value={formatCurrency(locale, session.totals.taxMinor, session.currency)}
-          />
-        )}
+        {session.totals !== null &&
+          session.totals.taxMinor > 0 &&
+          session.totals.taxIncluded !== true && (
+            <SummaryRow
+              label={t.checkout.summary.taxes}
+              value={formatCurrency(locale, session.totals.taxMinor, session.currency)}
+            />
+          )}
         <div className="border-border mt-1 flex items-baseline justify-between border-t pt-3">
           <dt className="text-base font-semibold">{t.checkout.summary.total}</dt>
           <dd className="text-xl font-semibold">
             <TotalValue session={session} quotes={quotes} selected={selected} locale={locale} />
           </dd>
         </div>
+        {session.totals !== null &&
+          session.totals.taxMinor > 0 &&
+          session.totals.taxIncluded === true && (
+            <p className="text-muted-foreground text-end text-xs">
+              {t.checkout.summary.includingTaxes.replace(
+                "{tax}",
+                formatCurrency(locale, session.totals.taxMinor, session.currency),
+              )}
+            </p>
+          )}
       </dl>
     </div>
   );

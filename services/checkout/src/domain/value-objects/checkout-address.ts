@@ -10,6 +10,8 @@ interface CheckoutAddressProps {
   /** May be empty: many countries the store ships to have no postal codes. */
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: ISO 3166-2 (`EG-C`), for countries with province data; checked against the region data by the use cases. */
+  readonly province?: string;
 }
 
 export interface CheckoutAddressInput {
@@ -22,9 +24,12 @@ export interface CheckoutAddressInput {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: the governorate / region / emirate. */
+  readonly province?: string;
 }
 
 const NAME_MAX_LENGTH = 120;
+const PROVINCE_MAX_LENGTH = 10;
 const PHONE_PATTERN = /^\+?[0-9]{7,15}$/;
 
 /** Arabic-Indic (U+0660–0669) and Persian (U+06F0–06F9) digits to ASCII. */
@@ -58,6 +63,14 @@ export class CheckoutAddress extends ValueObject<CheckoutAddressProps> {
       issues.push({ field: "phone", message: "must be 7-15 digits, optionally starting with +" });
     }
 
+    const province = input.province?.trim();
+    if (province !== undefined && province.length > PROVINCE_MAX_LENGTH) {
+      issues.push({
+        field: "province",
+        message: `must be at most ${PROVINCE_MAX_LENGTH} characters`,
+      });
+    }
+
     if (issues.length > 0) {
       return err(new ValidationError("Invalid address", issues));
     }
@@ -70,6 +83,8 @@ export class CheckoutAddress extends ValueObject<CheckoutAddressProps> {
         city: input.city,
         postalCode: input.postalCode.trim(),
         country: input.country,
+        // Only present when given, so an address without one (and its equality) is exactly as before.
+        ...(province === undefined || province === "" ? {} : { province }),
       }),
     );
   }
@@ -100,5 +115,9 @@ export class CheckoutAddress extends ValueObject<CheckoutAddressProps> {
 
   get country(): string {
     return this.props.country;
+  }
+
+  get province(): string | undefined {
+    return this.props.province;
   }
 }

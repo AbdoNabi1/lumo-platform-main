@@ -49,6 +49,8 @@ interface CheckoutSessionProps {
   /** The payment intent opened for this session's order once the shopper paid/committed (WP-13). Set once. */
   paymentIntentRef?: string;
   taxMinor?: number;
+  /** Plan 3C: whether `taxMinor` is already inside the prices. Persisted through the totals snapshot. */
+  taxIncluded?: boolean;
   discountMinor?: number;
   totals?: CheckoutTotals;
 }
@@ -106,6 +108,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
       readonly paymentSelection?: PaymentSelection;
       readonly paymentIntentRef?: string;
       readonly taxMinor?: number;
+      readonly taxIncluded?: boolean;
       readonly discountMinor?: number;
       readonly totals?: CheckoutTotals;
     } = {},
@@ -126,6 +129,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         paymentSelection: extra.paymentSelection,
         paymentIntentRef: extra.paymentIntentRef,
         taxMinor: extra.taxMinor,
+        taxIncluded: extra.taxIncluded,
         discountMinor: extra.discountMinor,
         totals: extra.totals,
       },
@@ -189,10 +193,15 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     this.props.paymentIntentRef = paymentIntentRef;
   }
 
-  /** Stores the tax snapshot requested from Finance via `TaxCalculationPort` — never computed here. */
-  applyTaxSnapshot(taxMinor: number): void {
+  /**
+   * Stores the tax snapshot requested from Finance via `TaxCalculationPort` — never computed here.
+   * `included` says whether that tax is already inside the prices (Plan 3C); a caller that does not
+   * know keeps the pre-3C meaning: the tax is added to the total.
+   */
+  applyTaxSnapshot(taxMinor: number, included = false): void {
     this.ensureOpen();
     this.props.taxMinor = taxMinor;
+    this.props.taxIncluded = included;
   }
 
   /** Stores the discount snapshot requested from Promotions via `PromotionValidationPort` — never computed here. */
@@ -213,6 +222,10 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
       this.props.shippingSelection?.rateAmountMinor ?? 0,
       this.props.discountMinor ?? 0,
       this.props.currency,
+      {
+        taxIncluded: this.props.taxIncluded ?? false,
+        shippingName: this.props.shippingSelection?.name,
+      },
     );
     this.props.totals = totals;
     this.addDomainEvent(
@@ -384,6 +397,10 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
 
   get taxMinor(): number | undefined {
     return this.props.taxMinor;
+  }
+
+  get taxIncluded(): boolean | undefined {
+    return this.props.taxIncluded;
   }
 
   get discountMinor(): number | undefined {

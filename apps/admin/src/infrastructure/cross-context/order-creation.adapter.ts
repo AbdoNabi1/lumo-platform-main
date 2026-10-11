@@ -44,6 +44,8 @@ type OrderCreationInput = Parameters<OrderCreationPort["create"]>[0];
  * - **Shipping method (Plan 3B).** The method the shopper selected (`CheckoutSession.shippingSelection`)
  *   travels as `input.shippingMethod` and is snapshotted into the order's `totals` JSON, so the admin
  *   can show "Delivery method" without asking Checkout. Orders placed before this have none.
+ * - **Province, rate name and tax (Plan 3C).** Both addresses carry their `province` (ISO 3166-2), and the
+ *   totals carry `shippingName` and `taxIncluded`, so the order records how its tax was worked out.
  * - **Recipient (Plan 3A).** `CheckoutAddress.name`, `phone` and `line2` travel to Orders' address
  *   input (`name`, `phone`, `line2`); Orders persists them as `recipient_name`, `phone` and `line2`.
  *
@@ -120,6 +122,9 @@ export class OrderCreationAdapter implements OrderCreationPort {
         city: input.billingAddress.city,
         postalCode: input.billingAddress.postalCode,
         country: input.billingAddress.country,
+        ...(input.billingAddress.province === undefined
+          ? {}
+          : { province: input.billingAddress.province }),
       },
       shippingAddress: {
         name: input.shippingAddress.name,
@@ -129,6 +134,9 @@ export class OrderCreationAdapter implements OrderCreationPort {
         city: input.shippingAddress.city,
         postalCode: input.shippingAddress.postalCode,
         country: input.shippingAddress.country,
+        ...(input.shippingAddress.province === undefined
+          ? {}
+          : { province: input.shippingAddress.province }),
       },
       totals: {
         subtotalMinor: input.totals.subtotalMinor,
@@ -139,6 +147,12 @@ export class OrderCreationAdapter implements OrderCreationPort {
         // Plan 3B: snapshotted into the order's totals JSON (no migration). Absent when the session
         // selected no shipping method — never a default.
         ...(input.shippingMethod === undefined ? {} : { shippingMethod: input.shippingMethod }),
+        // Plan 3C: the rate's name as the shopper saw it, and whether the tax is inside the prices
+        // (so the order page can say "Including EGP 14.00 in taxes" instead of adding it again).
+        ...(input.totals.shippingName === undefined
+          ? {}
+          : { shippingName: input.totals.shippingName }),
+        taxIncluded: input.totals.taxIncluded,
       },
     });
 

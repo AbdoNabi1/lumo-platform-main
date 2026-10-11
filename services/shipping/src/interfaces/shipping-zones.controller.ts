@@ -14,6 +14,11 @@ import type {
   UpdateZoneInput,
   ZoneIdInput,
 } from "../application/shipping-zones.use-cases";
+import type {
+  ListShippableCountries,
+  QuoteShippingRates,
+  QuoteShippingRatesInput,
+} from "../application/quote-shipping.use-cases";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface ShippingZonesControllerDeps {
@@ -24,6 +29,8 @@ export interface ShippingZonesControllerDeps {
   readonly addRate: AddRate;
   readonly updateRate: UpdateRate;
   readonly deleteRate: DeleteRate;
+  readonly quoteRates: QuoteShippingRates;
+  readonly listShippableCountries: ListShippableCountries;
 }
 
 /** Framework-agnostic interface boundary for the shipping zones and rates (Plan 3C). */
@@ -60,5 +67,15 @@ export class ShippingZonesController {
 
   async deleteRate(input: DeleteRateInput): Promise<ControllerResponse> {
     return present(await this.deps.deleteRate.execute(input), 200);
+  }
+
+  /** The rates the shop offers for an address and lines (Plan 3C); the checkout's shipping adapter calls this. */
+  async quote(input: QuoteShippingRatesInput): Promise<ControllerResponse> {
+    return present(await this.deps.quoteRates.execute(input), 200);
+  }
+
+  /** The countries the shop's zones ship to — what the checkout's country select offers (Plan 3C). */
+  async shippableCountries(input: TenantInput): Promise<ControllerResponse> {
+    return present(await this.deps.listShippableCountries.execute(input), 200);
   }
 }

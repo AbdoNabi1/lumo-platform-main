@@ -48,6 +48,7 @@ import { publicStaffAuthRoutes } from "./public-staff-auth-routes";
 import { staffAccountRoutes } from "./staff-account-routes";
 import { publicCartRoutes } from "./public-cart-routes";
 import { publicCheckoutRoutes } from "./public-checkout-routes";
+import { publicShippingRoutes } from "./public-shipping-routes";
 import { publicLoyaltyRoutes } from "./public-loyalty-routes";
 import { publicReviewsRoutes } from "./public-reviews-routes";
 import { publicWishlistRoutes } from "./public-wishlist-routes";
@@ -240,6 +241,8 @@ export interface OrderRecipientAddressDto extends OrderAddressDto {
   readonly recipientName: string | null;
   readonly phone: string | null;
   readonly line2: string | null;
+  /** Plan 3C: the governorate / region / emirate (ISO 3166-2); null for a country without province data or an older order. */
+  readonly province: string | null;
 }
 
 export interface OrderTotalsDto {
@@ -249,6 +252,10 @@ export interface OrderTotalsDto {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3C: true when `taxMinor` is already inside the prices ("Including … in taxes"); false on older orders, whose tax was added. */
+  readonly taxIncluded: boolean;
+  /** Plan 3C: the shipping rate's name as the shopper saw it; null on older orders. */
+  readonly shippingName: string | null;
 }
 
 export interface OrderHistoryEntryDto {
@@ -306,6 +313,7 @@ function toOrderRecipientAddressDto(address: Order["shippingAddress"]): OrderRec
     city: address.city,
     postalCode: address.postalCode,
     country: address.country,
+    province: address.province ?? null,
   };
 }
 
@@ -353,6 +361,8 @@ function toOrderDetailDto(
             discountMinor: totals.discountMinor,
             totalMinor: totals.totalMinor,
             currency: totals.currency,
+            taxIncluded: totals.taxIncluded,
+            shippingName: totals.shippingName ?? null,
           },
     checkoutRef: order.checkoutRef ?? null,
     paymentRef: order.paymentRef ?? null,
@@ -2122,6 +2132,7 @@ export function adminRoutes(
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),
     ...publicCheckoutRoutes(admin),
+    ...publicShippingRoutes(admin),
     ...publicReviewsRoutes(admin),
     ...publicWishlistRoutes(admin),
     ...publicLoyaltyRoutes(admin),

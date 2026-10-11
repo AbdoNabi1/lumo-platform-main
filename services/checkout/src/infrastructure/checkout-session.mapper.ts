@@ -29,11 +29,16 @@ interface CheckoutAddressJson {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: optional key inside the existing JSON — no migration; absent on older sessions. */
+  readonly province?: string;
 }
 interface ShippingSelectionJson {
   readonly method: string;
   readonly rateAmountMinor: number;
   readonly currency: string;
+  /** Plan 3C: the rate's name and description as the shopper saw them; absent on older sessions. */
+  readonly name?: string;
+  readonly description?: string;
 }
 interface PaymentSelectionJson {
   readonly paymentMethodRef: string;
@@ -48,6 +53,9 @@ interface CheckoutTotalsJson {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3C: absent on totals saved before it existed, which added the tax to the total. */
+  readonly taxIncluded?: boolean;
+  readonly shippingName?: string;
 }
 
 export interface CheckoutSessionRow {
@@ -134,6 +142,10 @@ export class CheckoutSessionMapper {
                 row.shippingSelection.method,
                 row.shippingSelection.rateAmountMinor,
                 row.shippingSelection.currency,
+                {
+                  name: row.shippingSelection.name,
+                  description: row.shippingSelection.description,
+                },
               ),
               "shipping selection",
             )
@@ -151,6 +163,7 @@ export class CheckoutSessionMapper {
           ? row.paymentSelection.paymentIntentRef
           : undefined,
         taxMinor: row.taxMinor ?? undefined,
+        taxIncluded: isSet(row.totals) ? (row.totals.taxIncluded ?? false) : undefined,
         discountMinor: row.discountMinor ?? undefined,
         totals: isSet(row.totals)
           ? CheckoutTotals.assemble(
@@ -159,6 +172,10 @@ export class CheckoutSessionMapper {
               row.totals.shippingMinor,
               row.totals.discountMinor,
               row.totals.currency,
+              {
+                taxIncluded: row.totals.taxIncluded ?? false,
+                shippingName: row.totals.shippingName,
+              },
             )
           : undefined,
       },
@@ -201,6 +218,12 @@ export class CheckoutSessionMapper {
               method: session.shippingSelection.method,
               rateAmountMinor: session.shippingSelection.rateAmountMinor,
               currency: session.shippingSelection.currency,
+              ...(session.shippingSelection.name === undefined
+                ? {}
+                : { name: session.shippingSelection.name }),
+              ...(session.shippingSelection.description === undefined
+                ? {}
+                : { description: session.shippingSelection.description }),
             },
       paymentSelection:
         session.paymentSelection === undefined
@@ -224,6 +247,10 @@ export class CheckoutSessionMapper {
               discountMinor: session.totals.discountMinor,
               totalMinor: session.totals.totalMinor,
               currency: session.totals.currency,
+              taxIncluded: session.totals.taxIncluded,
+              ...(session.totals.shippingName === undefined
+                ? {}
+                : { shippingName: session.totals.shippingName }),
             },
       version: 1,
     };
@@ -239,5 +266,6 @@ function toAddressJson(address: CheckoutAddress): CheckoutAddressJson {
     city: address.city,
     postalCode: address.postalCode,
     country: address.country,
+    ...(address.province === undefined ? {} : { province: address.province }),
   };
 }

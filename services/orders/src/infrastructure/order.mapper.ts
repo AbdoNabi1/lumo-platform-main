@@ -47,6 +47,8 @@ export interface OrderAddressRow {
   readonly recipientName?: string | null;
   readonly phone?: string | null;
   readonly line2?: string | null;
+  /** Plan 3C: nullable column; null/absent on orders placed before the province was captured. */
+  readonly province?: string | null;
 }
 
 function toExtra(address: OrderAddressRow) {
@@ -54,6 +56,9 @@ function toExtra(address: OrderAddressRow) {
     recipientName: address.recipientName ?? undefined,
     phone: address.phone ?? undefined,
     line2: address.line2 ?? undefined,
+    ...(address.province === null || address.province === undefined
+      ? {}
+      : { province: address.province }),
   };
 }
 export interface OrderTotalsJson {
@@ -65,6 +70,9 @@ export interface OrderTotalsJson {
   readonly currency: string;
   /** Plan 3B: a JSON key, so no migration; absent (or null) on orders placed before it was captured. */
   readonly shippingMethod?: string | null;
+  /** Plan 3C: JSON keys, no migration; absent on orders placed before they were captured. */
+  readonly shippingName?: string | null;
+  readonly taxIncluded?: boolean;
 }
 
 /** Unwraps a VO `Result`; a failure here means the row violates a domain invariant (corrupt data). */
@@ -152,6 +160,8 @@ export class OrderMapper {
             : OrderTotalsSnapshot.create({
                 ...row.totals,
                 shippingMethod: row.totals.shippingMethod ?? undefined,
+                shippingName: row.totals.shippingName ?? undefined,
+                taxIncluded: row.totals.taxIncluded ?? false,
               }),
         checkoutRef: row.checkoutRef ?? undefined,
         paymentRef: row.paymentRef ?? undefined,
@@ -181,6 +191,9 @@ export class OrderMapper {
               recipientName: order.billingAddress.recipientName ?? null,
               phone: order.billingAddress.phone ?? null,
               line2: order.billingAddress.line2 ?? null,
+              ...(order.billingAddress.province === undefined
+                ? {}
+                : { province: order.billingAddress.province }),
             },
       totals:
         order.totals === undefined
@@ -195,6 +208,10 @@ export class OrderMapper {
               ...(order.totals.shippingMethod === undefined
                 ? {}
                 : { shippingMethod: order.totals.shippingMethod }),
+              ...(order.totals.shippingName === undefined
+                ? {}
+                : { shippingName: order.totals.shippingName }),
+              taxIncluded: order.totals.taxIncluded,
             },
       version: 1, // first persisted version; reconstitution reads it back
     };
@@ -237,6 +254,7 @@ export class OrderMapper {
       recipientName: order.shippingAddress.recipientName ?? null,
       phone: order.shippingAddress.phone ?? null,
       line2: order.shippingAddress.line2 ?? null,
+      province: order.shippingAddress.province ?? null,
     };
   }
 }

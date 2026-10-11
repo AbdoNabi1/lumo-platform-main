@@ -25,5 +25,7 @@ export type {
   PromotionValidationPort,
   PromotionValidationResult,
   ShippingCalculationPort,
+  ShippingQuote,
   TaxCalculationPort,
+  TaxCalculationResult,
 } from "./application/ports";

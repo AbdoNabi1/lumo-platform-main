@@ -7,7 +7,7 @@ import { StatePanel } from "@/components/state-panel";
 import { CHECKOUT_SESSION_COOKIE, GUEST_SESSION_COOKIE } from "@/lib/cart";
 import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
-import { getCheckoutSession, getPaymentMethods } from "@/lib/runtime-api";
+import { getCheckoutSession, getPaymentMethods, getShippableCountries } from "@/lib/runtime-api";
 
 /**
  * Checkout page (Phase 2 — Public checkout). Resolves the caller's OWN active checkout session
@@ -45,6 +45,8 @@ export default async function CheckoutPage() {
   // What this merchant offers, in API order (no priority). Read on every render so a merchant who
   // disables a method is reflected immediately; `null` (unreachable) fails closed at the payment step.
   const paymentMethods = await getPaymentMethods();
+  // The countries the shop's shipping zones cover (Plan 3C); `null` (unreachable) fails closed in the form.
+  const shippableCountries = await getShippableCountries();
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-5xl flex-col gap-6 p-8">
@@ -72,6 +74,7 @@ export default async function CheckoutPage() {
           locale={locale}
           accountEmail={accountEmail}
           paymentMethods={paymentMethods}
+          shippableCountries={shippableCountries}
         />
       )}
     </main>

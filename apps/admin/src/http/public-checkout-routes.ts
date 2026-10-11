@@ -35,6 +35,8 @@ const addressBody = z.object({
   city: z.string().min(1),
   postalCode: z.string().max(32).optional(),
   country: z.string().min(1),
+  /** Plan 3C: the governorate / region / emirate (ISO 3166-2, for example `EG-C`); the domain checks it against the country. */
+  province: z.string().max(10).optional(),
 });
 /**
  * WP-1 (G-52): the guest's contact email. `.strict()` for the same reason `startCheckoutBody` is —
@@ -108,6 +110,8 @@ export interface PublicAddressDto {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: ISO 3166-2, or null for a country without province data. */
+  readonly province: string | null;
 }
 
 export interface PublicCheckoutSessionDto {
@@ -129,6 +133,10 @@ export interface PublicCheckoutSessionDto {
     readonly shippingMinor: number;
     readonly taxMinor: number;
     readonly grandTotalMinor: number;
+    /** Plan 3C: true when `taxMinor` is already inside the prices ("Including … in taxes"), not added to the total. */
+    readonly taxIncluded: boolean;
+    /** Plan 3C: the chosen shipping rate's name as the shopper saw it, or null. */
+    readonly shippingName: string | null;
   } | null;
   readonly shippingAddress: PublicAddressDto | null;
   readonly billingAddress: PublicAddressDto | null;
@@ -149,6 +157,7 @@ function toAddressDto(address: CheckoutAddress): PublicAddressDto {
     city: address.city,
     postalCode: address.postalCode,
     country: address.country,
+    province: address.province ?? null,
   };
 }
 
@@ -175,6 +184,8 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
             shippingMinor: session.totals.shippingMinor,
             taxMinor: session.totals.taxMinor,
             grandTotalMinor: session.totals.totalMinor,
+            taxIncluded: session.totals.taxIncluded,
+            shippingName: session.totals.shippingName ?? null,
           },
     shippingAddress:
       session.shippingAddress === undefined ? null : toAddressDto(session.shippingAddress),
@@ -364,6 +375,7 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           city: body.city,
           postalCode: body.postalCode ?? "",
           country: body.country,
+          ...(body.province === undefined ? {} : { province: body.province }),
         });
         if (result.status < 200 || result.status >= 300) return result;
         return mapSession(
@@ -399,6 +411,7 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           city: body.city,
           postalCode: body.postalCode ?? "",
           country: body.country,
+          ...(body.province === undefined ? {} : { province: body.province }),
         });
         if (result.status < 200 || result.status >= 300) return result;
         return mapSession(

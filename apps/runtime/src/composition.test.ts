@@ -554,22 +554,19 @@ describe("api entrypoint", () => {
     expect(() => assertProductionDunningNotificationsConfigured("local")).not.toThrow();
   });
 
-  it("FAILS CLOSED outside local while any integration port is still an offline stub (Phase 3, C-03) — names every stubbed port in one error, matching the real production literal (api.ts's `integrationPorts`) which lists exactly these 4 after Tasks 9-13 wired real adapters over 8 of the original 12 and Task 17a wired the 9th, orderCreation (C-2)", () => {
+  it("FAILS CLOSED outside local while any integration port is still an offline stub (Phase 3, C-03) — names every stubbed port in one error, matching the real production literal (api.ts's `integrationPorts`) which lists exactly these 2 after Tasks 9-13 wired real adapters over 8 of the original 12, Task 17a wired the 9th, orderCreation (C-2), and Plan 3C wired the last two checkout ports, taxCalculation and shippingCalculation", () => {
     const allStubbed = {
       shippingPort: undefined,
-      taxCalculation: undefined,
-      shippingCalculation: undefined,
       financePort: undefined,
     };
     expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /shippingPort, taxCalculation, shippingCalculation, financePort/,
+      /shippingPort, financePort/,
     );
-    // taxCalculation / shippingCalculation: genuinely-missing capabilities.
-    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /taxCalculation needs a tax provider integration/,
-    );
-    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /shippingCalculation needs a shipping rate source/,
+    // Plan 3C: taxCalculation / shippingCalculation are real adapters wireAdmin wires by default
+    // (the shop's own tax settings and shipping zones), so — like orderCreation below — they are in
+    // neither the literal nor the error text: re-listing them would re-stub ports that have a real adapter.
+    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).not.toThrow(
+      /taxCalculation|shippingCalculation/,
     );
     // shippingPort: the third genuinely-missing capability, found during Phase 3 implementation
     // (not one of the two the original plan named) — nothing computes package weight anywhere.

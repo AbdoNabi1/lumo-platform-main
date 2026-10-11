@@ -5,6 +5,9 @@ interface ShippingSelectionProps {
   readonly method: string;
   readonly rateAmountMinor: number;
   readonly currency: string;
+  /** Plan 3C: what the shopper saw for this rate ("Standard"), snapshotted with its price. */
+  readonly name?: string;
+  readonly description?: string;
 }
 
 /** The chosen shipping method + its quoted rate snapshot (requested from Shipping via `ShippingCalculationPort`, never computed here). */
@@ -13,6 +16,7 @@ export class ShippingSelection extends ValueObject<ShippingSelectionProps> {
     method: string,
     rateAmountMinor: number,
     currency: string,
+    extra: { readonly name?: string | undefined; readonly description?: string | undefined } = {},
   ): Result<ShippingSelection, ValidationError> {
     if (method.trim().length === 0) {
       return err(
@@ -28,7 +32,15 @@ export class ShippingSelection extends ValueObject<ShippingSelectionProps> {
         ]),
       );
     }
-    return ok(new ShippingSelection({ method, rateAmountMinor, currency }));
+    return ok(
+      new ShippingSelection({
+        method,
+        rateAmountMinor,
+        currency,
+        ...(extra.name === undefined ? {} : { name: extra.name }),
+        ...(extra.description === undefined ? {} : { description: extra.description }),
+      }),
+    );
   }
 
   get method(): string {
@@ -41,6 +53,14 @@ export class ShippingSelection extends ValueObject<ShippingSelectionProps> {
 
   get currency(): string {
     return this.props.currency;
+  }
+
+  get name(): string | undefined {
+    return this.props.name;
+  }
+
+  get description(): string | undefined {
+    return this.props.description;
   }
 }
 

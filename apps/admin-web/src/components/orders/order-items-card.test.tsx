@@ -85,6 +85,26 @@ describe("OrderItemsCard — the fulfillment card like Shopify's (Plan 3B)", () 
     expect(screen.getByText("Delivery method: Standard shipping")).toBeInTheDocument();
   });
 
+  it("names the rate the shopper chose when the order recorded its name (Plan 3C), not the stored id", () => {
+    renderCard(
+      order({
+        shippingMethod: "0b0d4b7e-3f43-4e2a-9d1e-aaaaaaaaaaaa",
+        totals: {
+          subtotalMinor: 5997,
+          taxMinor: 0,
+          shippingMinor: 5000,
+          discountMinor: 0,
+          totalMinor: 10_997,
+          currency: "USD",
+          taxIncluded: false,
+          shippingName: "Express 1-2 days",
+        },
+      }),
+    );
+
+    expect(screen.getByText("Delivery method: Express 1-2 days")).toBeInTheDocument();
+  });
+
   it("says so when no delivery method was recorded", () => {
     renderCard(order({ shippingMethod: null }));
 

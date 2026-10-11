@@ -16,6 +16,7 @@ export { quoteRates, NO_SHIPPING_RATE_ID } from "./domain/quote-rates";
 export type { QuoteAddress, QuoteLine, QuotedRate } from "./domain/quote-rates";
 export type { ShippingZoneRepository } from "./domain/shipping-zone-repository";
 export type { RateView, ZoneView } from "./application/shipping-zones.use-cases";
+export type { ShippableCountries } from "./application/quote-shipping.use-cases";
 export {
   PrismaShippingZoneRepository,
   type PrismaShippingZoneRepositoryDeps,

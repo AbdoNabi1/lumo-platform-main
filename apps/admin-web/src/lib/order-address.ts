@@ -1,3 +1,4 @@
+import { provinceName } from "@platform/regions";
 import type { Locale } from "./i18n";
 
 /** The parts of an order address the order page shows, copies, and sends to a map. */
@@ -9,6 +10,8 @@ export interface AddressParts {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: ISO 3166-2 (`EG-C`); absent or null when none was recorded. */
+  readonly province?: string | null;
 }
 
 /**
@@ -32,6 +35,10 @@ export function addressLines(address: AddressParts, locale: Locale): string[] {
     address.line1,
     address.line2,
     [address.city, address.postalCode].filter((part) => part !== "").join(", "),
+    // Plan 3C: the governorate in the page language; a code with no name shows as recorded.
+    address.province === null || address.province === undefined
+      ? null
+      : provinceName(address.province, locale),
     countryName(address.country, locale),
     address.phone,
   ].filter((line): line is string => line !== null && line !== "");

@@ -1,37 +1,62 @@
+import { COUNTRY_CODES } from "@platform/regions";
+import type { Locale } from "@/lib/i18n";
+
 /**
- * The countries the checkout offers (ISO 3166-1 alpha-2). Codes, not names, are what travels to
- * the API: they are the only form a tax or shipping provider can key on. The names live in the
- * message files, one per locale.
+ * The countries the shop ships to (`GET /public/shipping/countries`, Plan 3C): the union of its
+ * shipping zones' countries, and whether a rest-of-the-world zone covers every other country.
  */
-export const CHECKOUT_COUNTRIES = [
-  "EG",
-  "SA",
-  "AE",
-  "KW",
-  "QA",
-  "BH",
-  "OM",
-  "JO",
-  "LB",
-  "IQ",
-  "MA",
-  "TN",
-  "DZ",
-  "LY",
-  "SD",
-  "US",
-  "GB",
-  "DE",
-  "FR",
-  "CA",
-] as const;
+export interface ShippableCountries {
+  readonly countries: readonly string[];
+  readonly restOfWorld: boolean;
+}
 
-export type CheckoutCountry = (typeof CHECKOUT_COUNTRIES)[number];
+export interface CountryOption {
+  readonly code: string;
+  readonly name: string;
+}
 
-export const DEFAULT_CHECKOUT_COUNTRY: CheckoutCountry = "EG";
+/** ISO 3166-1 alpha-2 codes, not names, are what travels to the API. */
+export function isCountryCode(value: string): boolean {
+  return COUNTRY_CODES.includes(value);
+}
 
-export function isCheckoutCountry(value: string): value is CheckoutCountry {
-  return (CHECKOUT_COUNTRIES as readonly string[]).includes(value);
+/** The country's name in the page's language; the code itself when the runtime has no name for it. */
+export function countryName(code: string, locale: Locale): string {
+  try {
+    return new Intl.DisplayNames([locale], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+/**
+ * What the country select offers, sorted by name in the page's language: the shop's zone
+ * countries, or every country with a rest-of-the-world zone. `null` (the list could not be
+ * loaded) offers none, the same as a shop that ships nowhere yet — checkout fails closed.
+ */
+export function countryOptions(
+  shippable: ShippableCountries | null,
+  locale: Locale,
+): readonly CountryOption[] {
+  if (shippable === null) return [];
+  const codes = shippable.restOfWorld ? COUNTRY_CODES : shippable.countries.filter(isCountryCode);
+  return [...new Set(codes)]
+    .map((code) => ({ code, name: countryName(code, locale) }))
+    .sort((a, b) => a.name.localeCompare(b.name, locale));
+}
+
+/** Egypt when it is offered, else the first offered country, else none. */
+export function defaultCountry(options: readonly CountryOption[]): string {
+  if (options.some((option) => option.code === "EG")) return "EG";
+  return options[0]?.code ?? "";
+}
+
+/** Which word the province field wears: Egypt's governorate, Saudi Arabia's region, an emirate. */
+export function provinceLabelKey(country: string): "governorate" | "region" | "emirate" | null {
+  if (country === "EG") return "governorate";
+  if (country === "SA") return "region";
+  if (country === "AE") return "emirate";
+  return null;
 }
 
 /** Arabic-Indic (U+0660–0669) and Persian (U+06F0–06F9) digits to ASCII; spaces, dashes and brackets dropped. */

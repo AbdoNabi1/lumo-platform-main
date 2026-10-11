@@ -12,6 +12,7 @@ import {
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { CreateShipment } from "./application/create-shipment.use-case";
+import { ListShippableCountries, QuoteShippingRates } from "./application/quote-shipping.use-cases";
 import {
   AddRate,
   CreateZone,
@@ -87,6 +88,8 @@ function buildZonesController(
     addRate: new AddRate(zoneDeps),
     updateRate: new UpdateRate(zoneDeps),
     deleteRate: new DeleteRate(zoneDeps),
+    quoteRates: new QuoteShippingRates({ zones }),
+    listShippableCountries: new ListShippableCountries({ zones }),
   });
 }
 

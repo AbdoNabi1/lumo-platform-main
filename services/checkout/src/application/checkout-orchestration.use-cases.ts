@@ -135,12 +135,18 @@ export class RequestTaxCalculation implements UseCase<
         const result = await this.deps.taxCalculation.calculate(
           session.items,
           session.shippingAddress,
+          session.shippingSelection?.rateAmountMinor ?? 0,
           session.currency,
           input.tenantId,
         );
 
         try {
-          session.applyTaxSnapshot(result.taxMinor);
+          session.applyTaxSnapshot(result.taxMinor, result.included);
+          // Whether the tax is inside the prices is only persisted through the assembled totals, so
+          // they are assembled now; the caller's own recalculation then changes nothing.
+          if (session.items.length > 0) {
+            session.recalculateTotals(this.deps.idGenerator.generate(), this.deps.clock.now());
+          }
         } catch (error) {
           if (isDomainError(error)) return err(error);
           throw error;
@@ -193,6 +199,7 @@ export class RequestShippingQuote implements UseCase<
     }
     const quotes = await this.deps.shippingCalculation.quote(
       session.shippingAddress,
+      session.items,
       session.currency,
       input.tenantId,
     );

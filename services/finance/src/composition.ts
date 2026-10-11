@@ -31,6 +31,7 @@ import {
   SetProductCost,
 } from "./application/reference-data.commands";
 import { BalanceSheetQuery, IncomeStatementQuery, TrialBalanceQuery } from "./application/queries";
+import { CalculateStoreTax } from "./application/calculate-store-tax.use-case";
 import {
   DeleteTaxRegion,
   GetTaxSettings,
@@ -141,6 +142,7 @@ function buildTaxController(
     updateTaxSettings: new UpdateTaxSettings(taxDeps),
     upsertTaxRegion: new UpsertTaxRegion(taxDeps),
     deleteTaxRegion: new DeleteTaxRegion(taxDeps),
+    calculateStoreTax: new CalculateStoreTax({ settings }),
   });
 }
 

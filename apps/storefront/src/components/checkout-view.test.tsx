@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { en } from "@/messages/en";
 import { ar } from "@/messages/ar";
+import { COUNTRY_CODES } from "@platform/regions";
+import type { ShippableCountries } from "@/lib/checkout-address";
 import type { CheckoutSessionSummary } from "@/lib/runtime-api";
 import type {
   CheckoutActionResult,
@@ -47,9 +49,16 @@ const scrollIntoView = vi.fn();
 
 const OK: CheckoutActionResult = { ok: true, checkoutSessionId: "checkout-1" };
 const QUOTES = [
-  { method: "standard", rateAmountMinor: 500 },
-  { method: "express", rateAmountMinor: 1500 },
+  { method: "rate-standard", name: "Standard shipping", rateAmountMinor: 500 },
+  {
+    method: "rate-express",
+    name: "Express shipping",
+    description: "1-2 days",
+    rateAmountMinor: 1500,
+  },
 ];
+const STANDARD = /Standard shipping/;
+const EXPRESS = /Express shipping/;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -114,6 +123,11 @@ const saved = {
   city: "Cairo",
   postalCode: "",
   country: "EG",
+  province: "EG-C",
+};
+const SHIPS_TO: ShippableCountries = {
+  countries: ["EG", "SA", "AE", "US", "GB", "CA", "DZ"],
+  restOfWorld: false,
 };
 
 function renderView(
@@ -121,15 +135,19 @@ function renderView(
     session?: CheckoutSessionSummary;
     paymentMethods?: readonly string[] | null;
     accountEmail?: string | null;
+    shippable?: ShippableCountries | null;
+    locale?: "en" | "ar";
   } = {},
 ) {
+  const locale = props.locale ?? "en";
   return render(
     <CheckoutView
       session={props.session ?? session()}
-      t={en}
-      locale="en"
+      t={locale === "ar" ? (ar as unknown as typeof en) : en}
+      locale={locale}
       accountEmail={props.accountEmail ?? null}
       paymentMethods={props.paymentMethods === undefined ? METHODS : props.paymentMethods}
+      shippableCountries={props.shippable === undefined ? SHIPS_TO : props.shippable}
     />,
   );
 }
@@ -149,6 +167,7 @@ function fillEverything(overrides: Record<string, string> = {}): void {
     line1: "1 Main St",
     city: "Cairo",
     phone: "٠١٠ ١٢٣٤ ٥٦٧٨",
+    province: "EG-C",
     ...overrides,
   };
   type(en.checkout.contact.label, values.email);
@@ -156,6 +175,7 @@ function fillEverything(overrides: Record<string, string> = {}): void {
   type(en.checkout.address.line1, values.line1);
   type(en.checkout.address.city, values.city);
   type(en.checkout.address.phone, values.phone);
+  if (values.province !== "") type(en.checkout.address.governorate, values.province);
 }
 
 describe("CheckoutView — one page (Plan 3A)", () => {
@@ -191,14 +211,14 @@ describe("CheckoutView — one page (Plan 3A)", () => {
     expect(screen.getByText(en.checkout.address.phoneHint)).toBeInTheDocument();
   });
 
-  it("offers the twenty countries, named in the page's language", () => {
+  it("offers the shop's zone countries, named in the page's language", () => {
     renderView();
 
     const options = within(field(en.checkout.address.country)).getAllByRole("option");
-    expect(options.map((option) => option.getAttribute("value"))).toEqual(
-      expect.arrayContaining(["EG", "SA", "AE", "US", "GB", "CA", "DZ"]),
+    expect(options.map((option) => option.getAttribute("value")).sort()).toEqual(
+      [...SHIPS_TO.countries].sort(),
     );
-    expect(screen.getByRole("option", { name: en.checkout.countries.EG })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Egypt" })).toBeInTheDocument();
   });
 });
 
@@ -234,9 +254,7 @@ describe("CheckoutView — shipping methods follow a complete address", () => {
     renderView();
 
     expect(screen.getByText(en.checkout.shippingMethodHint)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("radio", { name: new RegExp(en.checkout.shippingMethodLabel.standard) }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: STANDARD })).not.toBeInTheDocument();
     expect(setShippingAddress).not.toHaveBeenCalled();
   });
 
@@ -246,15 +264,9 @@ describe("CheckoutView — shipping methods follow a complete address", () => {
 
     fireEvent.blur(field(en.checkout.address.phone));
 
-    const standard = await screen.findByRole(
-      "radio",
-      { name: new RegExp(en.checkout.shippingMethodLabel.standard) },
-      { timeout: 3000 },
-    );
+    const standard = await screen.findByRole("radio", { name: STANDARD }, { timeout: 3000 });
     expect(standard).toBeChecked();
-    expect(
-      screen.getByRole("radio", { name: new RegExp(en.checkout.shippingMethodLabel.express) }),
-    ).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: EXPRESS })).not.toBeChecked();
     expect(setShippingAddress).toHaveBeenCalledWith("checkout-1", {
       name: "Mona Ali",
       phone: "01012345678",
@@ -263,9 +275,10 @@ describe("CheckoutView — shipping methods follow a complete address", () => {
       city: "Cairo",
       postalCode: "",
       country: "EG",
+      province: "EG-C",
     });
     expect(selectShipping).toHaveBeenCalledTimes(1);
-    expect(selectShipping).toHaveBeenCalledWith("checkout-1", "standard");
+    expect(selectShipping).toHaveBeenCalledWith("checkout-1", "rate-standard");
     expect(recalculate).toHaveBeenCalled();
     expect(screen.queryByText(en.checkout.shippingMethodHint)).not.toBeInTheDocument();
   });
@@ -284,17 +297,13 @@ describe("CheckoutView — shipping methods follow a complete address", () => {
     renderView();
     fillEverything();
     fireEvent.blur(field(en.checkout.address.phone));
-    const express = await screen.findByRole(
-      "radio",
-      { name: new RegExp(en.checkout.shippingMethodLabel.express) },
-      { timeout: 3000 },
-    );
+    const express = await screen.findByRole("radio", { name: EXPRESS }, { timeout: 3000 });
     selectShipping.mockClear();
     recalculate.mockClear();
 
     fireEvent.click(express);
 
-    await waitFor(() => expect(selectShipping).toHaveBeenCalledWith("checkout-1", "express"));
+    await waitFor(() => expect(selectShipping).toHaveBeenCalledWith("checkout-1", "rate-express"));
     await waitFor(() => expect(recalculate).toHaveBeenCalled());
   });
 
@@ -303,13 +312,13 @@ describe("CheckoutView — shipping methods follow a complete address", () => {
       session: session({
         contactEmail: "guest@example.com",
         shippingAddress: saved,
-        selectedShippingMethod: "standard",
+        selectedShippingMethod: "rate-standard",
       }),
     });
 
     expect(
       await screen.findByRole("radio", {
-        name: new RegExp(en.checkout.shippingMethodLabel.standard),
+        name: STANDARD,
       }),
     ).toBeChecked();
     expect(setShippingAddress).not.toHaveBeenCalled();
@@ -460,8 +469,10 @@ describe("CheckoutView — Complete order runs everything in order", () => {
     fireEvent.click(screen.getByRole("radio", { name: en.checkout.differentBilling }));
     const [, billingLine1] = screen.getAllByLabelText(en.checkout.address.line1);
     const [, billingCity] = screen.getAllByLabelText(en.checkout.address.city);
+    const [, billingProvince] = screen.getAllByLabelText(en.checkout.address.governorate);
     fireEvent.change(billingLine1 as HTMLInputElement, { target: { value: "9 Bill St" } });
     fireEvent.change(billingCity as HTMLInputElement, { target: { value: "Giza" } });
+    fireEvent.change(billingProvince as HTMLInputElement, { target: { value: "EG-GZ" } });
 
     fireEvent.click(submit());
 
@@ -469,6 +480,7 @@ describe("CheckoutView — Complete order runs everything in order", () => {
     expect(setBillingAddress.mock.calls[0]?.[1]).toMatchObject({
       line1: "9 Bill St",
       city: "Giza",
+      province: "EG-GZ",
     });
   });
 
@@ -477,11 +489,11 @@ describe("CheckoutView — Complete order runs everything in order", () => {
       session: session({
         contactEmail: "guest@example.com",
         shippingAddress: saved,
-        selectedShippingMethod: "standard",
+        selectedShippingMethod: "rate-standard",
       }),
     });
     await screen.findByRole("radio", {
-      name: new RegExp(en.checkout.shippingMethodLabel.standard),
+      name: STANDARD,
     });
 
     fireEvent.click(submit());
@@ -577,7 +589,7 @@ describe("CheckoutView — after the order is placed, cash and a hosted checkout
         orderRef: "order-1",
         contactEmail: "guest@example.com",
         shippingAddress: saved,
-        selectedShippingMethod: "standard",
+        selectedShippingMethod: "rate-standard",
       }),
     });
 
@@ -639,7 +651,7 @@ describe("CheckoutView — order summary", () => {
       session: session({
         contactEmail: "guest@example.com",
         shippingAddress: saved,
-        selectedShippingMethod: "standard",
+        selectedShippingMethod: "rate-standard",
         totals: {
           subtotalMinor: 24000,
           shippingMinor: 500,
@@ -662,6 +674,203 @@ describe("CheckoutView — order summary", () => {
   });
 });
 
+describe("CheckoutView — where the shop ships (Plan 3C)", () => {
+  it("offers every country when a rest-of-the-world zone exists", () => {
+    renderView({ shippable: { countries: ["EG"], restOfWorld: true } });
+
+    const options = within(field(en.checkout.address.country)).getAllByRole("option");
+    expect(options).toHaveLength(COUNTRY_CODES.length);
+  });
+
+  it("says the shop ships nowhere yet, and disables the order button", () => {
+    renderView({ shippable: { countries: [], restOfWorld: false } });
+
+    expect(screen.getByText(en.checkout.noShippingDestinations)).toBeInTheDocument();
+    expect(submit()).toBeDisabled();
+  });
+
+  it("fails closed the same way when the list of countries could not be loaded", () => {
+    renderView({ shippable: null });
+
+    expect(screen.getByText(en.checkout.noShippingDestinations)).toBeInTheDocument();
+    expect(submit()).toBeDisabled();
+  });
+});
+
+describe("CheckoutView — the province (Plan 3C)", () => {
+  it("asks for the governorate of Egypt, from the region data, and requires it", () => {
+    renderView();
+
+    const select = field(en.checkout.address.governorate);
+    expect(select.tagName).toBe("SELECT");
+    expect(select).toBeRequired();
+    const names = within(select)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(names).toEqual(expect.arrayContaining(["Cairo", "Giza"]));
+    expect(within(select).getByRole("option", { name: "Cairo" })).toHaveValue("EG-C");
+  });
+
+  it("calls it a region for Saudi Arabia and an emirate for the UAE, and drops it for countries without data", () => {
+    renderView();
+
+    fireEvent.change(field(en.checkout.address.country), { target: { value: "SA" } });
+    expect(field(en.checkout.address.region).tagName).toBe("SELECT");
+    fireEvent.change(field(en.checkout.address.country), { target: { value: "AE" } });
+    expect(field(en.checkout.address.emirate).tagName).toBe("SELECT");
+    fireEvent.change(field(en.checkout.address.country), { target: { value: "US" } });
+    for (const label of ["governorate", "region", "emirate"] as const) {
+      expect(screen.queryByLabelText(en.checkout.address[label])).not.toBeInTheDocument();
+    }
+  });
+
+  it("forgets the chosen province when the country changes", () => {
+    renderView();
+    type(en.checkout.address.governorate, "EG-GZ");
+
+    fireEvent.change(field(en.checkout.address.country), { target: { value: "SA" } });
+
+    expect(field(en.checkout.address.region).value).toBe("");
+  });
+
+  it("is named in Arabic on an Arabic page", () => {
+    renderView({ locale: "ar" });
+
+    const select = screen.getByLabelText(ar.checkout.address.governorate);
+    expect(within(select).getByRole("option", { name: "القاهرة" })).toHaveValue("EG-C");
+  });
+
+  it("does not save or quote the address until the province is chosen", async () => {
+    renderView();
+    fillEverything({ province: "" });
+
+    fireEvent.blur(field(en.checkout.address.phone));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(setShippingAddress).not.toHaveBeenCalled();
+
+    type(en.checkout.address.governorate, "EG-GZ");
+    fireEvent.blur(field(en.checkout.address.phone));
+    await waitFor(() => expect(setShippingAddress).toHaveBeenCalled(), { timeout: 3000 });
+    expect(setShippingAddress).toHaveBeenCalledWith(
+      "checkout-1",
+      expect.objectContaining({ country: "EG", province: "EG-GZ" }),
+    );
+  });
+
+  it("sends no province for a country without province data", async () => {
+    renderView();
+    fillEverything({ province: "" });
+    fireEvent.change(field(en.checkout.address.country), { target: { value: "US" } });
+
+    fireEvent.blur(field(en.checkout.address.phone));
+    await waitFor(() => expect(setShippingAddress).toHaveBeenCalled(), { timeout: 3000 });
+    const sent = setShippingAddress.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(sent.country).toBe("US");
+    expect(sent).not.toHaveProperty("province");
+  });
+});
+
+describe("CheckoutView — the shop's rates (Plan 3C)", () => {
+  it("lists each rate by the merchant's name, with its description and its price", async () => {
+    renderView();
+    fillEverything();
+    fireEvent.blur(field(en.checkout.address.phone));
+
+    const express = await screen.findByRole("radio", { name: EXPRESS }, { timeout: 3000 });
+    expect(express).toHaveAccessibleName(expect.stringContaining("1-2 days"));
+    expect(express).toHaveAccessibleName(expect.stringMatching(/15/));
+    expect(selectShipping).toHaveBeenCalledWith("checkout-1", "rate-standard");
+  });
+
+  it("shows Free for a rate that costs nothing", async () => {
+    requestShippingQuote.mockResolvedValue({
+      ok: true,
+      checkoutSessionId: "checkout-1",
+      quotes: [{ method: "rate-free", name: "Free over 1000", rateAmountMinor: 0 }],
+    });
+    renderView();
+    fillEverything();
+    fireEvent.blur(field(en.checkout.address.phone));
+
+    const free = await screen.findByRole("radio", { name: /Free over 1000/ }, { timeout: 3000 });
+    expect(free).toHaveAccessibleName(expect.stringContaining(en.checkout.summary.free));
+  });
+
+  it("says shipping is not available, and disables the order button, when no rate fits the address", async () => {
+    requestShippingQuote.mockResolvedValue({
+      ok: true,
+      checkoutSessionId: "checkout-1",
+      quotes: [],
+    });
+    renderView();
+    fillEverything();
+    fireEvent.blur(field(en.checkout.address.phone));
+
+    expect(
+      await screen.findByText(en.checkout.noShippingRates, {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(submit()).toBeDisabled();
+  });
+});
+
+describe("CheckoutView — taxes in the summary (Plan 3C)", () => {
+  const withTotals = (totals: NonNullable<CheckoutSessionSummary["totals"]>) =>
+    session({
+      contactEmail: "guest@example.com",
+      shippingAddress: saved,
+      selectedShippingMethod: "rate-standard",
+      totals,
+    });
+
+  it("says how much of the total is tax when the prices already include it", () => {
+    renderView({
+      session: withTotals({
+        subtotalMinor: 24000,
+        shippingMinor: 500,
+        taxMinor: 2987,
+        grandTotalMinor: 24500,
+        taxIncluded: true,
+      }),
+    });
+
+    const summary = screen.getByRole("complementary");
+    expect(within(summary).getByText(/Including .*29\.87.* in taxes/)).toBeInTheDocument();
+    expect(within(summary).queryByText(en.checkout.summary.taxes)).toBeNull();
+  });
+
+  it("shows a Taxes line when the tax is added on top", () => {
+    renderView({
+      session: withTotals({
+        subtotalMinor: 24000,
+        shippingMinor: 500,
+        taxMinor: 3430,
+        grandTotalMinor: 27930,
+        taxIncluded: false,
+      }),
+    });
+
+    const summary = screen.getByRole("complementary");
+    expect(within(summary).getByText(en.checkout.summary.taxes)).toBeInTheDocument();
+    expect(within(summary).queryByText(/Including/)).toBeNull();
+  });
+
+  it("shows nothing about tax when there is none", () => {
+    renderView({
+      session: withTotals({
+        subtotalMinor: 24000,
+        shippingMinor: 500,
+        taxMinor: 0,
+        grandTotalMinor: 24500,
+        taxIncluded: false,
+      }),
+    });
+
+    const summary = screen.getByRole("complementary");
+    expect(within(summary).queryByText(en.checkout.summary.taxes)).toBeNull();
+    expect(within(summary).queryByText(/Including/)).toBeNull();
+  });
+});
+
 describe("CheckoutView — messages", () => {
   it("has every checkout key in Arabic too", () => {
     const missing: string[] = [];
@@ -678,8 +887,10 @@ describe("CheckoutView — messages", () => {
     expect(missing).toEqual([]);
   });
 
-  it("names all twenty countries in Arabic", () => {
-    expect(Object.keys(ar.checkout.countries)).toHaveLength(20);
-    expect(ar.checkout.countries.EG).toBe("مصر");
+  it("names the province field, the rates and the tax lines in Arabic", () => {
+    expect(ar.checkout.address.governorate).toBe("المحافظة");
+    expect(ar.checkout.noShippingRates).toBe("الشحن مش متاح للعنوان ده.");
+    expect(ar.checkout.summary.free).toBe("مجاني");
+    expect(ar.checkout.summary.includingTaxes).toContain("{tax}");
   });
 });

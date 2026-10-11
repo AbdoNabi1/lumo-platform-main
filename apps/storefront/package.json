@@ -16,6 +16,7 @@
     "@fontsource/ibm-plex-sans-arabic": "^5.1.0",
     "@platform/config": "workspace:*",
     "@platform/design": "workspace:*",
+    "@platform/regions": "workspace:*",
     "@platform/tracking": "workspace:*",
     "@platform/types": "workspace:*",
     "@platform/ui": "workspace:*",

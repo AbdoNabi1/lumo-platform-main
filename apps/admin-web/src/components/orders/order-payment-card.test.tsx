@@ -130,6 +130,44 @@ describe("OrderPaymentCard — the payment card like Shopify's (Plan 3B)", () =>
     expect(total.getByText(/450\.00/).closest("div")).toHaveClass("font-semibold");
   });
 
+  it("names the rate the shopper chose when the order recorded one, instead of a generic method label", async () => {
+    await renderCard(
+      order({
+        shippingMethod: "0b0d4b7e-rate-id",
+        totals: { ...order().totals!, taxIncluded: false, shippingName: "Express 1-2 days" },
+      }),
+    );
+
+    expect(row("Shipping").getByText("Express 1-2 days")).toBeInTheDocument();
+  });
+
+  it("with prices that include tax: says so under the total, and adds no Taxes line", async () => {
+    await renderCard(
+      order({
+        totals: { ...order().totals!, taxMinor: 1400, taxIncluded: true, totalMinor: 45000 },
+      }),
+    );
+
+    expect(screen.queryByText("Taxes")).toBeNull();
+    expect(screen.getByText(/Including .*14.00.* in taxes/)).toBeInTheDocument();
+    expect(row("Total").getByText(/450.00/)).toBeInTheDocument();
+  });
+
+  it("with prices that include no tax: shows the Taxes line as an extra", async () => {
+    await renderCard(order());
+
+    expect(row("Taxes").getByText(/40.00/)).toBeInTheDocument();
+    expect(screen.queryByText(/Including/)).toBeNull();
+  });
+
+  it("with prices that include tax but none collected: shows no tax note at all", async () => {
+    await renderCard(
+      order({ totals: { ...order().totals!, taxMinor: 0, taxIncluded: true, totalMinor: 41000 } }),
+    );
+
+    expect(screen.queryByText(/Including/)).toBeNull();
+  });
+
   it("shows a discount only when there is one", async () => {
     await renderCard(order());
     expect(screen.queryByText("Discount")).toBeNull();

@@ -4,6 +4,7 @@ import { CheckoutSession } from "../domain/checkout-session";
 import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
+import { ShippingSelection } from "../domain/value-objects/selections";
 import { CheckoutSessionMapper, type CheckoutSessionRow } from "./checkout-session.mapper";
 
 function guest(): CheckoutSession {
@@ -131,5 +132,74 @@ describe("CheckoutSessionMapper — recipient name and phone (Plan 3A)", () => {
     expect(back?.name).toBeUndefined();
     expect(back?.phone).toBeUndefined();
     expect(back?.line1).toBe("1 Main St");
+  });
+});
+
+describe("CheckoutSessionMapper — province, shipping rate name and tax included (Plan 3C)", () => {
+  function placed(): CheckoutSession {
+    const session = guest();
+    const line = CheckoutItem.create("p-shirt", 2, 5700, "EGP");
+    const address = CheckoutAddress.create({
+      line1: "1 Main St",
+      city: "Cairo",
+      postalCode: "11511",
+      country: "EG",
+      province: "EG-C",
+    });
+    const selection = ShippingSelection.create("rate-1", 5000, "EGP", {
+      name: "Standard",
+      description: "2-4 days",
+    });
+    if (!line.ok || !address.ok || !selection.ok) throw new Error("invalid fixture");
+    session.loadItems([line.value]);
+    session.setShippingAddress(address.value);
+    session.selectShipping(selection.value);
+    session.applyTaxSnapshot(1400, true);
+    session.recalculateTotals("e-1", new Date(0));
+    return session;
+  }
+
+  it("round-trips the province of an address", () => {
+    const row = CheckoutSessionMapper.toRow(placed(), "t1");
+
+    expect(row.shippingAddress).toMatchObject({ province: "EG-C" });
+    expect(CheckoutSessionMapper.toDomain(asRow(row)).shippingAddress?.province).toBe("EG-C");
+  });
+
+  it("round-trips the rate's name and description", () => {
+    const back = CheckoutSessionMapper.toDomain(asRow(CheckoutSessionMapper.toRow(placed(), "t1")));
+
+    expect(back.shippingSelection).toMatchObject({
+      method: "rate-1",
+      name: "Standard",
+      description: "2-4 days",
+    });
+  });
+
+  it("round-trips whether the tax is inside the prices, so the grand total stays the same", () => {
+    const original = placed();
+    const back = CheckoutSessionMapper.toDomain(asRow(CheckoutSessionMapper.toRow(original, "t1")));
+
+    expect(back.taxIncluded).toBe(true);
+    expect(back.totals).toMatchObject({
+      taxIncluded: true,
+      shippingName: "Standard",
+      totalMinor: 11_400 + 5000,
+    });
+    expect(back.totals?.totalMinor).toBe(original.totals?.totalMinor);
+  });
+
+  it("reads totals saved before 3C as tax added to the total, as they were", () => {
+    const row = asRow(CheckoutSessionMapper.toRow(placed(), "t1"));
+    const {
+      taxIncluded: _flag,
+      shippingName: _name,
+      ...legacyTotals
+    } = row.totals as Record<string, unknown>;
+
+    const back = CheckoutSessionMapper.toDomain({ ...row, totals: legacyTotals } as never);
+
+    expect(back.totals?.taxIncluded).toBe(false);
+    expect(back.totals?.totalMinor).toBe(11_400 + 5000 + 1400);
   });
 });

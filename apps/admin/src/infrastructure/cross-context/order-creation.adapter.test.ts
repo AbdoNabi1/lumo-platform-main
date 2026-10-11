@@ -325,6 +325,8 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
       shippingMinor: 200,
       discountMinor: 50,
       totalMinor: 2250,
+      // Plan 3C: totals now say whether the tax is inside the prices (here it is added, as before).
+      taxIncluded: false,
     });
   });
 
@@ -404,5 +406,66 @@ describe("OrderCreationAdapter — order line names and variants (Plan 2A)", () 
       unitPriceAmountMinor: 1000,
       quantity: 2,
     });
+  });
+});
+
+describe("OrderCreationAdapter — province, shipping rate name and tax included (Plan 3C)", () => {
+  it("carries the province of both addresses to Orders", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(
+      guestInput({
+        customerRef: "customer-1",
+        shippingAddress: checkoutAddress({ country: "EG", province: "EG-C" }),
+        billingAddress: checkoutAddress({ country: "EG", province: "EG-GZ" }),
+      }),
+    );
+
+    expect(calls[0]?.shippingAddress).toMatchObject({ province: "EG-C" });
+    expect(calls[0]?.billingAddress).toMatchObject({ province: "EG-GZ" });
+  });
+
+  it("sends no province key for an address without one", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(guestInput({ customerRef: "customer-1" }));
+
+    expect(Object.keys(calls[0]?.shippingAddress ?? {})).not.toContain("province");
+  });
+
+  it("snapshots whether the tax is inside the prices and the rate's name into the order's totals", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+    const totals = CheckoutTotals.assemble(
+      [checkoutItem("product-1", 2, 5700, "USD")],
+      1400,
+      5000,
+      0,
+      "USD",
+      { taxIncluded: true, shippingName: "Standard" },
+    );
+
+    await adapter.create(
+      guestInput({ customerRef: "customer-1", totals, shippingMethod: "rate-1" }),
+    );
+
+    expect(calls[0]?.totals).toMatchObject({
+      taxMinor: 1400,
+      totalMinor: 11_400 + 5000,
+      taxIncluded: true,
+      shippingName: "Standard",
+      shippingMethod: "rate-1",
+    });
+  });
+
+  it("sends no shipping name when the session selected none", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(guestInput({ customerRef: "customer-1" }));
+
+    expect(Object.keys(calls[0]?.totals ?? {})).not.toContain("shippingName");
   });
 });

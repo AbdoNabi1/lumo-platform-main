@@ -8,6 +8,9 @@ interface CheckoutTotalsProps {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3C: true when `taxMinor` is already inside the prices (so it is not added to the total). */
+  readonly taxIncluded: boolean;
+  readonly shippingName?: string;
 }
 
 /**
@@ -22,9 +25,15 @@ export class CheckoutTotals extends ValueObject<CheckoutTotalsProps> {
     shippingMinor: number,
     discountMinor: number,
     currency: string,
+    extra: { readonly taxIncluded?: boolean; readonly shippingName?: string | undefined } = {},
   ): CheckoutTotals {
     const subtotalMinor = items.reduce((sum, item) => sum + item.lineTotalMinor, 0);
-    const totalMinor = Math.max(0, subtotalMinor + taxMinor + shippingMinor - discountMinor);
+    const taxIncluded = extra.taxIncluded ?? false;
+    // grandTotal = subtotal + shipping − discount + (taxIncluded ? 0 : tax)
+    const totalMinor = Math.max(
+      0,
+      subtotalMinor + shippingMinor - discountMinor + (taxIncluded ? 0 : taxMinor),
+    );
     return new CheckoutTotals({
       subtotalMinor,
       taxMinor,
@@ -32,6 +41,8 @@ export class CheckoutTotals extends ValueObject<CheckoutTotalsProps> {
       discountMinor,
       totalMinor,
       currency,
+      taxIncluded,
+      ...(extra.shippingName === undefined ? {} : { shippingName: extra.shippingName }),
     });
   }
 
@@ -57,5 +68,13 @@ export class CheckoutTotals extends ValueObject<CheckoutTotalsProps> {
 
   get currency(): string {
     return this.props.currency;
+  }
+
+  get taxIncluded(): boolean {
+    return this.props.taxIncluded;
+  }
+
+  get shippingName(): string | undefined {
+    return this.props.shippingName;
   }
 }

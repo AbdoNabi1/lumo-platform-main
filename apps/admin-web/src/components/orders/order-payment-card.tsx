@@ -58,11 +58,17 @@ export async function OrderPaymentCard({
   const total = order.totals?.totalMinor ?? order.totalMinor;
   const money = (amountMinor: number) => formatCurrency(locale, amountMinor, currency);
   const itemCount = order.items.reduce((sum, item) => sum + item.quantity, 0);
+  // Plan 3C: the rate's recorded name when there is one; an older order's method key has its own label.
   const shippingMethodName =
-    order.shippingMethod === null
-      ? null
-      : ((t.shippingMethodLabel as Record<string, string>)[order.shippingMethod] ??
-        order.shippingMethod);
+    order.totals?.shippingName != null && order.totals.shippingName !== ""
+      ? order.totals.shippingName
+      : order.shippingMethod === null
+        ? null
+        : ((t.shippingMethodLabel as Record<string, string>)[order.shippingMethod] ??
+          order.shippingMethod);
+  // Plan 3C: prices that include tax carry it inside the total, so it is a note under the total, not an
+  // extra line; with none collected there is nothing to note.
+  const taxIncluded = order.totals?.taxIncluded === true;
 
   // What the customer has paid: the captured amount when Payments says so; a legacy paid order with no
   // intent to ask was paid in full; otherwise nothing.
@@ -99,7 +105,9 @@ export async function OrderPaymentCard({
                 note={shippingMethodName}
                 value={money(order.totals.shippingMinor)}
               />
-              <Line label={t.orderPage.paymentTaxes} value={money(order.totals.taxMinor)} />
+              {!taxIncluded && (
+                <Line label={t.orderPage.paymentTaxes} value={money(order.totals.taxMinor)} />
+              )}
               {order.totals.discountMinor > 0 && (
                 <Line
                   label={t.orderPage.paymentDiscount}
@@ -110,6 +118,11 @@ export async function OrderPaymentCard({
           )}
           <Line label={t.orderPage.paymentTotal} value={money(total)} strong />
         </dl>
+        {order.totals !== null && taxIncluded && order.totals.taxMinor > 0 && (
+          <p className="text-muted-foreground text-sm">
+            {t.orderPage.paymentTaxesIncluded.replace("{tax}", money(order.totals.taxMinor))}
+          </p>
+        )}
 
         <dl className="border-border flex flex-col gap-2 border-t pt-4 text-sm">
           <Line label={t.orderPage.paidByCustomer} value={money(paid)} />
