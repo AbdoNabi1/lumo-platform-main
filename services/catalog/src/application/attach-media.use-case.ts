@@ -5,6 +5,7 @@ import { err, ok, type Result } from "@platform/types";
 import { type DomainError, isDomainError, NotFoundError } from "@platform/utils";
 import type { ProductRepository } from "../domain/product-repository";
 import { MediaRef } from "../domain/value-objects/media-ref";
+import type { MediaLookupPort } from "./media-lookup.port";
 
 export interface AttachMediaInput {
   readonly productId: string;
@@ -22,6 +23,11 @@ export interface AttachMediaDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  /**
+   * Plan 2C-3: when present, the asset must be one of the caller's own (another tenant's id and an
+   * unknown id are the same not-found). Absent only in compositions with no Media at all.
+   */
+  readonly mediaLookup?: MediaLookupPort;
 }
 
 /** Attaches a media asset (by bare id, Media context owns the bytes) to a product. */
@@ -35,6 +41,11 @@ export class AttachMedia implements UseCase<AttachMediaInput, AttachMediaOutput,
   async execute(input: AttachMediaInput): Promise<Result<AttachMediaOutput, DomainError>> {
     const media = MediaRef.create(input.assetId);
     if (!media.ok) return err(media.error);
+
+    if (this.deps.mediaLookup !== undefined) {
+      const owned = await this.deps.mediaLookup.existingIds([input.assetId], input.tenantId);
+      if (!owned.includes(input.assetId)) return err(new NotFoundError("Media asset not found"));
+    }
 
     return this.deps.unitOfWork.run<Result<AttachMediaOutput, DomainError>>(async (tx) => {
       const product = await this.deps.products.findById(input.productId, input.tenantId, tx);

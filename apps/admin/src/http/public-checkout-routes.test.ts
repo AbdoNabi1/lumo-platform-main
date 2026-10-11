@@ -432,6 +432,7 @@ describe("public checkout routes — full guest lifecycle", () => {
         variantTitle: null,
         quantity: 2,
         unitPriceAmountMinor: 1999,
+        imageUrl: null,
       },
     ]);
 

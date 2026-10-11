@@ -36,3 +36,13 @@ export interface ProductRepository {
 export interface VariantCurrencyRelabeler {
   relabelCurrency(currency: string, tenantId: string, tx?: unknown): Promise<number>;
 }
+
+/**
+ * Plan 2C-3: one batched, tenant-scoped read of many products — what lets an order, a cart or a list
+ * show its pictures without reading products one by one. A separate port (like
+ * {@link VariantCurrencyRelabeler}) so the many `ProductRepository` fakes need no new method. An id
+ * that is unknown, deleted, malformed or another tenant's is simply absent.
+ */
+export interface ProductBatchReader {
+  findByIds(ids: readonly string[], tenantId: string, tx?: unknown): Promise<readonly Product[]>;
+}

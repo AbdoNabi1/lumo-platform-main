@@ -42,6 +42,19 @@ import { pagesRoutes } from "./pages-routes";
 import { notificationsRoutes } from "./notifications-routes";
 import { platformConsoleRoutes } from "./platform-console-routes";
 import { promotionsRoutes } from "./promotions-routes";
+import {
+  ALL_MEDIA,
+  featuredImageOf,
+  LIST_MEDIA,
+  lineKey,
+  loadImages,
+  mapProductPage,
+  productMedia,
+  resolveLineImages,
+  variantImageIdOf,
+  type ImageDto,
+  type ImageIndex,
+} from "./product-images";
 import { mapPage, publicCatalogRoutes } from "./public-catalog-routes";
 import { publicAuthRoutes } from "./public-auth-routes";
 import { publicStaffAuthRoutes } from "./public-staff-auth-routes";
@@ -227,6 +240,8 @@ export interface OrderDetailItemDto {
   readonly unitPriceMinor: number;
   readonly quantity: number;
   readonly lineTotalMinor: number;
+  /** Plan 2C-3: the variant's picture, else the product's, read now; null once the product is gone. */
+  readonly imageUrl: string | null;
 }
 
 export interface OrderAddressDto {
@@ -322,6 +337,7 @@ function toOrderDetailDto(
   fulfillmentStatus: OrderFulfillmentStatus,
   paymentProvider: string | null,
   linkedPaymentStatus: string | null,
+  lineImages: ReadonlyMap<string, ImageDto | null>,
 ): OrderDetailDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
@@ -347,6 +363,9 @@ function toOrderDetailDto(
       unitPriceMinor: item.snapshot.unitPrice.amountMinor,
       quantity: item.quantity,
       lineTotalMinor: item.lineTotal.amountMinor,
+      imageUrl:
+        lineImages.get(lineKey(item.snapshot.productId, item.snapshot.variantRef ?? null))?.url ??
+        null,
     })),
     shippingAddress: toOrderRecipientAddressDto(order.shippingAddress),
     billingAddress:
@@ -546,6 +565,7 @@ const assignCategoriesBody = z.object({ categoryIds: z.array(z.string().min(1)) 
 const assetIdParams = z.object({ productId: z.string().min(1), assetId: z.string().min(1) });
 const attachMediaBody = z.object({ assetId: z.string().min(1) });
 const reorderMediaBody = z.object({ assetIds: z.array(z.string().min(1)) });
+const variantImageBody = z.object({ mediaId: z.string().min(1).nullable() });
 
 const createCategoryBody = z.object({
   name: z.string().min(1),
@@ -770,6 +790,8 @@ export interface ProductVariantDto {
   readonly tracksInventory: boolean;
   /** Plan 2B-1: Shopify "Continue selling when out of stock". */
   readonly inventoryPolicy: "deny" | "continue";
+  /** Plan 2C-3: the media shown for this variant (one of the product's own); null when unset or gone. */
+  readonly imageId: string | null;
 }
 
 export interface ProductOptionDto {
@@ -786,6 +808,8 @@ export interface ProductListItemDto {
   readonly variantCount: number;
   readonly priceAmountMinor: number | null;
   readonly currency: string | null;
+  /** Plan 2C-3: the first picture, for the list thumbnail; null when the product has none. */
+  readonly featuredImage: ImageDto | null;
 }
 
 export interface ProductDetailDto {
@@ -805,9 +829,11 @@ export interface ProductDetailDto {
   readonly seoDescription: string | null;
   readonly variants: readonly ProductVariantDto[];
   readonly mediaAssetIds: readonly string[];
+  /** Plan 2C-3: the pictures in the merchant's order (first = featured), with url, alt and size. */
+  readonly media: readonly ImageDto[];
 }
 
-function toProductListItemDto(product: Product): ProductListItemDto {
+function toProductListItemDto(product: Product, images: ImageIndex): ProductListItemDto {
   const firstVariant = product.variants[0];
   return {
     id: product.id.toString(),
@@ -818,10 +844,11 @@ function toProductListItemDto(product: Product): ProductListItemDto {
     variantCount: product.variants.length,
     priceAmountMinor: firstVariant?.price.amountMinor ?? null,
     currency: firstVariant?.price.currency ?? null,
+    featuredImage: featuredImageOf(product, images),
   };
 }
 
-function toProductDetailDto(product: Product): ProductDetailDto {
+function toProductDetailDto(product: Product, images: ImageIndex): ProductDetailDto {
   return {
     id: product.id.toString(),
     sku: product.sku.value,
@@ -851,8 +878,10 @@ function toProductDetailDto(product: Product): ProductDetailDto {
       taxable: variant.attributes.taxable,
       tracksInventory: variant.attributes.tracksInventory,
       inventoryPolicy: variant.attributes.inventoryPolicy,
+      imageId: variantImageIdOf(variant, images),
     })),
     mediaAssetIds: product.media.map((media) => media.assetId),
+    media: productMedia(product, images),
   };
 }
 
@@ -948,11 +977,14 @@ export function adminRoutes(
       // ADR-0014: ListProductsInput now requires tenantId — sourced from the already-verified
       // context.tenantId (packages/http's tenant-resolution chain), never from the query string.
       handle: async ({ query, context }) =>
-        mapPage(
+        mapProductPage(
+          admin,
+          context.tenantId,
           await admin.products.listProducts(context.principal, {
             ...query,
             tenantId: context.tenantId,
           }),
+          { perProduct: LIST_MEDIA, variants: false },
           toProductListItemDto,
         ),
     }),
@@ -972,7 +1004,12 @@ export function adminRoutes(
         if (response.status !== 200) {
           return response;
         }
-        return { status: 200, body: toProductDetailDto(response.body as Product) };
+        const product = response.body as Product;
+        const images = await loadImages(admin, context.tenantId, [product], {
+          perProduct: ALL_MEDIA,
+          variants: true,
+        });
+        return { status: 200, body: toProductDetailDto(product, images) };
       },
     }),
     defineRoute({
@@ -1203,6 +1240,21 @@ export function adminRoutes(
         admin.products.attachMedia(context.principal, {
           productId: params.productId,
           ...body,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "PUT",
+      path: "/products/:productId/variants/:variantId/image",
+      version: 1,
+      permission: "products:update",
+      idempotent: true,
+      summary: "Set or clear a variant's image (one of the product's own media)",
+      schema: { params: variantIdParams, body: variantImageBody },
+      handle: ({ params, body, context }) =>
+        admin.products.setVariantImage(context.principal, {
+          ...params,
+          mediaId: body.mediaId,
           tenantId: context.tenantId,
         }),
     }),
@@ -1528,6 +1580,14 @@ export function adminRoutes(
             linkedPaymentStatus = linked.status.value;
           }
         }
+        const lineImages = await resolveLineImages(
+          admin,
+          context.tenantId,
+          order.items.map((item) => ({
+            productId: item.snapshot.productId,
+            variantId: item.snapshot.variantRef ?? null,
+          })),
+        );
         return {
           status: 200,
           body: toOrderDetailDto(
@@ -1535,6 +1595,7 @@ export function adminRoutes(
             statuses.byOrder.get(order.id.toString()) ?? "unfulfilled",
             paymentProvider,
             linkedPaymentStatus,
+            lineImages,
           ),
         };
       },

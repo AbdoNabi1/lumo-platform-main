@@ -11,7 +11,11 @@ import type { CategoryRepository } from "../domain/category-repository";
 import type { Collection } from "../domain/collection";
 import type { CollectionRepository } from "../domain/collection-repository";
 import type { Product } from "../domain/product";
-import type { ProductRepository, VariantCurrencyRelabeler } from "../domain/product-repository";
+import type {
+  ProductBatchReader,
+  ProductRepository,
+  VariantCurrencyRelabeler,
+} from "../domain/product-repository";
 import {
   BrandMapper,
   CategoryMapper,
@@ -55,12 +59,16 @@ function readScoped<T>(
     : runReadScoped(prisma, tenantId, run);
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Production `ProductRepository` on the `catalog` schema. The variant set is owned by the
  * aggregate; each save reconciles it (create-missing, delete-removed, update-changed).
  * Optimistic locking + same-transaction outbox per ADR-0003.
  */
-export class PrismaProductRepository implements ProductRepository, VariantCurrencyRelabeler {
+export class PrismaProductRepository
+  implements ProductRepository, VariantCurrencyRelabeler, ProductBatchReader
+{
   private readonly deps: PrismaCatalogRepositoryDeps;
 
   constructor(deps: PrismaCatalogRepositoryDeps) {
@@ -135,6 +143,25 @@ export class PrismaProductRepository implements ProductRepository, VariantCurren
           row as unknown as ProductRow,
           row.variants as VariantRow[],
         );
+  }
+
+  async findByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Product[]> {
+    // `id` is a uuid column: a non-uuid string inside `in` fails the whole query instead of matching nothing.
+    const wanted = [...new Set(ids)].filter((id) => UUID_PATTERN.test(id));
+    if (wanted.length === 0) return [];
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.product.findMany({
+        where: { tenantId, deletedAt: null, id: { in: wanted } },
+        include: { variants: true },
+      }),
+    );
+    return rows.map((row) =>
+      ProductMapper.toDomain(row as unknown as ProductRow, row.variants as VariantRow[]),
+    );
   }
 
   async findBySlug(slug: string, tenantId: string, tx?: unknown): Promise<Product | null> {

@@ -175,3 +175,56 @@ describe("ProductMapper — inventory switches (Plan 2B-1)", () => {
     expect(product.variants[0]?.isStockLimited()).toBe(true);
   });
 });
+
+describe("ProductMapper — variant image (Plan 2C-3)", () => {
+  const productRow: ProductRow = {
+    id: "22222222-2222-4222-8222-222222222222",
+    sku: "P-1",
+    name: "Tee",
+    slug: "tee",
+    publishState: "published",
+    scheduledAt: null,
+    brandId: null,
+    categoryRefs: [],
+    options: [],
+    seo: null,
+    mediaRefs: ["44444444-4444-4444-8444-444444444444"],
+    deletedAt: null,
+    version: 1,
+    description: null,
+    productType: null,
+    tags: [],
+  };
+  const variantRow: VariantRow = {
+    id: "33333333-3333-4333-8333-333333333333",
+    sku: "SKU-1",
+    priceAmountMinor: 1999,
+    currency: "USD",
+    selection: null,
+    compareAtAmountMinor: null,
+    costAmountMinor: null,
+    barcode: null,
+    weightGrams: null,
+    requiresShipping: true,
+    taxable: true,
+    tracksInventory: true,
+    inventoryPolicy: "deny",
+    mediaRef: "44444444-4444-4444-8444-444444444444",
+  };
+
+  it("round-trips the variant's image through the rows", () => {
+    const product = ProductMapper.toDomain(productRow, [variantRow]);
+    expect(product.variants[0]?.mediaRef).toBe("44444444-4444-4444-8444-444444444444");
+    const [row] = ProductMapper.toVariantRows(product, "tenant-1");
+    expect(row?.mediaRef).toBe("44444444-4444-4444-8444-444444444444");
+  });
+
+  it("maps a row with no image (null, or written before this plan) to none", () => {
+    const withNull = ProductMapper.toDomain(productRow, [{ ...variantRow, mediaRef: null }]);
+    const { mediaRef: _ignored, ...legacy } = variantRow;
+    const withoutKey = ProductMapper.toDomain(productRow, [legacy as unknown as VariantRow]);
+    expect(withNull.variants[0]?.mediaRef).toBeNull();
+    expect(withoutKey.variants[0]?.mediaRef).toBeNull();
+    expect(ProductMapper.toVariantRows(withNull, "tenant-1")[0]?.mediaRef).toBeNull();
+  });
+});

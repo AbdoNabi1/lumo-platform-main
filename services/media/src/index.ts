@@ -28,6 +28,10 @@ export {
   type UploadedImage,
   type UploadProductImageOutcome,
 } from "./application/upload-product-image.use-case";
+export {
+  ResolveMediaImages,
+  type ResolvedImage,
+} from "./application/resolve-media-images.use-case";
 export { MAX_ALT_LENGTH } from "./domain/media-asset";
 export type { LegacyStorageKeys, StorageKeyPolicy } from "./application/storage-key-ownership";
 export {

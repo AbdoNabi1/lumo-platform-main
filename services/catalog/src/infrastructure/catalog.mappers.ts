@@ -49,6 +49,8 @@ export interface VariantRow {
   readonly taxable: boolean;
   readonly tracksInventory: boolean;
   readonly inventoryPolicy: string;
+  /** Plan 2C-3: a bare id into Media; absent on rows read before it existed. */
+  readonly mediaRef?: string | null;
 }
 export interface CategoryRow {
   readonly id: string;
@@ -128,6 +130,7 @@ export class ProductMapper {
             // `assertValidAttributes` (run by `Variant.create`) rejects a corrupt value.
             inventoryPolicy: (v.inventoryPolicy ?? "deny") as InventoryPolicy,
           },
+          v.mediaRef ?? null,
         ),
       ),
       row.mediaRefs.map((assetId) => must(MediaRef.create(assetId), "media ref")),
@@ -189,6 +192,7 @@ export class ProductMapper {
       taxable: v.attributes.taxable,
       tracksInventory: v.attributes.tracksInventory,
       inventoryPolicy: v.attributes.inventoryPolicy,
+      mediaRef: v.mediaRef,
     }));
   }
 }

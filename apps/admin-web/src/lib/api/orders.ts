@@ -110,6 +110,8 @@ export interface OrderDetailItemDto {
   readonly unitPriceMinor: number;
   readonly quantity: number;
   readonly lineTotalMinor: number;
+  /** Plan 2C-3: the line's picture; null/absent shows the placeholder. */
+  readonly imageUrl?: string | null;
 }
 
 export interface OrderAddressDto {

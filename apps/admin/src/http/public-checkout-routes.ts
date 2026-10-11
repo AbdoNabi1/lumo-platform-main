@@ -5,6 +5,7 @@ import { CheckoutSession, type CheckoutAddress } from "@platform/checkout";
 import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
+import { withLineImages } from "./product-images";
 import { resolveSessionRef } from "./public-cart-routes";
 
 const checkoutSessionIdParams = z.object({ checkoutSessionId: z.string().min(1) });
@@ -127,6 +128,8 @@ export interface PublicCheckoutSessionDto {
     readonly variantTitle: string | null;
     readonly quantity: number;
     readonly unitPriceAmountMinor: number;
+    /** Plan 2C-3: the line's picture, or null for the placeholder. Filled in by `withLineImages`. */
+    readonly imageUrl: string | null;
   }[];
   readonly totals: {
     readonly subtotalMinor: number;
@@ -175,6 +178,7 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
       variantTitle: item.variantTitle ?? null,
       quantity: item.quantity,
       unitPriceAmountMinor: item.unitPriceAmountMinor,
+      imageUrl: null,
     })),
     totals:
       session.totals === undefined
@@ -236,7 +240,7 @@ async function requireOwnedSession(
 }
 
 export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
-  return [
+  return withLineImages(admin, [
     defineRoute({
       method: "POST",
       path: "/public/checkouts",
@@ -659,5 +663,5 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         });
       },
     }),
-  ] as readonly RouteDefinition[];
+  ] as readonly RouteDefinition[]);
 }

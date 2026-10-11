@@ -48,7 +48,10 @@ import { RemoveProductFromCollection } from "./application/remove-product-from-c
 import { RemoveVariant } from "./application/remove-variant.use-case";
 import { RenameCollection } from "./application/rename-collection.use-case";
 import { ReorderCollectionProducts } from "./application/reorder-collection-products.use-case";
+import { GetProductsByIds } from "./application/get-products-by-ids.use-case";
+import type { MediaLookupPort } from "./application/media-lookup.port";
 import { ReorderMedia } from "./application/reorder-media.use-case";
+import { SetVariantImage } from "./application/set-variant-image.use-case";
 import { SchedulePublishProduct } from "./application/schedule-publish-product.use-case";
 import { SetProductBrand } from "./application/set-product-brand.use-case";
 import { SetProductOptions } from "./application/set-product-options.use-case";
@@ -62,7 +65,11 @@ import { UpdateVariant } from "./application/update-variant.use-case";
 import type { BrandRepository } from "./domain/brand-repository";
 import type { CategoryRepository } from "./domain/category-repository";
 import type { CollectionRepository } from "./domain/collection-repository";
-import type { ProductRepository, VariantCurrencyRelabeler } from "./domain/product-repository";
+import type {
+  ProductBatchReader,
+  ProductRepository,
+  VariantCurrencyRelabeler,
+} from "./domain/product-repository";
 import { CatalogEventTranslator } from "./infrastructure/catalog-event-translator";
 import { InMemoryBrandRepository } from "./infrastructure/in-memory-brand-repository";
 import { InMemoryCategoryRepository } from "./infrastructure/in-memory-category-repository";
@@ -101,6 +108,11 @@ export interface CatalogWiringDeps {
    * nothing in this process delivers to a subscriber.
    */
   readonly onUsageRecorded?: Subscriber;
+  /**
+   * Plan 2C-3: Catalog's question to Media (is this asset the caller's own?). Present ⇒ attaching media
+   * checks it; absent only in compositions with no Media.
+   */
+  readonly mediaLookup?: MediaLookupPort;
 }
 
 export interface WiredCatalog {
@@ -116,7 +128,7 @@ export interface WiredCatalog {
 }
 
 interface CatalogRepos {
-  readonly products: ProductRepository & VariantCurrencyRelabeler;
+  readonly products: ProductRepository & VariantCurrencyRelabeler & ProductBatchReader;
   readonly categories: CategoryRepository;
   readonly brands: BrandRepository;
   readonly collections: CollectionRepository;
@@ -143,6 +155,7 @@ function buildControllers(
     updateProduct: new UpdateProduct({ products, unitOfWork, idGenerator, clock }),
     getProduct: new GetProduct({ products }),
     getProductBySlug: new GetProductBySlug({ products }),
+    getProductsByIds: new GetProductsByIds({ products }),
     listProducts: new ListProducts({ products }),
     schedulePublishProduct: new SchedulePublishProduct({ products, unitOfWork, clock }),
     unpublishProduct: new UnpublishProduct({ products, unitOfWork, idGenerator, clock }),
@@ -162,7 +175,14 @@ function buildControllers(
       idGenerator,
       clock,
     }),
-    attachMedia: new AttachMedia({ products, unitOfWork, idGenerator, clock }),
+    attachMedia: new AttachMedia({
+      products,
+      unitOfWork,
+      idGenerator,
+      clock,
+      ...(deps.mediaLookup === undefined ? {} : { mediaLookup: deps.mediaLookup }),
+    }),
+    setVariantImage: new SetVariantImage({ products, unitOfWork, idGenerator, clock }),
     detachMedia: new DetachMedia({ products, unitOfWork, idGenerator, clock }),
     reorderMedia: new ReorderMedia({ products, unitOfWork, idGenerator, clock }),
     relabelVariantCurrency: new RelabelVariantCurrency({ products, unitOfWork }),

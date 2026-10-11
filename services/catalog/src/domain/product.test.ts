@@ -275,3 +275,77 @@ describe("Product", () => {
     expect(product.media.map((m) => m.assetId)).toEqual(["asset-1"]);
   });
 });
+
+describe("Product — variant images (Plan 2C-3)", () => {
+  function productWithMedia(): Product {
+    const product = productFixture();
+    product.addVariant(variantFixture("variant-2", "SKU-2"), "evt-v2", new Date(0));
+    product.attachMedia(mediaRef("asset-1"), "evt-a1", new Date(0));
+    product.attachMedia(mediaRef("asset-2"), "evt-a2", new Date(0));
+    product.pullDomainEvents();
+    return product;
+  }
+  const variantOf = (product: Product, id: string) =>
+    product.variants.find((v) => v.id.toString() === id)!;
+
+  it("starts without an image", () => {
+    expect(variantOf(productWithMedia(), "variant-1").mediaRef).toBeNull();
+  });
+
+  it("gives a variant one of the product's own media as its image, and raises one event", () => {
+    const product = productWithMedia();
+    product.setVariantImage("variant-1", "asset-2", "evt-1", new Date(0));
+    expect(variantOf(product, "variant-1").mediaRef).toBe("asset-2");
+    expect(variantOf(product, "variant-2").mediaRef).toBeNull();
+    expect(product.pullDomainEvents()).toHaveLength(1);
+  });
+
+  it("clears the image with null", () => {
+    const product = productWithMedia();
+    product.setVariantImage("variant-1", "asset-1", "evt-1", new Date(0));
+    product.setVariantImage("variant-1", null, "evt-2", new Date(0));
+    expect(variantOf(product, "variant-1").mediaRef).toBeNull();
+  });
+
+  it("refuses an image that is not attached to this product", () => {
+    const product = productWithMedia();
+    expect(() =>
+      product.setVariantImage("variant-1", "someone-elses", "evt-1", new Date(0)),
+    ).toThrow(BusinessRuleError);
+    expect(variantOf(product, "variant-1").mediaRef).toBeNull();
+  });
+
+  it("refuses an unknown variant", () => {
+    const product = productWithMedia();
+    expect(() => product.setVariantImage("nope", "asset-1", "evt-1", new Date(0))).toThrow(
+      BusinessRuleError,
+    );
+  });
+
+  it("clears the variant image when that media is detached, and only for the variants that used it", () => {
+    const product = productWithMedia();
+    product.setVariantImage("variant-1", "asset-1", "evt-1", new Date(0));
+    product.setVariantImage("variant-2", "asset-2", "evt-2", new Date(0));
+    product.detachMedia("asset-1", "evt-3", new Date(0));
+    expect(variantOf(product, "variant-1").mediaRef).toBeNull();
+    expect(variantOf(product, "variant-2").mediaRef).toBe("asset-2");
+  });
+
+  it("keeps the image when the variant is edited", () => {
+    const product = productWithMedia();
+    product.setVariantImage("variant-1", "asset-1", "evt-1", new Date(0));
+    const variant = variantOf(product, "variant-1");
+    product.updateVariant(
+      "variant-1",
+      {
+        sku: sku("SKU-1"),
+        price: money(2500),
+        selection: variant.selection,
+        attributes: variant.attributes,
+      },
+      "evt-2",
+      new Date(0),
+    );
+    expect(variantOf(product, "variant-1").mediaRef).toBe("asset-1");
+  });
+});

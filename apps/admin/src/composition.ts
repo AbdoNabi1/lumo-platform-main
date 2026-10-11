@@ -54,7 +54,12 @@ import {
 } from "@platform/licensing";
 import { wireLocalization } from "@platform/localization";
 import { wireLoyalty, type LoyaltyController } from "@platform/loyalty";
-import { wireMediaLibrary, type LegacyStorageKeys, type ObjectStoragePort } from "@platform/media";
+import {
+  wireMediaLibrary,
+  type LegacyStorageKeys,
+  type ObjectStoragePort,
+  type ResolveMediaImages,
+} from "@platform/media";
 import { wireNotifications } from "@platform/notifications";
 import {
   wireOrders,
@@ -529,6 +534,11 @@ export interface WiredAdmin {
   readonly pages: PagesAdminController;
   /** Media Library screen → Media Library extension (Sprint 5.4 — Media's first admin-transport wiring). */
   readonly mediaLibrary: MediaLibraryAdminController;
+  /**
+   * Plan 2C-3: media ids → images (url, alt, size) in one tenant-scoped read. Used by the product,
+   * order, cart and checkout readers; it authorizes nothing itself — the route that calls it does.
+   */
+  readonly mediaImages: ResolveMediaImages;
   /** Tenancy screen → Tenancy (Sprint 5.5/5.6 — Tenancy's first admin-transport wiring). */
   readonly tenancy: TenancyAdminController;
   /** Plan 3C: relabels the shop's variant prices when the store currency changes. */
@@ -694,7 +704,9 @@ interface DrainableContext {
  * in-memory persistence + outbox. Serializer/id/clock are injected and shared across contexts.
  */
 export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
-  const catalog = wireCatalog(deps);
+  // Plan 2C-3: Media is wired first because Catalog asks it whether an attached asset is the tenant's own.
+  const mediaLibrary = wireMediaLibrary(deps);
+  const catalog = wireCatalog({ ...deps, mediaLookup: mediaLibrary.images });
   const inventory = wireInventory(deps);
   // Phase 3 Task 12 (C-3): `notifications` must exist before `ordersDeps` below is built — Orders
   // cannot receive a real NotificationPort adapter built from `notifications` if `notifications`
@@ -1021,7 +1033,6 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const featureFlags = wireFeatureFlags(deps);
   const featureRegistry = wireFeatureRegistry(deps);
   const pages = wirePages(deps);
-  const mediaLibrary = wireMediaLibrary(deps);
   // T10.6: the platform tenant (WP-14) — and the deployment scope it is — cannot be suspended or
   // cancelled through the ordinary lifecycle: that would stop Morbeh billing anyone.
   const tenancy = wireTenancy({
@@ -1236,6 +1247,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       mediaLibrary: mediaLibrary.mediaLibrary,
       guard,
     }),
+    mediaImages: mediaLibrary.images,
     tenancy: new TenancyAdminController({ tenancy: tenancy.tenancy, guard }),
     storeCurrency: new StoreCurrencyRelabelAdapter(catalog.products),
     tenantAvailability: tenancy.tenantAvailability,

@@ -40,6 +40,14 @@ import type {
 } from "../application/unpublish-product.use-case";
 import type { UnlistProduct, UnlistProductInput } from "../application/unlist-product.use-case";
 import type { UpdateProduct, UpdateProductInput } from "../application/update-product.use-case";
+import type {
+  GetProductsByIds,
+  GetProductsByIdsInput,
+} from "../application/get-products-by-ids.use-case";
+import type {
+  SetVariantImage,
+  SetVariantImageInput,
+} from "../application/set-variant-image.use-case";
 import type { UpdateVariant, UpdateVariantInput } from "../application/update-variant.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
@@ -49,6 +57,7 @@ export interface ProductControllerDeps {
   readonly updateProduct: UpdateProduct;
   readonly getProduct: GetProduct;
   readonly getProductBySlug: GetProductBySlug;
+  readonly getProductsByIds: GetProductsByIds;
   readonly listProducts: ListProducts;
   readonly schedulePublishProduct: SchedulePublishProduct;
   readonly unpublishProduct: UnpublishProduct;
@@ -65,6 +74,7 @@ export interface ProductControllerDeps {
   readonly attachMedia: AttachMedia;
   readonly detachMedia: DetachMedia;
   readonly reorderMedia: ReorderMedia;
+  readonly setVariantImage: SetVariantImage;
   readonly relabelVariantCurrency: RelabelVariantCurrency;
 }
 
@@ -163,5 +173,13 @@ export class ProductController {
 
   async reorderMedia(input: ReorderMediaInput): Promise<ControllerResponse> {
     return present(await this.deps.reorderMedia.execute(input), 200);
+  }
+
+  async getByIds(input: GetProductsByIdsInput): Promise<ControllerResponse> {
+    return present(await this.deps.getProductsByIds.execute(input), 200);
+  }
+
+  async setVariantImage(input: SetVariantImageInput): Promise<ControllerResponse> {
+    return present(await this.deps.setVariantImage.execute(input), 200);
   }
 }

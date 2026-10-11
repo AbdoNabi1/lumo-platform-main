@@ -7,6 +7,18 @@ import type { Paginated } from "@platform/types";
 import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { variantTitleOf } from "./merchandise-resolution";
+import {
+  ALL_MEDIA,
+  featuredImageOf,
+  hoverImageOf,
+  LIST_MEDIA,
+  loadImages,
+  mapProductPage,
+  productMedia,
+  variantImageIdOf,
+  type ImageDto,
+  type ImageIndex,
+} from "./product-images";
 
 const pageQuery = z.object({
   first: z.coerce.number().int().positive().optional(),
@@ -110,6 +122,11 @@ export interface PublicVariantDto {
    * shows "out of stock" for it. Only this DERIVED flag is public; the two switches behind it are not.
    */
   readonly sellableWhenOutOfStock: boolean;
+  /**
+   * Plan 2C-3: the id (in `media`) of the picture to show when the shopper picks this variant; null when
+   * the variant has none of its own.
+   */
+  readonly imageId: string | null;
 }
 
 export interface PublicProductDto {
@@ -125,6 +142,16 @@ export interface PublicProductDto {
   /** Plan 2A: the declared options the shopper picks from, in display order. */
   readonly options: readonly { readonly name: string; readonly values: readonly string[] }[];
   readonly variants: readonly PublicVariantDto[];
+  /**
+   * Plan 2C-3: the product's pictures in the merchant's order (first = featured), each `{ id, url, alt,
+   * width, height }` and nothing else. The by-slug read carries them all; a list page carries the first
+   * few, enough for the card.
+   */
+  readonly media: readonly ImageDto[];
+  /** The first picture, for product cards; null when the product has none. */
+  readonly featuredImage: ImageDto | null;
+  /** The second picture, shown when a shopper hovers a card; null when there is only one. */
+  readonly hoverImage: ImageDto | null;
 }
 
 export interface PublicCategoryDto {
@@ -162,12 +189,13 @@ export interface PublicInventoryDto {
 }
 
 /**
- * Public product projection — identity, naming, publish state, descriptive text, and purchasable
- * variants only. Of a variant's Plan 2C-1 `attributes` ONLY `compareAtPrice` is exposed: `cost` is
+ * Public product projection — identity, naming, publish state, descriptive text, purchasable
+ * variants and (Plan 2C-3) the product's pictures: `{ id, url, alt, width, height }` each, never a
+ * storage key or a tenant id. Of a variant's Plan 2C-1 `attributes` ONLY `compareAtPrice` is exposed: `cost` is
  * merchant margin, and barcode / weight / shipping flags are not something the storefront needs.
  * Adding a field here is a deliberate act (see the "SECURITY" test in `public-catalog-routes.test.ts`).
  */
-function toProductDto(product: Product): PublicProductDto {
+function toProductDto(product: Product, images: ImageIndex): PublicProductDto {
   const options = product.options.map((o) => ({ name: o.name, values: [...o.values] }));
   return {
     id: product.id.value,
@@ -188,7 +216,11 @@ function toProductDto(product: Product): PublicProductDto {
       title: variantTitleOf(options, variant.selection?.values ?? null),
       compareAtAmountMinor: variant.attributes.compareAtPrice?.amountMinor ?? null,
       sellableWhenOutOfStock: !variant.isStockLimited(),
+      imageId: variantImageIdOf(variant, images),
     })),
+    media: productMedia(product, images),
+    featuredImage: featuredImageOf(product, images),
+    hoverImage: hoverImageOf(product, images),
   };
 }
 
@@ -306,10 +338,13 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       // (no principal/authorization required) but still runs behind tenant resolution, per
       // packages/http/src/server.ts's "nothing below runs tenant-less, public routes included".
       handle: async ({ query, context }) =>
-        mapPage(
+        mapProductPage(
+          admin,
+          context.tenantId,
           listedProductsOnly(
             await admin.publicReads.products.list({ ...query, tenantId: context.tenantId }),
           ),
+          { perProduct: LIST_MEDIA, variants: true },
           toProductDto,
         ),
     }),
@@ -330,7 +365,11 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
         const product = response.body as Product;
         // Plan 2C-1: published and unlisted open by link; draft/archived/deleted look like a missing slug.
         if (!product.status.isSellable || product.deleted) return PRODUCT_NOT_FOUND_RESPONSE;
-        return { status: 200, body: toProductDto(product) };
+        const images = await loadImages(admin, context.tenantId, [product], {
+          perProduct: ALL_MEDIA,
+          variants: true,
+        });
+        return { status: 200, body: toProductDto(product, images) };
       },
     }),
     defineRoute({
@@ -388,12 +427,15 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
         "Public: list a collection's published member products, in curated order (cursor pagination)",
       schema: { params: slugParams, querystring: pageQuery },
       handle: async ({ params, query, context }) =>
-        mapPage(
+        mapProductPage(
+          admin,
+          context.tenantId,
           await admin.publicReads.collections.listMemberProducts({
             ...params,
             ...query,
             tenantId: context.tenantId,
           }),
+          { perProduct: LIST_MEDIA, variants: true },
           toProductDto,
         ),
     }),

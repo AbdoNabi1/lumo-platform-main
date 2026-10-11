@@ -2,7 +2,11 @@ import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/r
 import type { CursorPage, Paginated } from "@platform/types";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { Product } from "../domain/product";
-import type { ProductRepository, VariantCurrencyRelabeler } from "../domain/product-repository";
+import type {
+  ProductBatchReader,
+  ProductRepository,
+  VariantCurrencyRelabeler,
+} from "../domain/product-repository";
 
 export interface InMemoryProductRepositoryDeps {
   readonly outbox: OutboxWriter;
@@ -17,7 +21,9 @@ export interface InMemoryProductRepositoryDeps {
  * carries no `tenantId` of its own, so the store must key on it explicitly or a cross-tenant leak
  * here would be invisible to every isolation test.
  */
-export class InMemoryProductRepository implements ProductRepository, VariantCurrencyRelabeler {
+export class InMemoryProductRepository
+  implements ProductRepository, VariantCurrencyRelabeler, ProductBatchReader
+{
   private readonly store = new Map<
     string,
     { readonly tenantId: string; readonly product: Product }
@@ -40,6 +46,17 @@ export class InMemoryProductRepository implements ProductRepository, VariantCurr
     return entry !== undefined && entry.tenantId === tenantId && !entry.product.deleted
       ? entry.product
       : null;
+  }
+
+  findByIds(ids: readonly string[], tenantId: string): Promise<readonly Product[]> {
+    const wanted = new Set(ids);
+    return Promise.resolve(
+      [...this.store.entries()]
+        .filter(
+          ([id, entry]) => wanted.has(id) && entry.tenantId === tenantId && !entry.product.deleted,
+        )
+        .map(([, entry]) => entry.product),
+    );
   }
 
   async findBySlug(slug: string, tenantId: string): Promise<Product | null> {

@@ -436,6 +436,8 @@ describe("GET /orders/:orderId (detail)", () => {
         unitPriceMinor: 1999,
         quantity: 2,
         lineTotalMinor: 3998,
+        // Plan 2C-3: no picture for a line whose product has none.
+        imageUrl: null,
       },
     ]);
     expect(body.history).toEqual([{ type: "placed", occurredAt: expect.any(String) }]);
@@ -507,6 +509,7 @@ describe("GET /products (list) and /products/:productId (detail)", () => {
       variantCount: 1,
       priceAmountMinor: 1999,
       currency: "USD",
+      featuredImage: null,
     });
 
     const getRes = await app.inject({
@@ -547,9 +550,11 @@ describe("GET /products (list) and /products/:productId (detail)", () => {
           taxable: true,
           tracksInventory: true,
           inventoryPolicy: "deny",
+          imageId: null,
         },
       ],
       mediaAssetIds: [],
+      media: [],
     });
   });
 });

@@ -210,6 +210,15 @@ export class ProductsAdminController {
     return this.products.reorderMedia(input);
   }
 
+  async setVariantImage(
+    principal: Principal,
+    input: Parameters<ProductController["setVariantImage"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "products:update");
+    if (denied) return denied;
+    return this.products.setVariantImage(input);
+  }
+
   async createCategory(
     principal: Principal,
     input: Parameters<CategoryController["create"]>[0],

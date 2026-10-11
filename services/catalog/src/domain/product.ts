@@ -375,8 +375,34 @@ export class Product extends AggregateRoot<ProductProps> {
       throw new BusinessRuleError(`Media not attached: ${assetId}`);
     }
     this.props.media = this.props.media.filter((m) => m.assetId !== assetId);
+    // A variant must never point at media the product no longer has.
+    for (const variant of this.props.variants) {
+      if (variant.mediaRef === assetId) variant.setMediaRef(null);
+    }
     this.addDomainEvent(
       new ProductMediaDetached({ eventId, aggregateId: this.id, occurredAt }, { assetId }),
+    );
+  }
+
+  /**
+   * Plan 2C-3: Shopify's "variant image". `assetId` must be one of THIS product's media, or `null` to clear.
+   */
+  setVariantImage(
+    variantId: string,
+    assetId: string | null,
+    eventId: string,
+    occurredAt: Date,
+  ): void {
+    const variant = this.props.variants.find((v) => v.id.toString() === variantId);
+    if (!variant) {
+      throw new BusinessRuleError(`Variant not found: ${variantId}`);
+    }
+    if (assetId !== null && !this.props.media.some((m) => m.assetId === assetId)) {
+      throw new BusinessRuleError(`Media not attached: ${assetId}`);
+    }
+    variant.setMediaRef(assetId);
+    this.addDomainEvent(
+      new ProductVariantUpdated({ eventId, aggregateId: this.id, occurredAt }, { variantId }),
     );
   }
 

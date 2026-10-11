@@ -1,5 +1,14 @@
 import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
+/** Plan 2C-3: a product picture as the staff API serves it. */
+export interface ProductImageDto {
+  readonly id: string;
+  readonly url: string;
+  readonly alt: string | null;
+  readonly width: number | null;
+  readonly height: number | null;
+}
+
 export interface ProductListItemDto {
   readonly id: string;
   readonly sku: string;
@@ -9,6 +18,8 @@ export interface ProductListItemDto {
   readonly variantCount: number;
   readonly priceAmountMinor: number | null;
   readonly currency: string | null;
+  /** Plan 2C-3: the list thumbnail; null/absent shows the placeholder. */
+  readonly featuredImage?: ProductImageDto | null;
 }
 
 export interface ProductsPageInfo {
@@ -85,6 +96,8 @@ export interface ProductVariantDto {
   readonly tracksInventory: boolean;
   /** Plan 2B-1: Shopify "Continue selling when out of stock". */
   readonly inventoryPolicy: InventoryPolicy;
+  /** Plan 2C-3: the media shown for this variant (one of the product's own); null/absent when unset. */
+  readonly imageId?: string | null;
 }
 
 export interface ProductOptionDto {
@@ -109,6 +122,8 @@ export interface ProductDetailDto {
   readonly tags: readonly string[];
   readonly variants: readonly ProductVariantDto[];
   readonly mediaAssetIds: readonly string[];
+  /** Plan 2C-3: the pictures in order (first = featured). Absent from an older runtime. */
+  readonly media?: readonly ProductImageDto[];
 }
 
 function isProductDetailDto(value: unknown): value is ProductDetailDto {

@@ -78,6 +78,8 @@ interface VariantProps {
   price: Money;
   selection: VariantSelection | null;
   attributes: VariantAttributes;
+  /** Plan 2C-3: a bare id into Media; always one of the product's own media. */
+  mediaRef: string | null;
 }
 
 /**
@@ -92,9 +94,15 @@ export class Variant extends Entity<VariantProps> {
     price: Money,
     selection: VariantSelection | null = null,
     attributes: VariantAttributes = DEFAULT_VARIANT_ATTRIBUTES,
+    mediaRef: string | null = null,
   ): Variant {
     assertValidAttributes(price, attributes);
-    return new Variant({ sku, price, selection, attributes }, id);
+    return new Variant({ sku, price, selection, attributes, mediaRef }, id);
+  }
+
+  /** The aggregate checks the media belongs to the product; this only holds the reference. */
+  setMediaRef(mediaRef: string | null): void {
+    this.props.mediaRef = mediaRef;
   }
 
   /** Applies a full change set. Selection rules are the aggregate's job; attributes are checked here. */
@@ -141,6 +149,11 @@ export class Variant extends Entity<VariantProps> {
 
   get attributes(): VariantAttributes {
     return this.props.attributes;
+  }
+
+  /** Plan 2C-3: the media shown for this variant on the storefront, or `null` for the product's own. */
+  get mediaRef(): string | null {
+    return this.props.mediaRef;
   }
 
   /** Plan 2B-1: only a tracked variant that stops at zero is limited by its stock. */

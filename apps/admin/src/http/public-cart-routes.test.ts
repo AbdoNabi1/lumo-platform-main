@@ -710,6 +710,7 @@ describe("public cart routes — DTO boundary (regression, carried from Producti
           currency: "USD",
           lineTotalAmountMinor: 3000,
           metadata: undefined,
+          imageUrl: null,
         },
       ],
       subtotalAmountMinor: 3000,

@@ -5,6 +5,7 @@ import { logger, NotFoundError, toErrorEnvelope, ValidationError } from "@platfo
 import type { WiredAdmin } from "../composition";
 import type { PageResponse } from "./public-catalog-routes";
 import { merchandiseUnresolvedResponse, resolveMerchandise } from "./merchandise-resolution";
+import { withLineImages } from "./product-images";
 
 const cartIdParams = z.object({ cartId: z.string().min(1) });
 /**
@@ -124,6 +125,8 @@ export interface PublicCartItemDto {
   readonly currency: string;
   readonly lineTotalAmountMinor: number;
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /** Plan 2C-3: the line's picture (variant image, else the product's), or null for the placeholder. Filled in by `withLineImages`. */
+  readonly imageUrl: string | null;
 }
 
 export interface PublicCartDto {
@@ -160,6 +163,7 @@ function toCartDto(cart: Cart): PublicCartDto {
       currency: item.unitPrice.currency,
       lineTotalAmountMinor: item.lineTotal.amountMinor,
       metadata: item.metadata,
+      imageUrl: null,
     })),
     subtotalAmountMinor: cart.totalAmount().amountMinor,
   };
@@ -209,7 +213,7 @@ async function requireOwnedCart(
 }
 
 export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
-  return [
+  return withLineImages(admin, [
     defineRoute({
       method: "GET",
       path: "/public/carts/current",
@@ -402,5 +406,5 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
         );
       },
     }),
-  ] as readonly RouteDefinition[];
+  ] as readonly RouteDefinition[]);
 }

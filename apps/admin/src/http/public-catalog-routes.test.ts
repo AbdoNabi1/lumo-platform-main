@@ -188,6 +188,7 @@ describe("public catalog routes — DTO boundary", () => {
         title: null,
         compareAtAmountMinor: null,
         sellableWhenOutOfStock: false,
+        imageId: null,
       },
     ]);
   });

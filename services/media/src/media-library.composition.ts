@@ -24,6 +24,7 @@ import {
   RegisterMediaAsset,
 } from "./application/media-library.use-cases";
 import type { ObjectStoragePort } from "./application/object-storage.port";
+import { ResolveMediaImages } from "./application/resolve-media-images.use-case";
 import { UpdateMediaAlt, UploadProductImage } from "./application/upload-product-image.use-case";
 import type { LegacyStorageKeys } from "./application/storage-key-ownership";
 import type { FolderRepository, MediaAssetRepository } from "./domain/library-repositories";
@@ -73,6 +74,8 @@ export interface MediaLibraryWiringDeps {
 
 export interface WiredMediaLibrary {
   readonly mediaLibrary: MediaLibraryController;
+  /** Plan 2C-3: the batched, tenant-scoped image read for admin and storefront DTOs. No auth: callers authorize. */
+  readonly images: ResolveMediaImages;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
 }
@@ -127,6 +130,13 @@ function buildController(
   });
 }
 
+function buildImages(repos: MediaLibraryRepos, deps: MediaLibraryWiringDeps): ResolveMediaImages {
+  return new ResolveMediaImages({
+    mediaAssets: repos.mediaAssets,
+    ...(deps.publicMediaBaseUrl === undefined ? {} : { publicBaseUrl: deps.publicMediaBaseUrl }),
+  });
+}
+
 /**
  * Composition root for the Media Library extension (Sprint 5.4) — a separate wiring function from
  * `wireMedia` (the Phase-1 Asset slice), matching the dirty tree's own additive split; neither
@@ -155,6 +165,7 @@ export function wireMediaLibrary(deps: MediaLibraryWiringDeps): WiredMediaLibrar
 
     return {
       mediaLibrary: buildController(repos, unitOfWork, deps),
+      images: buildImages(repos, deps),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -194,6 +205,7 @@ export function wireMediaLibrary(deps: MediaLibraryWiringDeps): WiredMediaLibrar
 
   return {
     mediaLibrary: controller,
+    images: buildImages(repos, deps),
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

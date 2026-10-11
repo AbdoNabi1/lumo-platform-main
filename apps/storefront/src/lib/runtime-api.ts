@@ -19,6 +19,15 @@ async function currentTenantId(): Promise<string> {
   return shopId;
 }
 
+/** Plan 2C-3: a product picture as the public API serves it — nothing but where it is, how to describe it, and its size. */
+export interface ProductImageSummary {
+  readonly id: string;
+  readonly url: string;
+  readonly alt: string | null;
+  readonly width: number | null;
+  readonly height: number | null;
+}
+
 export interface ProductVariantSummary {
   readonly id: string;
   readonly sku: string;
@@ -32,6 +41,8 @@ export interface ProductVariantSummary {
   readonly compareAtAmountMinor: number | null;
   /** Plan 2B-1: untracked, or keeps selling past zero — the storefront never shows "out of stock" for it. */
   readonly sellableWhenOutOfStock: boolean;
+  /** Plan 2C-3: the id (in the product's `media`) to show when this variant is picked; null/absent when it has none. */
+  readonly imageId?: string | null;
 }
 
 export interface ProductOptionSummary {
@@ -52,6 +63,14 @@ export interface ProductSummary {
   /** Plan 2A: the options a shopper picks from, in display order; empty for a single-variant product. */
   readonly options: readonly ProductOptionSummary[];
   readonly variants: readonly ProductVariantSummary[];
+  /**
+   * Plan 2C-3: the pictures in the merchant's order (first = featured). Optional so a storefront deployed
+   * before the runtime still renders; the by-slug read has all of them, list pages the first few.
+   */
+  readonly media?: readonly ProductImageSummary[];
+  readonly featuredImage?: ProductImageSummary | null;
+  /** The second picture, for the card hover. */
+  readonly hoverImage?: ProductImageSummary | null;
 }
 
 export interface CategorySummary {
@@ -111,6 +130,8 @@ export interface CartItemSummary {
   readonly currency: string;
   readonly lineTotalAmountMinor: number;
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /** Plan 2C-3: the line's picture; null/absent shows the placeholder. */
+  readonly imageUrl?: string | null;
 }
 
 export interface CartSummary {
@@ -812,6 +833,8 @@ export interface CheckoutSessionItemSummary {
   readonly variantTitle?: string | null;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
+  /** Plan 2C-3: the line's picture; null/absent shows the placeholder. */
+  readonly imageUrl?: string | null;
 }
 
 export interface CheckoutTotalsSummary {
