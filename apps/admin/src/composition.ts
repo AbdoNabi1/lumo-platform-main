@@ -148,6 +148,7 @@ import { ExperimentationAdminController } from "./interfaces/experimentation.adm
 import { FeatureFlagsAdminController } from "./interfaces/feature-flags.admin-controller";
 import { FeatureRegistryAdminController } from "./interfaces/feature-registry.admin-controller";
 import { FinanceAdminController } from "./interfaces/finance.admin-controller";
+import { TaxSettingsAdminController } from "./interfaces/tax-settings.admin-controller";
 import { FulfillmentAdminController } from "./interfaces/fulfillment.admin-controller";
 import { InventoryAdminController } from "./interfaces/inventory.admin-controller";
 import { LicensingAdminController } from "./interfaces/licensing.admin-controller";
@@ -464,6 +465,8 @@ export interface WiredAdmin {
   readonly notifications: NotificationsAdminController;
   /** Finance screen → Finance (ADR-0024). */
   readonly finance: FinanceAdminController;
+  /** Plan 3C: Settings → Taxes and duties. */
+  readonly taxes: TaxSettingsAdminController;
   /** Content Blocks screen → Content (Sprint 5.4 — Content's first admin-transport wiring). */
   readonly content: ContentAdminController;
   /** Coupons screen → Coupons (Sprint S1 — Coupons' first admin-transport wiring). */
@@ -1082,6 +1085,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     finance: new FinanceAdminController({ finance: finance.finance, guard }),
+    taxes: new TaxSettingsAdminController({ taxes: finance.taxes, guard }),
     cart: new CartAdminController({ cart: cart.cart, guard }),
     checkout: new CheckoutAdminController({ checkout: checkout.checkout, guard }),
     payments: new PaymentsAdminController({ payments: payments.payments, guard }),

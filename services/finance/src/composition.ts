@@ -31,6 +31,12 @@ import {
   SetProductCost,
 } from "./application/reference-data.commands";
 import { BalanceSheetQuery, IncomeStatementQuery, TrialBalanceQuery } from "./application/queries";
+import {
+  DeleteTaxRegion,
+  GetTaxSettings,
+  UpdateTaxSettings,
+  UpsertTaxRegion,
+} from "./application/tax-settings.use-cases";
 import { GetReadModel, ListReadModel, QueryReadModel } from "./application/read-model.queries";
 import type {
   AccountRepository,
@@ -46,11 +52,14 @@ import type {
   TaxProfileRepository,
 } from "./domain/repositories";
 import type { PostingAccounts } from "./domain/services/ledger-poster";
+import type { TaxSettingsRepository } from "./domain/tax-settings-repository";
 import { FinanceController } from "./interfaces/finance.controller";
+import { TaxSettingsController } from "./interfaces/tax-settings.controller";
 import { FinanceEventTranslator } from "./infrastructure/finance-event-translator";
 import { InMemoryAiForecast } from "./infrastructure/in-memory-ai-forecast";
 import { InMemoryReadModelStore } from "./infrastructure/in-memory-read-model-store";
 import { InMemorySecurity } from "./infrastructure/in-memory-security";
+import { InMemoryTaxSettingsRepository } from "./infrastructure/in-memory-tax-settings-repository";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import {
   InMemoryAccountRepository,
@@ -76,6 +85,7 @@ import {
   PrismaJournalRepository,
   PrismaTaxProfileRepository,
 } from "./infrastructure/prisma-finance-repositories";
+import { PrismaTaxSettingsRepository } from "./infrastructure/prisma-tax-settings-repository";
 
 export interface FinanceWiringDeps {
   readonly serializer: EventSerializer;
@@ -99,6 +109,8 @@ export interface FinanceWiringDeps {
 
 export interface WiredFinance {
   readonly finance: FinanceController;
+  /** Plan 3C: the shop's tax settings (Settings → Taxes and duties). */
+  readonly taxes: TaxSettingsController;
   readonly security: InMemorySecurity;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
@@ -115,6 +127,21 @@ interface FinanceRepos {
   readonly fiscalPeriods: FiscalPeriodRepository;
   readonly taxProfiles: TaxProfileRepository;
   readonly cogsSnapshots: CogsSnapshotRepository;
+}
+
+/** Plan 3C: the tax settings controller over an already-wired repository. */
+function buildTaxController(
+  settings: TaxSettingsRepository,
+  unitOfWork: TransactionalUnitOfWork<unknown>,
+  deps: FinanceWiringDeps,
+): TaxSettingsController {
+  const taxDeps = { settings, unitOfWork, idGenerator: deps.idGenerator };
+  return new TaxSettingsController({
+    getTaxSettings: new GetTaxSettings(taxDeps),
+    updateTaxSettings: new UpdateTaxSettings(taxDeps),
+    upsertTaxRegion: new UpsertTaxRegion(taxDeps),
+    deleteTaxRegion: new DeleteTaxRegion(taxDeps),
+  });
 }
 
 /** Builds the `FinanceController` from an already-wired repo set — shared by both the in-memory and Prisma branches so the (large) use-case wiring is written exactly once. */
@@ -230,6 +257,11 @@ export function wireFinance(deps: FinanceWiringDeps): WiredFinance {
         readModels,
         deps,
       ),
+      taxes: buildTaxController(
+        new PrismaTaxSettingsRepository(financeDeps),
+        new PrismaUnitOfWork(deps.prisma),
+        deps,
+      ),
       security,
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
@@ -289,6 +321,7 @@ export function wireFinance(deps: FinanceWiringDeps): WiredFinance {
 
   return {
     finance: controller,
+    taxes: buildTaxController(new InMemoryTaxSettingsRepository(), unitOfWork, deps),
     security,
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,

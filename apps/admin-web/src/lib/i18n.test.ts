@@ -36,6 +36,7 @@ const SHARED_VERBATIM = new Set([
   // and the dash for "no condition". Nothing to translate (same rationale as the 3B entries above).
   "shippingSettings.between",
   "shippingSettings.noCondition",
+  "taxSettings.noOverrides",
   // T5.9a — the three `ContentBlock` body format names (`ContentCreateForm`'s format `<select>`).
   // "HTML"/"Markdown"/"JSON" are technical format identifiers, not natural-language words, and are
   // conventionally left untransliterated in Arabic UI copy — same rationale as the entries above.

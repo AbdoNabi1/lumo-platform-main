@@ -25,6 +25,17 @@ export { ClickHouseReadModelStore } from "./infrastructure/clickhouse-read-model
 export { wireFinance } from "./composition";
 export type { FinanceWiringDeps, WiredFinance } from "./composition";
 export { FinanceController } from "./interfaces/finance.controller";
+export { TaxSettingsController } from "./interfaces/tax-settings.controller";
+export { TaxSettings, TaxRegion } from "./domain/tax-settings";
+export type { ProvinceRate, TaxRegionInput } from "./domain/tax-settings";
+export { calculateTax } from "./domain/tax-calculation";
+export type { TaxDestination, TaxResult, TaxableLine } from "./domain/tax-calculation";
+export type { TaxSettingsRepository } from "./domain/tax-settings-repository";
+export type { TaxRegionView, TaxSettingsView } from "./application/tax-settings.use-cases";
+export {
+  PrismaTaxSettingsRepository,
+  type PrismaTaxSettingsRepositoryDeps,
+} from "./infrastructure/prisma-tax-settings-repository";
 export type { ControllerResponse } from "./interfaces/presenter";
 // Task 17b (C-2): the runtime worker registers Finance's `OrdersPaidConsumer` against
 // `orders.order.paid` (it had zero callers before), so the consumer, its deps type, the
