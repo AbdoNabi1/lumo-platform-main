@@ -26,6 +26,31 @@ export interface InventoryValidationPort {
   validate(items: readonly CheckoutItem[], tenantId: string): Promise<InventoryValidationResult>;
 }
 
+export type StockReservationResult =
+  { readonly ok: true } | { readonly ok: false; readonly reason: string };
+
+/**
+ * Plan 3C (G-114): holds the stock for a freshly placed order, the way Shopify does when the order is
+ * created. `reserve` is the race-proof second check behind `InventoryValidationPort`; `release` gives
+ * back whatever was held for the order, and is how a half-reserved order is undone. `items` are the
+ * session's lines; the implementation decides where each is taken from. A line that does not track
+ * stock, or that keeps selling when out of stock, never makes `reserve` fail for lack of it.
+ * ADR-0014: `tenantId` is an explicit per-call parameter.
+ */
+export interface OrderStockReservationPort {
+  reserve(
+    orderId: string,
+    items: readonly CheckoutItem[],
+    tenantId: string,
+  ): Promise<StockReservationResult>;
+  release(orderId: string, tenantId: string): Promise<void>;
+}
+
+/** Plan 3C: cancels an order Checkout just placed but could not reserve stock for. ADR-0014: explicit `tenantId`. */
+export interface OrderCancellationPort {
+  cancel(orderId: string, tenantId: string): Promise<void>;
+}
+
 export interface TaxCalculationResult {
   readonly taxMinor: number;
   /** Plan 3C: true when the tax is already inside the prices (Shopify "All prices include tax"). */

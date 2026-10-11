@@ -20,10 +20,10 @@ interface OrderLinesBody {
  * Best-effort, never throws, each release independent: the order is already cancelled when this
  * runs, and one refused release must not strand the others. Problems are logged with ids only.
  *
- * Today no flow reserves real stock for an order that can still be cancelled — Orders reserves only
- * when fulfillment is requested, after payment, and a paid order is refunded, not cancelled; the
- * Fulfillment context's own reserve step is an in-memory stub (G-131). This is the safety net for the
- * day one does.
+ * Since Plan 3C (G-114) Checkout reserves an order's stock the moment it is placed, so a cancelled
+ * order really does hold stock, and this is the path that gives it back — including for an order
+ * Checkout itself cancels after a lost race for the last units. (Committing the reservation when the
+ * order ships waits for the Fulfillment rework, G-131.)
  */
 export class OrdersStockReleaseAdapter implements StockReleasePort {
   private readonly orders: Pick<OrderController, "getOrder">;
@@ -62,7 +62,8 @@ export class OrdersStockReleaseAdapter implements StockReleasePort {
       for (const productId of productIds) {
         const stockItems = await this.items.findByProduct(productId, tenantId);
         for (const stockItem of stockItems) {
-          for (const reservation of stockItem.reservations) {
+          // A copy: releasing takes the reservation off the aggregate being walked.
+          for (const reservation of [...stockItem.reservations]) {
             if (reservation.reference !== orderId) continue;
             await this.release(orderId, tenantId, {
               productId,

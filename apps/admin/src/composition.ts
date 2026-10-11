@@ -13,6 +13,8 @@ import {
   type CheckoutController,
   type CheckoutSession,
   type InventoryValidationPort,
+  type OrderCancellationPort as CheckoutOrderCancellationPort,
+  type OrderStockReservationPort as CheckoutStockReservationPort,
   type OrderCreationPort,
   type PaymentInitiationPort,
   type PaymentMethodPort,
@@ -119,6 +121,10 @@ import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-paym
 import { OrdersFulfillmentCancelAdapter } from "./infrastructure/cross-context/orders-fulfillment-cancel.adapter";
 import { OrdersPaymentVoidAdapter } from "./infrastructure/cross-context/orders-payment-void.adapter";
 import { OrdersStockReleaseAdapter } from "./infrastructure/cross-context/orders-stock-release.adapter";
+import {
+  CheckoutOrderCancellationAdapter,
+  CheckoutStockReservationAdapter,
+} from "./infrastructure/cross-context/checkout-stock-reservation.adapters";
 import { CatalogPricingValidationAdapter } from "./infrastructure/cross-context/catalog-pricing-validation.adapter";
 import {
   CheckoutPaymentInitiationAdapter,
@@ -361,6 +367,10 @@ export interface AdminWiringDeps {
    */
   readonly pricingValidation?: PricingValidationPort;
   readonly inventoryValidation?: InventoryValidationPort;
+  /** Plan 3C (G-114): reserves the order's stock when it is placed. Defaults to the real adapter over Inventory. */
+  readonly stockReservation?: CheckoutStockReservationPort;
+  /** Plan 3C: cancels an order whose stock could not be reserved. Defaults to the real adapter over Orders. */
+  readonly orderCancellation?: CheckoutOrderCancellationPort;
   readonly taxCalculation?: TaxCalculationPort;
   readonly shippingCalculation?: ShippingCalculationPort;
   /**
@@ -915,6 +925,33 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       new PromotionValidationAdapter(catalog.products, promotions.promotions),
     orderCreation:
       deps.orderCreation ?? new OrderCreationAdapter(orders.orders, identity.customers),
+    // Plan 3C (G-114): the stock is held the moment the order is placed — the same Inventory logic
+    // RequestFulfillment uses later (so that later call finds the reservation and adds none), with the
+    // real release (G-130) and Orders' own cancellation behind it. Both read the REAL order, so they are
+    // the default only while the order is created for real; a caller that substitutes a stub
+    // `orderCreation` (fabricated order refs) has no order to reserve for and keeps its own choice.
+    ...(deps.orderCreation === undefined || deps.stockReservation !== undefined
+      ? {
+          stockReservation:
+            deps.stockReservation ??
+            new CheckoutStockReservationAdapter(
+              new OrdersInventoryAdapter(
+                catalog.products,
+                inventory.inventory,
+                inventory.warehouseRepository,
+                inventory.inventoryItemRepository,
+                orders.orders,
+              ),
+              new OrdersStockReleaseAdapter(
+                orders.orders,
+                inventory.inventoryItemRepository,
+                inventory.inventory,
+              ),
+            ),
+          orderCancellation:
+            deps.orderCancellation ?? new CheckoutOrderCancellationAdapter(orders.orders),
+        }
+      : {}),
   };
   const checkout = wireCheckout({
     ...checkoutDeps,

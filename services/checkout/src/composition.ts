@@ -40,6 +40,8 @@ import { StartCheckout } from "./application/start-checkout.use-case";
 import type { CheckoutSessionRepository } from "./domain/checkout-session-repository";
 import type {
   InventoryValidationPort,
+  OrderCancellationPort,
+  OrderStockReservationPort,
   OrderCreationPort,
   PaymentInitiationPort,
   PaymentMethodPort,
@@ -81,6 +83,12 @@ export interface CheckoutWiringDeps {
    */
   readonly pricingValidation?: PricingValidationPort;
   readonly inventoryValidation?: InventoryValidationPort;
+  /**
+   * Plan 3C (G-114): reserves the order's stock when it is placed, and cancels the order if it
+   * cannot. Absent ⇒ no reservation at placement, as before.
+   */
+  readonly stockReservation?: OrderStockReservationPort;
+  readonly orderCancellation?: OrderCancellationPort;
   readonly taxCalculation?: TaxCalculationPort;
   readonly shippingCalculation?: ShippingCalculationPort;
   readonly promotionValidation?: PromotionValidationPort;
@@ -144,6 +152,10 @@ function buildController(
       ...(deps.inventoryValidation === undefined
         ? {}
         : { inventoryValidation: deps.inventoryValidation }),
+      ...(deps.stockReservation === undefined ? {} : { stockReservation: deps.stockReservation }),
+      ...(deps.orderCancellation === undefined
+        ? {}
+        : { orderCancellation: deps.orderCancellation }),
     }),
     failCheckout: new FailCheckout({
       sessions,

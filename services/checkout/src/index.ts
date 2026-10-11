@@ -16,6 +16,9 @@ export {
 export { CHECKOUT_PUBLISHED_EVENTS } from "./infrastructure/checkout-event-translator";
 export type {
   InventoryValidationPort,
+  OrderCancellationPort,
+  OrderStockReservationPort,
+  StockReservationResult,
   InventoryValidationResult,
   OrderCreationPort,
   PaymentInitiationPort,

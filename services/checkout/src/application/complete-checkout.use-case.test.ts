@@ -8,7 +8,13 @@ import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
 import { ShippingSelection } from "../domain/value-objects/selections";
-import type { InventoryValidationPort, OrderCreationPort } from "./ports";
+import type {
+  InventoryValidationPort,
+  OrderCancellationPort,
+  OrderCreationPort,
+  OrderStockReservationPort,
+  StockReservationResult,
+} from "./ports";
 import { CompleteCheckout } from "./complete-checkout.use-case";
 
 function must<T>(r: { ok: boolean; value?: T }): T {
@@ -454,5 +460,141 @@ describe("CompleteCheckout — stock gate (Plan 2B-3)", () => {
     expect(again.value.orderRef).toBe("order-abc");
     expect(stock.callCount).toBe(1);
     expect(orderCreation.callCount).toBe(1);
+  });
+});
+
+describe("CompleteCheckout — reserves the stock when the order is placed (Plan 3C, G-114)", () => {
+  class FakeReservation implements OrderStockReservationPort {
+    readonly calls: string[] = [];
+    reservedLines: readonly CheckoutItem[] = [];
+    constructor(private readonly result: StockReservationResult) {}
+
+    async reserve(
+      orderId: string,
+      items: readonly CheckoutItem[],
+      tenantId: string,
+    ): Promise<StockReservationResult> {
+      this.calls.push(`reserve:${orderId}:${tenantId}`);
+      this.reservedLines = items;
+      return this.result;
+    }
+
+    async release(orderId: string, tenantId: string): Promise<void> {
+      this.calls.push(`release:${orderId}:${tenantId}`);
+    }
+  }
+
+  class FakeCancellation implements OrderCancellationPort {
+    readonly calls: string[] = [];
+    async cancel(orderId: string, tenantId: string): Promise<void> {
+      this.calls.push(`cancel:${orderId}:${tenantId}`);
+    }
+  }
+
+  function build(options: {
+    reservation?: OrderStockReservationPort;
+    cancellation?: OrderCancellationPort;
+  }) {
+    const sessions = new FakeSessionRepository();
+    sessions.seed(readySession());
+    const orderCreation = new FakeOrderCreationPort("order-abc");
+    const useCase = new CompleteCheckout({
+      sessions,
+      unitOfWork: new NoopUnitOfWork(),
+      idGenerator: sequentialIds(),
+      clock,
+      orderCreation,
+      ...(options.reservation === undefined ? {} : { stockReservation: options.reservation }),
+      ...(options.cancellation === undefined ? {} : { orderCancellation: options.cancellation }),
+    });
+    return { sessions, orderCreation, useCase };
+  }
+  const input = { tenantId: "tenant-a", checkoutSessionId: "cs-1", idempotencyKey: "idem-1" };
+
+  it("reserves the stock for the new order, in the caller's tenant, then completes the session", async () => {
+    const reservation = new FakeReservation({ ok: true });
+    const cancellation = new FakeCancellation();
+    const { sessions, useCase } = build({ reservation, cancellation });
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(true);
+    expect(reservation.calls).toEqual(["reserve:order-abc:tenant-a"]);
+    expect(reservation.reservedLines).toHaveLength(1);
+    expect(cancellation.calls).toEqual([]);
+    expect((await sessions.findById("cs-1"))?.orderRef).toBe("order-abc");
+  });
+
+  it("the lost race: releases, cancels the order, refuses with OUT_OF_STOCK and leaves the session open to retry", async () => {
+    const reservation = new FakeReservation({ ok: false, reason: "insufficient stock" });
+    const cancellation = new FakeCancellation();
+    const { sessions, useCase } = build({ reservation, cancellation });
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error).toBeInstanceOf(BusinessRuleError);
+    expect(result.error.message).toBe("OUT_OF_STOCK: insufficient stock");
+    expect(reservation.calls).toEqual(["reserve:order-abc:tenant-a", "release:order-abc:tenant-a"]);
+    expect(cancellation.calls).toEqual(["cancel:order-abc:tenant-a"]);
+    const persisted = await sessions.findById("cs-1");
+    expect(persisted?.orderRef).toBeNull();
+    expect(persisted?.state.isOpen).toBe(true);
+  });
+
+  it("treats a reservation that throws as a lost race, never as a placed order", async () => {
+    const reservation = new FakeReservation({ ok: true });
+    reservation.reserve = async () => {
+      throw new Error("inventory down");
+    };
+    const cancellation = new FakeCancellation();
+    const { sessions, useCase } = build({ reservation, cancellation });
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message.startsWith("OUT_OF_STOCK:")).toBe(true);
+    expect(result.error.message).not.toContain("inventory down");
+    expect(cancellation.calls).toEqual(["cancel:order-abc:tenant-a"]);
+    expect((await sessions.findById("cs-1"))?.orderRef).toBeNull();
+  });
+
+  it("still refuses when cleaning up fails: a throwing release or cancel never masks OUT_OF_STOCK", async () => {
+    const reservation = new FakeReservation({ ok: false, reason: "insufficient stock" });
+    reservation.release = async () => {
+      throw new Error("release failed");
+    };
+    const cancellation: OrderCancellationPort = {
+      cancel: async () => {
+        throw new Error("cancel failed");
+      },
+    };
+    const { useCase } = build({ reservation, cancellation });
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message).toBe("OUT_OF_STOCK: insufficient stock");
+  });
+
+  it("without a reservation port, completes exactly as before", async () => {
+    const { useCase } = build({});
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("a retried complete after success does not reserve again", async () => {
+    const reservation = new FakeReservation({ ok: true });
+    const { useCase } = build({ reservation });
+
+    await useCase.execute(input);
+    await useCase.execute(input);
+
+    expect(reservation.calls).toEqual(["reserve:order-abc:tenant-a"]);
   });
 });

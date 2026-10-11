@@ -5,7 +5,13 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { BusinessRuleError, type DomainError, NotFoundError } from "@platform/utils";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
-import type { InventoryValidationPort, OrderCreationPort } from "./ports";
+import type {
+  InventoryValidationPort,
+  OrderCancellationPort,
+  OrderCreationPort,
+  OrderStockReservationPort,
+  StockReservationResult,
+} from "./ports";
 
 export interface CompleteCheckoutInput {
   /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
@@ -32,6 +38,14 @@ export interface CompleteCheckoutDeps {
    * wired a stock source (and every earlier test) behave exactly as before.
    */
   readonly inventoryValidation?: InventoryValidationPort;
+  /**
+   * Plan 3C (G-114): when present, the stock is reserved for the order as soon as it is placed. The
+   * validation above stays as the cheap first check; this is the race-proof second one — two
+   * shoppers can both pass validation for the last unit, and only one can reserve it.
+   */
+  readonly stockReservation?: OrderStockReservationPort;
+  /** Plan 3C: cancels the order when its stock could not be reserved. Optional, like the port above. */
+  readonly orderCancellation?: OrderCancellationPort;
 }
 
 /**
@@ -124,6 +138,18 @@ export class CompleteCheckout implements UseCase<
         idempotencyKey: input.idempotencyKey,
       });
 
+      // Plan 3C (G-114): hold the stock for the order. If another shopper took it in the meantime,
+      // undo the order — release whatever was held, cancel it — and refuse like the validation gate
+      // does. The session is left untouched and open, exactly as that gate leaves it, so the shopper
+      // can go back to the cart, adjust it, and complete again (which places a new order).
+      if (this.deps.stockReservation !== undefined) {
+        const reserved = await this.reserveStock(orderRef, session.items, input.tenantId);
+        if (!reserved.ok) {
+          await this.undoOrder(orderRef, input.tenantId);
+          return err(new BusinessRuleError(`OUT_OF_STOCK: ${reserved.reason}`));
+        }
+      }
+
       try {
         session.complete(orderRef, this.deps.idGenerator.generate(), this.deps.clock.now());
       } catch (error) {
@@ -134,5 +160,37 @@ export class CompleteCheckout implements UseCase<
       await this.deps.sessions.save(session, input.tenantId, tx);
       return ok({ checkoutSessionId: session.id.toString(), state: session.state.value, orderRef });
     });
+  }
+
+  /** A reservation that throws is a failed reservation: the order must not stand on stock nobody holds. */
+  private async reserveStock(
+    orderRef: string,
+    items: Parameters<OrderStockReservationPort["reserve"]>[1],
+    tenantId: string,
+  ): Promise<StockReservationResult> {
+    try {
+      // The port is present: the caller checked.
+      return await (this.deps.stockReservation as OrderStockReservationPort).reserve(
+        orderRef,
+        items,
+        tenantId,
+      );
+    } catch {
+      return { ok: false, reason: "insufficient stock" };
+    }
+  }
+
+  /** Releases what was held and cancels the order. Each step is best-effort: neither may mask the refusal. */
+  private async undoOrder(orderRef: string, tenantId: string): Promise<void> {
+    try {
+      await this.deps.stockReservation?.release(orderRef, tenantId);
+    } catch {
+      // The cancellation below releases again; nothing more to do here.
+    }
+    try {
+      await this.deps.orderCancellation?.cancel(orderRef, tenantId);
+    } catch {
+      // The shopper is told the stock is gone either way; the order is left for the merchant to cancel.
+    }
   }
 }

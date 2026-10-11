@@ -759,7 +759,11 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
         if (row === undefined) throw new Error("no stock row");
         return row;
       };
-      const before = await stock();
+      // Placing the order already holds its own unit (Plan 3C, G-114): that is the baseline the
+      // cancellation must restore on top of.
+      const placed = await stock();
+      expect(placed.reserved).toBeGreaterThan(0);
+      const before = { ...placed, reserved: 0, available: placed.available + placed.reserved };
 
       // Stock is held under the ORDER's id — exactly the reference Orders' own reservation uses.
       const held = await post("/inventory/reserve", admin("tok-a"), {
@@ -771,8 +775,8 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
       });
       expect(held.statusCode).toBe(201);
       expect(await stock()).toMatchObject({
-        reserved: before.reserved + 2,
-        available: before.available - 2,
+        reserved: placed.reserved + 2,
+        available: placed.available - 2,
       });
 
       // "Fulfill items": a fulfillment order is opened for the order.

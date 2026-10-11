@@ -61,6 +61,29 @@ function setup(
 }
 
 describe("OrdersStockReleaseAdapter (G-130: release the stock held for a cancelled order)", () => {
+  it("releases every reservation of the order even when releasing removes it from the stock item as it goes (Plan 3C: a placed order can hold two)", async () => {
+    const stockItem = item("p-1", "wh-1", "var-a", [
+      ["res-1", "order-1"],
+      ["res-2", "order-1"],
+    ]);
+    const live = stockItem.reservations as { id: { toString(): string }; reference: string }[];
+    const release = vi.fn().mockImplementation(async (target: { reservationId: string }) => {
+      // Inventory takes the reservation off the aggregate the adapter is walking.
+      const at = live.findIndex((r) => r.id.toString() === target.reservationId);
+      if (at >= 0) live.splice(at, 1);
+      return { status: 200 };
+    });
+    const { orders, items, inventory } = setup({ "p-1": [stockItem] }, release);
+
+    await new OrdersStockReleaseAdapter(orders, items, inventory, logger()).releaseOrderStock(
+      "order-1",
+      "tenant-a",
+    );
+
+    expect(release).toHaveBeenCalledTimes(2);
+    expect(live).toHaveLength(0);
+  });
+
   it("releases every reservation whose reference is the order, at whichever location and variant holds it", async () => {
     const { orders, items, inventory, release } = setup({
       "p-1": [
