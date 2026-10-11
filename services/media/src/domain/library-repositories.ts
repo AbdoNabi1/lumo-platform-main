@@ -19,5 +19,11 @@ export interface FolderRepository {
 export interface MediaAssetRepository {
   save(asset: MediaAsset, tenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tenantId: string, tx?: unknown): Promise<MediaAsset | null>;
+  /**
+   * One batched, tenant-scoped read (Plan 2C-3): the assets among `ids` that belong to `tenantId`.
+   * An id that is unknown, malformed or another tenant's is simply absent, never an error. Order is
+   * not guaranteed; callers keep their own order.
+   */
+  findByIds(ids: readonly string[], tenantId: string, tx?: unknown): Promise<readonly MediaAsset[]>;
   list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<MediaAsset>>;
 }

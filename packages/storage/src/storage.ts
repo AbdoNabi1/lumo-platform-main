@@ -12,13 +12,21 @@ export interface SignedUrlOptions {
   readonly contentType?: string;
 }
 
+export interface PutObjectOptions {
+  readonly contentType: string;
+  /** e.g. `public, max-age=31536000, immutable` — sent as the object's `Cache-Control`. */
+  readonly cacheControl?: string;
+}
+
 /**
- * Object storage abstraction. Uploads are performed by clients directly against storage via
- * signed URLs — the application issues URLs and verifies existence but does not proxy bytes.
+ * Object storage abstraction. Large uploads are performed by clients directly against storage via
+ * signed URLs; `putObject` is the server-side write for small objects the server has already
+ * validated (product images, Plan 2C-3).
  */
 export interface StorageService {
   readonly bucket: string;
   getSignedUploadUrl(key: string, options?: SignedUrlOptions): Promise<string>;
+  putObject(key: string, body: Uint8Array, options: PutObjectOptions): Promise<void>;
   getSignedDownloadUrl(key: string, options?: SignedUrlOptions): Promise<string>;
   objectExists(key: string): Promise<boolean>;
   ensureBucket(): Promise<void>;
@@ -45,6 +53,20 @@ export class S3StorageService implements StorageService {
     return getSignedUrl(this.client, command, {
       expiresIn: options.expiresInSeconds ?? DEFAULT_EXPIRY_SECONDS,
     });
+  }
+
+  async putObject(key: string, body: Uint8Array, options: PutObjectOptions): Promise<void> {
+    // No `IfNoneMatch`: keys carry a fresh id and are never rewritten, and not every S3-compatible
+    // provider supports conditional writes.
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: body,
+        ContentType: options.contentType,
+        ...(options.cacheControl !== undefined ? { CacheControl: options.cacheControl } : {}),
+      }),
+    );
   }
 
   getSignedDownloadUrl(key: string, options: SignedUrlOptions = {}): Promise<string> {

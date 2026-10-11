@@ -39,6 +39,8 @@ function harness() {
   const folders = new InMemoryFolderRepository({ outbox, context });
   const probed: string[] = [];
   const objectStorage: ObjectStoragePort = {
+    persistent: true,
+    put: async () => undefined,
     exists: async (key) => (probed.push(key), true),
     getDownloadUrl: async (key) => `https://signed.example/${key}`,
   };

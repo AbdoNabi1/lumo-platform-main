@@ -73,6 +73,17 @@ export interface RouteDefinition<TBody = unknown, TParams = unknown, TQuery = un
    * `suspendedTenantMayCall`. A cancelled tenant is refused regardless.
    */
   readonly allowWhenSuspended?: boolean;
+  /**
+   * Plan 2C-3: a route that takes a raw binary body (an image upload) instead of JSON. The bytes
+   * arrive as `context.rawBody` and the type as `context.headers["content-type"]`. The listed content
+   * types are accepted ON THIS ROUTE ONLY, and the transport refuses anything over `maxBytes` with
+   * 413 (before reading it) and any other content type with 415. Authentication, tenant resolution
+   * and the permission guard run exactly as for every other route.
+   */
+  readonly binaryBody?: {
+    readonly maxBytes: number;
+    readonly contentTypes: readonly string[];
+  };
   readonly summary: string;
   readonly schema: {
     readonly body?: z.ZodType<TBody>;

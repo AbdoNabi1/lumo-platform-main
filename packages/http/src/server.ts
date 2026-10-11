@@ -18,6 +18,7 @@ import type {
 } from "@platform/contracts";
 import type { HealthReport, HealthRegistry } from "@platform/health";
 import {
+  AppError,
   AuthenticationError,
   AuthorizationError,
   ValidationError,
@@ -291,9 +292,9 @@ export async function registerRoutes(
     app.get("/openapi.json", () => app.swagger());
   }
 
-  for (const route of routes) {
+  const addRoute = (instance: FastifyInstance, route: RouteDefinition): void => {
     const url = `/api/v${route.version}${route.path}`;
-    app.route({
+    instance.route({
       method: route.method,
       url,
       schema: {
@@ -317,6 +318,28 @@ export async function registerRoutes(
         }
         void reply.status(response.status).send(response.body);
       },
+    });
+  };
+
+  for (const route of routes) {
+    const binary = route.binaryBody;
+    if (binary === undefined) {
+      addRoute(app, route);
+      continue;
+    }
+    // A binary parser lives in its own encapsulated scope so ONLY this route accepts an image body,
+    // each route with its own size cap (Fastify checks Content-Length against it before reading).
+    await app.register((scope, _options, done) => {
+      scope.addContentTypeParser(
+        [...binary.contentTypes],
+        { parseAs: "buffer", bodyLimit: binary.maxBytes },
+        (request, body: Buffer, parsed) => {
+          request.rawBody = body;
+          parsed(null, undefined);
+        },
+      );
+      addRoute(scope, route);
+      done();
     });
   }
 }
@@ -694,6 +717,14 @@ function normalizeFastifyError(error: unknown): unknown {
     return new ValidationError("Malformed request", [
       { field: "body", message: (error as Error).message },
     ]);
+  }
+  if (statusCode === 413) {
+    return new AppError("The request body is too large", { code: "PAYLOAD_TOO_LARGE" });
+  }
+  if (statusCode === 415) {
+    return new AppError("This content type is not accepted here", {
+      code: "UNSUPPORTED_MEDIA_TYPE",
+    });
   }
   return error;
 }

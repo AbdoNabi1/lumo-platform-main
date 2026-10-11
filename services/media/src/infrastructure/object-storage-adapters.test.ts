@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SignedUrlOptions, StorageService } from "@platform/storage";
+import type { PutObjectOptions, SignedUrlOptions, StorageService } from "@platform/storage";
 import type { ObjectStoragePort } from "../application/object-storage.port";
 import { InMemoryObjectStorage, StorageServiceObjectStorage } from "./object-storage-adapters";
 
@@ -15,6 +15,7 @@ class FakeStorageService implements StorageService {
   readonly bucket = "media";
   existsCalls: string[] = [];
   downloadUrlCalls: string[] = [];
+  puts: { key: string; body: Uint8Array; options: PutObjectOptions }[] = [];
   private readonly present: Set<string>;
 
   constructor(present: readonly string[]) {
@@ -23,6 +24,10 @@ class FakeStorageService implements StorageService {
 
   async getSignedUploadUrl(): Promise<string> {
     throw new Error("not exercised by this adapter");
+  }
+
+  async putObject(key: string, body: Uint8Array, options: PutObjectOptions): Promise<void> {
+    this.puts.push({ key, body, options });
   }
 
   async getSignedDownloadUrl(key: string, _options?: SignedUrlOptions): Promise<string> {
@@ -57,6 +62,29 @@ describe("StorageServiceObjectStorage (M2-2)", () => {
     const url = await adapter.getDownloadUrl("hero.png");
     expect(url).toBe("https://minio.local/media/hero.png?X-Amz-Signature=fake");
     expect(storageService.downloadUrlCalls).toEqual(["hero.png"]);
+  });
+
+  it("put() writes through StorageService.putObject() with the content type and cache header, and the adapter is persistent", async () => {
+    const storageService = new FakeStorageService([]);
+    const adapter = new StorageServiceObjectStorage(storageService);
+    const bytes = Uint8Array.from([9, 8, 7]);
+
+    await adapter.put("tenants/t/product-images/a.png", bytes, "image/png", "public, immutable");
+
+    expect(adapter.persistent).toBe(true);
+    expect(storageService.puts).toEqual([
+      {
+        key: "tenants/t/product-images/a.png",
+        body: bytes,
+        options: { contentType: "image/png", cacheControl: "public, immutable" },
+      },
+    ]);
+  });
+
+  it("InMemoryObjectStorage never pretends to store: it is not persistent and put() refuses", async () => {
+    const stub = new InMemoryObjectStorage();
+    expect(stub.persistent).toBe(false);
+    await expect(stub.put()).rejects.toThrow(/does not store/);
   });
 
   it("InMemoryObjectStorage still reports every object as existing — unchanged fallback behavior", async () => {

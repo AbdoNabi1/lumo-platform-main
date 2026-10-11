@@ -8,6 +8,8 @@ import type { FolderRepository, MediaAssetRepository } from "../domain/library-r
 import type { MediaAsset } from "../domain/media-asset";
 import { FolderMapper, MediaAssetMapper } from "./library-mappers";
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface PrismaLibraryRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
@@ -100,7 +102,7 @@ export class PrismaMediaAssetRepository implements MediaAssetRepository {
     } else {
       const updated = await client.mediaAsset.updateMany({
         where: { id, tenantId, version: asset.version },
-        data: { status: row.status, version: { increment: 1 } },
+        data: { status: row.status, alt: row.alt, version: { increment: 1 } },
       });
       if (updated.count === 0)
         throw new ConcurrencyError(`MediaAsset ${id} was modified concurrently`);
@@ -122,6 +124,23 @@ export class PrismaMediaAssetRepository implements MediaAssetRepository {
         ? await run(tx as TransactionClient)
         : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : MediaAssetMapper.toDomain(row);
+  }
+
+  async findByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly MediaAsset[]> {
+    // `id` is a uuid column: a non-uuid string inside `in` fails the whole query instead of matching nothing.
+    const wanted = [...new Set(ids)].filter((id) => UUID_PATTERN.test(id));
+    if (wanted.length === 0) return [];
+    const run = (client: TransactionClient) =>
+      client.mediaAsset.findMany({ where: { tenantId, id: { in: wanted } } });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return rows.map((row) => MediaAssetMapper.toDomain(row));
   }
 
   async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<MediaAsset>> {

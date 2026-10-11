@@ -173,6 +173,14 @@ const schema = z
       .default("true")
       .transform((v) => v.toLowerCase() === "true"),
     S3_BUCKET_MEDIA: z.string().default("media"),
+    /**
+     * Plan 2C-3: where the PUBLIC media bucket is served from; an image is shown at
+     * `${MEDIA_PUBLIC_BASE_URL}/${storageKey}`. Absent (or empty) ⇒ product-image uploads answer 503.
+     */
+    MEDIA_PUBLIC_BASE_URL: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().url().optional(),
+    ),
 
     // ── Stripe PSP adapter (C2-2) — same present/absent-optionality convention as S3 above. Absent
     // ⇒ Payments' InMemoryPaymentProvider; present (both keys) ⇒ the real StripePaymentProvider.

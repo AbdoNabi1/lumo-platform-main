@@ -73,3 +73,34 @@ describe("InMemoryFolderRepository / InMemoryMediaAssetRepository tenant isolati
     expect(pageB.items.map((a) => a.id.toString())).not.toContain(asset.id.toString());
   });
 });
+
+describe("InMemoryMediaAssetRepository.findByIds (Plan 2C-3)", () => {
+  it("returns only the caller tenant's assets among the ids, and skips unknown ones", async () => {
+    const { mediaAssets, nextId } = wire();
+    const mine = MediaAsset.create(
+      UniqueEntityId.from(nextId()),
+      "a.png",
+      "tenants/a/k1.png",
+      nextId(),
+      new Date(0),
+    );
+    const theirs = MediaAsset.create(
+      UniqueEntityId.from(nextId()),
+      "b.png",
+      "tenants/b/k2.png",
+      nextId(),
+      new Date(0),
+    );
+    await mediaAssets.save(mine, "tenant-a");
+    await mediaAssets.save(theirs, "tenant-b");
+
+    const found = await mediaAssets.findByIds(
+      [mine.id.toString(), theirs.id.toString(), "does-not-exist"],
+      "tenant-a",
+    );
+
+    expect(found.map((a) => a.id.toString())).toEqual([mine.id.toString()]);
+    expect(await mediaAssets.findByIds([mine.id.toString()], "tenant-b")).toEqual([]);
+    expect(await mediaAssets.findByIds([], "tenant-a")).toEqual([]);
+  });
+});

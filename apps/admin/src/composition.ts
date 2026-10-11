@@ -322,6 +322,12 @@ export interface AdminWiringDeps {
    */
   readonly objectStorage?: ObjectStoragePort;
   /**
+   * Where the public media bucket is served from (`MEDIA_PUBLIC_BASE_URL`, Plan 2C-3). Passed straight
+   * through to `wireMediaLibrary(deps)`; absent ⇒ product-image uploads answer 503 and no image url is
+   * ever produced.
+   */
+  readonly publicMediaBaseUrl?: string;
+  /**
    * Whether the Media Library may still sign an existing asset whose key is not tenant-prefixed
    * (G-68). Default `"refuse"`; `createAdminHttpApi` passes `"allow"` under `TENANT_MODE=single` so
    * existing rows keep working, and `"refuse"` under multi. Registration is strict either way.

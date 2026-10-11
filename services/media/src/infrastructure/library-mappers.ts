@@ -18,6 +18,11 @@ export interface MediaAssetRow {
   readonly folderRef: string | null;
   readonly status: string;
   readonly version: number;
+  readonly contentType?: string | null;
+  readonly byteSize?: number | null;
+  readonly width?: number | null;
+  readonly height?: number | null;
+  readonly alt?: string | null;
 }
 
 export class FolderMapper {
@@ -52,6 +57,13 @@ export class MediaAssetMapper {
       LibraryEntryStatus.from(row.status as LibraryEntryStatusValue),
       row.version,
       row.folderRef ?? undefined,
+      {
+        ...(row.contentType != null ? { contentType: row.contentType } : {}),
+        ...(row.byteSize != null ? { byteSize: row.byteSize } : {}),
+        ...(row.width != null ? { width: row.width } : {}),
+        ...(row.height != null ? { height: row.height } : {}),
+        ...(row.alt != null ? { alt: row.alt } : {}),
+      },
     );
   }
 
@@ -64,6 +76,11 @@ export class MediaAssetMapper {
       folderRef: asset.folderRef ?? null,
       status: asset.status.value,
       version: 1,
+      contentType: asset.contentType ?? null,
+      byteSize: asset.byteSize ?? null,
+      width: asset.width ?? null,
+      height: asset.height ?? null,
+      alt: asset.alt ?? null,
     };
   }
 }

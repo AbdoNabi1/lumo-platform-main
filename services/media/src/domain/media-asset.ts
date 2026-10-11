@@ -2,11 +2,28 @@ import { AggregateRoot, BusinessRuleError, type UniqueEntityId } from "@platform
 import { MediaLibraryChanged } from "./events/media-library-changed.event";
 import { LibraryEntryStatus } from "./value-objects/library";
 
+/** What an uploaded image is (Plan 2C-3). Absent on assets registered before that plan. */
+export interface ImageDetails {
+  readonly contentType?: string;
+  readonly byteSize?: number;
+  readonly width?: number;
+  readonly height?: number;
+  readonly alt?: string;
+}
+
+/** The longest alt text kept — Shopify's own cap is 512. */
+export const MAX_ALT_LENGTH = 512;
+
 interface MediaAssetProps {
   readonly name: string;
   readonly storageKey: string;
   readonly folderRef?: string;
   status: LibraryEntryStatus;
+  readonly contentType?: string;
+  readonly byteSize?: number;
+  readonly width?: number;
+  readonly height?: number;
+  alt?: string;
 }
 
 /**
@@ -22,9 +39,10 @@ export class MediaAsset extends AggregateRoot<MediaAssetProps> {
     eventId: string,
     occurredAt: Date,
     folderRef?: string,
+    details: ImageDetails = {},
   ): MediaAsset {
     const asset = new MediaAsset(
-      { name, storageKey, folderRef, status: LibraryEntryStatus.active() },
+      { name, storageKey, folderRef, status: LibraryEntryStatus.active(), ...details },
       id,
     );
     asset.raise("created", eventId, occurredAt);
@@ -38,8 +56,15 @@ export class MediaAsset extends AggregateRoot<MediaAssetProps> {
     status: LibraryEntryStatus,
     version: number,
     folderRef?: string,
+    details: ImageDetails = {},
   ): MediaAsset {
-    return new MediaAsset({ name, storageKey, folderRef, status }, id, version);
+    return new MediaAsset({ name, storageKey, folderRef, status, ...details }, id, version);
+  }
+
+  /** Sets (or, with `undefined`, clears) the alt text. The caller trims and length-checks it. */
+  updateAlt(alt: string | undefined): void {
+    if (alt === undefined) delete this.props.alt;
+    else this.props.alt = alt;
   }
 
   archive(eventId: string, occurredAt: Date): void {
@@ -77,5 +102,25 @@ export class MediaAsset extends AggregateRoot<MediaAssetProps> {
 
   get status(): LibraryEntryStatus {
     return this.props.status;
+  }
+
+  get contentType(): string | undefined {
+    return this.props.contentType;
+  }
+
+  get byteSize(): number | undefined {
+    return this.props.byteSize;
+  }
+
+  get width(): number | undefined {
+    return this.props.width;
+  }
+
+  get height(): number | undefined {
+    return this.props.height;
+  }
+
+  get alt(): string | undefined {
+    return this.props.alt;
   }
 }

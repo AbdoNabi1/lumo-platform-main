@@ -23,6 +23,8 @@ const B_KEY = "tenants/tenant-b/product-images/2026/09/secret.png";
 
 /** A real bucket's behaviour: it knows nothing about tenants — it answers for any key that exists. */
 const bucket: ObjectStoragePort = {
+  persistent: true,
+  put: async () => undefined,
   exists: async (key) => key === B_KEY || key.startsWith("tenants/tenant-a/"),
   getDownloadUrl: async (key) => `https://signed.example/${key}?sig=1`,
 };

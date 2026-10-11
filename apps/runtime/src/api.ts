@@ -568,6 +568,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // for tests/local composition that don't pass it).
     paymentsPort: buildReturnsPaymentsPortAdapter(runtime),
     objectStorage: runtime.objectStorage,
+    ...(runtime.config.MEDIA_PUBLIC_BASE_URL === undefined
+      ? {}
+      : { publicMediaBaseUrl: runtime.config.MEDIA_PUBLIC_BASE_URL }),
     paymentProvider: runtime.paymentProvider,
     // WP-13: registered providers (Paymob today; each built per request from the tenant's own
     // sealed credentials) and the vault that seals them. Neither is a process-wide provider.

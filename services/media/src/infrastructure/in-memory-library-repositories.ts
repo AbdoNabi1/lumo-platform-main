@@ -82,6 +82,15 @@ export class InMemoryMediaAssetRepository implements MediaAssetRepository {
     return entry !== undefined && entry.tenantId === tenantId ? entry.asset : null;
   }
 
+  findByIds(ids: readonly string[], tenantId: string): Promise<readonly MediaAsset[]> {
+    const wanted = new Set(ids);
+    return Promise.resolve(
+      [...this.store.entries()]
+        .filter(([id, entry]) => wanted.has(id) && entry.tenantId === tenantId)
+        .map(([, entry]) => entry.asset),
+    );
+  }
+
   async list(page: CursorPage, tenantId: string): Promise<Paginated<MediaAsset>> {
     return paginate(
       [...this.store.values()].filter((e) => e.tenantId === tenantId).map((e) => e.asset),

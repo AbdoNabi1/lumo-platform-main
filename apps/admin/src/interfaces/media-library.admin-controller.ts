@@ -63,6 +63,25 @@ export class MediaLibraryAdminController {
     return this.mediaLibrary.getDownloadUrl(input);
   }
 
+  /** Plan 2C-3: staff-only (`products:update`) — the same permission that edits the product the image is for. */
+  async uploadProductImage(
+    principal: Principal,
+    input: Parameters<MediaLibraryController["uploadProductImage"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "products:update");
+    if (denied) return denied;
+    return this.mediaLibrary.uploadProductImage(input);
+  }
+
+  async updateMediaAlt(
+    principal: Principal,
+    input: Parameters<MediaLibraryController["updateMediaAlt"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "products:update");
+    if (denied) return denied;
+    return this.mediaLibrary.updateMediaAlt(input);
+  }
+
   async listFolders(
     principal: Principal,
     input: Parameters<MediaLibraryController["listFolders"]>[0],

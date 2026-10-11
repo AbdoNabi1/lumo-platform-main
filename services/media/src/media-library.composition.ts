@@ -11,6 +11,7 @@ import {
   type Subscriber,
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
+import { StorageKeyFactory } from "@platform/storage";
 import { GetFolder } from "./application/get-folder.use-case";
 import { GetMediaAsset } from "./application/get-media-asset.use-case";
 import { ListFolders } from "./application/list-folders.use-case";
@@ -23,6 +24,7 @@ import {
   RegisterMediaAsset,
 } from "./application/media-library.use-cases";
 import type { ObjectStoragePort } from "./application/object-storage.port";
+import { UpdateMediaAlt, UploadProductImage } from "./application/upload-product-image.use-case";
 import type { LegacyStorageKeys } from "./application/storage-key-ownership";
 import type { FolderRepository, MediaAssetRepository } from "./domain/library-repositories";
 import {
@@ -53,6 +55,11 @@ export interface MediaLibraryWiringDeps {
    * explicit, recorded legacy allowance (G-68). Registration ignores it: it never accepts legacy keys.
    */
   readonly legacyStorageKeys?: LegacyStorageKeys;
+  /**
+   * Where the public media bucket is served from (`MEDIA_PUBLIC_BASE_URL`). Absent ⇒ product-image
+   * uploads answer 503. Also how a stored key becomes the url the storefront renders.
+   */
+  readonly publicMediaBaseUrl?: string;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaFolderRepository` +
    * `PrismaMediaAssetRepository` + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. `wireMedia`
@@ -107,6 +114,16 @@ function buildController(
     getFolder: new GetFolder({ folders: repos.folders }),
     listMediaAssets: new ListMediaAssets({ mediaAssets: repos.mediaAssets }),
     getMediaAsset: new GetMediaAsset({ mediaAssets: repos.mediaAssets }),
+    uploadProductImage: new UploadProductImage({
+      mediaAssets: repos.mediaAssets,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      objectStorage,
+      keyFactory: new StorageKeyFactory({ idGenerator: deps.idGenerator, clock: deps.clock }),
+      ...(deps.publicMediaBaseUrl === undefined ? {} : { publicBaseUrl: deps.publicMediaBaseUrl }),
+    }),
+    updateMediaAlt: new UpdateMediaAlt({ mediaAssets: repos.mediaAssets, unitOfWork }),
   });
 }
 
