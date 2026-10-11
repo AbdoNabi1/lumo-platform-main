@@ -697,6 +697,105 @@ describe("CheckoutView — where the shop ships (Plan 3C)", () => {
   });
 });
 
+describe("CheckoutView — the billing address takes any country (follow-up to Plan 3C)", () => {
+  function openBilling() {
+    fireEvent.click(screen.getByRole("radio", { name: en.checkout.differentBilling }));
+    const [shippingCountry, billingCountry] = screen.getAllByLabelText(
+      en.checkout.address.country,
+    ) as HTMLSelectElement[];
+    return { shippingCountry, billingCountry };
+  }
+  const codes = (select: HTMLSelectElement | undefined) =>
+    within(select as HTMLSelectElement)
+      .getAllByRole("option")
+      .map((option) => option.getAttribute("value"));
+
+  it("limits only the shipping country to the shop's zones; billing offers every country", () => {
+    renderView();
+
+    const { shippingCountry, billingCountry } = openBilling();
+
+    expect(codes(shippingCountry)).not.toContain("FR");
+    expect(codes(shippingCountry)).toHaveLength(SHIPS_TO.countries.length);
+    expect(codes(billingCountry)).toHaveLength(COUNTRY_CODES.length);
+    expect(codes(billingCountry)).toEqual(expect.arrayContaining(["FR", "JP", "EG"]));
+  });
+
+  it("offers every country for billing even when the shop ships nowhere yet", () => {
+    renderView({ shippable: { countries: [], restOfWorld: false } });
+
+    const { billingCountry } = openBilling();
+
+    expect(codes(billingCountry)).toHaveLength(COUNTRY_CODES.length);
+  });
+
+  it("asks for the billing governorate/region/emirate only for countries with provinces", () => {
+    renderView();
+    const { billingCountry } = openBilling();
+
+    expect(screen.getAllByLabelText(en.checkout.address.governorate)).toHaveLength(2);
+    fireEvent.change(billingCountry as HTMLSelectElement, { target: { value: "SA" } });
+    expect(screen.getAllByLabelText(en.checkout.address.region)).toHaveLength(1);
+    fireEvent.change(billingCountry as HTMLSelectElement, { target: { value: "FR" } });
+    expect(screen.queryAllByLabelText(en.checkout.address.region)).toHaveLength(0);
+    expect(screen.getAllByLabelText(en.checkout.address.governorate)).toHaveLength(1);
+  });
+
+  it("sends a billing address in a country the shop does not ship to, without a province", async () => {
+    renderView();
+    fillEverything();
+    const { billingCountry } = openBilling();
+    fireEvent.change(billingCountry as HTMLSelectElement, { target: { value: "FR" } });
+    const [, billingLine1] = screen.getAllByLabelText(en.checkout.address.line1);
+    const [, billingCity] = screen.getAllByLabelText(en.checkout.address.city);
+    fireEvent.change(billingLine1 as HTMLInputElement, { target: { value: "1 Rue de Paris" } });
+    fireEvent.change(billingCity as HTMLInputElement, { target: { value: "Paris" } });
+
+    fireEvent.click(submit());
+
+    await waitFor(() => expect(setBillingAddress).toHaveBeenCalled(), { timeout: 5000 });
+    const sent = setBillingAddress.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(sent).toMatchObject({ country: "FR", city: "Paris" });
+    expect(sent).not.toHaveProperty("province");
+  });
+
+  it("does not submit a billing address in Egypt/Saudi Arabia/the UAE until its province is chosen", async () => {
+    renderView();
+    fillEverything();
+    openBilling();
+    const [, billingLine1] = screen.getAllByLabelText(en.checkout.address.line1);
+    const [, billingCity] = screen.getAllByLabelText(en.checkout.address.city);
+    fireEvent.change(billingLine1 as HTMLInputElement, { target: { value: "9 Bill St" } });
+    fireEvent.change(billingCity as HTMLInputElement, { target: { value: "Giza" } });
+
+    fireEvent.click(submit());
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    expect(setBillingAddress).not.toHaveBeenCalled();
+  });
+
+  it("shows a saved billing country the shop does not ship to as selected", () => {
+    renderView({
+      session: session({
+        contactEmail: "guest@example.com",
+        shippingAddress: saved,
+        billingAddress: {
+          ...saved,
+          line1: "1 Rue de Paris",
+          city: "Paris",
+          country: "FR",
+          province: null,
+        },
+      }),
+    });
+
+    const [, billingCountry] = screen.getAllByLabelText(
+      en.checkout.address.country,
+    ) as HTMLSelectElement[];
+    expect(billingCountry?.value).toBe("FR");
+  });
+});
+
 describe("CheckoutView — the province (Plan 3C)", () => {
   it("asks for the governorate of Egypt, from the region data, and requires it", () => {
     renderView();

@@ -71,6 +71,11 @@ export interface TaxCalculationPort {
     shippingMinor: number,
     currency: string,
     tenantId: string,
+    /**
+     * What the order gave away before tax: Finance works the tax out AFTER discounts, like Shopify.
+     * Optional so implementations written before discounts existed stay valid.
+     */
+    discounts?: { readonly orderMinor: number; readonly shippingMinor: number },
   ): Promise<TaxCalculationResult>;
 }
 

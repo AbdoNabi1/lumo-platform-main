@@ -125,3 +125,82 @@ describe("CalculateStoreTax (Plan 3C)", () => {
     expect(!negative.ok && negative.error).toBeInstanceOf(ValidationError);
   });
 });
+
+describe("CalculateStoreTax — after discounts (follow-up to Plan 3C)", () => {
+  async function exclusive14() {
+    const h = harness();
+    await h.update.execute({
+      tenantId: T1,
+      pricesIncludeTax: false,
+      chargeTaxOnShipping: true,
+    });
+    await h.upsert.execute({
+      tenantId: T1,
+      countryCode: "EG",
+      rateBasisPoints: 1400,
+      provinces: [],
+    });
+    return h;
+  }
+
+  it("takes the order discount off the taxable lines before taxing them", async () => {
+    const h = await exclusive14();
+
+    const result = await h.calculate.execute({
+      tenantId: T1,
+      lines: [
+        { unitPriceMinor: 10_000, quantity: 1, taxable: true },
+        { unitPriceMinor: 10_000, quantity: 1, taxable: true },
+      ],
+      destination: { country: "EG" },
+      shippingMinor: 0,
+      orderDiscountMinor: 2000,
+    });
+
+    expect(result).toEqual({ ok: true, value: { taxMinor: 2520, included: false } });
+  });
+
+  it("taxes shipping after a shipping discount", async () => {
+    const h = await exclusive14();
+
+    const result = await h.calculate.execute({
+      tenantId: T1,
+      lines: [],
+      destination: { country: "EG" },
+      shippingMinor: 5000,
+      shippingDiscountMinor: 1000,
+    });
+
+    expect(result).toEqual({ ok: true, value: { taxMinor: 560, included: false } });
+  });
+
+  it("refuses a discount that is negative or not a whole number of minor units", async () => {
+    const h = await exclusive14();
+
+    for (const bad of [{ orderDiscountMinor: -1 }, { shippingDiscountMinor: 1.5 }]) {
+      const result = await h.calculate.execute({
+        tenantId: T1,
+        lines,
+        destination: { country: "EG" },
+        shippingMinor: 0,
+        ...bad,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected err");
+      expect(result.error).toBeInstanceOf(ValidationError);
+    }
+  });
+
+  it("without a discount behaves as before", async () => {
+    const h = await exclusive14();
+
+    const result = await h.calculate.execute({
+      tenantId: T1,
+      lines: [{ unitPriceMinor: 10_000, quantity: 1, taxable: true }],
+      destination: { country: "EG" },
+      shippingMinor: 0,
+    });
+
+    expect(result).toEqual({ ok: true, value: { taxMinor: 1400, included: false } });
+  });
+});

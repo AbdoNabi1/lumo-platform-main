@@ -343,6 +343,13 @@ function CheckoutForm({
     [shippableCountries, locale],
   );
   const initialCountry = defaultCountry(countries);
+  // Only the SHIPPING address is limited to the shop's zones. A billing address can be anywhere
+  // (the cardholder's), so it offers every country, like Shopify.
+  const billingCountries = useMemo(
+    () => countryOptions({ countries: [], restOfWorld: true }, locale),
+    [locale],
+  );
+  const initialBillingCountry = defaultCountry(billingCountries);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<ErrorReason | null>(null);
   const [redirecting, setRedirecting] = useState(false);
@@ -353,7 +360,7 @@ function CheckoutForm({
     formFrom(session.shippingAddress, initialCountry),
   );
   const [billing, setBilling] = useState<AddressForm>(() =>
-    formFrom(session.billingAddress, initialCountry),
+    formFrom(session.billingAddress, initialBillingCountry),
   );
   const [billingMode, setBillingMode] = useState<"same" | "different">(() =>
     session.billingAddress !== null &&
@@ -799,7 +806,7 @@ function CheckoutForm({
                 onChange={setBilling}
                 phoneRequired={false}
                 phoneInvalid={false}
-                countries={countries}
+                countries={billingCountries}
                 t={t}
                 locale={locale}
               />

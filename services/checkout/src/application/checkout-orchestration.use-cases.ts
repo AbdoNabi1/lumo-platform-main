@@ -138,6 +138,8 @@ export class RequestTaxCalculation implements UseCase<
           session.shippingSelection?.rateAmountMinor ?? 0,
           session.currency,
           input.tenantId,
+          // The order discount Promotions gave this session; nothing discounts shipping yet.
+          { orderMinor: session.discountMinor ?? 0, shippingMinor: 0 },
         );
 
         try {

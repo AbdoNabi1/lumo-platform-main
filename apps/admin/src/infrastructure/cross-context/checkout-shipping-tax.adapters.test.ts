@@ -280,3 +280,54 @@ describe("CheckoutTaxCalculationAdapter (Plan 3C)", () => {
     ).rejects.toThrow(/tax/i);
   });
 });
+
+describe("CheckoutTaxCalculationAdapter — after discounts (follow-up to Plan 3C)", () => {
+  it("hands the order and shipping discounts to Finance, which taxes the discounted amounts", async () => {
+    const w = await world();
+    const taxed = await w.seed("TAXED", { sku: "TAXED-1" });
+    const calculate = vi
+      .fn()
+      .mockResolvedValue({ status: 200, body: { taxMinor: 2210, included: true } });
+    const adapter = new CheckoutTaxCalculationAdapter(w.products, { calculate } as unknown as Pick<
+      TaxSettingsController,
+      "calculate"
+    >);
+
+    await adapter.calculate(
+      [line(taxed.productId, taxed.variantId, 10_000, 2)],
+      { country: "EG" },
+      5000,
+      "EGP",
+      TENANT,
+      { orderMinor: 2000, shippingMinor: 1000 },
+    );
+
+    expect(calculate).toHaveBeenCalledWith(
+      expect.objectContaining({ orderDiscountMinor: 2000, shippingDiscountMinor: 1000 }),
+    );
+  });
+
+  it("sends no discount fields when none is given", async () => {
+    const w = await world();
+    const taxed = await w.seed("TAXED", { sku: "TAXED-1" });
+    const calculate = vi
+      .fn()
+      .mockResolvedValue({ status: 200, body: { taxMinor: 0, included: true } });
+    const adapter = new CheckoutTaxCalculationAdapter(w.products, { calculate } as unknown as Pick<
+      TaxSettingsController,
+      "calculate"
+    >);
+
+    await adapter.calculate(
+      [line(taxed.productId, taxed.variantId, 10_000)],
+      { country: "EG" },
+      0,
+      "EGP",
+      TENANT,
+    );
+
+    const sent = calculate.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(sent).not.toHaveProperty("orderDiscountMinor");
+    expect(sent).not.toHaveProperty("shippingDiscountMinor");
+  });
+});

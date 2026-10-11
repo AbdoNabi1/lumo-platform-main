@@ -144,6 +144,7 @@ export class CheckoutTaxCalculationAdapter implements TaxCalculationPort {
     shippingMinor: number,
     _currency: string,
     tenantId: string,
+    discounts?: { readonly orderMinor: number; readonly shippingMinor: number },
   ): Promise<TaxCalculationResult> {
     const resolved = await resolveLines(this.products, items, tenantId);
     const response = await this.taxes.calculate({
@@ -158,6 +159,13 @@ export class CheckoutTaxCalculationAdapter implements TaxCalculationPort {
         ...(destination.province === undefined ? {} : { province: destination.province }),
       },
       shippingMinor,
+      // Tax is worked out after discounts: Finance takes them off the taxable lines and the shipping price.
+      ...(discounts === undefined || discounts.orderMinor === 0
+        ? {}
+        : { orderDiscountMinor: discounts.orderMinor }),
+      ...(discounts === undefined || discounts.shippingMinor === 0
+        ? {}
+        : { shippingDiscountMinor: discounts.shippingMinor }),
     });
     if (response.status !== 200) {
       throw new Error(

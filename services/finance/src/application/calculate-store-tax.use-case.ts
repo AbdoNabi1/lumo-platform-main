@@ -17,6 +17,10 @@ export interface CalculateStoreTaxInput extends TenantInput {
   readonly destination: TaxDestination;
   /** The chosen shipping rate's price; taxed only when the shop charges tax on shipping. */
   readonly shippingMinor: number;
+  /** The order-level discount (Promotions' snapshot), shared across the taxable lines before they are taxed. */
+  readonly orderDiscountMinor?: number;
+  /** A discount on the shipping price, taken off it before it is taxed. */
+  readonly shippingDiscountMinor?: number;
 }
 
 /**
@@ -43,7 +47,24 @@ export class CalculateStoreTax implements UseCase<CalculateStoreTaxInput, TaxRes
         ]),
       );
     }
+    for (const [field, value] of [
+      ["orderDiscountMinor", input.orderDiscountMinor],
+      ["shippingDiscountMinor", input.shippingDiscountMinor],
+    ] as const) {
+      if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
+        return err(
+          new ValidationError("Invalid discount", [
+            { field, message: "must be a non-negative integer" },
+          ]),
+        );
+      }
+    }
     const settings = (await this.deps.settings.get(input.tenantId)) ?? TaxSettings.defaults();
-    return ok(calculateTax(settings, input.lines, input.destination, input.shippingMinor));
+    return ok(
+      calculateTax(settings, input.lines, input.destination, input.shippingMinor, {
+        orderMinor: input.orderDiscountMinor,
+        shippingMinor: input.shippingDiscountMinor,
+      }),
+    );
   }
 }

@@ -187,6 +187,23 @@ describe("RequestTaxCalculation (Plan 3C)", () => {
     expect(tenantId).toBe("t1");
   });
 
+  it("tells Finance the order discount the session holds, so the tax follows the discounted prices", async () => {
+    const s = setup({ province: "EG-C" });
+    s.session.applyPromotionSnapshot(2000);
+
+    await s.tax.execute(ids);
+
+    expect((s.taxCalls[0] as unknown[])[5]).toEqual({ orderMinor: 2000, shippingMinor: 0 });
+  });
+
+  it("sends no discount when the session holds none", async () => {
+    const s = setup();
+
+    await s.tax.execute(ids);
+
+    expect((s.taxCalls[0] as unknown[])[5]).toEqual({ orderMinor: 0, shippingMinor: 0 });
+  });
+
   it("sends zero shipping when none has been chosen yet", async () => {
     const s = setup();
 

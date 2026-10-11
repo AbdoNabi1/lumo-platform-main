@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
-import { calculateTax, type TaxableLine } from "./tax-calculation";
+import { allocateDiscount, calculateTax, type TaxableLine } from "./tax-calculation";
 import { TaxSettings } from "./tax-settings";
 
 function settings(
@@ -192,5 +192,126 @@ describe("calculateTax — rounding", () => {
     const odd = settings({ includes: false }, [{ country: "EG", bp: 1437 }]);
 
     expect(calculateTax(odd, [line(10_000)], { country: "EG" }, 0).taxMinor).toBe(1437);
+  });
+});
+
+describe("allocateDiscount (tax after discounts)", () => {
+  it("splits a discount in proportion to the amounts", () => {
+    expect(allocateDiscount([10_000, 10_000], 2000)).toEqual([1000, 1000]);
+    expect(allocateDiscount([30_000, 10_000], 4000)).toEqual([3000, 1000]);
+  });
+
+  it("gives the remainder to the largest fractions, so the shares add up exactly", () => {
+    const shares = allocateDiscount([3333, 3333, 3333], 100);
+
+    expect(shares).toEqual([34, 33, 33]);
+    expect(shares.reduce((a, b) => a + b, 0)).toBe(100);
+  });
+
+  it("gives a remainder to the larger fraction first, not to the first line", () => {
+    // 7 over 1:2 -> 2.33 / 4.67 -> floors 2 + 4, the spare unit goes to the 4.67
+    expect(allocateDiscount([100, 200], 7)).toEqual([2, 5]);
+  });
+
+  it("never takes more than the amounts hold, and ignores a negative discount", () => {
+    expect(allocateDiscount([500, 500], 5000)).toEqual([500, 500]);
+    expect(allocateDiscount([500, 500], -10)).toEqual([0, 0]);
+    expect(allocateDiscount([0, 0], 100)).toEqual([0, 0]);
+    expect(allocateDiscount([], 100)).toEqual([]);
+  });
+});
+
+describe("calculateTax — tax is worked out after discounts, like Shopify", () => {
+  it("inclusive 14%: 100.00 + 100.00 with a 20.00 order discount is taxed on 90.00 + 90.00", () => {
+    const result = calculateTax(
+      settings({ includes: true }, [EG]),
+      [line(10_000), line(10_000)],
+      { country: "EG" },
+      0,
+      { orderMinor: 2000 },
+    );
+
+    // each 90.00 holds 90.00 × 0.14 / 1.14 = 11.05
+    expect(result).toEqual({ taxMinor: 2 * 1105, included: true });
+  });
+
+  it("exclusive 14%: the same cart is taxed on 90.00 + 90.00", () => {
+    const result = calculateTax(
+      settings({ includes: false }, [EG]),
+      [line(10_000), line(10_000)],
+      { country: "EG" },
+      0,
+      { orderMinor: 2000 },
+    );
+
+    expect(result).toEqual({ taxMinor: 2 * 1260, included: false });
+  });
+
+  it("a line that is not taxable gets no share of the discount", () => {
+    const result = calculateTax(
+      settings({ includes: false }, [EG]),
+      [line(10_000), line(10_000), line(10_000, 1, false)],
+      { country: "EG" },
+      0,
+      { orderMinor: 2000 },
+    );
+
+    expect(result.taxMinor).toBe(2 * 1260);
+  });
+
+  it("a discount larger than the taxable lines leaves no tax", () => {
+    const result = calculateTax(
+      settings({ includes: false }, [EG]),
+      [line(5000)],
+      { country: "EG" },
+      0,
+      { orderMinor: 99_999 },
+    );
+
+    expect(result.taxMinor).toBe(0);
+  });
+
+  it("rounds each line after its own share, half up", () => {
+    // 3 × 33.33 = 99.99 with a 1.00 discount: shares 34/33/33 -> 32.99 / 33.00 / 33.00 -> 4.62 + 4.62 + 4.62
+    const result = calculateTax(
+      settings({ includes: false }, [EG]),
+      [line(3333), line(3333), line(3333)],
+      { country: "EG" },
+      0,
+      { orderMinor: 100 },
+    );
+
+    expect(result.taxMinor).toBe(462 + 462 + 462);
+  });
+
+  it("shipping is taxed on its price after a shipping discount", () => {
+    const result = calculateTax(
+      settings({ includes: false, shipping: true }, [EG]),
+      [],
+      { country: "EG" },
+      5000,
+      { shippingMinor: 1000 },
+    );
+
+    expect(result.taxMinor).toBe(560);
+  });
+
+  it("a free shipping discount (the whole price) leaves no shipping tax", () => {
+    const result = calculateTax(
+      settings({ includes: false, shipping: true }, [EG]),
+      [],
+      { country: "EG" },
+      5000,
+      { shippingMinor: 5000 },
+    );
+
+    expect(result.taxMinor).toBe(0);
+  });
+
+  it("without discounts nothing changes", () => {
+    const base = calculateTax(settings({}, [EG]), [line(11_400)], { country: "EG" }, 0);
+    const none = calculateTax(settings({}, [EG]), [line(11_400)], { country: "EG" }, 0, {});
+
+    expect(none).toEqual(base);
   });
 });
