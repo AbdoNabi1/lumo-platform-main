@@ -47,6 +47,47 @@ function product(overrides: Partial<ProductSummary> = {}): ProductSummary {
   };
 }
 
+describe("resolveCurrentCart — line pictures (Plan 2C-3)", () => {
+  const lineOf = (extra: Record<string, unknown>) => ({
+    productId: "prod-1",
+    variantId: "variant-l",
+    sku: "SKU-1-L",
+    title: "Wooden Blocks",
+    variantTitle: "L",
+    quantity: 1,
+    unitPriceAmountMinor: 1200,
+    currency: "USD",
+    lineTotalAmountMinor: 1200,
+    ...extra,
+  });
+
+  it("carries each line's picture url, or null when the API sent none", async () => {
+    getCurrentCart.mockResolvedValue({
+      status: 200,
+      body: {
+        cart: cart({
+          items: [
+            lineOf({ imageUrl: "https://cdn.example.test/l.webp" }),
+            lineOf({ variantId: "variant-m", imageUrl: null }),
+            lineOf({ variantId: "variant-s" }),
+          ],
+        }),
+      },
+    });
+    getProducts.mockResolvedValue([product({ id: "prod-1" })]);
+
+    const result = await resolveCurrentCart("session-1");
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.lines.map((l) => l.imageUrl)).toEqual([
+      "https://cdn.example.test/l.webp",
+      null,
+      null,
+    ]);
+  });
+});
+
 describe("resolveCurrentCart", () => {
   it("resolves an existing cart and joins its lines to Catalog product names", async () => {
     getCurrentCart.mockResolvedValue({
@@ -86,6 +127,7 @@ describe("resolveCurrentCart", () => {
         unitPriceAmountMinor: 1500,
         currency: "USD",
         lineTotalAmountMinor: 3000,
+        imageUrl: null,
       },
     ]);
   });

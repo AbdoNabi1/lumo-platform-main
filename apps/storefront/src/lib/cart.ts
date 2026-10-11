@@ -65,6 +65,8 @@ export interface ResolvedCartLine {
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
   readonly lineTotalAmountMinor: number;
+  /** Plan 2C-3: the line's picture; null when it has none (or the API predates pictures). */
+  readonly imageUrl: string | null;
 }
 
 export type CurrentCartResult =
@@ -101,6 +103,7 @@ function resolveLine(item: CartItemSummary, products: readonly ProductSummary[])
     unitPriceAmountMinor: item.unitPriceAmountMinor,
     currency: item.currency,
     lineTotalAmountMinor: item.lineTotalAmountMinor,
+    imageUrl: item.imageUrl ?? null,
   };
 }
 

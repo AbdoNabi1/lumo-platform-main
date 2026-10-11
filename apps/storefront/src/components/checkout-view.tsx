@@ -37,6 +37,7 @@ import type {
   ShippingQuoteSummary,
 } from "@/lib/runtime-api";
 import type { Dictionary } from "@/messages/en";
+import { LineThumb } from "./line-thumb";
 
 /** `"paymentOpen"` / `"handoff"` only ever follow a PLACED order — see `openPaymentFor`. */
 type ErrorReason =
@@ -1120,12 +1121,19 @@ function SummaryBody({
       <ul className="flex flex-col gap-3">
         {session.items.map((item, index) => (
           <li key={`${item.productId}-${item.variantId ?? index}`} className="flex gap-3 text-sm">
-            <span
-              aria-label={`${t.checkout.summary.quantity} ${item.quantity}`}
-              className="bg-muted text-muted-foreground flex size-6 shrink-0 items-center justify-center rounded-full text-xs"
+            <LineThumb
+              url={item.imageUrl}
+              alt={item.title ?? item.productId}
+              size={64}
+              noImageLabel={t.product.gallery.noImage}
             >
-              {item.quantity}
-            </span>
+              <span
+                aria-label={`${t.checkout.summary.quantity} ${item.quantity}`}
+                className="bg-muted-foreground text-background absolute -end-2 -top-2 flex min-w-5 items-center justify-center rounded-full px-1.5 text-xs"
+              >
+                {item.quantity}
+              </span>
+            </LineThumb>
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate font-medium">{item.title ?? item.productId}</span>
               {item.variantTitle != null && (

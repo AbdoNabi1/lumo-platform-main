@@ -1,4 +1,6 @@
+import Image from "next/image";
 import Link from "next/link";
+import { PackageIcon } from "lucide-react";
 import { Badge, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@platform/ui";
 import { AddToCartButton } from "./add-to-cart-button";
 import { formatCurrency, formatNumber } from "@/lib/format";
@@ -29,10 +31,50 @@ export function ProductCard({
   readonly locale: Locale;
 }) {
   const outOfStock = availability.status === "ok" && availability.available <= 0;
+  // Plan 2C-3: an older API sends only `media`; a newer one names the card's two pictures itself.
+  const featured = product.featuredImage ?? product.media?.[0] ?? null;
+  const hover = product.hoverImage ?? product.media?.[1] ?? null;
+  const alt = featured?.alt ?? product.name;
 
   return (
     <Card variant="interactive">
-      <Link href={`/products/${product.slug}`} className="block">
+      <Link href={`/products/${product.slug}`} className="group block">
+        {/* A square, so the grid does not jump as pictures load. The hover picture is CSS only. */}
+        <div className="bg-muted relative aspect-square w-full overflow-hidden">
+          {featured !== null ? (
+            <>
+              <Image
+                src={featured.url}
+                alt={alt}
+                fill
+                sizes="(min-width: 1024px) 20rem, 50vw"
+                unoptimized
+                loading="lazy"
+                className="object-cover"
+              />
+              {hover !== null && (
+                <Image
+                  src={hover.url}
+                  alt={hover.alt ?? product.name}
+                  aria-hidden="true"
+                  fill
+                  sizes="(min-width: 1024px) 20rem, 50vw"
+                  unoptimized
+                  loading="lazy"
+                  className="object-cover opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+                />
+              )}
+            </>
+          ) : (
+            <div
+              role="img"
+              aria-label={t.product.gallery.noImage}
+              className="text-muted-foreground flex size-full items-center justify-center"
+            >
+              <PackageIcon aria-hidden="true" className="size-8" />
+            </div>
+          )}
+        </div>
         <CardHeader>
           <CardTitle as="h3" className="text-base">
             {product.name}

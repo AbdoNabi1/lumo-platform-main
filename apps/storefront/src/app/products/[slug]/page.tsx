@@ -6,6 +6,8 @@ import { AlertTriangleIcon, ArrowLeftIcon, PackageIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import { AddToWishlistButton } from "@/components/add-to-wishlist-button";
 import { AvailabilityBadge, PriceLabel } from "@/components/product-card";
+import { ProductGallery } from "@/components/product-gallery";
+import { ProductSelectionProvider } from "@/components/product-selection";
 import { ProductReviews } from "@/components/product-reviews";
 import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
@@ -40,12 +42,13 @@ export async function generateMetadata({
 /**
  * Product Detail. Only fields the public `/public/products` DTO actually carries are shown —
  * `name`, `sku`, `slug`, `description` (plain text), `options`,
- * `variants[].{id,sku,selection,title,price,compareAt}`, plus availability (Inventory, summed
- * across warehouses). Plan 2A: the shopper buys a VARIANT, so the price shown (and added to the
+ * `variants[].{id,sku,selection,title,price,compareAt,imageId}`, `media[]` (Plan 2C-3: `{ id, url, alt,
+ * width, height }` each), plus availability (Inventory, summed across warehouses). Plan 2A: the shopper buys a VARIANT, so the price shown (and added to the
  * cart) follows the variant picked in {@link VariantPicker}. Plan 2C-1: that variant price is the
- * ONLY price source — the Pricing screen is not consulted. The DTO has no image/media, brand, or
- * category fields, so none are rendered — see the Phase 2 report for the full list of fields
- * evaluated and why each was included or omitted.
+ * ONLY price source — the Pricing screen is not consulted. The DTO has no brand or category
+ * fields, so none are rendered. The gallery shows the product's pictures; picking a variant that has its
+ * own picture switches the large one to it ({@link ProductSelectionProvider} joins the picker and the
+ * gallery while the page stays a Server Component).
  *
  * T5.18 added a reviews section below the core product card (display only at the time). T5.18-write
  * adds the submission form: rendered only when {@link resolveCurrentCustomer} confirms a REAL
@@ -126,53 +129,59 @@ export default async function ProductDetailPage({
         {t.product.backToShop}
       </Link>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <span
-              className="bg-secondary text-secondary-foreground flex size-9 shrink-0 items-center justify-center rounded-md"
-              aria-hidden="true"
-            >
-              <PackageIcon className="size-4" />
-            </span>
-            <h1>
-              <CardTitle as="div">{product.name}</CardTitle>
-            </h1>
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <p className="text-muted-foreground text-sm">
-            {t.product.sku}: {product.sku}
-          </p>
+      <ProductSelectionProvider>
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <span
+                className="bg-secondary text-secondary-foreground flex size-9 shrink-0 items-center justify-center rounded-md"
+                aria-hidden="true"
+              >
+                <PackageIcon className="size-4" />
+              </span>
+              <h1>
+                <CardTitle as="div">{product.name}</CardTitle>
+              </h1>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <ProductGallery media={product.media ?? []} productName={product.name} t={t} />
 
-          {/* Plan 2C-1: PLAIN TEXT, rendered as text — never as HTML (no dangerouslySetInnerHTML). */}
-          {product.description !== null && (
-            <p className="whitespace-pre-line text-sm">{product.description}</p>
-          )}
+            <p className="text-muted-foreground text-sm">
+              {t.product.sku}: {product.sku}
+            </p>
 
-          <div className="flex items-center gap-3">
-            {price.status !== "ok" && <PriceLabel price={price} t={t} locale={locale} />}
-            <AvailabilityBadge availability={availability} t={t} locale={locale} />
-          </div>
+            {/* Plan 2C-1: PLAIN TEXT, rendered as text — never as HTML (no dangerouslySetInnerHTML). */}
+            {product.description !== null && (
+              <p className="whitespace-pre-line text-sm">{product.description}</p>
+            )}
 
-          {price.status === "ok" && (
-            <VariantPicker
-              product={product}
-              availabilityByVariant={availabilityByVariant}
-              t={t}
-              locale={locale}
-            />
-          )}
+            <div className="flex items-center gap-3">
+              {price.status !== "ok" && <PriceLabel price={price} t={t} locale={locale} />}
+              <AvailabilityBadge availability={availability} t={t} locale={locale} />
+            </div>
 
-          {/*
-           * Shown only to a signed-in customer — a wishlist has no `customerRef` to be scoped to
-           * for an anonymous shopper, so there is nothing to offer rather than a control that would
-           * fail on click. An `"error"` resolution renders nothing either: when the session cannot
-           * be verified, the safe default is to withhold the control, not to guess.
-           */}
-          {customer.status === "signed-in" && <AddToWishlistButton productRef={product.id} t={t} />}
-        </CardContent>
-      </Card>
+            {price.status === "ok" && (
+              <VariantPicker
+                product={product}
+                availabilityByVariant={availabilityByVariant}
+                t={t}
+                locale={locale}
+              />
+            )}
+
+            {/*
+             * Shown only to a signed-in customer — a wishlist has no `customerRef` to be scoped to
+             * for an anonymous shopper, so there is nothing to offer rather than a control that would
+             * fail on click. An `"error"` resolution renders nothing either: when the session cannot
+             * be verified, the safe default is to withhold the control, not to guess.
+             */}
+            {customer.status === "signed-in" && (
+              <AddToWishlistButton productRef={product.id} t={t} />
+            )}
+          </CardContent>
+        </Card>
+      </ProductSelectionProvider>
 
       {/*
        * Same `"error"`-withholds-the-control discipline as `AddToWishlistButton` above: when the

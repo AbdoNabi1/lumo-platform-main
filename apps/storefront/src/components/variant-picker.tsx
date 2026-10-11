@@ -1,11 +1,12 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { AddToCartButton } from "@/components/add-to-cart-button";
 import { formatCurrency } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { ProductSummary } from "@/lib/runtime-api";
 import type { Dictionary } from "@/messages/en";
+import { useProductSelection } from "./product-selection";
 
 /**
  * Plan 2A — the shopper buys a specific variant (a size, a colour), not "the product". One
@@ -45,6 +46,13 @@ export function VariantPicker({
             (option) => candidate.selection?.[option.name] === chosen[option.name],
           ),
         );
+
+  // Plan 2C-3: tell the gallery which picture belongs to the variant picked (none: it keeps its own).
+  const { setVariantImageId } = useProductSelection();
+  const variantImageId = variant?.imageId ?? null;
+  useEffect(() => {
+    setVariantImageId(variantImageId);
+  }, [variantImageId, setVariantImageId]);
 
   const stock = variant === undefined ? undefined : availabilityByVariant[variant.id];
   const outOfStock = stock !== undefined && stock !== "unlimited" && stock <= 0;

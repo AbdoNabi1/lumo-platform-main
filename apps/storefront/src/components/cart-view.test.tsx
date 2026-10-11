@@ -64,6 +64,7 @@ function line(overrides: Partial<ResolvedCartLine> = {}): ResolvedCartLine {
     unitPriceAmountMinor: 1500,
     currency: "USD",
     lineTotalAmountMinor: 3000,
+    imageUrl: null,
     ...overrides,
   };
 }
@@ -283,5 +284,30 @@ describe("CartView — proceed to checkout (Phase 2)", () => {
 
     expect(await screen.findByText(en.cart.checkoutErrorBody)).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe("CartView — line pictures (Plan 2C-3)", () => {
+  it("shows each line's picture beside its name, described by the product name", () => {
+    render(
+      <CartView
+        cart={cart({ subtotalAmountMinor: 3000 })}
+        lines={[line({ imageUrl: "https://cdn.example.test/blocks.webp" })]}
+        t={en}
+        locale="en"
+      />,
+    );
+    const img = screen.getByRole("img", { name: "Wooden Blocks" });
+    expect(img).toHaveAttribute("src", "https://cdn.example.test/blocks.webp");
+    expect(img).toHaveAttribute("width", "64");
+    expect(img).toHaveAttribute("loading", "lazy");
+  });
+
+  it("draws a placeholder, and no img, for a line without a picture", () => {
+    const { container } = render(
+      <CartView cart={cart({ subtotalAmountMinor: 3000 })} lines={[line()]} t={en} locale="en" />,
+    );
+    expect(container.querySelectorAll("img")).toHaveLength(0);
+    expect(screen.getByLabelText(en.product.gallery.noImage)).toBeInTheDocument();
   });
 });

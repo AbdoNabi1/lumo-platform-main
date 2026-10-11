@@ -52,6 +52,12 @@ export const en = {
     addToCartError: "Couldn't add this to your cart. Try again.",
     chooseOption: "Choose {option}",
     unavailableCombination: "This combination is not available",
+    /** Plan 2C-3 — the product page's picture gallery. */
+    gallery: {
+      label: "Product images",
+      showImage: "Show image {n} of {total}",
+      noImage: "No image available",
+    },
     chooseVariant: "Choose a size/option first",
     reviewsTitle: "Reviews",
     reviewsCount: "{count} reviews",

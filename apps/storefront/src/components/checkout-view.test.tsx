@@ -624,6 +624,41 @@ describe("CheckoutView — out of stock at placement (Plan 2B-3)", () => {
   });
 });
 
+describe("CheckoutView — line pictures (Plan 2C-3)", () => {
+  it("shows each line's picture with the quantity badge over it, like Shopify", () => {
+    renderView({
+      session: session({
+        items: [
+          {
+            productId: "p1",
+            title: "Linen Shirt",
+            variantTitle: "L",
+            quantity: 2,
+            unitPriceAmountMinor: 12000,
+            imageUrl: "https://cdn.example.test/shirt.webp",
+          },
+        ],
+      }),
+    });
+
+    const summary = screen.getByRole("complementary");
+    const img = within(summary).getByRole("img", { name: "Linen Shirt" });
+    expect(img).toHaveAttribute("src", "https://cdn.example.test/shirt.webp");
+    const badge = within(summary).getByLabelText(`${en.checkout.summary.quantity} 2`);
+    expect(badge).toHaveTextContent("2");
+    expect(badge.className).toContain("absolute");
+    expect(badge.parentElement).toBe(img.parentElement);
+  });
+
+  it("keeps the quantity badge over a placeholder when a line has no picture", () => {
+    renderView();
+    const summary = screen.getByRole("complementary");
+    expect(within(summary).queryByRole("img", { name: "Linen Shirt" })).toBeNull();
+    expect(within(summary).getByLabelText(`${en.checkout.summary.quantity} 2`)).toBeInTheDocument();
+    expect(within(summary).getByLabelText(en.product.gallery.noImage)).toBeInTheDocument();
+  });
+});
+
 describe("CheckoutView — order summary", () => {
   it("lists each line with its variant, quantity and line total", () => {
     renderView();

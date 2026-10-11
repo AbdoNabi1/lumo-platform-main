@@ -240,3 +240,69 @@ describe("ProductCard", () => {
     expect(screen.getByText("$29.99").tagName).toBe("S");
   });
 });
+
+describe("ProductCard pictures (Plan 2C-3)", () => {
+  const image = (id: string, alt: string | null = null) => ({
+    id,
+    url: `https://cdn.example.test/${id}.webp`,
+    alt,
+    width: 800,
+    height: 800,
+  });
+  const price = {
+    status: "ok" as const,
+    amountMinor: 1999,
+    currency: "USD",
+    compareAtMinor: null,
+    varies: false,
+  };
+  const renderCard = (extra: Partial<PublishedProduct>) =>
+    render(
+      <ProductCard
+        product={{ ...product, ...extra }}
+        price={price}
+        availability={{ status: "ok", available: 4 }}
+        t={en}
+        locale="en"
+      />,
+    );
+
+  it("shows the featured image in a square at the top, described by its alt text, lazily loaded", () => {
+    const { container } = renderCard({ featuredImage: image("a", "A wooden block set") });
+    const img = screen.getByRole("img", { name: "A wooden block set" });
+    expect(img).toHaveAttribute("src", "https://cdn.example.test/a.webp");
+    expect(img).toHaveAttribute("loading", "lazy");
+    expect(container.querySelector(".aspect-square")).not.toBeNull();
+    expect(img.closest("a")).toHaveAttribute("href", "/products/wooden-blocks");
+  });
+
+  it("describes a picture with no alt text by the product name", () => {
+    renderCard({ featuredImage: image("a") });
+    expect(screen.getByRole("img", { name: "Wooden Blocks" })).toBeInTheDocument();
+  });
+
+  it("holds the second picture for the hover, shown by CSS alone (no script)", () => {
+    const { container } = renderCard({ featuredImage: image("a"), hoverImage: image("b") });
+    const imgs = container.querySelectorAll("img");
+    expect(imgs).toHaveLength(2);
+    expect(imgs[1]).toHaveAttribute("src", "https://cdn.example.test/b.webp");
+    expect(imgs[1]!.className).toContain("opacity-0");
+    expect(imgs[1]!.className).toContain("group-hover:opacity-100");
+    expect(imgs[1]).toHaveAttribute("aria-hidden", "true");
+    expect(container.querySelector("a.group")).not.toBeNull();
+  });
+
+  it("falls back to the first of media[] when the API sent no featuredImage", () => {
+    renderCard({ media: [image("m")] });
+    expect(screen.getByRole("img", { name: "Wooden Blocks" })).toHaveAttribute(
+      "src",
+      "https://cdn.example.test/m.webp",
+    );
+  });
+
+  it("draws a placeholder, and no img, for a product without pictures", () => {
+    const { container } = renderCard({ featuredImage: null });
+    expect(container.querySelectorAll("img")).toHaveLength(0);
+    expect(screen.getByLabelText(en.product.gallery.noImage)).toBeInTheDocument();
+  });
+});

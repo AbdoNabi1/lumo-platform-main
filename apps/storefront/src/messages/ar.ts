@@ -57,6 +57,12 @@ export const ar: Dictionary = {
     addToCartError: "تعذّرت الإضافة إلى سلتك. حاول مرة أخرى.",
     chooseOption: "اختر {option}",
     unavailableCombination: "الاختيار ده مش متاح",
+    /** Plan 2C-3 — the product page's picture gallery. */
+    gallery: {
+      label: "صور المنتج",
+      showImage: "عرض الصورة {n} من {total}",
+      noImage: "مفيش صورة",
+    },
     chooseVariant: "اختار المقاس/النوع الأول",
     reviewsTitle: "التقييمات",
     reviewsCount: "{count} تقييم",

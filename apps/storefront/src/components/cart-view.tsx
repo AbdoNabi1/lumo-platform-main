@@ -7,6 +7,7 @@ import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@platform/ui";
 import { changeQuantity, clearCart, removeItem, type CartActionResult } from "@/app/cart/actions";
 import { startCheckout } from "@/app/checkout/actions";
+import { LineThumb } from "./line-thumb";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import type { ResolvedCartLine } from "@/lib/cart";
 import type { Locale } from "@/lib/i18n";
@@ -141,7 +142,13 @@ export function CartView({
                 key={lineKey(line)}
                 className="border-border flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
               >
-                <div className="flex flex-col gap-0.5">
+                <LineThumb
+                  url={line.imageUrl}
+                  alt={line.name ?? t.cart.productUnavailable}
+                  size={64}
+                  noImageLabel={t.product.gallery.noImage}
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   {line.slug !== null ? (
                     <Link href={`/products/${line.slug}`} className="font-medium hover:underline">
                       {line.name}
