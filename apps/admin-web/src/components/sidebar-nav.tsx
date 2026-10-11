@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ExternalLinkIcon } from "lucide-react";
 import { cn, focusRingInset } from "@platform/ui";
-import { PRIMARY_NAV, SALES_CHANNEL_NAV, type NavItem } from "./navigation";
+import { PRIMARY_NAV, salesChannelNav, type NavItem } from "./navigation";
 import type { Dictionary } from "@/messages/en";
 import type { Locale } from "@/lib/i18n";
 import { formatNumber } from "@/lib/format";
@@ -76,6 +76,8 @@ interface SidebarNavProps {
   readonly activeId: string;
   /** True in the tablet rail, false in the mobile drawer (which always shows labels). */
   readonly collapsible?: boolean;
+  /** The runtime `STOREFRONT_URL`; `null` hides the sales channels group. */
+  readonly storefrontUrl?: string | null;
 }
 
 /**
@@ -83,7 +85,14 @@ interface SidebarNavProps {
  * drawer. Rendered as real `<nav>`/`<ul>` landmarks with `aria-current="page"` on the
  * active item.
  */
-export function SidebarNav({ t, locale, activeId, collapsible = false }: SidebarNavProps) {
+export function SidebarNav({
+  t,
+  locale,
+  activeId,
+  collapsible = false,
+  storefrontUrl = null,
+}: SidebarNavProps) {
+  const channels = salesChannelNav(storefrontUrl);
   const renderItem = (item: NavItem) => (
     <NavLink
       key={item.id}
@@ -101,23 +110,25 @@ export function SidebarNav({ t, locale, activeId, collapsible = false }: Sidebar
         <ul className="flex flex-col gap-0.5">{PRIMARY_NAV.map(renderItem)}</ul>
       </nav>
 
-      {/*
-       * A second landmark rather than a heading inside the first: the group label is
-       * navigation structure, and promoting it to an <h2> would put a level-2 heading
-       * ahead of the page's <h1> in the document order.
-       */}
-      <nav aria-label={t.nav.salesChannels} className="flex flex-col gap-0.5">
-        <p
-          className={cn(
-            "text-subtle-foreground px-3 pb-1 text-xs font-medium uppercase tracking-wide",
-            collapsible && "max-lg:sr-only",
-          )}
-          aria-hidden="true"
-        >
-          {t.nav.salesChannels}
-        </p>
-        <ul className="flex flex-col gap-0.5">{SALES_CHANNEL_NAV.map(renderItem)}</ul>
-      </nav>
+      {channels.length > 0 && (
+        /*
+         * A second landmark rather than a heading inside the first: the group label is
+         * navigation structure, and promoting it to an <h2> would put a level-2 heading
+         * ahead of the page's <h1> in the document order.
+         */
+        <nav aria-label={t.nav.salesChannels} className="flex flex-col gap-0.5">
+          <p
+            className={cn(
+              "text-subtle-foreground px-3 pb-1 text-xs font-medium uppercase tracking-wide",
+              collapsible && "max-lg:sr-only",
+            )}
+            aria-hidden="true"
+          >
+            {t.nav.salesChannels}
+          </p>
+          <ul className="flex flex-col gap-0.5">{channels.map(renderItem)}</ul>
+        </nav>
+      )}
     </div>
   );
 }

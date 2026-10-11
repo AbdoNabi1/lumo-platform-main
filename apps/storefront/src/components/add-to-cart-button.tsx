@@ -16,7 +16,6 @@ import type { Dictionary } from "@/messages/en";
 export function AddToCartButton({
   productId,
   variantId,
-  currency,
   outOfStock,
   sellableWhenOutOfStock,
   t,
@@ -24,8 +23,6 @@ export function AddToCartButton({
   readonly productId: string;
   /** Plan 2A: the variant being bought; omitted only for a product the server can default (one variant). */
   readonly variantId?: string;
-  /** Plan 2C-1: the currency of the variant being bought; a new cart is opened in it. Never a price. */
-  readonly currency: string;
   readonly outOfStock: boolean;
   /** Plan 2B-1: the variant sells past zero, so no stock snapshot is sent with the add. */
   readonly sellableWhenOutOfStock?: boolean | undefined;
@@ -40,8 +37,8 @@ export function AddToCartButton({
     startTransition(async () => {
       const response =
         sellableWhenOutOfStock === true
-          ? await addToCart(productId, 1, variantId, currency, true)
-          : await addToCart(productId, 1, variantId, currency);
+          ? await addToCart(productId, 1, variantId, true)
+          : await addToCart(productId, 1, variantId);
       if (response.ok) {
         setResult("ok");
         return;

@@ -1,13 +1,13 @@
 "use client";
 
 import { useId, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
+import { Card, CardContent, CardHeader, CardTitle, Input } from "@platform/ui";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
-import { SUPPORTED_CURRENCIES, toMinorUnits } from "@/lib/products/money";
+import { toMinorUnits } from "@/lib/products/money";
 import type { Dictionary } from "@/messages/en";
 import { Chip, ChipPanel, ChipRow, MoneyInput, Switch } from "./controls";
-import { Field, NativeSelect, PRODUCT_FORM_ID } from "./field";
+import { Field, PRODUCT_FORM_ID } from "./field";
 
 export interface PricingInitial {
   readonly price: string;
@@ -28,7 +28,8 @@ function formatted(locale: Locale, text: string, currency: string): string | und
  * while the server rejects it), so a merchant never has a value they cannot see. A closed chip's
  * field is hidden, not removed: it is still in the form and still saved.
  *
- * `currencyEditable` is false in the variant dialog, whose currency is the variant's own.
+ * `currencyEditable` is false in the variant dialog, whose currency is the variant's own. In the
+ * editor the currency is the STORE currency (Settings → General): shown read-only, and still posted.
  */
 export function PricingFields({
   initial,
@@ -52,7 +53,7 @@ export function PricingFields({
   const [price, setPrice] = useState(initial.price);
   const [compareAt, setCompareAt] = useState(initial.compareAtPrice);
   const [cost, setCost] = useState(initial.costPerItem);
-  const [currency, setCurrency] = useState(initial.currency);
+  const currency = initial.currency;
   const [taxable, setTaxable] = useState(initial.taxable);
   const [open, setOpen] = useState(() => ({
     compareAt: initial.compareAtPrice !== "",
@@ -69,12 +70,6 @@ export function PricingFields({
   const profit = priceMinor !== null && costMinor !== null ? priceMinor - costMinor : null;
   const margin =
     profit !== null && priceMinor !== null && priceMinor > 0 ? profit / priceMinor : null;
-
-  const currencies: readonly string[] = SUPPORTED_CURRENCIES.includes(
-    initial.currency as (typeof SUPPORTED_CURRENCIES)[number],
-  )
-    ? SUPPORTED_CURRENCIES
-    : [...SUPPORTED_CURRENCIES, initial.currency];
 
   return (
     <div className="flex flex-col gap-4">
@@ -97,19 +92,7 @@ export function PricingFields({
         </Field>
         {currencyEditable && (
           <Field label={editor.currency} name="currency" error={errors["currency"]} form={form}>
-            {(control) => (
-              <NativeSelect
-                {...control}
-                value={currency}
-                onChange={(event) => setCurrency(event.target.value)}
-              >
-                {currencies.map((code) => (
-                  <option key={code} value={code}>
-                    {code}
-                  </option>
-                ))}
-              </NativeSelect>
-            )}
+            {(control) => <Input {...control} value={currency} readOnly />}
           </Field>
         )}
       </div>

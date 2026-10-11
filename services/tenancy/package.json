@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@platform/eslint-config": "workspace:*",
+    "@platform/regions": "workspace:*",
     "@platform/tsconfig": "workspace:*",
     "@vitest/coverage-v8": "^2.1.4",
     "eslint": "^9.13.0",

@@ -1,5 +1,6 @@
 import { UniqueEntityId } from "@platform/domain";
 import { ShopDomain, type ShopDomainKind, type ShopDomainStatus } from "../domain/shop-domain";
+import { StoreSettings } from "../domain/store-settings";
 import { Tenant, type TenantIsolationTier, type TenantStatus } from "../domain/tenant";
 import { Hostname } from "../domain/value-objects/hostname";
 import { TenantSlug } from "../domain/value-objects/tenant-slug";
@@ -125,6 +126,32 @@ export class ShopDomainMapper {
       isPrimary: domain.isPrimary,
       verifiedAt: domain.verifiedAt ?? null,
       version: 1,
+    };
+  }
+}
+
+export interface StoreSettingsRow {
+  readonly storeName: string;
+  readonly contactEmail: string | null;
+  readonly currency: string;
+  readonly timezone: string;
+  readonly weightUnit: string;
+}
+
+export class StoreSettingsMapper {
+  static toDomain(row: StoreSettingsRow): StoreSettings {
+    const result = StoreSettings.create(row);
+    if (!result.ok) throw new Error(`Corrupt store_settings row: ${result.error.message}`);
+    return result.value;
+  }
+
+  static toRow(settings: StoreSettings): StoreSettingsRow {
+    return {
+      storeName: settings.storeName,
+      contactEmail: settings.contactEmail,
+      currency: settings.currency,
+      timezone: settings.timezone,
+      weightUnit: settings.weightUnit,
     };
   }
 }

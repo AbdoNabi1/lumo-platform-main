@@ -13,6 +13,7 @@ import { fetchCategoriesPage } from "@/lib/api/categories";
 import { fetchMediaDownloadUrl } from "@/lib/api/media";
 import { fetchWarehouses } from "@/lib/api/inventory";
 import { fetchProduct, fetchProductInventory } from "@/lib/api/products";
+import { storeSettingsOrDefaults } from "@/lib/api/store-settings";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { formatDateTime } from "@/lib/format";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
@@ -98,9 +99,10 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
   const categories = categoriesResult.outcome === "ok" ? categoriesResult.items : [];
 
   // Never default a failed read to zeros: Save would write them. Read-only quantities instead.
-  const [warehousesResult, inventoryResult] = await Promise.all([
+  const [warehousesResult, inventoryResult, settings] = await Promise.all([
     fetchWarehouses(),
     fetchProductInventory(product.id),
+    storeSettingsOrDefaults(),
   ]);
   const stock =
     warehousesResult.outcome === "ok" && inventoryResult.outcome === "ok"
@@ -151,7 +153,8 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
           product={product}
           brands={brands}
           categories={categories}
-          defaultCurrency={product.variants[0]?.currency ?? "EGP"}
+          defaultCurrency={product.variants[0]?.currency ?? settings.currency}
+          weightUnit={settings.weightUnit}
           t={t}
           locale={locale}
           stock={stock}

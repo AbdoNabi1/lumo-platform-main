@@ -121,6 +121,7 @@ import {
   CheckoutPaymentMethodsAdapter,
 } from "./infrastructure/cross-context/checkout-payment.adapters";
 import { PaymentsNotificationAdapter } from "./infrastructure/cross-context/payments-notification.adapter";
+import { StoreCurrencyRelabelAdapter } from "./infrastructure/cross-context/store-currency-relabel.adapter";
 import { PaymentsOrdersAdapter } from "./infrastructure/cross-context/payments-orders.adapter";
 import { PromotionValidationAdapter } from "./infrastructure/cross-context/promotion-validation.adapter";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
@@ -494,6 +495,8 @@ export interface WiredAdmin {
   readonly mediaLibrary: MediaLibraryAdminController;
   /** Tenancy screen → Tenancy (Sprint 5.5/5.6 — Tenancy's first admin-transport wiring). */
   readonly tenancy: TenancyAdminController;
+  /** Plan 3C: relabels the shop's variant prices when the store currency changes. */
+  readonly storeCurrency: StoreCurrencyRelabelAdapter;
   /** T10.6: a tenant's lifecycle status straight from the source of truth (the gate caches it). */
   readonly tenantAvailability: (tenantId: string) => Promise<TenantAvailability>;
   /** T10.6: runs / inspects a tenant's security baseline (idempotent, resumable). */
@@ -1150,6 +1153,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     tenancy: new TenancyAdminController({ tenancy: tenancy.tenancy, guard }),
+    storeCurrency: new StoreCurrencyRelabelAdapter(catalog.products),
     tenantAvailability: tenancy.tenantAvailability,
     tenantProvisioner: new TenantProvisioner({ security: security.security, logger: adminLogger }),
     licensing: new LicensingAdminController({ licensing: licensing.licensing, guard }),

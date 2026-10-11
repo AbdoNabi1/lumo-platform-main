@@ -98,7 +98,6 @@ export function VariantPicker({
       <AddToCartButton
         productId={product.id}
         variantId={variant?.id}
-        currency={variant?.currency ?? product.variants[0]?.currency ?? ""}
         outOfStock={outOfStock || variant === undefined}
         sellableWhenOutOfStock={stock === "unlimited"}
         t={t}

@@ -12,6 +12,7 @@ import type { BrandDto } from "@/lib/api/brands";
 import type { CategoryDto } from "@/lib/api/categories";
 import type { FormState } from "@/lib/api/mutation";
 import type { ProductDetailDto } from "@/lib/api/products";
+import type { WeightUnit } from "@/lib/api/store-settings";
 import type { Locale } from "@/lib/i18n";
 import { fromMinorUnits } from "@/lib/products/money";
 import type { StockView } from "@/lib/products/stock";
@@ -36,8 +37,10 @@ export interface ProductEditorProps {
   readonly product: ProductDetailDto | null;
   readonly brands: readonly BrandDto[];
   readonly categories: readonly CategoryDto[];
-  /** Create mode's starting currency; edit mode uses the variant's own. */
+  /** The store currency (Settings → General): create mode's currency; edit mode shows the variant's own. */
   readonly defaultCurrency: string;
+  /** The store's weight unit: weights are typed and shown in it and stored as grams. */
+  readonly weightUnit: WeightUnit;
   readonly t: Dictionary;
   readonly locale: Locale;
   /** Quantities and the one location they belong to (Plan 2B-2). */
@@ -81,6 +84,7 @@ export function ProductEditor(props: ProductEditorProps) {
     brands,
     categories,
     defaultCurrency,
+    weightUnit,
     t,
     locale,
     stock,
@@ -258,6 +262,7 @@ export function ProductEditor(props: ProductEditorProps) {
               <ShippingCard
                 requiresShipping={variant?.requiresShipping ?? true}
                 weightGrams={variant?.weightGrams ?? null}
+                weightUnit={weightUnit}
                 errors={errors}
                 t={t}
               />
@@ -273,6 +278,7 @@ export function ProductEditor(props: ProductEditorProps) {
               errors={errors}
               onPlanChange={onPlanChange}
               onOptionCountChange={setOptionCount}
+              weightUnit={weightUnit}
             />
           ) : (
             <Card>

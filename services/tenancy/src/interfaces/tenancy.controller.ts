@@ -5,6 +5,12 @@ import type { GetWorkspace } from "../application/get-workspace.use-case";
 import type { ListTenants } from "../application/list-tenants.use-case";
 import type { ListWorkspaces } from "../application/list-workspaces.use-case";
 import type {
+  GetPublicStore,
+  GetStoreSettings,
+  UpdateStoreSettings,
+} from "../application/store-settings.use-cases";
+import type { StoreSettingsInput } from "../domain/store-settings";
+import type {
   AddCustomDomain,
   AddCustomDomainInput,
   DomainIdInput,
@@ -52,6 +58,9 @@ export interface TenancyControllerDeps {
   readonly setPrimaryDomain: SetPrimaryDomain;
   readonly listShopDomains: ListShopDomains;
   readonly resolveHost: ResolveHost;
+  readonly getStoreSettings: GetStoreSettings;
+  readonly updateStoreSettings: UpdateStoreSettings;
+  readonly getPublicStore: GetPublicStore;
 }
 
 /** Framework-agnostic interface boundary for Tenancy use-cases (no HTTP server). */
@@ -76,6 +85,18 @@ export class TenancyController {
 
   async listShopDomains(input: ShopIdInput): Promise<ControllerResponse> {
     return present(await this.deps.listShopDomains.execute(input), 200);
+  }
+
+  async getStoreSettings(): Promise<ControllerResponse> {
+    return present(await this.deps.getStoreSettings.execute({}), 200);
+  }
+
+  async updateStoreSettings(input: StoreSettingsInput): Promise<ControllerResponse> {
+    return present(await this.deps.updateStoreSettings.execute(input), 200);
+  }
+
+  async getPublicStore(): Promise<ControllerResponse> {
+    return present(await this.deps.getPublicStore.execute({}), 200);
   }
 
   async resolveHost(input: ResolveHostInput): Promise<ControllerResponse> {

@@ -1,5 +1,6 @@
 import type { CursorPage, Paginated } from "@platform/types";
 import type { ShopDomain } from "./shop-domain";
+import type { StoreSettings } from "./store-settings";
 import type { Tenant } from "./tenant";
 import type { Workspace } from "./workspace";
 
@@ -31,4 +32,14 @@ export interface ShopDomainRepository {
   /** `hostname` is already normalised (`Hostname.value`). Unique across the whole platform. */
   findByHostname(hostname: string, tx?: unknown): Promise<ShopDomain | null>;
   listByShop(shopRef: string, tx?: unknown): Promise<readonly ShopDomain[]>;
+}
+
+/**
+ * One row per shop. Like every Tenancy repository it is scoped to the tenant its composition was
+ * built for (ADR-0008); there is no tenant argument.
+ */
+export interface StoreSettingsRepository {
+  /** `null` until the merchant has saved once; callers fall back to {@link StoreSettings.defaults}. */
+  get(tx?: unknown): Promise<StoreSettings | null>;
+  save(settings: StoreSettings, tx?: unknown): Promise<void>;
 }

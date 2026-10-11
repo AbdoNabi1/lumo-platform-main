@@ -47,6 +47,8 @@ import {
   randomToken,
 } from "@/lib/products/handles";
 import { toMinorUnits } from "@/lib/products/money";
+import { toGrams } from "@/lib/products/weight";
+import type { WeightUnit } from "@/lib/api/store-settings";
 import { resolveVendor, type VendorChoice } from "@/lib/products/vendor";
 import {
   activeLocations,
@@ -100,16 +102,17 @@ function optionalMoney(
 }
 
 /**
- * Blank → null; grams from "250" g or "1.5" kg (string arithmetic via `toMinorUnits` with 3
- * decimals). The currency codes below only borrow an exponent: KWD has 3 decimals (kg → g) and JPY
- * has none (g stays whole).
+ * Blank → null; whole grams from a weight typed in the store's unit (`weightUnit`: kg, g, lb, oz —
+ * Settings → General, posted as a hidden field). An unknown unit reads as grams. `undefined` when the
+ * text is not a weight.
  */
 function weightGramsOf(formData: FormData): number | null | undefined {
   const raw = stringField(formData, "weight").trim();
   if (raw.length === 0) return null;
-  const unit = stringField(formData, "weightUnit") === "kg" ? "kg" : "g";
-  const parsed = toMinorUnits(raw, unit === "kg" ? "KWD" : "JPY");
-  return parsed ?? undefined;
+  const submitted = stringField(formData, "weightUnit");
+  const unit: WeightUnit =
+    submitted === "kg" || submitted === "lb" || submitted === "oz" ? submitted : "g";
+  return toGrams(raw, unit) ?? undefined;
 }
 
 function tagsOf(formData: FormData): string[] {
@@ -552,9 +555,7 @@ async function applyStockEdits(
  * or the lone `available` of a page rendered before the shop had a location. A malformed number is
  * returned as `undefined` so the caller can name the field.
  */
-function singleStockInputs(
-  formData: FormData,
-): {
+function singleStockInputs(formData: FormData): {
   readonly field: string;
   readonly posted: string | null;
   readonly value: number | null | undefined;

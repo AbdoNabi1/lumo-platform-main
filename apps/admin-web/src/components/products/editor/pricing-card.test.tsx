@@ -118,10 +118,13 @@ describe("PricingCard", () => {
     expect(chip(t.chargeTax)).toHaveTextContent(`· ${t.no}`);
   });
 
-  it("keeps the currency select under the same name, with a visible label", () => {
+  it("shows the store currency as a read-only field that still posts under the same name", () => {
     const { container } = renderCard({ currency: "EGP" });
 
-    expect(screen.getByLabelText(t.currency)).toHaveAttribute("name", "currency");
+    const currency = screen.getByLabelText(t.currency);
+    expect(currency).toHaveAttribute("name", "currency");
+    expect(currency).toHaveAttribute("readonly");
+    expect(currency.tagName).toBe("INPUT");
     expect(formData(container).get("currency")).toBe("EGP");
   });
 

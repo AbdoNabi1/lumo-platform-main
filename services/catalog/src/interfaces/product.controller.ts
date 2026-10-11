@@ -15,6 +15,10 @@ import type {
 import type { GetProduct, GetProductInput } from "../application/get-product.use-case";
 import type { ListProducts, ListProductsInput } from "../application/list-products.use-case";
 import type { PublishProduct, PublishProductInput } from "../application/publish-product.use-case";
+import type {
+  RelabelVariantCurrency,
+  RelabelVariantCurrencyInput,
+} from "../application/relabel-variant-currency.use-case";
 import type { RemoveVariant, RemoveVariantInput } from "../application/remove-variant.use-case";
 import type { ReorderMedia, ReorderMediaInput } from "../application/reorder-media.use-case";
 import type {
@@ -61,6 +65,7 @@ export interface ProductControllerDeps {
   readonly attachMedia: AttachMedia;
   readonly detachMedia: DetachMedia;
   readonly reorderMedia: ReorderMedia;
+  readonly relabelVariantCurrency: RelabelVariantCurrency;
 }
 
 /** Framework-agnostic interface boundary for product use-cases (no HTTP server). */
@@ -73,6 +78,11 @@ export class ProductController {
 
   async create(input: CreateProductInput): Promise<ControllerResponse> {
     return present(await this.deps.createProduct.execute(input), 201);
+  }
+
+  /** Plan 3C: the store currency changed — relabel every variant, keeping the amounts. */
+  async relabelVariantCurrency(input: RelabelVariantCurrencyInput): Promise<ControllerResponse> {
+    return present(await this.deps.relabelVariantCurrency.execute(input), 200);
   }
 
   async publish(input: PublishProductInput): Promise<ControllerResponse> {

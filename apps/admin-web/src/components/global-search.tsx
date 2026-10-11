@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { CommandSearch, CommandSearchTrigger, type CommandGroup } from "@platform/ui";
-import { PRIMARY_NAV, SALES_CHANNEL_NAV } from "./navigation";
+import { PRIMARY_NAV, salesChannelNav } from "./navigation";
 import type { Dictionary } from "@/messages/en";
 
 /**
@@ -14,9 +14,12 @@ import type { Dictionary } from "@/messages/en";
 export function GlobalSearch({
   t,
   className,
+  storefrontUrl = null,
 }: {
   readonly t: Dictionary;
   readonly className?: string;
+  /** The runtime `STOREFRONT_URL`; `null` leaves the storefront out of the results. */
+  readonly storefrontUrl?: string | null;
 }) {
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
@@ -49,7 +52,7 @@ export function GlobalSearch({
       {
         id: "channels",
         heading: t.nav.salesChannels,
-        items: SALES_CHANNEL_NAV.map((item) => ({
+        items: salesChannelNav(storefrontUrl).map((item) => ({
           id: item.id,
           label: item.label(t),
           Icon: item.Icon,
@@ -59,7 +62,7 @@ export function GlobalSearch({
         })),
       },
     ],
-    [t, router],
+    [t, router, storefrontUrl],
   );
 
   return (

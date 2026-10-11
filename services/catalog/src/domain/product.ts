@@ -319,6 +319,19 @@ export class Product extends AggregateRoot<ProductProps> {
     this.props.options = [...options];
   }
 
+  /**
+   * Plan 3C: switches every variant to the store currency, keeping the amounts (Shopify relabels, it
+   * does not convert). Returns how many variants changed. No event: a mass relabel is not a per-product
+   * fact downstream contexts replay.
+   */
+  relabelCurrency(currency: string): number {
+    let changed = 0;
+    for (const variant of this.props.variants) {
+      if (variant.relabelCurrency(currency)) changed += 1;
+    }
+    return changed;
+  }
+
   /** Plan 2C-1. No event of its own — `UpdateProduct` already raises `product.updated`. */
   setDetails(details: ProductDetails): void {
     this.props.details = details;

@@ -11,16 +11,11 @@ const addToCart =
       productId: string,
       quantity: number,
       variantId: string | undefined,
-      currency: string,
     ) => Promise<CartActionResult>
   >();
 vi.mock("@/app/cart/actions", () => ({
-  addToCart: (
-    productId: string,
-    quantity: number,
-    variantId: string | undefined,
-    currency: string,
-  ) => addToCart(productId, quantity, variantId, currency),
+  addToCart: (productId: string, quantity: number, variantId: string | undefined) =>
+    addToCart(productId, quantity, variantId),
 }));
 
 const product: PublishedProduct = {

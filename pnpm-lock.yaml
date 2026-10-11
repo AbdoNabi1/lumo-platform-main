@@ -245,6 +245,9 @@ importers:
       '@platform/design':
         specifier: workspace:*
         version: link:../../packages/design
+      '@platform/regions':
+        specifier: workspace:*
+        version: link:../../packages/regions
       '@platform/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -3791,6 +3794,9 @@ importers:
       '@platform/eslint-config':
         specifier: workspace:*
         version: link:../../packages/eslint-config
+      '@platform/regions':
+        specifier: workspace:*
+        version: link:../../packages/regions
       '@platform/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig

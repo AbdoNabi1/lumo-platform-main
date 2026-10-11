@@ -25,6 +25,7 @@ import {
 import { removeProductVariantAction, updateVariantDetailsAction } from "@/app/products/actions";
 import type { FormState } from "@/lib/api/mutation";
 import type { ProductDetailDto, ProductVariantDto } from "@/lib/api/products";
+import type { WeightUnit } from "@/lib/api/store-settings";
 import { formatNumber } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import { fromMinorUnits } from "@/lib/products/money";
@@ -68,6 +69,7 @@ export function VariantsCard({
   locale,
   onPlanChange,
   onOptionCountChange,
+  weightUnit,
   errors = NO_ERRORS,
 }: {
   readonly product: ProductDetailDto;
@@ -78,6 +80,8 @@ export function VariantsCard({
   readonly onPlanChange: (summary: { adds: number; removes: number }) => void;
   /** How many complete options are typed, so the page can hide the single variant's cards. */
   readonly onOptionCountChange?: (count: number) => void;
+  /** The store's weight unit: variant weights are typed and shown in it. */
+  readonly weightUnit: WeightUnit;
   readonly errors?: Readonly<Record<string, string>>;
 }) {
   const editor = t.productEditor;
@@ -315,6 +319,7 @@ export function VariantsCard({
             onClose={() => setEditingId(null)}
             t={t}
             locale={locale}
+            weightUnit={weightUnit}
           />
         )}
       </Dialog>
@@ -328,12 +333,14 @@ function VariantDialog({
   onClose,
   t,
   locale,
+  weightUnit,
 }: {
   readonly product: ProductDetailDto;
   readonly variant: ProductVariantDto;
   readonly onClose: () => void;
   readonly t: Dictionary;
   readonly locale: Locale;
+  readonly weightUnit: WeightUnit;
 }) {
   const editor = t.productEditor;
   const [state, formAction, isPending] = useActionState(updateVariantDetailsAction, INITIAL_STATE);
@@ -415,6 +422,7 @@ function VariantDialog({
           <ShippingBody
             physical={physical}
             weightGrams={variant.weightGrams}
+            weightUnit={weightUnit}
             errors={errors}
             t={t}
             form={undefined}

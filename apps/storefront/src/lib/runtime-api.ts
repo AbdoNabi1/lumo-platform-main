@@ -256,6 +256,28 @@ async function postItem<T>(
   }
 }
 
+/** What the storefront may know about the shop without signing in (Plan 3C): its name and currency. */
+export interface PublicStore {
+  readonly name: string;
+  /** The store currency (ISO 4217): every price, cart and order of the shop is in it. */
+  readonly currency: string;
+}
+
+/** The shop's name and currency (`GET /public/store`); `null` when the Runtime API cannot answer. */
+export async function getPublicStore(): Promise<PublicStore | null> {
+  const response = await fetchItem<PublicStore>("/api/v1/public/store");
+  const body = response.body;
+  if (
+    response.status !== 200 ||
+    body === null ||
+    typeof body.name !== "string" ||
+    typeof body.currency !== "string"
+  ) {
+    return null;
+  }
+  return { name: body.name, currency: body.currency };
+}
+
 /** Products — Catalog (`GET /public/products`, Phase 9). */
 export function getProducts(
   first: number = MAX_PAGE_SIZE,

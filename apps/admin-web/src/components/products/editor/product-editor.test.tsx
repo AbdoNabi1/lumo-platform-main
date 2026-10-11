@@ -75,6 +75,7 @@ const base = {
   brands: [],
   categories: [],
   defaultCurrency: "EGP",
+  weightUnit: "kg" as const,
   t: en,
   locale: "en",
   stock,

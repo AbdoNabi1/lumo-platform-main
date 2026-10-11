@@ -60,7 +60,7 @@ const config: NextConfig = {
   // Trace from the monorepo root so workspace packages are bundled into standalone output.
   outputFileTracingRoot: fileURLToPath(new URL("../../", import.meta.url)),
   // Compile the design-system packages from source — no pre-build step needed.
-  transpilePackages: ["@platform/ui", "@platform/design"],
+  transpilePackages: ["@platform/ui", "@platform/design", "@platform/regions"],
   async headers() {
     return [{ source: "/(.*)", headers: SECURITY_HEADERS }];
   },

@@ -43,6 +43,7 @@ import { MoveCategory } from "./application/move-category.use-case";
 import { MoveProductBetweenCollections } from "./application/move-product-between-collections.use-case";
 import { PublishCollection } from "./application/publish-collection.use-case";
 import { PublishProduct } from "./application/publish-product.use-case";
+import { RelabelVariantCurrency } from "./application/relabel-variant-currency.use-case";
 import { RemoveProductFromCollection } from "./application/remove-product-from-collection.use-case";
 import { RemoveVariant } from "./application/remove-variant.use-case";
 import { RenameCollection } from "./application/rename-collection.use-case";
@@ -61,7 +62,7 @@ import { UpdateVariant } from "./application/update-variant.use-case";
 import type { BrandRepository } from "./domain/brand-repository";
 import type { CategoryRepository } from "./domain/category-repository";
 import type { CollectionRepository } from "./domain/collection-repository";
-import type { ProductRepository } from "./domain/product-repository";
+import type { ProductRepository, VariantCurrencyRelabeler } from "./domain/product-repository";
 import { CatalogEventTranslator } from "./infrastructure/catalog-event-translator";
 import { InMemoryBrandRepository } from "./infrastructure/in-memory-brand-repository";
 import { InMemoryCategoryRepository } from "./infrastructure/in-memory-category-repository";
@@ -115,7 +116,7 @@ export interface WiredCatalog {
 }
 
 interface CatalogRepos {
-  readonly products: ProductRepository;
+  readonly products: ProductRepository & VariantCurrencyRelabeler;
   readonly categories: CategoryRepository;
   readonly brands: BrandRepository;
   readonly collections: CollectionRepository;
@@ -164,6 +165,7 @@ function buildControllers(
     attachMedia: new AttachMedia({ products, unitOfWork, idGenerator, clock }),
     detachMedia: new DetachMedia({ products, unitOfWork, idGenerator, clock }),
     reorderMedia: new ReorderMedia({ products, unitOfWork, idGenerator, clock }),
+    relabelVariantCurrency: new RelabelVariantCurrency({ products, unitOfWork }),
   });
 
   const categoryController = new CategoryController({

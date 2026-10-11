@@ -1,6 +1,28 @@
 import { describe, expect, it } from "vitest";
 
-import { COUNTRY_CODES, PROVINCES, hasProvinces, isProvinceOf, provinceName } from "./index";
+import {
+  COUNTRY_CODES,
+  CURRENCY_CODES,
+  PROVINCES,
+  hasProvinces,
+  isCurrencyCode,
+  isProvinceOf,
+  provinceName,
+} from "./index";
+
+describe("CURRENCY_CODES / isCurrencyCode", () => {
+  it("lists ISO 4217 codes once, uppercase, including the ones the shops use", () => {
+    expect(new Set(CURRENCY_CODES).size).toBe(CURRENCY_CODES.length);
+    for (const code of CURRENCY_CODES) expect(code).toMatch(/^[A-Z]{3}$/);
+    expect(CURRENCY_CODES).toEqual(expect.arrayContaining(["EGP", "SAR", "AED", "USD", "EUR"]));
+  });
+  it("accepts a listed code and rejects anything else", () => {
+    expect(isCurrencyCode("EGP")).toBe(true);
+    expect(isCurrencyCode("egp")).toBe(false);
+    expect(isCurrencyCode("XXX")).toBe(false);
+    expect(isCurrencyCode("")).toBe(false);
+  });
+});
 
 describe("COUNTRY_CODES", () => {
   it("lists every ISO 3166-1 alpha-2 code once, uppercase", () => {

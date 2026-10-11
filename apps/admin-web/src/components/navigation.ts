@@ -127,14 +127,22 @@ export const PRIMARY_NAV: readonly NavItem[] = [
  * The one customer-facing surface that actually exists in this monorepo (`apps/storefront`).
  * POS and Mobile app were removed here: they had `/channels/pos` and `/channels/mobile-app`
  * hrefs pointing at pages that have never existed, so both rendered the 404 screen.
- * `NEXT_PUBLIC_*` because `sidebar-nav.tsx` renders in the browser bundle.
+ *
+ * Plan 3C: the address is the runtime `STOREFRONT_URL` (read by the server shell at request time and
+ * passed down, as the product page's Preview button does). `NEXT_PUBLIC_*` is inlined at build time
+ * and this app's image is built without build args, so it fell back to `http://localhost:3000` in
+ * production. Unset or blank now means no link at all — never a localhost guess.
  */
-export const SALES_CHANNEL_NAV: readonly NavItem[] = [
-  {
-    id: "storefront",
-    label: (t) => t.nav.storefront,
-    href: process.env["NEXT_PUBLIC_STOREFRONT_URL"] ?? "http://localhost:3000",
-    Icon: StoreIcon,
-    external: true,
-  },
-];
+export function salesChannelNav(storefrontUrl: string | null | undefined): readonly NavItem[] {
+  const href = storefrontUrl?.trim();
+  if (href === undefined || href === "") return [];
+  return [
+    {
+      id: "storefront",
+      label: (t) => t.nav.storefront,
+      href,
+      Icon: StoreIcon,
+      external: true,
+    },
+  ];
+}

@@ -51,7 +51,17 @@ interface AppShellProps {
  * RTL is a direction change on `<html dir>` rather than a second stylesheet.
  */
 export function AppShell({ children, t, locale, activeNavId, user }: AppShellProps) {
-  const nav = <SidebarNav t={t} locale={locale} activeId={activeNavId} collapsible />;
+  // Read per request, on the server: NEXT_PUBLIC_* would be frozen at build time (Plan 3C).
+  const storefrontUrl = process.env["STOREFRONT_URL"]?.trim() || null;
+  const nav = (
+    <SidebarNav
+      t={t}
+      locale={locale}
+      activeId={activeNavId}
+      collapsible
+      storefrontUrl={storefrontUrl}
+    />
+  );
 
   return (
     <div className="lumo-canvas flex min-h-dvh">
@@ -113,7 +123,12 @@ export function AppShell({ children, t, locale, activeNavId, user }: AppShellPro
               </div>
             }
           >
-            <SidebarNav t={t} locale={locale} activeId={activeNavId} />
+            <SidebarNav
+              t={t}
+              locale={locale}
+              activeId={activeNavId}
+              storefrontUrl={storefrontUrl}
+            />
           </MobileNav>
 
           <div className="flex items-center gap-2 md:hidden">
@@ -121,7 +136,11 @@ export function AppShell({ children, t, locale, activeNavId, user }: AppShellPro
             <span className="font-semibold">{t.brand}</span>
           </div>
 
-          <GlobalSearch t={t} className="mx-auto hidden w-full max-w-md sm:flex" />
+          <GlobalSearch
+            t={t}
+            className="mx-auto hidden w-full max-w-md sm:flex"
+            storefrontUrl={storefrontUrl}
+          />
 
           <div className="ms-auto flex items-center gap-1 sm:gap-2">
             <div className="hidden sm:block">

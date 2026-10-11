@@ -25,6 +25,11 @@ import {
   VerifyDomain,
 } from "./application/shop-domains.use-cases";
 import {
+  GetPublicStore,
+  GetStoreSettings,
+  UpdateStoreSettings,
+} from "./application/store-settings.use-cases";
+import {
   ActivateTenant,
   ArchiveWorkspace,
   CancelTenant,
@@ -36,17 +41,20 @@ import {
 } from "./application/tenancy.use-cases";
 import type {
   ShopDomainRepository,
+  StoreSettingsRepository,
   TenantRepository,
   WorkspaceRepository,
 } from "./domain/repositories";
 import {
   InMemoryShopDomainRepository,
+  InMemoryStoreSettingsRepository,
   InMemoryTenantRepository,
   InMemoryWorkspaceRepository,
 } from "./infrastructure/in-memory-repositories";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import {
   PrismaShopDomainRepository,
+  PrismaStoreSettingsRepository,
   PrismaTenantRepository,
   PrismaWorkspaceRepository,
 } from "./infrastructure/prisma-repositories";
@@ -94,6 +102,7 @@ interface TenancyRepos {
   readonly tenants: TenantRepository;
   readonly workspaces: WorkspaceRepository;
   readonly domains: ShopDomainRepository;
+  readonly storeSettings: StoreSettingsRepository;
 }
 
 /** Builds the `TenancyController` from an already-wired repo set — shared by both branches so the use-case wiring is written exactly once. */
@@ -135,6 +144,9 @@ function buildController(
     setPrimaryDomain: new SetPrimaryDomain(tenancyDeps),
     listShopDomains: new ListShopDomains(tenancyDeps),
     resolveHost: new ResolveHost(tenancyDeps),
+    getStoreSettings: new GetStoreSettings({ settings: repos.storeSettings }),
+    updateStoreSettings: new UpdateStoreSettings({ settings: repos.storeSettings, unitOfWork }),
+    getPublicStore: new GetPublicStore({ settings: repos.storeSettings }),
   });
 }
 
@@ -168,6 +180,7 @@ export function wireTenancy(deps: TenancyWiringDeps): WiredTenancy {
       tenants: new PrismaTenantRepository(tenancyDeps),
       workspaces: new PrismaWorkspaceRepository(tenancyDeps),
       domains: new PrismaShopDomainRepository(tenancyDeps),
+      storeSettings: new PrismaStoreSettingsRepository(tenancyDeps),
     };
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
@@ -195,6 +208,7 @@ export function wireTenancy(deps: TenancyWiringDeps): WiredTenancy {
     tenants: new InMemoryTenantRepository({ outbox: outboxWriter, context }),
     workspaces: new InMemoryWorkspaceRepository({ outbox: outboxWriter, context }),
     domains: new InMemoryShopDomainRepository(),
+    storeSettings: new InMemoryStoreSettingsRepository(),
   };
   const unitOfWork = new InMemoryUnitOfWork();
   const controller = buildController(repos, unitOfWork, deps);

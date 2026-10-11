@@ -167,6 +167,29 @@ export class TenancyAdminController {
     return this.tenancy.resolveHost(input);
   }
 
+  async getStoreSettings(principal: Principal): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:read");
+    if (denied) return denied;
+    return this.tenancy.getStoreSettings();
+  }
+
+  async updateStoreSettings(
+    principal: Principal,
+    input: Parameters<TenancyController["updateStoreSettings"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:update");
+    if (denied) return denied;
+    return this.tenancy.updateStoreSettings(input);
+  }
+
+  /**
+   * Plan 3C: UNGUARDED on purpose — the storefront needs the shop's name and currency before anyone
+   * is signed in. The Tenancy use case returns only those two fields.
+   */
+  async getPublicStore(): Promise<AdminResponse> {
+    return this.tenancy.getPublicStore();
+  }
+
   async getCurrentWorkspace(principal: Principal): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "tenancy:read");
     if (denied) return denied;

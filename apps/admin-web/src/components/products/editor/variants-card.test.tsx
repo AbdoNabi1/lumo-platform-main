@@ -107,6 +107,7 @@ function renderCard(
         t={en}
         locale="en"
         onPlanChange={onPlanChange}
+        weightUnit="kg"
         errors={extra.errors ?? {}}
       />,
     ),

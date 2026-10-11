@@ -8,11 +8,17 @@ import "@fontsource/ibm-plex-sans-arabic/600.css";
 import "./globals.css";
 import { ThemeProvider } from "@platform/ui";
 import { DEFAULT_LOCALE, directionFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { getPublicStore } from "@/lib/runtime-api";
 
-export const metadata: Metadata = {
-  title: "Platform — foundation",
-  description: "Monorepo foundation (Phase 2, Sprint 0.1).",
-};
+/**
+ * Plan 3C: the tab shows the shop's own name (Settings → General), or "Store" until it has one — not a
+ * build-time placeholder. Read per request, so renaming the shop shows on the next page load.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const store = await getPublicStore();
+  const name = store?.name.trim() ?? "";
+  return { title: name.length > 0 ? name : "Store" };
+}
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;

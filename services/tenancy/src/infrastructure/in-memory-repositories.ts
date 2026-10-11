@@ -3,10 +3,12 @@ import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/r
 import type { CursorPage, Paginated } from "@platform/types";
 import type {
   ShopDomainRepository,
+  StoreSettingsRepository,
   TenantRepository,
   WorkspaceRepository,
 } from "../domain/repositories";
 import type { ShopDomain } from "../domain/shop-domain";
+import type { StoreSettings } from "../domain/store-settings";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
 
@@ -123,5 +125,18 @@ export class InMemoryShopDomainRepository implements ShopDomainRepository {
     return [...this.store.values()]
       .filter((domain) => domain.shopRef === shopRef)
       .sort((a, b) => a.hostname.value.localeCompare(b.hostname.value));
+  }
+}
+
+export class InMemoryStoreSettingsRepository implements StoreSettingsRepository {
+  private current: StoreSettings | null = null;
+
+  get(): Promise<StoreSettings | null> {
+    return Promise.resolve(this.current);
+  }
+
+  save(settings: StoreSettings): Promise<void> {
+    this.current = settings;
+    return Promise.resolve();
   }
 }

@@ -10,6 +10,7 @@ import {
   clearCart as clearCartApi,
   createCart,
   getCurrentCart,
+  getPublicStore,
   removeCartItem,
 } from "@/lib/runtime-api";
 
@@ -44,6 +45,14 @@ async function currentOrNewSessionRef(): Promise<string> {
   return sessionRef;
 }
 
+/** Starts a new guest session: a fresh opaque id in the cookie. The old session's cart is left behind. */
+async function replaceSessionRef(): Promise<string> {
+  const jar = await cookies();
+  const sessionRef = crypto.randomUUID();
+  jar.set(GUEST_SESSION_COOKIE, sessionRef, GUEST_SESSION_COOKIE_OPTIONS);
+  return sessionRef;
+}
+
 /** The existing guest session, if any — mutations on an already-rendered cart must never mint a new session out from under it. */
 async function existingSessionRef(): Promise<string | undefined> {
   const jar = await cookies();
@@ -64,8 +73,10 @@ function isVariantRequired(body: unknown): boolean {
  * add (Task 9's flow: session → cart-if-necessary → item added → cookie persists → `/cart` shows
  * it).
  *
- * Plan 2C-1: the Pricing screen is no longer consulted here. `currency` is the currency of the
- * variant being bought — only used to open a new cart; it is NEVER a price. The H-01 rule stands:
+ * Plan 3C: a new cart is opened in the STORE currency (`GET /public/store`), never one the browser
+ * names or one inferred from the product. A cart left over in another currency (the merchant changed
+ * the store currency) is replaced by a fresh cart on a new session. The currency is never a price.
+ * Plan 2C-1: the Pricing screen is not consulted here. The H-01 rule stands:
  * no price is sent to the Cart API, which resolves it server-side from the Catalog variant and
  * rejects any request that tries to supply one. A product the server will not sell answers 422,
  * which surfaces here as `"unavailable"`.
@@ -74,10 +85,10 @@ export async function addToCart(
   productId: string,
   quantity: number,
   variantId: string | undefined,
-  currency: string,
   sellableWhenOutOfStock = false,
 ): Promise<CartActionResult> {
-  if (currency.length === 0) return { ok: false, reason: "unavailable" };
+  const store = await getPublicStore();
+  if (store === null) return { ok: false, reason: "network" };
 
   // Plan 2B-1: the stock snapshot is the VARIANT's, and is left out for a variant that sells past
   // zero (it has no meaningful "available"). Still a display hint only — the server never trusts it.
@@ -85,7 +96,7 @@ export async function addToCart(
   const availability = availabilityBook?.resolve(productId, variantId);
   const inventoryAvailable = availability?.status === "ok" ? availability.available : undefined;
 
-  const sessionRef = await currentOrNewSessionRef();
+  let sessionRef = await currentOrNewSessionRef();
 
   const current = await getCurrentCart(sessionRef);
   if (current.status < 200 || current.status >= 300 || current.body === null) {
@@ -93,8 +104,12 @@ export async function addToCart(
   }
 
   let cartId = current.body.cart?.id;
+  if (cartId !== undefined && current.body.cart?.currency !== store.currency) {
+    sessionRef = await replaceSessionRef();
+    cartId = undefined;
+  }
   if (cartId === undefined) {
-    const created = await createCart(sessionRef, currency);
+    const created = await createCart(sessionRef, store.currency);
     if (created.status < 200 || created.status >= 300 || created.body === null) {
       return { ok: false, reason: "network" };
     }

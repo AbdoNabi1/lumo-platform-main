@@ -1,4 +1,4 @@
-import { Entity, type Money, type UniqueEntityId, ValidationError } from "@platform/domain";
+import { Entity, Money, type UniqueEntityId, ValidationError } from "@platform/domain";
 import type { Sku } from "./value-objects/sku";
 import type { VariantSelection } from "./value-objects/variant-selection";
 
@@ -104,6 +104,27 @@ export class Variant extends Entity<VariantProps> {
     this.props.price = changes.price;
     this.props.selection = changes.selection;
     this.props.attributes = changes.attributes;
+  }
+
+  /**
+   * Plan 3C: the store currency changed. Keeps every amount and switches the currency of the price,
+   * the compare-at price and the cost together. Returns whether anything changed.
+   */
+  relabelCurrency(currency: string): boolean {
+    if (this.props.price.currency === currency) return false;
+    const relabel = (money: Money): Money => {
+      const result = Money.create(money.amountMinor, currency);
+      if (!result.ok) throw result.error;
+      return result.value;
+    };
+    const { compareAtPrice, cost } = this.props.attributes;
+    this.props.price = relabel(this.props.price);
+    this.props.attributes = {
+      ...this.props.attributes,
+      compareAtPrice: compareAtPrice === null ? null : relabel(compareAtPrice),
+      cost: cost === null ? null : relabel(cost),
+    };
+    return true;
   }
 
   get sku(): Sku {

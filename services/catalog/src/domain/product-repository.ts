@@ -27,3 +27,12 @@ export interface ProductRepository {
     tx?: unknown,
   ): Promise<Paginated<Product>>;
 }
+
+/**
+ * Plan 3C: the store currency changed. Sets every variant of the tenant to `currency`, keeping the
+ * amounts. Idempotent. Returns the number of variants changed. A separate port so the many
+ * `ProductRepository` fakes need no new method.
+ */
+export interface VariantCurrencyRelabeler {
+  relabelCurrency(currency: string, tenantId: string, tx?: unknown): Promise<number>;
+}

@@ -11,7 +11,7 @@ import type { CategoryRepository } from "../domain/category-repository";
 import type { Collection } from "../domain/collection";
 import type { CollectionRepository } from "../domain/collection-repository";
 import type { Product } from "../domain/product";
-import type { ProductRepository } from "../domain/product-repository";
+import type { ProductRepository, VariantCurrencyRelabeler } from "../domain/product-repository";
 import {
   BrandMapper,
   CategoryMapper,
@@ -60,11 +60,20 @@ function readScoped<T>(
  * aggregate; each save reconciles it (create-missing, delete-removed, update-changed).
  * Optimistic locking + same-transaction outbox per ADR-0003.
  */
-export class PrismaProductRepository implements ProductRepository {
+export class PrismaProductRepository implements ProductRepository, VariantCurrencyRelabeler {
   private readonly deps: PrismaCatalogRepositoryDeps;
 
   constructor(deps: PrismaCatalogRepositoryDeps) {
     this.deps = deps;
+  }
+
+  async relabelCurrency(currency: string, tenantId: string, tx?: unknown): Promise<number> {
+    const client = requireTx(tx, "PrismaProductRepository");
+    const updated = await client.productVariant.updateMany({
+      where: { tenantId, NOT: { currency } },
+      data: { currency },
+    });
+    return updated.count;
   }
 
   async save(product: Product, tenantId: string, tx?: unknown): Promise<void> {

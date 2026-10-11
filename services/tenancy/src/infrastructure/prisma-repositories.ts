@@ -6,14 +6,17 @@ import { ConcurrencyError } from "@platform/utils";
 import type { Prisma } from "@prisma/client";
 import type {
   ShopDomainRepository,
+  StoreSettingsRepository,
   TenantRepository,
   WorkspaceRepository,
 } from "../domain/repositories";
 import type { ShopDomain } from "../domain/shop-domain";
+import type { StoreSettings } from "../domain/store-settings";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
 import {
   ShopDomainMapper,
+  StoreSettingsMapper,
   TenantMapper,
   WorkspaceMapper,
   type ShopDomainRow,
@@ -232,5 +235,30 @@ export class PrismaShopDomainRepository implements ShopDomainRepository {
       orderBy: { hostname: "asc" },
     });
     return rows.map((row) => ShopDomainMapper.toDomain(row as ShopDomainRow));
+  }
+}
+
+export class PrismaStoreSettingsRepository implements StoreSettingsRepository {
+  private readonly deps: PrismaTenancyRepositoriesDeps;
+
+  constructor(deps: PrismaTenancyRepositoriesDeps) {
+    this.deps = deps;
+  }
+
+  async get(tx?: unknown): Promise<StoreSettings | null> {
+    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+    const row = await client.storeSettings.findFirst({ where: { tenantId: this.deps.tenantId } });
+    return row === null ? null : StoreSettingsMapper.toDomain(row);
+  }
+
+  async save(settings: StoreSettings, tx?: unknown): Promise<void> {
+    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+    const tenantId = this.deps.tenantId;
+    const data = StoreSettingsMapper.toRow(settings);
+    await client.storeSettings.upsert({
+      where: { tenantId },
+      create: { tenantId, ...data },
+      update: data,
+    });
   }
 }

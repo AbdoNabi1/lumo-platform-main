@@ -261,6 +261,8 @@ describe("saveProductAction", () => {
   it.each([
     ["1.5", "kg", 1500],
     ["250", "g", 250],
+    ["1", "lb", 454],
+    ["2", "oz", 57],
     ["", "g", null],
   ] as const)("reads weight %s %s as %s grams", async (weight, weightUnit, grams) => {
     use(product());

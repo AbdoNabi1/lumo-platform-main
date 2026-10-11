@@ -2,7 +2,7 @@ import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/r
 import type { CursorPage, Paginated } from "@platform/types";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { Product } from "../domain/product";
-import type { ProductRepository } from "../domain/product-repository";
+import type { ProductRepository, VariantCurrencyRelabeler } from "../domain/product-repository";
 
 export interface InMemoryProductRepositoryDeps {
   readonly outbox: OutboxWriter;
@@ -17,7 +17,7 @@ export interface InMemoryProductRepositoryDeps {
  * carries no `tenantId` of its own, so the store must key on it explicitly or a cross-tenant leak
  * here would be invisible to every isolation test.
  */
-export class InMemoryProductRepository implements ProductRepository {
+export class InMemoryProductRepository implements ProductRepository, VariantCurrencyRelabeler {
   private readonly store = new Map<
     string,
     { readonly tenantId: string; readonly product: Product }
@@ -70,6 +70,14 @@ export class InMemoryProductRepository implements ProductRepository {
 
   async delete(product: Product, tenantId: string, tx?: unknown): Promise<void> {
     await this.save(product, tenantId, tx);
+  }
+
+  relabelCurrency(currency: string, tenantId: string): Promise<number> {
+    let changed = 0;
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId) changed += entry.product.relabelCurrency(currency);
+    }
+    return Promise.resolve(changed);
   }
 
   async list(page: CursorPage, tenantId: string): Promise<Paginated<Product>> {

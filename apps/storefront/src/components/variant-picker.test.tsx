@@ -12,7 +12,6 @@ const addToCart =
       productId: string,
       quantity: number,
       variantId: string | undefined,
-      currency: string,
       sellableWhenOutOfStock?: boolean,
     ) => Promise<CartActionResult>
   >();
@@ -21,12 +20,11 @@ vi.mock("@/app/cart/actions", () => ({
     productId: string,
     quantity: number,
     variantId: string | undefined,
-    currency: string,
     sellableWhenOutOfStock?: boolean,
   ) =>
     sellableWhenOutOfStock === undefined
-      ? addToCart(productId, quantity, variantId, currency)
-      : addToCart(productId, quantity, variantId, currency, sellableWhenOutOfStock),
+      ? addToCart(productId, quantity, variantId)
+      : addToCart(productId, quantity, variantId, sellableWhenOutOfStock),
 }));
 
 beforeEach(() => {
@@ -83,7 +81,7 @@ describe("VariantPicker", () => {
     expect(screen.queryByText("$100.00")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
-    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-l", "USD"));
+    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-l"));
   });
 
   it("strikes through the chosen variant's own compare-at price, and only that one (Plan 2C-1)", () => {
@@ -100,7 +98,7 @@ describe("VariantPicker", () => {
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
 
-    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-s", "USD"));
+    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-s"));
   });
 
   it("a combination with no variant says so and disables add-to-cart", () => {
@@ -155,7 +153,7 @@ describe("VariantPicker", () => {
     expect(screen.getByText("$50.00")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
-    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-mug", 1, "v-mug", "USD"));
+    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-mug", 1, "v-mug"));
   });
 
   it("takes its labels from the Arabic dictionary", () => {
@@ -212,9 +210,7 @@ describe("VariantPicker", () => {
     expect(button).toBeEnabled();
     expect(screen.queryByText(en.product.outOfStock)).not.toBeInTheDocument();
     fireEvent.click(button);
-    await waitFor(() =>
-      expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-s", "USD", true),
-    );
+    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-shirt", 1, "v-s", true));
   });
 
   it("does not disable a variant whose stock is unknown", () => {

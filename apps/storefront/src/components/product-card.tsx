@@ -52,7 +52,6 @@ export function ProductCard({
           <AddToCartButton
             productId={product.id}
             variantId={product.variants[0]?.id}
-            currency={product.variants[0]?.currency ?? ""}
             outOfStock={outOfStock}
             sellableWhenOutOfStock={product.variants[0]?.sellableWhenOutOfStock}
             t={t}

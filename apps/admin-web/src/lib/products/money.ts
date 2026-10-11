@@ -1,6 +1,3 @@
-/** Currencies offered in the price fields until a store currency setting exists (G-99). */
-export const SUPPORTED_CURRENCIES = ["EGP", "USD", "SAR", "AED", "KWD", "QAR", "EUR"] as const;
-
 /** Minor-unit exponent of an ISO-4217 currency (EGP 2, JPY 0, KWD 3), from the runtime's Intl data. */
 export function currencyExponent(currency: string): number {
   try {
