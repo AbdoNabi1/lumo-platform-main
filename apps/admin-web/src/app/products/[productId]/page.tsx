@@ -4,13 +4,12 @@ import { cookies } from "next/headers";
 import { AlertTriangleIcon, ArrowLeftIcon, LockIcon, SearchXIcon } from "lucide-react";
 import { Button, Card, CardContent } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import { ProductMediaCard } from "@/components/products/editor/media-card";
 import { ProductEditor } from "@/components/products/editor/product-editor";
 import { ProductLifecycleActions } from "@/components/products/product-lifecycle-actions";
-import { ProductMediaCard } from "@/components/products/product-media-card";
 import { ProductStatusBadge } from "@/components/products/product-status-badge";
 import { fetchBrandsPage } from "@/lib/api/brands";
 import { fetchCategoriesPage } from "@/lib/api/categories";
-import { fetchMediaDownloadUrl } from "@/lib/api/media";
 import { fetchWarehouses } from "@/lib/api/inventory";
 import { fetchProduct, fetchProductInventory } from "@/lib/api/products";
 import { storeSettingsOrDefaults } from "@/lib/api/store-settings";
@@ -75,18 +74,6 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
   }
 
   const product = result.product;
-
-  // T3.6: resolve a download URL per attached media asset — there is no list/batch endpoint
-  // (see `docs/plans/BLOCKERS.md`), so this fans out one `GET /media/assets/:id/download-url`
-  // call per id, same fan-out shape as `lib/api/licensing.ts`'s `fetchUsageCounters`. A failed
-  // lookup renders an explicit "unavailable" state for that one asset (README rule #4) rather
-  // than hiding it or fabricating a link.
-  const mediaAssets = await Promise.all(
-    product.mediaAssetIds.map(async (id) => {
-      const downloadResult = await fetchMediaDownloadUrl(id);
-      return { id, url: downloadResult.outcome === "ok" ? downloadResult.url : null };
-    }),
-  );
 
   // The editor's vendor select and categories checklist need the lists — fetched here, server-side
   // (never from the Client Component), and capped to the first page (100). A failed fetch degrades
@@ -160,7 +147,14 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
           stock={stock}
           storefrontUrl={storefrontUrl}
           slots={{
-            media: <ProductMediaCard productId={product.id} mediaAssets={mediaAssets} t={t} />,
+            media: (
+              <ProductMediaCard
+                productId={product.id}
+                productName={product.name}
+                media={product.media ?? []}
+                t={t}
+              />
+            ),
             dangerZone: (
               <ProductLifecycleActions productId={product.id} status={product.status} t={t} />
             ),

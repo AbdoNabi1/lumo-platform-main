@@ -30,6 +30,7 @@ const {
   attachProductMedia,
   detachProductMedia,
   reorderProductMedia,
+  setProductVariantImage,
 } = await import("./products");
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -297,6 +298,19 @@ describe("T5.1 write functions", () => {
     expect(url).toBe("http://runtime.test/api/v1/products/product-1/media/asset-1");
     expect(init.method).toBe("DELETE");
     expect(init.body).toBeUndefined();
+  });
+
+  it("setProductVariantImage sends a PUT with the media id, or null to clear", async () => {
+    const fetchMock = stubOk();
+    await setProductVariantImage("product-1", "variant-1", "asset-1", "key-17");
+    const [url, init] = requestOf(fetchMock);
+    expect(url).toBe("http://runtime.test/api/v1/products/product-1/variants/variant-1/image");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toEqual({ mediaId: "asset-1" });
+
+    const cleared = stubOk();
+    await setProductVariantImage("product-1", "variant-1", null, "key-18");
+    expect(JSON.parse(requestOf(cleared)[1].body as string)).toEqual({ mediaId: null });
   });
 
   it("reorderProductMedia sends a PUT with the full assetIds order", async () => {

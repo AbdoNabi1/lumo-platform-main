@@ -37,6 +37,7 @@ import { PRODUCT_FORM_ID } from "./field";
 import { InventoryBody } from "./inventory-card";
 import { OptionsEditor } from "./options-editor";
 import { PricingFields } from "./pricing-card";
+import { VariantImagePicker } from "./variant-image-picker";
 import { ShippingBody } from "./shipping-card";
 
 const INITIAL_STATE: FormState = { status: "idle" };
@@ -363,6 +364,16 @@ function VariantDialog({
           {editor.currency}: {currency}
         </DialogDescription>
       </DialogHeader>
+
+      {/* Its own save (the variant-image action), apart from this dialog's Save. */}
+      <VariantImagePicker
+        productId={product.id}
+        variantId={variant.id}
+        productName={product.name}
+        media={product.media ?? []}
+        current={variant.imageId ?? null}
+        t={t}
+      />
 
       <form action={formAction} className="flex flex-col gap-4">
         <input type="hidden" name="productId" value={product.id} />

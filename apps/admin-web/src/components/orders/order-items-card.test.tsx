@@ -189,3 +189,27 @@ describe("OrderItemsCard — the fulfillment card like Shopify's (Plan 3B)", () 
     expect(screen.getByText("طريقة الشحن: شحن عادي")).toBeInTheDocument();
   });
 });
+
+describe("OrderItemsCard line pictures (Plan 2C-3)", () => {
+  it("shows the line's picture, described by the product name", () => {
+    render(
+      <OrderItemsCard
+        order={order({
+          items: [
+            item({
+              id: "i1",
+              name: "Cotton shirt",
+              imageUrl: "https://cdn.example.test/shirt.webp",
+            }),
+            item({ id: "i2", name: "Plain cup", imageUrl: null }),
+          ],
+        })}
+        t={en}
+        locale="en"
+      />,
+    );
+    const img = screen.getByRole("img", { name: "Cotton shirt" });
+    expect(img).toHaveAttribute("src", "https://cdn.example.test/shirt.webp");
+    expect(screen.queryByRole("img", { name: "Plain cup" })).not.toBeInTheDocument();
+  });
+});

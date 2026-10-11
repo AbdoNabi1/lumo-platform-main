@@ -485,6 +485,23 @@ export function detachProductMedia(
   );
 }
 
+/**
+ * `PUT /products/:productId/variants/:variantId/image` (`products:update`) — the variant's image: one
+ * of the product's own media, or `null` to clear it.
+ */
+export function setProductVariantImage(
+  productId: string,
+  variantId: string,
+  mediaId: string | null,
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(
+    path(productId, `/variants/${encodeURIComponent(variantId)}/image`),
+    { method: "PUT", body: { mediaId }, idempotencyKey },
+    isUnknown,
+  );
+}
+
 /** `PUT /products/:productId/media` (`idempotent: true`, `products:update`) — full reorder. */
 export function reorderProductMedia(
   productId: string,

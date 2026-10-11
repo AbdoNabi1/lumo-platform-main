@@ -22,6 +22,7 @@ import {
   setProductBrand,
   setProductOptions,
   setProductSeo,
+  setProductVariantImage,
   unlistProduct,
   unpublishProduct,
   updateProduct,
@@ -34,6 +35,7 @@ import {
   type ProductVariantDto,
 } from "@/lib/api/products";
 import { createBrand, fetchBrandsPage, type BrandDto } from "@/lib/api/brands";
+import { updateMediaAlt, uploadProductImage, type UploadedImageDto } from "@/lib/api/media";
 import { adjustStock, fetchWarehouses, receiveStock, registerWarehouse } from "@/lib/api/inventory";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import {
@@ -1148,6 +1150,10 @@ export async function createProductAction(
   if (categoryIds.length > 0) {
     followUps.push(() => assignProductCategories(id, categoryIds, newIdempotencyKey()));
   }
+  // Plan 2C-3: pictures uploaded before the product existed (hidden `mediaAssetId` inputs, in the
+  // merchant's order) are attached now. The first one becomes the featured image.
+  const uploadedIds = stringFieldValues(formData, "mediaAssetId").filter((v) => v.length > 0);
+  if (uploadedIds.length > 0) followUps.push(() => attachInOrder(id, uploadedIds));
   const moveStatus = statusCall(id, "draft", stringField(formData, "status"));
   if (moveStatus !== null) followUps.push(moveStatus);
 
@@ -1447,22 +1453,36 @@ export async function removeProductVariantAction(
   return toFormState(result, t);
 }
 
+/** Attaches each asset in order, one call each, stopping at the first failure. */
+async function attachInOrder(
+  productId: string,
+  assetIds: readonly string[],
+): Promise<MutationResult<unknown>> {
+  let last: MutationResult<unknown> = { outcome: "ok", data: {} };
+  for (const assetId of assetIds) {
+    last = await attachProductMedia(productId, assetId, newIdempotencyKey());
+    if (last.outcome !== "ok") return last;
+  }
+  return last;
+}
+
+/** Plan 2C-3: attaches every posted `assetId`, in the posted order (an upload batch lands in one call). */
 export async function attachProductMediaAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
   const t = await formErrorDictionary();
   const productId = stringField(formData, "productId");
-  const assetId = stringField(formData, "assetId");
-  if (productId.length === 0 || assetId.length === 0) {
+  const assetIds = stringFieldValues(formData, "assetId").filter((id) => id.length > 0);
+  if (productId.length === 0 || assetIds.length === 0) {
     return {
       status: "error",
       message: t.invalid,
-      fieldErrors: assetId.length === 0 ? { assetId: t.invalid } : {},
+      fieldErrors: assetIds.length === 0 ? { assetId: t.invalid } : {},
     };
   }
 
-  const result = await attachProductMedia(productId, assetId, newIdempotencyKey());
+  const result = await attachInOrder(productId, assetIds);
   if (result.outcome === "ok") {
     revalidatePath("/products");
     revalidatePath(`/products/${productId}`);
@@ -1471,24 +1491,25 @@ export async function attachProductMediaAction(
   return toFormState(result, t);
 }
 
+/** Detaches every posted `assetId` (one for a tile's Delete, several for the selection bar). */
 export async function detachProductMediaAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
   const t = await formErrorDictionary();
   const productId = stringField(formData, "productId");
-  const assetId = stringField(formData, "assetId");
-  if (productId.length === 0 || assetId.length === 0) {
+  const assetIds = stringFieldValues(formData, "assetId").filter((id) => id.length > 0);
+  if (productId.length === 0 || assetIds.length === 0) {
     return { status: "error", message: t.invalid, fieldErrors: {} };
   }
 
-  const result = await detachProductMedia(productId, assetId, newIdempotencyKey());
-  if (result.outcome === "ok") {
-    revalidatePath("/products");
-    revalidatePath(`/products/${productId}`);
-    return { status: "success" };
+  for (const assetId of assetIds) {
+    const result = await detachProductMedia(productId, assetId, newIdempotencyKey());
+    if (result.outcome !== "ok") return toFormState(result, t);
   }
-  return toFormState(result, t);
+  revalidatePath("/products");
+  revalidatePath(`/products/${productId}`);
+  return { status: "success" };
 }
 
 /** Full reorder — `assetIds` arrives as one repeated hidden field, already in the new order. */
@@ -1506,6 +1527,92 @@ export async function reorderProductMediaAction(
   const result = await reorderProductMedia(productId, assetIds, newIdempotencyKey());
   if (result.outcome === "ok") {
     revalidatePath("/products");
+    revalidatePath(`/products/${productId}`);
+    return { status: "success" };
+  }
+  return toFormState(result, t);
+}
+
+/** What the media card reads back from one upload. `reason` is a stable key; the card words it. */
+export type UploadImageState =
+  | { readonly status: "ok"; readonly image: UploadedImageDto }
+  | {
+      readonly status: "error";
+      readonly reason: "too_large" | "unsupported" | "unavailable" | "failed";
+    };
+
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Plan 2C-3 — uploads ONE image (the card sends them two at a time). The browser has already scaled and
+ * re-encoded it; this forwards the bytes to the runtime, which checks them again (magic bytes, 8 MB,
+ * never SVG). Called directly by the card, not through a form, so it returns a value instead of a
+ * `FormState`.
+ */
+export async function uploadProductImageAction(formData: FormData): Promise<UploadImageState> {
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { status: "error", reason: "unsupported" };
+  if (file.size > MAX_UPLOAD_BYTES) return { status: "error", reason: "too_large" };
+
+  const result = await uploadProductImage({
+    bytes: new Uint8Array(await file.arrayBuffer()),
+    contentType: file.type,
+    fileName: file.name,
+    idempotencyKey: newIdempotencyKey(),
+  });
+  switch (result.outcome) {
+    case "ok":
+      return { status: "ok", image: result.image };
+    case "unavailable":
+      return { status: "error", reason: "unavailable" };
+    case "too_large":
+      return { status: "error", reason: "too_large" };
+    case "unsupported":
+      return { status: "error", reason: "unsupported" };
+    default:
+      return { status: "error", reason: "failed" };
+  }
+}
+
+/** Plan 2C-3 — sets or clears one image's alt text. Works before a product exists (no `productId`). */
+export async function updateMediaAltAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const t = await formErrorDictionary();
+  const mediaId = stringField(formData, "mediaId");
+  if (mediaId.length === 0) return { status: "error", message: t.invalid, fieldErrors: {} };
+
+  const alt = stringField(formData, "alt").trim();
+  const result = await updateMediaAlt(mediaId, alt.length === 0 ? null : alt, newIdempotencyKey());
+  if (result.outcome === "ok") {
+    const productId = stringField(formData, "productId");
+    if (productId.length > 0) revalidatePath(`/products/${productId}`);
+    return { status: "success" };
+  }
+  return toFormState(result, t);
+}
+
+/** Plan 2C-3 — the variant's image; a blank `mediaId` is the "None" choice. */
+export async function setVariantImageAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const t = await formErrorDictionary();
+  const productId = stringField(formData, "productId");
+  const variantId = stringField(formData, "variantId");
+  if (productId.length === 0 || variantId.length === 0) {
+    return { status: "error", message: t.invalid, fieldErrors: {} };
+  }
+
+  const mediaId = stringField(formData, "mediaId");
+  const result = await setProductVariantImage(
+    productId,
+    variantId,
+    mediaId.length === 0 ? null : mediaId,
+    newIdempotencyKey(),
+  );
+  if (result.outcome === "ok") {
     revalidatePath(`/products/${productId}`);
     return { status: "success" };
   }

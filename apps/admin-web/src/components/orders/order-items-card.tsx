@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { ImageIcon } from "lucide-react";
 import { Button, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import type { OrderDetailDto } from "@/lib/api/orders";
 import { formatCurrency } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
+import { ProductThumb } from "@/components/products/product-thumb";
 import { FulfillItemsButton } from "./fulfill-items-button";
 import { OrderFulfillmentStatusBadge } from "./order-status-badge";
 
@@ -31,8 +31,8 @@ function deliveryMethodLine(
 
 /**
  * The fulfillment card, like Shopify's: titled with the fulfillment status and the number of items
- * ("Unfulfilled (3)"), the delivery method, then one row per item — a placeholder tile (product images
- * arrive with Plan 2C-3), the title linking to the product, the variant and SKU, and
+ * ("Unfulfilled (3)"), the delivery method, then one row per item — the product picture (a placeholder tile when
+ * there is none), the title linking to the product, the variant and SKU, and
  * "price × quantity" with the line total. The footer is a "Fulfill items" button while nothing has been
  * opened (and the order is still live), or a "View fulfillment" link once a fulfillment exists.
  *
@@ -67,12 +67,7 @@ export function OrderItemsCard({
         <ul className="divide-border flex flex-col divide-y">
           {order.items.map((item) => (
             <li key={item.id} className="flex items-start gap-3 py-3 first:pt-0">
-              <div
-                aria-hidden="true"
-                className="bg-muted text-muted-foreground flex size-10 shrink-0 items-center justify-center rounded-lg"
-              >
-                <ImageIcon className="size-4" />
-              </div>
+              <ProductThumb url={item.imageUrl} alt={item.name} />
               <div className="min-w-0 flex-1">
                 <Link
                   href={`/products/${item.productId}`}

@@ -202,3 +202,70 @@ export async function mutateAdminApi<T>(
   }
   return { outcome: "ok", data: parsed };
 }
+
+/**
+ * The outcome of sending raw bytes (an image upload). The statuses an upload can meet that a JSON
+ * write never does are their own outcomes, so a screen can say "too large" or "storage isn't set up"
+ * instead of a generic failure.
+ */
+export type BinaryResult<T> =
+  | { readonly outcome: "ok"; readonly data: T }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unavailable" }
+  | { readonly outcome: "too_large" }
+  | { readonly outcome: "unsupported" }
+  | { readonly outcome: "error"; readonly message: string };
+
+/** Uploads need longer than a JSON call: up to 8 MB over a phone connection. */
+const UPLOAD_TIMEOUT_MS = 60_000;
+
+/**
+ * POSTs raw bytes to the admin runtime API — server-side only, like every function here (the bearer
+ * credential must never reach the browser). `headers` carries the file name; the `Idempotency-Key`
+ * and content type are set from the arguments.
+ */
+export async function sendAdminBinary<T>(
+  path: string,
+  init: {
+    readonly body: Uint8Array;
+    readonly contentType: string;
+    readonly idempotencyKey: string;
+    readonly headers?: Readonly<Record<string, string>>;
+  },
+  isValid: (value: unknown) => value is T,
+): Promise<BinaryResult<T>> {
+  const runtimeApiUrl = requireProdEnv("RUNTIME_API_URL", DEFAULT_RUNTIME_API_URL);
+  const headers = {
+    ...(await adminRequestHeaders()),
+    ...init.headers,
+    "content-type": init.contentType,
+    "idempotency-key": init.idempotencyKey,
+  };
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      `${runtimeApiUrl}${path}`,
+      { method: "POST", headers, body: init.body as BodyInit, cache: "no-store" },
+      UPLOAD_TIMEOUT_MS,
+    );
+  } catch (error) {
+    return {
+      outcome: "error",
+      message: error instanceof Error ? error.message : "Network error reaching the admin API",
+    };
+  }
+
+  if (response.status === 401 || response.status === 403) return { outcome: "unauthorized" };
+  if (response.status === 503) return { outcome: "unavailable" };
+  if (response.status === 413) return { outcome: "too_large" };
+  if (response.status === 415) return { outcome: "unsupported" };
+  if (!response.ok) {
+    return { outcome: "error", message: `Admin API responded with status ${response.status}` };
+  }
+  const parsed: unknown = await response.json().catch(() => null);
+  if (!isValid(parsed)) {
+    return { outcome: "error", message: "Admin API returned an unexpected response shape" };
+  }
+  return { outcome: "ok", data: parsed };
+}

@@ -3,7 +3,8 @@ import { cookies } from "next/headers";
 import { ArrowLeftIcon } from "lucide-react";
 import { Button } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
-import { ProductEditor } from "@/components/products/editor/product-editor";
+import { ProductMediaCard } from "@/components/products/editor/media-card";
+import { PRODUCT_FORM_ID, ProductEditor } from "@/components/products/editor/product-editor";
 import { fetchBrandsPage } from "@/lib/api/brands";
 import { fetchCategoriesPage } from "@/lib/api/categories";
 import { fetchWarehouses } from "@/lib/api/inventory";
@@ -63,7 +64,17 @@ export default async function NewProductPage() {
           locale={locale}
           stock={stock}
           storefrontUrl={null}
-          slots={{}}
+          slots={{
+            media: (
+              <ProductMediaCard
+                productId={null}
+                productName=""
+                media={[]}
+                t={t}
+                formId={PRODUCT_FORM_ID}
+              />
+            ),
+          }}
         />
       </div>
     </AppShell>

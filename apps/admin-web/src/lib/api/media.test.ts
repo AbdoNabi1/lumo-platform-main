@@ -134,3 +134,93 @@ describe("fetchMediaDownloadUrl", () => {
     expect(headers["authorization"]).toBe("Bearer staff-session-jwt");
   });
 });
+
+const { uploadProductImage, updateMediaAlt } = await import("./media");
+
+describe("uploadProductImage (Plan 2C-3)", () => {
+  const image = { id: "m-1", url: "https://cdn.test/a.webp", alt: null, width: 3, height: 2 };
+  const bytes = new Uint8Array([1, 2, 3]);
+
+  it("posts the raw bytes with the content type, the file name and an idempotency key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, image));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+    vi.stubEnv("TENANT_DEFAULT_ID", "tenant-x");
+    vi.stubEnv("ADMIN_API_TOKEN", "staff-token");
+
+    const result = await uploadProductImage({
+      bytes,
+      contentType: "image/webp",
+      fileName: "صورة حذاء.webp",
+      idempotencyKey: "key-1",
+    });
+
+    expect(result).toEqual({ outcome: "ok", image });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://runtime.test/api/v1/media/uploads");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(bytes);
+    const headers = init.headers as Record<string, string>;
+    expect(headers["content-type"]).toBe("image/webp");
+    expect(headers["idempotency-key"]).toBe("key-1");
+    expect(headers["x-tenant-id"]).toBe("tenant-x");
+    expect(headers["authorization"]).toBe("Bearer staff-token");
+    expect(decodeURIComponent(headers["x-file-name"]!)).toBe("صورة حذاء.webp");
+  });
+
+  it.each([
+    [503, { outcome: "unavailable" }],
+    [413, { outcome: "too_large" }],
+    [415, { outcome: "unsupported" }],
+    [401, { outcome: "unauthorized" }],
+    [403, { outcome: "unauthorized" }],
+  ])("maps a %i to %j", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(status, { code: "X" })));
+    expect(
+      await uploadProductImage({
+        bytes,
+        contentType: "image/png",
+        fileName: "a.png",
+        idempotencyKey: "k",
+      }),
+    ).toEqual(expected);
+  });
+
+  it("maps a network failure and an odd success body to the error outcome", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNRESET")));
+    const failed = await uploadProductImage({
+      bytes,
+      contentType: "image/png",
+      fileName: "a.png",
+      idempotencyKey: "k",
+    });
+    expect(failed).toEqual({ outcome: "error", message: "ECONNRESET" });
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(201, { nope: true })));
+    const odd = await uploadProductImage({
+      bytes,
+      contentType: "image/png",
+      fileName: "a.png",
+      idempotencyKey: "k",
+    });
+    expect(odd.outcome).toBe("error");
+  });
+});
+
+describe("updateMediaAlt (Plan 2C-3)", () => {
+  it("PATCHes the alt text of one asset", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { mediaAssetId: "m-1", alt: "x" }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+
+    const result = await updateMediaAlt("m-1", "Red shoe", "key-2");
+
+    expect(result.outcome).toBe("ok");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://runtime.test/api/v1/media/assets/m-1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({ alt: "Red shoe" });
+  });
+});

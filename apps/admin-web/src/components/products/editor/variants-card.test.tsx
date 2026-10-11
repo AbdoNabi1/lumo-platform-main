@@ -9,12 +9,15 @@ import { VariantsCard } from "./variants-card";
 type Action = (previous: FormState, formData: FormData) => Promise<FormState>;
 const updateVariantDetailsAction = vi.fn<Action>();
 const removeProductVariantAction = vi.fn<Action>();
+const setVariantImageAction = vi.fn<Action>();
 
 vi.mock("@/app/products/actions", () => ({
   updateVariantDetailsAction: (previous: FormState, formData: FormData) =>
     updateVariantDetailsAction(previous, formData),
   removeProductVariantAction: (previous: FormState, formData: FormData) =>
     removeProductVariantAction(previous, formData),
+  setVariantImageAction: (previous: FormState, formData: FormData) =>
+    setVariantImageAction(previous, formData),
 }));
 
 const t = en.productEditor;
@@ -412,5 +415,48 @@ describe("VariantsCard", () => {
     expect(
       within(several).getByRole("button", { name: en.productVariantsForm.remove }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("VariantsCard — the variant image (Plan 2C-3)", () => {
+  const picture = (id: string) => ({
+    id,
+    url: `https://cdn.example.test/${id}.webp`,
+    alt: null,
+    width: 10,
+    height: 10,
+  });
+
+  it("puts the Image picker in the variant dialog when the product has pictures, with the variant's own checked", async () => {
+    renderCard(
+      product({
+        options: [{ name: "Size", values: ["S"] }],
+        media: [picture("a"), picture("b")],
+        variants: [variant({ selection: { Size: "S" }, imageId: "b" })],
+      }),
+    );
+    fireEvent.click(within(rowsOf()[0]!).getByRole("button", { name: t.edit }));
+
+    const dialog = await screen.findByRole("dialog");
+    const group = within(dialog).getByRole("radiogroup", { name: en.productMedia.variantImage });
+    expect(within(group).getAllByRole("radio")).toHaveLength(3);
+    expect(within(group).getAllByRole("radio", { name: "Tee" })).toHaveLength(2);
+    expect(
+      within(group)
+        .getAllByRole("radio")
+        .filter((r) => r.getAttribute("aria-checked") === "true"),
+    ).toHaveLength(1);
+  });
+
+  it("leaves the picker out for a product with no pictures", async () => {
+    renderCard(
+      product({
+        options: [{ name: "Size", values: ["S"] }],
+        variants: [variant({ selection: { Size: "S" } })],
+      }),
+    );
+    fireEvent.click(within(rowsOf()[0]!).getByRole("button", { name: t.edit }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("radiogroup")).not.toBeInTheDocument();
   });
 });
