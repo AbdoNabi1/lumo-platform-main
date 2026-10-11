@@ -20,9 +20,9 @@ export interface TaxResult {
   readonly included: boolean;
 }
 
-/** What the order gave away before tax: a share of it is taken off the taxable lines and off the shipping price. */
+/** What the order gave away before tax: a share of it is taken off every line (taxable or not) and off the shipping price. */
 export interface TaxDiscounts {
-  /** The order-level discount, shared across the taxable lines in proportion to their amounts. */
+  /** The order-level discount, shared across ALL the lines in proportion to their amounts. */
   readonly orderMinor?: number | undefined;
   /** A discount on the shipping price, taken off it before it is taxed. */
   readonly shippingMinor?: number | undefined;
@@ -67,9 +67,10 @@ function roundedShare(amountMinor: number, basisPoints: number, divisor: number)
  *  - prices exclude tax: `tax = round(amount × r)`, added to the total.
  * Rounding is half up on minor units, line by line. A destination with no region has no tax.
  *
- * Tax is worked out AFTER discounts, like Shopify: the order discount is shared across the taxable
- * lines in proportion to their amounts ({@link allocateDiscount}; a line that is not taxable gets no
- * share), and the shipping price is taxed after its own discount.
+ * Tax is worked out AFTER discounts, like Shopify: the order discount is shared across ALL the
+ * lines in proportion to their amounts ({@link allocateDiscount}) — a line that is not taxable still
+ * absorbs its share — and only the taxable lines' discounted amounts are taxed. The shipping price is
+ * taxed after its own discount.
  */
 export function calculateTax(
   settings: TaxSettings,
@@ -88,13 +89,12 @@ export function calculateTax(
       ? roundedShare(amountMinor, rate, 10_000 + rate)
       : roundedShare(amountMinor, rate, 10_000);
 
-  const taxable = lines.filter((line) => line.taxable);
-  const amounts = taxable.map((line) => line.unitPriceMinor * line.quantity);
+  const amounts = lines.map((line) => line.unitPriceMinor * line.quantity);
   const shares = allocateDiscount(amounts, discounts.orderMinor ?? 0);
 
   let taxMinor = 0;
-  amounts.forEach((amount, index) => {
-    taxMinor += taxOf(amount - (shares[index] ?? 0));
+  lines.forEach((line, index) => {
+    if (line.taxable) taxMinor += taxOf((amounts[index] ?? 0) - (shares[index] ?? 0));
   });
   const shippingAfterDiscount = Math.max(
     0,

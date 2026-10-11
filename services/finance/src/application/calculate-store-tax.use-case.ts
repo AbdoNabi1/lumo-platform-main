@@ -17,7 +17,7 @@ export interface CalculateStoreTaxInput extends TenantInput {
   readonly destination: TaxDestination;
   /** The chosen shipping rate's price; taxed only when the shop charges tax on shipping. */
   readonly shippingMinor: number;
-  /** The order-level discount (Promotions' snapshot), shared across the taxable lines before they are taxed. */
+  /** The order-level discount (Promotions' snapshot), shared across all the lines (taxable or not), then only the taxable lines' discounted amounts are taxed. */
   readonly orderDiscountMinor?: number;
   /** A discount on the shipping price, taken off it before it is taxed. */
   readonly shippingDiscountMinor?: number;

@@ -247,19 +247,45 @@ describe("calculateTax — tax is worked out after discounts, like Shopify", () 
     expect(result).toEqual({ taxMinor: 2 * 1260, included: false });
   });
 
-  it("a line that is not taxable gets no share of the discount", () => {
+  it("a line that is not taxable still absorbs its share of the discount: 100.00 taxable + 100.00 not, 20.00 off, inclusive 14% -> tax on 90.00 only", () => {
     const result = calculateTax(
-      settings({ includes: false }, [EG]),
-      [line(10_000), line(10_000), line(10_000, 1, false)],
+      settings({ includes: true }, [EG]),
+      [line(10_000), line(10_000, 1, false)],
       { country: "EG" },
       0,
       { orderMinor: 2000 },
     );
 
-    expect(result.taxMinor).toBe(2 * 1260);
+    // the 20.00 is shared 10.00 / 10.00; only the taxable 90.00 is taxed: 90.00 × 0.14 / 1.14 = 11.05
+    expect(result).toEqual({ taxMinor: 1105, included: true });
   });
 
-  it("a discount larger than the taxable lines leaves no tax", () => {
+  it("exclusive: the same cart adds tax on the taxable 90.00 only", () => {
+    const result = calculateTax(
+      settings({ includes: false }, [EG]),
+      [line(10_000), line(10_000, 1, false)],
+      { country: "EG" },
+      0,
+      { orderMinor: 2000 },
+    );
+
+    expect(result).toEqual({ taxMinor: 1260, included: false });
+  });
+
+  it("shares the discount across every line, taxable or not, with the shares adding up exactly", () => {
+    // 3 × 100.00 (two taxable, one not), 10.00 off -> 3.34 / 3.33 / 3.33; the taxable lines are 96.66 + 96.67
+    const result = calculateTax(
+      settings({ includes: false }, [EG]),
+      [line(10_000), line(10_000), line(10_000, 1, false)],
+      { country: "EG" },
+      0,
+      { orderMinor: 1000 },
+    );
+
+    expect(result.taxMinor).toBe(1353 + 1353); // round(9666 × .14) = 1353, round(9667 × .14) = 1353
+  });
+
+  it("a discount larger than the lines leaves no tax", () => {
     const result = calculateTax(
       settings({ includes: false }, [EG]),
       [line(5000)],
