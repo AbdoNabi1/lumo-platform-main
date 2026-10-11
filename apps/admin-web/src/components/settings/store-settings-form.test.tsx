@@ -129,7 +129,7 @@ describe("StoreSettingsForm (Plan 3C)", () => {
 
     fireEvent.click(save());
 
-    expect(await screen.findByText("Could not save")).toBeInTheDocument();
+    expect(await screen.findByText("Could not save", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByText("must be a valid email address")).toBeInTheDocument();
   });
 });

@@ -32,6 +32,10 @@ const SHARED_VERBATIM = new Set([
   // language, so it stays identical in both locales, same rationale as `topbar.searchHint`'s
   // "Ctrl K" above.
   "pricingPage.datetimePlaceholder",
+  // Plan 3C - shipping rate texts that are only placeholders and a symbol, no words: "{min} - {max}"
+  // and the dash for "no condition". Nothing to translate (same rationale as the 3B entries above).
+  "shippingSettings.between",
+  "shippingSettings.noCondition",
   // T5.9a — the three `ContentBlock` body format names (`ContentCreateForm`'s format `<select>`).
   // "HTML"/"Markdown"/"JSON" are technical format identifiers, not natural-language words, and are
   // conventionally left untransliterated in Arabic UI copy — same rationale as the entries above.

@@ -8,6 +8,7 @@ import {
   InfoIcon,
   LockIcon,
   StoreIcon,
+  TruckIcon,
 } from "lucide-react";
 import {
   Badge,
@@ -72,6 +73,20 @@ export default async function SettingsPage() {
               <span className="flex flex-1 flex-col">
                 <span className="text-sm font-medium">{t.settingsPage.generalTitle}</span>
                 <span className="text-muted-foreground text-sm">{t.settingsPage.generalBody}</span>
+              </span>
+              <ChevronRightIcon
+                aria-hidden="true"
+                className="text-muted-foreground size-4 rtl:rotate-180"
+              />
+            </Link>
+            <Link
+              href="/settings/shipping"
+              className="hover:bg-muted/50 flex items-center gap-3 p-4"
+            >
+              <TruckIcon aria-hidden="true" className="text-muted-foreground size-5" />
+              <span className="flex flex-1 flex-col">
+                <span className="text-sm font-medium">{t.settingsPage.shippingTitle}</span>
+                <span className="text-muted-foreground text-sm">{t.settingsPage.shippingBody}</span>
               </span>
               <ChevronRightIcon
                 aria-hidden="true"

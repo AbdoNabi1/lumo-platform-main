@@ -64,3 +64,46 @@ model ProcessedShippingWebhook {
   @@map("processed_webhooks")
   @@schema("shipping")
 }
+
+/// Plan 3C — Shopify's shipping zone (Shipping and delivery → General shipping rates): a named set of
+/// countries (and provinces) with the rates offered inside it. `countries` is
+/// `[{ code, provinces: string[] | null }]` (`null` = the whole country, code `*` = rest of world).
+/// `profile` is `general` for now; the column exists so custom profiles never reshape the table.
+model ShippingZone {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  profile   String   @default("general")
+  name      String
+  countries Json     @default("[]")
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  rates ShippingRate[]
+
+  @@index([tenantId, profile])
+  @@map("shipping_zones")
+  @@schema("shipping")
+}
+
+/// Plan 3C — one price a shopper can pick, inside a zone. `condition_type` is none | order_price |
+/// weight (CHECK + domain-enforced); the bounds are minor units (order_price) or grams (weight), the
+/// minimum inclusive and the maximum exclusive.
+model ShippingRate {
+  id            String  @id @db.Uuid
+  tenantId      String  @map("tenant_id")
+  zoneId        String  @map("zone_id") @db.Uuid
+  name          String
+  priceMinor    Int     @map("price_minor")
+  conditionType String  @default("none") @map("condition_type")
+  conditionMin  BigInt? @map("condition_min")
+  conditionMax  BigInt? @map("condition_max")
+  description   String?
+  position      Int     @default(0)
+
+  zone ShippingZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, zoneId])
+  @@map("shipping_rates")
+  @@schema("shipping")
+}

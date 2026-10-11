@@ -175,6 +175,7 @@ import { SecuritySecretsAdminController } from "./interfaces/security-secrets.ad
 import { SecuritySessionsAdminController } from "./interfaces/security-sessions.admin-controller";
 import { SeoAdminController } from "./interfaces/seo.admin-controller";
 import { ShippingAdminController } from "./interfaces/shipping.admin-controller";
+import { ShippingZonesAdminController } from "./interfaces/shipping-zones.admin-controller";
 import { TenancyAdminController } from "./interfaces/tenancy.admin-controller";
 import { ThemeAdminController } from "./interfaces/theme.admin-controller";
 import { WishlistAdminController } from "./interfaces/wishlist.admin-controller";
@@ -434,6 +435,8 @@ export interface WiredAdmin {
   readonly fulfillment: FulfillmentAdminController;
   /** Shipping screen → Shipping (Sprint 4.10 — Shipping's first admin-transport wiring). */
   readonly shipping: ShippingAdminController;
+  /** Plan 3C: Settings → Shipping and delivery (zones and rates). */
+  readonly shippingZones: ShippingZonesAdminController;
   /** Returns screen → Returns (Sprint 4.11 — Returns' first admin-transport wiring). */
   readonly returns: ReturnsAdminController;
   /** Reviews screen → Reviews (Sprint S1 — Reviews' first admin-transport wiring). */
@@ -1087,6 +1090,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     shipping: new ShippingAdminController({ shipping: shipping.shipping, guard }),
+    shippingZones: new ShippingZonesAdminController({ zones: shipping.zones, guard }),
     returns: new ReturnsAdminController({ returns: returns.returns, guard }),
     reviews: new ReviewsAdminController({ reviews: reviews.reviews, guard }),
     search: new SearchAdminController({ search: search.search, guard }),
