@@ -1,7 +1,6 @@
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
-import type { StorageKeyFactory } from "@platform/storage";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError, ValidationError } from "@platform/utils";
 import type { MediaAssetRepository } from "../domain/library-repositories";
@@ -33,13 +32,22 @@ export function publicMediaUrl(baseUrl: string, storageKey: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${storageKey}`;
 }
 
+/** Mints the object key. `@platform/storage`'s `StorageKeyFactory` is the production implementation. */
+export interface StorageKeyBuilder {
+  build(input: {
+    readonly tenantId: string;
+    readonly namespace: "product-images";
+    readonly filename?: string;
+  }): string;
+}
+
 export interface UploadProductImageDeps {
   readonly mediaAssets: MediaAssetRepository;
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   readonly objectStorage: ObjectStoragePort;
-  readonly keyFactory: StorageKeyFactory;
+  readonly keyFactory: StorageKeyBuilder;
   /** Where the public bucket is served from. Absent ⇒ uploads are unavailable (503). */
   readonly publicBaseUrl?: string;
 }

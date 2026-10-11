@@ -195,6 +195,29 @@ project's base URL, `https://<project-slug>.projects.oryapis.com`:
 `AUTH_AUDIENCE` stays at its default `morbeh-admin`, which is what `scripts/ops/seed-ory-network.mjs`
 registers the dashboard's OAuth2 client with.
 
+### 3b. Product images (Plan 2C-3) — off until the bucket exists
+
+Product pictures are stored in **Supabase Storage** through its S3-compatible API and shown from a
+**public-read** bucket (like Shopify's CDN: keys are unique and never overwritten, so a picture is cached
+for a year). Until these are set the dashboard's Media card answers "Image storage isn't set up yet."
+and nothing is stored. Add them to `runtime-api`; every value comes from the Supabase dashboard
+(Storage → New bucket `media`, **Public bucket** on, 8 MB limit, JPEG/PNG/WebP/GIF only; then Storage →
+Settings → S3 Connection) and is **never** written in this repository or in chat:
+
+| Variable                | Value                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `S3_ENDPOINT`           | (empty here) the S3 Connection **Endpoint**                                                            |
+| `S3_REGION`             | (empty here) the S3 Connection **Region**                                                              |
+| `S3_ACCESS_KEY_ID`      | (empty here) an **Access key ID** created under S3 Connection                                          |
+| `S3_SECRET_ACCESS_KEY`  | (empty here) its **Secret access key**                                                                 |
+| `S3_FORCE_PATH_STYLE`   | `true`                                                                                                 |
+| `S3_BUCKET_MEDIA`       | `media`                                                                                                |
+| `MEDIA_PUBLIC_BASE_URL` | (empty here) the Endpoint with its tail `/storage/v1/s3` replaced by `/storage/v1/object/public/media` |
+
+Also set `MEDIA_PUBLIC_BASE_URL` (the same value) on the **`admin-web`** service: the dashboard's
+Content-Security-Policy allows images from that one origin and no other, and it is read when the image
+is built, so redeploy `admin-web` after setting it. The `storefront` has no CSP and does not need it.
+
 ## 4. Environment variables — `storefront` service
 
 | Variable                  | Value                                                     | Why                                                                                             |
@@ -217,20 +240,21 @@ Railway injects `PORT=8080`; the image's `ENV PORT=3100` is only a default and N
 `server.js` reads `PORT`. Point the public domain at **port 8080**. Healthcheck path `/api/healthz`.
 No start command. `<ory>` is the Ory project's base URL, no trailing slash.
 
-| Variable                  | Value                                                                  |
-| ------------------------- | ---------------------------------------------------------------------- |
-| `RAILWAY_DOCKERFILE_PATH` | `infrastructure/docker/admin-web.Dockerfile`                           |
-| `APP_ENV`                 | `production`                                                           |
-| `ADMIN_WEB_ORIGIN`        | this service's own public origin, e.g. `https://<name>.up.railway.app` |
-| `AUTH_ISSUER_URL`         | `<ory>` — no trailing slash, same as the API's                         |
-| `AUTH_JWKS_URL`           | `<ory>/.well-known/jwks.json`                                          |
-| `HYDRA_PUBLIC_URL`        | `<ory>`                                                                |
-| `HYDRA_ADMIN_URL`         | `<ory>`                                                                |
-| `KRATOS_PUBLIC_URL`       | `<ory>`                                                                |
-| `AUTH_CLIENT_SECRET`      | the secret chosen when the OAuth2 client was registered                |
-| `ORY_API_KEY`             | the project's `ory_pat_…` key (consent + identity lookup)              |
-| `RUNTIME_API_URL`         | the `runtime-api` service's public URL, no trailing slash              |
-| `TENANT_DEFAULT_ID`       | `tenant-local`                                                         |
+| Variable                  | Value                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------ |
+| `RAILWAY_DOCKERFILE_PATH` | `infrastructure/docker/admin-web.Dockerfile`                                         |
+| `APP_ENV`                 | `production`                                                                         |
+| `ADMIN_WEB_ORIGIN`        | this service's own public origin, e.g. `https://<name>.up.railway.app`               |
+| `AUTH_ISSUER_URL`         | `<ory>` — no trailing slash, same as the API's                                       |
+| `AUTH_JWKS_URL`           | `<ory>/.well-known/jwks.json`                                                        |
+| `HYDRA_PUBLIC_URL`        | `<ory>`                                                                              |
+| `HYDRA_ADMIN_URL`         | `<ory>`                                                                              |
+| `KRATOS_PUBLIC_URL`       | `<ory>`                                                                              |
+| `AUTH_CLIENT_SECRET`      | the secret chosen when the OAuth2 client was registered                              |
+| `ORY_API_KEY`             | the project's `ory_pat_…` key (consent + identity lookup)                            |
+| `RUNTIME_API_URL`         | the `runtime-api` service's public URL, no trailing slash                            |
+| `TENANT_DEFAULT_ID`       | `tenant-local`                                                                       |
+| `MEDIA_PUBLIC_BASE_URL`   | (empty until §3b) the same value as the API's — read at build time for the image CSP |
 
 Leave unset: `COOKIE_DOMAIN` (host-only cookies are correct here), `ADMIN_API_TOKEN` (a static
 fallback token that would bypass the login), `AUTH_AUDIENCE` and `AUTH_CLIENT_ID` (their defaults
