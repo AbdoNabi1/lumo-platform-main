@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { PackageIcon } from "lucide-react";
-import { Badge, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@platform/ui";
+import { Badge, Button, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@platform/ui";
 import { AddToCartButton } from "./add-to-cart-button";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import type { AvailabilityResolution, PriceResolution, PublishedProduct } from "@/lib/catalog";
@@ -87,7 +87,8 @@ export function ProductCard({
       </Link>
       {/*
        * Plan 2A: a quick add can only name a variant when there is exactly one. A product with
-       * several (sizes, colours) is bought from its detail page, where the shopper picks one.
+       * several (sizes, colours) is bought from its detail page, where the shopper picks one —
+       * Shopify's "Choose options" button takes them there.
        */}
       {price.status === "ok" && product.variants.length <= 1 && (
         <CardFooter>
@@ -98,6 +99,13 @@ export function ProductCard({
             sellableWhenOutOfStock={product.variants[0]?.sellableWhenOutOfStock}
             t={t}
           />
+        </CardFooter>
+      )}
+      {price.status === "ok" && product.variants.length > 1 && (
+        <CardFooter>
+          <Button asChild>
+            <Link href={`/products/${product.slug}`}>{t.product.chooseOptions}</Link>
+          </Button>
         </CardFooter>
       )}
     </Card>

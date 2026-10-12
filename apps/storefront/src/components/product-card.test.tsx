@@ -201,6 +201,46 @@ describe("ProductCard", () => {
     expect(button.closest("a")).toBeNull();
   });
 
+  it("offers 'Choose options' instead of a quick add when the product has several variants", () => {
+    const variant = {
+      id: "v-s",
+      sku: "SKU-S",
+      priceAmountMinor: 1999,
+      currency: "USD",
+      selection: { Size: "S" },
+      title: "S",
+      compareAtAmountMinor: null,
+      sellableWhenOutOfStock: false,
+    };
+    render(
+      <ProductCard
+        product={{
+          ...product,
+          options: [{ name: "Size", values: ["S", "M"] }],
+          variants: [
+            variant,
+            { ...variant, id: "v-m", sku: "SKU-M", selection: { Size: "M" }, title: "M" },
+          ],
+        }}
+        price={{
+          status: "ok",
+          amountMinor: 1999,
+          currency: "USD",
+          compareAtMinor: null,
+          varies: false,
+        }}
+        availability={{ status: "ok", available: 10 }}
+        t={en}
+        locale="en"
+      />,
+    );
+    expect(screen.getByRole("link", { name: en.product.chooseOptions })).toHaveAttribute(
+      "href",
+      "/products/wooden-blocks",
+    );
+    expect(screen.queryByRole("button", { name: en.product.addToCart })).not.toBeInTheDocument();
+  });
+
   it("shows 'From …' when the variants are priced differently (Plan 2C-1)", () => {
     render(
       <ProductCard

@@ -45,6 +45,7 @@ export const en = {
     availabilityUnknown: "Availability unknown",
     backToShop: "Back to shop",
     addToCart: "Add to cart",
+    chooseOptions: "Choose options",
     addingToCart: "Adding…",
     addedToCart: "Added to your cart.",
     viewCart: "View cart",

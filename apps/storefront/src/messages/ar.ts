@@ -50,6 +50,7 @@ export const ar: Dictionary = {
     availabilityUnknown: "التوفر غير معروف",
     backToShop: "العودة إلى المتجر",
     addToCart: "أضف إلى السلة",
+    chooseOptions: "اختر الخيارات",
     addingToCart: "جارٍ الإضافة…",
     addedToCart: "تمت الإضافة إلى سلتك.",
     viewCart: "عرض السلة",
