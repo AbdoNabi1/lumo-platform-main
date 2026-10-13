@@ -15,6 +15,7 @@ import { AddAddress } from "./application/add-address.use-case";
 import { ChangeConsent } from "./application/change-consent.use-case";
 import { CompleteSignup } from "./application/complete-signup.use-case";
 import { GetCustomer } from "./application/get-customer.use-case";
+import { GetCustomerContacts } from "./application/get-customer-contacts.use-case";
 import { ListCustomers } from "./application/list-customers.use-case";
 import { AddMembership, ChangeMembershipRole } from "./application/membership.use-cases";
 import { ArchiveOrganization, CreateOrganization } from "./application/organization.use-cases";
@@ -28,7 +29,7 @@ import type {
   OrganizationRepository,
   UserRepository,
 } from "./domain/access-repositories";
-import type { CustomerRepository } from "./domain/customer-repository";
+import type { CustomerContactReader, CustomerRepository } from "./domain/customer-repository";
 import type { SignupTokenRepository } from "./domain/signup-token-repository";
 import { IdentityEventTranslator } from "./infrastructure/identity-event-translator";
 import {
@@ -74,7 +75,7 @@ export interface WiredIdentity {
 }
 
 interface IdentityRepos {
-  readonly customers: CustomerRepository;
+  readonly customers: CustomerRepository & CustomerContactReader;
   readonly signupTokens: SignupTokenRepository;
   readonly users: UserRepository;
   readonly organizations: OrganizationRepository;
@@ -127,6 +128,7 @@ function buildControllers(
     }),
     getCustomer: new GetCustomer({ customers }),
     listCustomers: new ListCustomers({ customers }),
+    getCustomerContacts: new GetCustomerContacts({ customers }),
   });
 
   const access = new AccessController({

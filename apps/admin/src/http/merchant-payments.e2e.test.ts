@@ -940,7 +940,8 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
       // A fresh cash-on-delivery order: payment pending, nothing fulfilled, and the list says who/what/how.
       expect(await listRow()).toMatchObject({
         orderNumber: "1001",
-        customerName: null, // this checkout typed no recipient name
+        // this guest checkout typed no recipient name, so the list labels the guest by their email (Plan 3D)
+        customerName: "sess-cod-status@example.com",
         itemCount: 1,
         shippingMethod: "standard",
         paymentStatus: "pending",

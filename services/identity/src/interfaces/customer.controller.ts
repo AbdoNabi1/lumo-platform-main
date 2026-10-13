@@ -1,6 +1,10 @@
 import type { AddAddress, AddAddressInput } from "../application/add-address.use-case";
 import type { ChangeConsent, ChangeConsentInput } from "../application/change-consent.use-case";
 import type { CompleteSignup, CompleteSignupInput } from "../application/complete-signup.use-case";
+import type {
+  GetCustomerContacts,
+  GetCustomerContactsInput,
+} from "../application/get-customer-contacts.use-case";
 import type { GetCustomer, GetCustomerInput } from "../application/get-customer.use-case";
 import type { ListCustomers, ListCustomersInput } from "../application/list-customers.use-case";
 import type {
@@ -26,6 +30,7 @@ export interface CustomerControllerDeps {
   readonly changeConsent: ChangeConsent;
   readonly getCustomer: GetCustomer;
   readonly listCustomers: ListCustomers;
+  readonly getCustomerContacts: GetCustomerContacts;
 }
 
 /** Framework-agnostic interface boundary for customer use-cases (no HTTP server). */
@@ -69,5 +74,10 @@ export class CustomerController {
 
   async listCustomers(input: ListCustomersInput): Promise<ControllerResponse> {
     return present(await this.deps.listCustomers.execute(input), 200);
+  }
+
+  /** The names and emails of a set of customers in one read (Plan 3D: labelling a page of orders). */
+  async customerContacts(input: GetCustomerContactsInput): Promise<ControllerResponse> {
+    return present(await this.deps.getCustomerContacts.execute(input), 200);
   }
 }

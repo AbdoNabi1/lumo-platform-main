@@ -3,7 +3,12 @@ import { buildPaginatedPage, normalizePageSize } from "@platform/repository";
 import type { Paginated } from "@platform/types";
 import { ConflictError } from "@platform/utils";
 import type { Customer } from "../domain/customer";
-import type { CustomerListQuery, CustomerRepository } from "../domain/customer-repository";
+import type {
+  CustomerContact,
+  CustomerContactReader,
+  CustomerListQuery,
+  CustomerRepository,
+} from "../domain/customer-repository";
 
 export interface InMemoryCustomerRepositoryDeps {
   readonly outbox: OutboxWriter;
@@ -18,7 +23,7 @@ export interface InMemoryCustomerRepositoryDeps {
  * carries no `tenantId` of its own, so the store must key on it explicitly or a cross-tenant leak
  * here would be invisible to every isolation test.
  */
-export class InMemoryCustomerRepository implements CustomerRepository {
+export class InMemoryCustomerRepository implements CustomerRepository, CustomerContactReader {
   private readonly store = new Map<
     string,
     { readonly tenantId: string; readonly customer: Customer }
@@ -58,6 +63,22 @@ export class InMemoryCustomerRepository implements CustomerRepository {
       }
     }
     return null;
+  }
+
+  findContactsByIds(ids: readonly string[], tenantId: string): Promise<readonly CustomerContact[]> {
+    const contacts: CustomerContact[] = [];
+    for (const id of new Set(ids)) {
+      const entry = this.store.get(id);
+      if (entry !== undefined && entry.tenantId === tenantId) {
+        contacts.push({
+          id,
+          name: entry.customer.name,
+          email: entry.customer.email.value,
+          isGuest: entry.customer.isGuest,
+        });
+      }
+    }
+    return Promise.resolve(contacts);
   }
 
   async list(query: CustomerListQuery, tenantId: string): Promise<Paginated<Customer>> {

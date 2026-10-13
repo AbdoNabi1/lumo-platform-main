@@ -59,6 +59,21 @@ export class CustomersAdminController {
     return this.customers.getCustomer(input);
   }
 
+  /**
+   * The names and emails of a set of customers in ONE read (Plan 3D) — what labels a page of orders
+   * whose shipping address has no recipient name. Authorized as `orders:read`, not `customers:read`:
+   * a staff member who may read orders must not see a list of anonymous rows because they lack the
+   * separate customers screen's permission. Only name, email and the guest marker leave Identity.
+   */
+  async contactsOfCustomers(
+    principal: Principal,
+    input: Parameters<CustomerController["customerContacts"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    return this.customers.customerContacts(input);
+  }
+
   async listCustomers(
     principal: Principal,
     input: Parameters<CustomerController["listCustomers"]>[0],

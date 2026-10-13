@@ -7,6 +7,18 @@ export interface CustomerListQuery extends CursorPage {
 }
 
 /**
+ * Just enough of a customer to label them in a list: their name, email and whether they are a guest.
+ * A guest's stored name is only a placeholder (the local part of their email), so a label should use
+ * their email instead.
+ */
+export interface CustomerContact {
+  readonly id: string;
+  readonly name: string;
+  readonly email: string;
+  readonly isGuest: boolean;
+}
+
+/**
  * Persistence port for {@link Customer}. Implemented in infrastructure. The optional `tx` scopes
  * the call to the caller's transaction (ADR-0003).
  *
@@ -23,4 +35,20 @@ export interface CustomerRepository {
   findByEmail(email: string, tenantId: string, tx?: unknown): Promise<Customer | null>;
   /** Cursor page, most-recently-registered first (id is UUIDv7 — time-ordered, D-022), matching `OrderRepository.list`'s convention. */
   list(query: CustomerListQuery, tenantId: string, tx?: unknown): Promise<Paginated<Customer>>;
+}
+
+/**
+ * The read that labels a page of orders (Plan 3D). A port of its own, implemented by the same
+ * repositories, so a stub of {@link CustomerRepository} elsewhere does not have to know about it.
+ */
+export interface CustomerContactReader {
+  /**
+   * The name and email of the given customers of this tenant, in ONE read (Plan 3D: labelling a page
+   * of orders). An id that is unknown, erased, another tenant's or not an id at all is simply absent.
+   */
+  findContactsByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly CustomerContact[]>;
 }

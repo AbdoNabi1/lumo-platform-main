@@ -3,7 +3,11 @@ export type { IdentityWiringDeps, WiredIdentity } from "./composition";
 export { CustomerController } from "./interfaces/customer.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { Customer } from "./domain/customer";
-export type { CustomerRepository } from "./domain/customer-repository";
+export type {
+  CustomerContact,
+  CustomerContactReader,
+  CustomerRepository,
+} from "./domain/customer-repository";
 export {
   PrismaCustomerRepository,
   type PrismaCustomerRepositoryDeps,

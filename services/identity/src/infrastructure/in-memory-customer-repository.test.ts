@@ -225,3 +225,66 @@ describe("InMemoryCustomerRepository — (tenantId, email) uniqueness (WP-1)", (
     await expect(repository.save(customer, "tenant-1")).resolves.toBeUndefined();
   });
 });
+
+describe("InMemoryCustomerRepository.findContactsByIds", () => {
+  function wire() {
+    const nextId = monotonicIds();
+    const outbox = new OutboxWriter({
+      store: new InMemoryOutboxStore(),
+      translator: new IdentityEventTranslator(),
+      serializer: new InMemoryEventSerializer(),
+      clock: { now: () => new Date("2026-07-05T00:00:00.000Z") },
+      producer: "identity",
+    });
+    const repository = new InMemoryCustomerRepository({
+      outbox,
+      context: rootEventContext({ generate: nextId }),
+    });
+    const register = async (tenantId: string, name: string, email: string): Promise<string> => {
+      const customer = Customer.register(
+        UniqueEntityId.from(nextId()),
+        must(Email.create(email)),
+        name,
+        nextId(),
+        new Date(0),
+      );
+      await repository.save(customer, tenantId);
+      return customer.id.toString();
+    };
+    return { repository, register };
+  }
+
+  it("answers the name and email of each known customer of the tenant", async () => {
+    const { repository, register } = wire();
+    const alice = await register("tenant-a", "Alice", "alice@example.com");
+    const bob = await register("tenant-a", "Bob", "bob@example.com");
+
+    const contacts = await repository.findContactsByIds([alice, bob], "tenant-a");
+
+    expect(contacts).toEqual(
+      expect.arrayContaining([
+        { id: alice, name: "Alice", email: "alice@example.com", isGuest: false },
+        { id: bob, name: "Bob", email: "bob@example.com", isGuest: false },
+      ]),
+    );
+    expect(contacts).toHaveLength(2);
+  });
+
+  it("leaves an unknown id out instead of failing", async () => {
+    const { repository, register } = wire();
+    const alice = await register("tenant-a", "Alice", "alice@example.com");
+
+    const contacts = await repository.findContactsByIds([alice, "customer-1", "nope"], "tenant-a");
+
+    expect(contacts.map((contact) => contact.id)).toEqual([alice]);
+  });
+
+  it("never answers another tenants customer", async () => {
+    const { repository, register } = wire();
+    const theirs = await register("tenant-b", "Mallory", "mallory@example.com");
+
+    const contacts = await repository.findContactsByIds([theirs], "tenant-a");
+
+    expect(contacts).toEqual([]);
+  });
+});

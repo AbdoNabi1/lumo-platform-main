@@ -4,8 +4,16 @@ import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/r
 import type { Paginated } from "@platform/types";
 import { ConcurrencyError, ConflictError } from "@platform/utils";
 import type { Customer } from "../domain/customer";
-import type { CustomerListQuery, CustomerRepository } from "../domain/customer-repository";
+import type {
+  CustomerContact,
+  CustomerContactReader,
+  CustomerListQuery,
+  CustomerRepository,
+} from "../domain/customer-repository";
 import { CustomerMapper } from "./customer.mapper";
+
+/** `identity.customers.id` is a Postgres uuid, so anything else must never reach the database. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Duck-typed on Prisma's error code — this context does not depend on `@prisma/client`. */
 function isUniqueViolation(error: unknown): boolean {
@@ -26,7 +34,7 @@ export interface PrismaCustomerRepositoryDeps {
  * Addresses and the consent log are append-only inserts (`skipDuplicates`); the consent log is
  * never updated or deleted. Optimistic locking + same-transaction outbox per ADR-0003.
  */
-export class PrismaCustomerRepository implements CustomerRepository {
+export class PrismaCustomerRepository implements CustomerRepository, CustomerContactReader {
   private readonly deps: PrismaCustomerRepositoryDeps;
 
   constructor(deps: PrismaCustomerRepositoryDeps) {
@@ -111,6 +119,32 @@ export class PrismaCustomerRepository implements CustomerRepository {
         ? await run(tx as TransactionClient)
         : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : CustomerMapper.toDomain(row, row.addresses, row.consents);
+  }
+
+  async findContactsByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly CustomerContact[]> {
+    // An order's customer_ref is free text, so a legacy or back-office ref can be any string; a
+    // non-uuid in `id IN (…)` would fail the whole query. It cannot match a customer anyway.
+    const uuids = [...new Set(ids)].filter((id) => UUID.test(id));
+    if (uuids.length === 0) return [];
+    const run = (client: TransactionClient) =>
+      client.customer.findMany({
+        where: { tenantId, deletedAt: null, id: { in: uuids } },
+        select: { id: true, name: true, email: true, isGuest: true },
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      isGuest: row.isGuest,
+    }));
   }
 
   /**

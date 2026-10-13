@@ -17,6 +17,7 @@ import { UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { fulfillmentStatusesOf } from "./fulfillment-statuses-of";
+import { customerNameOf, customerNamesFor } from "./order-customer-names";
 import { analyticsRoutes } from "./analytics-routes";
 import { salesAnalyticsRoutes } from "./sales-analytics-routes";
 import { automationRoutes } from "./automation-routes";
@@ -193,7 +194,10 @@ export interface OrderListItemDto {
   readonly currency: string;
   readonly totalMinor: number;
   readonly createdAt: string;
-  /** Plan 3B: the shipping address's recipient name; null when the shopper typed none. */
+  /**
+   * Plan 3B/3D: the recipient the shopper typed on the shipping address, else the customer's name
+   * (a guest's email), else null for a customer Identity does not know.
+   */
   readonly customerName: string | null;
   /** Plan 3B: the sum of the line quantities. */
   readonly itemCount: number;
@@ -208,6 +212,7 @@ export interface OrderListItemDto {
 function toOrderListItemDto(
   order: Order,
   fulfillmentStatus: OrderFulfillmentStatus,
+  customerNames: ReadonlyMap<string, string>,
 ): OrderListItemDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
@@ -221,7 +226,7 @@ function toOrderListItemDto(
     currency: order.currency,
     totalMinor: order.totalAmount().amountMinor,
     createdAt: firstEvent.occurredAt.toISOString(),
-    customerName: order.shippingAddress.recipientName ?? null,
+    customerName: customerNameOf(order, customerNames),
     itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
     shippingMethod: order.totals?.shippingMethod ?? null,
     paymentStatus: derivePaymentStatus(order.history),
@@ -1515,8 +1520,18 @@ export function adminRoutes(
           orders.map((order) => order.id.toString()),
         );
         if (!statuses.ok) return statuses.response;
+        const customerNames = await customerNamesFor(
+          admin,
+          context.principal,
+          context.tenantId,
+          orders,
+        );
         return mapPage(response, (order: Order) =>
-          toOrderListItemDto(order, statuses.byOrder.get(order.id.toString()) ?? "unfulfilled"),
+          toOrderListItemDto(
+            order,
+            statuses.byOrder.get(order.id.toString()) ?? "unfulfilled",
+            customerNames,
+          ),
         );
       },
     }),
