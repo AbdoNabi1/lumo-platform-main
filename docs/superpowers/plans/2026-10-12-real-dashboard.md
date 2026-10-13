@@ -267,3 +267,27 @@ Searched `apps/admin-web/src` (app, components, lib, data, messages) for `demo`,
 - **Home** shows only real numbers, with zeros as zeros, a period comparison, a full-day chart, top products, and recent orders with names and Shopify badges.
 - **No "Demo", sample or fake number** remains anywhere in the admin.
 - **Every gate is green.** The security assertions are unchanged.
+
+## Outcome (2026-10-13)
+
+Commits, in order: the inventory above; `feat(orders): real sales summary for the dashboard, computed from orders`;
+`feat(orders): show the customer's name or email when an order has no recipient name`;
+`feat(orders): range presets and an unfulfilled filter for the home dashboard`;
+`feat(admin-web): real home dashboard like shopify, zeros included`;
+`feat(admin-web): real analytics page, no sample numbers`; and this docs commit. No migration.
+
+Where the build departed from the text above, and why:
+
+- **Orders to fulfill** is not derived inside `services/orders`: fulfillment status belongs to the Fulfillment
+  context and the Plan 3B function lives in `apps/admin`. The read model returns the open order ids (never
+  cancelled, not closed) and the route counts the ones the Plan 3B derivation calls unfulfilled, in batches of 500.
+- **`to` is exclusive**, so "Today" is `from` today, `to` tomorrow. The route also takes `range=today|yesterday|7d|30d|month`,
+  resolved against today in the shop's own time zone, because admin-web cannot know the shop's "today".
+- **The bad-range 400** comes from the route handler: the platform maps every schema failure to 422.
+- **The shop's time zone and currency** are read through `TenancyAdminController.getStoreRegion` (guarded `orders:read`),
+  not by injecting Tenancy into the orders controller, which the `TENANT_MODE=multi` boot guard forbids (no second pin exemption).
+- **A guest is named by email**: guest checkout stores the email's local part as the customer's name (a placeholder).
+- **`GET /orders?fulfillment=unfulfilled`** exists so the card links to a list that matches its count.
+- **Top products** carry `imageUrl` (the name order lines already use) instead of a `featuredImage` object.
+- **The Analytics catalog** (metric and dimension tables) was removed along with its unused client.
+- New gaps G-145 (no visits, no conversion), G-146 (full refunds only), G-147 (other currencies excluded); the T5.13 blocker is closed.

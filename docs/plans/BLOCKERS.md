@@ -588,6 +588,13 @@ already, independent of how the operator selects or discovers one.
 
 ## T5.13 — Live dashboard: only the Revenue KPI has a real data source; Orders-count/AOV/Conversion Rate, Sales Overview, Top Products, and Sales By Channel stay demo (per-tile, not per-page)
 
+> **CLOSED 2026-10-13 (Plan 3D, `docs/superpowers/plans/2026-10-12-real-dashboard.md`).** Home and Analytics no longer
+> carry any demo data: total sales, orders, average order value, orders to fulfill, the sales chart and top products
+> are computed from the shop's orders (`GET /analytics/sales`, `services/orders` `GetSalesSummary`), and a shop with no
+> orders sees zeros. Conversion rate and sales by channel were removed because no honest source exists (visits are not
+> counted, G-145; orders carry no channel). `apps/admin-web/src/data/dashboard.ts`, the per-tile provenance and every
+> "Demo" tag are gone. What follows is the historical record of why the tiles were demo.
+
 **Expected:** `apps/admin-web/src/data/dashboard.ts` returned one page-wide `provenance: "demo"`
 flag; the task asked to convert the dashboard tile by tile, giving each section (KPIs/Sales
 Overview/Top Products/Sales By Channel) its own accurate `provenance`, live where a real source
