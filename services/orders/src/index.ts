@@ -42,6 +42,7 @@ export {
   isSalesRangePreset,
   localDay,
   MAX_SALES_RANGE_DAYS,
+  previousPresetRange,
   previousSalesRange,
   resolveSalesRange,
   SALES_RANGE_PRESETS,

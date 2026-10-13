@@ -3,6 +3,7 @@ import { defineRoute, type RouteDefinition } from "@platform/http";
 import {
   isSalesRangePreset,
   localDay,
+  previousPresetRange,
   previousSalesRange,
   resolveSalesRange,
   SALES_RANGE_PRESETS,
@@ -125,15 +126,20 @@ export function salesAnalyticsRoutes(
         const { timezone, currency } = region.body as { timezone: string; currency: string };
 
         // A preset means today in the SHOP's zone, not the server's or the browser's.
+        const today = localDay(now(), timezone);
         const { from, to } =
           preset !== undefined
-            ? resolveSalesRange(preset, localDay(now(), timezone))
+            ? resolveSalesRange(preset, today)
             : { from: query.from ?? "", to: query.to ?? "" };
+        // "This month" is compared with the same days of last month, as Shopify does.
+        const previous =
+          preset !== undefined ? previousPresetRange(preset, today) : previousSalesRange(from, to);
 
         const response = await admin.orders.salesReport(context.principal, {
           tenantId: context.tenantId,
           from,
           to,
+          previous,
           timezone,
           currency,
         });
@@ -178,7 +184,7 @@ export function salesAnalyticsRoutes(
           currency: report.currency,
           timezone: report.timezone,
           range: { from, to },
-          previousRange: previousSalesRange(from, to),
+          previousRange: previous,
         };
         return { status: 200, body };
       },

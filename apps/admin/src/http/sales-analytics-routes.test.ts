@@ -120,6 +120,7 @@ describe("GET /analytics/sales", () => {
       tenantId: "tenant-a",
       from: "2026-10-06",
       to: "2026-10-13",
+      previous: { from: "2026-09-29", to: "2026-10-06" },
       ...SHOP,
     });
   });
@@ -300,14 +301,19 @@ describe("GET /analytics/sales", () => {
   });
 
   it.each([
-    ["today", { from: "2026-10-13", to: "2026-10-14" }],
-    ["yesterday", { from: "2026-10-12", to: "2026-10-13" }],
-    ["7d", { from: "2026-10-07", to: "2026-10-14" }],
-    ["30d", { from: "2026-09-14", to: "2026-10-14" }],
-    ["month", { from: "2026-10-01", to: "2026-10-14" }],
+    ["today", { from: "2026-10-13", to: "2026-10-14" }, { from: "2026-10-12", to: "2026-10-13" }],
+    [
+      "yesterday",
+      { from: "2026-10-12", to: "2026-10-13" },
+      { from: "2026-10-11", to: "2026-10-12" },
+    ],
+    ["7d", { from: "2026-10-07", to: "2026-10-14" }, { from: "2026-09-30", to: "2026-10-07" }],
+    ["30d", { from: "2026-09-14", to: "2026-10-14" }, { from: "2026-08-15", to: "2026-09-14" }],
+    // Month to date is compared with the same days of last month, as Shopify does.
+    ["month", { from: "2026-10-01", to: "2026-10-14" }, { from: "2026-09-01", to: "2026-09-14" }],
   ])(
     "resolves range=%s against today in the shop's zone (Oct 13 in Cairo)",
-    async (range, expected) => {
+    async (range, expected, previous) => {
       const salesReport = vi.fn().mockResolvedValue(report({}));
 
       const response = await invoke(adminWith({ salesReport }), { range });
@@ -315,9 +321,11 @@ describe("GET /analytics/sales", () => {
       expect(salesReport).toHaveBeenCalledWith(principal, {
         tenantId: "tenant-a",
         ...expected,
+        previous,
         ...SHOP,
       });
       expect(response.body.range).toEqual(expected);
+      expect(response.body.previousRange).toEqual(previous);
     },
   );
 
@@ -333,6 +341,7 @@ describe("GET /analytics/sales", () => {
       tenantId: "tenant-a",
       from: "2026-10-12",
       to: "2026-10-13",
+      previous: { from: "2026-10-11", to: "2026-10-12" },
       currency: "USD",
       timezone: "UTC",
     });

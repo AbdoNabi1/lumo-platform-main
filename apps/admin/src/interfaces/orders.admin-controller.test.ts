@@ -160,6 +160,26 @@ describe("OrdersAdminController", () => {
       });
     });
 
+    it("compares with the range the caller names, when it names one", async () => {
+      const { guard } = guardAnswering(true);
+      const salesSummary = vi.fn().mockResolvedValue(summary(0));
+      const target = controller(guard, {
+        orders: { salesSummary } as unknown as OrderController,
+      });
+
+      await target.salesReport(staff, {
+        ...input,
+        previous: { from: "2026-09-01", to: "2026-09-14" },
+      });
+
+      expect(salesSummary).toHaveBeenNthCalledWith(2, {
+        tenantId: "t-1",
+        from: "2026-09-01",
+        to: "2026-09-14",
+        ...shop,
+      });
+    });
+
     it("answers the failure of the current range without reading the previous one", async () => {
       const { guard } = guardAnswering(true);
       const salesSummary = vi.fn().mockResolvedValue({ status: 422, body: {} });

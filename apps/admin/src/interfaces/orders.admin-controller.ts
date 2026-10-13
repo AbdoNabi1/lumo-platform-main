@@ -213,7 +213,8 @@ export class OrdersAdminController {
   }
 
   /**
-   * The dashboard's figures for `[from, to)` and for the equal-length range before it (Plan 3D), in
+   * The dashboard's figures for `[from, to)` and for `previous` — by default the equal-length range
+   * before it; "this month" names the same days of last month instead (Plan 3D) — in
    * the shop's own time zone and currency (read by the caller, see `TenancyAdminController.getStoreRegion`;
    * Orders holds no Tenancy dependency, which the multi-tenant boot guard forbids). Authorized as
    * `orders:read`. `openOrderIds` is asked for on the current range only, the comparison has no use for it.
@@ -226,6 +227,7 @@ export class OrdersAdminController {
       readonly to: string;
       readonly timezone: string;
       readonly currency: string;
+      readonly previous?: { readonly from: string; readonly to: string };
     },
   ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "orders:read");
@@ -242,7 +244,7 @@ export class OrdersAdminController {
     if (current.status !== 200) return current;
     const previous = await this.orders.salesSummary({
       tenantId,
-      ...previousSalesRange(input.from, input.to),
+      ...(input.previous ?? previousSalesRange(input.from, input.to)),
       timezone,
       currency,
     });

@@ -4,6 +4,7 @@ import {
   enumerateDays,
   isSalesRangePreset,
   localDay,
+  previousPresetRange,
   previousSalesRange,
   rankTopProducts,
   resolveSalesRange,
@@ -77,6 +78,41 @@ describe("rankTopProducts", () => {
       "Charlie",
       "Echo",
     ]);
+  });
+});
+
+describe("previousPresetRange", () => {
+  it("compares this month with the same days of last month, like Shopify's month to date", () => {
+    expect(previousPresetRange("month", "2026-10-13")).toEqual({
+      from: "2026-09-01",
+      to: "2026-09-14",
+    });
+    expect(previousPresetRange("month", "2026-01-05")).toEqual({
+      from: "2025-12-01",
+      to: "2025-12-06",
+    });
+  });
+
+  it("stops at the end of a shorter last month", () => {
+    expect(previousPresetRange("month", "2026-03-30")).toEqual({
+      from: "2026-02-01",
+      to: "2026-03-01",
+    });
+    expect(previousPresetRange("month", "2026-10-31")).toEqual({
+      from: "2026-09-01",
+      to: "2026-10-01",
+    });
+  });
+
+  it("is the equal-length range just before for every other preset", () => {
+    expect(previousPresetRange("7d", "2026-10-13")).toEqual({
+      from: "2026-09-30",
+      to: "2026-10-07",
+    });
+    expect(previousPresetRange("today", "2026-10-13")).toEqual({
+      from: "2026-10-12",
+      to: "2026-10-13",
+    });
   });
 });
 

@@ -162,6 +162,30 @@ export function previousSalesRange(
   };
 }
 
+/**
+ * What a preset is compared with. "This month" is month to date, which Shopify compares with the same
+ * days of last month (Oct 1–13 with Sep 1–13, stopping at the end of a shorter month); every other
+ * preset with the equal-length range just before it.
+ */
+export function previousPresetRange(
+  preset: SalesRangePreset,
+  today: string,
+): { readonly from: string; readonly to: string } {
+  const range = resolveSalesRange(preset, today);
+  if (preset !== "month") return previousSalesRange(range.from, range.to);
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7));
+  const dayOfMonth = Number(today.slice(8, 10));
+  // Date.UTC rolls month 0 back to December of the year before, and day 0 to the last day before.
+  const lastMonthStart = new Date(Date.UTC(year, month - 2, 1));
+  const lastMonthDays = new Date(Date.UTC(year, month - 1, 0)).getUTCDate();
+  const end =
+    dayOfMonth >= lastMonthDays
+      ? range.from
+      : new Date(Date.UTC(year, month - 2, dayOfMonth + 1)).toISOString().slice(0, 10);
+  return { from: lastMonthStart.toISOString().slice(0, 10), to: end };
+}
+
 /** Sales over orders, rounded half up; 0 with no orders. */
 export function averageOrderValueMinor(totalSalesMinor: number, ordersCount: number): number {
   if (ordersCount === 0) return 0;
