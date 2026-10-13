@@ -1,6 +1,6 @@
 import type { Principal } from "@platform/contracts";
 import type { FulfillmentController } from "@platform/fulfillment";
-import { type OrderController, RefundPolicy } from "@platform/orders";
+import { type OrderController, previousSalesRange, RefundPolicy } from "@platform/orders";
 import type { PaymentController } from "@platform/payments";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
@@ -210,6 +210,47 @@ export class OrdersAdminController {
     const denied = await this.guard.ensure(principal, "orders:read");
     if (denied) return denied;
     return this.fulfillment.getByOrders({ tenantId: input.tenantId, orderRefs: input.orderIds });
+  }
+
+  /**
+   * The dashboard's figures for `[from, to)` and for the equal-length range before it (Plan 3D), in
+   * the shop's own time zone and currency (read by the caller, see `TenancyAdminController.getStoreRegion`;
+   * Orders holds no Tenancy dependency, which the multi-tenant boot guard forbids). Authorized as
+   * `orders:read`. `openOrderIds` is asked for on the current range only, the comparison has no use for it.
+   */
+  async salesReport(
+    principal: Principal,
+    input: {
+      readonly tenantId: string;
+      readonly from: string;
+      readonly to: string;
+      readonly timezone: string;
+      readonly currency: string;
+    },
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    const { tenantId, timezone, currency } = input;
+    const current = await this.orders.salesSummary({
+      tenantId,
+      from: input.from,
+      to: input.to,
+      timezone,
+      currency,
+      includeOpenOrderIds: true,
+    });
+    if (current.status !== 200) return current;
+    const previous = await this.orders.salesSummary({
+      tenantId,
+      ...previousSalesRange(input.from, input.to),
+      timezone,
+      currency,
+    });
+    if (previous.status !== 200) return previous;
+    return {
+      status: 200,
+      body: { current: current.body, previous: previous.body, currency, timezone },
+    };
   }
 
   /** The payment intent linked to an order (Plan 3B) — only its provider is shown on the order page. Authorized as `orders:read`. */

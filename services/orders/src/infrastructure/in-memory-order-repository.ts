@@ -30,6 +30,11 @@ export class InMemoryOrderRepository implements OrderRepository {
     await this.outbox.write(order.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
+  /** Every order of one shop: the source of the offline sales read model (`InMemorySalesSummaryQuery`). */
+  ordersOf(tenantId: string): readonly Order[] {
+    return [...(this.store.get(tenantId)?.values() ?? [])];
+  }
+
   async findById(id: string, tenantId: string): Promise<Order | null> {
     return this.store.get(tenantId)?.get(id) ?? null;
   }

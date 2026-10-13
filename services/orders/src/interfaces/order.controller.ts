@@ -3,6 +3,8 @@ import type {
   CreateOrderFromCheckoutInput,
 } from "../application/create-order-from-checkout.use-case";
 import type { GetOrder, GetOrderInput } from "../application/get-order.use-case";
+import type { GetSalesSummary } from "../application/get-sales-summary.use-case";
+import type { SalesSummaryInput } from "../application/sales-summary";
 import type { ListOrders, ListOrdersInput } from "../application/list-orders.use-case";
 import type { MarkOrderPaid, MarkOrderPaidInput } from "../application/mark-order-paid.use-case";
 import type {
@@ -31,6 +33,7 @@ export interface OrderControllerDeps {
   readonly recordCheckoutPayment: RecordCheckoutPayment;
   readonly getOrder: GetOrder;
   readonly listOrders: ListOrders;
+  readonly getSalesSummary: GetSalesSummary;
 }
 
 /** Framework-agnostic interface boundary for order use-cases (no HTTP server). */
@@ -80,5 +83,10 @@ export class OrderController {
 
   async listOrders(input: ListOrdersInput): Promise<ControllerResponse> {
     return present(await this.deps.listOrders.execute(input), 200);
+  }
+
+  /** The dashboard's sales figures for one range (Plan 3D); a read model, nothing is written. */
+  async salesSummary(input: SalesSummaryInput): Promise<ControllerResponse> {
+    return present(await this.deps.getSalesSummary.execute(input), 200);
   }
 }

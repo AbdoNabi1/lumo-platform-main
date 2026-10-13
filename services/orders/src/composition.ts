@@ -13,6 +13,7 @@ import {
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { CreateOrderFromCheckout } from "./application/create-order-from-checkout.use-case";
 import { GetOrder } from "./application/get-order.use-case";
+import { GetSalesSummary } from "./application/get-sales-summary.use-case";
 import { ListOrders } from "./application/list-orders.use-case";
 import { MarkOrderPaid } from "./application/mark-order-paid.use-case";
 import {
@@ -23,6 +24,7 @@ import {
 import { PlaceOrder } from "./application/place-order.use-case";
 import { RecordCheckoutPayment } from "./application/record-checkout-payment.use-case";
 import { RefundOrder } from "./application/refund-order.use-case";
+import type { SalesSummaryQuery } from "./application/sales-summary";
 import type { OrderRepository } from "./domain/order-repository";
 import type {
   InventoryPort,
@@ -37,6 +39,7 @@ import type {
 } from "./application/ports";
 import { InMemoryOrderNumberAllocator } from "./infrastructure/in-memory-order-number-allocator";
 import { InMemoryOrderRepository } from "./infrastructure/in-memory-order-repository";
+import { InMemorySalesSummaryQuery } from "./infrastructure/in-memory-sales-summary-query";
 import {
   InMemoryInventoryAdapter,
   InMemoryNotificationAdapter,
@@ -51,6 +54,7 @@ import {
 } from "./infrastructure/order-event-translator";
 import { PrismaOrderNumberAllocator } from "./infrastructure/prisma-order-number-allocator";
 import { PrismaOrderRepository } from "./infrastructure/prisma-order-repository";
+import { PrismaSalesSummaryQuery } from "./infrastructure/prisma-sales-summary-query";
 import { OrderController } from "./interfaces/order.controller";
 
 export interface OrdersWiringDeps {
@@ -104,6 +108,7 @@ function buildController(
   orders: OrderRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   orderNumbers: OrderNumberAllocator,
+  sales: SalesSummaryQuery,
   deps: OrdersWiringDeps,
 ): OrderController {
   const paymentPort = deps.paymentPort ?? new InMemoryPaymentAdapter();
@@ -177,6 +182,7 @@ function buildController(
     }),
     getOrder: new GetOrder({ orders }),
     listOrders: new ListOrders({ orders }),
+    getSalesSummary: new GetSalesSummary({ sales }),
   });
 }
 
@@ -202,7 +208,13 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {
-      orders: buildController(orders, unitOfWork, new PrismaOrderNumberAllocator(), deps),
+      orders: buildController(
+        orders,
+        unitOfWork,
+        new PrismaOrderNumberAllocator(),
+        new PrismaSalesSummaryQuery({ prisma: deps.prisma }),
+        deps,
+      ),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -220,7 +232,13 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
 
   const orders = new InMemoryOrderRepository({ outbox: outboxWriter, context });
   const unitOfWork = new InMemoryUnitOfWork();
-  const controller = buildController(orders, unitOfWork, new InMemoryOrderNumberAllocator(), deps);
+  const controller = buildController(
+    orders,
+    unitOfWork,
+    new InMemoryOrderNumberAllocator(),
+    new InMemorySalesSummaryQuery({ ordersOf: (tenantId) => orders.ordersOf(tenantId) }),
+    deps,
+  );
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];

@@ -173,6 +173,21 @@ export class TenancyAdminController {
     return this.tenancy.getStoreSettings();
   }
 
+  /**
+   * Plan 3D: the shop's time zone and currency — all the sales report needs of the settings, so it is
+   * authorized as `orders:read` (the people who see the Home dashboard), not `settings:read`. Nothing
+   * else of the settings (name, contact email, weight unit) is returned. A failed read is answered as
+   * it is: a guessed zone would put orders on the wrong days.
+   */
+  async getStoreRegion(principal: Principal): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    const settings = await this.tenancy.getStoreSettings();
+    if (settings.status !== 200) return settings;
+    const { currency, timezone } = settings.body as { currency: string; timezone: string };
+    return { status: 200, body: { currency, timezone } };
+  }
+
   async updateStoreSettings(
     principal: Principal,
     input: Parameters<TenancyController["updateStoreSettings"]>[0],

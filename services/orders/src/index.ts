@@ -38,5 +38,16 @@ export type {
 } from "./application/ports";
 export { ORDERS_PUBLISHED_EVENTS } from "./infrastructure/order-event-translator";
 export { derivePaymentStatus } from "./domain/order-statuses";
+export {
+  MAX_SALES_RANGE_DAYS,
+  previousSalesRange,
+  validateSalesRange,
+} from "./application/sales-summary";
+export type {
+  DailySales,
+  SalesSummary,
+  SalesSummaryInput,
+  TopProduct as SalesTopProduct,
+} from "./application/sales-summary";
 export { RefundPolicy } from "./domain/refund-policy";
 export type { OrderFulfillmentStatus, OrderPaymentStatus } from "./domain/order-statuses";

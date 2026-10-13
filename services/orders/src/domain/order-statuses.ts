@@ -15,10 +15,16 @@ export type OrderPaymentStatus = "pending" | "paid" | "refunded" | "voided";
 export type OrderFulfillmentStatus = "unfulfilled" | "in_progress" | "fulfilled" | "delivered";
 
 const PAID: ReadonlySet<OrderEventType> = new Set<OrderEventType>(["paid", "payment_received"]);
-const REFUNDED: ReadonlySet<OrderEventType> = new Set<OrderEventType>([
-  "refunded",
-  "refund_requested",
-]);
+
+/**
+ * The events that make an order "refunded" (full refunds only). Exported so the sales read model's
+ * SQL counts exactly what {@link derivePaymentStatus} calls refunded: one definition.
+ */
+export const REFUNDED_EVENT_TYPES: readonly OrderEventType[] = ["refunded", "refund_requested"];
+const REFUNDED: ReadonlySet<OrderEventType> = new Set<OrderEventType>(REFUNDED_EVENT_TYPES);
+
+/** The event that makes an order "cancelled" for good, even if it is closed afterwards. */
+export const CANCELLED_EVENT_TYPE: OrderEventType = "cancelled";
 
 /** Pure: the payment status an order's append-only history implies. */
 export function derivePaymentStatus(

@@ -67,7 +67,13 @@ describe("OrdersAdminController", () => {
       (name) => name !== "constructor",
     );
     expect(methods).toEqual(
-      expect.arrayContaining(["getOrder", "listOrders", "fulfillmentsOfOrders", "paymentIntentOf"]),
+      expect.arrayContaining([
+        "getOrder",
+        "listOrders",
+        "fulfillmentsOfOrders",
+        "paymentIntentOf",
+        "salesReport",
+      ]),
     );
 
     for (const method of methods) {
@@ -78,6 +84,10 @@ describe("OrdersAdminController", () => {
         orderId: "o-1",
         orderIds: ["o-1"],
         paymentIntentId: "p-1",
+        from: "2026-10-06",
+        to: "2026-10-13",
+        timezone: "Africa/Cairo",
+        currency: "EGP",
       });
       expect(response?.status, method).toBe(403);
     }
@@ -102,6 +112,80 @@ describe("OrdersAdminController", () => {
         tenantId: "t-1",
         orderRefs: ["o-1", "o-2", "o-3"],
       });
+    });
+  });
+
+  describe("salesReport (Plan 3D: the dashboard's figures)", () => {
+    const shop = { timezone: "Africa/Cairo", currency: "EGP" };
+    const input = { tenantId: "t-1", from: "2026-10-06", to: "2026-10-13", ...shop };
+    const summary = (totalSalesMinor: number) => ({
+      status: 200,
+      body: { totalSalesMinor, ordersCount: 0, openOrderIds: [] },
+    });
+
+    it("asks for orders:read only, and sums the range and the one before it in the shop's zone and currency", async () => {
+      const { guard, asked } = guardAnswering(true);
+      const salesSummary = vi
+        .fn()
+        .mockResolvedValueOnce(summary(300))
+        .mockResolvedValueOnce(summary(200));
+      const target = controller(guard, {
+        orders: { salesSummary } as unknown as OrderController,
+      });
+
+      const response = await target.salesReport(staff, input);
+
+      expect(asked).toEqual(["orders:read"]);
+      expect(salesSummary).toHaveBeenNthCalledWith(1, {
+        tenantId: "t-1",
+        from: "2026-10-06",
+        to: "2026-10-13",
+        ...shop,
+        includeOpenOrderIds: true,
+      });
+      expect(salesSummary).toHaveBeenNthCalledWith(2, {
+        tenantId: "t-1",
+        from: "2026-09-29",
+        to: "2026-10-06",
+        ...shop,
+      });
+      expect(response).toEqual({
+        status: 200,
+        body: {
+          current: { totalSalesMinor: 300, ordersCount: 0, openOrderIds: [] },
+          previous: { totalSalesMinor: 200, ordersCount: 0, openOrderIds: [] },
+          currency: "EGP",
+          timezone: "Africa/Cairo",
+        },
+      });
+    });
+
+    it("answers the failure of the current range without reading the previous one", async () => {
+      const { guard } = guardAnswering(true);
+      const salesSummary = vi.fn().mockResolvedValue({ status: 422, body: {} });
+      const target = controller(guard, {
+        orders: { salesSummary } as unknown as OrderController,
+      });
+
+      const response = await target.salesReport(staff, input);
+
+      expect(response.status).toBe(422);
+      expect(salesSummary).toHaveBeenCalledTimes(1);
+    });
+
+    it("answers the failure of the previous range instead of a half report", async () => {
+      const { guard } = guardAnswering(true);
+      const salesSummary = vi
+        .fn()
+        .mockResolvedValueOnce(summary(300))
+        .mockResolvedValueOnce({ status: 500, body: {} });
+      const target = controller(guard, {
+        orders: { salesSummary } as unknown as OrderController,
+      });
+
+      const response = await target.salesReport(staff, input);
+
+      expect(response.status).toBe(500);
     });
   });
 
