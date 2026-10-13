@@ -17,17 +17,27 @@ export function HomeKpis({
   t,
   locale,
   comparisonLabel,
+  showOrdersToFulfill = true,
+  label,
 }: {
   readonly data: SalesAnalyticsDto;
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly comparisonLabel: string;
+  /** Home shows the to-do count; Analytics, which describes a period, does not. */
+  readonly showOrdersToFulfill?: boolean;
+  /** The accessible name of the group; the page title by default. */
+  readonly label?: string;
 }) {
   const { current, previous, currency } = data;
   return (
     <section
-      aria-label={t.header.title}
-      className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0"
+      aria-label={label ?? t.header.title}
+      className={
+        showOrdersToFulfill
+          ? "grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0"
+          : "grid gap-4 sm:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0"
+      }
     >
       <KpiCard
         id="totalSales"
@@ -67,18 +77,20 @@ export function HomeKpis({
         t={t}
         locale={locale}
       />
-      <KpiCard
-        id="ordersToFulfill"
-        icon={PackageCheckIcon}
-        accent="warning"
-        title={t.kpi.ordersToFulfill}
-        value={formatNumber(locale, current.ordersToFulfill)}
-        hint={t.kpi.ordersToFulfillHint}
-        href="/orders?fulfillment=unfulfilled"
-        hrefLabel={t.kpi.viewOrdersToFulfill}
-        t={t}
-        locale={locale}
-      />
+      {showOrdersToFulfill && (
+        <KpiCard
+          id="ordersToFulfill"
+          icon={PackageCheckIcon}
+          accent="warning"
+          title={t.kpi.ordersToFulfill}
+          value={formatNumber(locale, current.ordersToFulfill)}
+          hint={t.kpi.ordersToFulfillHint}
+          href="/orders?fulfillment=unfulfilled"
+          hrefLabel={t.kpi.viewOrdersToFulfill}
+          t={t}
+          locale={locale}
+        />
+      )}
     </section>
   );
 }

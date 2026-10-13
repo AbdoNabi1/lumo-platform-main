@@ -16,6 +16,7 @@ export function parseRange(raw: string | readonly string[] | undefined): Dashboa
     : DEFAULT_RANGE;
 }
 
-export function rangeHref(range: DashboardRange): string {
-  return `/?range=${range}`;
+/** The URL of `path` (Home is `/`, Analytics `/analytics`) showing `range`. */
+export function rangeHref(range: DashboardRange, path = "/"): string {
+  return `${path}?range=${range}`;
 }

@@ -977,26 +977,7 @@ export const ar: Dictionary = {
   },
   analyticsPage: {
     title: "التحليلات",
-    subtitle: "كتالوج المقاييس والأبعاد المعتمد لمتجرك.",
-    metricsTitle: "المقاييس",
-    dimensionsTitle: "الأبعاد",
-    columns: {
-      id: "المعرّف",
-      description: "الوصف",
-      unit: "الوحدة",
-      kind: "النوع",
-      aggregation: "دالة التجميع",
-      label: "التسمية",
-      readModel: "نموذج القراءة",
-      field: "الحقل",
-    },
-    kindDefinition: "تعريف",
-    kindCalculated: "محسوب",
-    empty: "لا توجد تعريفات بعد.",
-    error: "تعذّر تحميل كتالوج المقاييس. حاول تحديث الصفحة.",
-    unauthorized: "سجّل الدخول لعرض كتالوج المقاييس.",
-    queryNote:
-      "هذا كتالوج التعريفات فقط. تنفيذ استعلام يتطلب مخزن قراءة مُهيَّأ، وهو غير متصل في هذه البيئة.",
+    subtitle: "المبيعات والطلبات وأكتر المنتجات مبيعًا في متجرك.",
   },
   marketingPage: {
     title: "التسويق",

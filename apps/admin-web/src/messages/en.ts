@@ -1050,26 +1050,7 @@ export const en = {
   },
   analyticsPage: {
     title: "Analytics",
-    subtitle: "The governed metric and dimension catalog for your store.",
-    metricsTitle: "Metrics",
-    dimensionsTitle: "Dimensions",
-    columns: {
-      id: "Id",
-      description: "Description",
-      unit: "Unit",
-      kind: "Kind",
-      aggregation: "Aggregation",
-      label: "Label",
-      readModel: "Read model",
-      field: "Field",
-    },
-    kindDefinition: "Definition",
-    kindCalculated: "Calculated",
-    empty: "No definitions yet.",
-    error: "Couldn't load the metric catalog. Try refreshing the page.",
-    unauthorized: "Sign in to view the metric catalog.",
-    queryNote:
-      "This is the definition catalog only. Running a query needs a populated read store, which is not connected in this environment.",
+    subtitle: "Sales, orders and top products for your store.",
   },
   marketingPage: {
     title: "Marketing",

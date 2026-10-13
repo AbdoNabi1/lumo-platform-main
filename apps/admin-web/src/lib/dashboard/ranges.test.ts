@@ -26,3 +26,10 @@ describe("dashboard ranges", () => {
     expect(rangeHref("today")).toBe("/?range=today");
   });
 });
+
+describe("rangeHref on another page", () => {
+  it("puts the range in the URL of that page, so Analytics keeps it on reload too", () => {
+    expect(rangeHref("30d", "/analytics")).toBe("/analytics?range=30d");
+    expect(rangeHref("today", "/")).toBe("/?range=today");
+  });
+});
