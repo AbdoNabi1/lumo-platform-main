@@ -11,10 +11,19 @@ import {
 } from "@platform/ui";
 import { COUNTRY_CODES, PROVINCES, hasProvinces, provinceName } from "@platform/regions";
 import { saveZoneAction } from "@/app/settings/shipping/actions";
+import { MoneyInput, Switch } from "@/components/products/editor/controls";
 import { CheckboxRow, Field } from "@/components/products/editor/field";
 import type { FormState } from "@/lib/api/mutation";
 import type { Locale } from "@/lib/i18n";
 import { countryName } from "@/lib/shipping/display";
+import { buildInlineRates, chipProvinces, selectionOfProvinces } from "@/lib/shipping/inline-rates";
+import {
+  CAIRO_GIZA,
+  GREATER_CAIRO,
+  remainingProvinces,
+  suggestZoneName,
+  type QuickSetupCountry,
+} from "@/lib/shipping/quick-setup";
 import {
   REST_OF_WORLD,
   countriesFromSelection,
@@ -27,6 +36,7 @@ import {
   type ZoneDto,
 } from "@/lib/shipping/zones";
 import type { Dictionary } from "@/messages/en";
+import { RateFields, initialRateFields } from "./rate-fields";
 
 const INITIAL_STATE: FormState = { status: "idle" };
 
@@ -75,25 +85,36 @@ function CountryCheckbox({
 export function ZoneDialogContent({
   zone,
   zones,
+  homeCountry,
+  currency,
   onClose,
   t,
   locale,
 }: {
   readonly zone: ZoneDto | null;
   readonly zones: readonly ZoneDto[];
+  /** The store's own country: listed first, with its provinces open, and the shortcuts are for it. */
+  readonly homeCountry: QuickSetupCountry;
+  readonly currency: string;
   readonly onClose: () => void;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
   const copy = t.shippingSettings;
   const [state, formAction, isPending] = useActionState(saveZoneAction, INITIAL_STATE);
-  const [name, setName] = useState(zone?.name ?? "");
+  const [typedName, setTypedName] = useState(zone?.name ?? "");
+  // The name follows the selection until the merchant types; an existing zone's name is never touched.
+  const [nameTyped, setNameTyped] = useState(zone !== null);
   const [selection, setSelection] = useState<Selection>(() =>
     selectionFromCountries(zone?.countries ?? []),
   );
   const [search, setSearch] = useState("");
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set([homeCountry]));
+  const [rate, setRate] = useState(() => initialRateFields(null, currency, locale));
+  const [freeOn, setFreeOn] = useState(false);
+  const [freeOver, setFreeOver] = useState("");
   const errors = state.status === "error" ? state.fieldErrors : {};
+  const name = nameTyped ? typedName : suggestZoneName(selection, zones, zone?.id ?? null, locale);
 
   useEffect(() => {
     if (state.status === "success") onClose();
@@ -102,8 +123,35 @@ export function ZoneDialogContent({
   const taken = useMemo(() => takenBy(zones, zone?.id ?? null), [zones, zone]);
   const countries = useMemo(() => {
     const names = COUNTRY_CODES.map((code) => ({ code, name: countryName(code, locale) }));
-    return names.sort((a, b) => a.name.localeCompare(b.name, locale));
-  }, [locale]);
+    const sorted = names.sort((a, b) => a.name.localeCompare(b.name, locale));
+    const home = sorted.filter(({ code }) => code === homeCountry);
+    return [...home, ...sorted.filter(({ code }) => code !== homeCountry)];
+  }, [locale, homeCountry]);
+  const shortcuts = useMemo(() => {
+    const exceptId = zone?.id ?? null;
+    const left = remainingProvinces(homeCountry, zones, exceptId);
+    const all = {
+      label: copy.chipAllRemaining.replace("{noun}", nounFor(homeCountry, copy)),
+      left,
+    };
+    const egypt = [
+      { label: copy.chipCairoGiza, left: chipProvinces(CAIRO_GIZA, "EG", zones, exceptId) },
+      { label: copy.chipGreaterCairo, left: chipProvinces(GREATER_CAIRO, "EG", zones, exceptId) },
+    ];
+    return (homeCountry === "EG" ? [...egypt, all] : [all]).map(({ label, left: provinces }) => ({
+      label,
+      selection: selectionOfProvinces(homeCountry, provinces),
+      empty: provinces.length === 0,
+    }));
+  }, [homeCountry, zones, zone, copy]);
+  const selectedJson = JSON.stringify(countriesFromSelection(selection));
+  const ratesJson = JSON.stringify(
+    buildInlineRates(
+      { name: rate.name, description: rate.description, price: rate.price },
+      freeOn ? freeOver : null,
+      copy.freeShipping,
+    ),
+  );
   const query = search.trim().toLowerCase();
   const visible = countries.filter(
     ({ code, name: label }) =>
@@ -130,11 +178,8 @@ export function ZoneDialogContent({
 
       <form action={formAction} className="flex flex-col gap-4">
         {zone !== null && <input type="hidden" name="zoneId" value={zone.id} />}
-        <input
-          type="hidden"
-          name="countries"
-          value={JSON.stringify(countriesFromSelection(selection))}
-        />
+        <input type="hidden" name="countries" value={selectedJson} />
+        {zone === null && <input type="hidden" name="rates" value={ratesJson} />}
 
         <Field label={copy.zoneName} name="name" error={errors["name"]}>
           {(control) => (
@@ -142,7 +187,10 @@ export function ZoneDialogContent({
               {...control}
               maxLength={80}
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                setTypedName(event.target.value);
+                setNameTyped(true);
+              }}
             />
           )}
         </Field>
@@ -157,6 +205,24 @@ export function ZoneDialogContent({
             />
           )}
         </Field>
+
+        <div role="group" aria-label={copy.shortcuts} className="flex flex-wrap gap-2">
+          {shortcuts.map((shortcut) => (
+            <Button
+              key={shortcut.label}
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={
+                shortcut.empty ||
+                JSON.stringify(countriesFromSelection(shortcut.selection)) === selectedJson
+              }
+              onClick={() => setSelection(shortcut.selection)}
+            >
+              {shortcut.label}
+            </Button>
+          ))}
+        </div>
 
         <fieldset className="flex flex-col gap-1">
           <legend className="text-sm font-medium">{copy.countries}</legend>
@@ -263,6 +329,42 @@ export function ZoneDialogContent({
             </p>
           )}
         </fieldset>
+
+        {zone === null && (
+          <fieldset className="flex flex-col gap-4">
+            <legend className="mb-2 text-sm font-medium">{copy.rateSection}</legend>
+            <RateFields
+              value={rate}
+              onChange={setRate}
+              currency={currency}
+              locale={locale}
+              t={t}
+              errors={errors}
+              names={{ name: "rateName", description: "rateDescription", price: "ratePrice" }}
+            />
+            <Switch label={copy.freeOverToggle} checked={freeOn} onCheckedChange={setFreeOn} />
+            {freeOn && (
+              <Field label={copy.freeOverAmount} name="freeOver">
+                {(control) => (
+                  <MoneyInput
+                    id={control.id}
+                    name={control.name}
+                    label={copy.freeOverAmount}
+                    currency={currency}
+                    locale={locale}
+                    value={freeOver}
+                    onValueChange={setFreeOver}
+                  />
+                )}
+              </Field>
+            )}
+            {errors["rates"] !== undefined && (
+              <p role="alert" className="text-destructive text-xs">
+                {errors["rates"]}
+              </p>
+            )}
+          </fieldset>
+        )}
 
         {state.status === "error" && errors["countries"] === undefined && (
           <p role="alert" className="text-destructive text-sm">

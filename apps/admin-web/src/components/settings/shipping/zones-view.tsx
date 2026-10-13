@@ -250,6 +250,8 @@ export function ZonesView({
               key={dialog.zone?.id ?? "new"}
               zone={dialog.zone}
               zones={zones}
+              homeCountry={homeCountry}
+              currency={currency}
               onClose={close}
               t={t}
               locale={locale}

@@ -17,6 +17,7 @@ import { fetchStoreSettings } from "@/lib/api/store-settings";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import { toMinorUnits } from "@/lib/products/money";
 import { toGrams } from "@/lib/products/weight";
+import { parseInlineRates, type InlineRateInput } from "@/lib/shipping/inline-rates";
 import { QUICK_SETUP_COUNTRIES, quickSetupPlan } from "@/lib/shipping/quick-setup";
 
 /**
@@ -78,10 +79,32 @@ export async function saveZoneAction(_previous: FormState, formData: FormData): 
   }
   const input = { name: text(formData, "name").trim(), countries };
   const zoneId = text(formData, "zoneId");
-  const result =
-    zoneId.length > 0
-      ? await updateShippingZone(zoneId, input, newIdempotencyKey())
-      : await createShippingZone(input, newIdempotencyKey());
+  if (zoneId.length > 0) {
+    const updated = await updateShippingZone(zoneId, input, newIdempotencyKey());
+    if (updated.outcome !== "ok") return toFormState(updated, t.formErrors);
+    revalidatePath(PATH);
+    return { status: "success" };
+  }
+
+  // Plan 3E: a new zone may carry its first rates, saved with it in one atomic call.
+  const rawRates = text(formData, "rates");
+  let rates: InlineRateInput[] = [];
+  if (rawRates.length > 0) {
+    const store = await fetchStoreSettings();
+    if (store.outcome !== "ok") {
+      return toFormState(
+        store.outcome === "error" ? store : { outcome: store.outcome },
+        t.formErrors,
+      );
+    }
+    const parsed = parseInlineRates(rawRates, store.settings.currency);
+    if (!parsed.ok) return invalid(t.formErrors.invalid, { [parsed.field]: t.formErrors.invalid });
+    rates = parsed.rates;
+  }
+  const result = await createShippingZone(
+    rates.length > 0 ? { ...input, rates } : input,
+    newIdempotencyKey(),
+  );
   if (result.outcome !== "ok") return toFormState(result, t.formErrors);
   revalidatePath(PATH);
   return { status: "success" };

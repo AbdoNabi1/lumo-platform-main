@@ -1610,6 +1610,17 @@ export const en = {
     quickSetupWholePrice: "Whole country",
     quickSetupFreeOver: "Free shipping on orders over (optional)",
     quickSetupSave: "Save shipping rates",
+    shortcuts: "Shortcuts",
+    chipCairoGiza: "Cairo and Giza",
+    chipGreaterCairo: "Greater Cairo",
+    chipAllRemaining: "All remaining {noun}",
+    rateSection: "Shipping rate",
+    ratePresetLabel: "Rate type",
+    presetCustom: "Custom",
+    freeOverToggle: "Add free shipping over",
+    freeOverAmount: "Order total for free shipping",
+    rateNameLooksLikePrice:
+      "Customers see this name at checkout. Use words like 'Standard', and put the amount in Price.",
     quickSetupPartial: "“{saved}” is saved. “{missing}” was not — add it with Create zone.",
   },
   /** Plan 3C — Settings → General (store name, currency, time zone, weight unit). */

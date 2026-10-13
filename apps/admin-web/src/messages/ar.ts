@@ -1518,6 +1518,17 @@ export const ar: Dictionary = {
     quickSetupWholePrice: "البلد كلها",
     quickSetupFreeOver: "شحن مجاني للطلبات فوق (اختياري)",
     quickSetupSave: "احفظ أسعار الشحن",
+    shortcuts: "اختصارات",
+    chipCairoGiza: "القاهرة والجيزة",
+    chipGreaterCairo: "القاهرة الكبرى",
+    chipAllRemaining: "كل {noun} الباقية",
+    rateSection: "سعر الشحن",
+    ratePresetLabel: "نوع الشحن",
+    presetCustom: "مخصص",
+    freeOverToggle: "ضيف شحن مجاني للطلبات فوق",
+    freeOverAmount: "إجمالي الطلب للشحن المجاني",
+    rateNameLooksLikePrice:
+      "العميل بيشوف الاسم ده في الدفع. اكتب اسم زي 'شحن عادي'، والمبلغ في خانة السعر.",
     quickSetupPartial: "«{saved}» اتحفظت. «{missing}» ماتحفظتش — ضيفها من «إنشاء منطقة».",
   },
   generalSettings: {

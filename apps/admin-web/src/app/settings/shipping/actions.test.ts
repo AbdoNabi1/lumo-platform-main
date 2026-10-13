@@ -340,3 +340,95 @@ describe("quickSetupAction (Plan 3E)", () => {
     expect(zones.createShippingZone).not.toHaveBeenCalled();
   });
 });
+
+describe("saveZoneAction with a first rate (Plan 3E)", () => {
+  const standard = { name: "Standard", description: "2–4 business days", price: "50" };
+
+  it("sends the rates, read in the store currency, with the new zone", async () => {
+    const rates = [
+      { ...standard, max: "1000" },
+      { name: "Free shipping", description: "", price: "0", min: "1000" },
+    ];
+
+    const state = await saveZoneAction(
+      idle,
+      form({ name: "Cairo", countries: JSON.stringify(countries), rates: JSON.stringify(rates) }),
+    );
+
+    expect(state).toEqual({ status: "success" });
+    expect(zones.createShippingZone).toHaveBeenCalledWith(
+      {
+        name: "Cairo",
+        countries,
+        rates: [
+          {
+            name: "Standard",
+            priceMinor: 5000,
+            description: "2–4 business days",
+            condition: { type: "orderPrice", maxMinor: 100_000 },
+          },
+          {
+            name: "Free shipping",
+            priceMinor: 0,
+            description: null,
+            condition: { type: "orderPrice", minMinor: 100_000 },
+          },
+        ],
+      },
+      expect.any(String),
+    );
+  });
+
+  it("creates the zone with no rates key when the list is empty", async () => {
+    await saveZoneAction(
+      idle,
+      form({ name: "Cairo", countries: JSON.stringify(countries), rates: "[]" }),
+    );
+
+    expect(zones.createShippingZone).toHaveBeenCalledWith(
+      { name: "Cairo", countries },
+      expect.any(String),
+    );
+  });
+
+  it("never sends rates when editing a zone", async () => {
+    await saveZoneAction(
+      idle,
+      form({
+        zoneId: "z-1",
+        name: "Cairo",
+        countries: JSON.stringify(countries),
+        rates: JSON.stringify([standard]),
+      }),
+    );
+
+    expect(zones.updateShippingZone).toHaveBeenCalledWith(
+      "z-1",
+      { name: "Cairo", countries },
+      expect.any(String),
+    );
+  });
+
+  it.each([
+    ["a price that is not a number", { ...standard, price: "abc" }, "ratePrice"],
+    ["an empty rate name", { ...standard, name: " " }, "rateName"],
+  ])("refuses %s before any request, naming the field", async (_label, rate, field) => {
+    const state = await saveZoneAction(
+      idle,
+      form({ name: "Cairo", countries: JSON.stringify(countries), rates: JSON.stringify([rate]) }),
+    );
+
+    expect(state.status === "error" && Object.keys(state.fieldErrors)).toEqual([field]);
+    expect(zones.createShippingZone).not.toHaveBeenCalled();
+  });
+
+  it("refuses rates that are not a list", async () => {
+    const state = await saveZoneAction(
+      idle,
+      form({ name: "Cairo", countries: JSON.stringify(countries), rates: "nope" }),
+    );
+
+    expect(state.status).toBe("error");
+    expect(zones.createShippingZone).not.toHaveBeenCalled();
+  });
+});
