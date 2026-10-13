@@ -42,11 +42,13 @@ function posted(): Record<string, string> {
 }
 
 describe("RateDialogContent (Plan 3C)", () => {
-  it("starts empty when adding a rate, with Shopify's hints", () => {
+  it("starts on the Standard preset when adding a rate, with Shopify's hints", () => {
     renderDialog();
 
     expect(screen.getByRole("heading", { name: t.addRate })).toBeInTheDocument();
-    expect(screen.getByLabelText(t.rateName)).toHaveValue("");
+    expect(screen.getByLabelText(t.ratePresetLabel)).toHaveValue("standard");
+    expect(screen.getByLabelText(t.rateName)).toHaveValue("Standard");
+    expect(screen.getByLabelText(t.description)).toHaveValue("2–4 business days");
     expect(screen.getByText(t.rateNameHint)).toBeInTheDocument();
     expect(screen.getByText(t.descriptionHint)).toBeInTheDocument();
     expect(posted()).toMatchObject({ zoneId: "z-1", conditionType: "none" });
@@ -115,6 +117,40 @@ describe("RateDialogContent (Plan 3C)", () => {
       min: "0",
       max: "5",
     });
+  });
+
+  it("fills the name and the transit time from a preset", () => {
+    renderDialog();
+
+    fireEvent.change(screen.getByLabelText(t.ratePresetLabel), { target: { value: "express" } });
+
+    expect(posted()).toMatchObject({ name: "Express", description: "1–2 business days" });
+  });
+
+  it("opens an existing rate as Custom, so its values stay", () => {
+    renderDialog({
+      id: "r-1",
+      name: "Light",
+      priceMinor: 5000,
+      condition: { type: "none" },
+      description: null,
+    });
+
+    expect(screen.getByLabelText(t.ratePresetLabel)).toHaveValue("custom");
+    expect(screen.getByLabelText(t.rateName)).toHaveValue("Light");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("warns when editing the owner's rate that is named just '50'", () => {
+    renderDialog({
+      id: "r-1",
+      name: "50",
+      priceMinor: 5000,
+      condition: { type: "none" },
+      description: null,
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent(t.rateNameLooksLikePrice);
   });
 
   it("submits through the action", async () => {
