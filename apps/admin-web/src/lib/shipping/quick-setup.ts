@@ -210,3 +210,13 @@ export function quickSetupPlan(input: QuickSetupInput): ZonePayload[] {
   }
   return plan;
 }
+
+export const QUICK_SETUP_COUNTRIES = ["EG", "SA", "AE"] as const;
+export type QuickSetupCountry = (typeof QUICK_SETUP_COUNTRIES)[number];
+
+/** The country a shop most likely ships from, judging by its currency (Egypt when unsure). */
+export function homeCountryFor(currency: string): QuickSetupCountry {
+  if (currency === "SAR") return "SA";
+  if (currency === "AED") return "AE";
+  return "EG";
+}

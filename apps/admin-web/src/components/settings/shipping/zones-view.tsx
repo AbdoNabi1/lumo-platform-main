@@ -23,6 +23,8 @@ import type { Locale } from "@/lib/i18n";
 import { describeCondition, formatRatePrice, summarizeCountry } from "@/lib/shipping/display";
 import type { RateDto, ZoneDto } from "@/lib/shipping/zones";
 import type { Dictionary } from "@/messages/en";
+import type { QuickSetupCountry } from "@/lib/shipping/quick-setup";
+import { QuickSetup } from "./quick-setup";
 import { RateDialogContent } from "./rate-dialog";
 import { ZoneDialogContent } from "./zone-dialog";
 
@@ -191,12 +193,15 @@ export function ZonesView({
   zones,
   currency,
   weightUnit,
+  homeCountry,
   t,
   locale,
 }: {
   readonly zones: readonly ZoneDto[];
   readonly currency: string;
   readonly weightUnit: WeightUnit;
+  /** The store's own country, from its currency (Plan 3E). */
+  readonly homeCountry: QuickSetupCountry;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
@@ -205,60 +210,65 @@ export function ZonesView({
   const close = useCallback(() => setDialog(null), []);
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <CardTitle>{copy.generalRates}</CardTitle>
-          <CardDescription>{copy.generalRatesBody}</CardDescription>
-        </div>
-        <Button type="button" onClick={() => setDialog({ kind: "zone", zone: null })}>
-          {copy.createZone}
-        </Button>
-      </CardHeader>
-      <CardContent className="p-0">
-        {zones.length === 0 ? (
-          <p className="text-muted-foreground border-border border-t p-4 text-sm">
-            {copy.emptyState}
-          </p>
-        ) : (
-          zones.map((zone) => (
-            <ZoneSection
-              key={zone.id}
-              zone={zone}
-              currency={currency}
-              weightUnit={weightUnit}
+    <>
+      {zones.length === 0 && (
+        <QuickSetup homeCountry={homeCountry} currency={currency} t={t} locale={locale} />
+      )}
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <CardTitle>{copy.generalRates}</CardTitle>
+            <CardDescription>{copy.generalRatesBody}</CardDescription>
+          </div>
+          <Button type="button" onClick={() => setDialog({ kind: "zone", zone: null })}>
+            {copy.createZone}
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0">
+          {zones.length === 0 ? (
+            <p className="text-muted-foreground border-border border-t p-4 text-sm">
+              {copy.emptyState}
+            </p>
+          ) : (
+            zones.map((zone) => (
+              <ZoneSection
+                key={zone.id}
+                zone={zone}
+                currency={currency}
+                weightUnit={weightUnit}
+                t={t}
+                locale={locale}
+                onDialog={setDialog}
+              />
+            ))
+          )}
+        </CardContent>
+
+        <Dialog open={dialog !== null} onOpenChange={(open) => !open && close()}>
+          {dialog?.kind === "zone" && (
+            <ZoneDialogContent
+              key={dialog.zone?.id ?? "new"}
+              zone={dialog.zone}
+              zones={zones}
+              onClose={close}
               t={t}
               locale={locale}
-              onDialog={setDialog}
             />
-          ))
-        )}
-      </CardContent>
-
-      <Dialog open={dialog !== null} onOpenChange={(open) => !open && close()}>
-        {dialog?.kind === "zone" && (
-          <ZoneDialogContent
-            key={dialog.zone?.id ?? "new"}
-            zone={dialog.zone}
-            zones={zones}
-            onClose={close}
-            t={t}
-            locale={locale}
-          />
-        )}
-        {dialog?.kind === "rate" && (
-          <RateDialogContent
-            key={`${dialog.zoneId}:${dialog.rate?.id ?? "new"}`}
-            zoneId={dialog.zoneId}
-            rate={dialog.rate}
-            currency={currency}
-            weightUnit={weightUnit}
-            onClose={close}
-            t={t}
-            locale={locale}
-          />
-        )}
-      </Dialog>
-    </Card>
+          )}
+          {dialog?.kind === "rate" && (
+            <RateDialogContent
+              key={`${dialog.zoneId}:${dialog.rate?.id ?? "new"}`}
+              zoneId={dialog.zoneId}
+              rate={dialog.rate}
+              currency={currency}
+              weightUnit={weightUnit}
+              onClose={close}
+              t={t}
+              locale={locale}
+            />
+          )}
+        </Dialog>
+      </Card>
+    </>
   );
 }

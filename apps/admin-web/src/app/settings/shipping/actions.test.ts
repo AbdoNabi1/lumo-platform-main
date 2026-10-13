@@ -19,7 +19,7 @@ vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined }),
 }));
 
-const { deleteRateAction, deleteZoneAction, saveRateAction, saveZoneAction } =
+const { deleteRateAction, deleteZoneAction, quickSetupAction, saveRateAction, saveZoneAction } =
   await import("./actions");
 
 const idle: FormState = { status: "idle" };
@@ -233,5 +233,110 @@ describe("saveRateAction", () => {
       status: "error",
       fieldErrors: { condition: "the minimum must be below the maximum" },
     });
+  });
+});
+
+describe("quickSetupAction (Plan 3E)", () => {
+  const standard = { name: "Standard", description: "2–4 business days" };
+  const egypt = { country: "EG", cityPrice: "50", restPrice: "75", freeOver: "" };
+
+  it("creates Cairo and Giza, then the rest of Egypt, each with its rate and its own key", async () => {
+    const state = await quickSetupAction(idle, form(egypt));
+
+    expect(state).toEqual({ status: "success" });
+    expect(zones.createShippingZone).toHaveBeenCalledTimes(2);
+    const [first, second] = zones.createShippingZone.mock.calls as [
+      [Record<string, unknown>, string],
+      [Record<string, unknown>, string],
+    ];
+    expect(first[0]).toEqual({
+      name: "Cairo and Giza",
+      countries: [{ code: "EG", provinces: ["EG-C", "EG-GZ"] }],
+      rates: [{ ...standard, priceMinor: 5000, condition: { type: "none" } }],
+    });
+    expect(second[0]).toMatchObject({
+      name: "Rest of Egypt",
+      rates: [{ ...standard, priceMinor: 7500, condition: { type: "none" } }],
+    });
+    expect((second[0]["countries"] as { provinces: string[] }[])[0]?.provinces).toHaveLength(25);
+    expect(first[1]).not.toBe(second[1]);
+    expect(revalidatePath).toHaveBeenCalledWith("/settings/shipping");
+  });
+
+  it("adds the free-shipping rate above the threshold, read in the store currency", async () => {
+    await quickSetupAction(idle, form({ ...egypt, freeOver: "1,000" }));
+
+    const [first] = zones.createShippingZone.mock.calls[0] as [{ rates: unknown[] }];
+    expect(first.rates).toEqual([
+      { ...standard, priceMinor: 5000, condition: { type: "orderPrice", maxMinor: 100_000 } },
+      {
+        name: "Free shipping",
+        priceMinor: 0,
+        condition: { type: "orderPrice", minMinor: 100_000 },
+        description: standard.description,
+      },
+    ]);
+  });
+
+  it("creates one zone for Saudi Arabia and ignores the rest price", async () => {
+    const state = await quickSetupAction(
+      idle,
+      form({ country: "SA", cityPrice: "30", restPrice: "" }),
+    );
+
+    expect(state).toEqual({ status: "success" });
+    expect(zones.createShippingZone).toHaveBeenCalledTimes(1);
+    expect(zones.createShippingZone.mock.calls[0]?.[0]).toMatchObject({
+      name: "Saudi Arabia",
+      countries: [{ code: "SA", provinces: null }],
+      rates: [{ priceMinor: 3000 }],
+    });
+  });
+
+  it("names what was saved and what was not when the second zone fails, and still refreshes", async () => {
+    zones.createShippingZone
+      .mockResolvedValueOnce({ outcome: "ok", data: {} })
+      .mockResolvedValueOnce({ outcome: "error", message: "boom" });
+
+    const state = await quickSetupAction(idle, form(egypt));
+
+    expect(state).toEqual({
+      status: "error",
+      message: "“Cairo and Giza” is saved. “Rest of Egypt” was not — add it with Create zone.",
+      fieldErrors: {},
+    });
+    expect(revalidatePath).toHaveBeenCalledWith("/settings/shipping");
+  });
+
+  it("stops at the first failure and refreshes nothing when nothing was saved", async () => {
+    zones.createShippingZone.mockResolvedValueOnce({ outcome: "error", message: "boom" });
+
+    const state = await quickSetupAction(idle, form(egypt));
+
+    expect(state.status).toBe("error");
+    expect(zones.createShippingZone).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an empty city price", { cityPrice: "" }, "cityPrice"],
+    ["a negative city price", { cityPrice: "-5" }, "cityPrice"],
+    ["an empty rest price for Egypt", { restPrice: "" }, "restPrice"],
+    ["a negative rest price", { restPrice: "-1" }, "restPrice"],
+    ["a free-shipping amount that is not a number", { freeOver: "abc" }, "freeOver"],
+    ["a free-shipping amount of zero", { freeOver: "0" }, "freeOver"],
+  ])("refuses %s before any request", async (_label, change, field) => {
+    const state = await quickSetupAction(idle, form({ ...egypt, ...change }));
+
+    expect(state.status).toBe("error");
+    expect(state.status === "error" && Object.keys(state.fieldErrors)).toEqual([field]);
+    expect(zones.createShippingZone).not.toHaveBeenCalled();
+  });
+
+  it("refuses a country the quick setup does not know", async () => {
+    const state = await quickSetupAction(idle, form({ ...egypt, country: "US" }));
+
+    expect(state.status).toBe("error");
+    expect(zones.createShippingZone).not.toHaveBeenCalled();
   });
 });

@@ -50,7 +50,12 @@ export interface RateInputDto {
 }
 
 export function createShippingZone(
-  input: { readonly name: string; readonly countries: readonly ZoneCountryDto[] },
+  input: {
+    readonly name: string;
+    readonly countries: readonly ZoneCountryDto[];
+    /** Plan 3E: saved with the zone in one call, all or nothing. */
+    readonly rates?: readonly RateInputDto[];
+  },
   idempotencyKey: string,
 ): Promise<MutationResult<unknown>> {
   return mutateAdminApi(

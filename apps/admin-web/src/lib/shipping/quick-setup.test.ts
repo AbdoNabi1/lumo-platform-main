@@ -4,6 +4,7 @@ import {
   CAIRO_GIZA,
   GREATER_CAIRO,
   RATE_PRESETS,
+  homeCountryFor,
   looksLikePrice,
   quickSetupPlan,
   ratePreset,
@@ -235,5 +236,16 @@ describe("quickSetupPlan", () => {
         zones: [egyptZone],
       }),
     ).toEqual([]);
+  });
+});
+
+describe("homeCountryFor", () => {
+  it.each([
+    ["EGP", "EG"],
+    ["SAR", "SA"],
+    ["AED", "AE"],
+    ["USD", "EG"],
+  ])("%s ships from %s", (currency, country) => {
+    expect(homeCountryFor(currency)).toBe(country);
   });
 });

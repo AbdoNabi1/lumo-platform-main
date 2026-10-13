@@ -1601,6 +1601,16 @@ export const en = {
     presetExpress: "Express",
     presetExpressDescription: "1–2 business days",
     freeShipping: "Free shipping",
+    quickSetupTitle: "Set up shipping in seconds",
+    quickSetupBody: "Enter your prices and we'll create your shipping zones and rates for you.",
+    quickSetupCountry: "Where do you ship?",
+    quickSetupCurrency: "Prices are in {currency}.",
+    quickSetupCityPrice: "Cairo and Giza",
+    quickSetupRestPrice: "All other governorates",
+    quickSetupWholePrice: "Whole country",
+    quickSetupFreeOver: "Free shipping on orders over (optional)",
+    quickSetupSave: "Save shipping rates",
+    quickSetupPartial: "“{saved}” is saved. “{missing}” was not — add it with Create zone.",
   },
   /** Plan 3C — Settings → General (store name, currency, time zone, weight unit). */
   generalSettings: {

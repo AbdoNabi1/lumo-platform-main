@@ -137,6 +137,7 @@ export function MoneyInput({
   describedBy,
   id,
   label,
+  placeholder,
 }: {
   readonly name: string;
   readonly currency: string;
@@ -149,6 +150,7 @@ export function MoneyInput({
   readonly id?: string | undefined;
   /** The accessible name; a visible `<Label>` for the same `id` may repeat it. */
   readonly label: string;
+  readonly placeholder?: string | undefined;
 }) {
   return (
     <div className="relative">
@@ -166,6 +168,7 @@ export function MoneyInput({
         aria-label={label}
         aria-invalid={invalid === true ? true : undefined}
         aria-describedby={describedBy}
+        placeholder={placeholder}
         className="ps-12"
         value={value}
         onChange={(event) => onValueChange(event.target.value)}

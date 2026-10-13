@@ -14,9 +14,10 @@ import {
 } from "@/lib/api/shipping-zones";
 import { newIdempotencyKey, toFormState, type FormState } from "@/lib/api/mutation";
 import { fetchStoreSettings } from "@/lib/api/store-settings";
-import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import { toMinorUnits } from "@/lib/products/money";
 import { toGrams } from "@/lib/products/weight";
+import { QUICK_SETUP_COUNTRIES, quickSetupPlan } from "@/lib/shipping/quick-setup";
 
 /**
  * Plan 3C — Settings → Shipping and delivery. Every action follows the app's write shape: parse the
@@ -27,9 +28,13 @@ import { toGrams } from "@/lib/products/weight";
 
 const PATH = "/settings/shipping";
 
-async function dictionary() {
+async function currentLocale(): Promise<Locale> {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
-  return dictionaryFor(isLocale(stored) ? stored : DEFAULT_LOCALE);
+  return isLocale(stored) ? stored : DEFAULT_LOCALE;
+}
+
+async function dictionary() {
+  return dictionaryFor(await currentLocale());
 }
 
 function text(formData: FormData, name: string): string {
@@ -176,6 +181,64 @@ export async function saveRateAction(_previous: FormState, formData: FormData): 
       ? await updateShippingRate(zoneId, rateId, input, newIdempotencyKey())
       : await addShippingRate(zoneId, input, newIdempotencyKey());
   if (result.outcome !== "ok") return toFormState(result, t.formErrors);
+  revalidatePath(PATH);
+  return { status: "success" };
+}
+
+/**
+ * Plan 3E — quick setup for a shop with no zones. Prices are read in the STORE's currency; the plan
+ * (zones with their rates) comes from `quickSetupPlan`. Each zone is one atomic call, sent in turn with
+ * its own idempotency key; if a later one fails the message names what was saved and what was not.
+ */
+export async function quickSetupAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const locale = await currentLocale();
+  const t = dictionaryFor(locale);
+  const country = text(formData, "country");
+  if (!(QUICK_SETUP_COUNTRIES as readonly string[]).includes(country)) {
+    return invalid(t.formErrors.invalid, { country: t.formErrors.invalid });
+  }
+
+  const store = await fetchStoreSettings();
+  if (store.outcome !== "ok") {
+    return toFormState(
+      store.outcome === "error" ? store : { outcome: store.outcome },
+      t.formErrors,
+    );
+  }
+  const { currency } = store.settings;
+
+  const fieldErrors: Record<string, string> = {};
+  const cityPriceMinor = toMinorUnits(text(formData, "cityPrice"), currency);
+  if (cityPriceMinor === null) fieldErrors["cityPrice"] = t.formErrors.invalid;
+  const restPriceMinor = country === "EG" ? toMinorUnits(text(formData, "restPrice"), currency) : 0;
+  if (restPriceMinor === null) fieldErrors["restPrice"] = t.formErrors.invalid;
+  const freeOver = bound(text(formData, "freeOver"), (value) => toMinorUnits(value, currency));
+  if (freeOver === null || freeOver === 0) fieldErrors["freeOver"] = t.formErrors.invalid;
+  if (cityPriceMinor === null || restPriceMinor === null || Object.keys(fieldErrors).length > 0) {
+    return invalid(t.formErrors.invalid, fieldErrors);
+  }
+
+  const plan = quickSetupPlan({
+    country,
+    cityPriceMinor,
+    restPriceMinor,
+    freeOverMinor: freeOver ?? null,
+    zones: [],
+    locale,
+  });
+  for (const [index, zone] of plan.entries()) {
+    const result = await createShippingZone(zone, newIdempotencyKey());
+    if (result.outcome === "ok") continue;
+    if (index === 0) return toFormState(result, t.formErrors);
+    revalidatePath(PATH);
+    const message = t.shippingSettings.quickSetupPartial
+      .replace("{saved}", plan[0]?.name ?? "")
+      .replace("{missing}", zone.name);
+    return invalid(message);
+  }
   revalidatePath(PATH);
   return { status: "success" };
 }

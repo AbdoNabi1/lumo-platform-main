@@ -7,6 +7,7 @@ import { fetchShippingZones } from "@/lib/api/shipping-zones";
 import { storeSettingsOrDefaults } from "@/lib/api/store-settings";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { homeCountryFor } from "@/lib/shipping/quick-setup";
 
 /**
  * Plan 3C — Settings → Shipping and delivery (Shopify's "General shipping rates"): the zones the shop
@@ -36,6 +37,7 @@ export default async function ShippingSettingsPage() {
             zones={result.zones}
             currency={settings.currency}
             weightUnit={settings.weightUnit}
+            homeCountry={homeCountryFor(settings.currency)}
             t={t}
             locale={locale}
           />

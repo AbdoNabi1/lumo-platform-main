@@ -11,6 +11,7 @@ const actions = vi.hoisted(() => ({
   saveRateAction: vi.fn(),
   deleteZoneAction: vi.fn(),
   deleteRateAction: vi.fn(),
+  quickSetupAction: vi.fn(),
 }));
 vi.mock("@/app/settings/shipping/actions", () => actions);
 
@@ -65,7 +66,9 @@ const zones: ZoneDto[] = [
 ];
 
 function renderView(list: ZoneDto[] = zones) {
-  return render(<ZonesView zones={list} currency="EGP" weightUnit="kg" t={en} locale="en" />);
+  return render(
+    <ZonesView zones={list} currency="EGP" weightUnit="kg" homeCountry="EG" t={en} locale="en" />,
+  );
 }
 
 describe("ZonesView (Plan 3C)", () => {
@@ -74,6 +77,19 @@ describe("ZonesView (Plan 3C)", () => {
 
     expect(screen.getByText(t.emptyState)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t.createZone })).toBeInTheDocument();
+  });
+
+  it("offers the quick setup card above the empty state when there are no zones", () => {
+    renderView([]);
+
+    expect(screen.getByText(t.quickSetupTitle)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t.quickSetupSave })).toBeInTheDocument();
+  });
+
+  it("hides the quick setup card once a zone exists", () => {
+    renderView();
+
+    expect(screen.queryByText(t.quickSetupTitle)).not.toBeInTheDocument();
   });
 
   it("lists each zone with its countries summarised", () => {
