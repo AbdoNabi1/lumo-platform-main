@@ -1,63 +1,43 @@
 import Link from "next/link";
 import { ArrowRightIcon } from "lucide-react";
+import { Button, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import {
-  Avatar,
-  AvatarFallback,
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@platform/ui";
-import type { OrderStatus, RecentOrder } from "@/data/dashboard";
+  OrderFulfillmentStatusBadge,
+  OrderPaymentStatusBadge,
+} from "@/components/orders/order-status-badge";
+import type { OrderListItemDto } from "@/lib/api/orders";
 import { formatCurrency, formatRelativeMinutes } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
-/**
- * Order status → badge variant. This mapping is the platform's semantic contract: the
- * same status must look the same in orders, payments, checkout, and analytics, so it is
- * expressed once here rather than chosen per screen.
- */
-const STATUS_VARIANT: Readonly<Record<OrderStatus, "success" | "info" | "destructive">> = {
-  paid: "success",
-  processing: "info",
-  refunded: "destructive",
-};
-
-function statusLabel(status: OrderStatus, t: Dictionary): string {
-  switch (status) {
-    case "paid":
-      return t.recentOrders.paid;
-    case "processing":
-      return t.recentOrders.processing;
-    case "refunded":
-      return t.recentOrders.refunded;
-  }
+function minutesSince(iso: string, now: Date): number {
+  return Math.max(0, Math.round((now.getTime() - Date.parse(iso)) / 60_000));
 }
 
+/**
+ * The latest orders, in the same shape as the orders list (Plan 3B): the number, who it is for, when,
+ * the payment and fulfillment statuses and the total. Whatever the date range chosen above, these are
+ * the latest five. An order whose customer Identity does not know says "No customer" rather than a
+ * made-up name. `now` is injectable so the relative time is testable.
+ */
 export function RecentOrders({
   orders,
   t,
   locale,
+  now,
   className,
-  live = false,
 }: {
-  readonly orders: readonly RecentOrder[];
+  readonly orders: readonly OrderListItemDto[];
   readonly t: Dictionary;
   readonly locale: Locale;
+  readonly now?: Date;
   readonly className?: string;
-  /** Set once the data behind this widget is the real `GET /orders` endpoint rather than demo data. */
-  readonly live?: boolean;
 }) {
+  const reference = now ?? new Date();
   return (
     <Card className={className}>
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <CardTitle>{t.recentOrders.title}</CardTitle>
-          {live && <Badge variant="success">{t.recentOrders.liveBadge}</Badge>}
-        </div>
+        <CardTitle as="h2">{t.recentOrders.title}</CardTitle>
         <Button variant="outline" size="sm" asChild>
           <Link href="/orders">
             {t.recentOrders.viewAll}
@@ -71,27 +51,27 @@ export function RecentOrders({
           {orders.map((order) => (
             <li
               key={order.id}
-              className="border-border/60 hover:bg-accent/40 duration-(--duration-fast) flex items-center gap-3 border-t px-4 py-3.5 transition-colors ease-out sm:px-5"
+              className="border-border/60 hover:bg-accent/40 duration-(--duration-fast) flex flex-wrap items-center gap-x-3 gap-y-2 border-t px-4 py-3.5 transition-colors ease-out sm:px-5"
             >
-              <Avatar>
-                <AvatarFallback>{order.customerInitials}</AvatarFallback>
-              </Avatar>
-
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">
                   <Link href={`/orders/${order.id}`} className="hover:text-primary">
-                    {order.reference}
+                    #{order.orderNumber}
                   </Link>
                 </p>
                 <p className="text-muted-foreground truncate text-xs">
-                  {order.customerName} · {formatRelativeMinutes(locale, order.minutesAgo)}
+                  {order.customerName ?? t.ordersPage.noCustomer} ·{" "}
+                  {formatRelativeMinutes(locale, minutesSince(order.createdAt, reference))}
                 </p>
               </div>
 
-              <Badge variant={STATUS_VARIANT[order.status]}>{statusLabel(order.status, t)}</Badge>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <OrderPaymentStatusBadge status={order.paymentStatus} t={t} />
+                <OrderFulfillmentStatusBadge status={order.fulfillmentStatus} t={t} />
+              </div>
 
-              <span className="w-20 text-end font-medium tabular-nums">
-                {formatCurrency(locale, order.total.amountMinor, order.total.currency)}
+              <span className="w-24 text-end font-medium tabular-nums">
+                {formatCurrency(locale, order.totalMinor, order.currency)}
               </span>
             </li>
           ))}

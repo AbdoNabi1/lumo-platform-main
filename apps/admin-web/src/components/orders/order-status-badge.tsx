@@ -4,8 +4,8 @@ import type { Dictionary } from "@/messages/en";
 /**
  * Order status → badge variant, covering the full 21-value lifecycle
  * (`services/orders/src/domain/order-event.ts`) — the Orders list/detail screens show the real
- * status, unlike the Dashboard widget's deliberately simplified 3-bucket mapping
- * (`src/data/recent-orders.ts`). Semantics: `success` = money/goods moved as expected, `warning`
+ * status, and since Plan 3D so does Home's recent orders (the payment and fulfillment badges below,
+ * not a simplified bucket). Semantics: `success` = money/goods moved as expected, `warning`
  * = needs attention or mid-flight, `destructive` = failed/reversed, `info` = in progress,
  * `outline` = terminal and neutral (cancelled/closed), `neutral` = not yet started.
  */

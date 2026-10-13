@@ -1,52 +1,66 @@
-import { CalendarIcon, ChevronDownIcon, SlidersHorizontalIcon } from "lucide-react";
-import { Badge, Button } from "@platform/ui";
-import type { PageProvenance } from "@/data/dashboard";
+import Link from "next/link";
+import { cn } from "@platform/ui";
+import { DASHBOARD_RANGES, rangeHref, type DashboardRange } from "@/lib/dashboard/ranges";
 import type { Dictionary } from "@/messages/en";
 
+function labelOf(range: DashboardRange, t: Dictionary): string {
+  switch (range) {
+    case "today":
+      return t.header.ranges.today;
+    case "yesterday":
+      return t.header.ranges.yesterday;
+    case "7d":
+      return t.header.ranges.last7;
+    case "30d":
+      return t.header.ranges.last30;
+    case "month":
+      return t.header.ranges.thisMonth;
+  }
+}
+
 /**
- * Page header: title, greeting, and the period/filter controls.
- *
- * `provenance` is the page-level summary (`summarizePageProvenance` in `data/dashboard.ts`) —
- * "live" only when every section below is live, "demo" only when every section is demo, "mixed"
- * otherwise (today's actual state: Revenue live, the rest demo). The header says so next to the
- * title rather than letting a partly-sample page pass as either fully real or fully fake; the
- * per-section badges on each card carry the precise, per-tile truth.
+ * Home's header: the title and the date range. The range is a row of links, one per preset, each
+ * pointing at `/?range=…`: the choice lives in the URL, so a reload, the back button and a shared
+ * link all keep it, and it works before any script has loaded.
  */
 export function DashboardHeader({
   t,
   userName,
-  rangeLabel,
-  provenance,
+  range,
 }: {
   readonly t: Dictionary;
   readonly userName: string;
-  readonly rangeLabel: string;
-  readonly provenance: PageProvenance;
+  readonly range: DashboardRange;
 }) {
   return (
     <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-4xl font-semibold tracking-tight">{t.header.title}</h1>
-          {provenance === "demo" && <Badge variant="warning">{t.data.demoBadge}</Badge>}
-          {provenance === "mixed" && <Badge variant="info">{t.data.partialBadge}</Badge>}
-        </div>
+        <h1 className="text-4xl font-semibold tracking-tight">{t.header.title}</h1>
         <p className="text-md text-muted-foreground mt-1">
           {t.header.subtitle.replace("{name}", userName)}
         </p>
       </div>
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <Button variant="outline" size="md" aria-label={t.header.dateRange}>
-          <CalendarIcon aria-hidden="true" />
-          <span className="tabular-nums">{rangeLabel}</span>
-          <ChevronDownIcon aria-hidden="true" />
-        </Button>
-        <Button variant="outline" size="md">
-          <SlidersHorizontalIcon aria-hidden="true" />
-          {t.header.filters}
-        </Button>
-      </div>
+      <nav aria-label={t.header.dateRange} className="flex shrink-0 flex-wrap items-center gap-2">
+        {DASHBOARD_RANGES.map((candidate) => {
+          const active = candidate === range;
+          return (
+            <Link
+              key={candidate}
+              href={rangeHref(candidate)}
+              aria-current={active ? "true" : undefined}
+              className={cn(
+                "border-border duration-(--duration-fast) focus-visible:ring-ring inline-flex h-9 items-center rounded-full border px-3.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2",
+                active
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card text-foreground hover:bg-accent",
+              )}
+            >
+              {labelOf(candidate, t)}
+            </Link>
+          );
+        })}
+      </nav>
     </header>
   );
 }

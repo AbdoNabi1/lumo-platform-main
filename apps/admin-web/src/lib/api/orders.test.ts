@@ -11,6 +11,7 @@ vi.mock("jose", () => ({
 }));
 
 const {
+  fetchOrdersPage,
   fetchRecentOrders,
   placeOrder,
   createOrderFromCheckout,
@@ -272,13 +273,11 @@ describe("T5.2 write functions", () => {
     });
 
     it("maps a 409 to conflict (e.g. currency mismatch with the checkout session)", async () => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue(
-          jsonResponse(409, {
-            message: "Checkout session currency does not match the requested order currency",
-          }),
-        );
+      const fetchMock = vi.fn().mockResolvedValue(
+        jsonResponse(409, {
+          message: "Checkout session currency does not match the requested order currency",
+        }),
+      );
       vi.stubGlobal("fetch", fetchMock);
 
       const result = await createOrderFromCheckout(
@@ -352,5 +351,33 @@ describe("T5.2 write functions", () => {
     vi.stubGlobal("fetch", fetchMock);
     const result = await refundOrder("order-1", "key-8");
     expect(result).toEqual({ outcome: "forbidden" });
+  });
+});
+
+describe("fetchOrdersPage: the orders to fulfill filter (Plan 3D)", () => {
+  const emptyPage = { items: [], pageInfo: { hasNextPage: false, endCursor: null } };
+
+  it("asks only for the orders to fulfill when told to, next to the other filters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, emptyPage));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchOrdersPage({ first: 20, search: "1001", fulfillment: "unfulfilled" });
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.pathname).toBe("/api/v1/orders");
+    expect(url.searchParams.get("fulfillment")).toBe("unfulfilled");
+    expect(url.searchParams.get("search")).toBe("1001");
+    expect(url.searchParams.get("first")).toBe("20");
+  });
+
+  it("does not send the filter when it is not asked for", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, emptyPage));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchOrdersPage({ first: 20 });
+
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).searchParams.has("fulfillment")).toBe(
+      false,
+    );
   });
 });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatCalendarDay,
+  formatCalendarRange,
   formatCurrency,
   formatCurrencyCompact,
   formatDelta,
@@ -131,5 +133,32 @@ describe("formatLongDate (Plan 3B: the order page header)", () => {
     expect(formatLongDate("en", iso)).toBe("October 9, 2026");
     expect(formatLongDate("ar", iso)).not.toBe("October 9, 2026");
     expect(formatLongDate("ar", iso)).toContain("أكتوبر");
+  });
+});
+
+describe("formatCalendarDay / formatCalendarRange (days in the shop's calendar)", () => {
+  // The dashboard's days arrive as plain `YYYY-MM-DD` in the SHOP's zone. They are labels, not
+  // instants: they must read as the same day wherever the server or the browser happens to be.
+  it("names the day as it was sent, with no shift from the runtime time zone", () => {
+    expect(formatCalendarDay("en", "2026-10-12")).toBe("Oct 12");
+    expect(formatCalendarDay("en", "2026-01-01")).toBe("Jan 1");
+  });
+
+  it("names the month in Arabic for the Arabic surface", () => {
+    const label = formatCalendarDay("ar", "2026-10-12");
+    expect(label).not.toBe(formatCalendarDay("en", "2026-10-12"));
+    expect(label).toContain("أكتوبر");
+  });
+
+  it("shows a range up to but not including the exclusive end", () => {
+    expect(formatCalendarRange("en", "2026-10-06", "2026-10-13")).toBe("Oct 6 – 12");
+  });
+
+  it("shows a one-day range as that day", () => {
+    expect(formatCalendarRange("en", "2026-10-12", "2026-10-13")).toBe("Oct 12");
+  });
+
+  it("crosses a month end", () => {
+    expect(formatCalendarRange("en", "2026-09-29", "2026-10-06")).toBe("Sep 29 – Oct 5");
   });
 });

@@ -67,6 +67,8 @@ export interface OrdersListQuery {
   readonly after?: string;
   readonly status?: string;
   readonly search?: string;
+  /** Plan 3D: only the open orders still waiting to be fulfilled (what Home's card counts). */
+  readonly fulfillment?: "unfulfilled";
 }
 
 export type FetchOrdersPageResult =
@@ -85,6 +87,7 @@ export async function fetchOrdersPage(query: OrdersListQuery): Promise<FetchOrde
   if (query.after !== undefined) params.set("after", query.after);
   if (query.status !== undefined) params.set("status", query.status);
   if (query.search !== undefined) params.set("search", query.search);
+  if (query.fulfillment !== undefined) params.set("fulfillment", query.fulfillment);
 
   const result = await getAdminApi(`/api/v1/orders?${params.toString()}`, isOrdersPageDto);
   if (result.outcome === "ok") {

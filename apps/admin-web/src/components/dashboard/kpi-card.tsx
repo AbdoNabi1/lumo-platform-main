@@ -1,133 +1,139 @@
-import {
-  CircleDollarSignIcon,
-  ShoppingBagIcon,
-  TagIcon,
-  TrendingDownIcon,
-  TrendingUpIcon,
-  UsersIcon,
-  type LucideIcon,
-} from "lucide-react";
+import Link from "next/link";
+import { MinusIcon, TrendingDownIcon, TrendingUpIcon, type LucideIcon } from "lucide-react";
 import { Badge, Card, CardContent, cn } from "@platform/ui";
-import { Sparkline } from "./sparkline";
-import type { DashboardKpi, KpiId } from "@/data/dashboard";
-import { formatCurrency, formatDelta, formatNumber, formatPercent } from "@/lib/format";
+import type { Change } from "@/lib/dashboard/change";
+import { formatDelta } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
+import { Sparkline } from "./sparkline";
 
-const ICONS: Readonly<Record<KpiId, LucideIcon>> = {
-  revenue: CircleDollarSignIcon,
-  orders: ShoppingBagIcon,
-  averageOrderValue: TagIcon,
-  conversionRate: UsersIcon,
-};
+/** A distinct pastel accent per card, purely visual grouping. */
+export type KpiAccent = "info" | "primary" | "success" | "warning";
 
-/** A distinct pastel accent per KPI, plus a soft colour-matched glow — purely visual
- *  grouping, no change in meaning. */
-const ACCENT: Readonly<Record<KpiId, string>> = {
-  revenue: "bg-info-subtle text-info-foreground shadow-[0_0_20px_-2px_var(--info-subtle)]",
-  orders:
+const ACCENT: Readonly<Record<KpiAccent, string>> = {
+  info: "bg-info-subtle text-info-foreground shadow-[0_0_20px_-2px_var(--info-subtle)]",
+  primary:
     "bg-primary-subtle text-primary-subtle-foreground shadow-[0_0_20px_-2px_var(--primary-subtle)]",
-  averageOrderValue:
-    "bg-success-subtle text-success-foreground shadow-[0_0_20px_-2px_var(--success-subtle)]",
-  conversionRate:
-    "bg-warning-subtle text-warning-foreground shadow-[0_0_20px_-2px_var(--warning-subtle)]",
+  success: "bg-success-subtle text-success-foreground shadow-[0_0_20px_-2px_var(--success-subtle)]",
+  warning: "bg-warning-subtle text-warning-foreground shadow-[0_0_20px_-2px_var(--warning-subtle)]",
 };
 
-function titleFor(id: KpiId, t: Dictionary): string {
-  switch (id) {
-    case "revenue":
-      return t.kpi.totalRevenue;
-    case "orders":
-      return t.kpi.orders;
-    case "averageOrderValue":
-      return t.kpi.averageOrderValue;
-    case "conversionRate":
-      return t.kpi.conversionRate;
+/** The badge: up or down by a fraction, "New" when the period before had nothing, a dash when neither did. */
+function ChangeBadge({
+  change,
+  locale,
+  t,
+}: {
+  readonly change: Change;
+  readonly locale: Locale;
+  readonly t: Dictionary;
+}) {
+  if (change.kind === "new") return <Badge variant="info">{t.kpi.changeNew}</Badge>;
+  if (change.kind === "none") {
+    return (
+      <span
+        className="bg-muted text-muted-foreground inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium"
+        title={t.kpi.nothingToCompare}
+      >
+        <MinusIcon className="size-3.5" aria-hidden="true" />
+        <span aria-hidden="true">—</span>
+        <span className="sr-only">{t.kpi.nothingToCompare}</span>
+      </span>
+    );
   }
-}
-
-function valueFor(kpi: DashboardKpi, locale: Locale): string {
-  switch (kpi.kind) {
-    case "money":
-      return formatCurrency(locale, kpi.value.amountMinor, kpi.value.currency);
-    case "count":
-      return formatNumber(locale, kpi.value);
-    case "rate":
-      return formatPercent(locale, kpi.value);
-  }
+  const up = change.fraction >= 0;
+  const TrendIcon = up ? TrendingUpIcon : TrendingDownIcon;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium tabular-nums",
+        up
+          ? "bg-success-subtle text-success-foreground"
+          : "bg-destructive-subtle text-destructive-subtle-foreground",
+      )}
+    >
+      <TrendIcon className="size-3.5" aria-hidden="true" />
+      {formatDelta(locale, change.fraction)}
+    </span>
+  );
 }
 
 /**
- * A single KPI: icon, title, value, period-over-period comparison, and a trend spark.
- *
- * The delta's direction is carried by an icon and a word-equivalent sign, not by colour
- * alone — colour is reinforcement (WCAG 1.4.1).
- *
- * `kpi.provenance` is per-KPI, not per-page (`data/dashboard.ts`'s module doc explains why):
- * Revenue can be live while Orders/AOV/Conversion Rate stay demo, so each card carries its own
- * small "Live"/"Demo" tag next to its title rather than relying on one page-wide signal that
- * could never be accurate for all four at once.
+ * One KPI card on Home: icon, title, value, and (when it is a period figure) how it moved against the
+ * period before plus a spark of its days. The direction of the change is carried by an icon and a sign,
+ * not by colour alone (WCAG 1.4.1). A card with no `change` (orders to fulfill: an all-time count)
+ * shows the value alone, and `href` makes its value a link.
  */
 export function KpiCard({
-  kpi,
+  id,
+  icon: Icon,
+  accent,
+  title,
+  value,
+  hint,
+  change,
+  comparisonLabel,
+  trend,
+  href,
+  hrefLabel,
   t,
   locale,
-  comparisonLabel,
 }: {
-  readonly kpi: DashboardKpi;
+  readonly id: string;
+  readonly icon: LucideIcon;
+  readonly accent: KpiAccent;
+  readonly title: string;
+  readonly value: string;
+  readonly hint?: string;
+  readonly change?: Change;
+  readonly comparisonLabel?: string;
+  readonly trend?: readonly number[];
+  readonly href?: string;
+  readonly hrefLabel?: string;
   readonly t: Dictionary;
   readonly locale: Locale;
-  readonly comparisonLabel: string;
 }) {
-  const Icon = ICONS[kpi.id];
-  const up = kpi.delta >= 0;
-  const TrendIcon = up ? TrendingUpIcon : TrendingDownIcon;
-  const title = titleFor(kpi.id, t);
-
   return (
-    <Card variant="kpi">
+    <Card variant="kpi" data-kpi={id}>
       <CardContent className="flex flex-col gap-4 pt-4 sm:pt-5">
         <div className="flex items-center gap-3">
           <span
             className={cn(
               "flex size-10 shrink-0 items-center justify-center rounded-full",
-              ACCENT[kpi.id],
+              ACCENT[accent],
             )}
             aria-hidden="true"
           >
             <Icon className="size-5" />
           </span>
           <h3 className="text-muted-foreground text-base font-medium">{title}</h3>
-          {kpi.provenance === "live" ? (
-            <Badge variant="success">{t.data.liveTag}</Badge>
-          ) : (
-            <Badge variant="warning">{t.data.demoTag}</Badge>
-          )}
         </div>
 
         <div className="flex items-end justify-between gap-3">
-          <p className="text-3xl font-semibold tabular-nums tracking-tight">
-            {valueFor(kpi, locale)}
-          </p>
-          <Sparkline points={kpi.trend} />
+          {href === undefined ? (
+            <p className="text-3xl font-semibold tabular-nums tracking-tight">{value}</p>
+          ) : (
+            <Link
+              href={href}
+              aria-label={hrefLabel}
+              className="hover:text-primary focus-visible:ring-ring rounded-md text-3xl font-semibold tabular-nums tracking-tight focus-visible:outline-none focus-visible:ring-2"
+            >
+              {value}
+            </Link>
+          )}
+          {trend !== undefined && <Sparkline points={trend} />}
         </div>
 
-        <p className="flex flex-wrap items-center gap-2 text-xs">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium tabular-nums",
-              up
-                ? "bg-success-subtle text-success-foreground"
-                : "bg-destructive-subtle text-destructive-subtle-foreground",
-            )}
-          >
-            <TrendIcon className="size-3.5" aria-hidden="true" />
-            {formatDelta(locale, kpi.delta)}
-          </span>
-          <span className="text-muted-foreground">
-            {t.kpi.comparedTo.replace("{range}", comparisonLabel)}
-          </span>
-        </p>
+        {change !== undefined && comparisonLabel !== undefined ? (
+          <p className="flex flex-wrap items-center gap-2 text-xs">
+            <ChangeBadge change={change} locale={locale} t={t} />
+            <span className="text-muted-foreground">
+              {t.kpi.comparedTo.replace("{range}", comparisonLabel)}
+            </span>
+          </p>
+        ) : (
+          hint !== undefined && <p className="text-muted-foreground text-xs">{hint}</p>
+        )}
       </CardContent>
     </Card>
   );

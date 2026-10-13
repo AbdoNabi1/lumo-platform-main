@@ -67,6 +67,36 @@ export function formatDateRange(locale: Locale, startIso: string, endIso: string
   return formatter.formatRange(new Date(startIso), new Date(endIso));
 }
 
+const DAY_MS = 86_400_000;
+
+/** A `YYYY-MM-DD` in the shop's calendar as a UTC midnight: a label, not an instant. */
+function shopDayAsUtc(day: string): Date {
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
+/**
+ * "Oct 12" for a day in the SHOP's calendar (`YYYY-MM-DD`, what the sales API sends). Formatted in UTC
+ * on purpose: the string already names the shop's day, so the server's or the browser's time zone
+ * must not move it to the day before or after.
+ */
+export function formatCalendarDay(locale: Locale, day: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(shopDayAsUtc(day));
+}
+
+/** "Oct 6 – 12" for `[from, toExclusive)` in the shop's calendar; a single day reads as that day. */
+export function formatCalendarRange(locale: Locale, from: string, toExclusive: string): string {
+  const first = shopDayAsUtc(from);
+  const last = new Date(shopDayAsUtc(toExclusive).getTime() - DAY_MS);
+  if (last.getTime() <= first.getTime()) return formatCalendarDay(locale, from);
+  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", timeZone: "UTC" })
+    .formatRange(first, last)
+    .replace(/[\u2009\u202f\u00a0]/g, " ");
+}
+
 export function formatShortDate(locale: Locale, iso: string): string {
   return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(iso));
 }

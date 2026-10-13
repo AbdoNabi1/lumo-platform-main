@@ -1,16 +1,19 @@
-import type { ReactNode } from "react";
-import { AlertTriangleIcon, LockIcon, PackageSearchIcon } from "lucide-react";
-import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from "@platform/ui";
-import { getRecentOrders } from "@/data/recent-orders";
+import { PackageSearchIcon } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle, Skeleton } from "@platform/ui";
+import { fetchRecentOrders } from "@/lib/api/orders";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
+import { DashboardError } from "./dashboard-error";
 import { RecentOrders } from "./recent-orders";
 
+/** How many orders Home lists, whatever the date range. */
+const RECENT_ORDERS = 5;
+
 /**
- * Resolves and renders the Dashboard's Recent Orders widget from the real `GET /orders` endpoint.
- * An async Server Component on purpose: rendered inside its own `<Suspense>` boundary in
- * `app/page.tsx` (fallback: `RecentOrdersSkeleton`), so this one real section can stream in
- * independently of the rest of the still-demo page instead of blocking it.
+ * Resolves and renders Home's recent orders from the real `GET /orders`. An async Server Component
+ * on purpose: rendered inside its own `<Suspense>` boundary in `app/page.tsx` (fallback:
+ * {@link RecentOrdersSkeleton}), so it streams in on its own and a slow or failing orders list never
+ * blocks, or takes down, the figures above it.
  */
 export async function RecentOrdersSection({
   t,
@@ -21,75 +24,50 @@ export async function RecentOrdersSection({
   readonly locale: Locale;
   readonly className?: string;
 }) {
-  const result = await getRecentOrders();
+  const result = await fetchRecentOrders(RECENT_ORDERS);
 
-  if (result.status === "unauthorized") {
+  if (result.outcome === "unauthorized") {
     return (
-      <StatePanel
+      <DashboardError
+        title={t.recentOrders.title}
         t={t}
-        className={className}
-        icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.recentOrders.unauthorized}
+        as="h2"
+        unauthorized
+        unauthorizedMessage={t.recentOrders.unauthorized}
+        {...(className === undefined ? {} : { className })}
       />
     );
   }
 
-  if (result.status === "error") {
+  if (result.outcome === "error") {
     return (
-      <StatePanel
+      <DashboardError
+        title={t.recentOrders.title}
         t={t}
-        className={className}
-        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
-        message={t.recentOrders.error}
+        as="h2"
+        {...(className === undefined ? {} : { className })}
       />
     );
   }
 
   if (result.orders.length === 0) {
     return (
-      <StatePanel
-        t={t}
-        className={className}
-        icon={<PackageSearchIcon aria-hidden="true" className="size-5" />}
-        message={t.recentOrders.empty}
-        live
-      />
+      <Card className={className}>
+        <CardHeader>
+          <CardTitle as="h2">{t.recentOrders.title}</CardTitle>
+        </CardHeader>
+        <CardContent className="text-muted-foreground flex flex-col items-center gap-2 px-4 py-10 text-center text-base sm:px-5">
+          <PackageSearchIcon aria-hidden="true" className="size-5" />
+          <p role="note">{t.recentOrders.empty}</p>
+        </CardContent>
+      </Card>
     );
   }
 
-  return <RecentOrders orders={result.orders} t={t} locale={locale} className={className} live />;
+  return <RecentOrders orders={result.orders} t={t} locale={locale} className={className} />;
 }
 
-function StatePanel({
-  t,
-  className,
-  icon,
-  message,
-  live = false,
-}: {
-  readonly t: Dictionary;
-  readonly className?: string;
-  readonly icon: ReactNode;
-  readonly message: string;
-  readonly live?: boolean;
-}) {
-  return (
-    <Card className={className}>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <CardTitle>{t.recentOrders.title}</CardTitle>
-          {live && <Badge variant="success">{t.recentOrders.liveBadge}</Badge>}
-        </div>
-      </CardHeader>
-      <CardContent className="text-muted-foreground flex flex-col items-center gap-2 px-4 py-10 text-center text-base sm:px-5">
-        {icon}
-        <p role="note">{message}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** `<Suspense>` fallback for {@link RecentOrdersSection} — the existing Morbeh skeleton treatment. */
+/** `<Suspense>` fallback for {@link RecentOrdersSection}. */
 export function RecentOrdersSkeleton({
   t,
   className,
@@ -100,16 +78,15 @@ export function RecentOrdersSkeleton({
   return (
     <Card className={className} aria-busy="true" aria-label={t.recentOrders.title}>
       <CardHeader>
-        <CardTitle>{t.recentOrders.title}</CardTitle>
+        <CardTitle as="h2">{t.recentOrders.title}</CardTitle>
       </CardHeader>
       <CardContent className="px-0 sm:px-0">
         <ul className="flex flex-col">
-          {Array.from({ length: 5 }, (_, index) => (
+          {Array.from({ length: RECENT_ORDERS }, (_, index) => (
             <li
               key={index}
               className="border-border/60 flex items-center gap-3 border-t px-4 py-3.5 sm:px-5"
             >
-              <Skeleton className="size-10 shrink-0 rounded-full" />
               <div className="flex min-w-0 flex-1 flex-col gap-2">
                 <Skeleton className="h-4 w-24" />
                 <Skeleton className="h-3 w-32" />
