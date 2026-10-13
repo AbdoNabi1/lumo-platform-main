@@ -97,6 +97,8 @@ export class ListZones implements UseCase<
 export interface CreateZoneInput extends TenantInput {
   readonly name: string;
   readonly countries: readonly ZoneCountry[];
+  /** Plan 3E: first rates, saved with the zone in the same unit of work (all or nothing). */
+  readonly rates?: readonly RateFields[];
 }
 
 /** Region checks and the one-zone-per-country rule, against the tenant's other zones. */
@@ -132,9 +134,16 @@ export class CreateZone implements UseCase<CreateZoneInput, { id: string }, Doma
         ShippingZone.create(id, { name: input.name, countries: input.countries }, position),
       );
       if (!built.ok) return err(built.error);
+      const zone = built.value;
+      const withRates = attempt(() => {
+        for (const rate of input.rates ?? []) {
+          zone.addRate(UniqueEntityId.from(this.deps.idGenerator.generate()), rateFields(rate));
+        }
+      });
+      if (!withRates.ok) return err(withRates.error);
       const problem = await checkCountries(this.deps, input.tenantId, input.countries, tx);
       if (problem !== null) return err(problem);
-      await this.deps.zones.save(built.value, input.tenantId, tx);
+      await this.deps.zones.save(zone, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

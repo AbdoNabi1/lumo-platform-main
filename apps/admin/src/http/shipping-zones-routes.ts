@@ -27,6 +27,8 @@ const rateBody = z.object({
   condition: condition.optional(),
   description: z.string().max(1000).nullable().optional(),
 });
+// Plan 3E: only a new zone may carry its first rates, saved with it in one unit of work.
+const createZoneBody = zoneBody.extend({ rates: z.array(rateBody).max(20).optional() });
 
 /**
  * Plan 3C — the shop's shipping zones and rates (Settings → Shipping and delivery). Staff routes under
@@ -53,7 +55,7 @@ export function shippingZonesRoutes(admin: WiredAdmin): readonly RouteDefinition
       permission: "settings:update",
       idempotent: true,
       summary: "Create a shipping zone (a country can only be in one zone)",
-      schema: { body: zoneBody },
+      schema: { body: createZoneBody },
       handle: ({ body, context }) =>
         admin.shippingZones.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),

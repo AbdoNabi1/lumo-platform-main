@@ -278,3 +278,38 @@ describe("shipping zones API — permissions (Plan 3C)", () => {
     }
   });
 });
+
+describe("shipping zones API — zone with its rates (Plan 3E)", () => {
+  let app: FastifyInstance;
+  beforeAll(async () => {
+    app = await buildApp();
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it("passes the body's rates through and lists them on the new zone", async () => {
+    const created = await send(app, "POST", "/shipping/zones", {
+      ...cairo,
+      rates: [{ name: "Standard", priceMinor: 5000, description: "2-4 business days" }],
+    });
+    expect(created.statusCode).toBe(201);
+
+    const res = await app.inject({ method: "GET", url: "/api/v1/shipping/zones", headers: authed });
+    const zone = (res.json() as { items: ZoneBody[] }).items[0];
+    expect(zone?.rates).toMatchObject([
+      { name: "Standard", priceMinor: 5000, description: "2-4 business days" },
+    ]);
+  });
+
+  it("refuses 21 rates (422) and creates no zone", async () => {
+    const rates = Array.from({ length: 21 }, (_, i) => ({ name: `Rate ${i}`, priceMinor: 100 }));
+    const res = await send(app, "POST", "/shipping/zones", {
+      name: "Other",
+      countries: [{ code: "SA", provinces: null }],
+      rates,
+    });
+
+    expect(res.statusCode).toBe(422);
+  });
+});

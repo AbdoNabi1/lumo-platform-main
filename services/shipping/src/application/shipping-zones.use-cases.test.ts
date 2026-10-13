@@ -392,3 +392,70 @@ describe("AddRate / UpdateRate / DeleteRate", () => {
     ).toBeInstanceOf(NotFoundError);
   });
 });
+
+describe("CreateZone with rates", () => {
+  it("creates a zone with two rates and lists them in order", async () => {
+    const h = harness();
+    const result = await h.create.execute({
+      tenantId: T1,
+      name: "Cairo and Giza",
+      countries: cairo as never,
+      rates: [
+        { name: "Standard", priceMinor: 5000, description: "2-4 business days" },
+        {
+          name: "Free shipping",
+          priceMinor: 0,
+          condition: { type: "orderPrice", minMinor: 100_000 },
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+
+    const listed = await h.list.execute({ tenantId: T1 });
+
+    expect(listed.ok && listed.value.items[0]?.rates).toEqual([
+      {
+        id: expect.any(String),
+        name: "Standard",
+        priceMinor: 5000,
+        condition: { type: "none" },
+        description: "2-4 business days",
+      },
+      {
+        id: expect.any(String),
+        name: "Free shipping",
+        priceMinor: 0,
+        condition: { type: "orderPrice", minMinor: 100_000 },
+        description: null,
+      },
+    ]);
+  });
+
+  it.each([
+    ["an empty name", { name: "  ", priceMinor: 5000 }],
+    ["a negative price", { name: "Standard", priceMinor: -1 }],
+  ])("saves no zone at all when a rate has %s", async (_label, bad) => {
+    const h = harness();
+    const error = await failure(
+      h.create.execute({
+        tenantId: T1,
+        name: "Cairo and Giza",
+        countries: cairo as never,
+        rates: [{ name: "Standard", priceMinor: 5000 }, bad],
+      }),
+    );
+
+    expect(error).toBeInstanceOf(ValidationError);
+    const listed = await h.list.execute({ tenantId: T1 });
+    expect(listed.ok && listed.value.items).toEqual([]);
+  });
+
+  it("still creates a zone with no rates field, exactly as before", async () => {
+    const h = harness();
+    await created(h, T1, "Cairo and Giza", cairo);
+
+    const listed = await h.list.execute({ tenantId: T1 });
+
+    expect(listed.ok && listed.value.items[0]?.rates).toEqual([]);
+  });
+});
