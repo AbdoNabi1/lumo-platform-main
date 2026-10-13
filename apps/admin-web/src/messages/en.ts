@@ -1590,6 +1590,17 @@ export const en = {
     cancel: "Cancel",
     loadError: "Couldn't load your shipping zones. Try again.",
     unauthorized: "Sign in to manage shipping.",
+    /** Plan 3E — names the zone dialog and quick setup suggest, and the rate presets. */
+    nameSeparator: ", ",
+    nameJoinLast: "{list} and {last}",
+    restOfEG: "Rest of Egypt",
+    restOfSA: "Rest of Saudi Arabia",
+    restOfAE: "Rest of the UAE",
+    presetStandard: "Standard",
+    presetStandardDescription: "2–4 business days",
+    presetExpress: "Express",
+    presetExpressDescription: "1–2 business days",
+    freeShipping: "Free shipping",
   },
   /** Plan 3C — Settings → General (store name, currency, time zone, weight unit). */
   generalSettings: {
