@@ -18,6 +18,7 @@ import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { fulfillmentStatusesOf } from "./fulfillment-statuses-of";
 import { customerNameOf, customerNamesFor } from "./order-customer-names";
+import { listUnfulfilledOrders } from "./unfulfilled-orders";
 import { analyticsRoutes } from "./analytics-routes";
 import { salesAnalyticsRoutes } from "./sales-analytics-routes";
 import { automationRoutes } from "./automation-routes";
@@ -171,6 +172,8 @@ const listOrdersQuery = z.object({
   after: z.string().min(1).optional(),
   status: z.enum(orderStatusValues).optional(),
   search: z.string().min(1).optional(),
+  /** Plan 3D: only the open orders still waiting to be fulfilled (the Home card links here). */
+  fulfillment: z.enum(["unfulfilled"]).optional(),
 });
 const customerIdParams = z.object({ customerId: z.string().min(1) });
 const listCustomersQuery = z.object({
@@ -1507,19 +1510,35 @@ export function adminRoutes(
       summary: "List orders, most recently placed first (cursor-paginated)",
       schema: { querystring: listOrdersQuery },
       handle: async ({ query, context }): Promise<AdminResponse> => {
-        const response = await admin.orders.listOrders(context.principal, {
-          ...query,
-          tenantId: context.tenantId,
-        });
-        if (response.status !== 200) return response;
+        const { fulfillment, ...listQuery } = query;
+        let response: AdminResponse;
+        let fulfillmentByOrder: ReadonlyMap<string, OrderFulfillmentStatus>;
+        if (fulfillment === "unfulfilled") {
+          const found = await listUnfulfilledOrders(
+            admin,
+            context.principal,
+            context.tenantId,
+            listQuery,
+          );
+          if (!found.ok) return found.response;
+          response = { status: 200, body: found.page };
+          fulfillmentByOrder = found.statuses;
+        } else {
+          response = await admin.orders.listOrders(context.principal, {
+            ...listQuery,
+            tenantId: context.tenantId,
+          });
+          if (response.status !== 200) return response;
+          const statuses = await fulfillmentStatusesOf(
+            admin,
+            context.principal,
+            context.tenantId,
+            (response.body as Paginated<Order>).items.map((order) => order.id.toString()),
+          );
+          if (!statuses.ok) return statuses.response;
+          fulfillmentByOrder = statuses.byOrder;
+        }
         const orders = (response.body as Paginated<Order>).items;
-        const statuses = await fulfillmentStatusesOf(
-          admin,
-          context.principal,
-          context.tenantId,
-          orders.map((order) => order.id.toString()),
-        );
-        if (!statuses.ok) return statuses.response;
         const customerNames = await customerNamesFor(
           admin,
           context.principal,
@@ -1529,7 +1548,7 @@ export function adminRoutes(
         return mapPage(response, (order: Order) =>
           toOrderListItemDto(
             order,
-            statuses.byOrder.get(order.id.toString()) ?? "unfulfilled",
+            fulfillmentByOrder.get(order.id.toString()) ?? "unfulfilled",
             customerNames,
           ),
         );

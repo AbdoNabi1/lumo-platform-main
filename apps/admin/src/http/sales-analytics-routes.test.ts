@@ -75,10 +75,15 @@ interface SalesBody {
   readonly error: { readonly code: string };
 }
 
+/** 22:30 UTC on Oct 12 is already Oct 13 in the default shop zone (Africa/Cairo). */
+const NOW = new Date("2026-10-12T22:30:00Z");
+
 const principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
 
 async function invoke(admin: WiredAdmin, query: Record<string, string | undefined>) {
-  const route = salesAnalyticsRoutes(admin).find((r) => r.path === "/analytics/sales");
+  const route = salesAnalyticsRoutes(admin, { now: () => NOW }).find(
+    (r) => r.path === "/analytics/sales",
+  );
   if (route === undefined) throw new Error("no /analytics/sales route");
   return (await route.handle({
     body: undefined,
@@ -292,6 +297,70 @@ describe("GET /analytics/sales", () => {
       "https://cdn.example/1.jpg",
       null,
     ]);
+  });
+
+  it.each([
+    ["today", { from: "2026-10-13", to: "2026-10-14" }],
+    ["yesterday", { from: "2026-10-12", to: "2026-10-13" }],
+    ["7d", { from: "2026-10-07", to: "2026-10-14" }],
+    ["30d", { from: "2026-09-14", to: "2026-10-14" }],
+    ["month", { from: "2026-10-01", to: "2026-10-14" }],
+  ])(
+    "resolves range=%s against today in the shop's zone (Oct 13 in Cairo)",
+    async (range, expected) => {
+      const salesReport = vi.fn().mockResolvedValue(report({}));
+
+      const response = await invoke(adminWith({ salesReport }), { range });
+
+      expect(salesReport).toHaveBeenCalledWith(principal, {
+        tenantId: "tenant-a",
+        ...expected,
+        ...SHOP,
+      });
+      expect(response.body.range).toEqual(expected);
+    },
+  );
+
+  it("uses the shop's zone, not UTC, to decide what today is", async () => {
+    const salesReport = vi.fn().mockResolvedValue(report({}));
+    const getStoreRegion = vi
+      .fn()
+      .mockResolvedValue({ status: 200, body: { currency: "USD", timezone: "UTC" } });
+
+    await invoke(adminWith({ salesReport, getStoreRegion }), { range: "today" });
+
+    expect(salesReport).toHaveBeenCalledWith(principal, {
+      tenantId: "tenant-a",
+      from: "2026-10-12",
+      to: "2026-10-13",
+      currency: "USD",
+      timezone: "UTC",
+    });
+  });
+
+  it("lets a preset win over an explicit from and to", async () => {
+    const salesReport = vi.fn().mockResolvedValue(report({}));
+
+    await invoke(adminWith({ salesReport }), {
+      range: "today",
+      from: "2020-01-01",
+      to: "2020-02-01",
+    });
+
+    expect(salesReport).toHaveBeenCalledWith(
+      principal,
+      expect.objectContaining({ from: "2026-10-13" }),
+    );
+  });
+
+  it("answers 400 for a preset it does not know", async () => {
+    const salesReport = vi.fn();
+
+    const response = await invoke(adminWith({ salesReport }), { range: "90d" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_RANGE");
+    expect(salesReport).not.toHaveBeenCalled();
   });
 
   it.each([

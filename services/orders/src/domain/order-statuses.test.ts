@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OrderEventType } from "./order-event";
-import { derivePaymentStatus } from "./order-statuses";
+import { derivePaymentStatus, isOpenOrder } from "./order-statuses";
 
 function history(...types: OrderEventType[]) {
   return types.map((type) => ({ type }));
@@ -148,5 +148,24 @@ describe("derivePaymentStatus", () => {
 
   it("is pending for an empty history (nothing has happened yet)", () => {
     expect(derivePaymentStatus([])).toBe("pending");
+  });
+});
+
+describe("isOpenOrder (Plan 3D: an order that can still need fulfilling)", () => {
+  it("is open while nothing has cancelled or closed it", () => {
+    expect(isOpenOrder(history("created"))).toBe(true);
+    expect(isOpenOrder(history("placed", "paid"))).toBe(true);
+    expect(isOpenOrder(history("created", "confirmed", "payment_received", "delivered"))).toBe(
+      true,
+    );
+  });
+
+  it("is not open once it was cancelled, even if it was closed afterwards or never closed", () => {
+    expect(isOpenOrder(history("created", "cancelled"))).toBe(false);
+    expect(isOpenOrder(history("created", "cancelled", "closed"))).toBe(false);
+  });
+
+  it("is not open once it is closed", () => {
+    expect(isOpenOrder(history("created", "delivered", "closed"))).toBe(false);
   });
 });

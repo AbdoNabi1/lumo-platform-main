@@ -8,7 +8,11 @@ import {
   type SalesSummaryQuery,
   type TopProduct,
 } from "../application/sales-summary";
-import { CANCELLED_EVENT_TYPE, REFUNDED_EVENT_TYPES } from "../domain/order-statuses";
+import {
+  CANCELLED_EVENT_TYPE,
+  CLOSED_EVENT_TYPE,
+  REFUNDED_EVENT_TYPES,
+} from "../domain/order-statuses";
 
 export interface PrismaSalesSummaryQueryDeps {
   readonly prisma: Database;
@@ -40,7 +44,7 @@ interface IdRow {
 const CANCELLED: readonly string[] = [CANCELLED_EVENT_TYPE];
 const REFUNDED: readonly string[] = REFUNDED_EVENT_TYPES;
 // `closed` is terminal in the lifecycle (nothing follows it), so "has a closed event" is "is closed".
-const CANCELLED_OR_CLOSED: readonly string[] = [CANCELLED_EVENT_TYPE, "closed"];
+const CANCELLED_OR_CLOSED: readonly string[] = [CANCELLED_EVENT_TYPE, CLOSED_EVENT_TYPE];
 
 /**
  * Production {@link SalesSummaryQuery}: the dashboard's figures as SQL aggregates over

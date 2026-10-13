@@ -1,7 +1,8 @@
 import type { Order } from "../domain/order";
-import { CANCELLED_EVENT_TYPE, REFUNDED_EVENT_TYPES } from "../domain/order-statuses";
+import { CANCELLED_EVENT_TYPE, isOpenOrder, REFUNDED_EVENT_TYPES } from "../domain/order-statuses";
 import {
   assembleSalesSummary,
+  localDay,
   type MeasuredDay,
   type SalesSummary,
   type SalesSummaryInput,
@@ -14,26 +15,12 @@ export interface InMemorySalesSummaryQueryDeps {
   readonly ordersOf: (tenantId: string) => readonly Order[];
 }
 
-/** The shop-local calendar day (`YYYY-MM-DD`) of an instant. */
-function localDay(instant: Date, timezone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(instant);
-}
-
 function isCancelled(order: Order): boolean {
   return order.history.some((entry) => entry.type === CANCELLED_EVENT_TYPE);
 }
 
 function isRefunded(order: Order): boolean {
   return order.history.some((entry) => REFUNDED_EVENT_TYPES.includes(entry.type));
-}
-
-function isClosed(order: Order): boolean {
-  return order.status === "closed";
 }
 
 /** When the order was placed: its first history entry (the record, as the SQL's `created_at` is). */
@@ -101,9 +88,7 @@ export class InMemorySalesSummaryQuery implements SalesSummaryQuery {
       otherCurrencyOrders: inRange.length - counted.length,
       openOrderIds:
         input.includeOpenOrderIds === true
-          ? orders
-              .filter((order) => !isCancelled(order) && !isClosed(order))
-              .map((order) => order.id.toString())
+          ? orders.filter((order) => isOpenOrder(order.history)).map((order) => order.id.toString())
           : [],
     });
   }

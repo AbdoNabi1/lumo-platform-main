@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   averageOrderValueMinor,
   enumerateDays,
+  isSalesRangePreset,
+  localDay,
   previousSalesRange,
   rankTopProducts,
+  resolveSalesRange,
+  SALES_RANGE_PRESETS,
   validateSalesRange,
 } from "./sales-summary";
 
@@ -93,5 +97,52 @@ describe("previousSalesRange", () => {
       from: "2025-12-29",
       to: "2026-01-01",
     });
+  });
+});
+
+describe("resolveSalesRange", () => {
+  // Wednesday 2026-10-14
+  it.each([
+    ["today", { from: "2026-10-14", to: "2026-10-15" }],
+    ["yesterday", { from: "2026-10-13", to: "2026-10-14" }],
+    ["7d", { from: "2026-10-08", to: "2026-10-15" }],
+    ["30d", { from: "2026-09-15", to: "2026-10-15" }],
+    ["month", { from: "2026-10-01", to: "2026-10-15" }],
+  ] as const)("%s ends today, in the shop's own calendar", (preset, expected) => {
+    expect(resolveSalesRange(preset, "2026-10-14")).toEqual(expected);
+  });
+
+  it("crosses a month and year end", () => {
+    expect(resolveSalesRange("today", "2026-12-31")).toEqual({
+      from: "2026-12-31",
+      to: "2027-01-01",
+    });
+    expect(resolveSalesRange("7d", "2026-01-03")).toEqual({ from: "2025-12-28", to: "2026-01-04" });
+    expect(resolveSalesRange("month", "2026-03-01")).toEqual({
+      from: "2026-03-01",
+      to: "2026-03-02",
+    });
+  });
+
+  it("every preset is a valid range", () => {
+    for (const preset of SALES_RANGE_PRESETS) {
+      const { from, to } = resolveSalesRange(preset, "2026-10-14");
+      expect(validateSalesRange(from, to)).toBeNull();
+    }
+  });
+});
+
+describe("localDay", () => {
+  it("is the calendar day in the zone: 22:30 UTC on Oct 12 is already Oct 13 in Cairo", () => {
+    expect(localDay(new Date("2026-10-12T22:30:00Z"), "Africa/Cairo")).toBe("2026-10-13");
+    expect(localDay(new Date("2026-10-12T22:30:00Z"), "UTC")).toBe("2026-10-12");
+  });
+});
+
+describe("isSalesRangePreset", () => {
+  it("knows the five presets and nothing else", () => {
+    expect(SALES_RANGE_PRESETS.every((preset) => isSalesRangePreset(preset))).toBe(true);
+    expect(isSalesRangePreset("90d")).toBe(false);
+    expect(isSalesRangePreset("")).toBe(false);
   });
 });

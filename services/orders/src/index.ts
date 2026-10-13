@@ -37,12 +37,17 @@ export type {
   StockReleasePort,
 } from "./application/ports";
 export { ORDERS_PUBLISHED_EVENTS } from "./infrastructure/order-event-translator";
-export { derivePaymentStatus } from "./domain/order-statuses";
+export { derivePaymentStatus, isOpenOrder } from "./domain/order-statuses";
 export {
+  isSalesRangePreset,
+  localDay,
   MAX_SALES_RANGE_DAYS,
   previousSalesRange,
+  resolveSalesRange,
+  SALES_RANGE_PRESETS,
   validateSalesRange,
 } from "./application/sales-summary";
+export type { SalesRangePreset } from "./application/sales-summary";
 export type {
   DailySales,
   SalesSummary,

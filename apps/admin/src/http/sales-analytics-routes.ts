@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import {
+  isSalesRangePreset,
+  localDay,
   previousSalesRange,
+  resolveSalesRange,
+  SALES_RANGE_PRESETS,
   validateSalesRange,
   type DailySales,
   type SalesSummary,
@@ -15,10 +19,20 @@ import { lineKey, resolveLineImages, type ImageDto } from "./product-images";
 /** Orders are looked up in Fulfillment this many at a time (one batched read per chunk). */
 const FULFILLMENT_BATCH = 500;
 
+/**
+ * Either a preset (`range`, resolved here against today in the shop's own zone) or an explicit
+ * `[from, to)` of dates in that zone. Every field is optional so that a missing or malformed one is a
+ * 400 from the handler (the platform answers a schema failure with 422).
+ */
 const salesQuery = z.object({
+  range: z.string().optional(),
   from: z.string().optional(),
   to: z.string().optional(),
 });
+
+function invalidRange(message: string): AdminResponse {
+  return { status: 400, body: { error: { code: "INVALID_RANGE", message } } };
+}
 
 export interface SalesTopProductDto extends SalesTopProduct {
   /** The variant's picture, else the product's featured one; `null` shows the placeholder. */
@@ -82,7 +96,11 @@ async function countOrdersToFulfill(
 }
 
 /** Plan 3D — the Home dashboard's and the Analytics page's numbers, computed from the shop's orders. */
-export function salesAnalyticsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
+export function salesAnalyticsRoutes(
+  admin: WiredAdmin,
+  options: { readonly now?: () => Date } = {},
+): readonly RouteDefinition[] {
+  const now = options.now ?? (() => new Date());
   return [
     defineRoute({
       method: "GET",
@@ -93,16 +111,24 @@ export function salesAnalyticsRoutes(admin: WiredAdmin): readonly RouteDefinitio
         "Sales, orders, average order value, orders to fulfill, a daily series and top products for [from, to), with the range before it",
       schema: { querystring: salesQuery },
       handle: async ({ query, context }): Promise<AdminResponse> => {
-        const from = query.from ?? "";
-        const to = query.to ?? "";
-        const problem = validateSalesRange(from, to);
-        if (problem !== null) {
-          return { status: 400, body: { error: { code: "INVALID_RANGE", message: problem } } };
+        const preset = query.range;
+        if (preset !== undefined && !isSalesRangePreset(preset)) {
+          return invalidRange(`"range" must be one of ${SALES_RANGE_PRESETS.join(", ")}`);
+        }
+        if (preset === undefined) {
+          const problem = validateSalesRange(query.from ?? "", query.to ?? "");
+          if (problem !== null) return invalidRange(problem);
         }
 
         const region = await admin.tenancy.getStoreRegion(context.principal);
         if (region.status !== 200) return region;
         const { timezone, currency } = region.body as { timezone: string; currency: string };
+
+        // A preset means today in the SHOP's zone, not the server's or the browser's.
+        const { from, to } =
+          preset !== undefined
+            ? resolveSalesRange(preset, localDay(now(), timezone))
+            : { from: query.from ?? "", to: query.to ?? "" };
 
         const response = await admin.orders.salesReport(context.principal, {
           tenantId: context.tenantId,

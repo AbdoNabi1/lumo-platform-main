@@ -26,6 +26,20 @@ const REFUNDED: ReadonlySet<OrderEventType> = new Set<OrderEventType>(REFUNDED_E
 /** The event that makes an order "cancelled" for good, even if it is closed afterwards. */
 export const CANCELLED_EVENT_TYPE: OrderEventType = "cancelled";
 
+/** The terminal event: nothing follows it in the lifecycle, so having it means the order is closed. */
+export const CLOSED_EVENT_TYPE: OrderEventType = "closed";
+
+/**
+ * Whether an order can still need fulfilling: it was never cancelled and is not closed. The one
+ * definition behind the dashboard's "orders to fulfill" and the orders list's unfulfilled filter
+ * (the sales read model's SQL asks for exactly these two event types).
+ */
+export function isOpenOrder(history: readonly { readonly type: OrderEventType }[]): boolean {
+  return !history.some(
+    (entry) => entry.type === CANCELLED_EVENT_TYPE || entry.type === CLOSED_EVENT_TYPE,
+  );
+}
+
 /** Pure: the payment status an order's append-only history implies. */
 export function derivePaymentStatus(
   history: readonly { readonly type: OrderEventType }[],

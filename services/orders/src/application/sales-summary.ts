@@ -100,6 +100,54 @@ export function enumerateDays(from: string, to: string): readonly string[] {
   return days;
 }
 
+/** The presets the dashboard's date picker offers; each is resolved against "today" in the shop's zone. */
+export const SALES_RANGE_PRESETS = ["today", "yesterday", "7d", "30d", "month"] as const;
+export type SalesRangePreset = (typeof SALES_RANGE_PRESETS)[number];
+
+export function isSalesRangePreset(value: string): value is SalesRangePreset {
+  return (SALES_RANGE_PRESETS as readonly string[]).includes(value);
+}
+
+/** The shop-local calendar day (`YYYY-MM-DD`) of an instant in an IANA zone. */
+export function localDay(instant: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(instant);
+}
+
+function shiftDay(day: string, days: number): string {
+  const start = parseUtcDay(day);
+  if (start === null) return day;
+  return new Date(start + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * The `[from, to)` a preset stands for, given today's date in the shop's zone. Every preset ENDS
+ * TODAY (`to` is tomorrow, exclusive): today; yesterday; the 7 and 30 days up to and including
+ * today; the 1st of this month through today.
+ */
+export function resolveSalesRange(
+  preset: SalesRangePreset,
+  today: string,
+): { readonly from: string; readonly to: string } {
+  const tomorrow = shiftDay(today, 1);
+  switch (preset) {
+    case "today":
+      return { from: today, to: tomorrow };
+    case "yesterday":
+      return { from: shiftDay(today, -1), to: today };
+    case "7d":
+      return { from: shiftDay(today, -6), to: tomorrow };
+    case "30d":
+      return { from: shiftDay(today, -29), to: tomorrow };
+    case "month":
+      return { from: `${today.slice(0, 7)}-01`, to: tomorrow };
+  }
+}
+
 /** The range of the same length that ends where this one starts (what a figure is compared with). */
 export function previousSalesRange(
   from: string,
