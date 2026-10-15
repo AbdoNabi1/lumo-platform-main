@@ -40,6 +40,7 @@ import { InitiatePayment, ListPaymentMethods } from "./application/payment-initi
 import { StartCheckout } from "./application/start-checkout.use-case";
 import type { CheckoutSessionRepository } from "./domain/checkout-session-repository";
 import type {
+  DiscountUsagePort,
   InventoryValidationPort,
   OrderCancellationPort,
   OrderStockReservationPort,
@@ -93,6 +94,8 @@ export interface CheckoutWiringDeps {
   readonly taxCalculation?: TaxCalculationPort;
   readonly shippingCalculation?: ShippingCalculationPort;
   readonly promotionValidation?: PromotionValidationPort;
+  /** Phase 2: records each discount's use once an order is placed. Absent ⇒ nothing is recorded. */
+  readonly discountUsage?: DiscountUsagePort;
   /**
    * C-2: the outbound seam `CompleteCheckout` uses to materialize an order from a completed
    * session. Same `deps.X ?? new InMemoryXAdapter()` convention as the 5 orchestration ports
@@ -157,6 +160,8 @@ function buildController(
       ...(deps.orderCancellation === undefined
         ? {}
         : { orderCancellation: deps.orderCancellation }),
+      promotionValidation,
+      ...(deps.discountUsage === undefined ? {} : { discountUsage: deps.discountUsage }),
     }),
     failCheckout: new FailCheckout({
       sessions,

@@ -5,11 +5,14 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { BusinessRuleError, type DomainError, NotFoundError } from "@platform/utils";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
+import { refreshDiscounts } from "./discount-code.use-cases";
 import type {
+  DiscountUsagePort,
   InventoryValidationPort,
   OrderCancellationPort,
   OrderCreationPort,
   OrderStockReservationPort,
+  PromotionValidationPort,
   StockReservationResult,
 } from "./ports";
 
@@ -46,6 +49,10 @@ export interface CompleteCheckoutDeps {
   readonly stockReservation?: OrderStockReservationPort;
   /** Plan 3C: cancels the order when its stock could not be reserved. Optional, like the port above. */
   readonly orderCancellation?: OrderCancellationPort;
+  /** Phase 2: when present, the discounts are worked out once more right before the order exists. */
+  readonly promotionValidation?: PromotionValidationPort;
+  /** Phase 2: when present, each discount's use is recorded after the order is placed (best effort). */
+  readonly discountUsage?: DiscountUsagePort;
 }
 
 /**
@@ -104,6 +111,36 @@ export class CompleteCheckout implements UseCase<
         );
       }
 
+      // Phase 2: a code can run out, expire or stop qualifying between the last recalculation and
+      // this click. Work the discounts out once more; if they moved, show the shopper the new total
+      // instead of placing an order at a price they never saw. `DISCOUNTS_CHANGED:` is the prefix
+      // the storefront reads, like `OUT_OF_STOCK:`.
+      if (this.deps.promotionValidation !== undefined) {
+        const before = {
+          order: session.discountMinor ?? 0,
+          shipping: session.discountSnapshot?.shippingDiscountMinor ?? 0,
+        };
+        try {
+          await refreshDiscounts(session, this.deps.promotionValidation, input.tenantId);
+          const after = {
+            order: session.discountMinor ?? 0,
+            shipping: session.discountSnapshot?.shippingDiscountMinor ?? 0,
+          };
+          if (before.order !== after.order || before.shipping !== after.shipping) {
+            session.recalculateTotals(this.deps.idGenerator.generate(), this.deps.clock.now());
+            await this.deps.sessions.save(session, input.tenantId, tx);
+            return err(
+              new BusinessRuleError(
+                "DISCOUNTS_CHANGED: the discounts changed; review the new total",
+              ),
+            );
+          }
+        } catch (error) {
+          if (isDomainError(error)) return err(error);
+          throw error;
+        }
+      }
+
       let draft;
       try {
         draft = session.generateOrderDraft();
@@ -135,6 +172,7 @@ export class CompleteCheckout implements UseCase<
         shippingAddress: draft.shippingAddress,
         totals: draft.totals,
         ...(draft.shippingMethod === undefined ? {} : { shippingMethod: draft.shippingMethod }),
+        ...(draft.discounts.length === 0 ? {} : { discounts: draft.discounts }),
         idempotencyKey: input.idempotencyKey,
       });
 
@@ -158,6 +196,23 @@ export class CompleteCheckout implements UseCase<
       }
 
       await this.deps.sessions.save(session, input.tenantId, tx);
+
+      // Phase 2: count each discount's use. The order already exists, so a failure here must not
+      // undo it; Coupons dedupes by order, and a retried completion returns early above.
+      if (this.deps.discountUsage !== undefined && draft.discounts.length > 0) {
+        try {
+          await this.deps.discountUsage.record({
+            tenantId: input.tenantId,
+            orderRef,
+            ...(draft.customerRef === undefined ? {} : { customerRef: draft.customerRef }),
+            ...(draft.contactEmail === undefined ? {} : { email: draft.contactEmail }),
+            applied: draft.discounts,
+          });
+        } catch {
+          // Best effort by design (spec "Placing the order and recording usage").
+        }
+      }
+
       return ok({ checkoutSessionId: session.id.toString(), state: session.state.value, orderRef });
     });
   }

@@ -197,6 +197,8 @@ export interface OrderCreationPort {
     readonly totals: CheckoutTotals;
     /** The shipping method the shopper selected (Plan 3B); the order snapshots it with the totals. */
     readonly shippingMethod?: string;
+    /** Phase 2: the discounts the shopper got, as shown at checkout; absent when none. */
+    readonly discounts?: readonly AppliedDiscountSnapshot[];
     readonly idempotencyKey: string;
   }): Promise<{ readonly orderRef: string }>;
 }
