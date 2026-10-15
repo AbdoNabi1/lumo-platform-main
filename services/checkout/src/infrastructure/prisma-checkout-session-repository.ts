@@ -45,6 +45,7 @@ export class PrismaCheckoutSessionRepository implements CheckoutSessionRepositor
           taxMinor: row.taxMinor,
           discountMinor: row.discountMinor,
           totals: row.totals,
+          discounts: row.discounts,
           version: { increment: 1 },
         },
       });
@@ -82,6 +83,7 @@ export class PrismaCheckoutSessionRepository implements CheckoutSessionRepositor
           shippingSelection: row.shippingSelection as Record<string, never>,
           paymentSelection: row.paymentSelection as Record<string, never>,
           totals: row.totals as Record<string, never>,
+          discounts: row.discounts as Record<string, never>,
         });
   }
 

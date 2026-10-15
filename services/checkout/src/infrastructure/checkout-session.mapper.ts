@@ -7,6 +7,7 @@ import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { CheckoutState, type CheckoutStateValue } from "../domain/value-objects/checkout-state";
 import { CheckoutTotals } from "../domain/value-objects/checkout-totals";
 import { ContactEmail } from "../domain/value-objects/contact-email";
+import type { DiscountSnapshot } from "../domain/value-objects/discount-snapshot";
 import { PaymentSelection, ShippingSelection } from "../domain/value-objects/selections";
 
 interface CheckoutItemJson {
@@ -46,6 +47,16 @@ interface PaymentSelectionJson {
   /** WP-13: the payment intent opened for the order. Lives in this JSON (no new column). */
   readonly paymentIntentRef?: string;
 }
+/** What `JSON.parse` yields — assignable to Prisma's JSON input, which the typed interfaces are not. */
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type JsonObject = { [key: string]: JsonValue };
+
+interface DiscountsJson {
+  readonly codes?: readonly string[];
+  readonly snapshot?: DiscountSnapshot;
+  readonly rejectedAttempts?: number;
+  readonly attemptsWindowStartedAt?: string;
+}
 interface CheckoutTotalsJson {
   readonly subtotalMinor: number;
   readonly taxMinor: number;
@@ -56,6 +67,8 @@ interface CheckoutTotalsJson {
   /** Plan 3C: absent on totals saved before it existed, which added the tax to the total. */
   readonly taxIncluded?: boolean;
   readonly shippingName?: string;
+  /** Phase 2: absent on totals saved before it existed (no shipping discount). */
+  readonly shippingDiscountMinor?: number;
 }
 
 export interface CheckoutSessionRow {
@@ -77,6 +90,8 @@ export interface CheckoutSessionRow {
   readonly taxMinor: number | null;
   readonly discountMinor: number | null;
   readonly totals: CheckoutTotalsJson | Record<string, never>;
+  /** Phase 2: `{}` = no codes and no discounts (every session saved before it existed). */
+  readonly discounts: DiscountsJson | Record<string, never>;
   readonly version: number;
 }
 
@@ -175,9 +190,17 @@ export class CheckoutSessionMapper {
               {
                 taxIncluded: row.totals.taxIncluded ?? false,
                 shippingName: row.totals.shippingName,
+                shippingDiscountMinor: row.totals.shippingDiscountMinor ?? 0,
               },
             )
           : undefined,
+        discountCodes: isSet(row.discounts) ? (row.discounts.codes ?? []) : [],
+        discountSnapshot: isSet(row.discounts) ? row.discounts.snapshot : undefined,
+        rejectedCodeAttempts: isSet(row.discounts) ? (row.discounts.rejectedAttempts ?? 0) : 0,
+        codeAttemptsWindowStartedAt:
+          isSet(row.discounts) && row.discounts.attemptsWindowStartedAt !== undefined
+            ? new Date(row.discounts.attemptsWindowStartedAt)
+            : undefined,
       },
     );
   }
@@ -248,10 +271,22 @@ export class CheckoutSessionMapper {
               totalMinor: session.totals.totalMinor,
               currency: session.totals.currency,
               taxIncluded: session.totals.taxIncluded,
+              shippingDiscountMinor: session.totals.shippingDiscountMinor,
               ...(session.totals.shippingName === undefined
                 ? {}
                 : { shippingName: session.totals.shippingName }),
             },
+      discounts:
+        session.hasDiscountState || session.rejectedCodeAttempts > 0
+          ? (JSON.parse(
+              JSON.stringify({
+                codes: session.discountCodes,
+                snapshot: session.discountSnapshot,
+                rejectedAttempts: session.rejectedCodeAttempts,
+                attemptsWindowStartedAt: session.codeAttemptsWindowStartedAt?.toISOString(),
+              }),
+            ) as JsonObject)
+          : {},
       version: 1,
     };
   }

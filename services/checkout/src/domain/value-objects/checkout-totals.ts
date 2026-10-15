@@ -11,6 +11,8 @@ interface CheckoutTotalsProps {
   /** Plan 3C: true when `taxMinor` is already inside the prices (so it is not added to the total). */
   readonly taxIncluded: boolean;
   readonly shippingName?: string;
+  /** Phase 2: the part of `shippingMinor` a shipping discount covers; 0 on older totals. */
+  readonly shippingDiscountMinor: number;
 }
 
 /**
@@ -25,14 +27,26 @@ export class CheckoutTotals extends ValueObject<CheckoutTotalsProps> {
     shippingMinor: number,
     discountMinor: number,
     currency: string,
-    extra: { readonly taxIncluded?: boolean; readonly shippingName?: string | undefined } = {},
+    extra: {
+      readonly taxIncluded?: boolean;
+      readonly shippingName?: string | undefined;
+      readonly shippingDiscountMinor?: number;
+    } = {},
   ): CheckoutTotals {
     const subtotalMinor = items.reduce((sum, item) => sum + item.lineTotalMinor, 0);
     const taxIncluded = extra.taxIncluded ?? false;
-    // grandTotal = subtotal + shipping − discount + (taxIncluded ? 0 : tax)
+    const shippingDiscountMinor = Math.min(
+      Math.max(0, extra.shippingDiscountMinor ?? 0),
+      shippingMinor,
+    );
+    // grandTotal = subtotal + shipping − shipping discount − discount + (taxIncluded ? 0 : tax)
     const totalMinor = Math.max(
       0,
-      subtotalMinor + shippingMinor - discountMinor + (taxIncluded ? 0 : taxMinor),
+      subtotalMinor +
+        shippingMinor -
+        shippingDiscountMinor -
+        discountMinor +
+        (taxIncluded ? 0 : taxMinor),
     );
     return new CheckoutTotals({
       subtotalMinor,
@@ -42,6 +56,7 @@ export class CheckoutTotals extends ValueObject<CheckoutTotalsProps> {
       totalMinor,
       currency,
       taxIncluded,
+      shippingDiscountMinor,
       ...(extra.shippingName === undefined ? {} : { shippingName: extra.shippingName }),
     });
   }
@@ -72,6 +87,10 @@ export class CheckoutTotals extends ValueObject<CheckoutTotalsProps> {
 
   get taxIncluded(): boolean {
     return this.props.taxIncluded;
+  }
+
+  get shippingDiscountMinor(): number {
+    return this.props.shippingDiscountMinor;
   }
 
   get shippingName(): string | undefined {

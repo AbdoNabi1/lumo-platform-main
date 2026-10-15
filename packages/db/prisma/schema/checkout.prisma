@@ -21,6 +21,7 @@ model CheckoutSession {
   taxMinor          Int?     @map("tax_minor")
   discountMinor     Int?     @map("discount_minor")
   totals            Json     @default("{}")
+  discounts         Json     @default("{}") // Phase 2: { codes, snapshot, rejectedAttempts, attemptsWindowStartedAt }; {} = none
   version           Int      @default(0)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
