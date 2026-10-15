@@ -43,6 +43,7 @@ import { platformBillingRoutes } from "./platform-billing-routes";
 import { pagesRoutes } from "./pages-routes";
 import { notificationsRoutes } from "./notifications-routes";
 import { platformConsoleRoutes } from "./platform-console-routes";
+import { discountsRoutes } from "./discounts-routes";
 import { promotionsRoutes } from "./promotions-routes";
 import {
   ALL_MEDIA,
@@ -2212,6 +2213,7 @@ export function adminRoutes(
     })(),
     ...licensingRoutes(admin),
     ...platformConsoleRoutes(admin),
+    ...discountsRoutes(admin),
     ...promotionsRoutes(admin),
     ...publicAuthRoutes(admin, options.rateLimiter),
     ...publicStaffAuthRoutes(admin, options.rateLimiter),

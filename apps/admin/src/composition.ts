@@ -181,6 +181,7 @@ import { PlatformConsoleAdminController } from "./interfaces/platform-console.ad
 import { PricingAdminController } from "./interfaces/pricing.admin-controller";
 import { ProductsAdminController } from "./interfaces/products.admin-controller";
 import { PromotionsAdminController } from "./interfaces/promotions.admin-controller";
+import { DiscountsAdminController } from "./interfaces/discounts/discounts.admin-controller";
 import { RecommendationsAdminController } from "./interfaces/recommendations.admin-controller";
 import { ReportingAdminController } from "./interfaces/reporting.admin-controller";
 import { ReturnsAdminController } from "./interfaces/returns.admin-controller";
@@ -521,6 +522,8 @@ export interface WiredAdmin {
   readonly featureRegistry: FeatureRegistryAdminController;
   /** Promotions screen → Promotions (Sprint S1 — Promotions' first admin-transport wiring). */
   readonly promotions: PromotionsAdminController;
+  /** Discounts screen → one Shopify-style facade over Promotions + Coupons (Phase 2). */
+  readonly discounts: DiscountsAdminController;
   /** Recommendations screen → Recommendations (Sprint S1 — Recommendations' first admin-transport wiring). */
   readonly recommendations: RecommendationsAdminController;
   /** Reporting screen → Reporting (Sprint S1 — Reporting's first admin-transport wiring). */
@@ -1243,6 +1246,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     promotions: new PromotionsAdminController({ promotions: promotions.promotions, guard }),
+    discounts: new DiscountsAdminController({
+      promotions: promotions.promotions,
+      coupons: coupons.coupons,
+      guard,
+      clock: deps.clock,
+    }),
     recommendations: new RecommendationsAdminController({
       recommendations: recommendations.recommendations,
       guard,
