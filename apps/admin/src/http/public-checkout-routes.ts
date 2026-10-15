@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { Cart } from "@platform/cart";
-import { CheckoutSession, type CheckoutAddress } from "@platform/checkout";
-import { NotFoundError, toErrorEnvelope } from "@platform/utils";
+import { CheckoutSession, type CheckoutAddress, type DiscountCodeOutput } from "@platform/checkout";
+import { NotFoundError, ValidationError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { withLineImages } from "./product-images";
@@ -62,6 +62,14 @@ const sessionRefOnlyBody = z.object({ sessionRef: z.string().min(1) });
  * place a method — or a price — could be supplied at the moment money is about to move.
  */
 const initiatePaymentBody = z.object({ sessionRef: z.string().min(1) }).strict();
+/** Phase 2: a code the shopper typed — never an amount. Normalised by Checkout. */
+const discountCodeBody = z
+  .object({ sessionRef: z.string().min(1), code: z.string().trim().min(1).max(64) })
+  .strict();
+const discountCodeParams = z.object({
+  checkoutSessionId: z.string().min(1),
+  code: z.string().min(1).max(64),
+});
 /** See the C-2 note on `completeBody` in `checkout-routes.ts` — the same field, same caveat. */
 const completeBody = z.object({
   sessionRef: z.string().min(1),
@@ -140,6 +148,8 @@ export interface PublicCheckoutSessionDto {
     readonly taxIncluded: boolean;
     /** Plan 3C: the chosen shipping rate's name as the shopper saw it, or null. */
     readonly shippingName: string | null;
+    readonly discountMinor: number;
+    readonly shippingDiscountMinor: number;
   } | null;
   readonly shippingAddress: PublicAddressDto | null;
   readonly billingAddress: PublicAddressDto | null;
@@ -149,6 +159,20 @@ export interface PublicCheckoutSessionDto {
   /** The caller's own receipt address (WP-1) — visible only to the session's owner, same as the addresses. */
   readonly contactEmail: string | null;
   readonly orderRef: string | null;
+  /** Phase 2: the codes the shopper entered and what was taken off — titles and amounts only. */
+  readonly discount: {
+    readonly codes: readonly {
+      readonly code: string;
+      readonly applicable: boolean;
+      readonly reason: string | null;
+    }[];
+    readonly applied: readonly {
+      readonly title: string;
+      readonly code: string | null;
+      readonly discountClass: string;
+      readonly amountMinor: number;
+    }[];
+  };
 }
 
 function toAddressDto(address: CheckoutAddress): PublicAddressDto {
@@ -190,6 +214,8 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
             grandTotalMinor: session.totals.totalMinor,
             taxIncluded: session.totals.taxIncluded,
             shippingName: session.totals.shippingName ?? null,
+            discountMinor: session.totals.discountMinor,
+            shippingDiscountMinor: session.totals.shippingDiscountMinor,
           },
     shippingAddress:
       session.shippingAddress === undefined ? null : toAddressDto(session.shippingAddress),
@@ -199,6 +225,20 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
     selectedPaymentMethod: session.paymentSelection?.provider ?? null,
     contactEmail: session.contactEmail?.value ?? null,
     orderRef: session.orderRef,
+    // Phase 2: the codes the shopper entered with whether each applies, and what was taken off —
+    // titles and amounts only, never promotion internals.
+    discount: {
+      codes: session.discountCodes.map((code) => {
+        const status = session.discountSnapshot?.codeStatuses.find((s) => s.code === code);
+        return { code, applicable: status?.applicable === true, reason: status?.reason ?? null };
+      }),
+      applied: (session.discountSnapshot?.applied ?? []).map((a) => ({
+        title: a.title,
+        code: a.code ?? null,
+        discountClass: a.discountClass,
+        amountMinor: a.amountMinor,
+      })),
+    },
   };
 }
 
@@ -583,6 +623,80 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         if (result.status < 200 || result.status >= 300) return result;
         return mapSession(
           await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/checkouts/:checkoutSessionId/discount-codes",
+      version: 1,
+      permission: "checkout:recalculate",
+      public: true,
+      idempotent: true,
+      summary: "Public: apply a discount code to the caller's own checkout session",
+      schema: { params: checkoutSessionIdParams, body: discountCodeBody },
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
+        if (!(owned instanceof CheckoutSession)) return owned;
+        const result = await admin.publicReads.checkout.addDiscountCode({
+          tenantId: context.tenantId,
+          checkoutSessionId: params.checkoutSessionId,
+          code: body.code,
+        });
+        if (result.status < 200 || result.status >= 300) return result;
+        const outcome = result.body as DiscountCodeOutput;
+        if (!outcome.applicable) {
+          // The reason is a stable token (`not_found`, `minimum_not_met`, …) the storefront words.
+          return {
+            status: 422,
+            body: toErrorEnvelope(
+              new ValidationError("Discount code not applied", [
+                { field: "code", message: outcome.reason ?? "not_found" },
+              ]),
+            ),
+          };
+        }
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
+      },
+    }),
+    defineRoute({
+      method: "DELETE",
+      path: "/public/checkouts/:checkoutSessionId/discount-codes/:code",
+      version: 1,
+      permission: "checkout:recalculate",
+      public: true,
+      idempotent: true,
+      summary: "Public: remove a discount code from the caller's own checkout session",
+      schema: { params: discountCodeParams, querystring: sessionRefQuery },
+      handle: async ({ params, query, context }) => {
+        const sessionRef = resolveSessionRef(context, query.sessionRef);
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          sessionRef,
+          context.tenantId,
+        );
+        if (!(owned instanceof CheckoutSession)) return owned;
+        const result = await admin.publicReads.checkout.removeDiscountCode({
+          tenantId: context.tenantId,
+          checkoutSessionId: params.checkoutSessionId,
+          code: params.code,
+        });
+        if (result.status < 200 || result.status >= 300) return result;
+        return mapSession(
+          await admin.publicReads.checkout.get({
+            tenantId: context.tenantId,
+            checkoutSessionId: params.checkoutSessionId,
+          }),
           toPublicCheckoutSessionDto,
         );
       },

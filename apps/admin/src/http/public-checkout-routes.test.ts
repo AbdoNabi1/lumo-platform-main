@@ -358,7 +358,7 @@ function callAuth(
 }
 
 describe("public checkout routes — route inventory", () => {
-  it("exposes exactly the 15 guest-completable routes, all public", () => {
+  it("exposes exactly the 17 guest-completable routes, all public", () => {
     const admin = routesFor(buildAdmin());
     const paths = admin.routes.map((r) => `${r.method} ${r.path}`).sort();
 
@@ -380,6 +380,9 @@ describe("public checkout routes — route inventory", () => {
         // WP-13: which methods the merchant offers, and opening payment for the selected one.
         "GET /public/payment-methods",
         "POST /public/checkouts/:checkoutSessionId/payment",
+        // Phase 2: a shopper enters and removes discount codes.
+        "POST /public/checkouts/:checkoutSessionId/discount-codes",
+        "DELETE /public/checkouts/:checkoutSessionId/discount-codes/:code",
       ].sort(),
     );
     expect(admin.routes.every((r) => r.public === true)).toBe(true);
@@ -496,6 +499,8 @@ describe("public checkout routes — full guest lifecycle", () => {
       grandTotalMinor: 4498,
       taxIncluded: true,
       shippingName: "Standard",
+      discountMinor: 0,
+      shippingDiscountMinor: 0,
     });
 
     const paymentIntent = unwrap<{ amountMinor: number; currency: string; provider: string }>(
