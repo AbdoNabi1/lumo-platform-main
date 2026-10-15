@@ -17,7 +17,10 @@ import {
   AdvancePromotion,
   CreatePromotion,
   EvaluatePromotions,
+  ListActiveAutomaticPromotions,
+  ListPromotionsForAdmin,
   RecordPromotionUsage,
+  UpdatePromotion,
 } from "./application/promotion.use-cases";
 import type { PromotionRepository } from "./domain/promotion-repository";
 import { InMemoryPromotionRepository } from "./infrastructure/in-memory-promotion-repository";
@@ -67,6 +70,9 @@ function buildController(
     recordPromotionUsage: new RecordPromotionUsage(promotionDeps),
     listPromotions: new ListPromotions({ promotions }),
     getPromotion: new GetPromotion({ promotions }),
+    updatePromotion: new UpdatePromotion(promotionDeps),
+    listActiveAutomatic: new ListActiveAutomaticPromotions({ promotions }),
+    listForAdmin: new ListPromotionsForAdmin({ promotions, clock: deps.clock }),
   });
 }
 

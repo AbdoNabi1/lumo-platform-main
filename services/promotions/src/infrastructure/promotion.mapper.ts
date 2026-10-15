@@ -1,9 +1,16 @@
 import { UniqueEntityId } from "@platform/domain";
 import { Promotion } from "../domain/promotion";
 import {
+  COMBINES_WITH_EVERYTHING,
+  COMBINES_WITH_NOTHING,
+  type CombinesWith,
+  type DiscountMethod,
+} from "../domain/value-objects/discount-settings";
+import {
   PromotionCondition,
   PromotionReward,
   PromotionRule,
+  type PromotionRewardProps,
   type PromotionRewardType,
   type PromotionRuleType,
   type PromotionScope,
@@ -30,6 +37,11 @@ export interface PromotionRow {
   readonly rewardValue?: number;
   readonly buyQuantity?: number;
   readonly getQuantity?: number;
+  /** Phase 2 reward fields (buy X get Y, free shipping, once per order); absent on older rows. */
+  readonly rewardExtras?: Omit<
+    PromotionRewardProps,
+    "type" | "value" | "buyQuantity" | "getQuantity"
+  >;
   readonly stackable: boolean;
   readonly priority: number;
   readonly startsAt: Date;
@@ -40,6 +52,8 @@ export interface PromotionRow {
   readonly usageLimit: number | null;
   readonly usageCount: number;
   readonly status: string;
+  readonly method: DiscountMethod | null;
+  readonly combinesWith: CombinesWith | null;
   readonly version: number;
 }
 
@@ -57,6 +71,7 @@ export class PromotionMapper {
       value: row.rewardValue,
       buyQuantity: row.buyQuantity,
       getQuantity: row.getQuantity,
+      ...row.rewardExtras,
     });
     if (!reward.ok)
       throw new Error(`Corrupt promotion row: invalid reward (${reward.error.message})`);
@@ -85,31 +100,39 @@ export class PromotionMapper {
       row.usageCount,
       PromotionStatus.from(row.status as PromotionStatusValue),
       row.version,
+      {
+        method: row.method ?? undefined,
+        combinesWith:
+          row.combinesWith ?? (row.stackable ? COMBINES_WITH_EVERYTHING : COMBINES_WITH_NOTHING),
+      },
     );
   }
 
   static toRow(promotion: Promotion, tenantId: string) {
+    const { condition, reward } = promotion.rule;
     return {
       id: promotion.id.toString(),
       tenantId,
       name: promotion.name,
       ruleType: promotion.rule.type,
-      scope: promotion.rule.condition.scope,
-      targetRefs: promotion.rule.condition.targetRefs,
-      reward: {
-        type: promotion.rule.reward.type,
-        value: promotion.rule.reward.value,
-        buyQuantity: promotion.rule.reward.buyQuantity,
-        getQuantity: promotion.rule.reward.getQuantity,
-      },
+      scope: condition.scope,
+      targetRefs: [...condition.targetRefs],
+      minimumQuantity: condition.minimumQuantity ?? null,
+      minimumSubtotalAmountMinor: condition.minimumSubtotalAmountMinor ?? null,
+      reward: JSON.parse(JSON.stringify(reward.toProps())) as Record<string, unknown>,
       stackable: promotion.rule.stackable,
       priority: promotion.rule.priority,
       startsAt: promotion.schedule.startsAt,
       endsAt: promotion.schedule.endsAt ?? null,
+      customerRefs: promotion.eligibility.customerRefs ?? null,
+      segmentRefs: promotion.eligibility.segmentRefs ?? null,
       campaignRef: promotion.campaign.campaignRef ?? null,
       usageLimit: promotion.usageLimit ?? null,
       usageCount: promotion.usageCount,
       status: promotion.status.value,
+      method: promotion.method ?? null,
+      discountClass: promotion.discountClass,
+      combinesWith: { ...promotion.combinesWith },
       version: 1,
     };
   }

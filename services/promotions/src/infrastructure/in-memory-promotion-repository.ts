@@ -2,7 +2,7 @@ import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
 import type { Promotion } from "../domain/promotion";
-import type { PromotionRepository } from "../domain/promotion-repository";
+import type { AdminPromotionQuery, PromotionRepository } from "../domain/promotion-repository";
 
 /** ADR-0014 (WP-10, T10.3): per-tenant bucket, so every store is keyed by `(tenantId, id)`. */
 function bucketFor<T>(store: Map<string, Map<string, T>>, tenantId: string): Map<string, T> {
@@ -55,5 +55,31 @@ export class InMemoryPromotionRepository implements PromotionRepository {
     const limit = normalizePageSize(page.first);
     const window = start < 0 ? [] : all.slice(start, start + limit + 1);
     return buildPaginatedPage(window, limit, (x) => x.id.toString());
+  }
+
+  async findActiveAutomatic(tenantId: string): Promise<readonly Promotion[]> {
+    return [...bucketFor(this.store, tenantId).values()].filter(
+      (p) => p.status.value === "active" && p.method === "automatic",
+    );
+  }
+
+  async listForAdmin(query: AdminPromotionQuery, tenantId: string): Promise<Paginated<Promotion>> {
+    const search = query.search?.trim().toLowerCase();
+    const all = [...bucketFor(this.store, tenantId).values()]
+      .filter((p) => p.viewAt(query.now) !== "archived")
+      .filter((p) => query.view === "all" || p.viewAt(query.now) === query.view)
+      .filter(
+        (p) =>
+          search === undefined ||
+          search === "" ||
+          p.name.toLowerCase().includes(search) ||
+          (query.alsoIds ?? []).includes(p.id.toString()),
+      )
+      .sort((a, b) => b.id.toString().localeCompare(a.id.toString()));
+    const after = query.after !== undefined ? decodeCursor(query.after) : undefined;
+    const start = after === undefined ? 0 : all.findIndex((p) => p.id.toString() < after);
+    const limit = normalizePageSize(query.first);
+    const window = start < 0 ? [] : all.slice(start, start + limit + 1);
+    return buildPaginatedPage(window, limit, (p) => p.id.toString());
   }
 }
