@@ -9,7 +9,10 @@ import type { OrderRepository } from "../domain/order-repository";
 import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
-import { OrderTotalsSnapshot } from "../domain/value-objects/order-totals-snapshot";
+import {
+  type OrderDiscountLine,
+  OrderTotalsSnapshot,
+} from "../domain/value-objects/order-totals-snapshot";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
 import type { OrderNumberAllocator } from "./ports";
 
@@ -58,6 +61,10 @@ export interface CreateOrderFromCheckoutTotalsInput {
   readonly shippingName?: string;
   /** Plan 3C: whether the tax is already inside the prices. */
   readonly taxIncluded?: boolean;
+  /** Phase 2: the free-shipping part of the discounts; absent on older orders. */
+  readonly shippingDiscountMinor?: number;
+  /** Phase 2: each discount the shopper got; absent on older orders. */
+  readonly discounts?: readonly OrderDiscountLine[];
 }
 
 export interface CreateOrderFromCheckoutInput {

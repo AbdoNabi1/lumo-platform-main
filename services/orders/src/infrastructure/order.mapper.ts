@@ -6,7 +6,10 @@ import { OrderEvent, type OrderEventType } from "../domain/order-event";
 import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
-import { OrderTotalsSnapshot } from "../domain/value-objects/order-totals-snapshot";
+import {
+  type OrderDiscountLine,
+  OrderTotalsSnapshot,
+} from "../domain/value-objects/order-totals-snapshot";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
 
 /** Row shapes (structural — matches the Prisma payloads without importing Prisma types). */
@@ -73,6 +76,9 @@ export interface OrderTotalsJson {
   /** Plan 3C: JSON keys, no migration; absent on orders placed before they were captured. */
   readonly shippingName?: string | null;
   readonly taxIncluded?: boolean;
+  /** Phase 2: JSON keys, no migration; absent on orders placed before discounts applied at checkout. */
+  readonly shippingDiscountMinor?: number;
+  readonly discounts?: readonly OrderDiscountLine[];
 }
 
 /** Unwraps a VO `Result`; a failure here means the row violates a domain invariant (corrupt data). */
@@ -211,6 +217,12 @@ export class OrderMapper {
               ...(order.totals.shippingName === undefined
                 ? {}
                 : { shippingName: order.totals.shippingName }),
+              ...(order.totals.shippingDiscountMinor === 0
+                ? {}
+                : { shippingDiscountMinor: order.totals.shippingDiscountMinor }),
+              ...(order.totals.discounts.length === 0
+                ? {}
+                : { discounts: order.totals.discounts.map((d) => ({ ...d })) }),
               taxIncluded: order.totals.taxIncluded,
             },
       version: 1, // first persisted version; reconstitution reads it back
