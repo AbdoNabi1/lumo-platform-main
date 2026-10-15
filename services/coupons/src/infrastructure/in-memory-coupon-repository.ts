@@ -45,6 +45,25 @@ export class InMemoryCouponRepository implements CouponRepository {
     return null;
   }
 
+  async findByPromotionRefs(
+    promotionRefs: readonly string[],
+    tenantId: string,
+  ): Promise<readonly Coupon[]> {
+    return [...this.store.values()]
+      .filter(
+        (entry) => entry.tenantId === tenantId && promotionRefs.includes(entry.coupon.promotionRef),
+      )
+      .map((entry) => entry.coupon);
+  }
+
+  async findPromotionRefsByCode(fragment: string, tenantId: string): Promise<readonly string[]> {
+    const needle = fragment.trim().toUpperCase();
+    const refs = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId && entry.coupon.code.value.includes(needle))
+      .map((entry) => entry.coupon.promotionRef);
+    return [...new Set(refs)].slice(0, 50);
+  }
+
   async hasRedemption(
     couponId: string,
     idempotencyKey: string,

@@ -9,6 +9,7 @@ export interface CouponRedemptionJson {
   readonly idempotencyKey: string;
   readonly customerRef: string;
   readonly orderRef?: string;
+  readonly email?: string;
   readonly occurredAt: string;
 }
 
@@ -52,6 +53,7 @@ export class CouponMapper {
           r.customerRef,
           new Date(r.occurredAt),
           r.orderRef,
+          r.email,
         ),
       ),
     );
@@ -75,6 +77,7 @@ export class CouponMapper {
         idempotencyKey: r.idempotencyKey,
         customerRef: r.customerRef,
         orderRef: r.orderRef,
+        ...(r.email === undefined ? {} : { email: r.email }),
         occurredAt: r.occurredAt.toISOString(),
       })),
       version: 1,

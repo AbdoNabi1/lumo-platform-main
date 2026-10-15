@@ -21,6 +21,18 @@ export interface CouponRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<boolean>;
+  /** Every coupon authorising one of these promotions (the admin Discounts list). */
+  findByPromotionRefs(
+    promotionRefs: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Coupon[]>;
+  /** The promotions whose code contains `fragment` (case-insensitive), at most 50. */
+  findPromotionRefsByCode(
+    fragment: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly string[]>;
   /** Cursor page, most recently created first (Phase A.30 admin Discounts screen). */
   list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Coupon>>;
 }

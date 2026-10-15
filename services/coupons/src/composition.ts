@@ -14,7 +14,11 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import {
   AdvanceCoupon,
   CreateCoupon,
+  FindPromotionRefsByCode,
+  GetCouponByCode,
   ListCoupons,
+  ListCouponsByPromotionRefs,
+  ReconfigureCoupon,
   RedeemCoupon,
 } from "./application/coupon.use-cases";
 import type { PromotionsPort } from "./application/ports";
@@ -64,6 +68,10 @@ function buildController(
     advanceCoupon: new AdvanceCoupon(couponDeps),
     redeemCoupon: new RedeemCoupon({ ...couponDeps, promotions }),
     listCoupons: new ListCoupons({ coupons }),
+    getCouponByCode: new GetCouponByCode({ coupons }),
+    listCouponsByPromotionRefs: new ListCouponsByPromotionRefs({ coupons }),
+    findPromotionRefsByCode: new FindPromotionRefsByCode({ coupons }),
+    reconfigureCoupon: new ReconfigureCoupon(couponDeps),
   });
 }
 

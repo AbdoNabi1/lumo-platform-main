@@ -9,12 +9,12 @@ import {
 } from "./value-objects/coupon-status";
 
 interface CouponProps {
-  readonly code: CouponCode;
+  code: CouponCode;
   readonly promotionRef: string;
-  readonly multiUse: boolean;
+  multiUse: boolean;
   readonly customerRef?: string;
   readonly campaignRef?: string;
-  readonly usageLimit?: number;
+  usageLimit?: number;
   usageCount: number;
   readonly expiresAt?: Date;
   status: CouponStatus;
@@ -130,6 +130,7 @@ export class Coupon extends AggregateRoot<CouponProps> {
     occurredAt: Date,
     eventId: string,
     orderRef?: string,
+    email?: string,
   ): void {
     if (this.props.status.value !== "active") {
       throw new BusinessRuleError(`Coupon is not active (status: ${this.props.status.value})`);
@@ -143,7 +144,15 @@ export class Coupon extends AggregateRoot<CouponProps> {
     if (this.props.customerRef !== undefined && this.props.customerRef !== customerRef) {
       throw new BusinessRuleError("Coupon is not assigned to this customer");
     }
-    if (!this.props.multiUse && this.props.redemptions.some((r) => r.customerRef === customerRef)) {
+    const normalizedEmail = email?.toLowerCase();
+    if (
+      !this.props.multiUse &&
+      this.props.redemptions.some(
+        (r) =>
+          r.customerRef === customerRef ||
+          (normalizedEmail !== undefined && r.email?.toLowerCase() === normalizedEmail),
+      )
+    ) {
       throw new BusinessRuleError("Coupon has already been redeemed by this customer");
     }
 
@@ -154,6 +163,7 @@ export class Coupon extends AggregateRoot<CouponProps> {
         customerRef,
         occurredAt,
         orderRef,
+        email,
       ),
     );
     this.props.usageCount += 1;
@@ -161,6 +171,20 @@ export class Coupon extends AggregateRoot<CouponProps> {
     if (this.props.usageLimit !== undefined && this.props.usageCount >= this.props.usageLimit) {
       this.transition("depleted", eventId, occurredAt);
     }
+  }
+
+  /**
+   * The merchant's edits to a discount code (Phase 2): the code itself, one-use-per-customer and the
+   * total limit. Uniqueness of the new code is the use case's job (it needs the repository).
+   */
+  reconfigure(changes: {
+    readonly code: CouponCode;
+    readonly multiUse: boolean;
+    readonly usageLimit?: number;
+  }): void {
+    this.props.code = changes.code;
+    this.props.multiUse = changes.multiUse;
+    this.props.usageLimit = changes.usageLimit;
   }
 
   get code(): CouponCode {

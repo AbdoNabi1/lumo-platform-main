@@ -34,6 +34,9 @@ export class PrismaCouponRepository implements CouponRepository {
       const updated = await client.coupon.updateMany({
         where: { id: couponId, tenantId, version: coupon.version },
         data: {
+          code: row.code,
+          multiUse: row.multiUse,
+          usageLimit: row.usageLimit,
           usageCount: row.usageCount,
           status: row.status,
           redemptions: row.redemptions,
@@ -72,6 +75,39 @@ export class PrismaCouponRepository implements CouponRepository {
         ? await run(tx as TransactionClient)
         : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : CouponMapper.toDomain(this.toMapperRow(row));
+  }
+
+  async findByPromotionRefs(
+    promotionRefs: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Coupon[]> {
+    if (promotionRefs.length === 0) return [];
+    const run = (client: TransactionClient) =>
+      client.coupon.findMany({ where: { tenantId, promotionRef: { in: [...promotionRefs] } } });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return rows.map((row) => CouponMapper.toDomain(this.toMapperRow(row)));
+  }
+
+  async findPromotionRefsByCode(
+    fragment: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly string[]> {
+    const run = (client: TransactionClient) =>
+      client.coupon.findMany({
+        where: { tenantId, code: { contains: fragment.trim().toUpperCase() } },
+        select: { promotionRef: true },
+        take: 50,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return [...new Set(rows.map((row) => row.promotionRef))];
   }
 
   async hasRedemption(

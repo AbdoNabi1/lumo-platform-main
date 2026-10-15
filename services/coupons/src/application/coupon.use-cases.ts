@@ -109,6 +109,7 @@ export interface RedeemCouponInput {
   readonly customerRef: string;
   readonly idempotencyKey: string;
   readonly orderRef?: string;
+  readonly email?: string;
   readonly tenantId: string;
 }
 
@@ -168,6 +169,7 @@ export class RedeemCoupon implements UseCase<RedeemCouponInput, RedeemCouponOutp
           this.deps.clock.now(),
           this.deps.idGenerator.generate(),
           input.orderRef,
+          input.email,
         );
       } catch (error) {
         if (isDomainError(error)) return err(error);
@@ -181,6 +183,111 @@ export class RedeemCoupon implements UseCase<RedeemCouponInput, RedeemCouponOutp
         promotionRef: coupon.promotionRef,
         duplicate: false,
       });
+    });
+  }
+}
+
+/** A coupon by the code a customer typed (normalised the same way `CouponCode` stores it). */
+export class GetCouponByCode implements UseCase<
+  { readonly tenantId: string; readonly code: string },
+  Coupon,
+  DomainError
+> {
+  private readonly deps: Pick<CouponDeps, "coupons">;
+
+  constructor(deps: Pick<CouponDeps, "coupons">) {
+    this.deps = deps;
+  }
+
+  async execute(input: {
+    readonly tenantId: string;
+    readonly code: string;
+  }): Promise<Result<Coupon, DomainError>> {
+    const coupon = await this.deps.coupons.findByCode(
+      input.code.trim().toUpperCase(),
+      input.tenantId,
+    );
+    return coupon === null ? err(new NotFoundError("Coupon not found")) : ok(coupon);
+  }
+}
+
+/** The coupons authorising a set of promotions (admin Discounts list). */
+export class ListCouponsByPromotionRefs implements UseCase<
+  { readonly tenantId: string; readonly promotionRefs: readonly string[] },
+  { readonly items: readonly Coupon[] },
+  DomainError
+> {
+  private readonly deps: Pick<CouponDeps, "coupons">;
+
+  constructor(deps: Pick<CouponDeps, "coupons">) {
+    this.deps = deps;
+  }
+
+  async execute(input: { readonly tenantId: string; readonly promotionRefs: readonly string[] }) {
+    return ok({
+      items: await this.deps.coupons.findByPromotionRefs(input.promotionRefs, input.tenantId),
+    });
+  }
+}
+
+/** The promotions whose code contains a search fragment (admin Discounts search). */
+export class FindPromotionRefsByCode implements UseCase<
+  { readonly tenantId: string; readonly fragment: string },
+  { readonly promotionRefs: readonly string[] },
+  DomainError
+> {
+  private readonly deps: Pick<CouponDeps, "coupons">;
+
+  constructor(deps: Pick<CouponDeps, "coupons">) {
+    this.deps = deps;
+  }
+
+  async execute(input: { readonly tenantId: string; readonly fragment: string }) {
+    if (input.fragment.trim() === "") return ok({ promotionRefs: [] as readonly string[] });
+    return ok({
+      promotionRefs: await this.deps.coupons.findPromotionRefsByCode(
+        input.fragment,
+        input.tenantId,
+      ),
+    });
+  }
+}
+
+export interface ReconfigureCouponInput extends CouponIdInput {
+  readonly code: string;
+  readonly multiUse: boolean;
+  readonly usageLimit?: number;
+}
+
+/** Edits a discount code's code and limits; a code used by another coupon is a conflict. */
+export class ReconfigureCoupon implements UseCase<
+  ReconfigureCouponInput,
+  CouponStatusOutput,
+  DomainError
+> {
+  private readonly deps: CouponDeps;
+
+  constructor(deps: CouponDeps) {
+    this.deps = deps;
+  }
+
+  async execute(input: ReconfigureCouponInput): Promise<Result<CouponStatusOutput, DomainError>> {
+    const code = CouponCode.create(input.code);
+    if (!code.ok) return err(code.error);
+    return this.deps.unitOfWork.run<Result<CouponStatusOutput, DomainError>>(async (tx) => {
+      const coupon = await this.deps.coupons.findById(input.couponId, input.tenantId, tx);
+      if (coupon === null) return err(new NotFoundError("Coupon not found"));
+      const holder = await this.deps.coupons.findByCode(code.value.value, input.tenantId, tx);
+      if (holder !== null && holder.id.toString() !== coupon.id.toString()) {
+        return err(new ConflictError(`Coupon code "${code.value.value}" already exists`));
+      }
+      coupon.reconfigure({
+        code: code.value,
+        multiUse: input.multiUse,
+        usageLimit: input.usageLimit,
+      });
+      await this.deps.coupons.save(coupon, input.tenantId, tx);
+      return ok({ couponId: coupon.id.toString(), status: coupon.status.value });
     });
   }
 }
