@@ -71,12 +71,14 @@ export default async function SecuritySessionsPage({ searchParams }: SessionsPag
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.securitySessionsPage.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.securitySessionsPage.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.securitySessionsPage.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.securitySessionsPage.subtitle}</p>
       </header>
 
       <section className="flex flex-col gap-6">
-        <h2 className="text-2xl font-semibold tracking-tight">{t.securitySessionsPage.sections.sessions}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {t.securitySessionsPage.sections.sessions}
+        </h2>
 
         <Suspense fallback={<TableCardSkeleton />}>
           <SessionExplorerSection t={t} />
@@ -149,7 +151,9 @@ export default async function SecuritySessionsPage({ searchParams }: SessionsPag
       </section>
 
       <section className="flex flex-col gap-6">
-        <h2 className="text-2xl font-semibold tracking-tight">{t.securitySessionsPage.sections.devices}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {t.securitySessionsPage.sections.devices}
+        </h2>
 
         <Suspense fallback={<TableCardSkeleton />}>
           <DeviceExplorerSection t={t} />
@@ -166,7 +170,9 @@ export default async function SecuritySessionsPage({ searchParams }: SessionsPag
       </section>
 
       <section className="flex flex-col gap-6">
-        <h2 className="text-2xl font-semibold tracking-tight">{t.securitySessionsPage.sections.mfa}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {t.securitySessionsPage.sections.mfa}
+        </h2>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
@@ -226,7 +232,9 @@ export default async function SecuritySessionsPage({ searchParams }: SessionsPag
       </section>
 
       <section className="flex flex-col gap-6">
-        <h2 className="text-2xl font-semibold tracking-tight">{t.securitySessionsPage.sections.risk}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {t.securitySessionsPage.sections.risk}
+        </h2>
 
         <Suspense fallback={<TableCardSkeleton />}>
           <RiskExplorerSection t={t} />
@@ -248,10 +256,20 @@ export default async function SecuritySessionsPage({ searchParams }: SessionsPag
 async function SessionExplorerSection({ t }: { readonly t: Dictionary }) {
   const result = await fetchSessionExplorer();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securitySessionsPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securitySessionsPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securitySessionsPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securitySessionsPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -269,7 +287,9 @@ async function SessionExplorerSection({ t }: { readonly t: Dictionary }) {
       </CardHeader>
       <CardContent className="p-0 sm:p-0">
         {data.sessions.length === 0 ? (
-          <p className="text-muted-foreground p-5 text-center text-base">{t.securitySessionsPage.empty}</p>
+          <p className="text-muted-foreground p-5 text-center text-base">
+            {t.securitySessionsPage.empty}
+          </p>
         ) : (
           <Table aria-label={t.securitySessionsPage.sessionsTitle}>
             <TableHeader>
@@ -289,7 +309,9 @@ async function SessionExplorerSection({ t }: { readonly t: Dictionary }) {
                   <TableCell className="font-medium">{session.id}</TableCell>
                   <TableCell className="text-muted-foreground">{session.principalRef}</TableCell>
                   <TableCell>
-                    <Badge variant={session.suspicious ? "warning" : "neutral"}>{session.status}</Badge>
+                    <Badge variant={session.suspicious ? "warning" : "neutral"}>
+                      {session.status}
+                    </Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground">{session.refreshCount}</TableCell>
                   <TableCell className="text-muted-foreground">{session.riskAtLastEval}</TableCell>
@@ -319,10 +341,20 @@ async function SessionExplorerSection({ t }: { readonly t: Dictionary }) {
 async function DeviceExplorerSection({ t }: { readonly t: Dictionary }) {
   const result = await fetchDeviceExplorer();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securitySessionsPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securitySessionsPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securitySessionsPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securitySessionsPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -337,7 +369,9 @@ async function DeviceExplorerSection({ t }: { readonly t: Dictionary }) {
       </CardHeader>
       <CardContent className="p-0 sm:p-0">
         {data.devices.length === 0 ? (
-          <p className="text-muted-foreground p-5 text-center text-base">{t.securitySessionsPage.empty}</p>
+          <p className="text-muted-foreground p-5 text-center text-base">
+            {t.securitySessionsPage.empty}
+          </p>
         ) : (
           <Table aria-label={t.securitySessionsPage.devicesTitle}>
             <TableHeader>
@@ -359,7 +393,15 @@ async function DeviceExplorerSection({ t }: { readonly t: Dictionary }) {
                     {device.principalRef ?? t.securitySessionsPage.noPrincipal}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={device.trustLevel === "blocked" ? "destructive" : device.trustLevel === "trusted" ? "success" : "neutral"}>
+                    <Badge
+                      variant={
+                        device.trustLevel === "blocked"
+                          ? "destructive"
+                          : device.trustLevel === "trusted"
+                            ? "success"
+                            : "neutral"
+                      }
+                    >
                       {device.trustLevel}
                     </Badge>
                   </TableCell>
@@ -394,10 +436,20 @@ async function DeviceExplorerSection({ t }: { readonly t: Dictionary }) {
 async function RiskExplorerSection({ t }: { readonly t: Dictionary }) {
   const result = await fetchRiskExplorer();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securitySessionsPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securitySessionsPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securitySessionsPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securitySessionsPage.error}
+      />
+    );
   }
   const { data } = result;
   const entries = Object.entries(data.distribution);
@@ -414,15 +466,21 @@ async function RiskExplorerSection({ t }: { readonly t: Dictionary }) {
           </div>
           <div>
             <dt className="text-muted-foreground text-sm">{t.securitySessionsPage.dominantBand}</dt>
-            <dd className="font-medium">{data.dominantBand ?? t.securitySessionsPage.noDominantBand}</dd>
+            <dd className="font-medium">
+              {data.dominantBand ?? t.securitySessionsPage.noDominantBand}
+            </dd>
           </div>
           <div>
-            <dt className="text-muted-foreground text-sm">{t.securitySessionsPage.threatsIndicated}</dt>
+            <dt className="text-muted-foreground text-sm">
+              {t.securitySessionsPage.threatsIndicated}
+            </dt>
             <dd className="font-medium tabular-nums">{data.threatsIndicated}</dd>
           </div>
         </dl>
         <div>
-          <p className="text-muted-foreground text-sm">{t.securitySessionsPage.riskDistributionLabel}</p>
+          <p className="text-muted-foreground text-sm">
+            {t.securitySessionsPage.riskDistributionLabel}
+          </p>
           {entries.length === 0 ? (
             <p className="text-muted-foreground mt-1 text-sm">{t.securitySessionsPage.empty}</p>
           ) : (
@@ -449,14 +507,17 @@ async function IntrospectSessionResult({
   readonly t: Dictionary;
 }) {
   const result = await introspectSession(sessionId);
-  if (result.outcome === "unauthorized") return <ResultPanel message={t.securityLookup.unauthorized} />;
+  if (result.outcome === "unauthorized")
+    return <ResultPanel message={t.securityLookup.unauthorized} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
   return (
     <Card>
       <CardContent className="flex flex-col gap-2 pt-5 text-sm">
         <Badge variant={data.active ? "success" : "destructive"}>
-          {data.active ? t.securitySessionsPage.sessionActive : t.securitySessionsPage.sessionInactive}
+          {data.active
+            ? t.securitySessionsPage.sessionActive
+            : t.securitySessionsPage.sessionInactive}
         </Badge>
         {data.session !== null && (
           <div className="text-muted-foreground">

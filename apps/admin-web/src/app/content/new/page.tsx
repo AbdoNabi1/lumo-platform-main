@@ -24,8 +24,8 @@ export default async function NewContentBlockPage() {
               {t.contentPage.title}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.contentCreateForm.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.contentCreateForm.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.contentCreateForm.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.contentCreateForm.subtitle}</p>
         </div>
 
         <Card>

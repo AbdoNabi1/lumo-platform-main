@@ -81,7 +81,7 @@ export default async function PromotionDetailPage({ params }: PromotionDetailPag
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-4xl font-semibold tracking-tight">{promotion.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{promotion.name}</h1>
             <PromotionStatusBadge status={promotion.status} t={t} />
           </div>
         </div>
@@ -93,12 +93,27 @@ export default async function PromotionDetailPage({ params }: PromotionDetailPag
                 <CardTitle>{t.promotionDetail.fieldsTitle}</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2">
-                <Field label={t.promotionDetail.ruleType} value={(t.promotionRuleType as Record<string, string>)[promotion.ruleType] ?? promotion.ruleType} />
-                <Field label={t.promotionDetail.scope} value={(t.promotionScope as Record<string, string>)[promotion.scope] ?? promotion.scope} />
+                <Field
+                  label={t.promotionDetail.ruleType}
+                  value={
+                    (t.promotionRuleType as Record<string, string>)[promotion.ruleType] ??
+                    promotion.ruleType
+                  }
+                />
+                <Field
+                  label={t.promotionDetail.scope}
+                  value={
+                    (t.promotionScope as Record<string, string>)[promotion.scope] ?? promotion.scope
+                  }
+                />
                 <Field label={t.promotionDetail.targetRefs} value={refList(promotion.targetRefs)} />
                 <Field
                   label={t.promotionDetail.minimumQuantity}
-                  value={promotion.minimumQuantity !== null ? String(promotion.minimumQuantity) : t.promotionDetail.none}
+                  value={
+                    promotion.minimumQuantity !== null
+                      ? String(promotion.minimumQuantity)
+                      : t.promotionDetail.none
+                  }
                 />
                 <Field
                   label={t.promotionDetail.minimumSubtotalAmountMinor}
@@ -108,32 +123,66 @@ export default async function PromotionDetailPage({ params }: PromotionDetailPag
                       : t.promotionDetail.none
                   }
                 />
-                <Field label={t.promotionDetail.rewardType} value={(t.promotionRewardType as Record<string, string>)[promotion.rewardType] ?? promotion.rewardType} />
+                <Field
+                  label={t.promotionDetail.rewardType}
+                  value={
+                    (t.promotionRewardType as Record<string, string>)[promotion.rewardType] ??
+                    promotion.rewardType
+                  }
+                />
                 <Field
                   label={t.promotionDetail.rewardValue}
-                  value={promotion.rewardValue !== null ? String(promotion.rewardValue) : t.promotionDetail.none}
+                  value={
+                    promotion.rewardValue !== null
+                      ? String(promotion.rewardValue)
+                      : t.promotionDetail.none
+                  }
                 />
                 <Field
                   label={t.promotionDetail.buyQuantity}
-                  value={promotion.buyQuantity !== null ? String(promotion.buyQuantity) : t.promotionDetail.none}
+                  value={
+                    promotion.buyQuantity !== null
+                      ? String(promotion.buyQuantity)
+                      : t.promotionDetail.none
+                  }
                 />
                 <Field
                   label={t.promotionDetail.getQuantity}
-                  value={promotion.getQuantity !== null ? String(promotion.getQuantity) : t.promotionDetail.none}
+                  value={
+                    promotion.getQuantity !== null
+                      ? String(promotion.getQuantity)
+                      : t.promotionDetail.none
+                  }
                 />
                 <Field
                   label={t.promotionDetail.stackable}
                   value={promotion.stackable ? t.promotionDetail.yes : t.promotionDetail.no}
                 />
                 <Field label={t.promotionDetail.priority} value={String(promotion.priority)} />
-                <Field label={t.promotionDetail.startsAt} value={formatDateTime(locale, promotion.startsAt)} />
+                <Field
+                  label={t.promotionDetail.startsAt}
+                  value={formatDateTime(locale, promotion.startsAt)}
+                />
                 <Field
                   label={t.promotionDetail.endsAt}
-                  value={promotion.endsAt !== null ? formatDateTime(locale, promotion.endsAt) : t.promotionDetail.none}
+                  value={
+                    promotion.endsAt !== null
+                      ? formatDateTime(locale, promotion.endsAt)
+                      : t.promotionDetail.none
+                  }
                 />
-                <Field label={t.promotionDetail.customerRefs} value={refList(promotion.customerRefs)} />
-                <Field label={t.promotionDetail.segmentRefs} value={refList(promotion.segmentRefs)} />
-                <Field label={t.promotionDetail.campaignRef} value={promotion.campaignRef ?? t.promotionDetail.none} />
+                <Field
+                  label={t.promotionDetail.customerRefs}
+                  value={refList(promotion.customerRefs)}
+                />
+                <Field
+                  label={t.promotionDetail.segmentRefs}
+                  value={refList(promotion.segmentRefs)}
+                />
+                <Field
+                  label={t.promotionDetail.campaignRef}
+                  value={promotion.campaignRef ?? t.promotionDetail.none}
+                />
                 <Field
                   label={t.promotionDetail.usage}
                   value={
@@ -158,7 +207,11 @@ export default async function PromotionDetailPage({ params }: PromotionDetailPag
           <div className="flex flex-col gap-6">
             <Card>
               <CardContent>
-                <PromotionLifecycleActions promotionId={promotion.id} status={promotion.status} t={t} />
+                <PromotionLifecycleActions
+                  promotionId={promotion.id}
+                  status={promotion.status}
+                  t={t}
+                />
               </CardContent>
             </Card>
           </div>

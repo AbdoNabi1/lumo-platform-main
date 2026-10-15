@@ -18,9 +18,19 @@ const t = en.inventoryPage;
 const warehouses = [{ id: "w1", code: "SHOP", name: "Main shop", status: "active" }];
 
 describe("InventoryView", () => {
-  it("shows the Locations card first, then the id-based tools under a collapsed Advanced section", () => {
+  it("keeps the id-based tools away from merchants", () => {
     const { container } = render(
       <InventoryView t={en} warehouses={{ outcome: "ok", items: warehouses }} />,
+    );
+
+    expect(screen.getByText(t.locationsTitle)).toBeInTheDocument();
+    expect(container.querySelector("details")).toBeNull();
+    expect(screen.queryByText(t.transferTitle)).not.toBeInTheDocument();
+  });
+
+  it("shows the Locations card first, then the id-based tools under a collapsed Advanced section for the platform team", () => {
+    const { container } = render(
+      <InventoryView t={en} warehouses={{ outcome: "ok", items: warehouses }} showAdvanced />,
     );
 
     const locationsTitle = screen.getByText(t.locationsTitle);
@@ -45,7 +55,9 @@ describe("InventoryView", () => {
   });
 
   it("shows an error state, still with Advanced, when the locations could not be loaded", () => {
-    const { container } = render(<InventoryView t={en} warehouses={{ outcome: "error" }} />);
+    const { container } = render(
+      <InventoryView t={en} warehouses={{ outcome: "error" }} showAdvanced />,
+    );
 
     expect(screen.getByText(t.locationsError)).toBeInTheDocument();
     expect(container.querySelector("details")).not.toBeNull();

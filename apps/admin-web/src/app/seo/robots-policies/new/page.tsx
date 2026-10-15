@@ -36,13 +36,17 @@ export default async function NewRobotsPolicyPage({ searchParams }: NewRobotsPol
             {t.robotsPolicyForm.back}
           </Link>
         </Button>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.robotsPolicyForm.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.robotsPolicyForm.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.robotsPolicyForm.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.robotsPolicyForm.subtitle}</p>
       </div>
 
       <Card>
         <CardContent>
-          <RobotsPolicyForm t={t} defaultUserAgent={policy?.userAgent} defaultRules={policy?.rules} />
+          <RobotsPolicyForm
+            t={t}
+            defaultUserAgent={policy?.userAgent}
+            defaultRules={policy?.rules}
+          />
         </CardContent>
       </Card>
     </div>

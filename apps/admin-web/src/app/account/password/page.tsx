@@ -21,7 +21,7 @@ export default async function ChangePasswordPage() {
     <AppShell t={t} locale={locale} activeNavId="account" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header>
-          <h1 className="text-4xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold tracking-tight">
             Change password / تغيير كلمة السر
           </h1>
         </header>

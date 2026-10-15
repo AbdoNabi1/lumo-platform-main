@@ -27,9 +27,7 @@ interface TranslationSetDetailPageProps {
  * `/translation-sets/new` to operator+); every write action here is independently
  * permission-gated server-side, same precedent as every prior Phase 5 detail-page write action.
  */
-export default async function TranslationSetDetailPage({
-  params,
-}: TranslationSetDetailPageProps) {
+export default async function TranslationSetDetailPage({ params }: TranslationSetDetailPageProps) {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
@@ -85,7 +83,7 @@ export default async function TranslationSetDetailPage({
             </Link>
           </Button>
 
-          <h1 className="flex items-center gap-2 text-4xl font-semibold tracking-tight">
+          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
             <LanguagesIcon aria-hidden="true" className="size-7" />
             {set.namespace}
           </h1>

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Suspense } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { AlertTriangleIcon, InfoIcon, LockIcon, PercentIcon, PlusIcon } from "lucide-react";
+import { AlertTriangleIcon, LockIcon, PercentIcon, PlusIcon } from "lucide-react";
 import { Button, Card, CardContent, Skeleton } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
 import { DiscountsPagination } from "@/components/discounts/discounts-pagination";
@@ -23,9 +23,9 @@ interface DiscountsPageProps {
  * *code* itself). "Type"/"value" live on the `Promotion` a coupon authorizes
  * (`services/promotions`), not on the coupon — Promotions now has its own list/detail screen
  * (T5.8 Part B, `/promotions`), so the promotion reference column links there, but this list
- * still only renders fields Coupons owns directly (`t.discountsPage.note`), never a fabricated
- * join. T5.8 Part A added the "New coupon" create screen (`/discounts/new`, which also carries the
- * redeem form) and each row's inline "advance status" control (`DiscountsTable`, gated by
+ * still only renders fields Coupons owns directly, never a fabricated join. T5.8 Part A added the
+ * "New coupon" create screen (`/discounts/new`; its redeem form is a platform tool, shown only with
+ * `ADMIN_PLATFORM_TOOLS`) and each row's inline "advance status" control (`DiscountsTable`, gated by
  * `lib/coupon-lifecycle.ts` — same "no detail page, per-row action" shape as `ContentBlocksTable`).
  */
 export default async function DiscountsPage({ searchParams }: DiscountsPageProps) {
@@ -40,8 +40,8 @@ export default async function DiscountsPage({ searchParams }: DiscountsPageProps
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-semibold tracking-tight">{t.discountsPage.title}</h1>
-            <p className="text-md text-muted-foreground mt-1">{t.discountsPage.subtitle}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{t.discountsPage.title}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">{t.discountsPage.subtitle}</p>
           </div>
           <Button asChild>
             <Link href="/discounts/new">
@@ -50,11 +50,6 @@ export default async function DiscountsPage({ searchParams }: DiscountsPageProps
             </Link>
           </Button>
         </header>
-
-        <p className="text-muted-foreground flex items-start gap-2 text-xs">
-          <InfoIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-          {t.discountsPage.note}
-        </p>
 
         <Suspense key={params.after ?? ""} fallback={<DiscountsTableSkeleton />}>
           <DiscountsResults first={PAGE_SIZE} after={params.after} t={t} locale={locale} />

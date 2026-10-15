@@ -25,8 +25,8 @@ export default async function GeneralSettingsPage() {
           <Link href="/settings" className="text-muted-foreground text-sm hover:underline">
             {t.generalSettings.back}
           </Link>
-          <h1 className="mt-2 text-4xl font-semibold tracking-tight">{t.generalSettings.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.generalSettings.subtitle}</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{t.generalSettings.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.generalSettings.subtitle}</p>
         </header>
 
         {result.outcome === "ok" ? (

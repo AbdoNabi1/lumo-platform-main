@@ -87,7 +87,7 @@ export default async function OrderFulfillmentPage({ params }: OrderFulfillmentP
               {t.fulfillmentScreen.back}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.fulfillmentScreen.title}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.fulfillmentScreen.title}</h1>
           <p className="text-muted-foreground mt-1 text-sm">#{order.orderNumber}</p>
         </div>
 

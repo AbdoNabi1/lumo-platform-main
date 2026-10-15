@@ -1,6 +1,14 @@
 import { Suspense } from "react";
 import { cookies } from "next/headers";
-import { Card, CardContent, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger } from "@platform/ui";
+import {
+  Card,
+  CardContent,
+  Skeleton,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
 import { BundlesPanel } from "@/components/feature-registry/bundles-panel";
 import { CapabilityGraphPanel } from "@/components/feature-registry/capability-graph-panel";
@@ -46,8 +54,8 @@ export default async function FeatureRegistryPage({ searchParams }: FeatureRegis
     <AppShell t={t} locale={locale} activeNavId="feature-registry" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.featureRegistryPage.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.featureRegistryPage.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.featureRegistryPage.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.featureRegistryPage.subtitle}</p>
         </header>
 
         <FeatureKeySearch t={t} />

@@ -35,8 +35,8 @@ export default async function NewSeoProfilePage({ searchParams }: NewSeoProfileP
             {t.seoProfileDetail.back}
           </Link>
         </Button>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.seoProfileForm.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.seoProfileForm.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.seoProfileForm.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.seoProfileForm.subtitle}</p>
       </div>
 
       <Card>

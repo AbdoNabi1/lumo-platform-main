@@ -37,8 +37,8 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-semibold tracking-tight">{t.productsPage.title}</h1>
-            <p className="text-md text-muted-foreground mt-1">{t.productsPage.subtitle}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{t.productsPage.title}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">{t.productsPage.subtitle}</p>
           </div>
           <Button asChild>
             <Link href="/products/new">

@@ -82,7 +82,7 @@ export default async function ReviewDetailPage({ params }: ReviewDetailPageProps
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="flex items-center gap-1 text-4xl font-semibold tracking-tight">
+            <h1 className="flex items-center gap-1 text-2xl font-semibold tracking-tight">
               <StarIcon aria-hidden="true" className="size-7 fill-current" />
               {review.rating}
             </h1>
@@ -104,7 +104,7 @@ export default async function ReviewDetailPage({ params }: ReviewDetailPageProps
             <Field label={t.reviewDetail.unhelpfulCount} value={String(review.unhelpfulCount)} />
             <div className="flex flex-col gap-1 sm:col-span-2">
               <span className="text-muted-foreground text-xs">{t.reviewDetail.body}</span>
-              <p className="text-sm whitespace-pre-wrap">{review.bodyText}</p>
+              <p className="whitespace-pre-wrap text-sm">{review.bodyText}</p>
             </div>
             <div className="flex flex-col gap-1 sm:col-span-2">
               <span className="text-muted-foreground text-xs">{t.reviewDetail.assets}</span>
@@ -121,7 +121,9 @@ export default async function ReviewDetailPage({ params }: ReviewDetailPageProps
               )}
             </div>
             <div className="flex flex-col gap-1 sm:col-span-2">
-              <span className="text-muted-foreground text-xs">{t.reviewDetail.merchantResponse}</span>
+              <span className="text-muted-foreground text-xs">
+                {t.reviewDetail.merchantResponse}
+              </span>
               <p className="text-sm">
                 {review.merchantResponse ?? t.reviewDetail.noMerchantResponse}
               </p>
@@ -130,11 +132,7 @@ export default async function ReviewDetailPage({ params }: ReviewDetailPageProps
         </Card>
 
         <ReviewLifecycleActions reviewId={review.id} status={review.status} t={t} />
-        <ReviewRespondForm
-          reviewId={review.id}
-          merchantResponse={review.merchantResponse}
-          t={t}
-        />
+        <ReviewRespondForm reviewId={review.id} merchantResponse={review.merchantResponse} t={t} />
         <ReviewCustomerActions reviewId={review.id} t={t} />
       </div>
     </AppShell>

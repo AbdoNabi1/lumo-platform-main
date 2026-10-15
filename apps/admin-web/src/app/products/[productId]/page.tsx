@@ -112,7 +112,7 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-4xl font-semibold tracking-tight">{product.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{product.name}</h1>
             <ProductStatusBadge status={product.status} t={t} />
           </div>
           <p className="text-muted-foreground mt-1 text-sm">

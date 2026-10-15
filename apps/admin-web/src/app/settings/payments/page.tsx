@@ -26,8 +26,8 @@ export default async function PaymentSettingsPage() {
           <Link href="/settings" className="text-muted-foreground text-sm hover:underline">
             {t.paymentSettings.back}
           </Link>
-          <h1 className="mt-2 text-4xl font-semibold tracking-tight">{t.paymentSettings.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.paymentSettings.subtitle}</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{t.paymentSettings.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.paymentSettings.subtitle}</p>
         </header>
 
         {result.outcome === "ok" ? (

@@ -76,7 +76,7 @@ export default async function PageDetailPage({ params }: PageDetailPageProps) {
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-4xl font-semibold tracking-tight">{page.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{page.name}</h1>
             <PageStatusBadge status={page.status} t={t} />
           </div>
           <p className="text-muted-foreground mt-1 font-mono text-sm">{page.routePath}</p>

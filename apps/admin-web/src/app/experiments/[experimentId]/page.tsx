@@ -100,7 +100,7 @@ export default async function ExperimentDetailPage({ params }: ExperimentDetailP
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="flex items-center gap-2 text-4xl font-semibold tracking-tight">
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
               <FlaskConicalIcon aria-hidden="true" className="size-7" />
               {experiment.name}
             </h1>
@@ -123,8 +123,7 @@ export default async function ExperimentDetailPage({ params }: ExperimentDetailP
             <Field
               label={t.experimentDetail.audienceSegmentRefs}
               value={
-                experiment.audienceSegmentRefs !== null &&
-                experiment.audienceSegmentRefs.length > 0
+                experiment.audienceSegmentRefs !== null && experiment.audienceSegmentRefs.length > 0
                   ? experiment.audienceSegmentRefs.join(", ")
                   : t.experimentDetail.none
               }
@@ -161,7 +160,7 @@ export default async function ExperimentDetailPage({ params }: ExperimentDetailP
                 <TableBody>
                   {experiment.variants.map((variant) => (
                     <TableRow key={variant.key}>
-                      <TableCell className="font-mono text-sm font-medium whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap font-mono text-sm font-medium">
                         {variant.key}
                         {experiment.winnerVariantKey === variant.key && (
                           <Badge variant="success" className="ms-2">
@@ -174,9 +173,7 @@ export default async function ExperimentDetailPage({ params }: ExperimentDetailP
                       </TableCell>
                       <TableCell>
                         <Badge variant={variant.isControl ? "info" : "outline"}>
-                          {variant.isControl
-                            ? t.experimentDetail.yes
-                            : t.experimentDetail.no}
+                          {variant.isControl ? t.experimentDetail.yes : t.experimentDetail.no}
                         </Badge>
                       </TableCell>
                     </TableRow>
@@ -209,7 +206,7 @@ export default async function ExperimentDetailPage({ params }: ExperimentDetailP
                 <TableBody>
                   {experiment.results.map((entry, index) => (
                     <TableRow key={index}>
-                      <TableCell className="font-mono text-sm whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap font-mono text-sm">
                         {entry.variantKey}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{entry.metricValue}</TableCell>

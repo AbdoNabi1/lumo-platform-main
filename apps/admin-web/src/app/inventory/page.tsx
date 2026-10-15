@@ -4,6 +4,7 @@ import { InventoryView } from "@/components/inventory/inventory-view";
 import { fetchWarehouses } from "@/lib/api/inventory";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { showPlatformTools } from "@/lib/platform-tools";
 
 /**
  * The Inventory screen. Plan 2B-3: the shop's locations are listed by name (`GET /warehouses`) with
@@ -19,7 +20,7 @@ export default async function InventoryPage() {
 
   return (
     <AppShell t={t} locale={locale} activeNavId="inventory" user={user}>
-      <InventoryView t={t} warehouses={warehouses} />
+      <InventoryView t={t} warehouses={warehouses} showAdvanced={showPlatformTools()} />
     </AppShell>
   );
 }

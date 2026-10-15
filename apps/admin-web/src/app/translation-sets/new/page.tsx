@@ -24,10 +24,10 @@ export default async function NewTranslationSetPage() {
               {t.translationSetsPage.title}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold tracking-tight">
             {t.translationSetCreateForm.title}
           </h1>
-          <p className="text-md text-muted-foreground mt-1">
+          <p className="text-muted-foreground mt-1 text-sm">
             {t.translationSetCreateForm.subtitle}
           </p>
         </div>

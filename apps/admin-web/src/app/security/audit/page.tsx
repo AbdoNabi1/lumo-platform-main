@@ -47,8 +47,8 @@ export default async function SecurityAuditPage({ searchParams }: AuditPageProps
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.securityAuditPage.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.securityAuditPage.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.securityAuditPage.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.securityAuditPage.subtitle}</p>
       </header>
 
       <Suspense key={`verify:${params.tenantRef ?? ""}`} fallback={<TableCardSkeleton />}>
@@ -122,10 +122,20 @@ async function VerifyAuditChainSection({
 }) {
   const result = await verifyAuditChain(tenantRef);
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityAuditPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAuditPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityAuditPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAuditPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -164,10 +174,20 @@ async function AuditExplorerSection({
 }) {
   const result = await fetchAuditExplorer(tenantRef);
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityAuditPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAuditPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityAuditPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAuditPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -176,7 +196,8 @@ async function AuditExplorerSection({
         <CardTitle>{t.securityAuditPage.auditTitle}</CardTitle>
         <div className="flex gap-4 text-sm">
           <span className="text-muted-foreground">
-            {t.securityAuditPage.count}: <span className="text-foreground font-medium">{data.count}</span>
+            {t.securityAuditPage.count}:{" "}
+            <span className="text-foreground font-medium">{data.count}</span>
           </span>
           <Badge variant={data.chainValid ? "success" : "destructive"}>
             {data.chainValid ? t.securityAuditPage.chainValid : t.securityAuditPage.chainBroken}
@@ -185,7 +206,9 @@ async function AuditExplorerSection({
       </CardHeader>
       <CardContent className="p-0 sm:p-0">
         {data.timeline.length === 0 ? (
-          <p className="text-muted-foreground p-5 text-center text-base">{t.securityAuditPage.empty}</p>
+          <p className="text-muted-foreground p-5 text-center text-base">
+            {t.securityAuditPage.empty}
+          </p>
         ) : (
           <Table aria-label={t.securityAuditPage.auditTitle}>
             <TableHeader>
@@ -207,7 +230,9 @@ async function AuditExplorerSection({
                   <TableCell>
                     <Badge variant="neutral">{row.decision}</Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{row.resource ?? t.securityAuditPage.noResource}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {row.resource ?? t.securityAuditPage.noResource}
+                  </TableCell>
                   <TableCell className="text-muted-foreground">{row.occurredAt}</TableCell>
                 </TableRow>
               ))}
@@ -222,10 +247,20 @@ async function AuditExplorerSection({
 async function IncidentExplorerSection({ t }: { readonly t: Dictionary }) {
   const result = await fetchIncidentExplorer();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityAuditPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAuditPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityAuditPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAuditPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -234,16 +269,20 @@ async function IncidentExplorerSection({ t }: { readonly t: Dictionary }) {
         <CardTitle>{t.securityAuditPage.incidentsTitle}</CardTitle>
         <div className="flex gap-4 text-sm">
           <span className="text-muted-foreground">
-            {t.securityAuditPage.total}: <span className="text-foreground font-medium">{data.total}</span>
+            {t.securityAuditPage.total}:{" "}
+            <span className="text-foreground font-medium">{data.total}</span>
           </span>
           <span className="text-muted-foreground">
-            {t.securityAuditPage.open}: <span className="text-foreground font-medium">{data.open}</span>
+            {t.securityAuditPage.open}:{" "}
+            <span className="text-foreground font-medium">{data.open}</span>
           </span>
         </div>
       </CardHeader>
       <CardContent className="p-0 sm:p-0">
         {data.incidents.length === 0 ? (
-          <p className="text-muted-foreground p-5 text-center text-base">{t.securityAuditPage.empty}</p>
+          <p className="text-muted-foreground p-5 text-center text-base">
+            {t.securityAuditPage.empty}
+          </p>
         ) : (
           <Table aria-label={t.securityAuditPage.incidentsTitle}>
             <TableHeader>
@@ -263,7 +302,13 @@ async function IncidentExplorerSection({ t }: { readonly t: Dictionary }) {
                   <TableCell className="font-medium">{incident.reference}</TableCell>
                   <TableCell>{incident.title}</TableCell>
                   <TableCell>
-                    <Badge variant={incident.severity === "critical" || incident.severity === "high" ? "destructive" : "neutral"}>
+                    <Badge
+                      variant={
+                        incident.severity === "critical" || incident.severity === "high"
+                          ? "destructive"
+                          : "neutral"
+                      }
+                    >
                       {incident.severity}
                     </Badge>
                   </TableCell>
@@ -275,7 +320,11 @@ async function IncidentExplorerSection({ t }: { readonly t: Dictionary }) {
                     {incident.assignee ?? t.securityAuditPage.unassigned}
                   </TableCell>
                   <TableCell>
-                    <IncidentLifecycleControl reference={incident.reference} status={incident.status} t={t} />
+                    <IncidentLifecycleControl
+                      reference={incident.reference}
+                      status={incident.status}
+                      t={t}
+                    />
                   </TableCell>
                 </TableRow>
               ))}

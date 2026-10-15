@@ -72,7 +72,7 @@ export default async function SeoProfileDetailPage({ params }: SeoProfileDetailP
         </Button>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-4xl font-semibold tracking-tight">{profile.pageRef}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{profile.pageRef}</h1>
           <Button variant="outline" size="sm" asChild>
             <Link href={`/seo/profiles/new?${editParams.toString()}`}>
               <PencilIcon aria-hidden="true" />

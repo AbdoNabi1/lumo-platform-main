@@ -24,12 +24,10 @@ export default async function NewNotificationPage() {
               {t.notificationsPage.title}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold tracking-tight">
             {t.notificationCreateForm.title}
           </h1>
-          <p className="text-md text-muted-foreground mt-1">
-            {t.notificationCreateForm.subtitle}
-          </p>
+          <p className="text-muted-foreground mt-1 text-sm">{t.notificationCreateForm.subtitle}</p>
         </div>
 
         <Card>

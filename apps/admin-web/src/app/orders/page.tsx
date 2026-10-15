@@ -19,6 +19,7 @@ import { UnfulfilledFilterNote } from "@/components/orders/unfulfilled-filter-no
 import { fetchOrdersPage } from "@/lib/api/orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
+import { showPlatformTools } from "@/lib/platform-tools";
 import type { Dictionary } from "@/messages/en";
 
 const PAGE_SIZE = 20;
@@ -54,16 +55,19 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-semibold tracking-tight">{t.ordersPage.title}</h1>
-            <p className="text-md text-muted-foreground mt-1">{t.ordersPage.subtitle}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{t.ordersPage.title}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">{t.ordersPage.subtitle}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" asChild>
-              <Link href="/orders/from-checkout">
-                <UploadIcon aria-hidden="true" />
-                {t.ordersPage.createFromCheckout}
-              </Link>
-            </Button>
+            {/* A recovery tool for the platform team, not a merchant action. */}
+            {showPlatformTools() && (
+              <Button variant="outline" asChild>
+                <Link href="/orders/from-checkout">
+                  <UploadIcon aria-hidden="true" />
+                  {t.ordersPage.createFromCheckout}
+                </Link>
+              </Button>
+            )}
             <Button asChild>
               <Link href="/orders/new">
                 <PlusIcon aria-hidden="true" />

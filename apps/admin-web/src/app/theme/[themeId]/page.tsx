@@ -89,7 +89,7 @@ export default async function ThemeDetailPage({ params }: ThemeDetailPageProps) 
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-4xl font-semibold tracking-tight">{theme.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{theme.name}</h1>
             <ThemeStatusBadge status={theme.status} t={t} />
           </div>
         </div>

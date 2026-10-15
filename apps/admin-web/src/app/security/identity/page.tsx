@@ -59,8 +59,8 @@ export default async function SecurityIdentityPage({ searchParams }: IdentityPag
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.securityIdentityPage.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.securityIdentityPage.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.securityIdentityPage.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.securityIdentityPage.subtitle}</p>
       </header>
 
       <Suspense fallback={<TableCardSkeleton />}>
@@ -225,7 +225,10 @@ export default async function SecurityIdentityPage({ searchParams }: IdentityPag
             params.consentSubjectRef.length > 0 &&
             params.consentPurpose !== undefined &&
             params.consentPurpose.length > 0 && (
-              <Suspense key={`${params.consentSubjectRef}:${params.consentPurpose}`} fallback={<ResultSkeleton />}>
+              <Suspense
+                key={`${params.consentSubjectRef}:${params.consentPurpose}`}
+                fallback={<ResultSkeleton />}
+              >
                 <CheckConsentResult
                   subjectRef={params.consentSubjectRef}
                   purpose={params.consentPurpose}
@@ -242,10 +245,20 @@ export default async function SecurityIdentityPage({ searchParams }: IdentityPag
 async function IdentityOverviewSection({ t }: { readonly t: Dictionary }) {
   const result = await fetchIdentityOverview();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityIdentityPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityIdentityPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityIdentityPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityIdentityPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -254,19 +267,24 @@ async function IdentityOverviewSection({ t }: { readonly t: Dictionary }) {
         <CardTitle>{t.securityIdentityPage.overviewTitle}</CardTitle>
         <div className="flex gap-4 text-sm">
           <span className="text-muted-foreground">
-            {t.securityIdentityPage.totalPrincipals}: <span className="text-foreground font-medium">{data.total}</span>
+            {t.securityIdentityPage.totalPrincipals}:{" "}
+            <span className="text-foreground font-medium">{data.total}</span>
           </span>
           <span className="text-muted-foreground">
-            {t.securityIdentityPage.humans}: <span className="text-foreground font-medium">{data.humans}</span>
+            {t.securityIdentityPage.humans}:{" "}
+            <span className="text-foreground font-medium">{data.humans}</span>
           </span>
           <span className="text-muted-foreground">
-            {t.securityIdentityPage.nonHumans}: <span className="text-foreground font-medium">{data.nonHumans}</span>
+            {t.securityIdentityPage.nonHumans}:{" "}
+            <span className="text-foreground font-medium">{data.nonHumans}</span>
           </span>
         </div>
       </CardHeader>
       <CardContent className="p-0 sm:p-0">
         {data.principals.length === 0 ? (
-          <p className="text-muted-foreground p-5 text-center text-base">{t.securityIdentityPage.empty}</p>
+          <p className="text-muted-foreground p-5 text-center text-base">
+            {t.securityIdentityPage.empty}
+          </p>
         ) : (
           <Table aria-label={t.securityIdentityPage.overviewTitle}>
             <TableHeader>
@@ -309,10 +327,20 @@ async function IdentityOverviewSection({ t }: { readonly t: Dictionary }) {
 async function MachineIdentitySection({ t }: { readonly t: Dictionary }) {
   const result = await fetchMachineIdentityExplorer();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityIdentityPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityIdentityPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityIdentityPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityIdentityPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -321,16 +349,20 @@ async function MachineIdentitySection({ t }: { readonly t: Dictionary }) {
         <CardTitle>{t.securityIdentityPage.machineTitle}</CardTitle>
         <div className="flex gap-4 text-sm">
           <span className="text-muted-foreground">
-            {t.securityIdentityPage.active}: <span className="text-foreground font-medium">{data.active}</span>
+            {t.securityIdentityPage.active}:{" "}
+            <span className="text-foreground font-medium">{data.active}</span>
           </span>
           <span className="text-muted-foreground">
-            {t.securityIdentityPage.suspended}: <span className="text-foreground font-medium">{data.suspended}</span>
+            {t.securityIdentityPage.suspended}:{" "}
+            <span className="text-foreground font-medium">{data.suspended}</span>
           </span>
         </div>
       </CardHeader>
       <CardContent className="p-0 sm:p-0">
         {data.identities.length === 0 ? (
-          <p className="text-muted-foreground p-5 text-center text-base">{t.securityIdentityPage.empty}</p>
+          <p className="text-muted-foreground p-5 text-center text-base">
+            {t.securityIdentityPage.empty}
+          </p>
         ) : (
           <Table aria-label={t.securityIdentityPage.machineTitle}>
             <TableHeader>
@@ -352,7 +384,9 @@ async function MachineIdentitySection({ t }: { readonly t: Dictionary }) {
                   <TableCell>
                     <Badge variant="neutral">{identity.status}</Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{identity.allowedScopeCount}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {identity.allowedScopeCount}
+                  </TableCell>
                   <TableCell className="text-muted-foreground">
                     {identity.rotationIntervalDays ?? t.securityIdentityPage.noRotationPolicy}
                   </TableCell>
@@ -374,34 +408,47 @@ async function ResolvePrincipalResult({
   readonly t: Dictionary;
 }) {
   const result = await resolvePrincipal(subjectRef);
-  if (result.outcome === "unauthorized") return <ResultPanel message={t.securityLookup.unauthorized} />;
+  if (result.outcome === "unauthorized")
+    return <ResultPanel message={t.securityLookup.unauthorized} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 pt-5">
         <div>
-          <p className="text-muted-foreground text-sm">{t.securityIdentityPage.resolvedPrincipal}</p>
+          <p className="text-muted-foreground text-sm">
+            {t.securityIdentityPage.resolvedPrincipal}
+          </p>
           {data.principal === null ? (
-            <p className="text-muted-foreground text-sm">{t.securityIdentityPage.noPrincipalFound}</p>
+            <p className="text-muted-foreground text-sm">
+              {t.securityIdentityPage.noPrincipalFound}
+            </p>
           ) : (
             <p className="text-sm">
-              {data.principal.externalId} — {data.principal.kind} — <Badge variant="neutral">{data.principal.status}</Badge>
+              {data.principal.externalId} — {data.principal.kind} —{" "}
+              <Badge variant="neutral">{data.principal.status}</Badge>
             </p>
           )}
         </div>
         <div>
-          <p className="text-muted-foreground text-sm">{t.securityIdentityPage.resolvedIdentityUser}</p>
+          <p className="text-muted-foreground text-sm">
+            {t.securityIdentityPage.resolvedIdentityUser}
+          </p>
           {data.identityUser === null ? (
-            <p className="text-muted-foreground text-sm">{t.securityIdentityPage.noIdentityUserFound}</p>
+            <p className="text-muted-foreground text-sm">
+              {t.securityIdentityPage.noIdentityUserFound}
+            </p>
           ) : (
             <p className="text-sm">
-              {data.identityUser.userId} — <Badge variant="neutral">{data.identityUser.status}</Badge>
+              {data.identityUser.userId} —{" "}
+              <Badge variant="neutral">{data.identityUser.status}</Badge>
             </p>
           )}
         </div>
         <div>
-          <p className="text-muted-foreground text-sm">{t.securityIdentityPage.resolvedMemberships}</p>
+          <p className="text-muted-foreground text-sm">
+            {t.securityIdentityPage.resolvedMemberships}
+          </p>
           {data.memberships.length === 0 ? (
             <p className="text-muted-foreground text-sm">{t.securityIdentityPage.noMemberships}</p>
           ) : (
@@ -419,9 +466,16 @@ async function ResolvePrincipalResult({
   );
 }
 
-async function ResolveMembershipResult({ userId, t }: { readonly userId: string; readonly t: Dictionary }) {
+async function ResolveMembershipResult({
+  userId,
+  t,
+}: {
+  readonly userId: string;
+  readonly t: Dictionary;
+}) {
   const result = await resolveMembership(userId);
-  if (result.outcome === "unauthorized") return <ResultPanel message={t.securityLookup.unauthorized} />;
+  if (result.outcome === "unauthorized")
+    return <ResultPanel message={t.securityLookup.unauthorized} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
   return (
@@ -451,7 +505,8 @@ async function ResolveOrganizationResult({
   readonly t: Dictionary;
 }) {
   const result = await resolveOrganization(organizationId);
-  if (result.outcome === "unauthorized") return <ResultPanel message={t.securityLookup.unauthorized} />;
+  if (result.outcome === "unauthorized")
+    return <ResultPanel message={t.securityLookup.unauthorized} />;
   if (result.outcome === "not_found") return <ResultPanel message={t.securityLookup.notFound} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
@@ -473,7 +528,8 @@ async function ResolveMachineIdentityResult({
   readonly t: Dictionary;
 }) {
   const result = await resolveMachineIdentity(externalId);
-  if (result.outcome === "unauthorized") return <ResultPanel message={t.securityLookup.unauthorized} />;
+  if (result.outcome === "unauthorized")
+    return <ResultPanel message={t.securityLookup.unauthorized} />;
   if (result.outcome === "not_found") return <ResultPanel message={t.securityLookup.notFound} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
@@ -500,14 +556,17 @@ async function CheckConsentResult({
   readonly t: Dictionary;
 }) {
   const result = await checkConsent(subjectRef, purpose);
-  if (result.outcome === "unauthorized") return <ResultPanel message={t.securityLookup.unauthorized} />;
+  if (result.outcome === "unauthorized")
+    return <ResultPanel message={t.securityLookup.unauthorized} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
   return (
     <Card>
       <CardContent className="pt-5">
         <Badge variant={data.granted ? "success" : "destructive"}>
-          {data.granted ? t.securityIdentityPage.consentGranted : t.securityIdentityPage.consentNotGranted}
+          {data.granted
+            ? t.securityIdentityPage.consentGranted
+            : t.securityIdentityPage.consentNotGranted}
         </Badge>
       </CardContent>
     </Card>

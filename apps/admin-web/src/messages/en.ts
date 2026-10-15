@@ -34,9 +34,9 @@ export const en = {
     featureFlags: "Feature flags",
     experiments: "Experiments",
     salesChannels: "Sales channels",
-    storefront: "Storefront",
-    pos: "POS",
-    mobileApp: "Mobile app",
+    onlineStore: "Online Store",
+    viewStore: "View your store",
+    platformTools: "Platform tools",
     opensInNewTab: "opens in a new tab",
     openMenu: "Open navigation",
     closeMenu: "Close navigation",
@@ -51,9 +51,6 @@ export const en = {
     createProduct: "Product",
     createOrder: "Order",
     createDiscount: "Discount",
-    notifications: "Notifications",
-    unreadNotifications: "You have unread notifications",
-    messages: "Messages",
     account: "Account",
     signOut: "Sign out",
     changePassword: "Change password",
@@ -452,7 +449,7 @@ export const en = {
   },
   orderCreate: {
     title: "New order",
-    subtitle: "Place a backoffice order for a customer.",
+    subtitle: "Create an order for a customer.",
     customerRef: "Customer reference",
     currency: "Currency",
     shippingAddress: "Shipping address",
@@ -647,7 +644,7 @@ export const en = {
    */
   inventoryPage: {
     title: "Inventory",
-    subtitle: "Your stock locations, and the advanced tools for moving and reserving stock.",
+    subtitle: "The places where you keep and sell your stock.",
     locationsTitle: "Locations",
     noLocations: "No locations yet. Add one to start tracking stock.",
     locationNameLabel: "Location name",
@@ -900,7 +897,7 @@ export const en = {
   },
   categoriesPage: {
     title: "Categories",
-    subtitle: "Browse the category tree as a flat, cursor-paginated list.",
+    subtitle: "Group your products so customers can find them.",
     columns: { name: "Name", slug: "Slug", parent: "Parent" },
     noParent: "No parent",
     previous: "Previous",
@@ -929,7 +926,7 @@ export const en = {
   },
   brandsPage: {
     title: "Brands",
-    subtitle: "Browse and manage brands.",
+    subtitle: "The brands and vendors of the products you sell.",
     columns: { name: "Name", slug: "Slug" },
     previous: "Previous",
     next: "Next",
@@ -1050,24 +1047,29 @@ export const en = {
   },
   analyticsPage: {
     title: "Analytics",
-    subtitle: "Sales, orders and top products for your store.",
+    subtitle: "How your store is doing: sales, orders and top products.",
   },
   marketingPage: {
     title: "Marketing",
-    subtitle: "Campaigns, channels, and performance across your marketing efforts.",
-    unavailableTitle: "No Marketing context exists yet",
-    unavailableBody:
-      "There is no campaign aggregate anywhere in the backend — Coupons and Promotions each carry only a bare, opaque campaignRef string with no owning data of their own (docs/architecture/08-marketing-core.md and 19-marketing-data-model.md describe the intended model, but no application code implements it). Building this screen today would mean inventing campaign status, channels, dates, and performance numbers — this page waits for a real Marketing context instead.",
+    subtitle: "Reach your customers and bring them back to your store.",
+    campaignsTitle: "Campaigns are on the way",
+    campaignsBody:
+      "Soon you will plan campaigns here and see the sales each one brings in. Until then, use automations and discount codes.",
+    automationsTitle: "Automations",
+    automationsBody:
+      "Send messages and run tasks automatically when something happens in your store.",
+    discountsTitle: "Discounts",
+    discountsBody: "Create codes that bring customers back.",
   },
   discountsPage: {
     title: "Discounts",
-    subtitle: "Coupon codes that authorize a promotion — from the Coupons context.",
+    subtitle: "Discount codes your customers enter at checkout.",
     columns: {
       code: "Code",
       status: "Status",
       usage: "Usage",
       expires: "Expires",
-      promotion: "Promotion reference",
+      promotion: "Promotion",
     },
     unlimited: "Unlimited",
     noExpiry: "No expiry",
@@ -1076,8 +1078,7 @@ export const en = {
     empty: "No discount codes yet.",
     error: "Couldn't load discounts. Try refreshing the page.",
     unauthorized: "Sign in to view discounts.",
-    note: "Type and value live on the Promotion a coupon authorizes, not on the coupon itself — this list shows only fields Coupons owns directly.",
-    newCoupon: "New coupon",
+    newCoupon: "Create discount",
   },
   discountStatus: {
     active: "Active",
@@ -1093,17 +1094,17 @@ export const en = {
     advancing: "Advancing…",
   },
   couponCreate: {
-    title: "New coupon",
-    subtitle: "Create a coupon code that authorizes a promotion.",
+    title: "Create discount",
+    subtitle: "Create a code customers enter at checkout to get a promotion.",
     back: "Back to discounts",
     code: "Code",
-    promotionRef: "Promotion reference",
+    promotionRef: "Promotion",
     multiUse: "Multi-use (redeemable more than once)",
     usageLimit: "Usage limit (optional)",
-    customerRef: "Customer reference (optional)",
+    customerRef: "Only for one customer (optional)",
     expiresAt: "Expires at (optional)",
-    campaignRef: "Campaign reference (optional)",
-    submit: "Create coupon",
+    campaignRef: "Campaign (optional)",
+    submit: "Save discount",
     submitting: "Creating…",
   },
   /** Customer-facing/POS-style action offered here for completeness (one of the 4 coupon routes) — see the task brief. */
@@ -1118,7 +1119,7 @@ export const en = {
   },
   contentPage: {
     title: "Content",
-    subtitle: "Reusable content blocks — from the Content context.",
+    subtitle: "Reusable content for your store, like banners and announcements.",
     columns: {
       name: "Name",
       type: "Type",
@@ -1170,7 +1171,7 @@ export const en = {
    */
   pagesPage: {
     title: "Pages",
-    subtitle: "Routed pages — from the Dynamic Pages context.",
+    subtitle: "Pages on your online store, like About us or Contact.",
     columns: {
       name: "Name",
       routePath: "Route",
@@ -1193,7 +1194,7 @@ export const en = {
   },
   pageCreate: {
     title: "New page",
-    subtitle: "Route a page to a template, experience, SEO profile, and locale.",
+    subtitle: "Add a page to your online store.",
     name: "Name",
     routePath: "Route path",
     templateRef: "Template reference (optional)",
@@ -1295,7 +1296,7 @@ export const en = {
   },
   seoProfileForm: {
     title: "Set SEO profile",
-    subtitle: "Create or update a page's SEO metadata by page reference.",
+    subtitle: "Set the title and description search engines show for a page.",
     pageRef: "Page reference",
     titleField: "Title",
     description: "Description",
@@ -1451,14 +1452,6 @@ export const en = {
   },
   settingsPage: {
     title: "Settings",
-    subtitle: "What's configurable today, split by who actually owns it.",
-    frontendSection: "Interface",
-    frontendBody: "Owned entirely by admin-web — no backend round trip.",
-    languageLabel: "Language",
-    backendSection: "Workspace & billing",
-    backendBody:
-      'Tenancy owns white-label workspace configuration (theme, branding, domain, locale, currency, timezone) and Licensing owns plans/subscriptions/billing — both are real, persisted aggregates with working write APIs. Reading the workspace config or the plan/subscription back still needs a resolved workspace/tenant id, and admin-web has no authenticated session yet to know which one is "current" (see the Admin Authentication gap) — nor does either context expose a list/lookup to discover one without it. That half is shown as unavailable rather than guessed. Licensing\'s usage counters are different: they are scoped by the tenant header admin-web already sends on every request, so no workspace resolution is needed — see the live table below.',
-    unavailableLabel: "Unavailable — no resolvable workspace context yet",
     usageSectionTitle: "Usage",
     usageSectionBody:
       "Live, tenant-scoped usage counters (Licensing's GET /usage-counters), one row per registered resource.",
@@ -1475,6 +1468,10 @@ export const en = {
     taxesTitle: "Taxes and duties",
     taxesBody: "Whether prices include tax, and the rate for each country.",
     paymentsBody: "Choose how customers pay you",
+    locationsTitle: "Locations",
+    locationsBody: "The places where you keep and sell your stock.",
+    languagesTitle: "Languages",
+    languagesBody: "The languages your store is available in.",
   },
   /** Plan 3A — Settings → Payments: which payment methods the storefront offers. */
   paymentSettings: {
@@ -2801,7 +2798,7 @@ export const en = {
    */
   themesPage: {
     title: "Theme",
-    subtitle: "Design-token themes — colors, typography, and spacing.",
+    subtitle: "Your store's colors, fonts and spacing.",
     columns: {
       name: "Name",
       status: "Status",
@@ -2822,9 +2819,9 @@ export const en = {
   },
   themeCreate: {
     title: "New theme",
-    subtitle: "Seed a theme from a frozen design-token preset.",
+    subtitle: "Start a new theme from a ready-made style.",
     name: "Name",
-    presetKey: "Preset key",
+    presetKey: "Starting style",
     submit: "Create theme",
     submitting: "Creating…",
   },
@@ -2961,13 +2958,6 @@ export const en = {
     retry: "Try again",
     backToDashboard: "Back to the dashboard",
   },
-  footer: {
-    navLabel: "Legal and support",
-    copyright: "© {year} Morbeh. All rights reserved.",
-    privacy: "Privacy policy",
-    terms: "Terms of service",
-    support: "Support",
-  },
   /**
    * T5.10 — the Review moderation queue (`app/reviews/page.tsx`, `/new`, `/[reviewId]`). No
    * frontend existed for the Reviews domain before this task. `reviewsPage` is the moderation
@@ -2975,7 +2965,7 @@ export const en = {
    */
   reviewsPage: {
     title: "Review moderation queue",
-    subtitle: "Moderate customer reviews — from the Reviews context.",
+    subtitle: "Approve, reply to and manage what customers say about your products.",
     statusFilterLabel: "Status",
     allStatuses: "All statuses",
     columns: {
@@ -3085,7 +3075,7 @@ export const en = {
    */
   promotionsPage: {
     title: "Promotions",
-    subtitle: "Discount rules a coupon or cart can qualify for — from the Promotions context.",
+    subtitle: "The offers behind your discount codes and automatic discounts.",
     columns: {
       name: "Name",
       status: "Status",
@@ -3134,7 +3124,7 @@ export const en = {
    */
   promotionCreate: {
     title: "New promotion",
-    subtitle: "Define a discount rule a coupon or cart can qualify for.",
+    subtitle: "Set up an offer: what it applies to, the reward, and when it runs.",
     name: "Name",
     ruleType: "Rule type",
     scope: "Scope",
@@ -3318,8 +3308,8 @@ export const en = {
    * delete route exists for a locale, so the detail screen is read-only.
    */
   localesPage: {
-    title: "Locales",
-    subtitle: "Registered locales — from the Localization context.",
+    title: "Languages",
+    subtitle: "The languages your store is available in.",
     columns: {
       code: "Code",
       name: "Name",
@@ -3333,11 +3323,11 @@ export const en = {
     empty: "No locales yet.",
     error: "Couldn't load locales. Try refreshing the page.",
     unauthorized: "Sign in to view locales.",
-    newLocale: "New locale",
+    newLocale: "Add language",
   },
   localeCreateForm: {
-    title: "New locale",
-    subtitle: "Register a locale.",
+    title: "Add language",
+    subtitle: "Make your store available in another language.",
     code: "Code",
     name: "Name",
     isDefault: "Default locale",

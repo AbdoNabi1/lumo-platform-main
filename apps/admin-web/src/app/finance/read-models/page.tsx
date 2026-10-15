@@ -2,7 +2,13 @@ import type { ReactNode } from "react";
 import { Suspense } from "react";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { AlertTriangleIcon, ArrowLeftIcon, DatabaseIcon, LockIcon, SearchXIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  ArrowLeftIcon,
+  DatabaseIcon,
+  LockIcon,
+  SearchXIcon,
+} from "lucide-react";
 import {
   Card,
   CardContent,
@@ -57,8 +63,8 @@ export default async function FinanceReadModelsPage({ searchParams }: ReadModels
             <ArrowLeftIcon aria-hidden="true" className="size-4 rtl:-scale-x-100" />
             {t.financeReadModelsPage.backToFinance}
           </Link>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.financeReadModelsPage.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.financeReadModelsPage.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.financeReadModelsPage.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.financeReadModelsPage.subtitle}</p>
         </header>
 
         <FinanceModelPicker t={t} selected={model} />
@@ -223,9 +229,7 @@ async function ReadModelDetail({
           {entries.map(([field]) => (
             <div key={field}>
               <dt className="text-muted-foreground font-mono text-xs">{field}</dt>
-              <dd className="tabular-nums">
-                {formatFieldValue(result.value, field, locale, t)}
-              </dd>
+              <dd className="tabular-nums">{formatFieldValue(result.value, field, locale, t)}</dd>
             </div>
           ))}
         </dl>
@@ -262,12 +266,7 @@ function drillInKeyOf(row: unknown): string | undefined {
 /** `*Minor` fields are minor-unit money facts (`revenueMinor`, `netProfitMinor`, …) — formatted as
  * currency using the row's own `currency` field, divided by 100 only here at the formatting
  * boundary, never upstream. Everything else renders as its own primitive. */
-function formatFieldValue(
-  row: unknown,
-  field: string,
-  locale: Locale,
-  t: Dictionary,
-): ReactNode {
+function formatFieldValue(row: unknown, field: string, locale: Locale, t: Dictionary): ReactNode {
   if (!isPlainObject(row)) return String(row);
   const value = row[field];
   if (field.endsWith("Minor") && typeof value === "number") {

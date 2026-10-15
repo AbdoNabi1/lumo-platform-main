@@ -20,8 +20,8 @@ export default async function NewRedirectPage() {
             {t.redirectCreate.back}
           </Link>
         </Button>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.redirectCreate.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.redirectCreate.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.redirectCreate.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.redirectCreate.subtitle}</p>
       </div>
 
       <Card>

@@ -39,9 +39,9 @@ export const ar: Dictionary = {
     featureFlags: "أعلام الميزات",
     experiments: "التجارب",
     salesChannels: "قنوات البيع",
-    storefront: "المتجر",
-    pos: "نقاط البيع",
-    mobileApp: "تطبيق الجوال",
+    onlineStore: "المتجر الإلكتروني",
+    viewStore: "عرض متجرك",
+    platformTools: "أدوات المنصة",
     opensInNewTab: "يفتح في تبويب جديد",
     openMenu: "فتح القائمة",
     closeMenu: "إغلاق القائمة",
@@ -56,9 +56,6 @@ export const ar: Dictionary = {
     createProduct: "منتج",
     createOrder: "طلب",
     createDiscount: "خصم",
-    notifications: "الإشعارات",
-    unreadNotifications: "لديك إشعارات غير مقروءة",
-    messages: "الرسائل",
     account: "الحساب",
     signOut: "تسجيل الخروج",
     changePassword: "تغيير كلمة السر",
@@ -432,7 +429,7 @@ export const ar: Dictionary = {
   },
   orderCreate: {
     title: "طلب جديد",
-    subtitle: "أنشئ طلبًا يدويًا لأحد العملاء.",
+    subtitle: "أنشئ طلب لعميل.",
     customerRef: "مرجع العميل",
     currency: "العملة",
     shippingAddress: "عنوان الشحن",
@@ -583,7 +580,7 @@ export const ar: Dictionary = {
   },
   inventoryPage: {
     title: "المخزون",
-    subtitle: "مواقع المخزون عندك، وأدوات متقدمة لنقل المخزون وحجزه.",
+    subtitle: "الأماكن اللي بتخزّن وتبيع منها بضاعتك.",
     locationsTitle: "المواقع",
     noLocations: "لسه مفيش مواقع. أضف موقع عشان تبدأ تتابع المخزون.",
     locationNameLabel: "اسم الموقع",
@@ -827,7 +824,7 @@ export const ar: Dictionary = {
   },
   categoriesPage: {
     title: "الفئات",
-    subtitle: "تصفح شجرة الفئات كقائمة مسطّحة مقسّمة على صفحات.",
+    subtitle: "قسّم منتجاتك عشان العملاء يلاقوها بسهولة.",
     columns: { name: "الاسم", slug: "المعرّف النصي", parent: "الفئة الأصل" },
     noParent: "بلا فئة أصل",
     previous: "السابق",
@@ -856,7 +853,7 @@ export const ar: Dictionary = {
   },
   brandsPage: {
     title: "العلامات التجارية",
-    subtitle: "تصفح العلامات التجارية وإدارتها.",
+    subtitle: "الماركات والموردين للمنتجات اللي بتبيعها.",
     columns: { name: "الاسم", slug: "المعرّف النصي" },
     previous: "السابق",
     next: "التالي",
@@ -977,24 +974,28 @@ export const ar: Dictionary = {
   },
   analyticsPage: {
     title: "التحليلات",
-    subtitle: "المبيعات والطلبات وأكتر المنتجات مبيعًا في متجرك.",
+    subtitle: "أداء متجرك: المبيعات والطلبات وأكتر المنتجات مبيعًا.",
   },
   marketingPage: {
     title: "التسويق",
-    subtitle: "الحملات والقنوات والأداء عبر جهودك التسويقية.",
-    unavailableTitle: "لا يوجد سياق تسويق بعد",
-    unavailableBody:
-      "لا يوجد أي تجميع (aggregate) للحملات في الخلفية على الإطلاق — تحمل الكوبونات والعروض الترويجية فقط مرجع حملة (campaignRef) نصياً مجرداً بلا بيانات مملوكة خاصة بها (تصف الوثائق النموذج المقصود لكن لا يوجد كود تطبيقي ينفّذه). بناء هذه الشاشة اليوم يعني اختراع حالة الحملة وقنواتها وتواريخها وأرقام أدائها — لذا تنتظر هذه الصفحة سياق تسويق حقيقي بدلاً من ذلك.",
+    subtitle: "اوصل لعملائك ورجّعهم لمتجرك.",
+    campaignsTitle: "الحملات جاية قريب",
+    campaignsBody:
+      "قريب هتقدر تخطط حملاتك هنا وتشوف المبيعات اللي جابتها كل حملة. لحد ما ده يحصل، استخدم الأتمتة وأكواد الخصم.",
+    automationsTitle: "الأتمتة",
+    automationsBody: "ابعت رسائل وشغّل مهام تلقائيًا لما يحصل حاجة في متجرك.",
+    discountsTitle: "الخصومات",
+    discountsBody: "أنشئ أكواد ترجّع العملاء لمتجرك.",
   },
   discountsPage: {
     title: "الخصومات",
-    subtitle: "رموز الكوبونات التي تُخوّل عرضاً ترويجياً — من سياق الكوبونات.",
+    subtitle: "أكواد الخصم اللي العملاء بيكتبوها وقت الدفع.",
     columns: {
       code: "الرمز",
       status: "الحالة",
       usage: "الاستخدام",
       expires: "تاريخ الانتهاء",
-      promotion: "مرجع العرض الترويجي",
+      promotion: "العرض",
     },
     unlimited: "غير محدود",
     noExpiry: "بلا تاريخ انتهاء",
@@ -1003,8 +1004,7 @@ export const ar: Dictionary = {
     empty: "لا توجد رموز خصم بعد.",
     error: "تعذّر تحميل الخصومات. حاول تحديث الصفحة.",
     unauthorized: "سجّل الدخول لعرض الخصومات.",
-    note: "النوع والقيمة موجودان في العرض الترويجي الذي يُخوّله الكوبون، وليس في الكوبون نفسه — تعرض هذه القائمة فقط الحقول التي يملكها الكوبون مباشرة.",
-    newCoupon: "كوبون جديد",
+    newCoupon: "إنشاء خصم",
   },
   discountStatus: {
     active: "نشِط",
@@ -1019,17 +1019,17 @@ export const ar: Dictionary = {
     advancing: "جارٍ التقدّم…",
   },
   couponCreate: {
-    title: "كوبون جديد",
-    subtitle: "أنشئ رمز كوبون يُخوّل عرضاً ترويجياً.",
+    title: "إنشاء خصم",
+    subtitle: "أنشئ كود يكتبه العميل وقت الدفع عشان ياخد العرض.",
     back: "العودة إلى الخصومات",
     code: "الرمز",
-    promotionRef: "مرجع العرض الترويجي",
+    promotionRef: "العرض",
     multiUse: "متعدد الاستخدام (قابل للاسترداد أكثر من مرة)",
     usageLimit: "حد الاستخدام (اختياري)",
-    customerRef: "مرجع العميل (اختياري)",
+    customerRef: "لعميل واحد بس (اختياري)",
     expiresAt: "تاريخ الانتهاء (اختياري)",
-    campaignRef: "مرجع الحملة (اختياري)",
-    submit: "إنشاء كوبون",
+    campaignRef: "الحملة (اختياري)",
+    submit: "حفظ الخصم",
     submitting: "جارٍ الإنشاء…",
   },
   couponRedeem: {
@@ -1043,7 +1043,7 @@ export const ar: Dictionary = {
   },
   contentPage: {
     title: "المحتوى",
-    subtitle: "كتل المحتوى القابلة لإعادة الاستخدام — من سياق المحتوى.",
+    subtitle: "محتوى بتستخدمه في أكتر من مكان في متجرك، زي البانرات والإعلانات.",
     columns: {
       name: "الاسم",
       type: "النوع",
@@ -1090,7 +1090,7 @@ export const ar: Dictionary = {
   },
   pagesPage: {
     title: "الصفحات",
-    subtitle: "الصفحات الموجَّهة — من سياق الصفحات الديناميكية.",
+    subtitle: "صفحات متجرك الإلكتروني، زي «من نحن» و«تواصل معنا».",
     columns: {
       name: "الاسم",
       routePath: "المسار",
@@ -1113,7 +1113,7 @@ export const ar: Dictionary = {
   },
   pageCreate: {
     title: "صفحة جديدة",
-    subtitle: "وجِّه صفحة إلى قالب وتجربة وملف SEO ولغة.",
+    subtitle: "أضف صفحة لمتجرك الإلكتروني.",
     name: "الاسم",
     routePath: "مسار الرابط",
     templateRef: "مرجع القالب (اختياري)",
@@ -1207,7 +1207,7 @@ export const ar: Dictionary = {
   },
   seoProfileForm: {
     title: "تعيين ملف تعريف السيو",
-    subtitle: "إنشاء أو تحديث البيانات الوصفية لصفحة عبر مرجع الصفحة.",
+    subtitle: "حدد العنوان والوصف اللي بيظهروا في محركات البحث للصفحة.",
     pageRef: "مرجع الصفحة",
     titleField: "العنوان",
     description: "الوصف",
@@ -1363,14 +1363,6 @@ export const ar: Dictionary = {
   },
   settingsPage: {
     title: "الإعدادات",
-    subtitle: "ما هو قابل للتهيئة اليوم، مقسَّماً بحسب الجهة المالكة فعلياً.",
-    frontendSection: "الواجهة",
-    frontendBody: "مملوكة بالكامل من admin-web — بلا اتصال بالخلفية.",
-    languageLabel: "اللغة",
-    backendSection: "مساحة العمل والفوترة",
-    backendBody:
-      'يملك قسم المستأجرين إعدادات مساحة العمل ذات العلامة البيضاء (السمة، الهوية البصرية، النطاق، اللغة، العملة، المنطقة الزمنية) ويملك قسم التراخيص الخطط والاشتراكات والفوترة — كلاهما تجميعات حقيقية ومحفوظة بواجهات كتابة عاملة. قراءة إعدادات مساحة العمل أو الخطة/الاشتراك لا تزال تتطلب معرّف مساحة عمل/مستأجر محلولاً، ولا تملك admin-web بعد جلسة موثّقة لمعرفة أيها "الحالي" (انظر فجوة مصادقة لوحة التحكم) — كما لا يوفّر أي من السياقين قائمة/بحثاً لاكتشاف واحد بدون ذلك. يُعرض هذا النصف كغير متاح بدلاً من التخمين. عدّادات الاستخدام في قسم التراخيص مختلفة: فهي محدَّدة النطاق برأس المستأجر الذي ترسله admin-web بالفعل مع كل طلب، لذا لا حاجة لحل مساحة العمل — انظر الجدول الحي أدناه.',
-    unavailableLabel: "غير متاحة — لا يوجد سياق مساحة عمل قابل للحل بعد",
     usageSectionTitle: "الاستخدام",
     usageSectionBody:
       "عدّادات استخدام حية ومحدَّدة النطاق حسب المستأجر (GET /usage-counters من قسم التراخيص)، صف واحد لكل مورد مسجَّل.",
@@ -1387,6 +1379,10 @@ export const ar: Dictionary = {
     taxesTitle: "الضرائب",
     taxesBody: "الأسعار شاملة الضريبة ولا لأ، ونسبة كل دولة.",
     paymentsBody: "اختار إزاي عملاؤك يدفعوا لك",
+    locationsTitle: "المواقع",
+    locationsBody: "الأماكن اللي بتخزّن وتبيع منها بضاعتك.",
+    languagesTitle: "اللغات",
+    languagesBody: "اللغات اللي متجرك متاح بيها.",
   },
   paymentSettings: {
     title: "الدفع",
@@ -2692,7 +2688,7 @@ export const ar: Dictionary = {
   },
   themesPage: {
     title: "التصميم",
-    subtitle: "قوالب تصميم الرموز — الألوان والطباعة والتباعد.",
+    subtitle: "ألوان متجرك وخطوطه ومسافاته.",
     columns: {
       name: "الاسم",
       status: "الحالة",
@@ -2713,9 +2709,9 @@ export const ar: Dictionary = {
   },
   themeCreate: {
     title: "قالب تصميم جديد",
-    subtitle: "ابدأ قالب تصميم من نموذج رموز تصميم مجمَّد.",
+    subtitle: "ابدأ تصميم جديد من ستايل جاهز.",
     name: "الاسم",
-    presetKey: "مفتاح النموذج",
+    presetKey: "الستايل اللي هتبدأ منه",
     submit: "إنشاء قالب التصميم",
     submitting: "جارٍ الإنشاء…",
   },
@@ -2846,16 +2842,9 @@ export const ar: Dictionary = {
     retry: "حاول مرة أخرى",
     backToDashboard: "العودة إلى لوحة التحكم",
   },
-  footer: {
-    navLabel: "الشؤون القانونية والدعم",
-    copyright: "© {year} موربيه. جميع الحقوق محفوظة.",
-    privacy: "سياسة الخصوصية",
-    terms: "شروط الخدمة",
-    support: "الدعم",
-  },
   reviewsPage: {
     title: "قائمة مراجعة التقييمات",
-    subtitle: "أشرف على تقييمات العملاء — من سياق التقييمات.",
+    subtitle: "وافق على تقييمات العملاء لمنتجاتك، ورد عليها، وأدرها.",
     statusFilterLabel: "الحالة",
     allStatuses: "كل الحالات",
     columns: {
@@ -2952,7 +2941,7 @@ export const ar: Dictionary = {
   },
   promotionsPage: {
     title: "العروض الترويجية",
-    subtitle: "قواعد الخصم التي يمكن أن يستوفيها كوبون أو سلة — من سياق العروض الترويجية.",
+    subtitle: "العروض اللي ورا أكواد الخصم والخصومات التلقائية.",
     columns: {
       name: "الاسم",
       status: "الحالة",
@@ -2995,7 +2984,7 @@ export const ar: Dictionary = {
   },
   promotionCreate: {
     title: "عرض ترويجي جديد",
-    subtitle: "عرّف قاعدة خصم يمكن أن يستوفيها كوبون أو سلة.",
+    subtitle: "جهّز عرض: على إيه، والمكافأة، وإمتى يشتغل.",
     name: "الاسم",
     ruleType: "نوع القاعدة",
     scope: "النطاق",
@@ -3163,7 +3152,7 @@ export const ar: Dictionary = {
   },
   localesPage: {
     title: "اللغات",
-    subtitle: "اللغات المسجَّلة — من سياق التوطين.",
+    subtitle: "اللغات اللي متجرك متاح بيها.",
     columns: {
       code: "الرمز",
       name: "الاسم",
@@ -3177,11 +3166,11 @@ export const ar: Dictionary = {
     empty: "لا توجد لغات بعد.",
     error: "تعذّر تحميل اللغات. حاول تحديث الصفحة.",
     unauthorized: "سجّل الدخول لعرض اللغات.",
-    newLocale: "لغة جديدة",
+    newLocale: "إضافة لغة",
   },
   localeCreateForm: {
-    title: "لغة جديدة",
-    subtitle: "تسجيل لغة.",
+    title: "إضافة لغة",
+    subtitle: "خلّي متجرك متاح بلغة تانية.",
     code: "الرمز",
     name: "الاسم",
     isDefault: "اللغة الافتراضية",

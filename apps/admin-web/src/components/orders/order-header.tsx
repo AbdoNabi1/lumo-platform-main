@@ -47,7 +47,7 @@ export function OrderHeader({
           </Link>
         </Button>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-4xl font-semibold tracking-tight">#{order.orderNumber}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">#{order.orderNumber}</h1>
           <OrderPaymentStatusBadge status={order.paymentStatus} t={t} />
           <OrderFulfillmentStatusBadge status={order.fulfillmentStatus} t={t} />
         </div>

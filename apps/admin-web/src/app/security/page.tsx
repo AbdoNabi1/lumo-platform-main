@@ -32,8 +32,8 @@ export default async function SecurityOverviewPage({ searchParams }: OverviewPag
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.securityOverviewPage.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.securityOverviewPage.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.securityOverviewPage.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.securityOverviewPage.subtitle}</p>
       </header>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -60,10 +60,22 @@ async function DashboardCard({
 }) {
   const result = await fetchSecurityDashboard(tenantRef);
   if (result.outcome === "unauthorized") {
-    return <StateCard title={t.securityOverviewPage.dashboardTitle} icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityOverviewPage.unauthorized} />;
+    return (
+      <StateCard
+        title={t.securityOverviewPage.dashboardTitle}
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityOverviewPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StateCard title={t.securityOverviewPage.dashboardTitle} icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityOverviewPage.error} />;
+    return (
+      <StateCard
+        title={t.securityOverviewPage.dashboardTitle}
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityOverviewPage.error}
+      />
+    );
   }
   const data: SecurityDashboardDto = result.data;
   const metricEntries = Object.entries(data.metrics);
@@ -79,7 +91,9 @@ async function DashboardCard({
             <dt className="text-muted-foreground text-sm">{t.securityOverviewPage.chainValid}</dt>
             <dd className="mt-1">
               <Badge variant={data.chainValid ? "success" : "destructive"}>
-                {data.chainValid ? t.securityOverviewPage.chainValid : t.securityOverviewPage.chainBroken}
+                {data.chainValid
+                  ? t.securityOverviewPage.chainValid
+                  : t.securityOverviewPage.chainBroken}
               </Badge>
             </dd>
           </div>
@@ -110,10 +124,22 @@ async function TrustCenterCard({
 }) {
   const result = await fetchTrustCenter(tenantRef);
   if (result.outcome === "unauthorized") {
-    return <StateCard title={t.securityOverviewPage.trustCenterTitle} icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityOverviewPage.unauthorized} />;
+    return (
+      <StateCard
+        title={t.securityOverviewPage.trustCenterTitle}
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityOverviewPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StateCard title={t.securityOverviewPage.trustCenterTitle} icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityOverviewPage.error} />;
+    return (
+      <StateCard
+        title={t.securityOverviewPage.trustCenterTitle}
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityOverviewPage.error}
+      />
+    );
   }
   const data: TrustCenterDto = result.data;
   return (
@@ -124,17 +150,27 @@ async function TrustCenterCard({
       <CardContent className="flex flex-col gap-4">
         <div className="flex items-baseline gap-2">
           <span className="text-3xl font-semibold tabular-nums">{data.postureScore}</span>
-          <span className="text-muted-foreground text-sm">{t.securityOverviewPage.postureScore}</span>
+          <span className="text-muted-foreground text-sm">
+            {t.securityOverviewPage.postureScore}
+          </span>
         </div>
         <dl className="grid grid-cols-2 gap-3">
           <Stat label={t.securityOverviewPage.openIncidents} value={String(data.openIncidents)} />
-          <Stat label={t.securityOverviewPage.criticalIncidents} value={String(data.criticalIncidents)} />
-          <Stat label={t.securityOverviewPage.complianceControls} value={String(data.complianceControls)} />
+          <Stat
+            label={t.securityOverviewPage.criticalIncidents}
+            value={String(data.criticalIncidents)}
+          />
+          <Stat
+            label={t.securityOverviewPage.complianceControls}
+            value={String(data.complianceControls)}
+          />
           <div>
             <dt className="text-muted-foreground text-sm">{t.securityOverviewPage.chainValid}</dt>
             <dd className="mt-1">
               <Badge variant={data.auditChainValid ? "success" : "destructive"}>
-                {data.auditChainValid ? t.securityOverviewPage.chainValid : t.securityOverviewPage.chainBroken}
+                {data.auditChainValid
+                  ? t.securityOverviewPage.chainValid
+                  : t.securityOverviewPage.chainBroken}
               </Badge>
             </dd>
           </div>
@@ -150,7 +186,9 @@ async function TrustCenterCard({
               ))}
             </div>
           ) : (
-            <p className="text-muted-foreground mt-1 text-sm">{t.securityOverviewPage.noFrameworks}</p>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {t.securityOverviewPage.noFrameworks}
+            </p>
           )}
         </div>
       </CardContent>
@@ -161,10 +199,22 @@ async function TrustCenterCard({
 async function AnalyticsCard({ t }: { readonly t: Dictionary }) {
   const result = await fetchSecurityAnalytics();
   if (result.outcome === "unauthorized") {
-    return <StateCard title={t.securityOverviewPage.analyticsTitle} icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityOverviewPage.unauthorized} />;
+    return (
+      <StateCard
+        title={t.securityOverviewPage.analyticsTitle}
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityOverviewPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StateCard title={t.securityOverviewPage.analyticsTitle} icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityOverviewPage.error} />;
+    return (
+      <StateCard
+        title={t.securityOverviewPage.analyticsTitle}
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityOverviewPage.error}
+      />
+    );
   }
   const data: SecurityAnalyticsDto = result.data;
   const riskEntries = Object.entries(data.riskDistribution);
@@ -181,13 +231,24 @@ async function AnalyticsCard({ t }: { readonly t: Dictionary }) {
           <Stat label={t.securityOverviewPage.mfaFailure} value={String(data.mfaFailure)} />
           <Stat label={t.securityOverviewPage.accessAllowed} value={String(data.accessAllowed)} />
           <Stat label={t.securityOverviewPage.accessDenied} value={String(data.accessDenied)} />
-          <Stat label={t.securityOverviewPage.accessChallenged} value={String(data.accessChallenged)} />
+          <Stat
+            label={t.securityOverviewPage.accessChallenged}
+            value={String(data.accessChallenged)}
+          />
           <Stat label={t.securityOverviewPage.tokenRefreshed} value={String(data.tokenRefreshed)} />
-          <Stat label={t.securityOverviewPage.threatsIndicated} value={String(data.threatsIndicated)} />
-          <Stat label={t.securityOverviewPage.sessionsRevoked} value={String(data.sessionsRevoked)} />
+          <Stat
+            label={t.securityOverviewPage.threatsIndicated}
+            value={String(data.threatsIndicated)}
+          />
+          <Stat
+            label={t.securityOverviewPage.sessionsRevoked}
+            value={String(data.sessionsRevoked)}
+          />
         </dl>
         <div>
-          <p className="text-muted-foreground text-sm">{t.securityOverviewPage.riskDistributionLabel}</p>
+          <p className="text-muted-foreground text-sm">
+            {t.securityOverviewPage.riskDistributionLabel}
+          </p>
           {riskEntries.length > 0 ? (
             <ul className="mt-1 flex flex-col gap-1 text-sm">
               {riskEntries.map(([band, count]) => (
@@ -198,7 +259,9 @@ async function AnalyticsCard({ t }: { readonly t: Dictionary }) {
               ))}
             </ul>
           ) : (
-            <p className="text-muted-foreground mt-1 text-sm">{t.securityOverviewPage.noRiskData}</p>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {t.securityOverviewPage.noRiskData}
+            </p>
           )}
         </div>
       </CardContent>

@@ -28,8 +28,8 @@ export default async function OrderFromCheckoutPage() {
               {t.orderDetail.back}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.orderFromCheckout.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.orderFromCheckout.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.orderFromCheckout.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.orderFromCheckout.subtitle}</p>
         </div>
 
         <Card>

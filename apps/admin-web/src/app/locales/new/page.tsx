@@ -24,8 +24,8 @@ export default async function NewLocalePage() {
               {t.localesPage.title}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.localeCreateForm.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.localeCreateForm.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.localeCreateForm.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.localeCreateForm.subtitle}</p>
         </div>
 
         <Card>

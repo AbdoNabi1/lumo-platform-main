@@ -24,8 +24,8 @@ export default async function NewPromotionPage() {
               {t.promotionDetail.back}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.promotionCreate.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.promotionCreate.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.promotionCreate.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.promotionCreate.subtitle}</p>
         </div>
 
         <Card>
