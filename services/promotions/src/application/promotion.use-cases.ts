@@ -49,7 +49,7 @@ export interface CreatePromotionInput {
   readonly segmentRefs?: readonly string[];
   readonly campaignRef?: string;
   readonly usageLimit?: number;
-  /** Phase 2. Absent = automatic for new callers of the platform-tools API. */
+  /** Phase 2. Absent = stored as NULL: reachable only through its coupon, never applied automatically. */
   readonly method?: DiscountMethod;
   readonly combinesWith?: CombinesWith;
   readonly appliesOncePerOrder?: boolean;

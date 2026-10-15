@@ -137,3 +137,64 @@ export class PromotionMapper {
     };
   }
 }
+
+/** Adapts a stored `promotions` record (JSON columns untyped) to the mapper's {@link PromotionRow}. */
+export function promotionRowFromRecord(row: {
+  readonly id: string;
+  readonly name: string;
+  readonly ruleType: string;
+  readonly scope: string;
+  readonly targetRefs: unknown;
+  readonly minimumQuantity: number | null;
+  readonly minimumSubtotalAmountMinor: number | null;
+  readonly reward: unknown;
+  readonly stackable: boolean;
+  readonly priority: number;
+  readonly startsAt: Date;
+  readonly endsAt: Date | null;
+  readonly customerRefs: unknown;
+  readonly segmentRefs: unknown;
+  readonly campaignRef: string | null;
+  readonly usageLimit: number | null;
+  readonly usageCount: number;
+  readonly status: string;
+  readonly method: string | null;
+  readonly combinesWith: unknown;
+  readonly version: number;
+}): PromotionRow {
+  const reward = row.reward as PromotionRewardProps;
+  return {
+    id: row.id,
+    name: row.name,
+    ruleType: row.ruleType as PromotionRow["ruleType"],
+    scope: row.scope as PromotionRow["scope"],
+    targetRefs: row.targetRefs as readonly string[],
+    minimumQuantity: row.minimumQuantity ?? undefined,
+    minimumSubtotalAmountMinor: row.minimumSubtotalAmountMinor ?? undefined,
+    rewardType: reward.type,
+    rewardValue: reward.value,
+    buyQuantity: reward.buyQuantity,
+    getQuantity: reward.getQuantity,
+    rewardExtras: {
+      appliesOncePerOrder: reward.appliesOncePerOrder,
+      countries: reward.countries,
+      maxShippingRateMinor: reward.maxShippingRateMinor,
+      buys: reward.buys,
+      gets: reward.gets,
+      maxUsesPerOrder: reward.maxUsesPerOrder,
+    },
+    stackable: row.stackable,
+    priority: row.priority,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    customerRefs: row.customerRefs as readonly string[] | null,
+    segmentRefs: row.segmentRefs as readonly string[] | null,
+    campaignRef: row.campaignRef,
+    usageLimit: row.usageLimit,
+    usageCount: row.usageCount,
+    status: row.status,
+    method: row.method as PromotionRow["method"],
+    combinesWith: row.combinesWith as PromotionRow["combinesWith"],
+    version: row.version,
+  };
+}

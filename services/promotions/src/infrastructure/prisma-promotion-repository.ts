@@ -6,8 +6,7 @@ import type { CursorPage, Paginated } from "@platform/types";
 import { ConcurrencyError } from "@platform/utils";
 import type { Promotion } from "../domain/promotion";
 import type { AdminPromotionQuery, PromotionRepository } from "../domain/promotion-repository";
-import type { PromotionRewardProps } from "../domain/value-objects/promotion-rule";
-import { PromotionMapper, type PromotionRow } from "./promotion.mapper";
+import { PromotionMapper, promotionRowFromRecord } from "./promotion.mapper";
 
 export interface PrismaPromotionRepositoryDeps {
   readonly prisma: Database;
@@ -93,7 +92,7 @@ export class PrismaPromotionRepository implements PromotionRepository {
       client.promotion.findFirst({ where: { id, tenantId } }),
     );
     if (row === null) return null;
-    return PromotionMapper.toDomain(this.toMapperRow(row));
+    return PromotionMapper.toDomain(promotionRowFromRecord(row));
   }
 
   async findActive(tenantId: string, tx?: unknown): Promise<readonly Promotion[]> {
@@ -102,7 +101,7 @@ export class PrismaPromotionRepository implements PromotionRepository {
         where: { tenantId, status: "active" },
       }),
     );
-    return rows.map((row) => PromotionMapper.toDomain(this.toMapperRow(row)));
+    return rows.map((row) => PromotionMapper.toDomain(promotionRowFromRecord(row)));
   }
 
   async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Promotion>> {
@@ -119,7 +118,7 @@ export class PrismaPromotionRepository implements PromotionRepository {
       }),
     );
     return buildPaginatedPage(
-      rows.map((row) => PromotionMapper.toDomain(this.toMapperRow(row))),
+      rows.map((row) => PromotionMapper.toDomain(promotionRowFromRecord(row))),
       limit,
       (p) => p.id.toString(),
     );
@@ -129,7 +128,7 @@ export class PrismaPromotionRepository implements PromotionRepository {
     const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
       client.promotion.findMany({ where: { tenantId, status: "active", method: "automatic" } }),
     );
-    return rows.map((row) => PromotionMapper.toDomain(this.toMapperRow(row)));
+    return rows.map((row) => PromotionMapper.toDomain(promotionRowFromRecord(row)));
   }
 
   async listForAdmin(
@@ -179,70 +178,10 @@ export class PrismaPromotionRepository implements PromotionRepository {
       client.promotion.findMany({ where, orderBy: { id: "desc" }, take: limit + 1 }),
     );
     return buildPaginatedPage(
-      rows.map((row) => PromotionMapper.toDomain(this.toMapperRow(row))),
+      rows.map((row) => PromotionMapper.toDomain(promotionRowFromRecord(row))),
       limit,
       (p) => p.id.toString(),
     );
-  }
-
-  private toMapperRow(row: {
-    readonly id: string;
-    readonly name: string;
-    readonly ruleType: string;
-    readonly scope: string;
-    readonly targetRefs: unknown;
-    readonly minimumQuantity: number | null;
-    readonly minimumSubtotalAmountMinor: number | null;
-    readonly reward: unknown;
-    readonly stackable: boolean;
-    readonly priority: number;
-    readonly startsAt: Date;
-    readonly endsAt: Date | null;
-    readonly customerRefs: unknown;
-    readonly segmentRefs: unknown;
-    readonly campaignRef: string | null;
-    readonly usageLimit: number | null;
-    readonly usageCount: number;
-    readonly status: string;
-    readonly method: string | null;
-    readonly combinesWith: unknown;
-    readonly version: number;
-  }): PromotionRow {
-    const reward = row.reward as PromotionRewardProps;
-    return {
-      id: row.id,
-      name: row.name,
-      ruleType: row.ruleType as PromotionRow["ruleType"],
-      scope: row.scope as PromotionRow["scope"],
-      targetRefs: row.targetRefs as readonly string[],
-      minimumQuantity: row.minimumQuantity ?? undefined,
-      minimumSubtotalAmountMinor: row.minimumSubtotalAmountMinor ?? undefined,
-      rewardType: reward.type,
-      rewardValue: reward.value,
-      buyQuantity: reward.buyQuantity,
-      getQuantity: reward.getQuantity,
-      rewardExtras: {
-        appliesOncePerOrder: reward.appliesOncePerOrder,
-        countries: reward.countries,
-        maxShippingRateMinor: reward.maxShippingRateMinor,
-        buys: reward.buys,
-        gets: reward.gets,
-        maxUsesPerOrder: reward.maxUsesPerOrder,
-      },
-      stackable: row.stackable,
-      priority: row.priority,
-      startsAt: row.startsAt,
-      endsAt: row.endsAt,
-      customerRefs: row.customerRefs as readonly string[] | null,
-      segmentRefs: row.segmentRefs as readonly string[] | null,
-      campaignRef: row.campaignRef,
-      usageLimit: row.usageLimit,
-      usageCount: row.usageCount,
-      status: row.status,
-      method: row.method as PromotionRow["method"],
-      combinesWith: row.combinesWith as PromotionRow["combinesWith"],
-      version: row.version,
-    };
   }
 
   private requireTx(tx: unknown): TransactionClient {
