@@ -153,6 +153,20 @@ export class OrderCreationAdapter implements OrderCreationPort {
           ? {}
           : { shippingName: input.totals.shippingName }),
         taxIncluded: input.totals.taxIncluded,
+        // Phase 2: the free-shipping part and each discount, as the shopper saw them at checkout.
+        ...(input.totals.shippingDiscountMinor === 0
+          ? {}
+          : { shippingDiscountMinor: input.totals.shippingDiscountMinor }),
+        ...(input.discounts === undefined || input.discounts.length === 0
+          ? {}
+          : {
+              discounts: input.discounts.map((d) => ({
+                title: d.title,
+                ...(d.code === undefined ? {} : { code: d.code }),
+                discountClass: d.discountClass,
+                amountMinor: d.amountMinor,
+              })),
+            }),
       },
     });
 

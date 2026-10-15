@@ -279,6 +279,15 @@ export interface OrderTotalsDto {
   readonly taxIncluded: boolean;
   /** Plan 3C: the shipping rate's name as the shopper saw it; null on older orders. */
   readonly shippingName: string | null;
+  /** Phase 2: the free-shipping part of the discounts; 0 on older orders. */
+  readonly shippingDiscountMinor: number;
+  /** Phase 2: each discount the order was placed with (code null for an automatic one); empty on older orders. */
+  readonly discounts: readonly {
+    readonly title: string;
+    readonly code: string | null;
+    readonly discountClass: string;
+    readonly amountMinor: number;
+  }[];
 }
 
 export interface OrderHistoryEntryDto {
@@ -390,6 +399,13 @@ function toOrderDetailDto(
             currency: totals.currency,
             taxIncluded: totals.taxIncluded,
             shippingName: totals.shippingName ?? null,
+            shippingDiscountMinor: totals.shippingDiscountMinor,
+            discounts: totals.discounts.map((d) => ({
+              title: d.title,
+              code: d.code ?? null,
+              discountClass: d.discountClass,
+              amountMinor: d.amountMinor,
+            })),
           },
     checkoutRef: order.checkoutRef ?? null,
     paymentRef: order.paymentRef ?? null,

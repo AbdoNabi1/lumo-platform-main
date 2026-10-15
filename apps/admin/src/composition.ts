@@ -19,6 +19,7 @@ import {
   type PaymentInitiationPort,
   type PaymentMethodPort,
   type PricingValidationPort,
+  type DiscountUsagePort,
   type PromotionValidationPort,
   type ShippingCalculationPort,
   type TaxCalculationPort,
@@ -138,6 +139,7 @@ import {
 import { PaymentsNotificationAdapter } from "./infrastructure/cross-context/payments-notification.adapter";
 import { StoreCurrencyRelabelAdapter } from "./infrastructure/cross-context/store-currency-relabel.adapter";
 import { PaymentsOrdersAdapter } from "./infrastructure/cross-context/payments-orders.adapter";
+import { DiscountUsageAdapter } from "./infrastructure/cross-context/discount-usage.adapter";
 import { PromotionValidationAdapter } from "./infrastructure/cross-context/promotion-validation.adapter";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
 import { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email-adapter";
@@ -394,6 +396,11 @@ export interface AdminWiringDeps {
    */
   readonly realShippingAndTax?: boolean;
   readonly promotionValidation?: PromotionValidationPort;
+  /**
+   * Phase 2: records each discount's use once an order is placed. Absent ⇒ the real
+   * `DiscountUsageAdapter` over Promotions + Coupons.
+   */
+  readonly discountUsage?: DiscountUsagePort;
   /**
    * C-2: the outbound seam `CompleteCheckout` uses to materialize an order from a completed
    * session. Passed straight through to `wireCheckout(deps)` below; absent ⇒ Checkout's own
@@ -897,6 +904,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // doesn't exist yet. Moved here (alongside `catalog`/`inventory`/`pricing` above, all wired
   // early for the same reason) from its previous position after `checkout` further down.
   const promotions = wirePromotions(deps);
+  // Phase 2: Checkout's discount adapters read and redeem coupons, so Coupons is wired here too.
+  const coupons = wireCoupons(deps);
   // Phase 3 Task 9 (C-3, closes H-1), re-pointed by Plan 2C-1 (closes G-94): a real
   // PricingValidationPort over the Catalog VARIANT price — the one price source, the same one the
   // cart routes charge — wired here rather than left to `wireCheckout`'s own
@@ -940,7 +949,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       ),
     promotionValidation:
       deps.promotionValidation ??
-      new PromotionValidationAdapter(catalog.products, promotions.promotions),
+      new PromotionValidationAdapter(
+        catalog.products,
+        promotions.promotions,
+        coupons.coupons,
+        deps.clock,
+      ),
+    discountUsage:
+      deps.discountUsage ?? new DiscountUsageAdapter(promotions.promotions, coupons.coupons),
     orderCreation:
       deps.orderCreation ?? new OrderCreationAdapter(orders.orders, identity.customers),
     // Plan 3C (G-114): the stock is held the moment the order is placed — the same Inventory logic
@@ -1022,7 +1038,6 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const search = wireSearch(deps);
   const security = wireSecurity(deps);
   const content = wireContent(deps);
-  const coupons = wireCoupons(deps);
   const localization = wireLocalization(deps);
   const loyalty = wireLoyalty(deps);
   const seo = wireSeo(deps);
