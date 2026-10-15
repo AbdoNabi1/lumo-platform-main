@@ -528,3 +528,206 @@ describe("calculateDiscounts — combinations", () => {
     expect(result.shippingDiscountMinor).toBe(5_000);
   });
 });
+
+describe("calculateDiscounts — codes that give nothing (Review Finding 1)", () => {
+  const sameItemCode = promo({
+    id: "p1",
+    method: "code",
+    ruleType: "buy_x_get_y",
+    scope: "product",
+    targetRefs: ["shirt"],
+    reward: {
+      type: "buy_x_get_y",
+      buys: { kind: "quantity", value: 2 },
+      gets: { quantity: 1, scope: "product", targetRefs: ["shirt"], effect: { kind: "free" } },
+    },
+  });
+  const candidates = [{ promotion: sameItemCode, coupon: coupon("BUY2GET1") }];
+
+  it("reports a buy 2 get 1 code as no_matching_items when no free unit is left", () => {
+    const result = run(candidates, [line("0", "shirt", 1_000, 2)], { codes: ["BUY2GET1"] });
+    expect(result.codeStatuses).toEqual([
+      { code: "BUY2GET1", applicable: false, reason: "no_matching_items" },
+    ]);
+    expect(result.orderDiscountMinor).toBe(0);
+    expect(result.applied).toEqual([]);
+  });
+
+  it("accepts the same code once a third shirt makes the free unit available", () => {
+    const result = run(candidates, [line("0", "shirt", 1_000, 3)], { codes: ["BUY2GET1"] });
+    expect(result.codeStatuses).toEqual([{ code: "BUY2GET1", applicable: true }]);
+    expect(result.orderDiscountMinor).toBe(1_000);
+  });
+
+  it("reports a code that stacks onto a discount which already took everything as no_matching_items", () => {
+    const all = promo({
+      id: "p1",
+      method: "code",
+      reward: { type: "percentage", value: 100 },
+      combinesWith: COMBINES_WITH_EVERYTHING,
+    });
+    const ten = promo({
+      id: "p2",
+      method: "code",
+      reward: { type: "percentage", value: 10 },
+      combinesWith: COMBINES_WITH_EVERYTHING,
+    });
+    const result = run(
+      [
+        { promotion: all, coupon: coupon("ALL") },
+        { promotion: ten, coupon: coupon("TEN") },
+      ],
+      [line("0", "a", 10_000)],
+      { codes: ["ALL", "TEN"] },
+    );
+    expect(result.codeStatuses).toEqual([
+      { code: "ALL", applicable: true },
+      { code: "TEN", applicable: false, reason: "no_matching_items" },
+    ]);
+    expect(result.applied.map((a) => a.code)).toEqual(["ALL"]);
+    expect(result.orderDiscountMinor).toBe(10_000);
+  });
+});
+
+describe("calculateDiscounts — buy X get Y by amount (Review Finding 2)", () => {
+  const amountBxgy = (buysValue: number) =>
+    promo({
+      id: "p1",
+      ruleType: "buy_x_get_y",
+      scope: "product",
+      targetRefs: ["shirt"],
+      reward: {
+        type: "buy_x_get_y",
+        buys: { kind: "amount", value: buysValue },
+        gets: { quantity: 1, scope: "product", targetRefs: ["shirt"], effect: { kind: "free" } },
+      },
+    });
+  // Two shirts on separate lines, 3,000 and 1,000. The cheaper one is the free unit.
+  const cart = [line("0", "shirt", 3_000), line("1", "shirt", 1_000)];
+
+  it("gives the free unit when the other units alone reach the amount", () => {
+    expect(run([{ promotion: amountBxgy(3_000) }], cart).orderDiscountMinor).toBe(1_000);
+  });
+
+  it("gives nothing when only the free unit makes up the amount", () => {
+    expect(run([{ promotion: amountBxgy(3_500) }], cart).orderDiscountMinor).toBe(0);
+  });
+});
+
+describe("calculateDiscounts — greedy selection above ten eligible discounts (Review Finding 2)", () => {
+  it("applies every discount when all of eleven can combine", () => {
+    const discounts = Array.from({ length: 11 }, (_, i) =>
+      promo({
+        id: `p${i}`,
+        scope: "product",
+        targetRefs: [`item${i}`],
+        reward: { type: "fixed_amount", value: 100 },
+        combinesWith: COMBINES_WITH_EVERYTHING,
+      }),
+    );
+    const lines = Array.from({ length: 11 }, (_, i) => line(`${i}`, `item${i}`, 1_000));
+    const result = run(
+      discounts.map((promotion) => ({ promotion })),
+      lines,
+    );
+    expect(result.applied).toHaveLength(11);
+    expect(result.orderDiscountMinor).toBe(1_100);
+  });
+
+  it("keeps only the largest of eleven discounts that cannot combine", () => {
+    const discounts = Array.from({ length: 11 }, (_, i) =>
+      promo({ id: `p${i}`, reward: { type: "percentage", value: i + 1 } }),
+    );
+    const result = run(
+      discounts.map((promotion) => ({ promotion })),
+      [line("0", "a", 10_000)],
+    );
+    expect(result.applied.map((a) => a.promotionId)).toEqual(["p10"]);
+    expect(result.orderDiscountMinor).toBe(1_100);
+  });
+});
+
+describe("calculateDiscounts — remaining eligibility and status rules (Review Finding 2)", () => {
+  const sale = (o: Partial<PromoOptions> = {}) =>
+    promo({ id: "p1", method: "code", reward: { type: "percentage", value: 10 }, ...o });
+  const cart = [line("0", "a", 10_000)];
+  const reasonFor = (candidate: DiscountCandidate, customer = {}) =>
+    run([candidate], cart, { codes: ["SALE10"], customer }).codeStatuses[0]?.reason;
+
+  it("answers expired for a coupon whose own end date has passed", () => {
+    expect(
+      reasonFor({
+        promotion: sale(),
+        coupon: coupon("SALE10", { expiresAt: new Date("2026-01-01") }),
+      }),
+    ).toBe("expired");
+  });
+
+  it("answers expired for an expired coupon and usage_limit_reached for a depleted one", () => {
+    expect(reasonFor({ promotion: sale(), coupon: coupon("SALE10", { status: "expired" }) })).toBe(
+      "expired",
+    );
+    expect(reasonFor({ promotion: sale(), coupon: coupon("SALE10", { status: "depleted" }) })).toBe(
+      "usage_limit_reached",
+    );
+  });
+
+  it("answers not_eligible for a coupon assigned to another customer", () => {
+    const assigned = {
+      promotion: sale(),
+      coupon: coupon("SALE10", { assignedCustomerRef: "vip" }),
+    };
+    expect(reasonFor(assigned, { customerRef: "someone" })).toBe("not_eligible");
+    expect(reasonFor(assigned, { customerRef: "vip" })).toBeUndefined();
+  });
+
+  it("answers minimum_not_met when the cart has too few items", () => {
+    expect(reasonFor({ promotion: sale({ minimumQuantity: 3 }), coupon: coupon("SALE10") })).toBe(
+      "minimum_not_met",
+    );
+  });
+
+  it("answers usage_limit_reached once the promotion's own limit is used up", () => {
+    const limited = sale({ usageLimit: 1 });
+    limited.recordUsage("evt", new Date(0));
+    expect(reasonFor({ promotion: limited, coupon: coupon("SALE10") })).toBe("usage_limit_reached");
+  });
+
+  it("answers expired for a paused promotion", () => {
+    const paused = sale();
+    paused.pause("evt", new Date(0));
+    expect(reasonFor({ promotion: paused, coupon: coupon("SALE10") })).toBe("expired");
+  });
+});
+
+describe("calculateDiscounts — allocation and entered codes (Review Finding 2)", () => {
+  it("splits a percentage with a leftover unit so the allocations sum to the discount", () => {
+    const sale = promo({ id: "p1", reward: { type: "percentage", value: 10 } });
+    const result = run(
+      [{ promotion: sale }],
+      [line("0", "a", 333), line("1", "b", 333), line("2", "c", 334)],
+    );
+    expect(result.orderDiscountMinor).toBe(100);
+    expect(result.lineAllocations).toEqual([
+      { lineRef: "0", amountMinor: 33 },
+      { lineRef: "1", amountMinor: 33 },
+      { lineRef: "2", amountMinor: 34 },
+    ]);
+    expect(result.lineAllocations.reduce((sum, a) => sum + a.amountMinor, 0)).toBe(
+      result.orderDiscountMinor,
+    );
+  });
+
+  it("treats the same code typed twice as one code", () => {
+    const sale = promo({ id: "p1", method: "code", reward: { type: "percentage", value: 10 } });
+    const result = run([{ promotion: sale, coupon: coupon("SALE10") }], [line("0", "a", 10_000)], {
+      codes: ["SALE10", "sale10"],
+    });
+    expect(result.codeStatuses).toEqual([{ code: "SALE10", applicable: true }]);
+    expect(result.orderDiscountMinor).toBe(1_000);
+  });
+
+  it("ignores a code that is only whitespace", () => {
+    expect(run([], [line("0", "a", 10_000)], { codes: ["  "] }).codeStatuses).toEqual([]);
+  });
+});

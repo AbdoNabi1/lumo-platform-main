@@ -316,10 +316,16 @@ function buyXGetYDiscounts(
   let uses = 0;
 
   if (buys.kind === "amount") {
-    const bought = lines
-      .filter((line) => buysRefs.has(line.lineRef))
-      .reduce((sum, line) => sum + (remaining.get(line.lineRef) ?? 0), 0);
+    // The free units are picked first (the cheapest qualifying ones); the amount must then be met
+    // by the remaining buying units alone, so a free unit never counts towards its own threshold.
     const free = getsOrder.slice(0, gets.quantity);
+    const freeAmountFromBuys = free
+      .filter((i) => buysRefs.has(units[i]!.ref))
+      .reduce((sum, i) => sum + units[i]!.price, 0);
+    const bought =
+      lines
+        .filter((line) => buysRefs.has(line.lineRef))
+        .reduce((sum, line) => sum + (remaining.get(line.lineRef) ?? 0), 0) - freeAmountFromBuys;
     if (bought >= buys.value && maxUses >= 1 && free.length === gets.quantity) got.push(...free);
   } else {
     while (uses < maxUses) {
@@ -504,13 +510,24 @@ export function calculateDiscounts(input: CalculateDiscountsInput): DiscountResu
   }
 
   const best = bestSet(eligible, input);
+  // A product or order code the winning set gives nothing for is not applicable, even though the
+  // set includes it. A shipping code stays applicable at 0 until a rate is chosen.
+  const emptyCodes = new Set<string>();
+  for (const a of best.applied) {
+    if (a.code !== undefined && a.amountMinor === 0 && a.discountClass !== "shipping") {
+      emptyCodes.add(a.code);
+    }
+  }
   const chosenCodes = new Set(
-    best.set.map((e) => e.code).filter((c): c is string => c !== undefined),
+    best.set.map((e) => e.code).filter((c): c is string => c !== undefined && !emptyCodes.has(c)),
   );
-  const applied = best.applied.filter((a) => a.code !== undefined || a.amountMinor > 0);
+  const applied = best.applied.filter((a) =>
+    a.code === undefined ? a.amountMinor > 0 : !emptyCodes.has(a.code),
+  );
 
   const codeStatuses: DiscountCodeStatus[] = codes.map((code, index) => {
     if (index >= MAX_DISCOUNT_CODES) return { code, applicable: false, reason: "too_many_codes" };
+    if (emptyCodes.has(code)) return { code, applicable: false, reason: "no_matching_items" };
     if (chosenCodes.has(code)) return { code, applicable: true };
     const rejection = rejections.get(code);
     if (rejection !== undefined) return { code, applicable: false, reason: rejection };
