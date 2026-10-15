@@ -15,6 +15,8 @@ export {
 } from "./infrastructure/prisma-checkout-session-repository";
 export { CHECKOUT_PUBLISHED_EVENTS } from "./infrastructure/checkout-event-translator";
 export type {
+  DiscountEvaluationInput,
+  DiscountUsagePort,
   InventoryValidationPort,
   OrderCancellationPort,
   OrderStockReservationPort,
@@ -32,3 +34,14 @@ export type {
   TaxCalculationPort,
   TaxCalculationResult,
 } from "./application/ports";
+export type {
+  AppliedDiscountSnapshot,
+  DiscountClassValue,
+  DiscountCodeStatusSnapshot,
+  DiscountSnapshot,
+} from "./domain/value-objects/discount-snapshot";
+export {
+  MAX_DISCOUNT_CODES,
+  normalizeDiscountCode,
+} from "./domain/value-objects/discount-snapshot";
+export type { DiscountCodeInput, DiscountCodeOutput } from "./application/discount-code.use-cases";

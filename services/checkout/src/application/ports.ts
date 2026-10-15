@@ -1,6 +1,10 @@
 import type { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import type { CheckoutItem } from "../domain/value-objects/checkout-item";
 import type { CheckoutTotals } from "../domain/value-objects/checkout-totals";
+import type {
+  AppliedDiscountSnapshot,
+  DiscountSnapshot,
+} from "../domain/value-objects/discount-snapshot";
 
 export interface PricingValidationResult {
   readonly valid: boolean;
@@ -134,6 +138,33 @@ export interface PromotionValidationPort {
     currency: string,
     tenantId: string,
   ): Promise<PromotionValidationResult>;
+  /**
+   * Phase 2: decides every discount for the session — entered codes and automatic discounts —
+   * against its lines, destination and selected rate. Checkout stores the answer verbatim.
+   */
+  evaluate(input: DiscountEvaluationInput): Promise<DiscountSnapshot>;
+}
+
+/** What Checkout tells Promotions about a session so it can decide every discount (Phase 2). */
+export interface DiscountEvaluationInput {
+  readonly tenantId: string;
+  readonly items: readonly CheckoutItem[];
+  /** Destination country and the selected rate; null until both an address and a method exist. */
+  readonly shipping: { readonly countryCode: string; readonly rateMinor: number } | null;
+  readonly customerRef?: string;
+  readonly email?: string;
+  readonly codes: readonly string[];
+}
+
+/** Records the discounts an order was placed with, so usage limits count them (Phase 2). */
+export interface DiscountUsagePort {
+  record(input: {
+    readonly tenantId: string;
+    readonly orderRef: string;
+    readonly customerRef?: string;
+    readonly email?: string;
+    readonly applied: readonly AppliedDiscountSnapshot[];
+  }): Promise<void>;
 }
 
 /**

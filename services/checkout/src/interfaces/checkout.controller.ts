@@ -2,6 +2,11 @@ import type {
   CompleteCheckout,
   CompleteCheckoutInput,
 } from "../application/complete-checkout.use-case";
+import type {
+  AddDiscountCode,
+  DiscountCodeInput,
+  RemoveDiscountCode,
+} from "../application/discount-code.use-cases";
 import type { FailCheckout, FailCheckoutInput } from "../application/fail-checkout.use-case";
 import type {
   GetCheckoutSession,
@@ -62,6 +67,8 @@ export interface CheckoutControllerDeps {
   readonly requestShippingQuote: RequestShippingQuote;
   readonly validatePromotion: ValidatePromotion;
   readonly recalculateTotals: RecalculateTotals;
+  readonly addDiscountCode: AddDiscountCode;
+  readonly removeDiscountCode: RemoveDiscountCode;
   readonly lock: Lock;
   readonly expireCheckout: ExpireCheckout;
   readonly generateOrderDraft: GenerateOrderDraft;
@@ -139,6 +146,14 @@ export class CheckoutController {
 
   async validatePromotion(input: ValidatePromotionInput): Promise<ControllerResponse> {
     return present(await this.deps.validatePromotion.execute(input), 200);
+  }
+
+  async addDiscountCode(input: DiscountCodeInput): Promise<ControllerResponse> {
+    return present(await this.deps.addDiscountCode.execute(input), 200);
+  }
+
+  async removeDiscountCode(input: DiscountCodeInput): Promise<ControllerResponse> {
+    return present(await this.deps.removeDiscountCode.execute(input), 200);
   }
 
   async recalculateTotals(input: CheckoutSessionIdInput): Promise<ControllerResponse> {

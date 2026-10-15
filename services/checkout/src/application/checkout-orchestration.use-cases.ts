@@ -14,6 +14,7 @@ import type {
   ShippingQuote,
   TaxCalculationPort,
 } from "./ports";
+import { refreshDiscounts } from "./discount-code.use-cases";
 
 export interface CheckoutSessionIdInput {
   /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
@@ -105,9 +106,17 @@ export class RequestTaxCalculation implements UseCase<
   RequestTaxCalculationOutput,
   DomainError
 > {
-  private readonly deps: OrchestrationDeps & { readonly taxCalculation: TaxCalculationPort };
+  private readonly deps: OrchestrationDeps & {
+    readonly taxCalculation: TaxCalculationPort;
+    readonly promotionValidation?: PromotionValidationPort;
+  };
 
-  constructor(deps: OrchestrationDeps & { readonly taxCalculation: TaxCalculationPort }) {
+  constructor(
+    deps: OrchestrationDeps & {
+      readonly taxCalculation: TaxCalculationPort;
+      readonly promotionValidation?: PromotionValidationPort;
+    },
+  ) {
     this.deps = deps;
   }
 
@@ -132,14 +141,25 @@ export class RequestTaxCalculation implements UseCase<
             ),
           );
         }
+        try {
+          if (this.deps.promotionValidation !== undefined) {
+            await refreshDiscounts(session, this.deps.promotionValidation, input.tenantId);
+          }
+        } catch (error) {
+          if (isDomainError(error)) return err(error);
+          throw error;
+        }
         const result = await this.deps.taxCalculation.calculate(
           session.items,
           session.shippingAddress,
           session.shippingSelection?.rateAmountMinor ?? 0,
           session.currency,
           input.tenantId,
-          // The order discount Promotions gave this session; nothing discounts shipping yet.
-          { orderMinor: session.discountMinor ?? 0, shippingMinor: 0 },
+          // Finance works the tax out after discounts, like Shopify — shipping discounts included (Phase 2).
+          {
+            orderMinor: session.discountMinor ?? 0,
+            shippingMinor: session.discountSnapshot?.shippingDiscountMinor ?? 0,
+          },
         );
 
         try {
@@ -285,9 +305,13 @@ export class RecalculateTotals implements UseCase<
   CheckoutSessionStatusOutput,
   DomainError
 > {
-  private readonly deps: OrchestrationDeps;
+  private readonly deps: OrchestrationDeps & {
+    readonly promotionValidation?: PromotionValidationPort;
+  };
 
-  constructor(deps: OrchestrationDeps) {
+  constructor(
+    deps: OrchestrationDeps & { readonly promotionValidation?: PromotionValidationPort },
+  ) {
     this.deps = deps;
   }
 
@@ -306,6 +330,9 @@ export class RecalculateTotals implements UseCase<
         const session = loaded.value;
 
         try {
+          if (this.deps.promotionValidation !== undefined) {
+            await refreshDiscounts(session, this.deps.promotionValidation, input.tenantId);
+          }
           session.recalculateTotals(this.deps.idGenerator.generate(), this.deps.clock.now());
         } catch (error) {
           if (isDomainError(error)) return err(error);

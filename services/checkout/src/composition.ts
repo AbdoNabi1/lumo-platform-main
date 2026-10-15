@@ -33,6 +33,7 @@ import {
   ValidatePromotion,
 } from "./application/checkout-orchestration.use-cases";
 import { CompleteCheckout } from "./application/complete-checkout.use-case";
+import { AddDiscountCode, RemoveDiscountCode } from "./application/discount-code.use-cases";
 import { FailCheckout } from "./application/fail-checkout.use-case";
 import { GetCheckoutSession } from "./application/get-checkout-session.use-case";
 import { InitiatePayment, ListPaymentMethods } from "./application/payment-initiation.use-cases";
@@ -178,6 +179,7 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       taxCalculation,
+      promotionValidation,
     }),
     requestShippingQuote: new RequestShippingQuote({ sessions, shippingCalculation }),
     validatePromotion: new ValidatePromotion({
@@ -192,6 +194,21 @@ function buildController(
       unitOfWork,
       idGenerator: deps.idGenerator,
       clock: deps.clock,
+      promotionValidation,
+    }),
+    addDiscountCode: new AddDiscountCode({
+      sessions,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      promotionValidation,
+    }),
+    removeDiscountCode: new RemoveDiscountCode({
+      sessions,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      promotionValidation,
     }),
     lock: new Lock({ sessions, unitOfWork, idGenerator: deps.idGenerator, clock: deps.clock }),
     expireCheckout: new ExpireCheckout({

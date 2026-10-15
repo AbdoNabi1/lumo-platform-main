@@ -1,5 +1,7 @@
 import type { CheckoutItem } from "../domain/value-objects/checkout-item";
+import type { DiscountSnapshot } from "../domain/value-objects/discount-snapshot";
 import type {
+  DiscountEvaluationInput,
   InventoryValidationPort,
   InventoryValidationResult,
   PricingValidationPort,
@@ -56,5 +58,16 @@ export class InMemoryPromotionValidationAdapter implements PromotionValidationPo
   // are dropped from the signature rather than declared and left unused.
   async validate(): Promise<PromotionValidationResult> {
     return { valid: true, discountMinor: 0 };
+  }
+
+  /** Offline stub: knows no codes and no automatic discounts. */
+  async evaluate(input: DiscountEvaluationInput): Promise<DiscountSnapshot> {
+    return {
+      applied: [],
+      orderDiscountMinor: 0,
+      shippingDiscountMinor: 0,
+      codeStatuses: input.codes.map((code) => ({ code, applicable: false, reason: "not_found" })),
+      lineAllocations: [],
+    };
   }
 }

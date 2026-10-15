@@ -1,5 +1,7 @@
 import type {
   CheckoutItem,
+  DiscountEvaluationInput,
+  DiscountSnapshot,
   PromotionValidationPort,
   PromotionValidationResult,
 } from "@platform/checkout";
@@ -60,6 +62,20 @@ export class PromotionValidationAdapter implements PromotionValidationPort {
   ) {
     this.products = products;
     this.promotions = promotions;
+  }
+
+  /**
+   * TEMPORARY stub (Task 6): the empty snapshot — no discounts, every code "not_found". Task 9
+   * replaces this with the real adapter over Promotions' discount evaluation.
+   */
+  async evaluate(input: DiscountEvaluationInput): Promise<DiscountSnapshot> {
+    return {
+      applied: [],
+      orderDiscountMinor: 0,
+      shippingDiscountMinor: 0,
+      codeStatuses: input.codes.map((code) => ({ code, applicable: false, reason: "not_found" })),
+      lineAllocations: [],
+    };
   }
 
   async validate(
