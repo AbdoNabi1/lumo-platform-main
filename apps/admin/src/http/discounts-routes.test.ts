@@ -249,4 +249,27 @@ describe("/discounts — Shopify-style facade (Phase 2)", () => {
     );
     expect(missingCode.status).toBe(422);
   });
+
+  it("refuses use limits on an automatic discount", async () => {
+    const { call } = build();
+    const automatic = {
+      ...common,
+      type: "amount_off_order",
+      method: "automatic",
+      title: "Autumn",
+      value: { kind: "percentage", amount: 5 },
+    };
+    const limited = await call("POST", "/discounts", {}, { ...automatic, usageLimit: 10 });
+    expect(limited.status).toBe(422);
+    expect(JSON.stringify(limited.body)).toContain("usageLimit");
+    const oncePerCustomer = await call(
+      "POST",
+      "/discounts",
+      {},
+      { ...automatic, oncePerCustomer: true },
+    );
+    expect(oncePerCustomer.status).toBe(422);
+    expect(JSON.stringify(oncePerCustomer.body)).toContain("oncePerCustomer");
+    expect((await call("POST", "/discounts", {}, automatic)).status).toBe(201);
+  });
 });

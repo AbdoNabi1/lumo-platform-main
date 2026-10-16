@@ -155,6 +155,8 @@ describe("DiscountUsageAdapter (Phase 2)", () => {
     const after = (await c.coupons.getByCode({ tenantId: TENANT, code: "SALE10" })).body as Coupon;
     expect(after.usageCount).toBe(1);
     expect(after.redemptions[0]?.email).toBe("ali@example.com");
+    // The guest's email lives in the redemption's own field, not in the customer reference.
+    expect(after.redemptions[0]?.customerRef).toBe("guest:order-1");
     const automatic = (await c.promotions.get({ tenantId: TENANT, promotionId: autoId }))
       .body as Promotion;
     expect(automatic.usageCount).toBe(2); // automatic uses are not deduplicated; CompleteCheckout calls this once per order

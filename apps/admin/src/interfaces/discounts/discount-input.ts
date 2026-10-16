@@ -78,6 +78,17 @@ export const discountInputSchema = z
       "title",
       "required for an automatic discount",
     );
+    // Shopify has no use limits on automatic discounts.
+    need(
+      input.method !== "automatic" || input.usageLimit === undefined,
+      "usageLimit",
+      "not available for an automatic discount",
+    );
+    need(
+      input.method !== "automatic" || input.oncePerCustomer !== true,
+      "oncePerCustomer",
+      "not available for an automatic discount",
+    );
     if (input.type === "amount_off_products" || input.type === "amount_off_order") {
       need(input.value !== undefined, "value", "required");
       if (input.value?.kind === "percentage")

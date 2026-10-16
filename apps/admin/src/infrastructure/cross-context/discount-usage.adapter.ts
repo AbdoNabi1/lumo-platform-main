@@ -5,7 +5,7 @@ import type { PromotionsController } from "@platform/promotions";
 /**
  * Real `DiscountUsagePort` (Phase 2): counts each discount an order was placed with. A code is
  * redeemed on its coupon — keyed `${orderRef}:${couponId}`, so a retry never counts twice, and
- * carrying the guest's email so "one use per customer" also catches a returning guest. An automatic
+ * carrying the guest's email in the redemption's own field (never in the customer reference) so "one use per customer" also catches a returning guest. An automatic
  * discount is counted on its promotion. Every failure is collected and thrown at the end; Checkout
  * treats this as best effort and never undoes the order over it.
  */
@@ -29,7 +29,7 @@ export class DiscountUsageAdapter implements DiscountUsagePort {
           ? await this.coupons.redeem({
               tenantId: input.tenantId,
               code: discount.code,
-              customerRef: input.customerRef ?? `guest:${input.email ?? input.orderRef}`,
+              customerRef: input.customerRef ?? `guest:${input.orderRef}`,
               ...(input.email === undefined ? {} : { email: input.email }),
               idempotencyKey: `${input.orderRef}:${discount.couponId}`,
               orderRef: input.orderRef,

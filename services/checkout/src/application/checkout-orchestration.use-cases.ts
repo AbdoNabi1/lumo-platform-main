@@ -14,7 +14,11 @@ import type {
   ShippingQuote,
   TaxCalculationPort,
 } from "./ports";
-import { refreshDiscounts } from "./discount-code.use-cases";
+import {
+  calculateAndStoreTax,
+  refreshDiscounts,
+  refreshDiscountsAndTax,
+} from "./discount-code.use-cases";
 
 export interface CheckoutSessionIdInput {
   /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
@@ -149,21 +153,9 @@ export class RequestTaxCalculation implements UseCase<
           if (isDomainError(error)) return err(error);
           throw error;
         }
-        const result = await this.deps.taxCalculation.calculate(
-          session.items,
-          session.shippingAddress,
-          session.shippingSelection?.rateAmountMinor ?? 0,
-          session.currency,
-          input.tenantId,
-          // Finance works the tax out after discounts, like Shopify — shipping discounts included (Phase 2).
-          {
-            orderMinor: session.discountMinor ?? 0,
-            shippingMinor: session.discountSnapshot?.shippingDiscountMinor ?? 0,
-          },
-        );
-
+        let result;
         try {
-          session.applyTaxSnapshot(result.taxMinor, result.included);
+          result = await calculateAndStoreTax(session, this.deps.taxCalculation, input.tenantId);
           // Whether the tax is inside the prices is only persisted through the assembled totals, so
           // they are assembled now; the caller's own recalculation then changes nothing.
           if (session.items.length > 0) {
@@ -299,19 +291,21 @@ export class ValidatePromotion implements UseCase<
   }
 }
 
+interface RecalculateTotalsDeps {
+  readonly promotionValidation?: PromotionValidationPort;
+  /** When present, a change of discounts on a session that already has tax re-works the tax. */
+  readonly taxCalculation?: TaxCalculationPort;
+}
+
 /** Assembles `CheckoutTotals` as a sum of the session's already-stored snapshots. */
 export class RecalculateTotals implements UseCase<
   CheckoutSessionIdInput,
   CheckoutSessionStatusOutput,
   DomainError
 > {
-  private readonly deps: OrchestrationDeps & {
-    readonly promotionValidation?: PromotionValidationPort;
-  };
+  private readonly deps: OrchestrationDeps & RecalculateTotalsDeps;
 
-  constructor(
-    deps: OrchestrationDeps & { readonly promotionValidation?: PromotionValidationPort },
-  ) {
+  constructor(deps: OrchestrationDeps & RecalculateTotalsDeps) {
     this.deps = deps;
   }
 
@@ -331,7 +325,14 @@ export class RecalculateTotals implements UseCase<
 
         try {
           if (this.deps.promotionValidation !== undefined) {
-            await refreshDiscounts(session, this.deps.promotionValidation, input.tenantId);
+            await refreshDiscountsAndTax(
+              session,
+              {
+                promotionValidation: this.deps.promotionValidation,
+                taxCalculation: this.deps.taxCalculation,
+              },
+              input.tenantId,
+            );
           }
           session.recalculateTotals(this.deps.idGenerator.generate(), this.deps.clock.now());
         } catch (error) {

@@ -3,11 +3,16 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { isDomainError } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
-import { type DomainError, NotFoundError, ValidationError } from "@platform/utils";
+import {
+  BusinessRuleError,
+  type DomainError,
+  NotFoundError,
+  ValidationError,
+} from "@platform/utils";
 import type { CheckoutSession } from "../domain/checkout-session";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
 import { normalizeDiscountCode } from "../domain/value-objects/discount-snapshot";
-import type { PromotionValidationPort } from "./ports";
+import type { PromotionValidationPort, TaxCalculationPort, TaxCalculationResult } from "./ports";
 
 /**
  * Asks Promotions for the session's discounts and stores the answer (Phase 2). A session no
@@ -37,6 +42,70 @@ export async function refreshDiscounts(
   }
 }
 
+/**
+ * Asks Finance for the tax on the session's items, shipping and discounts, and stores the answer
+ * verbatim. Finance works the tax out after discounts, like Shopify — shipping discounts included.
+ * The one place the tax call is made, so a request for tax and a change of discounts agree.
+ */
+export async function calculateAndStoreTax(
+  session: CheckoutSession,
+  port: TaxCalculationPort,
+  tenantId: string,
+): Promise<TaxCalculationResult> {
+  const address = session.shippingAddress;
+  if (address === undefined) {
+    throw new BusinessRuleError("Cannot request tax calculation before a shipping address is set");
+  }
+  const result = await port.calculate(
+    session.items,
+    address,
+    session.shippingSelection?.rateAmountMinor ?? 0,
+    session.currency,
+    tenantId,
+    {
+      orderMinor: session.discountMinor ?? 0,
+      shippingMinor: session.discountSnapshot?.shippingDiscountMinor ?? 0,
+    },
+  );
+  session.applyTaxSnapshot(result.taxMinor, result.included);
+  return result;
+}
+
+export interface DiscountRefreshDeps {
+  readonly promotionValidation: PromotionValidationPort;
+  /** Absent ⇒ a change of discounts never touches the stored tax. */
+  readonly taxCalculation?: TaxCalculationPort | undefined;
+}
+
+/**
+ * Works the discounts out again and, when they moved on a session whose tax was already
+ * requested, works the tax out again too — it was computed against the old discounts. A session
+ * that never asked for tax (or has no shipping address yet) is not taxed here.
+ */
+export async function refreshDiscountsAndTax(
+  session: CheckoutSession,
+  deps: DiscountRefreshDeps,
+  tenantId: string,
+): Promise<{ readonly discountsChanged: boolean }> {
+  const figures = () => ({
+    order: session.discountMinor ?? 0,
+    shipping: session.discountSnapshot?.shippingDiscountMinor ?? 0,
+  });
+  const before = figures();
+  await refreshDiscounts(session, deps.promotionValidation, tenantId);
+  const after = figures();
+  const discountsChanged = before.order !== after.order || before.shipping !== after.shipping;
+  if (
+    discountsChanged &&
+    deps.taxCalculation !== undefined &&
+    session.shippingAddress !== undefined &&
+    session.taxMinor !== undefined
+  ) {
+    await calculateAndStoreTax(session, deps.taxCalculation, tenantId);
+  }
+  return { discountsChanged };
+}
+
 export interface DiscountCodeInput {
   readonly tenantId: string;
   readonly checkoutSessionId: string;
@@ -57,6 +126,7 @@ interface DiscountCodeDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   readonly promotionValidation: PromotionValidationPort;
+  readonly taxCalculation?: TaxCalculationPort | undefined;
 }
 
 function recalculateIfPossible(session: CheckoutSession, deps: DiscountCodeDeps): void {
@@ -115,13 +185,13 @@ export class AddDiscountCode implements UseCase<
           }
           throw error;
         }
-        await refreshDiscounts(session, this.deps.promotionValidation, input.tenantId);
+        await refreshDiscountsAndTax(session, this.deps, input.tenantId);
         const status = session.discountSnapshot?.codeStatuses.find((s) => s.code === code);
         const applicable = status?.applicable === true;
         if (!applicable) {
           session.removeDiscountCode(code);
           session.recordRejectedDiscountCode(now);
-          await refreshDiscounts(session, this.deps.promotionValidation, input.tenantId);
+          await refreshDiscountsAndTax(session, this.deps, input.tenantId);
         }
         recalculateIfPossible(session, this.deps);
         await this.deps.sessions.save(session, input.tenantId, tx);
@@ -160,7 +230,7 @@ export class RemoveDiscountCode implements UseCase<
       if (session === null) return err(new NotFoundError("Checkout session not found"));
       try {
         session.removeDiscountCode(input.code);
-        await refreshDiscounts(session, this.deps.promotionValidation, input.tenantId);
+        await refreshDiscountsAndTax(session, this.deps, input.tenantId);
         recalculateIfPossible(session, this.deps);
       } catch (error) {
         if (isDomainError(error)) return err(error);

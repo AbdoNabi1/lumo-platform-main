@@ -364,6 +364,49 @@ describe("calculateDiscounts — free shipping", () => {
     );
     expect(expensive.codeStatuses[0]?.reason).toBe("not_eligible");
   });
+
+  it("compares the country without regard to case", () => {
+    const result = run(
+      [{ promotion: free({ countries: ["EG"] }), coupon: coupon("SHIPFREE") }],
+      [line("0", "a", 1_000)],
+      { codes: ["SHIPFREE"], shipping: { countryCode: "eg", rateMinor: 6_000 } },
+    );
+    expect(result.codeStatuses).toEqual([{ code: "SHIPFREE", applicable: true }]);
+    expect(result.shippingDiscountMinor).toBe(6_000);
+  });
+
+  it("does not apply a code when the chosen rate is already free", () => {
+    const result = run(
+      [{ promotion: free(), coupon: coupon("SHIPFREE") }],
+      [line("0", "a", 1_000)],
+      { codes: ["SHIPFREE"], shipping: { countryCode: "EG", rateMinor: 0 } },
+    );
+    expect(result.codeStatuses).toEqual([
+      { code: "SHIPFREE", applicable: false, reason: "no_matching_items" },
+    ]);
+    expect(result.applied).toEqual([]);
+  });
+
+  it("applies only one of two compatible free-shipping codes once a rate is chosen", () => {
+    const shipping = (id: string) =>
+      promo({
+        id,
+        method: "code",
+        reward: { type: "free_shipping" },
+        combinesWith: COMBINES_WITH_EVERYTHING,
+      });
+    const result = run(
+      [
+        { promotion: shipping("p1"), coupon: coupon("SHIPONE") },
+        { promotion: shipping("p2"), coupon: coupon("SHIPTWO") },
+      ],
+      [line("0", "a", 1_000)],
+      { codes: ["SHIPONE", "SHIPTWO"], shipping: { countryCode: "EG", rateMinor: 6_000 } },
+    );
+    expect(result.applied).toHaveLength(1);
+    expect(result.shippingDiscountMinor).toBe(6_000);
+    expect(result.codeStatuses.filter((s) => s.applicable)).toHaveLength(1);
+  });
 });
 
 describe("calculateDiscounts — eligibility", () => {

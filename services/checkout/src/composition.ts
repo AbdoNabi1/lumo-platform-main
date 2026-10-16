@@ -161,6 +161,7 @@ function buildController(
         ? {}
         : { orderCancellation: deps.orderCancellation }),
       promotionValidation,
+      taxCalculation,
       ...(deps.discountUsage === undefined ? {} : { discountUsage: deps.discountUsage }),
     }),
     failCheckout: new FailCheckout({
@@ -200,6 +201,7 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       promotionValidation,
+      taxCalculation,
     }),
     addDiscountCode: new AddDiscountCode({
       sessions,
@@ -207,6 +209,7 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       promotionValidation,
+      taxCalculation,
     }),
     removeDiscountCode: new RemoveDiscountCode({
       sessions,
@@ -214,6 +217,7 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       promotionValidation,
+      taxCalculation,
     }),
     lock: new Lock({ sessions, unitOfWork, idGenerator: deps.idGenerator, clock: deps.clock }),
     expireCheckout: new ExpireCheckout({

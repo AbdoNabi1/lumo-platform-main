@@ -8,7 +8,12 @@ import type { DiscountSnapshot } from "../domain/value-objects/discount-snapshot
 import { ShippingSelection } from "../domain/value-objects/selections";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { CompleteCheckout } from "./complete-checkout.use-case";
-import type { DiscountUsagePort, OrderCreationPort, PromotionValidationPort } from "./ports";
+import type {
+  DiscountUsagePort,
+  OrderCreationPort,
+  PromotionValidationPort,
+  TaxCalculationPort,
+} from "./ports";
 
 class FakeSessions implements CheckoutSessionRepository {
   readonly store = new Map<string, CheckoutSession>();
@@ -42,11 +47,37 @@ const tenPercent: DiscountSnapshot = {
   lineAllocations: [{ lineRef: "0", amountMinor: 1_000 }],
 };
 
+const none: DiscountSnapshot = {
+  applied: [],
+  orderDiscountMinor: 0,
+  shippingDiscountMinor: 0,
+  codeStatuses: [],
+  lineAllocations: [],
+};
+
+/** Stands in for Finance: 14% on what is left after the order discount. */
+const fakeTax: TaxCalculationPort = {
+  async calculate(items, _destination, _shippingMinor, _currency, _tenantId, discounts) {
+    const subtotal = items.reduce((sum, item) => sum + item.lineTotalMinor, 0);
+    return {
+      taxMinor: Math.floor(((subtotal - (discounts?.orderMinor ?? 0)) * 14) / 100),
+      included: false,
+    };
+  },
+};
+
 const clock = { now: () => new Date("2026-10-16T12:00:00.000Z") };
 let n = 0;
 const idGenerator = { generate: () => `id-${(n += 1)}` };
 
-function setup(options: { evaluateTo: DiscountSnapshot; usageFails?: boolean }) {
+function setup(options: {
+  evaluateTo: DiscountSnapshot;
+  usageFails?: boolean;
+  /** Start without the code and its discount (an automatic discount may appear later). */
+  startWithoutDiscount?: boolean;
+  /** Tax was already requested, on the discounts the session started with. */
+  taxRequested?: boolean;
+}) {
   const sessions = new FakeSessions();
   const session = CheckoutSession.start(
     UniqueEntityId.from("cs-1"),
@@ -62,8 +93,13 @@ function setup(options: { evaluateTo: DiscountSnapshot; usageFails?: boolean }) 
   session.setShippingAddress(address);
   session.setBillingAddress(address);
   session.selectShipping(must(ShippingSelection.create("std", 6_000, "EGP")));
-  session.enterDiscountCode("SALE10");
-  session.applyDiscountSnapshot(tenPercent);
+  if (options.startWithoutDiscount !== true) {
+    session.enterDiscountCode("SALE10");
+    session.applyDiscountSnapshot(tenPercent);
+  }
+  if (options.taxRequested === true) {
+    session.applyTaxSnapshot(options.startWithoutDiscount === true ? 1_400 : 1_260, false);
+  }
   session.recalculateTotals("evt-0", new Date(0));
   sessions.store.set("cs-1", session);
 
@@ -96,6 +132,7 @@ function setup(options: { evaluateTo: DiscountSnapshot; usageFails?: boolean }) 
     clock,
     orderCreation,
     promotionValidation,
+    taxCalculation: fakeTax,
     discountUsage,
   });
   return {
@@ -139,5 +176,60 @@ describe("CompleteCheckout — discounts (Phase 2)", () => {
     const result = await t.run();
     expect(result.ok).toBe(true);
     expect(t.session.orderRef).toBe("order-1");
+  });
+
+  it("re-works the tax when a discount appears after tax was requested, then places the order with it", async () => {
+    const t = setup({
+      evaluateTo: tenPercent,
+      startWithoutDiscount: true,
+      taxRequested: true,
+    });
+    expect(t.session.totals?.taxMinor).toBe(1_400);
+
+    const first = await t.run();
+    expect(!first.ok && first.error.message).toMatch(/^DISCOUNTS_CHANGED/);
+    expect(t.created).toHaveLength(0);
+    expect(t.session.totals?.discountMinor).toBe(1_000);
+    expect(t.session.totals?.taxMinor).toBe(1_260);
+
+    const second = await t.run();
+    expect(second.ok).toBe(true);
+    expect(t.created[0]?.totals.taxMinor).toBe(1_260);
+    expect(t.created[0]?.totals.discountMinor).toBe(1_000);
+  });
+
+  it("does not tax a session that never asked for tax when a discount appears", async () => {
+    const t = setup({ evaluateTo: tenPercent, startWithoutDiscount: true });
+    const first = await t.run();
+    expect(!first.ok && first.error.message).toMatch(/^DISCOUNTS_CHANGED/);
+    expect(t.session.taxMinor).toBeUndefined();
+  });
+
+  it("records only the discounts that took something off the order", async () => {
+    const freeRate: DiscountSnapshot = {
+      ...tenPercent,
+      applied: [
+        ...tenPercent.applied,
+        {
+          promotionId: "p-2",
+          couponId: "c-2",
+          code: "SHIPFREE",
+          title: "SHIPFREE",
+          discountClass: "shipping",
+          amountMinor: 0,
+        },
+      ],
+    };
+    const t = setup({ evaluateTo: freeRate });
+    const result = await t.run();
+    expect(result.ok).toBe(true);
+    expect(t.usage).toEqual([{ tenantId: "t1", orderRef: "order-1", applied: tenPercent.applied }]);
+  });
+
+  it("records nothing when no applied discount took anything off", async () => {
+    const t = setup({ evaluateTo: none, startWithoutDiscount: true });
+    const result = await t.run();
+    expect(result.ok).toBe(true);
+    expect(t.usage).toEqual([]);
   });
 });

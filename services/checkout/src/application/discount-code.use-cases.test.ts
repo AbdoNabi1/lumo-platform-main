@@ -10,9 +10,9 @@ import type {
 } from "../domain/value-objects/discount-snapshot";
 import { ShippingSelection } from "../domain/value-objects/selections";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
-import { RecalculateTotals } from "./checkout-orchestration.use-cases";
+import { RecalculateTotals, RequestTaxCalculation } from "./checkout-orchestration.use-cases";
 import { AddDiscountCode, RemoveDiscountCode } from "./discount-code.use-cases";
-import type { DiscountEvaluationInput, PromotionValidationPort } from "./ports";
+import type { DiscountEvaluationInput, PromotionValidationPort, TaxCalculationPort } from "./ports";
 
 class FakeSessions implements CheckoutSessionRepository {
   readonly store = new Map<string, CheckoutSession>();
@@ -75,6 +75,17 @@ class FakePromotions implements PromotionValidationPort {
   }
 }
 
+/** Stands in for Finance: 14% on what is left after the order discount (shipping is not taxed). */
+const fakeTax: TaxCalculationPort = {
+  async calculate(items, _destination, _shippingMinor, _currency, _tenantId, discounts) {
+    const subtotal = items.reduce((sum, item) => sum + item.lineTotalMinor, 0);
+    return {
+      taxMinor: Math.floor(((subtotal - (discounts?.orderMinor ?? 0)) * 14) / 100),
+      included: false,
+    };
+  },
+};
+
 const clock = { now: () => new Date("2026-10-16T12:00:00.000Z") };
 let n = 0;
 const idGenerator = { generate: () => `id-${(n += 1)}` };
@@ -102,6 +113,7 @@ function setup(quantity = 2) {
     idGenerator,
     clock,
     promotionValidation,
+    taxCalculation: fakeTax,
   };
   const input = (code: string) => ({ tenantId: "t1", checkoutSessionId: "cs-1", code });
   return {
@@ -111,6 +123,13 @@ function setup(quantity = 2) {
     remove: (code: string) => new RemoveDiscountCode(deps).execute(input(code)),
     recalculate: () =>
       new RecalculateTotals(deps).execute({ tenantId: "t1", checkoutSessionId: "cs-1" }),
+    requestTax: () =>
+      new RequestTaxCalculation(deps).execute({ tenantId: "t1", checkoutSessionId: "cs-1" }),
+    recalculateWithoutTaxPort: () =>
+      new RecalculateTotals({ ...deps, taxCalculation: undefined }).execute({
+        tenantId: "t1",
+        checkoutSessionId: "cs-1",
+      }),
   };
 }
 
@@ -181,5 +200,56 @@ describe("AddDiscountCode / RemoveDiscountCode (Phase 2)", () => {
     expect(call?.codes).toEqual(["SALE10"]);
     expect(call?.items).toHaveLength(1);
     expect(call?.tenantId).toBe("t1");
+  });
+
+  it("re-works the tax when a code changes the discount after tax was requested", async () => {
+    const t = setup();
+    await t.requestTax();
+    expect(t.session.taxMinor).toBe(1_400);
+
+    await t.add("SALE10");
+    expect(t.session.taxMinor).toBe(1_260);
+    expect(t.session.totals?.taxMinor).toBe(1_260);
+    expect(t.session.totals?.totalMinor).toBe(9_000 + 1_260);
+
+    await t.remove("SALE10");
+    expect(t.session.taxMinor).toBe(1_400);
+    expect(t.session.totals?.totalMinor).toBe(10_000 + 1_400);
+  });
+
+  it("re-works the tax in RecalculateTotals when an item change moves the discount", async () => {
+    const t = setup(2);
+    await t.add("SALE10");
+    await t.requestTax();
+    expect(t.session.taxMinor).toBe(1_260);
+    t.session.loadItems([must(CheckoutItem.create("prod-1", 1, 5_000, "EGP"))]);
+    await t.recalculate();
+    expect(t.session.totals?.discountMinor).toBe(0);
+    expect(t.session.taxMinor).toBe(700);
+    expect(t.session.totals?.totalMinor).toBe(5_000 + 700);
+  });
+
+  it("does not tax a session that never asked for tax", async () => {
+    const t = setup();
+    await t.add("SALE10");
+    expect(t.session.taxMinor).toBeUndefined();
+    expect(t.session.totals?.taxMinor ?? 0).toBe(0);
+  });
+
+  it("leaves the stored tax alone when no tax port is wired", async () => {
+    const t = setup();
+    await t.requestTax();
+    t.session.enterDiscountCode("SALE10");
+    await t.recalculateWithoutTaxPort();
+    expect(t.session.totals?.discountMinor).toBe(1_000);
+    expect(t.session.taxMinor).toBe(1_400);
+  });
+
+  it("keeps a legacy promotion snapshot through RecalculateTotals when nothing applies", async () => {
+    const t = setup();
+    t.session.applyPromotionSnapshot(500);
+    await t.recalculate();
+    expect(t.session.totals?.discountMinor).toBe(500);
+    expect(t.session.discountSnapshot).toBeUndefined();
   });
 });

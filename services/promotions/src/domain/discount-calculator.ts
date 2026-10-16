@@ -156,7 +156,11 @@ function requirementRejection(
   const matched = matchingLines(input.lines, condition.scope, condition.targetRefs);
 
   if (reward.type === "free_shipping" && input.shipping !== null) {
-    if (reward.countries !== undefined && !reward.countries.includes(input.shipping.countryCode)) {
+    const country = input.shipping.countryCode.toUpperCase();
+    if (
+      reward.countries !== undefined &&
+      !reward.countries.some((allowed) => allowed.toUpperCase() === country)
+    ) {
       return "not_eligible";
     }
     if (
@@ -511,10 +515,15 @@ export function calculateDiscounts(input: CalculateDiscountsInput): DiscountResu
 
   const best = bestSet(eligible, input);
   // A product or order code the winning set gives nothing for is not applicable, even though the
-  // set includes it. A shipping code stays applicable at 0 until a rate is chosen.
+  // set includes it. A shipping code stays applicable at 0 only until a rate is chosen; once one is,
+  // a shipping code that saves nothing (a free rate, or another shipping discount took it) is empty too.
   const emptyCodes = new Set<string>();
   for (const a of best.applied) {
-    if (a.code !== undefined && a.amountMinor === 0 && a.discountClass !== "shipping") {
+    if (
+      a.code !== undefined &&
+      a.amountMinor === 0 &&
+      (a.discountClass !== "shipping" || input.shipping !== null)
+    ) {
       emptyCodes.add(a.code);
     }
   }

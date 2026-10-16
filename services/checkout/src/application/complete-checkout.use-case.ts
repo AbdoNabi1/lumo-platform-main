@@ -5,7 +5,7 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { BusinessRuleError, type DomainError, NotFoundError } from "@platform/utils";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
-import { refreshDiscounts } from "./discount-code.use-cases";
+import { refreshDiscountsAndTax } from "./discount-code.use-cases";
 import type {
   DiscountUsagePort,
   InventoryValidationPort,
@@ -14,6 +14,7 @@ import type {
   OrderStockReservationPort,
   PromotionValidationPort,
   StockReservationResult,
+  TaxCalculationPort,
 } from "./ports";
 
 export interface CompleteCheckoutInput {
@@ -51,6 +52,8 @@ export interface CompleteCheckoutDeps {
   readonly orderCancellation?: OrderCancellationPort;
   /** Phase 2: when present, the discounts are worked out once more right before the order exists. */
   readonly promotionValidation?: PromotionValidationPort;
+  /** Phase 2: when present, a change of discounts re-works the tax that was already requested. */
+  readonly taxCalculation?: TaxCalculationPort;
   /** Phase 2: when present, each discount's use is recorded after the order is placed (best effort). */
   readonly discountUsage?: DiscountUsagePort;
 }
@@ -116,17 +119,17 @@ export class CompleteCheckout implements UseCase<
       // instead of placing an order at a price they never saw. `DISCOUNTS_CHANGED:` is the prefix
       // the storefront reads, like `OUT_OF_STOCK:`.
       if (this.deps.promotionValidation !== undefined) {
-        const before = {
-          order: session.discountMinor ?? 0,
-          shipping: session.discountSnapshot?.shippingDiscountMinor ?? 0,
-        };
+        const taxBefore = session.taxMinor;
         try {
-          await refreshDiscounts(session, this.deps.promotionValidation, input.tenantId);
-          const after = {
-            order: session.discountMinor ?? 0,
-            shipping: session.discountSnapshot?.shippingDiscountMinor ?? 0,
-          };
-          if (before.order !== after.order || before.shipping !== after.shipping) {
+          const { discountsChanged } = await refreshDiscountsAndTax(
+            session,
+            {
+              promotionValidation: this.deps.promotionValidation,
+              taxCalculation: this.deps.taxCalculation,
+            },
+            input.tenantId,
+          );
+          if (discountsChanged || session.taxMinor !== taxBefore) {
             session.recalculateTotals(this.deps.idGenerator.generate(), this.deps.clock.now());
             await this.deps.sessions.save(session, input.tenantId, tx);
             return err(
@@ -199,14 +202,16 @@ export class CompleteCheckout implements UseCase<
 
       // Phase 2: count each discount's use. The order already exists, so a failure here must not
       // undo it; Coupons dedupes by order, and a retried completion returns early above.
-      if (this.deps.discountUsage !== undefined && draft.discounts.length > 0) {
+      // A discount that took nothing off this order is not a use of it.
+      const used = draft.discounts.filter((discount) => discount.amountMinor > 0);
+      if (this.deps.discountUsage !== undefined && used.length > 0) {
         try {
           await this.deps.discountUsage.record({
             tenantId: input.tenantId,
             orderRef,
             ...(draft.customerRef === undefined ? {} : { customerRef: draft.customerRef }),
             ...(draft.contactEmail === undefined ? {} : { email: draft.contactEmail }),
-            applied: draft.discounts,
+            applied: used,
           });
         } catch {
           // Best effort by design (spec "Placing the order and recording usage").
