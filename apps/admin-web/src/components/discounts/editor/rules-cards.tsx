@@ -6,7 +6,7 @@ import { MoneyInput } from "@/components/products/editor/controls";
 import { CheckboxRow } from "@/components/products/editor/field";
 import { discountClassOf, type DiscountClass } from "@/lib/api/discounts";
 import type { Locale } from "@/lib/i18n";
-import { ErrorText, FormCard, RadioRow, TextField, type CardProps } from "./inputs";
+import { ErrorText, FormCard, RadioGroup, RadioRow, TextField, type CardProps } from "./inputs";
 import { ResourcePicker } from "./resource-picker";
 
 /** "Minimum purchase requirements": none, an amount, or a quantity of items. Not for buy X get Y. */
@@ -24,51 +24,53 @@ export function MinimumCard({
   const error = errors["minimumRequirement"];
   return (
     <FormCard title={copy.minimumRequirements}>
-      <RadioRow
-        name={group}
-        label={copy.noMinimum}
-        checked={values.minimumKind === "none"}
-        onChange={() => set({ minimumKind: "none" })}
-      />
-      <RadioRow
-        name={group}
-        label={copy.minimumAmount.replace("{currency}", currency)}
-        checked={values.minimumKind === "amount"}
-        onChange={() => set({ minimumKind: "amount" })}
-      >
-        <div className="flex flex-col gap-1.5">
-          <MoneyInput
-            id={amountId}
-            name="minimumAmount"
-            label={copy.minimumAmount.replace("{currency}", currency)}
-            currency={currency}
-            locale={locale}
-            value={values.minimumAmount}
-            onValueChange={(minimumAmount) => set({ minimumAmount })}
-            invalid={error !== undefined}
-            describedBy={error === undefined ? undefined : `${amountId}-error`}
-          />
-          {values.type === "amount_off_products" && (
-            <p className="text-muted-foreground text-xs">{copy.minimumProductsHint}</p>
-          )}
-          <ErrorText id={`${amountId}-error`} message={error} />
-        </div>
-      </RadioRow>
-      <RadioRow
-        name={group}
-        label={copy.minimumQuantity}
-        checked={values.minimumKind === "quantity"}
-        onChange={() => set({ minimumKind: "quantity" })}
-      >
-        <TextField
-          label={copy.minimumQuantity}
-          inputMode="numeric"
-          value={values.minimumQuantity}
-          onValueChange={(minimumQuantity) => set({ minimumQuantity })}
-          error={error}
-          hint={values.type === "amount_off_products" ? copy.minimumProductsHint : undefined}
+      <RadioGroup label={copy.minimumRequirements}>
+        <RadioRow
+          name={group}
+          label={copy.noMinimum}
+          checked={values.minimumKind === "none"}
+          onChange={() => set({ minimumKind: "none" })}
         />
-      </RadioRow>
+        <RadioRow
+          name={group}
+          label={copy.minimumAmount.replace("{currency}", currency)}
+          checked={values.minimumKind === "amount"}
+          onChange={() => set({ minimumKind: "amount" })}
+        >
+          <div className="flex flex-col gap-1.5">
+            <MoneyInput
+              id={amountId}
+              name="minimumAmount"
+              label={copy.minimumAmount.replace("{currency}", currency)}
+              currency={currency}
+              locale={locale}
+              value={values.minimumAmount}
+              onValueChange={(minimumAmount) => set({ minimumAmount })}
+              invalid={error !== undefined}
+              describedBy={error === undefined ? undefined : `${amountId}-error`}
+            />
+            {values.type === "amount_off_products" && (
+              <p className="text-muted-foreground text-xs">{copy.minimumProductsHint}</p>
+            )}
+            <ErrorText id={`${amountId}-error`} message={error} />
+          </div>
+        </RadioRow>
+        <RadioRow
+          name={group}
+          label={copy.minimumQuantity}
+          checked={values.minimumKind === "quantity"}
+          onChange={() => set({ minimumKind: "quantity" })}
+        >
+          <TextField
+            label={copy.minimumQuantity}
+            inputMode="numeric"
+            value={values.minimumQuantity}
+            onValueChange={(minimumQuantity) => set({ minimumQuantity })}
+            error={error}
+            hint={values.type === "amount_off_products" ? copy.minimumProductsHint : undefined}
+          />
+        </RadioRow>
+      </RadioGroup>
     </FormCard>
   );
 }
@@ -79,28 +81,30 @@ export function EligibilityCard({ values, set, errors, t }: CardProps) {
   const group = useId();
   return (
     <FormCard title={copy.eligibility}>
-      <RadioRow
-        name={group}
-        label={copy.allCustomers}
-        checked={values.allCustomers}
-        onChange={() => set({ allCustomers: true })}
-      />
-      <RadioRow
-        name={group}
-        label={copy.specificCustomers}
-        checked={!values.allCustomers}
-        onChange={() => set({ allCustomers: false })}
-      >
-        <ResourcePicker
-          title={copy.specificCustomers}
-          searchLabel={copy.searchCustomers}
-          selected={values.customers}
-          onChange={(customers) => set({ customers })}
-          search={(query) => searchDiscountTargetsAction("customers", query)}
-          t={t}
-          error={errors["customerEligibility"]}
+      <RadioGroup label={copy.eligibility}>
+        <RadioRow
+          name={group}
+          label={copy.allCustomers}
+          checked={values.allCustomers}
+          onChange={() => set({ allCustomers: true })}
         />
-      </RadioRow>
+        <RadioRow
+          name={group}
+          label={copy.specificCustomers}
+          checked={!values.allCustomers}
+          onChange={() => set({ allCustomers: false })}
+        >
+          <ResourcePicker
+            title={copy.specificCustomers}
+            searchLabel={copy.searchCustomers}
+            selected={values.customers}
+            onChange={(customers) => set({ customers })}
+            search={(query) => searchDiscountTargetsAction("customers", query)}
+            t={t}
+            error={errors["customerEligibility"]}
+          />
+        </RadioRow>
+      </RadioGroup>
     </FormCard>
   );
 }
@@ -169,7 +173,6 @@ export function ActiveDatesCard({
   zone,
 }: CardProps & { readonly zone: string }) {
   const copy = t.discounts.form;
-  const errorId = useId();
   return (
     <FormCard title={copy.activeDates}>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -209,6 +212,7 @@ export function ActiveDatesCard({
             label={copy.endDate}
             value={values.endDate}
             onValueChange={(endDate) => set({ endDate })}
+            error={errors["endsAt"]}
           />
           <TextField
             type="time"
@@ -218,7 +222,6 @@ export function ActiveDatesCard({
           />
         </div>
       )}
-      <ErrorText id={errorId} message={errors["endsAt"]} />
     </FormCard>
   );
 }

@@ -37,6 +37,36 @@ export function FormCard({
   );
 }
 
+/**
+ * Names a set of native radios. The label is read by assistive tech; `visible` also shows it (use
+ * it when the card has no heading saying the same thing).
+ */
+export function RadioGroup({
+  label,
+  visible = false,
+  className,
+  children,
+}: {
+  readonly label: string;
+  readonly visible?: boolean;
+  readonly className?: string;
+  readonly children: ReactNode;
+}) {
+  const labelId = useId();
+  return (
+    <div
+      role="radiogroup"
+      aria-labelledby={labelId}
+      className={cn("flex flex-col gap-2", className)}
+    >
+      <span id={labelId} className={visible ? "text-sm" : "sr-only"}>
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
 /** A native radio with its label. */
 export function RadioRow({
   label,

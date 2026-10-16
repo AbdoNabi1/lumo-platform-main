@@ -74,6 +74,8 @@ export function ResourcePicker({
   function openWith(initialQuery: string): void {
     setQuery(initialQuery);
     setDraft(selected);
+    // Drop the previous list so another scope's items are never tickable before this search lands.
+    setResult(null);
     setOpen(true);
   }
 
@@ -131,7 +133,7 @@ export function ResourcePicker({
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
           </DialogHeader>

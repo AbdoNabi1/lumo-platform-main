@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { Button, cn } from "@platform/ui";
 import { discountClassOf } from "@/lib/api/discounts";
 import { generateDiscountCode } from "@/lib/discounts/form";
@@ -18,6 +19,8 @@ export function MethodCard({
   mode,
 }: CardProps & { readonly mode: "create" | "edit" }) {
   const copy = t.discounts.form;
+  const groupName = useId();
+  const labelId = useId();
   const methods = [
     { value: "code", label: copy.methodCode },
     { value: "automatic", label: copy.methodAutomatic },
@@ -31,26 +34,31 @@ export function MethodCard({
         </span>
       }
     >
-      <div role="radiogroup" aria-label={copy.method} className="flex flex-col gap-1.5">
-        <span className="text-sm">{copy.method}</span>
+      <div role="radiogroup" aria-labelledby={labelId} className="flex flex-col gap-1.5">
+        <span id={labelId} className="text-sm">
+          {copy.method}
+        </span>
         <div className="bg-muted inline-flex w-fit rounded-lg p-0.5">
           {methods.map((method) => (
-            <button
-              key={method.value}
-              type="button"
-              role="radio"
-              aria-checked={values.method === method.value}
-              disabled={mode === "edit" && values.method !== method.value}
-              onClick={() => set({ method: method.value })}
-              className={cn(
-                "rounded-md px-3 py-1 text-sm disabled:opacity-50",
-                values.method === method.value
-                  ? "bg-card font-medium shadow-sm"
-                  : "text-muted-foreground",
-              )}
-            >
-              {method.label}
-            </button>
+            <label key={method.value} className="has-[:enabled]:cursor-pointer">
+              <input
+                type="radio"
+                name={groupName}
+                className="peer sr-only"
+                checked={values.method === method.value}
+                disabled={mode === "edit" && values.method !== method.value}
+                onChange={() => set({ method: method.value })}
+              />
+              <span
+                className={cn(
+                  "text-muted-foreground block rounded-md px-3 py-1 text-sm",
+                  "peer-checked:bg-card peer-checked:text-foreground peer-checked:font-medium peer-checked:shadow-sm",
+                  "peer-focus-visible:ring-primary peer-focus-visible:ring-2 peer-disabled:opacity-50",
+                )}
+              >
+                {method.label}
+              </span>
+            </label>
           ))}
         </div>
       </div>

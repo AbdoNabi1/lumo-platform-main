@@ -6,7 +6,7 @@ import { MoneyInput } from "@/components/products/editor/controls";
 import { CheckboxRow, NativeSelect } from "@/components/products/editor/field";
 import type { TargetScope } from "@/lib/api/discounts";
 import type { Locale } from "@/lib/i18n";
-import { ErrorText, FormCard, RadioRow, TextField, type CardProps } from "./inputs";
+import { ErrorText, FormCard, RadioGroup, RadioRow, TextField, type CardProps } from "./inputs";
 import { ResourcePicker } from "./resource-picker";
 
 /** Buy X get Y: "Customer buys" and "Customer gets", as two cards in Shopify's order. */
@@ -28,7 +28,7 @@ export function BuysGetsCard({
   return (
     <>
       <FormCard title={copy.customerBuys}>
-        <div className="flex flex-col gap-2">
+        <RadioGroup label={copy.customerBuys}>
           <RadioRow
             name={buysGroup}
             label={copy.minQuantityOfItems}
@@ -41,7 +41,7 @@ export function BuysGetsCard({
             checked={values.buysKind === "amount"}
             onChange={() => set({ buysKind: "amount", buysValue: "" })}
           />
-        </div>
+        </RadioGroup>
         <div className="grid gap-3 sm:grid-cols-2">
           {values.buysKind === "quantity" ? (
             <TextField
@@ -130,8 +130,7 @@ export function BuysGetsCard({
           t={t}
           error={errors["getsItems"]}
         />
-        <div className="flex flex-col gap-2">
-          <span className="text-sm">{copy.atDiscountedValue}</span>
+        <RadioGroup label={copy.atDiscountedValue} visible>
           <RadioRow
             name={effectGroup}
             label={copy.percentage}
@@ -157,7 +156,7 @@ export function BuysGetsCard({
             checked={values.getsEffect === "free"}
             onChange={() => set({ getsEffect: "free" })}
           />
-        </div>
+        </RadioGroup>
         <div className="flex flex-col gap-2">
           <CheckboxRow
             label={copy.maxUsesPerOrder}

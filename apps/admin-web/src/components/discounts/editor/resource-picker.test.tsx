@@ -79,6 +79,38 @@ describe("ResourcePicker", () => {
     expect(onChange).toHaveBeenCalledWith([{ id: "p-2", label: "Boot" }]);
   });
 
+  it("does not show the previous scope's results while the new search is pending", async () => {
+    const props = {
+      title: "Products",
+      searchLabel: en.discounts.form.searchProducts,
+      selected: [],
+      onChange: vi.fn(),
+      t: en,
+    } as const;
+    const productSearch = vi.fn().mockResolvedValue({
+      outcome: "ok",
+      items: [{ id: "p-1", label: "Sneaker", detail: null }],
+    });
+    const { rerender } = render(<ResourcePicker {...props} search={productSearch} />);
+
+    fireEvent.click(screen.getByRole("button", { name: en.discounts.form.browse }));
+    expect(await screen.findByText("Sneaker")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.discounts.form.pickerCancel }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    rerender(
+      <ResourcePicker
+        {...props}
+        title="Categories"
+        search={vi.fn().mockReturnValue(new Promise(() => undefined))}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.discounts.form.browse }));
+
+    expect(await screen.findByText(en.discounts.form.pickerSearching)).toBeInTheDocument();
+    expect(screen.queryByText("Sneaker")).not.toBeInTheDocument();
+  });
+
   it("says when the search fails", async () => {
     render(
       <ResourcePicker

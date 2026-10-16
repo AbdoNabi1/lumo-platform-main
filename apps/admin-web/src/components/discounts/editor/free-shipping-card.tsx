@@ -6,7 +6,7 @@ import { MoneyInput } from "@/components/products/editor/controls";
 import { CheckboxRow } from "@/components/products/editor/field";
 import type { Locale } from "@/lib/i18n";
 import { countryName } from "@/lib/shipping/display";
-import { ErrorText, FormCard, RadioRow, type CardProps } from "./inputs";
+import { ErrorText, FormCard, RadioGroup, RadioRow, type CardProps } from "./inputs";
 import { ResourcePicker } from "./resource-picker";
 
 /** Free shipping: all countries or chosen ones, and an optional cap on the shipping rate. */
@@ -41,28 +41,30 @@ export function FreeShippingCard({
   return (
     <>
       <FormCard title={copy.countries}>
-        <RadioRow
-          name={group}
-          label={copy.allCountries}
-          checked={values.allCountries}
-          onChange={() => set({ allCountries: true })}
-        />
-        <RadioRow
-          name={group}
-          label={copy.selectedCountries}
-          checked={!values.allCountries}
-          onChange={() => set({ allCountries: false })}
-        >
-          <ResourcePicker
-            title={copy.selectedCountries}
-            searchLabel={copy.searchCountries}
-            selected={values.countries}
-            onChange={(countries) => set({ countries })}
-            search={searchCountries}
-            t={t}
-            error={errors["countries"]}
+        <RadioGroup label={copy.countries}>
+          <RadioRow
+            name={group}
+            label={copy.allCountries}
+            checked={values.allCountries}
+            onChange={() => set({ allCountries: true })}
           />
-        </RadioRow>
+          <RadioRow
+            name={group}
+            label={copy.selectedCountries}
+            checked={!values.allCountries}
+            onChange={() => set({ allCountries: false })}
+          >
+            <ResourcePicker
+              title={copy.selectedCountries}
+              searchLabel={copy.searchCountries}
+              selected={values.countries}
+              onChange={(countries) => set({ countries })}
+              search={searchCountries}
+              t={t}
+              error={errors["countries"]}
+            />
+          </RadioRow>
+        </RadioGroup>
       </FormCard>
 
       <FormCard title={copy.shippingRates}>

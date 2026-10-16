@@ -6,7 +6,7 @@ import { searchDiscountTargetsAction } from "@/app/discounts/actions";
 import { MoneyInput } from "@/components/products/editor/controls";
 import { CheckboxRow, NativeSelect } from "@/components/products/editor/field";
 import type { Locale } from "@/lib/i18n";
-import { ErrorText, FormCard, RadioRow, type CardProps } from "./inputs";
+import { ErrorText, FormCard, RadioGroup, RadioRow, type CardProps } from "./inputs";
 import { ResourcePicker } from "./resource-picker";
 
 /** "Discount value" for amount off products / order: percentage or fixed amount, and for products, what it applies to. */
@@ -75,21 +75,22 @@ export function ValueCard({
 
       {forProducts && (
         <div className="flex flex-col gap-2">
-          <span className="text-sm">{copy.appliesTo}</span>
-          <div className="flex flex-wrap gap-4">
-            <RadioRow
-              name={groupName}
-              label={copy.specificCategories}
-              checked={values.appliesToKind === "categories"}
-              onChange={() => set({ appliesToKind: "categories", appliesToItems: [] })}
-            />
-            <RadioRow
-              name={groupName}
-              label={copy.specificProducts}
-              checked={values.appliesToKind === "products"}
-              onChange={() => set({ appliesToKind: "products", appliesToItems: [] })}
-            />
-          </div>
+          <RadioGroup label={copy.appliesTo} visible>
+            <div className="flex flex-wrap gap-4">
+              <RadioRow
+                name={groupName}
+                label={copy.specificCategories}
+                checked={values.appliesToKind === "categories"}
+                onChange={() => set({ appliesToKind: "categories", appliesToItems: [] })}
+              />
+              <RadioRow
+                name={groupName}
+                label={copy.specificProducts}
+                checked={values.appliesToKind === "products"}
+                onChange={() => set({ appliesToKind: "products", appliesToItems: [] })}
+              />
+            </div>
+          </RadioGroup>
           <ResourcePicker
             title={
               values.appliesToKind === "categories"
