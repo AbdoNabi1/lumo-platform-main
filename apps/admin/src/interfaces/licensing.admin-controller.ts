@@ -1,5 +1,6 @@
 import type { Principal } from "@platform/contracts";
 import type { LicensingController } from "@platform/licensing";
+import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -290,10 +291,7 @@ export class LicensingAdminController {
     if (billing.status !== 200) return billing;
     const own = (billing.body as { invoices: ReadonlyArray<{ id: string }> }).invoices;
     if (!own.some((invoice) => invoice.id === invoiceId)) {
-      return {
-        status: 404,
-        body: { error: { code: "NOT_FOUND", message: "Invoice not found" } },
-      };
+      return { status: 404, body: toErrorEnvelope(new NotFoundError("Invoice not found")) };
     }
     const begun = await this.licensing.beginCardEnrolment({ invoiceId, tenantId });
     if (begun.status !== 200) return begun;

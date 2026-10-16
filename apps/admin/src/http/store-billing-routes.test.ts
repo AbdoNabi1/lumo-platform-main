@@ -181,6 +181,15 @@ describe("merchant billing routes (/store/billing)", () => {
     expect(noSubscription.status).toBe(404);
   });
 
+  it("the plan change body is strict: a client-named tenantRef (or any extra key) is rejected", () => {
+    const { routes } = wire();
+    const body = route(routes, "POST", "/store/billing/plan").schema?.body;
+    expect(body?.safeParse({ planKey: "basic" }).success).toBe(true);
+    expect(body?.safeParse({ planKey: "basic", tenantRef: "shop-b" }).success).toBe(false);
+    expect(body?.safeParse({ planKey: "" }).success).toBe(false);
+    expect(body?.safeParse({ planKey: "x".repeat(65) }).success).toBe(false);
+  });
+
   it("pays only the caller's own invoice: another store's invoice id is a 404", async () => {
     const { raw, routes } = wire();
     const { invoiceId } = await seed(raw, "shop-a", "basic");
@@ -188,8 +197,10 @@ describe("merchant billing routes (/store/billing)", () => {
 
     const foreign = await call(pay, "shop-b", { invoiceId });
     expect(foreign.status).toBe(404);
+    expect(foreign.body).toMatchObject({ code: "NOT_FOUND" });
     const missing = await call(pay, "shop-a", { invoiceId: "no-such-invoice" });
     expect(missing.status).toBe(404);
+    expect(missing.body).toMatchObject({ code: "NOT_FOUND" });
 
     const own = await call(pay, "shop-a", { invoiceId });
     expect(own.status).toBe(200);
