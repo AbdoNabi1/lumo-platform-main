@@ -6,7 +6,7 @@ import { cn } from "../../lib/cn";
 import { focusRing } from "../../lib/focus";
 
 /**
- * Lumo Button.
+ * Morbeh Button.
  *
  * Six variants, four sizes, and the six states the design system defines
  * (default / hover / active / focus / disabled / loading). Colour comes only from tokens —

@@ -1,16 +1,19 @@
+import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertTriangleIcon, ArrowLeftIcon, PackageIcon } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, Separator } from "@platform/ui";
-import { AddToCartButton } from "@/components/add-to-cart-button";
+import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import { AddToWishlistButton } from "@/components/add-to-wishlist-button";
 import { AvailabilityBadge, PriceLabel } from "@/components/product-card";
+import { ProductGallery } from "@/components/product-gallery";
+import { ProductSelectionProvider } from "@/components/product-selection";
 import { ProductReviews } from "@/components/product-reviews";
 import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
+import { VariantPicker } from "@/components/variant-picker";
 import { WriteReviewForm } from "@/components/write-review-form";
-import { AvailabilityBook, PriceBook, resolveProductBySlug } from "@/lib/catalog";
+import { AvailabilityBook, priceOf, resolveProductBySlug } from "@/lib/catalog";
 import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { getProductReviews } from "@/lib/runtime-api";
@@ -19,11 +22,33 @@ import { getProductReviews } from "@/lib/runtime-api";
 const PRODUCT_REVIEWS_PAGE_SIZE = 10;
 
 /**
+ * Plan 2C-1: an UNLISTED product opens here by its link (and can be bought) but is kept out of
+ * search engines, as it is kept out of every list, search and collection.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  readonly params: Promise<{ readonly slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const result = await resolveProductBySlug(slug);
+  if (result.status !== "ok") return {};
+  return {
+    title: result.product.name,
+    ...(result.product.status === "unlisted" ? { robots: { index: false, follow: false } } : {}),
+  };
+}
+
+/**
  * Product Detail. Only fields the public `/public/products` DTO actually carries are shown —
- * `name`, `sku`, `slug`, `variants[].{id,sku}`, plus price (Pricing's product-level, real
- * `getPrices()`) and availability (Inventory, summed across warehouses). The DTO has no
- * description, image/media, brand, or category fields, so none are rendered — see the Phase 2
- * report for the full list of fields evaluated and why each was included or omitted.
+ * `name`, `sku`, `slug`, `description` (plain text), `options`,
+ * `variants[].{id,sku,selection,title,price,compareAt,imageId}`, `media[]` (Plan 2C-3: `{ id, url, alt,
+ * width, height }` each), plus availability (Inventory, summed across warehouses). Plan 2A: the shopper buys a VARIANT, so the price shown (and added to the
+ * cart) follows the variant picked in {@link VariantPicker}. Plan 2C-1: that variant price is the
+ * ONLY price source — the Pricing screen is not consulted. The DTO has no brand or category
+ * fields, so none are rendered. The gallery shows the product's pictures; picking a variant that has its
+ * own picture switches the large one to it ({@link ProductSelectionProvider} joins the picker and the
+ * gallery while the page stays a Server Component).
  *
  * T5.18 added a reviews section below the core product card (display only at the time). T5.18-write
  * adds the submission form: rendered only when {@link resolveCurrentCustomer} confirms a REAL
@@ -64,8 +89,7 @@ export default async function ProductDetailPage({
   }
 
   const { product } = result;
-  const [priceBook, availabilityBook, reviewsPage, customer] = await Promise.all([
-    PriceBook.load(),
+  const [availabilityBook, reviewsPage, customer] = await Promise.all([
     AvailabilityBook.load(),
     getProductReviews(product.id, PRODUCT_REVIEWS_PAGE_SIZE, reviewsAfter),
     /**
@@ -82,8 +106,19 @@ export default async function ProductDetailPage({
      */
     resolveCurrentCustomer((await cookies()).get(CUSTOMER_SESSION_COOKIE)?.value),
   ]);
-  const price = priceBook?.resolve(product.id) ?? { status: "unavailable" as const };
-  const availability = availabilityBook?.resolve(product.id) ?? { status: "unknown" as const };
+  const price = priceOf(product);
+  const availability = availabilityBook?.resolveProduct(product) ?? { status: "unknown" as const };
+  // Plan 2B-1: each size has its own stock. A variant that sells past zero is "unlimited"; one with
+  // no inventory row at all is left out (unknown stock never blocks a sale on its own).
+  const availabilityByVariant: Record<string, number | "unlimited"> = {};
+  for (const variant of product.variants) {
+    if (variant.sellableWhenOutOfStock) {
+      availabilityByVariant[variant.id] = "unlimited";
+      continue;
+    }
+    const stock = availabilityBook?.resolve(product.id, variant.id);
+    if (stock?.status === "ok") availabilityByVariant[variant.id] = stock.available;
+  }
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 p-8">
@@ -94,68 +129,59 @@ export default async function ProductDetailPage({
         {t.product.backToShop}
       </Link>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <span
-              className="bg-secondary text-secondary-foreground flex size-9 shrink-0 items-center justify-center rounded-md"
-              aria-hidden="true"
-            >
-              <PackageIcon className="size-4" />
-            </span>
-            <h1>
-              <CardTitle as="div">{product.name}</CardTitle>
-            </h1>
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <p className="text-muted-foreground text-sm">
-            {t.product.sku}: {product.sku}
-          </p>
+      <ProductSelectionProvider>
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <span
+                className="bg-secondary text-secondary-foreground flex size-9 shrink-0 items-center justify-center rounded-md"
+                aria-hidden="true"
+              >
+                <PackageIcon className="size-4" />
+              </span>
+              <h1>
+                <CardTitle as="div">{product.name}</CardTitle>
+              </h1>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <ProductGallery media={product.media ?? []} productName={product.name} t={t} />
 
-          <div className="flex items-center gap-3">
-            <PriceLabel price={price} t={t} locale={locale} />
-            <AvailabilityBadge availability={availability} t={t} locale={locale} />
-          </div>
+            <p className="text-muted-foreground text-sm">
+              {t.product.sku}: {product.sku}
+            </p>
 
-          {price.status === "ok" && (
-            <AddToCartButton
-              productId={product.id}
-              outOfStock={availability.status === "ok" && availability.available <= 0}
-              t={t}
-            />
-          )}
+            {/* Plan 2C-1: PLAIN TEXT, rendered as text — never as HTML (no dangerouslySetInnerHTML). */}
+            {product.description !== null && (
+              <p className="whitespace-pre-line text-sm">{product.description}</p>
+            )}
 
-          {/*
-           * Shown only to a signed-in customer — a wishlist has no `customerRef` to be scoped to
-           * for an anonymous shopper, so there is nothing to offer rather than a control that would
-           * fail on click. An `"error"` resolution renders nothing either: when the session cannot
-           * be verified, the safe default is to withhold the control, not to guess.
-           */}
-          {customer.status === "signed-in" && (
-            <AddToWishlistButton productRef={product.id} t={t} />
-          )}
+            <div className="flex items-center gap-3">
+              {price.status !== "ok" && <PriceLabel price={price} t={t} locale={locale} />}
+              <AvailabilityBadge availability={availability} t={t} locale={locale} />
+            </div>
 
-          {product.variants.length > 0 && (
-            <>
-              <Separator />
-              <div className="flex flex-col gap-2">
-                <h2 className="text-sm font-semibold">{t.product.variants}</h2>
-                <ul className="flex flex-col gap-2">
-                  {product.variants.map((variant) => (
-                    <li
-                      key={variant.id}
-                      className="border-border rounded-md border px-3 py-2 text-sm"
-                    >
-                      {t.product.variantSku.replace("{sku}", variant.sku)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+            {price.status === "ok" && (
+              <VariantPicker
+                product={product}
+                availabilityByVariant={availabilityByVariant}
+                t={t}
+                locale={locale}
+              />
+            )}
+
+            {/*
+             * Shown only to a signed-in customer — a wishlist has no `customerRef` to be scoped to
+             * for an anonymous shopper, so there is nothing to offer rather than a control that would
+             * fail on click. An `"error"` resolution renders nothing either: when the session cannot
+             * be verified, the safe default is to withhold the control, not to guess.
+             */}
+            {customer.status === "signed-in" && (
+              <AddToWishlistButton productRef={product.id} t={t} />
+            )}
+          </CardContent>
+        </Card>
+      </ProductSelectionProvider>
 
       {/*
        * Same `"error"`-withholds-the-control discipline as `AddToWishlistButton` above: when the

@@ -22,6 +22,7 @@ export interface FiscalDeps {
 
 export interface OpenFiscalPeriodInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly startDate: Date;
   readonly endDate: Date;
 }
@@ -50,7 +51,7 @@ export class OpenFiscalPeriod implements UseCase<OpenFiscalPeriodInput, { period
     }
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.fiscalPeriods.save(period, tx);
+      await this.deps.fiscalPeriods.save(period, input.tenantId, tx);
       return ok({ periodId: period.id.toString() });
     });
   }
@@ -58,6 +59,7 @@ export class OpenFiscalPeriod implements UseCase<OpenFiscalPeriodInput, { period
 
 export interface CloseFiscalPeriodInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly periodId: string;
 }
 
@@ -81,7 +83,7 @@ export class CloseFiscalPeriod implements UseCase<CloseFiscalPeriodInput, { peri
     if (!authz.ok) return err(authz.error);
 
     return this.deps.unitOfWork.run(async (tx) => {
-      const period = await this.deps.fiscalPeriods.findById(input.periodId, tx);
+      const period = await this.deps.fiscalPeriods.findById(input.periodId, input.tenantId, tx);
       if (period === null) return err(new NotFoundError("Fiscal period not found"));
 
       try {
@@ -91,7 +93,7 @@ export class CloseFiscalPeriod implements UseCase<CloseFiscalPeriodInput, { peri
         throw error;
       }
 
-      await this.deps.fiscalPeriods.save(period, tx);
+      await this.deps.fiscalPeriods.save(period, input.tenantId, tx);
       return ok({ periodId: period.id.toString() });
     });
   }
@@ -99,6 +101,7 @@ export class CloseFiscalPeriod implements UseCase<CloseFiscalPeriodInput, { peri
 
 export interface SetExchangeRateInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly baseCurrency: string;
   readonly quoteCurrency: string;
   readonly rate: number;
@@ -140,7 +143,7 @@ export class SetExchangeRate implements UseCase<SetExchangeRateInput, { rateId: 
     }
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.exchangeRates.add(rate, tx);
+      await this.deps.exchangeRates.add(rate, input.tenantId, tx);
       return ok({ rateId: rate.id.toString() });
     });
   }

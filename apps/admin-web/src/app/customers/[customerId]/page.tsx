@@ -17,6 +17,7 @@ import { fetchCustomerProfile, fetchIdentityTimeline } from "@/lib/api/customer-
 import { fetchCustomer } from "@/lib/api/customers";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { showPlatformTools } from "@/lib/platform-tools";
 
 function initialsOf(name: string): string {
   return name
@@ -55,10 +56,12 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
   const user = await getCurrentUser();
   const { customerId } = await params;
 
+  // The Customer 360 cards (identity resolution) are for the platform team, not the merchant.
+  const withCustomer360 = showPlatformTools();
   const [result, profileResult, identityTimelineResult] = await Promise.all([
     fetchCustomer(customerId),
-    fetchCustomerProfile("customer_id", customerId),
-    fetchIdentityTimeline("customer_id", customerId),
+    withCustomer360 ? fetchCustomerProfile("customer_id", customerId) : null,
+    withCustomer360 ? fetchIdentityTimeline("customer_id", customerId) : null,
   ]);
 
   if (result.outcome === "unauthorized") {
@@ -113,16 +116,13 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
               <AvatarFallback>{initialsOf(customer.name)}</AvatarFallback>
             </Avatar>
             <div>
-              <h1 className="text-4xl font-semibold tracking-tight">{customer.name}</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">{customer.name}</h1>
               <p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-sm">
                 <MailIcon aria-hidden="true" className="size-4" />
                 {customer.email}
               </p>
             </div>
           </div>
-          <p className="text-muted-foreground mt-2 text-xs">
-            {t.customerDetail.customerReference}: <span className="font-mono">{customer.id}</span>
-          </p>
         </div>
 
         <div className="grid gap-6 xl:grid-cols-3 [&>*]:min-w-0">
@@ -138,10 +138,12 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
           </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
-          <CustomerProfileCard result={profileResult} t={t} locale={locale} />
-          <CustomerIdentityTimelineCard result={identityTimelineResult} t={t} locale={locale} />
-        </div>
+        {profileResult !== null && identityTimelineResult !== null && (
+          <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
+            <CustomerProfileCard result={profileResult} t={t} locale={locale} />
+            <CustomerIdentityTimelineCard result={identityTimelineResult} t={t} locale={locale} />
+          </div>
+        )}
       </div>
     </AppShell>
   );

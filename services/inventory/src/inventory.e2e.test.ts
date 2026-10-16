@@ -9,6 +9,7 @@ function sequentialIds(): IdGenerator {
 }
 
 const clock: Clock = { now: () => new Date("2026-06-30T00:00:00.000Z") };
+const TENANT = "tenant-a";
 
 function wire() {
   return wireInventory({
@@ -23,6 +24,7 @@ describe("inventory (end to end)", () => {
     const app = wire();
 
     const received = await app.inventory.receive({
+      tenantId: TENANT,
       productId: "product-1",
       warehouseId: "wh-1",
       quantity: 10,
@@ -30,6 +32,7 @@ describe("inventory (end to end)", () => {
     expect(received.status).toBe(200);
 
     const reserved = await app.inventory.reserve({
+      tenantId: TENANT,
       productId: "product-1",
       warehouseId: "wh-1",
       quantity: 4,
@@ -45,9 +48,15 @@ describe("inventory (end to end)", () => {
 
   it("rejects reserving more than available (409)", async () => {
     const app = wire();
-    await app.inventory.receive({ productId: "product-2", warehouseId: "wh-1", quantity: 3 });
+    await app.inventory.receive({
+      tenantId: TENANT,
+      productId: "product-2",
+      warehouseId: "wh-1",
+      quantity: 3,
+    });
 
     const response = await app.inventory.reserve({
+      tenantId: TENANT,
       productId: "product-2",
       warehouseId: "wh-1",
       quantity: 5,
@@ -59,6 +68,7 @@ describe("inventory (end to end)", () => {
   it("returns 404 when reserving an unknown item", async () => {
     const app = wire();
     const response = await app.inventory.reserve({
+      tenantId: TENANT,
       productId: "missing",
       warehouseId: "wh-1",
       quantity: 1,
@@ -70,6 +80,7 @@ describe("inventory (end to end)", () => {
   it("rejects an invalid quantity (422)", async () => {
     const app = wire();
     const response = await app.inventory.receive({
+      tenantId: TENANT,
       productId: "product-3",
       warehouseId: "wh-1",
       quantity: 0,
@@ -79,8 +90,14 @@ describe("inventory (end to end)", () => {
 
   it("commits a reservation, dropping on-hand and reserved together", async () => {
     const app = wire();
-    await app.inventory.receive({ productId: "product-4", warehouseId: "wh-1", quantity: 10 });
+    await app.inventory.receive({
+      tenantId: TENANT,
+      productId: "product-4",
+      warehouseId: "wh-1",
+      quantity: 10,
+    });
     const reserved = await app.inventory.reserve({
+      tenantId: TENANT,
       productId: "product-4",
       warehouseId: "wh-1",
       quantity: 4,
@@ -89,6 +106,7 @@ describe("inventory (end to end)", () => {
     const { reservationId } = reserved.body as { reservationId: string };
 
     const committed = await app.inventory.commit({
+      tenantId: TENANT,
       productId: "product-4",
       warehouseId: "wh-1",
       reservationId,
@@ -99,17 +117,29 @@ describe("inventory (end to end)", () => {
 
   it("double-committing the same reservation fails (409, reservation already consumed)", async () => {
     const app = wire();
-    await app.inventory.receive({ productId: "product-5", warehouseId: "wh-1", quantity: 10 });
+    await app.inventory.receive({
+      tenantId: TENANT,
+      productId: "product-5",
+      warehouseId: "wh-1",
+      quantity: 10,
+    });
     const reserved = await app.inventory.reserve({
+      tenantId: TENANT,
       productId: "product-5",
       warehouseId: "wh-1",
       quantity: 4,
       reference: "order-5",
     });
     const { reservationId } = reserved.body as { reservationId: string };
-    await app.inventory.commit({ productId: "product-5", warehouseId: "wh-1", reservationId });
+    await app.inventory.commit({
+      tenantId: TENANT,
+      productId: "product-5",
+      warehouseId: "wh-1",
+      reservationId,
+    });
 
     const second = await app.inventory.commit({
+      tenantId: TENANT,
       productId: "product-5",
       warehouseId: "wh-1",
       reservationId,
@@ -119,9 +149,15 @@ describe("inventory (end to end)", () => {
 
   it("transfers unreserved stock between warehouses", async () => {
     const app = wire();
-    await app.inventory.receive({ productId: "product-6", warehouseId: "wh-1", quantity: 10 });
+    await app.inventory.receive({
+      tenantId: TENANT,
+      productId: "product-6",
+      warehouseId: "wh-1",
+      quantity: 10,
+    });
 
     const transferred = await app.inventory.transfer({
+      tenantId: TENANT,
       productId: "product-6",
       sourceWarehouseId: "wh-1",
       destinationWarehouseId: "wh-2",
@@ -133,9 +169,15 @@ describe("inventory (end to end)", () => {
 
   it("rejects a same-warehouse transfer (422)", async () => {
     const app = wire();
-    await app.inventory.receive({ productId: "product-7", warehouseId: "wh-1", quantity: 10 });
+    await app.inventory.receive({
+      tenantId: TENANT,
+      productId: "product-7",
+      warehouseId: "wh-1",
+      quantity: 10,
+    });
 
     const response = await app.inventory.transfer({
+      tenantId: TENANT,
       productId: "product-7",
       sourceWarehouseId: "wh-1",
       destinationWarehouseId: "wh-1",
@@ -146,9 +188,15 @@ describe("inventory (end to end)", () => {
 
   it("rejects transferring more than available (409)", async () => {
     const app = wire();
-    await app.inventory.receive({ productId: "product-8", warehouseId: "wh-1", quantity: 3 });
+    await app.inventory.receive({
+      tenantId: TENANT,
+      productId: "product-8",
+      warehouseId: "wh-1",
+      quantity: 3,
+    });
 
     const response = await app.inventory.transfer({
+      tenantId: TENANT,
       productId: "product-8",
       sourceWarehouseId: "wh-1",
       destinationWarehouseId: "wh-2",
@@ -160,17 +208,25 @@ describe("inventory (end to end)", () => {
   it("registers a warehouse, rejects a duplicate code, then deactivates it", async () => {
     const app = wire();
 
-    const registered = await app.warehouse.register({ code: "WH-EAST", name: "East DC" });
+    const registered = await app.warehouse.register({
+      tenantId: TENANT,
+      code: "WH-EAST",
+      name: "East DC",
+    });
     expect(registered.status).toBe(201);
     const { warehouseId } = registered.body as { warehouseId: string };
 
-    const duplicate = await app.warehouse.register({ code: "WH-EAST", name: "East DC (dup)" });
+    const duplicate = await app.warehouse.register({
+      tenantId: TENANT,
+      code: "WH-EAST",
+      name: "East DC (dup)",
+    });
     expect(duplicate.status).toBe(409);
 
-    const invalid = await app.warehouse.register({ code: "", name: "Nameless" });
+    const invalid = await app.warehouse.register({ tenantId: TENANT, code: "", name: "Nameless" });
     expect(invalid.status).toBe(422);
 
-    const deactivated = await app.warehouse.deactivate({ warehouseId });
+    const deactivated = await app.warehouse.deactivate({ tenantId: TENANT, warehouseId });
     expect(deactivated.status).toBe(200);
     expect((deactivated.body as { status: string }).status).toBe("inactive");
 
@@ -182,11 +238,15 @@ describe("inventory (end to end)", () => {
 
   it("rejects deactivating an already-inactive warehouse (409)", async () => {
     const app = wire();
-    const registered = await app.warehouse.register({ code: "WH-WEST", name: "West DC" });
+    const registered = await app.warehouse.register({
+      tenantId: TENANT,
+      code: "WH-WEST",
+      name: "West DC",
+    });
     const { warehouseId } = registered.body as { warehouseId: string };
-    await app.warehouse.deactivate({ warehouseId });
+    await app.warehouse.deactivate({ tenantId: TENANT, warehouseId });
 
-    const second = await app.warehouse.deactivate({ warehouseId });
+    const second = await app.warehouse.deactivate({ tenantId: TENANT, warehouseId });
     expect(second.status).toBe(409);
   });
 });

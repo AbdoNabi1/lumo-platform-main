@@ -40,6 +40,7 @@ function createInput(key: string) {
     slots: ["content"],
     events: ["onClick"],
     responsive: true,
+    tenantId: "tenant-1",
   };
 }
 
@@ -51,7 +52,7 @@ describe("Components read use-cases (Phase 4 T4.9)", () => {
       await create.execute(createInput(`component-${i}`));
     }
 
-    const page = await new ListComponentDefinitions(h).execute({ first: 2 });
+    const page = await new ListComponentDefinitions(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -60,6 +61,7 @@ describe("Components read use-cases (Phase 4 T4.9)", () => {
     const rest = await new ListComponentDefinitions(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -75,6 +77,7 @@ describe("Components read use-cases (Phase 4 T4.9)", () => {
 
     const found = await new GetComponentDefinition(h).execute({
       componentDefinitionId: created.value.componentDefinitionId,
+      tenantId: "tenant-1",
     });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
@@ -82,6 +85,7 @@ describe("Components read use-cases (Phase 4 T4.9)", () => {
 
     const missing = await new GetComponentDefinition(h).execute({
       componentDefinitionId: "nope",
+      tenantId: "tenant-1",
     });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;

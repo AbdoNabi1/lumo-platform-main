@@ -55,6 +55,7 @@ import type {
   EmergencyRevokeCredentialsInput,
   GetCredentialLineage,
   RotateDueCredentials,
+  RotateDueCredentialsInput,
   ScheduleCredentialRotation,
   ScheduleCredentialRotationInput,
 } from "../application/credential.use-cases";
@@ -115,6 +116,10 @@ import type {
   RevokeRoleAssignment,
   RevokeRoleAssignmentInput,
 } from "../application/authorization.use-cases";
+import type {
+  ListPrincipalRoleKeys,
+  ListPrincipalRoleKeysInput,
+} from "../application/principal-roles.use-cases";
 import type {
   IssueCredential,
   IssueCredentialInput,
@@ -177,6 +182,7 @@ import type {
   SecretExplorer,
   SecurityAnalytics,
   SecurityConsoleReadModels,
+  TenantBaselineState,
   SecurityDashboard,
   SecurityRegistryExplorer,
   SessionExplorer,
@@ -216,6 +222,8 @@ export interface SecurityControllerDeps {
   readonly configureTenantSecurity: ConfigureTenantSecurity;
   // Zero-trust + audit
   readonly evaluateAccess: EvaluateAccess;
+  /** Plan 1B-2 — the role keys a principal holds now (staff token minting). */
+  readonly listPrincipalRoleKeys: ListPrincipalRoleKeys;
   readonly verifyAuditChain: VerifyAuditChain;
   // P2.0-B — authentication, MFA, device, risk
   readonly registerAuthMethod: RegisterAuthMethod;
@@ -368,6 +376,9 @@ export class SecurityController {
   async evaluateAccess(input: EvaluateAccessInput): Promise<ControllerResponse> {
     return present(await this.deps.evaluateAccess.execute(input), 200);
   }
+  async listPrincipalRoleKeys(input: ListPrincipalRoleKeysInput): Promise<ControllerResponse> {
+    return present(await this.deps.listPrincipalRoleKeys.execute(input), 200);
+  }
   async verifyAuditChain(input: VerifyAuditChainInput): Promise<ControllerResponse> {
     return present(await this.deps.verifyAuditChain.execute(input), 200);
   }
@@ -419,8 +430,8 @@ export class SecurityController {
   ): Promise<ControllerResponse> {
     return present(await this.deps.scheduleCredentialRotation.execute(input), 200);
   }
-  async rotateDueCredentials(): Promise<ControllerResponse> {
-    return present(await this.deps.rotateDueCredentials.execute(), 200);
+  async rotateDueCredentials(input: RotateDueCredentialsInput): Promise<ControllerResponse> {
+    return present(await this.deps.rotateDueCredentials.execute(input), 200);
   }
   async emergencyRevokeCredentials(
     input: EmergencyRevokeCredentialsInput,
@@ -518,49 +529,56 @@ export class SecurityController {
   }
 
   // ── Console read models (Part 10) ─────────────────────────────────────────
-  async identityOverview(): Promise<IdentityOverview> {
-    return this.deps.readModels.identityOverview();
+  async identityOverview(tenantId: string): Promise<IdentityOverview> {
+    return this.deps.readModels.identityOverview(tenantId);
   }
-  async permissionExplorer(): Promise<PermissionExplorer> {
-    return this.deps.readModels.permissionExplorer();
+  /** T10.6: the STORED state of a tenant's baseline, for provisioning's completeness report. */
+  async tenantBaseline(tenantId: string, ownerExternalId?: string): Promise<TenantBaselineState> {
+    return this.deps.readModels.tenantBaseline(tenantId, ownerExternalId);
   }
-  async auditExplorer(tenantRef: string | null = null): Promise<AuditExplorer> {
-    return this.deps.readModels.auditExplorer(tenantRef);
+  async permissionExplorer(tenantId: string): Promise<PermissionExplorer> {
+    return this.deps.readModels.permissionExplorer(tenantId);
   }
-  async securityDashboard(tenantRef: string | null = null): Promise<SecurityDashboard> {
-    return this.deps.readModels.securityDashboard(tenantRef);
+  async auditExplorer(tenantId: string, tenantRef: string | null = null): Promise<AuditExplorer> {
+    return this.deps.readModels.auditExplorer(tenantId, tenantRef);
   }
-  async deviceExplorer(): Promise<DeviceExplorer> {
-    return this.deps.readModels.deviceExplorer();
+  async securityDashboard(
+    tenantId: string,
+    tenantRef: string | null = null,
+  ): Promise<SecurityDashboard> {
+    return this.deps.readModels.securityDashboard(tenantId, tenantRef);
   }
-  async machineIdentityExplorer(): Promise<MachineIdentityExplorer> {
-    return this.deps.readModels.machineIdentityExplorer();
+  async deviceExplorer(tenantId: string): Promise<DeviceExplorer> {
+    return this.deps.readModels.deviceExplorer(tenantId);
+  }
+  async machineIdentityExplorer(tenantId: string): Promise<MachineIdentityExplorer> {
+    return this.deps.readModels.machineIdentityExplorer(tenantId);
   }
   registryExplorer(): SecurityRegistryExplorer {
     return this.deps.readModels.registryExplorer();
   }
-  async incidentExplorer(): Promise<IncidentExplorer> {
-    return this.deps.readModels.incidentExplorer();
+  async incidentExplorer(tenantId: string): Promise<IncidentExplorer> {
+    return this.deps.readModels.incidentExplorer(tenantId);
   }
-  async trustCenter(tenantRef: string | null = null): Promise<TrustCenter> {
-    return this.deps.readModels.trustCenter(tenantRef);
+  async trustCenter(tenantId: string, tenantRef: string | null = null): Promise<TrustCenter> {
+    return this.deps.readModels.trustCenter(tenantId, tenantRef);
   }
   securityAnalytics(): SecurityAnalytics {
     return this.deps.readModels.securityAnalytics();
   }
-  async sessionExplorer(): Promise<SessionExplorer> {
-    return this.deps.readModels.sessionExplorer();
+  async sessionExplorer(tenantId: string): Promise<SessionExplorer> {
+    return this.deps.readModels.sessionExplorer(tenantId);
   }
-  async policyExplorer(): Promise<PolicyExplorer> {
-    return this.deps.readModels.policyExplorer();
+  async policyExplorer(tenantId: string): Promise<PolicyExplorer> {
+    return this.deps.readModels.policyExplorer(tenantId);
   }
   riskExplorer(): RiskExplorer {
     return this.deps.readModels.riskExplorer();
   }
-  async secretExplorer(): Promise<SecretExplorer> {
-    return this.deps.readModels.secretExplorer();
+  async secretExplorer(tenantId: string): Promise<SecretExplorer> {
+    return this.deps.readModels.secretExplorer(tenantId);
   }
-  async aiGovernanceExplorer(): Promise<AiGovernanceExplorer> {
-    return this.deps.readModels.aiGovernanceExplorer();
+  async aiGovernanceExplorer(tenantId: string): Promise<AiGovernanceExplorer> {
+    return this.deps.readModels.aiGovernanceExplorer(tenantId);
   }
 }

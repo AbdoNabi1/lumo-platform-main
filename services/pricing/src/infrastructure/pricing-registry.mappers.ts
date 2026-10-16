@@ -37,7 +37,10 @@ export class TaxClassMapper {
 export interface PricingRuleRow {
   readonly id: string;
   readonly type: string;
-  readonly value: number;
+  // WP-11 (F-07): `value` is `Decimal` in the schema now (was `Float`) — Prisma returns a
+  // `Prisma.Decimal` instance for it at runtime, not a plain `number`. `unknown` here (rather
+  // than a convenience-lie `number`) forces `toDomain` below to convert explicitly.
+  readonly value: unknown;
   readonly priority: number;
   readonly active: boolean;
   readonly version: number;
@@ -49,7 +52,11 @@ export class PricingRuleMapper {
     return PricingRule.reconstitute(
       UniqueEntityId.from(row.id),
       row.type as PricingRuleType,
-      row.value,
+      // `Number(x)` on a `Prisma.Decimal` calls its `valueOf()`/`toString()` (decimal.js),
+      // which is the exact decimal string — a correct, one-time, non-accumulating conversion.
+      // `PricingRule.value` is read-only after creation (no repeated-increment risk), so unlike
+      // `UsageCounter`/`Credit` this domain class does not need its own `Decimal` accumulator.
+      Number(row.value),
       row.priority,
       row.active,
       row.version,

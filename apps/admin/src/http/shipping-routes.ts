@@ -75,7 +75,8 @@ export function shippingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Open a shipment for a fulfillment order's packages",
       schema: { body: createShipmentBody },
-      handle: ({ body, context }) => admin.shipping.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.shipping.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -87,6 +88,7 @@ export function shippingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: shipmentIdParams, body: advanceBody },
       handle: ({ params, body, context }) =>
         admin.shipping.advance(context.principal, {
+          tenantId: context.tenantId,
           shipmentId: params.shipmentId,
           toStatus: body.toStatus as Parameters<typeof admin.shipping.advance>[1]["toStatus"],
         }),
@@ -99,7 +101,8 @@ export function shippingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Request a label from the carrier via the CarrierProviderPort",
       schema: { params: shipmentIdParams },
-      handle: ({ params, context }) => admin.shipping.createLabel(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.shipping.createLabel(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -109,7 +112,8 @@ export function shippingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Void the shipment's label at the carrier",
       schema: { params: shipmentIdParams },
-      handle: ({ params, context }) => admin.shipping.voidLabel(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.shipping.voidLabel(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -122,6 +126,7 @@ export function shippingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.shipping.updateTracking(context.principal, {
           shipmentId: params.shipmentId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -132,7 +137,8 @@ export function shippingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Retry a shipment from a recoverable state",
       schema: { params: shipmentIdParams },
-      handle: ({ params, context }) => admin.shipping.retry(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.shipping.retry(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -143,6 +149,7 @@ export function shippingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: shipmentByFulfillmentParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
         const response = await admin.shipping.getByFulfillment(context.principal, {
+          tenantId: context.tenantId,
           fulfillmentRef: params.fulfillmentOrderId,
         });
         if (response.status !== 200) {
@@ -159,7 +166,11 @@ export function shippingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Record a carrier webhook (replay-safe)",
       schema: { params: shipmentIdParams, body: recordWebhookBody },
       handle: ({ params, body, context }) =>
-        admin.shipping.recordWebhook(context.principal, { shipmentId: params.shipmentId, ...body }),
+        admin.shipping.recordWebhook(context.principal, {
+          shipmentId: params.shipmentId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
   ] as readonly RouteDefinition[];
 }

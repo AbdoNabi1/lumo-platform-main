@@ -21,11 +21,19 @@ function wire() {
 describe("theme (end to end)", () => {
   it("runs the full lifecycle: create (seeded from design tokens) -> publish, publishing canonical events", async () => {
     const app = wire();
-    const created = await app.theme.create({ name: "Default", presetKey: "default" });
+    const created = await app.theme.create({
+      name: "Default",
+      presetKey: "default",
+      tenantId: "tenant-local",
+    });
     expect(created.status).toBe(201);
     const themeId = (created.body as { themeId: string }).themeId;
 
-    const published = await app.theme.advance({ themeId, toStatus: "active" });
+    const published = await app.theme.advance({
+      themeId,
+      toStatus: "active",
+      tenantId: "tenant-local",
+    });
     expect(published.status).toBe(200);
 
     expect(await app.drainOutbox()).toBeGreaterThan(0);
@@ -34,14 +42,22 @@ describe("theme (end to end)", () => {
 
   it("rejects creating a duplicate theme name (409)", async () => {
     const app = wire();
-    await app.theme.create({ name: "Default", presetKey: "default" });
-    const response = await app.theme.create({ name: "Default", presetKey: "dark" });
+    await app.theme.create({ name: "Default", presetKey: "default", tenantId: "tenant-local" });
+    const response = await app.theme.create({
+      name: "Default",
+      presetKey: "dark",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(409);
   });
 
   it("returns 404 for an unknown theme", async () => {
     const app = wire();
-    const response = await app.theme.advance({ themeId: "missing", toStatus: "active" });
+    const response = await app.theme.advance({
+      themeId: "missing",
+      toStatus: "active",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(404);
   });
 });

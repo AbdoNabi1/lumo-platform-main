@@ -53,7 +53,7 @@ export function isUsageMetricType(value: string): value is UsageMetricType {
   return (USAGE_METRIC_TYPES as readonly string[]).includes(value);
 }
 
-/** The seed catalog — the billable resources of Lumo (Products, Orders, AI, Storage, Media, API, Emails, SMS, …). */
+/** The seed catalog — the billable resources of Morbeh (Products, Orders, AI, Storage, Media, API, Emails, SMS, …). */
 const SEED: readonly UsageResourceDefinition[] = [
   {
     resource: "AI_TOKEN",

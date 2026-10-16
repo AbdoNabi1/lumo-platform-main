@@ -9,6 +9,8 @@ import { loadRoleClosure } from "./authz-helpers";
 import { recordAudit, securityEvent, type SecurityDeps } from "./deps";
 
 export interface RelationTupleInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly namespace: string;
   readonly object: string;
   readonly relation: string;
@@ -36,7 +38,7 @@ export class WriteRelationTuple implements UseCase<
       subject: input.subject,
     });
     return this.deps.unitOfWork.run<Result<RelationTupleOutput, DomainError>>(async (tx) => {
-      await this.deps.relationTuples.put(tuple, tx);
+      await this.deps.relationTuples.put(tuple, input.tenantId, tx);
       await this.deps.outbox.publish(
         [
           securityEvent(
@@ -48,9 +50,11 @@ export class WriteRelationTuple implements UseCase<
             "written",
           ),
         ],
+        input.tenantId,
         tx,
       );
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: "system",
         action: "security.relation.written",
         decision: "allow",
@@ -77,7 +81,7 @@ export class DeleteRelationTuple implements UseCase<
   ): Promise<Result<DeleteRelationTupleOutput, DomainError>> {
     const key = new RelationTuple({ id: "lookup", ...input }).key();
     return this.deps.unitOfWork.run<Result<DeleteRelationTupleOutput, DomainError>>(async (tx) => {
-      const removed = await this.deps.relationTuples.remove(key, tx);
+      const removed = await this.deps.relationTuples.remove(key, input.tenantId, tx);
       if (removed) {
         await this.deps.outbox.publish(
           [
@@ -90,9 +94,11 @@ export class DeleteRelationTuple implements UseCase<
               "deleted",
             ),
           ],
+          input.tenantId,
           tx,
         );
         await recordAudit(this.deps, tx, {
+          tenantId: input.tenantId,
           principalRef: "system",
           action: "security.relation.deleted",
           decision: "allow",
@@ -105,6 +111,8 @@ export class DeleteRelationTuple implements UseCase<
 }
 
 export interface CheckAccessInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   readonly permission: string;
   readonly scope?: SecurityScopeProps;
@@ -140,7 +148,10 @@ export class CheckAccess implements UseCase<CheckAccessInput, AccessModelDecisio
     const requiredSpec = PermissionSpec.parse(input.permission);
     if (!requiredSpec.ok) return err(requiredSpec.error);
     const now = this.deps.clock.now();
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) {
       return ok({
         allowed: false,
@@ -154,10 +165,14 @@ export class CheckAccess implements UseCase<CheckAccessInput, AccessModelDecisio
     // RBAC
     const requestScope =
       input.scope === undefined ? SecurityScope.platform() : SecurityScope.of(input.scope);
-    const assignments = await this.deps.assignments.listByPrincipal(principal.id.toString());
+    const assignments = await this.deps.assignments.listByPrincipal(
+      principal.id.toString(),
+      input.tenantId,
+    );
     const roles = await loadRoleClosure(
       this.deps.roles,
       assignments.map((a) => a.roleKey),
+      input.tenantId,
     );
     const effective = this.deps.authorization.resolve({ assignments, roles, requestScope, now });
     const rbacGranted = this.deps.authorization.isAuthorized(effective, requiredSpec.value);
@@ -169,12 +184,15 @@ export class CheckAccess implements UseCase<CheckAccessInput, AccessModelDecisio
       input.object !== undefined &&
       input.relation !== undefined
     ) {
-      rebacGranted = await this.deps.relationshipCheck.check({
-        namespace: input.namespace,
-        object: input.object,
-        relation: input.relation,
-        subjectId: principal.externalId,
-      });
+      rebacGranted = await this.deps.relationshipCheck.check(
+        {
+          namespace: input.namespace,
+          object: input.object,
+          relation: input.relation,
+          subjectId: principal.externalId,
+        },
+        input.tenantId,
+      );
     }
 
     // ABAC
@@ -203,6 +221,7 @@ export class CheckAccess implements UseCase<CheckAccessInput, AccessModelDecisio
 
     return this.deps.unitOfWork.run<Result<AccessModelDecision, DomainError>>(async (tx) => {
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: requiredSpec.value.toString(),
         decision: allowed ? "allow" : "deny",

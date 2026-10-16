@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { staticProviders } from "./test-support/static-provider-resolver";
 import type {
   Clock,
   IdGenerator,
@@ -34,7 +35,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
   >();
   private readonly tenantId = "tenant-local";
 
-  async save(intent: PaymentIntent): Promise<void> {
+  async save(intent: PaymentIntent, _tenantId: string): Promise<void> {
     const id = intent.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -49,7 +50,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, existing.intentRow.version + 1);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
+  async findById(id: string, _tenantId: string): Promise<PaymentIntent | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     return PaymentIntentMapper.toDomain(
@@ -60,7 +61,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     );
   }
 
-  async findByIdempotencyKey(): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(_key: string, _tenantId: string): Promise<PaymentIntent | null> {
     return null;
   }
 
@@ -160,7 +161,7 @@ function buildDeps(
     unitOfWork,
     idGenerator: sequentialIds("evt"),
     clock,
-    paymentProvider,
+    providers: staticProviders(paymentProvider),
   };
 }
 
@@ -172,7 +173,9 @@ describe("Task 4/5 — exploit proof: PSP createIntent() call happens while a DB
     const lifecycle = new CreatePaymentIntentLifecycle(buildDeps(repo, provider, uow));
 
     const result = await lifecycle.execute({
+      tenantId: "tenant-a",
       orderRef: "order-1",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });
@@ -202,7 +205,13 @@ describe("Task 4/5 — exploit proof: PSP createIntent() call happens while a DB
     };
     const lifecycle = new CreatePaymentIntentLifecycle(buildDeps(repo, provider, uow));
 
-    await lifecycle.execute({ orderRef: "order-2", amountMinor: 500, currency: "USD" });
+    await lifecycle.execute({
+      tenantId: "tenant-a",
+      orderRef: "order-2",
+      provider: "stripe",
+      amountMinor: 500,
+      currency: "USD",
+    });
 
     expect(sizeDuringPspCall).toBe(1);
   });
@@ -216,7 +225,13 @@ describe("Task 5 — PSP failure recovery on create", () => {
     const lifecycle = new CreatePaymentIntentLifecycle(buildDeps(repo, failingProvider, uow));
 
     await expect(
-      lifecycle.execute({ orderRef: "order-fail", amountMinor: 1000, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        orderRef: "order-fail",
+        provider: "stripe",
+        amountMinor: 1000,
+        currency: "USD",
+      }),
     ).rejects.toThrow(/simulated PSP createIntent failure/);
 
     expect(repo.size()).toBe(1);
@@ -232,13 +247,21 @@ describe("Task 5 — PSP failure recovery on create", () => {
       buildDeps(repo, failingProvider, uow),
     );
     await expect(
-      failingLifecycle.execute({ orderRef: "order-retry", amountMinor: 1000, currency: "USD" }),
+      failingLifecycle.execute({
+        tenantId: "tenant-a",
+        orderRef: "order-retry",
+        provider: "stripe",
+        amountMinor: 1000,
+        currency: "USD",
+      }),
     ).rejects.toThrow();
 
     const workingProvider = new RecordingCreateProvider(uow, false);
     const retryLifecycle = new CreatePaymentIntentLifecycle(buildDeps(repo, workingProvider, uow));
     const retried = await retryLifecycle.execute({
+      tenantId: "tenant-a",
       orderRef: "order-retry",
+      provider: "stripe",
       amountMinor: 1000,
       currency: "USD",
     });
@@ -258,8 +281,20 @@ describe("Task 4 — concurrent create requests never race on shared state", () 
     const lifecycle = new CreatePaymentIntentLifecycle(buildDeps(repo, provider, uow));
 
     const [a, b] = await Promise.all([
-      lifecycle.execute({ orderRef: "order-a", amountMinor: 100, currency: "USD" }),
-      lifecycle.execute({ orderRef: "order-b", amountMinor: 200, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        orderRef: "order-a",
+        provider: "stripe",
+        amountMinor: 100,
+        currency: "USD",
+      }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        orderRef: "order-b",
+        provider: "stripe",
+        amountMinor: 200,
+        currency: "USD",
+      }),
     ]);
 
     expect(a.ok).toBe(true);

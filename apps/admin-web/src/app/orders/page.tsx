@@ -15,9 +15,11 @@ import { AppShell } from "@/components/app-shell";
 import { OrdersPagination } from "@/components/orders/orders-pagination";
 import { OrdersTable } from "@/components/orders/orders-table";
 import { OrdersToolbar } from "@/components/orders/orders-toolbar";
+import { UnfulfilledFilterNote } from "@/components/orders/unfulfilled-filter-note";
 import { fetchOrdersPage } from "@/lib/api/orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
+import { showPlatformTools } from "@/lib/platform-tools";
 import type { Dictionary } from "@/messages/en";
 
 const PAGE_SIZE = 20;
@@ -27,6 +29,8 @@ interface OrdersPageProps {
     readonly q?: string;
     readonly status?: string;
     readonly after?: string;
+    /** Plan 3D: `unfulfilled` when opened from Home's "Orders to fulfill" card. */
+    readonly fulfillment?: string;
   }>;
 }
 
@@ -44,22 +48,26 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const t = dictionaryFor(locale);
   const user = await getCurrentUser();
   const params = await searchParams;
+  const fulfillment = params.fulfillment === "unfulfilled" ? "unfulfilled" : undefined;
 
   return (
     <AppShell t={t} locale={locale} activeNavId="orders" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-semibold tracking-tight">{t.ordersPage.title}</h1>
-            <p className="text-md text-muted-foreground mt-1">{t.ordersPage.subtitle}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{t.ordersPage.title}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">{t.ordersPage.subtitle}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" asChild>
-              <Link href="/orders/from-checkout">
-                <UploadIcon aria-hidden="true" />
-                {t.ordersPage.createFromCheckout}
-              </Link>
-            </Button>
+            {/* A recovery tool for the platform team, not a merchant action. */}
+            {showPlatformTools() && (
+              <Button variant="outline" asChild>
+                <Link href="/orders/from-checkout">
+                  <UploadIcon aria-hidden="true" />
+                  {t.ordersPage.createFromCheckout}
+                </Link>
+              </Button>
+            )}
             <Button asChild>
               <Link href="/orders/new">
                 <PlusIcon aria-hidden="true" />
@@ -71,8 +79,10 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
 
         <OrdersToolbar t={t} />
 
+        {fulfillment !== undefined && <UnfulfilledFilterNote t={t} />}
+
         <Suspense
-          key={`${params.q ?? ""}:${params.status ?? ""}:${params.after ?? ""}`}
+          key={`${params.q ?? ""}:${params.status ?? ""}:${params.after ?? ""}:${fulfillment ?? ""}`}
           fallback={<OrdersTableSkeleton />}
         >
           <OrdersResults
@@ -80,6 +90,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
             after={params.after}
             status={params.status}
             search={params.q}
+            fulfillment={fulfillment}
             t={t}
             locale={locale}
           />
@@ -94,6 +105,7 @@ async function OrdersResults({
   after,
   status,
   search,
+  fulfillment,
   t,
   locale,
 }: {
@@ -101,11 +113,12 @@ async function OrdersResults({
   readonly after: string | undefined;
   readonly status: string | undefined;
   readonly search: string | undefined;
+  readonly fulfillment: "unfulfilled" | undefined;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
-  const hasFilters = Boolean(search) || Boolean(status);
-  const result = await fetchOrdersPage({ first, after, status, search });
+  const hasFilters = Boolean(search) || Boolean(status) || fulfillment !== undefined;
+  const result = await fetchOrdersPage({ first, after, status, search, fulfillment });
 
   if (result.outcome === "unauthorized") {
     return (

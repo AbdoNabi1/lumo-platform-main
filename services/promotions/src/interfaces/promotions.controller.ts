@@ -1,6 +1,5 @@
-import type { CursorPage } from "@platform/types";
 import type { GetPromotion } from "../application/get-promotion.use-case";
-import type { ListPromotions } from "../application/list-promotions.use-case";
+import type { ListPromotions, ListPromotionsInput } from "../application/list-promotions.use-case";
 import type {
   AdvancePromotion,
   AdvancePromotionInput,
@@ -8,8 +7,13 @@ import type {
   CreatePromotionInput,
   EvaluatePromotions,
   EvaluatePromotionsInput,
+  ListActiveAutomaticPromotions,
+  ListPromotionsForAdmin,
+  ListPromotionsForAdminInput,
   PromotionIdInput,
   RecordPromotionUsage,
+  UpdatePromotion,
+  UpdatePromotionInput,
 } from "../application/promotion.use-cases";
 import { type ControllerResponse, present } from "./presenter";
 
@@ -20,6 +24,9 @@ export interface PromotionsControllerDeps {
   readonly recordPromotionUsage: RecordPromotionUsage;
   readonly listPromotions: ListPromotions;
   readonly getPromotion: GetPromotion;
+  readonly updatePromotion: UpdatePromotion;
+  readonly listActiveAutomatic: ListActiveAutomaticPromotions;
+  readonly listForAdmin: ListPromotionsForAdmin;
 }
 
 /** Framework-agnostic interface boundary for promotions use-cases (no HTTP server). */
@@ -46,11 +53,23 @@ export class PromotionsController {
     return present(await this.deps.recordPromotionUsage.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListPromotionsInput): Promise<ControllerResponse> {
     return present(await this.deps.listPromotions.execute(input), 200);
   }
 
   async get(input: PromotionIdInput): Promise<ControllerResponse> {
     return present(await this.deps.getPromotion.execute(input), 200);
+  }
+
+  async update(input: UpdatePromotionInput): Promise<ControllerResponse> {
+    return present(await this.deps.updatePromotion.execute(input), 200);
+  }
+
+  async listActiveAutomatic(input: { readonly tenantId: string }): Promise<ControllerResponse> {
+    return present(await this.deps.listActiveAutomatic.execute(input), 200);
+  }
+
+  async listForAdmin(input: ListPromotionsForAdminInput): Promise<ControllerResponse> {
+    return present(await this.deps.listForAdmin.execute(input), 200);
   }
 }

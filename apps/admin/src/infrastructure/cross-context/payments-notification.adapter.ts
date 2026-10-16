@@ -47,14 +47,16 @@ export class PaymentsNotificationAdapter implements NotificationPort {
 
   private readonly notifications: Pick<NotificationsController, "create" | "queue" | "send">;
 
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `NotificationPort.notify` carries `tenantId` per call. */
   constructor(notifications: Pick<NotificationsController, "create" | "queue" | "send">) {
     this.notifications = notifications;
   }
 
-  async notify(orderRef: string, status: string): Promise<void> {
+  async notify(orderRef: string, status: string, tenantId: string): Promise<void> {
     const idempotencyKey = `${orderRef}:${status}`;
 
     const createResponse = await this.notifications.create({
+      tenantId,
       idempotencyKey,
       sourceRef: `payments:${orderRef}`,
       recipientRef: orderRef,
@@ -73,7 +75,7 @@ export class PaymentsNotificationAdapter implements NotificationPort {
     }
     const { notificationId } = createResponse.body as CreateNotificationBody;
 
-    const queueResponse = await this.notifications.queue({ notificationId });
+    const queueResponse = await this.notifications.queue({ notificationId, tenantId });
     if (queueResponse.status >= 400) {
       throw new Error(
         `PaymentsNotificationAdapter: queue failed for order "${orderRef}" ` +
@@ -81,7 +83,7 @@ export class PaymentsNotificationAdapter implements NotificationPort {
       );
     }
 
-    const sendResponse = await this.notifications.send({ notificationId });
+    const sendResponse = await this.notifications.send({ notificationId, tenantId });
     if (sendResponse.status >= 400) {
       throw new Error(
         `PaymentsNotificationAdapter: send failed for order "${orderRef}" ` +

@@ -1,10 +1,9 @@
-import type { CursorPage } from "@platform/types";
 import type {
   GetWishlistByCustomer,
   GetWishlistByCustomerInput,
 } from "../application/get-wishlist-by-customer.use-case";
 import type { GetWishlist } from "../application/get-wishlist.use-case";
-import type { ListWishlists } from "../application/list-wishlists.use-case";
+import type { ListWishlists, ListWishlistsInput } from "../application/list-wishlists.use-case";
 import type {
   AddWishlistItem,
   AdvanceWishlist,
@@ -64,7 +63,7 @@ export class WishlistController {
     return present(await this.deps.moveWishlistItemToCart.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListWishlistsInput): Promise<ControllerResponse> {
     return present(await this.deps.listWishlists.execute(input), 200);
   }
 

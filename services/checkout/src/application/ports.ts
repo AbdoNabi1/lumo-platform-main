@@ -1,15 +1,23 @@
 import type { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import type { CheckoutItem } from "../domain/value-objects/checkout-item";
 import type { CheckoutTotals } from "../domain/value-objects/checkout-totals";
+import type {
+  AppliedDiscountSnapshot,
+  DiscountSnapshot,
+} from "../domain/value-objects/discount-snapshot";
 
 export interface PricingValidationResult {
   readonly valid: boolean;
   readonly reason?: string;
 }
 
-/** Requests price validation for the session's item snapshots — Checkout never prices anything itself. */
+/** Requests price validation for the session's item snapshots — Checkout never prices anything itself. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface PricingValidationPort {
-  validate(items: readonly CheckoutItem[], currency: string): Promise<PricingValidationResult>;
+  validate(
+    items: readonly CheckoutItem[],
+    currency: string,
+    tenantId: string,
+  ): Promise<PricingValidationResult>;
 }
 
 export interface InventoryValidationResult {
@@ -17,34 +25,90 @@ export interface InventoryValidationResult {
   readonly reason?: string;
 }
 
-/** Requests stock-availability validation — Checkout never reserves/modifies stock itself. */
+/** Requests stock-availability validation — Checkout never reserves/modifies stock itself. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface InventoryValidationPort {
-  validate(items: readonly CheckoutItem[]): Promise<InventoryValidationResult>;
+  validate(items: readonly CheckoutItem[], tenantId: string): Promise<InventoryValidationResult>;
+}
+
+export type StockReservationResult =
+  { readonly ok: true } | { readonly ok: false; readonly reason: string };
+
+/**
+ * Plan 3C (G-114): holds the stock for a freshly placed order, the way Shopify does when the order is
+ * created. `reserve` is the race-proof second check behind `InventoryValidationPort`; `release` gives
+ * back whatever was held for the order, and is how a half-reserved order is undone. `items` are the
+ * session's lines; the implementation decides where each is taken from. A line that does not track
+ * stock, or that keeps selling when out of stock, never makes `reserve` fail for lack of it.
+ * ADR-0014: `tenantId` is an explicit per-call parameter.
+ */
+export interface OrderStockReservationPort {
+  reserve(
+    orderId: string,
+    items: readonly CheckoutItem[],
+    tenantId: string,
+  ): Promise<StockReservationResult>;
+  release(orderId: string, tenantId: string): Promise<void>;
+}
+
+/** Plan 3C: cancels an order Checkout just placed but could not reserve stock for. ADR-0014: explicit `tenantId`. */
+export interface OrderCancellationPort {
+  cancel(orderId: string, tenantId: string): Promise<void>;
 }
 
 export interface TaxCalculationResult {
   readonly taxMinor: number;
+  /** Plan 3C: true when the tax is already inside the prices (Shopify "All prices include tax"). */
+  readonly included: boolean;
 }
 
-/** Requests a tax calculation from Finance (ADR-0024) — Checkout stores the returned snapshot verbatim, never computes tax. */
+/**
+ * Requests a tax calculation from Finance (ADR-0024) — Checkout stores the returned snapshot
+ * verbatim, never computes tax. Plan 3C: the destination carries the province (a province rate
+ * replaces the country's), `shippingMinor` is the chosen shipping price (taxed only when the shop
+ * charges tax on shipping), and the implementation resolves each line's `taxable` flag from Catalog —
+ * never from the session. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter.
+ */
 export interface TaxCalculationPort {
   calculate(
     items: readonly CheckoutItem[],
-    shippingAddress: { readonly country: string },
+    destination: { readonly country: string; readonly province?: string | undefined },
+    shippingMinor: number,
     currency: string,
+    tenantId: string,
+    /**
+     * What the order gave away before tax: Finance works the tax out AFTER discounts, like Shopify.
+     * Optional so implementations written before discounts existed stay valid.
+     */
+    discounts?: { readonly orderMinor: number; readonly shippingMinor: number },
   ): Promise<TaxCalculationResult>;
 }
 
 export interface ShippingQuote {
+  /** The shipping rate's id; the checkout selects by it. */
   readonly method: string;
+  /** What the shopper sees ("Standard"). */
+  readonly name: string;
   readonly rateAmountMinor: number;
+  readonly description?: string | undefined;
 }
 
-/** Requests shipping rate quotes from Shipping — Checkout stores the chosen quote's snapshot verbatim, never computes rates. */
+/**
+ * Requests shipping rate quotes from Shipping — Checkout stores the chosen quote's snapshot verbatim,
+ * never computes rates. Plan 3C: the quote depends on the zone the address falls in and on the
+ * lines (order price, weight, whether anything needs shipping); the implementation resolves each
+ * line's `requiresShipping` and weight from Catalog — never from the session. No quotes means the shop
+ * does not ship to this address. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter.
+ */
 export interface ShippingCalculationPort {
   quote(
-    shippingAddress: { readonly country: string; readonly postalCode: string },
+    shippingAddress: {
+      readonly country: string;
+      readonly province?: string | undefined;
+      readonly postalCode: string;
+    },
+    items: readonly CheckoutItem[],
     currency: string,
+    tenantId: string,
   ): Promise<readonly ShippingQuote[]>;
 }
 
@@ -64,6 +128,7 @@ export interface PromotionValidationResult {
  * reference and currency carry none of that. `items` and `customerRef` give an implementation
  * enough to build that snapshot; mirrors `PricingValidationPort`/`InventoryValidationPort`, which
  * already take `items` for the same reason.
+ * ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter.
  */
 export interface PromotionValidationPort {
   validate(
@@ -71,7 +136,35 @@ export interface PromotionValidationPort {
     customerRef: string | undefined,
     promotionRef: string | undefined,
     currency: string,
+    tenantId: string,
   ): Promise<PromotionValidationResult>;
+  /**
+   * Phase 2: decides every discount for the session — entered codes and automatic discounts —
+   * against its lines, destination and selected rate. Checkout stores the answer verbatim.
+   */
+  evaluate(input: DiscountEvaluationInput): Promise<DiscountSnapshot>;
+}
+
+/** What Checkout tells Promotions about a session so it can decide every discount (Phase 2). */
+export interface DiscountEvaluationInput {
+  readonly tenantId: string;
+  readonly items: readonly CheckoutItem[];
+  /** Destination country and the selected rate; null until both an address and a method exist. */
+  readonly shipping: { readonly countryCode: string; readonly rateMinor: number } | null;
+  readonly customerRef?: string;
+  readonly email?: string;
+  readonly codes: readonly string[];
+}
+
+/** Records the discounts an order was placed with, so usage limits count them (Phase 2). */
+export interface DiscountUsagePort {
+  record(input: {
+    readonly tenantId: string;
+    readonly orderRef: string;
+    readonly customerRef?: string;
+    readonly email?: string;
+    readonly applied: readonly AppliedDiscountSnapshot[];
+  }): Promise<void>;
 }
 
 /**
@@ -88,13 +181,56 @@ export interface PromotionValidationPort {
  */
 export interface OrderCreationPort {
   create(input: {
+    /** ADR-0014 (WP-10, T10.3): the request's tenant. */
+    readonly tenantId: string;
     readonly checkoutSessionId: string;
     readonly customerRef: string | undefined;
+    /**
+     * A guest session's receipt address (WP-1, G-52). Only meaningful when `customerRef` is
+     * undefined: the implementation resolves a customer from it. Never proof of identity.
+     */
+    readonly contactEmail?: string;
     readonly currency: string;
     readonly items: readonly CheckoutItem[];
     readonly billingAddress: CheckoutAddress;
     readonly shippingAddress: CheckoutAddress;
     readonly totals: CheckoutTotals;
+    /** The shipping method the shopper selected (Plan 3B); the order snapshots it with the totals. */
+    readonly shippingMethod?: string;
+    /** Phase 2: the discounts the shopper got, as shown at checkout; absent when none. */
+    readonly discounts?: readonly AppliedDiscountSnapshot[];
     readonly idempotencyKey: string;
   }): Promise<{ readonly orderRef: string }>;
+}
+
+/**
+ * Which payment methods this merchant currently offers (WP-13). Checkout never decides this — it
+ * asks the owning context (Payments) and only ever validates the shopper's choice against the
+ * answer. The list carries no priority: nothing here, or downstream, picks its first entry.
+ * ADR-0014: `tenantId` is an explicit per-call parameter.
+ */
+export interface PaymentMethodPort {
+  enabledMethods(tenantId: string): Promise<readonly string[]>;
+}
+
+/**
+ * Opens the payment for a completed checkout's order, using EXACTLY the method the shopper selected
+ * (WP-13, decision 3) — `provider` is an input the caller passes through from the session's own
+ * selection; no implementation may substitute, default or prefer another. Amount and currency come
+ * from the session's server-derived totals, never from a client. ADR-0014: tenant per call.
+ */
+export interface PaymentInitiationPort {
+  initiate(input: {
+    readonly tenantId: string;
+    readonly orderRef: string;
+    readonly provider: string;
+    readonly amountMinor: number;
+    readonly currency: string;
+  }): Promise<{
+    readonly paymentIntentId: string;
+    readonly status: string;
+    readonly provider: string;
+    /** Where the shopper completes an online payment (a hosted-checkout URL / client secret). Absent for cash on delivery. */
+    readonly clientHandle?: string;
+  }>;
 }

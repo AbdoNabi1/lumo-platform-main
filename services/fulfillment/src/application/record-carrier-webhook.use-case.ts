@@ -9,6 +9,8 @@ import type { FulfillmentStatusValue } from "../domain/value-objects/fulfillment
 import type { ProcessedCarrierWebhookStore } from "./ports";
 
 export interface RecordCarrierWebhookInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly fulfillmentOrderId: string;
   readonly carrier: string;
   readonly eventId: string;
@@ -62,6 +64,7 @@ export class RecordCarrierWebhook implements UseCase<
     return this.deps.unitOfWork.run<Result<RecordCarrierWebhookOutput, DomainError>>(async (tx) => {
       const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(
         input.fulfillmentOrderId,
+        input.tenantId,
         tx,
       );
       if (fulfillmentOrder === null) {
@@ -71,6 +74,7 @@ export class RecordCarrierWebhook implements UseCase<
       const alreadyProcessed = await this.deps.processedCarrierWebhooks.hasProcessed(
         input.carrier,
         input.eventId,
+        input.tenantId,
       );
       if (alreadyProcessed) {
         return ok({
@@ -95,8 +99,12 @@ export class RecordCarrierWebhook implements UseCase<
         throw error;
       }
 
-      await this.deps.fulfillmentOrders.save(fulfillmentOrder, tx);
-      await this.deps.processedCarrierWebhooks.markProcessed(input.carrier, input.eventId);
+      await this.deps.fulfillmentOrders.save(fulfillmentOrder, input.tenantId, tx);
+      await this.deps.processedCarrierWebhooks.markProcessed(
+        input.carrier,
+        input.eventId,
+        input.tenantId,
+      );
       return ok({
         fulfillmentOrderId: fulfillmentOrder.id.toString(),
         status: fulfillmentOrder.status.value,

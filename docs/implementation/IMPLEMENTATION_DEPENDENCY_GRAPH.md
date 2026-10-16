@@ -1,4 +1,4 @@
-# Lumo Platform — Phase A Implementation Dependency Graph
+# Morbeh Platform — Phase A Implementation Dependency Graph
 
 **Status:** Validation only. No code was changed to produce this document.
 **Inputs:** `ARCHITECTURE_REMEDIATION_PLAN.md` (findings → remediation items) and `ARCHITECTURE_EXECUTION_MATRIX.md` (corrected scope, per-item impact analysis, revised ordering). This document takes the execution matrix's corrected 30-sub-item Phase A scope and makes the dependency structure between every pair of items explicit and checkable, then computes the critical path.

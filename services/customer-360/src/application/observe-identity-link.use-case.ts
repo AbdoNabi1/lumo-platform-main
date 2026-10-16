@@ -1,4 +1,4 @@
-﻿import type { UseCase } from "@platform/application";
+import type { UseCase } from "@platform/application";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
@@ -13,6 +13,9 @@ import { IdentityLinkObserved } from "../events/identity-link-observed.event";
 import type { IdentityGraphStore } from "../ports/identity-graph-store";
 
 export interface ObserveIdentityLinkInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly visitorId: string;
   readonly identifiers: readonly { readonly type: IdentifierType; readonly value: string }[];
   readonly observedAt: string;
@@ -70,7 +73,7 @@ export class ObserveIdentityLink implements UseCase<
             source: edge.source,
           },
         );
-        await this.deps.graph.appendEdge(edge, event, tx);
+        await this.deps.graph.appendEdge(edge, input.tenantId, event, tx);
       }
       return ok({ edgesObserved: stitched.edges.length });
     });

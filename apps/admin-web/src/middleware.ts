@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { optionalEnv, requireProdEnv } from "@/lib/env";
+import { readRolesClaim } from "@/lib/auth/claims";
+import { isNativeAuth, jwksFetchHeaders } from "@/lib/auth/native";
 import { deriveCodeChallenge, generateCodeVerifier } from "@/lib/auth/pkce";
+import { publicOrigin } from "@/lib/public-origin";
 
 /**
  * Admin route gate (Phase A.32) + role gate (Phase A.34). Runs on the Edge runtime, so it reads
@@ -27,25 +30,36 @@ const AUTH_JWKS_URL = requireProdEnv(
   "AUTH_JWKS_URL",
   "http://localhost:4444/.well-known/jwks.json",
 );
-const AUTH_AUDIENCE = optionalEnv("AUTH_AUDIENCE", "lumo-admin");
-const AUTH_CLIENT_ID = optionalEnv("AUTH_CLIENT_ID", "lumo-admin-web");
+const AUTH_AUDIENCE = optionalEnv("AUTH_AUDIENCE", "morbeh-admin");
+const AUTH_CLIENT_ID = optionalEnv("AUTH_CLIENT_ID", "morbeh-admin-web");
 const COOKIE_DOMAIN = process.env["COOKIE_DOMAIN"];
 const COOKIE_SAME_SITE = optionalEnv("COOKIE_SAME_SITE", "lax") as "lax" | "strict" | "none";
 
-const SESSION_COOKIE = "lumo_admin_session";
-const OAUTH_STATE_COOKIE = "lumo_oauth_state";
-const RETURN_TO_COOKIE = "lumo_return_to";
+const SESSION_COOKIE = "morbeh_admin_session";
+const OAUTH_STATE_COOKIE = "morbeh_oauth_state";
+const RETURN_TO_COOKIE = "morbeh_return_to";
 /** L-03 (audit) — see lib/auth/config.ts's OAUTH_PKCE_VERIFIER_COOKIE (same value, redefined
  * locally here for the same Edge-safe-by-inspection reason as the three constants above). */
-const PKCE_VERIFIER_COOKIE = "lumo_oauth_pkce_verifier";
+const PKCE_VERIFIER_COOKIE = "morbeh_oauth_pkce_verifier";
 /** G0-1 (launch-readiness review) — see lib/auth/config.ts's OAUTH_NONCE_COOKIE (same value,
  * redefined locally here for the same Edge-safe-by-inspection reason as the constants above). */
-const NONCE_COOKIE = "lumo_oauth_nonce";
+const NONCE_COOKIE = "morbeh_oauth_nonce";
 
 // Hydra's own login/consent callbacks, the token-exchange callback, and the dependency-free health
 // probe must never be gated — gating them would create a redirect loop back into themselves (or,
 // for /api/healthz, make container/k8s health checks depend on the auth backend being reachable).
-const PUBLIC_PREFIXES = ["/login", "/consent", "/auth/callback", "/logout", "/api/healthz"];
+const PUBLIC_PREFIXES = [
+  "/login",
+  "/consent",
+  "/auth/callback",
+  "/auth/native-login",
+  "/forgot-password",
+  "/reset-password",
+  "/auth/forgot",
+  "/auth/reset",
+  "/logout",
+  "/api/healthz",
+];
 
 // Authenticated-but-role-exempt: reachable by ANY authenticated session regardless of role, so
 // `/forbidden` itself can never redirect-loop into another `/forbidden`.
@@ -106,6 +120,7 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/inventory", "operator"],
   ["/pricing", "operator"],
   ["/analytics", "viewer"],
+  ["/account/password", "viewer"],
   ["/", "viewer"],
 ];
 
@@ -132,7 +147,8 @@ function highestRole(roles: readonly unknown[]): Role | undefined {
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
 function getJwks() {
-  jwks ??= createRemoteJWKSet(new URL(AUTH_JWKS_URL));
+  // Plan 1B-2: the runtime resolves a tenant for every route, JWKS included (a no-op for Hydra).
+  jwks ??= createRemoteJWKSet(new URL(AUTH_JWKS_URL), { headers: jwksFetchHeaders() });
   return jwks;
 }
 
@@ -150,7 +166,9 @@ function clearAuthCookies(response: NextResponse): void {
 }
 
 export async function middleware(request: NextRequest): Promise<NextResponse> {
-  const { pathname, search, origin } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
+  // Not Next's own request origin: behind a proxy that is the container's bind address (public-origin.ts).
+  const origin = publicOrigin(request);
 
   if (
     PUBLIC_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)) ||
@@ -176,8 +194,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
         return NextResponse.next();
       }
 
-      const rolesClaim = payload["roles"];
-      const roles = Array.isArray(rolesClaim) ? rolesClaim : [];
+      // Hydra nests the consent UI's `session.access_token` claims under `ext` — see claims.ts.
+      // Reading only the top level made `roles` empty for every real browser login, so this
+      // redirected each gated page to /forbidden on a perfectly valid session.
+      const roles = readRolesClaim(payload);
       const role = highestRole(roles);
       const required = requiredRoleFor(pathname);
       if (role === undefined || ROLE_RANK[role] < ROLE_RANK[required]) {
@@ -187,6 +207,15 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     } catch {
       // expired / invalid / wrong-issuer token -> fall through and re-authenticate
     }
+  }
+
+  if (isNativeAuth()) {
+    // Plan 1B-2: no OAuth2 round trip — send the browser to our own form and drop the dead cookie.
+    const login = new URL("/login", origin);
+    login.searchParams.set("return_to", `${pathname}${search}`);
+    const response = NextResponse.redirect(login);
+    clearAuthCookies(response);
+    return response;
   }
 
   const state = crypto.randomUUID();
@@ -201,7 +230,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   authorizeUrl.searchParams.set("response_type", "code");
   authorizeUrl.searchParams.set("client_id", AUTH_CLIENT_ID);
   authorizeUrl.searchParams.set("redirect_uri", new URL("/auth/callback", origin).toString());
-  authorizeUrl.searchParams.set("scope", "openid lumo.admin");
+  authorizeUrl.searchParams.set("scope", "openid morbeh.admin");
   authorizeUrl.searchParams.set("audience", AUTH_AUDIENCE);
   authorizeUrl.searchParams.set("state", state);
   authorizeUrl.searchParams.set("code_challenge", codeChallenge);

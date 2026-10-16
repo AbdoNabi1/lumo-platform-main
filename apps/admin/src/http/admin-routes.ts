@@ -1,14 +1,26 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { OrderDraft } from "@platform/checkout";
+import type { RateLimiter } from "@platform/contracts";
 import type { Brand, Category, Product } from "@platform/catalog";
 import type { Customer } from "@platform/identity";
-import type { InventoryItem } from "@platform/inventory";
-import type { Order } from "@platform/orders";
+import type { InventoryItem, WarehouseOutput } from "@platform/inventory";
+import {
+  derivePaymentStatus,
+  type Order,
+  type OrderFulfillmentStatus,
+  type OrderPaymentStatus,
+  RefundPolicy,
+} from "@platform/orders";
+import type { Paginated } from "@platform/types";
 import { UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
+import { fulfillmentStatusesOf } from "./fulfillment-statuses-of";
+import { customerNameOf, customerNamesFor } from "./order-customer-names";
+import { listUnfulfilledOrders } from "./unfulfilled-orders";
 import { analyticsRoutes } from "./analytics-routes";
+import { salesAnalyticsRoutes } from "./sales-analytics-routes";
 import { automationRoutes } from "./automation-routes";
 import { cartRoutes } from "./cart-routes";
 import { checkoutRoutes } from "./checkout-routes";
@@ -27,14 +39,32 @@ import { loyaltyRoutes } from "./loyalty-routes";
 import { mediaLibraryRoutes } from "./media-library-routes";
 import { paymentsRoutes } from "./payments-routes";
 import { paymentsWebhookRoutes } from "./payments-webhook-routes";
+import { platformBillingRoutes } from "./platform-billing-routes";
 import { pagesRoutes } from "./pages-routes";
 import { notificationsRoutes } from "./notifications-routes";
 import { platformConsoleRoutes } from "./platform-console-routes";
+import { discountsRoutes } from "./discounts-routes";
 import { promotionsRoutes } from "./promotions-routes";
+import {
+  ALL_MEDIA,
+  featuredImageOf,
+  LIST_MEDIA,
+  lineKey,
+  loadImages,
+  mapProductPage,
+  productMedia,
+  resolveLineImages,
+  variantImageIdOf,
+  type ImageDto,
+  type ImageIndex,
+} from "./product-images";
 import { mapPage, publicCatalogRoutes } from "./public-catalog-routes";
 import { publicAuthRoutes } from "./public-auth-routes";
+import { publicStaffAuthRoutes } from "./public-staff-auth-routes";
+import { staffAccountRoutes } from "./staff-account-routes";
 import { publicCartRoutes } from "./public-cart-routes";
 import { publicCheckoutRoutes } from "./public-checkout-routes";
+import { publicShippingRoutes } from "./public-shipping-routes";
 import { publicLoyaltyRoutes } from "./public-loyalty-routes";
 import { publicReviewsRoutes } from "./public-reviews-routes";
 import { publicWishlistRoutes } from "./public-wishlist-routes";
@@ -51,7 +81,9 @@ import { securitySecretsRoutes } from "./security-secrets-routes";
 import { securitySessionsRoutes } from "./security-sessions-routes";
 import { seoRoutes } from "./seo-routes";
 import { shippingRoutes } from "./shipping-routes";
-import { tenancyRoutes } from "./tenancy-routes";
+import { shippingZonesRoutes } from "./shipping-zones-routes";
+import { taxesRoutes } from "./taxes-routes";
+import { pinRoutesToTenant, tenancyRoutes } from "./tenancy-routes";
 import { themeRoutes } from "./theme-routes";
 import { wishlistRoutes } from "./wishlist-routes";
 
@@ -76,16 +108,37 @@ const placeOrderBody = z.object({
   }),
 });
 
+// Plan 2C-1 — Shopify product data. Every field is optional: omitted keeps the current value, null
+// clears it, so the admin-web forms (which send only sku/price/currency) keep working untouched.
+const variantAttributesBody = {
+  compareAtAmountMinor: z.number().int().min(0).nullable().optional(),
+  costAmountMinor: z.number().int().min(0).nullable().optional(),
+  barcode: z.string().max(64).nullable().optional(),
+  weightGrams: z.number().int().min(0).max(1_000_000).nullable().optional(),
+  requiresShipping: z.boolean().optional(),
+  taxable: z.boolean().optional(),
+  // Plan 2B-1 — Shopify "Track quantity" and "Continue selling when out of stock".
+  tracksInventory: z.boolean().optional(),
+  inventoryPolicy: z.enum(["deny", "continue"]).optional(),
+};
+const productDetailsBody = {
+  description: z.string().max(20_000).nullable().optional(),
+  productType: z.string().max(255).nullable().optional(),
+  tags: z.array(z.string().max(255)).max(250).optional(),
+};
+
 const createProductBody = z.object({
   sku: z.string().min(1),
   name: z.string().min(1),
   slug: z.string().min(1),
+  ...productDetailsBody,
   variants: z
     .array(
       z.object({
         sku: z.string().min(1),
         priceAmountMinor: z.number().int().positive(),
         currency: z.string().length(3),
+        ...variantAttributesBody,
       }),
     )
     .min(1),
@@ -120,6 +173,8 @@ const listOrdersQuery = z.object({
   after: z.string().min(1).optional(),
   status: z.enum(orderStatusValues).optional(),
   search: z.string().min(1).optional(),
+  /** Plan 3D: only the open orders still waiting to be fulfilled (the Home card links here). */
+  fulfillment: z.enum(["unfulfilled"]).optional(),
 });
 const customerIdParams = z.object({ customerId: z.string().min(1) });
 const listCustomersQuery = z.object({
@@ -143,9 +198,26 @@ export interface OrderListItemDto {
   readonly currency: string;
   readonly totalMinor: number;
   readonly createdAt: string;
+  /**
+   * Plan 3B/3D: the recipient the shopper typed on the shipping address, else the customer's name
+   * (a guest's email), else null for a customer Identity does not know.
+   */
+  readonly customerName: string | null;
+  /** Plan 3B: the sum of the line quantities. */
+  readonly itemCount: number;
+  /** Plan 3B: the shipping method the shopper selected; null on orders placed before it was captured. */
+  readonly shippingMethod: string | null;
+  /** Plan 3B: Shopify's payment status, derived from the order's history. */
+  readonly paymentStatus: OrderPaymentStatus;
+  /** Plan 3B: Shopify's fulfillment status, derived from the Fulfillment context. */
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
 }
 
-function toOrderListItemDto(order: Order): OrderListItemDto {
+function toOrderListItemDto(
+  order: Order,
+  fulfillmentStatus: OrderFulfillmentStatus,
+  customerNames: ReadonlyMap<string, string>,
+): OrderListItemDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
     throw new UnexpectedError(`Corrupt order data: order ${order.id.toString()} has no history`);
@@ -158,6 +230,11 @@ function toOrderListItemDto(order: Order): OrderListItemDto {
     currency: order.currency,
     totalMinor: order.totalAmount().amountMinor,
     createdAt: firstEvent.occurredAt.toISOString(),
+    customerName: customerNameOf(order, customerNames),
+    itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
+    shippingMethod: order.totals?.shippingMethod ?? null,
+    paymentStatus: derivePaymentStatus(order.history),
+    fulfillmentStatus,
   };
 }
 
@@ -165,9 +242,15 @@ export interface OrderDetailItemDto {
   readonly id: string;
   readonly productId: string;
   readonly name: string;
+  /** Plan 2A: the variant sold; all null on an order placed before variants were tracked. */
+  readonly variantRef: string | null;
+  readonly sku: string | null;
+  readonly variantTitle: string | null;
   readonly unitPriceMinor: number;
   readonly quantity: number;
   readonly lineTotalMinor: number;
+  /** Plan 2C-3: the variant's picture, else the product's, read now; null once the product is gone. */
+  readonly imageUrl: string | null;
 }
 
 export interface OrderAddressDto {
@@ -177,6 +260,15 @@ export interface OrderAddressDto {
   readonly country: string;
 }
 
+/** An order's address as staff see it (Plan 3A): the recipient and phone, and the second line, are null when absent. */
+export interface OrderRecipientAddressDto extends OrderAddressDto {
+  readonly recipientName: string | null;
+  readonly phone: string | null;
+  readonly line2: string | null;
+  /** Plan 3C: the governorate / region / emirate (ISO 3166-2); null for a country without province data or an older order. */
+  readonly province: string | null;
+}
+
 export interface OrderTotalsDto {
   readonly subtotalMinor: number;
   readonly taxMinor: number;
@@ -184,6 +276,19 @@ export interface OrderTotalsDto {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3C: true when `taxMinor` is already inside the prices ("Including … in taxes"); false on older orders, whose tax was added. */
+  readonly taxIncluded: boolean;
+  /** Plan 3C: the shipping rate's name as the shopper saw it; null on older orders. */
+  readonly shippingName: string | null;
+  /** Phase 2: the free-shipping part of the discounts; 0 on older orders. */
+  readonly shippingDiscountMinor: number;
+  /** Phase 2: each discount the order was placed with (code null for an automatic one); empty on older orders. */
+  readonly discounts: readonly {
+    readonly title: string;
+    readonly code: string | null;
+    readonly discountClass: string;
+    readonly amountMinor: number;
+  }[];
 }
 
 export interface OrderHistoryEntryDto {
@@ -201,16 +306,57 @@ export interface OrderDetailDto {
   readonly totalMinor: number;
   readonly createdAt: string;
   readonly items: readonly OrderDetailItemDto[];
-  readonly shippingAddress: OrderAddressDto;
-  readonly billingAddress: OrderAddressDto | null;
+  readonly shippingAddress: OrderRecipientAddressDto;
+  readonly billingAddress: OrderRecipientAddressDto | null;
   readonly totals: OrderTotalsDto | null;
   readonly checkoutRef: string | null;
   readonly paymentRef: string | null;
   readonly fulfillmentRef: string | null;
   readonly history: readonly OrderHistoryEntryDto[];
+  /** Plan 3B: Shopify's payment status, derived from the order's history. */
+  readonly paymentStatus: OrderPaymentStatus;
+  /** Plan 3B: Shopify's fulfillment status, derived from the Fulfillment context. */
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
+  /** Plan 3B: how the customer pays ("cod", "stripe", …), from the linked payment; null until one is linked. */
+  readonly paymentProvider: string | null;
+  /** Plan 3B: the shipping method the shopper selected; null on orders placed before it was captured. */
+  readonly shippingMethod: string | null;
+  /**
+   * G-127: whether "Refund" can succeed right now — decided here so the page never mirrors the policy:
+   * the order is in a refundable state AND has a captured linked payment (or is a legacy `paid` order,
+   * which never had one).
+   */
+  readonly refundable: boolean;
 }
 
-function toOrderDetailDto(order: Order): OrderDetailDto {
+const orderRefundPolicy = new RefundPolicy();
+
+function isRefundable(order: Order, paymentStatus: string | null): boolean {
+  if (!orderRefundPolicy.canRefund(order.status)) return false;
+  if (order.paymentRef === undefined) return order.status === "paid";
+  return paymentStatus === "captured" || paymentStatus === "refunded";
+}
+
+function toOrderRecipientAddressDto(address: Order["shippingAddress"]): OrderRecipientAddressDto {
+  return {
+    recipientName: address.recipientName ?? null,
+    phone: address.phone ?? null,
+    line1: address.line1,
+    line2: address.line2 ?? null,
+    city: address.city,
+    postalCode: address.postalCode,
+    country: address.country,
+    province: address.province ?? null,
+  };
+}
+
+function toOrderDetailDto(
+  order: Order,
+  fulfillmentStatus: OrderFulfillmentStatus,
+  paymentProvider: string | null,
+  linkedPaymentStatus: string | null,
+  lineImages: ReadonlyMap<string, ImageDto | null>,
+): OrderDetailDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
     throw new UnexpectedError(`Corrupt order data: order ${order.id.toString()} has no history`);
@@ -229,25 +375,19 @@ function toOrderDetailDto(order: Order): OrderDetailDto {
       id: item.id.toString(),
       productId: item.snapshot.productId,
       name: item.snapshot.name,
+      variantRef: item.snapshot.variantRef ?? null,
+      sku: item.snapshot.sku ?? null,
+      variantTitle: item.snapshot.variantTitle ?? null,
       unitPriceMinor: item.snapshot.unitPrice.amountMinor,
       quantity: item.quantity,
       lineTotalMinor: item.lineTotal.amountMinor,
+      imageUrl:
+        lineImages.get(lineKey(item.snapshot.productId, item.snapshot.variantRef ?? null))?.url ??
+        null,
     })),
-    shippingAddress: {
-      line1: order.shippingAddress.line1,
-      city: order.shippingAddress.city,
-      postalCode: order.shippingAddress.postalCode,
-      country: order.shippingAddress.country,
-    },
+    shippingAddress: toOrderRecipientAddressDto(order.shippingAddress),
     billingAddress:
-      billingAddress === undefined
-        ? null
-        : {
-            line1: billingAddress.line1,
-            city: billingAddress.city,
-            postalCode: billingAddress.postalCode,
-            country: billingAddress.country,
-          },
+      billingAddress === undefined ? null : toOrderRecipientAddressDto(billingAddress),
     totals:
       totals === undefined
         ? null
@@ -258,6 +398,15 @@ function toOrderDetailDto(order: Order): OrderDetailDto {
             discountMinor: totals.discountMinor,
             totalMinor: totals.totalMinor,
             currency: totals.currency,
+            taxIncluded: totals.taxIncluded,
+            shippingName: totals.shippingName ?? null,
+            shippingDiscountMinor: totals.shippingDiscountMinor,
+            discounts: totals.discounts.map((d) => ({
+              title: d.title,
+              code: d.code ?? null,
+              discountClass: d.discountClass,
+              amountMinor: d.amountMinor,
+            })),
           },
     checkoutRef: order.checkoutRef ?? null,
     paymentRef: order.paymentRef ?? null,
@@ -266,6 +415,11 @@ function toOrderDetailDto(order: Order): OrderDetailDto {
       type: entry.type,
       occurredAt: entry.occurredAt.toISOString(),
     })),
+    paymentStatus: derivePaymentStatus(order.history),
+    fulfillmentStatus,
+    paymentProvider,
+    shippingMethod: order.totals?.shippingMethod ?? null,
+    refundable: isRefundable(order, linkedPaymentStatus),
   };
 }
 
@@ -369,7 +523,11 @@ const markOrderPaidBody = z.object({ paymentRef: z.string().min(1) });
 // -- Catalog: Products/Brands/Categories (Commerce Sprint 1, Sprint 4.2, Sprint 7.0) ------------
 
 const productIdParams = z.object({ productId: z.string().min(1) });
-const updateProductBody = z.object({ name: z.string().min(1), slug: z.string().min(1) });
+const updateProductBody = z.object({
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  ...productDetailsBody,
+});
 const schedulePublishProductBody = z.object({ scheduledAt: z.coerce.date() });
 const listProductsQuery = z.object({
   first: z.coerce.number().int().min(1).max(100).optional(),
@@ -382,11 +540,15 @@ const addVariantBody = z.object({
   priceAmountMinor: z.number().int().positive(),
   currency: z.string().length(3),
   selection: z.record(z.string()).optional(),
+  ...variantAttributesBody,
 });
 const updateVariantBody = z.object({
   sku: z.string().min(1),
   priceAmountMinor: z.number().int().positive(),
   currency: z.string().length(3),
+  // Plan 2C-1: undefined keeps the selection, null clears it.
+  selection: z.record(z.string()).nullable().optional(),
+  ...variantAttributesBody,
 });
 const setProductOptionsBody = z.object({
   options: z.array(
@@ -403,6 +565,7 @@ const assignCategoriesBody = z.object({ categoryIds: z.array(z.string().min(1)) 
 const assetIdParams = z.object({ productId: z.string().min(1), assetId: z.string().min(1) });
 const attachMediaBody = z.object({ assetId: z.string().min(1) });
 const reorderMediaBody = z.object({ assetIds: z.array(z.string().min(1)) });
+const variantImageBody = z.object({ mediaId: z.string().min(1).nullable() });
 
 const createCategoryBody = z.object({
   name: z.string().min(1),
@@ -561,35 +724,45 @@ const createPricingRuleBody = z.object({
 
 const receiveStockBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   quantity: z.number().int().positive(),
 });
 const adjustInventoryBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   onHand: z.number().int().min(0),
 });
 const reserveStockBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   quantity: z.number().int().positive(),
   reference: z.string().min(1),
 });
 const releaseReservationBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   reservationId: z.string().min(1),
 });
 const commitReservationBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   warehouseId: z.string().min(1),
   reservationId: z.string().min(1),
 });
 const transferStockBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   sourceWarehouseId: z.string().min(1),
   destinationWarehouseId: z.string().min(1),
   quantity: z.number().int().positive(),
+});
+const listWarehousesQuery = z.object({
+  first: z.coerce.number().int().min(1).max(100).optional(),
+  after: z.string().min(1).optional(),
 });
 const registerWarehouseBody = z.object({ code: z.string().min(1), name: z.string().min(1) });
 const warehouseIdParams = z.object({ warehouseId: z.string().min(1) });
@@ -606,6 +779,19 @@ export interface ProductVariantDto {
   readonly priceAmountMinor: number;
   readonly currency: string;
   readonly selection: Readonly<Record<string, string>> | null;
+  readonly compareAtAmountMinor: number | null;
+  /** Staff-only: the public DTO never carries cost, barcode or weight. */
+  readonly costAmountMinor: number | null;
+  readonly barcode: string | null;
+  readonly weightGrams: number | null;
+  readonly requiresShipping: boolean;
+  readonly taxable: boolean;
+  /** Plan 2B-1: Shopify "Track quantity". */
+  readonly tracksInventory: boolean;
+  /** Plan 2B-1: Shopify "Continue selling when out of stock". */
+  readonly inventoryPolicy: "deny" | "continue";
+  /** Plan 2C-3: the media shown for this variant (one of the product's own); null when unset or gone. */
+  readonly imageId: string | null;
 }
 
 export interface ProductOptionDto {
@@ -622,6 +808,8 @@ export interface ProductListItemDto {
   readonly variantCount: number;
   readonly priceAmountMinor: number | null;
   readonly currency: string | null;
+  /** Plan 2C-3: the first picture, for the list thumbnail; null when the product has none. */
+  readonly featuredImage: ImageDto | null;
 }
 
 export interface ProductDetailDto {
@@ -630,6 +818,9 @@ export interface ProductDetailDto {
   readonly name: string;
   readonly slug: string;
   readonly status: string;
+  readonly description: string | null;
+  readonly productType: string | null;
+  readonly tags: readonly string[];
   readonly scheduledAt: string | null;
   readonly brandId: string | null;
   readonly categoryIds: readonly string[];
@@ -638,9 +829,11 @@ export interface ProductDetailDto {
   readonly seoDescription: string | null;
   readonly variants: readonly ProductVariantDto[];
   readonly mediaAssetIds: readonly string[];
+  /** Plan 2C-3: the pictures in the merchant's order (first = featured), with url, alt and size. */
+  readonly media: readonly ImageDto[];
 }
 
-function toProductListItemDto(product: Product): ProductListItemDto {
+function toProductListItemDto(product: Product, images: ImageIndex): ProductListItemDto {
   const firstVariant = product.variants[0];
   return {
     id: product.id.toString(),
@@ -651,16 +844,20 @@ function toProductListItemDto(product: Product): ProductListItemDto {
     variantCount: product.variants.length,
     priceAmountMinor: firstVariant?.price.amountMinor ?? null,
     currency: firstVariant?.price.currency ?? null,
+    featuredImage: featuredImageOf(product, images),
   };
 }
 
-function toProductDetailDto(product: Product): ProductDetailDto {
+function toProductDetailDto(product: Product, images: ImageIndex): ProductDetailDto {
   return {
     id: product.id.toString(),
     sku: product.sku.value,
     name: product.name,
     slug: product.slug.value,
     status: product.status.value,
+    description: product.details.description,
+    productType: product.details.productType,
+    tags: [...product.details.tags],
     scheduledAt: product.scheduledAt?.toISOString() ?? null,
     brandId: product.brand?.brandId ?? null,
     categoryIds: product.categories.map((category) => category.categoryId),
@@ -673,8 +870,18 @@ function toProductDetailDto(product: Product): ProductDetailDto {
       priceAmountMinor: variant.price.amountMinor,
       currency: variant.price.currency,
       selection: variant.selection?.values ?? null,
+      compareAtAmountMinor: variant.attributes.compareAtPrice?.amountMinor ?? null,
+      costAmountMinor: variant.attributes.cost?.amountMinor ?? null,
+      barcode: variant.attributes.barcode,
+      weightGrams: variant.attributes.weightGrams,
+      requiresShipping: variant.attributes.requiresShipping,
+      taxable: variant.attributes.taxable,
+      tracksInventory: variant.attributes.tracksInventory,
+      inventoryPolicy: variant.attributes.inventoryPolicy,
+      imageId: variantImageIdOf(variant, images),
     })),
     mediaAssetIds: product.media.map((media) => media.assetId),
+    media: productMedia(product, images),
   };
 }
 
@@ -685,6 +892,8 @@ function toProductDetailDto(product: Product): ProductDetailDto {
  */
 export interface ProductInventoryRowDto {
   readonly warehouseId: string;
+  /** Plan 2B-1: the variant this stock belongs to; null on a legacy product-level row. */
+  readonly variantId: string | null;
   readonly onHand: number;
   readonly reserved: number;
   readonly available: number;
@@ -693,6 +902,7 @@ export interface ProductInventoryRowDto {
 function toProductInventoryRowDto(item: InventoryItem): ProductInventoryRowDto {
   return {
     warehouseId: item.warehouseId.value,
+    variantId: item.variantRef,
     onHand: item.stockLevel.onHand,
     reserved: item.stockLevel.reserved,
     available: item.stockLevel.available,
@@ -736,7 +946,14 @@ function toBrandDto(brand: Brand): BrandDto {
  * NOTE: `PlaceOrder` remains an internal/admin operation — the storefront tier must never map
  * price-bearing inputs directly (doc 22 / hardening P0-4 rule).
  */
-export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
+export function adminRoutes(
+  admin: WiredAdmin,
+  options: {
+    readonly tenancyPinnedTo?: string;
+    readonly rateLimiter?: RateLimiter;
+    readonly onTenantLifecycleChange?: (tenantId: string) => void;
+  } = {},
+): readonly RouteDefinition[] {
   return [
     defineRoute({
       method: "POST",
@@ -746,7 +963,9 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a product",
       schema: { body: createProductBody },
-      handle: ({ body, context }) => admin.products.createProduct(context.principal, body),
+      // ADR-0014: CreateProductInput now requires tenantId — same source as every other product route.
+      handle: ({ body, context }) =>
+        admin.products.createProduct(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -755,8 +974,19 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "products:read",
       summary: "List/search products (cursor-paginated)",
       schema: { querystring: listProductsQuery },
+      // ADR-0014: ListProductsInput now requires tenantId — sourced from the already-verified
+      // context.tenantId (packages/http's tenant-resolution chain), never from the query string.
       handle: async ({ query, context }) =>
-        mapPage(await admin.products.listProducts(context.principal, query), toProductListItemDto),
+        mapProductPage(
+          admin,
+          context.tenantId,
+          await admin.products.listProducts(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          { perProduct: LIST_MEDIA, variants: false },
+          toProductListItemDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -766,11 +996,20 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get a product",
       schema: { params: productIdParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
-        const response = await admin.products.getProduct(context.principal, params);
+        // ADR-0014: GetProductInput now requires tenantId — same source as above.
+        const response = await admin.products.getProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) {
           return response;
         }
-        return { status: 200, body: toProductDetailDto(response.body as Product) };
+        const product = response.body as Product;
+        const images = await loadImages(admin, context.tenantId, [product], {
+          perProduct: ALL_MEDIA,
+          variants: true,
+        });
+        return { status: 200, body: toProductDetailDto(product, images) };
       },
     }),
     defineRoute({
@@ -781,7 +1020,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get a product's stock across every warehouse",
       schema: { params: productInventoryParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
-        const response = await admin.inventory.inventoryForProduct(context.principal, params);
+        const response = await admin.inventory.inventoryForProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) {
           return response;
         }
@@ -797,10 +1039,14 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       version: 1,
       permission: "products:update",
       idempotent: true,
-      summary: "Update a product's name/slug",
+      summary: "Update a product's name, slug and details",
       schema: { params: productIdParams, body: updateProductBody },
       handle: ({ params, body, context }) =>
-        admin.products.updateProduct(context.principal, { productId: params.productId, ...body }),
+        admin.products.updateProduct(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -810,7 +1056,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Publish a product",
       schema: { params: productIdParams },
-      handle: ({ params, context }) => admin.products.publishProduct(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.publishProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -824,6 +1074,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.products.schedulePublishProduct(context.principal, {
           productId: params.productId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -834,7 +1085,25 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Unpublish a product",
       schema: { params: productIdParams },
-      handle: ({ params, context }) => admin.products.unpublishProduct(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.unpublishProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/products/:productId/unlist",
+      version: 1,
+      permission: "products:publish",
+      idempotent: true,
+      summary: "Unlist a product (sellable by direct link only, never listed)",
+      schema: { params: productIdParams },
+      handle: ({ params, context }) =>
+        admin.products.unlistProduct(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -844,7 +1113,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Archive a product",
       schema: { params: productIdParams },
-      handle: ({ params, context }) => admin.products.archiveProduct(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.archiveProduct(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -854,7 +1124,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Soft-delete a product",
       schema: { params: productIdParams },
-      handle: ({ params, context }) => admin.products.deleteProduct(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.deleteProduct(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -865,7 +1136,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Add a variant to a product",
       schema: { params: productIdParams, body: addVariantBody },
       handle: ({ params, body, context }) =>
-        admin.products.addVariant(context.principal, { productId: params.productId, ...body }),
+        admin.products.addVariant(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -875,7 +1150,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Remove a variant from a product",
       schema: { params: variantIdParams },
-      handle: ({ params, context }) => admin.products.removeVariant(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.removeVariant(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -883,10 +1159,14 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       version: 1,
       permission: "products:update",
       idempotent: true,
-      summary: "Edit a variant's sku/price",
+      summary: "Edit a variant (sku, price, attributes, option selection)",
       schema: { params: variantIdParams, body: updateVariantBody },
       handle: ({ params, body, context }) =>
-        admin.products.updateVariant(context.principal, { ...params, ...body }),
+        admin.products.updateVariant(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -894,12 +1174,13 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       version: 1,
       permission: "products:update",
       idempotent: true,
-      summary: "Replace a product's declared option set (draft only)",
+      summary: "Replace a product's declared option set",
       schema: { params: productIdParams, body: setProductOptionsBody },
       handle: ({ params, body, context }) =>
         admin.products.setProductOptions(context.principal, {
           productId: params.productId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -911,7 +1192,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Set a product's SEO overrides",
       schema: { params: productIdParams, body: setProductSeoBody },
       handle: ({ params, body, context }) =>
-        admin.products.setProductSeo(context.principal, { productId: params.productId, ...body }),
+        admin.products.setProductSeo(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -922,7 +1207,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Assign or clear a product's brand",
       schema: { params: productIdParams, body: setProductBrandBody },
       handle: ({ params, body, context }) =>
-        admin.products.setProductBrand(context.principal, { productId: params.productId, ...body }),
+        admin.products.setProductBrand(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -936,6 +1225,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.products.assignCategories(context.principal, {
           productId: params.productId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -947,7 +1237,26 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Attach a media asset to a product",
       schema: { params: productIdParams, body: attachMediaBody },
       handle: ({ params, body, context }) =>
-        admin.products.attachMedia(context.principal, { productId: params.productId, ...body }),
+        admin.products.attachMedia(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "PUT",
+      path: "/products/:productId/variants/:variantId/image",
+      version: 1,
+      permission: "products:update",
+      idempotent: true,
+      summary: "Set or clear a variant's image (one of the product's own media)",
+      schema: { params: variantIdParams, body: variantImageBody },
+      handle: ({ params, body, context }) =>
+        admin.products.setVariantImage(context.principal, {
+          ...params,
+          mediaId: body.mediaId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "DELETE",
@@ -957,7 +1266,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Detach a media asset from a product",
       schema: { params: assetIdParams },
-      handle: ({ params, context }) => admin.products.detachMedia(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.detachMedia(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "PUT",
@@ -968,7 +1278,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Reorder a product's attached media",
       schema: { params: productIdParams, body: reorderMediaBody },
       handle: ({ params, body, context }) =>
-        admin.products.reorderMedia(context.principal, { productId: params.productId, ...body }),
+        admin.products.reorderMedia(context.principal, {
+          productId: params.productId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -977,8 +1291,15 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "categories:read",
       summary: "List categories (cursor-paginated)",
       schema: { querystring: listCategoriesQuery },
+      // ADR-0014: ListCategoriesInput now requires tenantId — same source as every product route.
       handle: async ({ query, context }) =>
-        mapPage(await admin.products.listCategories(context.principal, query), toCategoryDto),
+        mapPage(
+          await admin.products.listCategories(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toCategoryDto,
+        ),
     }),
     defineRoute({
       method: "POST",
@@ -988,7 +1309,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a category",
       schema: { body: createCategoryBody },
-      handle: ({ body, context }) => admin.products.createCategory(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.products.createCategory(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -999,7 +1321,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Reparent a category",
       schema: { params: categoryIdParams, body: moveCategoryBody },
       handle: ({ params, body, context }) =>
-        admin.products.moveCategory(context.principal, { categoryId: params.categoryId, ...body }),
+        admin.products.moveCategory(context.principal, {
+          categoryId: params.categoryId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1009,7 +1335,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Soft-delete a category (rejected if it has live children)",
       schema: { params: categoryIdParams },
-      handle: ({ params, context }) => admin.products.deleteCategory(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.products.deleteCategory(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -1018,8 +1348,15 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "brands:read",
       summary: "List brands (cursor-paginated)",
       schema: { querystring: listCategoriesQuery },
+      // ADR-0014: ListBrandsInput now requires tenantId — same source as every product route.
       handle: async ({ query, context }) =>
-        mapPage(await admin.products.listBrands(context.principal, query), toBrandDto),
+        mapPage(
+          await admin.products.listBrands(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toBrandDto,
+        ),
     }),
     defineRoute({
       method: "POST",
@@ -1029,7 +1366,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a brand",
       schema: { body: createBrandBody },
-      handle: ({ body, context }) => admin.products.createBrand(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.products.createBrand(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1040,7 +1378,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Rename a brand",
       schema: { params: brandIdParams, body: updateBrandBody },
       handle: ({ params, body, context }) =>
-        admin.products.updateBrand(context.principal, { id: params.brandId, ...body }),
+        admin.products.updateBrand(context.principal, {
+          id: params.brandId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1051,7 +1393,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Soft-delete a brand",
       schema: { params: brandIdParams },
       handle: ({ params, context }) =>
-        admin.products.deleteBrand(context.principal, { brandId: params.brandId }),
+        admin.products.deleteBrand(context.principal, {
+          brandId: params.brandId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1061,7 +1406,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Place an order (backoffice)",
       schema: { body: placeOrderBody },
-      handle: ({ body, context }) => admin.orders.placeOrder(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.orders.placeOrder(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1072,7 +1418,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Refund an order",
       schema: { params: orderIdParams },
       handle: ({ params, context }) =>
-        admin.orders.refundOrder(context.principal, { orderId: params.orderId }),
+        admin.orders.refundOrder(context.principal, {
+          orderId: params.orderId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1084,6 +1433,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { body: createOrderFromCheckoutBody },
       handle: async ({ body, context }): Promise<AdminResponse> => {
         const draftResponse = await admin.checkout.generateOrderDraft(context.principal, {
+          tenantId: context.tenantId,
           checkoutSessionId: body.checkoutRef,
         });
         if (draftResponse.status < 200 || draftResponse.status >= 300) {
@@ -1107,6 +1457,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
             discountMinor: draft.totals.discountMinor,
             totalMinor: draft.totals.totalMinor,
           },
+          tenantId: context.tenantId,
         });
       },
     }),
@@ -1122,6 +1473,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       handle: ({ params, body, context }) =>
         admin.orders.advanceOrder(context.principal, {
           orderId: params.orderId,
+          tenantId: context.tenantId,
           toStatus: body.toStatus as Parameters<typeof admin.orders.advanceOrder>[1]["toStatus"],
         }),
     }),
@@ -1137,6 +1489,7 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       handle: ({ params, body, context }) =>
         admin.orders.markOrderPaid(context.principal, {
           orderId: params.orderId,
+          tenantId: context.tenantId,
           paymentRef: body.paymentRef,
         }),
     }),
@@ -1148,7 +1501,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Request payment capture via the PaymentPort",
       schema: { params: orderIdParams },
       handle: ({ params, context }) =>
-        admin.orders.requestPaymentCapture(context.principal, { orderId: params.orderId }),
+        admin.orders.requestPaymentCapture(context.principal, {
+          orderId: params.orderId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1158,7 +1514,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Request fulfillment via the Inventory/Shipping ports",
       schema: { params: orderIdParams },
       handle: ({ params, context }) =>
-        admin.orders.requestFulfillment(context.principal, { orderId: params.orderId }),
+        admin.orders.requestFulfillment(context.principal, {
+          orderId: params.orderId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -1167,8 +1526,50 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "orders:read",
       summary: "List orders, most recently placed first (cursor-paginated)",
       schema: { querystring: listOrdersQuery },
-      handle: async ({ query, context }) =>
-        mapPage(await admin.orders.listOrders(context.principal, query), toOrderListItemDto),
+      handle: async ({ query, context }): Promise<AdminResponse> => {
+        const { fulfillment, ...listQuery } = query;
+        let response: AdminResponse;
+        let fulfillmentByOrder: ReadonlyMap<string, OrderFulfillmentStatus>;
+        if (fulfillment === "unfulfilled") {
+          const found = await listUnfulfilledOrders(
+            admin,
+            context.principal,
+            context.tenantId,
+            listQuery,
+          );
+          if (!found.ok) return found.response;
+          response = { status: 200, body: found.page };
+          fulfillmentByOrder = found.statuses;
+        } else {
+          response = await admin.orders.listOrders(context.principal, {
+            ...listQuery,
+            tenantId: context.tenantId,
+          });
+          if (response.status !== 200) return response;
+          const statuses = await fulfillmentStatusesOf(
+            admin,
+            context.principal,
+            context.tenantId,
+            (response.body as Paginated<Order>).items.map((order) => order.id.toString()),
+          );
+          if (!statuses.ok) return statuses.response;
+          fulfillmentByOrder = statuses.byOrder;
+        }
+        const orders = (response.body as Paginated<Order>).items;
+        const customerNames = await customerNamesFor(
+          admin,
+          context.principal,
+          context.tenantId,
+          orders,
+        );
+        return mapPage(response, (order: Order) =>
+          toOrderListItemDto(
+            order,
+            fulfillmentByOrder.get(order.id.toString()) ?? "unfulfilled",
+            customerNames,
+          ),
+        );
+      },
     }),
     defineRoute({
       method: "GET",
@@ -1179,12 +1580,50 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: orderIdParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
         const response = await admin.orders.getOrder(context.principal, {
+          tenantId: context.tenantId,
           orderId: params.orderId,
         });
         if (response.status !== 200) {
           return response;
         }
-        return { status: 200, body: toOrderDetailDto(response.body as Order) };
+        const order = response.body as Order;
+        const statuses = await fulfillmentStatusesOf(admin, context.principal, context.tenantId, [
+          order.id.toString(),
+        ]);
+        if (!statuses.ok) return statuses.response;
+        // How the customer pays is cosmetic: a payment that cannot be read shows as a dash, it does
+        // not fail the order page.
+        let paymentProvider: string | null = null;
+        let linkedPaymentStatus: string | null = null;
+        if (order.paymentRef !== undefined) {
+          const intent = await admin.orders.paymentIntentOf(context.principal, {
+            tenantId: context.tenantId,
+            paymentIntentId: order.paymentRef,
+          });
+          if (intent.status === 200) {
+            const linked = intent.body as { provider: string; status: { value: string } };
+            paymentProvider = linked.provider;
+            linkedPaymentStatus = linked.status.value;
+          }
+        }
+        const lineImages = await resolveLineImages(
+          admin,
+          context.tenantId,
+          order.items.map((item) => ({
+            productId: item.snapshot.productId,
+            variantId: item.snapshot.variantRef ?? null,
+          })),
+        );
+        return {
+          status: 200,
+          body: toOrderDetailDto(
+            order,
+            statuses.byOrder.get(order.id.toString()) ?? "unfulfilled",
+            paymentProvider,
+            linkedPaymentStatus,
+            lineImages,
+          ),
+        };
       },
     }),
     defineRoute({
@@ -1194,9 +1633,14 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "customers:read",
       summary: "List customers, most recently registered first (cursor-paginated)",
       schema: { querystring: listCustomersQuery },
+      // ADR-0014: ListCustomersInput now requires tenantId — sourced from the already-verified
+      // context.tenantId (packages/http's tenant-resolution chain), never from the query string.
       handle: async ({ query, context }) =>
         mapPage(
-          await admin.customers.listCustomers(context.principal, query),
+          await admin.customers.listCustomers(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
           toCustomerListItemDto,
         ),
     }),
@@ -1208,7 +1652,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get a single customer",
       schema: { params: customerIdParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
-        const response = await admin.customers.getCustomer(context.principal, params);
+        // ADR-0014: GetCustomerInput now requires tenantId — same source as above.
+        const response = await admin.customers.getCustomer(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) {
           return response;
         }
@@ -1223,7 +1671,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a chart-of-accounts entry",
       schema: { body: createAccountBody },
-      handle: ({ body, context }) => admin.finance.createAccount(context.principal, body),
+      // ADR-0014: Finance's use-case inputs now require tenantId — sourced from the
+      // already-verified context.tenantId (packages/http's tenant-resolution chain), same
+      // convention as every catalog/products route above.
+      handle: ({ body, context }) =>
+        admin.finance.createAccount(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1233,7 +1685,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a cost center",
       schema: { body: createCostCenterBody },
-      handle: ({ body, context }) => admin.finance.createCostCenter(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.createCostCenter(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1243,7 +1696,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create an expense category",
       schema: { body: createExpenseCategoryBody },
-      handle: ({ body, context }) => admin.finance.createExpenseCategory(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.createExpenseCategory(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1253,7 +1710,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Define a jurisdiction's tax profile",
       schema: { body: defineTaxProfileBody },
-      handle: ({ body, context }) => admin.finance.defineTaxProfile(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.defineTaxProfile(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1263,7 +1721,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Record an effective-dated product cost snapshot",
       schema: { body: setProductCostBody },
-      handle: ({ body, context }) => admin.finance.setProductCost(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.setProductCost(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1273,7 +1732,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Open a fiscal period",
       schema: { body: openFiscalPeriodBody },
-      handle: ({ body, context }) => admin.finance.openFiscalPeriod(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.openFiscalPeriod(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1284,7 +1744,10 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Close a fiscal period (step-up)",
       schema: { params: fiscalPeriodIdParams },
       handle: ({ params, context }) =>
-        admin.finance.closeFiscalPeriod(context.principal, { periodId: params.periodId }),
+        admin.finance.closeFiscalPeriod(context.principal, {
+          periodId: params.periodId,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1294,7 +1757,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Set a new historical exchange rate (step-up)",
       schema: { body: setExchangeRateBody },
-      handle: ({ body, context }) => admin.finance.setExchangeRate(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.setExchangeRate(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1304,7 +1768,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Record a merchant expense",
       schema: { body: recordExpenseBody },
-      handle: ({ body, context }) => admin.finance.recordExpense(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.recordExpense(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1314,7 +1779,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a budget",
       schema: { body: createBudgetBody },
-      handle: ({ body, context }) => admin.finance.createBudget(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.createBudget(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1325,7 +1791,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Revise a budget's amount",
       schema: { params: budgetIdParams, body: reviseBudgetBody },
       handle: ({ params, body, context }) =>
-        admin.finance.reviseBudget(context.principal, { budgetId: params.budgetId, ...body }),
+        admin.finance.reviseBudget(context.principal, {
+          budgetId: params.budgetId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1335,7 +1805,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Post a manual balanced adjustment journal (step-up)",
       schema: { body: recordManualAdjustmentBody },
-      handle: ({ body, context }) => admin.finance.recordManualAdjustment(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.finance.recordManualAdjustment(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1354,7 +1828,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "finance:read",
       summary: "Trial balance for a period",
       schema: { querystring: periodRangeQuery },
-      handle: ({ query, context }) => admin.finance.trialBalance(context.principal, query),
+      handle: ({ query, context }) =>
+        admin.finance.trialBalance(context.principal, { ...query, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -1363,7 +1838,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "finance:read",
       summary: "Income statement for a period",
       schema: { querystring: periodRangeQuery },
-      handle: ({ query, context }) => admin.finance.incomeStatement(context.principal, query),
+      handle: ({ query, context }) =>
+        admin.finance.incomeStatement(context.principal, { ...query, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -1372,7 +1848,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "finance:read",
       summary: "Balance sheet as of a period end",
       schema: { querystring: periodRangeQuery },
-      handle: ({ query, context }) => admin.finance.balanceSheet(context.principal, query),
+      handle: ({ query, context }) =>
+        admin.finance.balanceSheet(context.principal, { ...query, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -1381,7 +1858,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "finance:read",
       summary: "A single projected Finance read-model row",
       schema: { params: readModelParams },
-      handle: ({ params, context }) => admin.finance.getReadModel(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.finance.getReadModel(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -1392,7 +1870,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         "Paginated rows for a Finance read model (dimension/periodKey filter, sort, cursor; limit <= 200)",
       schema: { params: readModelListParams, querystring: readModelQuery },
       handle: ({ params, query, context }) =>
-        admin.finance.queryReadModel(context.principal, { model: params.model, ...query }),
+        admin.finance.queryReadModel(context.principal, {
+          model: params.model,
+          ...query,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1482,7 +1964,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a draft price list",
       schema: { body: createPriceListBody },
-      handle: ({ body, context }) => admin.pricing.createPriceList(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pricing.createPriceList(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1492,7 +1975,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Activate a draft price list",
       schema: { params: priceListIdParams },
-      handle: ({ params, context }) => admin.pricing.activatePriceList(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.pricing.activatePriceList(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1502,7 +1989,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a price (compare-at/cost/effective window/tax class optional)",
       schema: { body: createPriceBody },
-      handle: ({ body, context }) => admin.pricing.createPrice(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pricing.createPrice(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1513,7 +2001,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Change a price's amount (and optionally compare-at/cost)",
       schema: { params: priceIdParams, body: changePriceBody },
       handle: ({ params, body, context }) =>
-        admin.pricing.changePrice(context.principal, { priceId: params.priceId, ...body }),
+        admin.pricing.changePrice(context.principal, {
+          priceId: params.priceId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1523,7 +2015,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Publish a draft price",
       schema: { params: priceIdParams },
-      handle: ({ params, context }) => admin.pricing.publishPrice(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.pricing.publishPrice(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1533,7 +2026,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a tax classification",
       schema: { body: createTaxClassBody },
-      handle: ({ body, context }) => admin.pricing.createTaxClass(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pricing.createTaxClass(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1543,7 +2037,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a list-price adjustment rule (percentage capped at 100)",
       schema: { body: createPricingRuleBody },
-      handle: ({ body, context }) => admin.pricing.createPricingRule(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pricing.createPricingRule(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1553,7 +2048,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Receive stock for a product at a warehouse",
       schema: { body: receiveStockBody },
-      handle: ({ body, context }) => admin.inventory.receiveStock(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.receiveStock(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1563,7 +2059,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Adjust an item's on-hand stock",
       schema: { body: adjustInventoryBody },
-      handle: ({ body, context }) => admin.inventory.adjustStock(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.adjustStock(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1572,7 +2069,8 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "inventory:reserve",
       summary: "Reserve available stock for an order/cart",
       schema: { body: reserveStockBody },
-      handle: ({ body, context }) => admin.inventory.reserveStock(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.reserveStock(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -1582,7 +2080,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Release a held reservation",
       schema: { body: releaseReservationBody },
-      handle: ({ body, context }) => admin.inventory.releaseReservation(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.releaseReservation(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1592,7 +2094,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Commit a held reservation (ADR-0013 fulfillment step)",
       schema: { body: commitReservationBody },
-      handle: ({ body, context }) => admin.inventory.commitReservation(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.commitReservation(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1601,7 +2107,36 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       permission: "inventory:transfer",
       summary: "Transfer unreserved stock between warehouses",
       schema: { body: transferStockBody },
-      handle: ({ body, context }) => admin.inventory.transferStock(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.transferStock(context.principal, { ...body, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/warehouses",
+      version: 1,
+      permission: "inventory:read",
+      summary: "List warehouses (stock locations)",
+      schema: { querystring: listWarehousesQuery },
+      handle: async ({ query, context }): Promise<AdminResponse> => {
+        const response = await admin.inventory.listWarehouses(context.principal, {
+          ...query,
+          tenantId: context.tenantId,
+        });
+        if (response.status !== 200) return response;
+        const page = response.body as Paginated<WarehouseOutput>;
+        return {
+          status: 200,
+          body: {
+            items: page.items.map((w) => ({
+              id: w.warehouseId,
+              code: w.code,
+              name: w.name,
+              status: w.status,
+            })),
+            pageInfo: page.pageInfo,
+          },
+        };
+      },
     }),
     defineRoute({
       method: "POST",
@@ -1611,7 +2146,11 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Register a warehouse",
       schema: { body: registerWarehouseBody },
-      handle: ({ body, context }) => admin.inventory.registerWarehouse(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.inventory.registerWarehouse(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -1622,16 +2161,23 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Deactivate a warehouse",
       schema: { params: warehouseIdParams },
       handle: ({ params, context }) =>
-        admin.inventory.deactivateWarehouse(context.principal, params),
+        admin.inventory.deactivateWarehouse(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     ...analyticsRoutes(admin),
+    ...salesAnalyticsRoutes(admin),
     ...automationRoutes(admin),
     ...cartRoutes(admin),
     ...checkoutRoutes(admin),
     ...paymentsRoutes(admin),
     ...paymentsWebhookRoutes(admin),
+    ...platformBillingRoutes(admin),
     ...fulfillmentRoutes(admin),
     ...shippingRoutes(admin),
+    ...shippingZonesRoutes(admin),
+    ...taxesRoutes(admin),
     ...returnsRoutes(admin),
     ...reviewsRoutes(admin),
     ...searchRoutes(admin),
@@ -1655,14 +2201,27 @@ export function adminRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
     ...featureRegistryRoutes(admin),
     ...pagesRoutes(admin),
     ...mediaLibraryRoutes(admin),
-    ...tenancyRoutes(admin),
+    ...(() => {
+      const tenancy = tenancyRoutes(admin, {
+        ...(options.onTenantLifecycleChange === undefined
+          ? {}
+          : { onLifecycleChange: options.onTenantLifecycleChange }),
+      });
+      return options.tenancyPinnedTo === undefined
+        ? tenancy
+        : pinRoutesToTenant(tenancy, options.tenancyPinnedTo);
+    })(),
     ...licensingRoutes(admin),
     ...platformConsoleRoutes(admin),
+    ...discountsRoutes(admin),
     ...promotionsRoutes(admin),
-    ...publicAuthRoutes(admin),
+    ...publicAuthRoutes(admin, options.rateLimiter),
+    ...publicStaffAuthRoutes(admin, options.rateLimiter),
+    ...staffAccountRoutes(admin),
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),
     ...publicCheckoutRoutes(admin),
+    ...publicShippingRoutes(admin),
     ...publicReviewsRoutes(admin),
     ...publicWishlistRoutes(admin),
     ...publicLoyaltyRoutes(admin),

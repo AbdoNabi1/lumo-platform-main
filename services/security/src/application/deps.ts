@@ -66,7 +66,7 @@ import type {
  * on save; this port covers the two decision/audit facts so the `security.*` catalog is complete.
  */
 export interface SecurityOutboxPort {
-  publish(events: readonly DomainEvent[], tx?: unknown): Promise<void>;
+  publish(events: readonly DomainEvent[], tenantId: string, tx?: unknown): Promise<void>;
 }
 
 /** The full dependency surface every Security use-case is constructed with (composition-injected). */
@@ -133,6 +133,8 @@ export interface SecurityDeps {
 }
 
 export interface AuditAppendInput {
+  /** ADR-0014 (WP-10, T10.3): the row/scope tenant — distinct from `tenantRef`, the audit chain's own scope (null ⇒ platform chain). */
+  readonly tenantId: string;
   readonly principalRef: string;
   readonly action: string;
   readonly decision: string;
@@ -151,7 +153,7 @@ export async function recordAudit(
   input: AuditAppendInput,
 ): Promise<AuditRecord> {
   const tenantRef = input.tenantRef ?? null;
-  const tail = await deps.auditLedger.tail(tenantRef, tx);
+  const tail = await deps.auditLedger.tail(tenantRef, input.tenantId, tx);
   const record = deps.auditChain.append(tail, {
     id: deps.idGenerator.generate(),
     principalRef: input.principalRef,
@@ -162,7 +164,7 @@ export async function recordAudit(
     occurredAt: deps.clock.now().toISOString(),
     metadata: input.metadata,
   });
-  await deps.auditLedger.append(record, tx);
+  await deps.auditLedger.append(record, input.tenantId, tx);
   deps.telemetry.increment("security.audit.recorded");
   await deps.outbox.publish(
     [
@@ -175,6 +177,7 @@ export async function recordAudit(
         input.decision,
       ),
     ],
+    input.tenantId,
     tx,
   );
   return record;

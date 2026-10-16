@@ -84,6 +84,36 @@ of these lands, `public-checkout-routes.test.ts` documents the current behavior 
 `complete` actually returns today (including surfacing the failure state) rather than assuming
 success.
 
+**2026-09-21 — CLOSED by WP-1 (G-52). Kept, not deleted; the text above is the record of the limitation.**
+Decision taken (the plan's, not re-opened): on completion of a guest checkout, find-or-create a
+customer in Identity from the session's contact email and place the order against it — neither of the
+options above exactly (Orders' `customerRef` stays required; the guest customer is created at
+completion, not before `startCheckout`). How:
+
+- `CheckoutSession` carries a `contactEmail` (T1.1/T1.2; `POST /public/checkouts/:id/contact`, T1.3).
+- `ResolveGuestCustomer` (`services/identity`, T1.4) finds the customer by `(tenantId, email)` or
+  creates one marked `isGuest` — no consent record, `customer.registered` only on the create branch.
+  A concurrent-create unique violation is recovered in a fresh unit of work.
+- `OrderCreationAdapter` (T1.5) calls it, scoped to the session's tenant, when `customerRef` is absent.
+  A guest session with no contact email now throws a `ValidationError` (422 over the wire), not the
+  plain `Error` described under "Found".
+- Resolving is not authenticating (T1.8): a guest checking out with a registered customer's email gets
+  an order attached to that customer and nothing else; `/public/auth/me` and the other
+  customer-scoped routes still answer 401.
+- `public-checkout-routes.test.ts` now asserts the success path instead of the rejection.
+
+**Did this widen the separate concurrent-capture / duplicate-order window** (the adapter's own doc
+comment; out of scope, untouched)? Not in kind: two concurrent `/complete` calls could already both
+reach `create()`, and still can. It does add one new side effect ahead of order creation — the guest
+customer is committed in its own unit of work — so an order-creation failure after it leaves a guest
+customer with no order. That is harmless and idempotent: the retry finds the same customer by
+`(tenantId, email)` rather than creating a second.
+
+Not verified end to end: the browser e2e (`apps/e2e/tests/guest-purchase.spec.ts`) needs the full
+stack and was **not run** — see the WP-1 report. Requires migrations
+`20260921000000_wp1_checkout_contact_email` and `20260921010000_wp1_identity_guest_marker` to be
+deployed before the runtime that contains this change serves guest checkouts.
+
 ## Environment note (Phase 2 addendum) — the `turbo` binary itself does not run in this session
 
 The previously-documented workaround (`pnpm exec turbo run <task> --concurrency=4`) does not work in
@@ -202,7 +232,7 @@ own scope, one context earlier than Reporting hits it.
 `IndexProviderPort.query(term, page): Promise<Paginated<SearchDocument>>` (or similar) wired to a
 real OpenSearch/pgvector backend (ADR-0020, still a deferred build milestone per
 `services/search/src/composition.ts`'s doc comments), plus a new `ExecuteSearchQuery` use case that
-calls it and *separately* calls `LogQuery` for the analytics side-effect. Once that port method
+calls it and _separately_ calls `LogQuery` for the analytics side-effect. Once that port method
 exists, `GET /search/indexes/:indexId/queries` can be added exactly as the original note describes.
 Until then, the POST route is left as pure analytics logging, unrenamed, so nothing implies it
 returns results it cannot produce.
@@ -258,7 +288,7 @@ and `/settings` once each to close these out.
 
 ## T4.20 — Reporting: `AnalyticsReport` read endpoints deliberately not built (pointer: G-8)
 
-**Expected:** T4.20's note says building read endpoints for report *definitions* is in scope
+**Expected:** T4.20's note says building read endpoints for report _definitions_ is in scope
 ("an operator should see what reports exist. Do that.") but explicitly warns off building an
 endpoint that executes/reads a report's results: "there is no populated read store and no CDC
 pipeline in this codebase. Do not build one, do not wire a fake, and do not let a screen imply
@@ -303,7 +333,7 @@ Re-tested both previously-documented Windows `turbo` failures at Phase 4's close
 exit criteria's `pnpm typecheck && pnpm lint && pnpm test && pnpm arch` line asks:
 
 - `pnpm typecheck` (root, `turbo run typecheck` under the hood) — `[ELIFECYCLE] Command failed with
-  exit code 3221225781` (Windows `STATUS_ACCESS_VIOLATION`), same as the Phase 0 finding above, no
+exit code 3221225781` (Windows `STATUS_ACCESS_VIOLATION`), same as the Phase 0 finding above, no
   per-package output.
 - `pnpm exec turbo run typecheck --concurrency=4` (the Phase 0 workaround) — now also fails:
   `node.exe: error while loading shared libraries: ?: cannot open shared object file` (exit 127),
@@ -558,6 +588,13 @@ already, independent of how the operator selects or discovers one.
 
 ## T5.13 — Live dashboard: only the Revenue KPI has a real data source; Orders-count/AOV/Conversion Rate, Sales Overview, Top Products, and Sales By Channel stay demo (per-tile, not per-page)
 
+> **CLOSED 2026-10-13 (Plan 3D, `docs/superpowers/plans/2026-10-12-real-dashboard.md`).** Home and Analytics no longer
+> carry any demo data: total sales, orders, average order value, orders to fulfill, the sales chart and top products
+> are computed from the shop's orders (`GET /analytics/sales`, `services/orders` `GetSalesSummary`), and a shop with no
+> orders sees zeros. Conversion rate and sales by channel were removed because no honest source exists (visits are not
+> counted, G-145; orders carry no channel). `apps/admin-web/src/data/dashboard.ts`, the per-tile provenance and every
+> "Demo" tag are gone. What follows is the historical record of why the tiles were demo.
+
 **Expected:** `apps/admin-web/src/data/dashboard.ts` returned one page-wide `provenance: "demo"`
 flag; the task asked to convert the dashboard tile by tile, giving each section (KPIs/Sales
 Overview/Top Products/Sales By Channel) its own accurate `provenance`, live where a real source
@@ -658,7 +695,6 @@ read), which is a product decision, not a wiring gap. Once any of these land, th
 `provenance: "demo"` literal in `data/dashboard.ts` is the only place that needs to flip to a real
 fetch — the per-section/per-KPI plumbing this task built already renders either state correctly.
 
-
 ## T5.16 — Customer account and order history: DESIGN ONLY, no code written
 
 **This entry is a design decision, not an implementation record.** No route, no cookie, no guard,
@@ -671,9 +707,9 @@ bottom before assuming any of this exists in the codebase.**
 
 The storefront (`apps/storefront`) has no login of any kind today. Confirmed by reading
 `apps/storefront/src/app/cart/actions.ts` and `apps/storefront/src/lib/cart.ts`:
-`GUEST_SESSION_COOKIE` (`lumo-storefront-guest-session`) is minted by
+`GUEST_SESSION_COOKIE` (`morbeh-storefront-guest-session`) is minted by
 `currentOrNewSessionRef()` as a bare `crypto.randomUUID()`, HttpOnly, 30-day, with no principal,
-no credential, and no server-side identity check behind it — it is proof of *cart ownership*
+no credential, and no server-side identity check behind it — it is proof of _cart ownership_
 only (`resolveSessionRef`'s doc comment in `apps/admin/src/http/public-cart-routes.ts`: "never
 `customerRef`, never trusted from anywhere but this field"). Reusing or extending it for identity
 would let anyone forge access to another customer's orders/wishlist/loyalty balance by
@@ -693,8 +729,8 @@ domain — `services/orders/src/domain/order.ts:23`, `services/wishlist/src/doma
 wishlist-repository.ts:8`, `services/loyalty/src/domain/loyalty-account-repository.ts:8`,
 `services/reviews/src/domain/review.ts:17`) all already key their data off a bare `customerRef`
 string — this is Identity's `Customer.id`. So the shape of "what does a customer's own data scope
-look like" is already settled across four bounded contexts; what's missing is *how a request
-proves it is entitled to a given `customerRef`* at all.
+look like" is already settled across four bounded contexts; what's missing is _how a request
+proves it is entitled to a given `customerRef`_ at all.
 
 ### 1. Authentication flow — recommendation: reuse Security's use cases, do not build a second auth stack
 
@@ -725,10 +761,10 @@ Reasoning:
   permission checks, no impersonation/delegation).
 - `Principal` (`services/security/src/domain/principal.ts`) is already Security's "unified
   identity" concept, and its own doc comment states the shape this needs: "`human` principals are
-  a *reference* to an Identity-context user (`subjectRef`)... Security stores no human PII."
+  a _reference_ to an Identity-context user (`subjectRef`)... Security stores no human PII."
   `Session.principalRef` and `Authenticate`'s `principal.id.toString()` both key off `Principal`,
   not off `Customer` directly. So the missing link is a `Principal` (`kind: "human"`, `subjectRef:
-  customer.id.toString()`) created alongside each registered `Customer` — either at
+customer.id.toString()`) created alongside each registered `Customer` — either at
   `Customer.register()` time (Identity's registration use case additionally provisions a
   `Principal` via a port into Security, the same cross-context adapter pattern
   `OrderCreationPort`/`OrderCreationAdapter` already establishes for Checkout→Orders) or lazily on
@@ -752,9 +788,9 @@ Reasoning:
 
 ### 2. Session mechanism
 
-- **Cookie name:** a new `CUSTOMER_SESSION_COOKIE = "lumo-storefront-customer-session"` —
-  distinct from `GUEST_SESSION_COOKIE` (`lumo-storefront-guest-session`, cart ownership only) and
-  `CHECKOUT_SESSION_COOKIE` (`lumo_checkout_session`, single-sitting checkout flow). Same
+- **Cookie name:** a new `CUSTOMER_SESSION_COOKIE = "morbeh-storefront-customer-session"` —
+  distinct from `GUEST_SESSION_COOKIE` (`morbeh-storefront-guest-session`, cart ownership only) and
+  `CHECKOUT_SESSION_COOKIE` (`morbeh_checkout_session`, single-sitting checkout flow). Same
   `HttpOnly`/`Secure`-in-prod/`SameSite: "lax"` shape as `GUEST_SESSION_COOKIE_OPTIONS`
   (`apps/storefront/src/lib/cart.ts`) for consistency, but a shorter `maxAge` — recommend a
   sliding ~30–120 minute TTL refreshed on activity (mirroring `Session.refresh`'s rotate-and-extend
@@ -763,7 +799,7 @@ Reasoning:
 - **What it carries:** the opaque Security `Session.id` (the same UUID `EstablishSession`/
   `Authenticate` already return as `SessionOutput.id`) — **never** the raw `customerRef`/`Customer`
   id, and never a self-contained JWT with embedded claims. Opacity is deliberate, not just
-  defense-in-depth: because the cookie is *only* a lookup key, `RevokeSession`/`RevokeAllSessions`
+  defense-in-depth: because the cookie is _only_ a lookup key, `RevokeSession`/`RevokeAllSessions`
   take effect immediately on the next request (the introspection call below will report
   `active: false`); a self-contained signed token would keep validating locally until its own
   expiry regardless of a revocation the server already recorded.
@@ -832,7 +868,7 @@ partial string into a search box; it is not a safe security-scoping mechanism fo
 endpoint — a substring match can both over-match (one customer's ref happens to be a substring of
 another's, or of an order number) and under-match, and "match the order number too" is actively
 wrong for this use case (a customer must never see another customer's order just because its
-*number* happens to contain their ref as a substring). **A future implementation must add a
+_number_ happens to contain their ref as a substring). **A future implementation must add a
 genuine exact-match `customerRef` filter** — either a new `customerRef?: string` field on
 `OrderListQuery` handled as `WHERE customerRef = $1` (not `ILIKE '%...%'`), or a dedicated
 `listByCustomer(customerRef, page)` repository method — before wiring this route to real data.
@@ -849,14 +885,14 @@ own — they reuse `CustomerGuard` and the session→principal→customer resolu
 - **T5.17 Wishlist:** `WishlistRepository.findByCustomerRef(customerRef)` already exists
   (`services/wishlist/src/domain/wishlist-repository.ts:8`) — unlike Orders, there is **no**
   backend list-query gap to fix first. Once `CustomerGuard` exists, `GET
-  /public/customers/me/wishlist` is a direct wire-up: guard → resolve `customerRef` → 
+/public/customers/me/wishlist` is a direct wire-up: guard → resolve `customerRef` →
   `findByCustomerRef` → DTO-map → return. Any wishlist-mutation routes (add/remove item) this task
   adds need the identical guard and the identical `customerRef` resolution, never a client-
   supplied one.
 - **T5.19 Loyalty balance:** identical situation —
   `LoyaltyAccountRepository.findByCustomerRef(customerRef)` already exists
   (`services/loyalty/src/domain/loyalty-account-repository.ts:8`). `GET
-  /public/customers/me/loyalty` is the same direct wire-up as Wishlist, no repository gap.
+/public/customers/me/loyalty` is the same direct wire-up as Wishlist, no repository gap.
 - **T5.18-write (review authoring, deferred by T5.18's own report):** `Review.customerRef`
   (`services/reviews/src/domain/review.ts:17`) is required at creation and is also the key
   `vote(customerRef, ...)` uses to prevent double-voting (`review.ts:125-126`). Writing a review
@@ -938,20 +974,20 @@ three-state rendering.
 ## T5.17 — Customer auth foundation + Wishlist: SHIPPED, with four downstream gaps found
 
 **Both parts landed and are verified.** This entry is not a "blocked" record — it is the list of
-gaps found *while* implementing, each of which was worked around honestly rather than papered over.
+gaps found _while_ implementing, each of which was worked around honestly rather than papered over.
 T5.16's design (above) was implemented essentially as written; the deviations are called out below.
 
 ### 1. Wishlist share tokens can be minted but never redeemed
 
 **Expected:** T5.17's brief says to check `wishlist-routes.ts`/`services/wishlist` for a
-share-token-*resolution* capability and, if one exists, wire it as a separate unauthenticated public
+share-token-_resolution_ capability and, if one exists, wire it as a separate unauthenticated public
 route (a share link is meant for someone without an account).
 
 **Found — no such capability exists.** `WishlistRepository`
 (`services/wishlist/src/domain/wishlist-repository.ts:5-10`) declares exactly `save` / `findById` /
 `findByCustomerRef` / `list` — there is no `findByShareToken`. No use case in
 `services/wishlist/src/application/wishlist.use-cases.ts` accepts a token as input either;
-`ShareWishlistItem` only *mints* one (idempotently replaying the item's existing token). The token is
+`ShareWishlistItem` only _mints_ one (idempotently replaying the item's existing token). The token is
 real and persisted on the `WishlistItem` value object (`value-objects/wishlist-item.ts:6`), but
 nothing anywhere can look one up.
 
@@ -984,9 +1020,10 @@ cart" branch is unreachable and `MergeGuestCart` (which exists, and is already e
 
 **What shipped instead:** a new `AssignCartCustomer` use case
 (`services/cart/src/application/assign-cart-customer.use-case.ts`) + `CartController.assignCustomer`
-+ `POST /public/auth/claim-cart`, which promotes the guest cart in place. Re-login by the same
-customer short-circuits to a no-op (the domain method refuses *any* second assignment, which is right
-for the aggregate but wrong for a login flow); a cross-customer re-assignment is still refused.
+
+- `POST /public/auth/claim-cart`, which promotes the guest cart in place. Re-login by the same
+  customer short-circuits to a no-op (the domain method refuses _any_ second assignment, which is right
+  for the aggregate but wrong for a login flow); a cross-customer re-assignment is still refused.
 
 **Deviation from the design, deliberate:** `GUEST_SESSION_COOKIE` is **kept**, not cleared. Because
 `sessionRef` is the only key that resolves "my current cart" (`GetCurrentCart` →
@@ -1047,6 +1084,8 @@ process restart and are not shared across replicas.** Two related notes:
 C2-4 already established for the MFA provider stub. A Kratos/Auth0-backed provider then implements
 credential storage, and `CustomerCredentialsPort` becomes two no-ops.
 
+`2026-10-06: limitation 1 resolved by Plan 1B-1 (durable, tenant-scoped HashedPasswordAuthProvider).`
+
 ### 5. Config decision T5.16 §1 left open, now made
 
 T5.16 §1 left "does customer auth get its own `AuthMethodKind` (e.g. `customer_password`)" to the
@@ -1056,7 +1095,7 @@ and is the kind `InMemoryPasswordAuthProvider` registers against. `Authenticate`
 that is not in the versioned registry and nothing in the boot path registers one, so
 `CustomerAuthAdminController.ensurePasswordMethod()` registers it lazily, once per process — and only
 if absent, reading `registryExplorer()` first so it never overwrites a `displayName`/`enabled` an
-operator set through the admin console (a method an operator explicitly *disabled* stays disabled,
+operator set through the admin console (a method an operator explicitly _disabled_ stays disabled,
 and login then correctly fails).
 
 ## T6.3 — `turbo run test:coverage` not exercised; verified per-package instead (same pre-existing environment issue as Phase 0/2/4)
@@ -1150,7 +1189,7 @@ full bring-up sequence):
    already uses** (copied verbatim) — should be safe since it's the existing working pattern, but
    was never re-run itself, only read.
 3. **`guest-purchase.spec.ts`'s `test.fail()` annotation assumes the T2.3 gap (`docs/plans/
-   BLOCKERS.md`, "T2.3 — `POST /public/checkouts/:id/complete` throws for a genuine guest
+BLOCKERS.md`, "T2.3 — `POST /public/checkouts/:id/complete` throws for a genuine guest
    session") is still open.** That entry predates T5.16–19's customer-auth work; nothing in this
    session re-confirmed the gap still reproduces for a true (never-logged-in) guest session after
    those landed. If it turns out closed, remove `test.fail()` — the spec's assertions are already
@@ -1159,6 +1198,10 @@ full bring-up sequence):
 **Suggested fix:** run the suite once on a host with Docker per `apps/e2e/README.md`, fix
 whatever `support/admin-login.ts` selector turns out wrong (most likely failure point), and
 re-confirm item 3 above before deciding whether `test.fail()` stays.
+
+**2026-09-21 (WP-1):** item 3 is resolved — the T2.3 gap is closed and `test.fail()` is removed from
+`guest-purchase.spec.ts` (the spec now also fills the new contact step and reads the order back).
+The suite has still never been run against a live stack, so items 1 and 2 stand.
 
 ## T6.5 — the "KMS / secrets provider" guard is not fail-closed anywhere, unlike the other four; found, not fixed
 
@@ -1197,3 +1240,397 @@ not just `appEnv`, so it can tell "configured" from "not" — `wireSecurityProvi
 provider, confirm it starts) before merging — not something to trust from a code read alone, given
 `worker.ts` currently has zero guards to pattern-match against for this exact shape.
 
+## Environment note (WP-0 addendum, 2026-09-08) — `turbo` breakage is wider than previously recorded, and `pnpm -r` bails silently
+
+Re-confirmed the standing `turbo` failure once more this session: `pnpm exec turbo --version`
+produces no output and exits 127 — same failure class as the Phase 2 addendum and Phase 4 exit
+entries above, no new symptom there. Two things **are** new:
+
+1. **`pnpm build` is also broken, not just `lint`/`typecheck`/`test`/`test:coverage`.** Root
+   `package.json` routes all five through `turbo run <task>`; every prior entry in this file only
+   ever tested/mentioned three or four of them. There is no repo-wide turbo-free workaround for
+   `build` yet — use `pnpm --filter <name> run build` per package, and treat a genuine need for a
+   repo-wide production build on this host as still open.
+2. **`pnpm -r <task>` bails on the first package failure by default**, which silently understates
+   how much of the repository a gate run actually covered. Concretely: `pnpm -r
+--workspace-concurrency=4 run test` stopped after 27 of ~79 packages on
+   `packages/http/src/server.test.ts` timing out at 5000ms (see item 3) —
+   `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL`. Re-run with `pnpm -r --workspace-concurrency=4 --no-bail
+run test` to get a complete pass/fail picture instead of a partial one that looks like a full
+   run. `README.md`'s Scripts section and `docs/PROJECT_STATE.md`'s "Verified gates" section have
+   both been updated to say so.
+3. **A second, previously-undocumented concurrency-only timeout flake**:
+   `packages/http/src/server.test.ts` → `HTTP transport > public routes (Phase 9 hardening —
+storefront reads) > omits bearerAuth from the OpenAPI security requirement for a public route`.
+   Times out at 5000ms under `--workspace-concurrency=4`; passes in 530ms (all 28 tests in the
+   file) when re-run alone via `pnpm --filter @platform/http run test`. Same class of flake as the
+   already-documented `apps/runtime/src/security/wire-security-provisioning.test.ts` one, not the
+   same test. Re-run either file alone before treating a failure in it as a regression.
+
+Full-repo measurement this session (`--no-bail`, so complete): typecheck 79/79 packages, exit 0.
+Tests: 77 of 78 test-bearing packages pass; the one failure is item 3's already-known-flaky sibling,
+`wire-security-provisioning.test.ts`, timing out the same way it always has. `pnpm arch`: 0
+violations, 1855 modules, 7492 dependencies cruised. Recorded in full in `docs/PROJECT_STATE.md`'s
+"Verified gates" section — this entry exists so the turbo/bail/flake facts specifically don't get
+lost the way the pre-3.0A history in that file did.
+
+## T12 — `docs/archive/**` treated as excluded from the rename, same as root `PHASE_A*.md`
+
+**Expected:** `WP-12-brand-rename.md`'s Definition of Done excludes "archived phase reports
+(`PHASE_A*.md` at repo root...) — these are historical records, not live docs, leave them" — naming
+only the root-level files by that exact pattern.
+
+**Found:** `docs/archive/reports/` (112 files), `docs/archive/phase-a28-stash-review/`, and
+`docs/archive/sprint-a0-lockfile-repair/` hold the same genre of record — closed incident/audit
+reports, several of them literally titled `PHASE_A##_*_REPORT.md`, just filed under `docs/archive/`
+instead of the repo root.
+
+**Ruling made:** treated `docs/archive/**` as covered by the same exclusion intent, not renamed.
+Rewriting a closed historical report to retroactively say "Morbeh" where the platform was actually
+still called Lumo at the time misrepresents that history, which is exactly what the DoD's own
+reasoning ("historical records, not live docs") argues against — it just didn't anticipate this
+second archive location. Flagging this ruling explicitly rather than silently generalizing the rule.
+
+## T12.7 (1/2) — Debezium outbox connector name (`lumo-outbox`) deliberately NOT renamed
+
+**Expected:** `WP-12-brand-rename.md` T12.7 names this as one of exactly two mandatory deferrals —
+do not rename the Debezium connector name, and file a ticket instead of doing it inline.
+
+**Found:** the identifier `lumo-outbox` (connector name) / `lumo_outbox` (publication + replication
+slot name, byte-identical string, per Debezium convention) / `"topic.prefix": "lumo"` appears as one
+single, load-bearing identity across every layer of the CDC pipeline:
+
+- `infrastructure/docker/debezium/outbox-connector.json` — the connector's own `name`, and its
+  `database.dbname`/`topic.prefix`/`publication.name`/`slot.name` fields.
+- `infrastructure/docker/debezium/register-connector.sh` — registers via
+  `PUT .../connectors/lumo-outbox/config`.
+- `infrastructure/docker/postgres/init/01-roles-and-cdc.sql` — comments referencing the
+  `lumo_outbox` publication (created by a migration, not this script).
+- `infrastructure/k8s/70-debezium.yaml` — the k8s equivalent Job, same connector name/topic-prefix/
+  publication/slot literals embedded in its curl payload.
+- `apps/runtime/src/scheduler.ts:217` — the outbox-prune job's own
+  `SELECT confirmed_flush_lsn FROM pg_replication_slots WHERE slot_name = 'lumo_outbox'` gate.
+- `apps/runtime/src/config.ts` / `.env.example` — `KAFKA_CONNECT_CDC_CONNECTORS` default/value
+  `lumo-outbox`, which the scheduler's CDC watchdog polls by exact name.
+- Every `services/*/prisma-*.integration.test.ts` file and `apps/runtime/src/scheduler.test.ts` that
+  exercises the outbox-prune/watchdog path against this same literal.
+
+**Why blocked:** renaming any single one of these without renaming all of them in the same breath
+(including re-registering the connector against Kafka Connect, which is a live operation, not a
+file edit) would desynchronize the pipeline — the scheduler would poll/gate on a slot name that no
+longer matches what Debezium actually created, exactly the "re-emit or skip events" risk T12.7
+itself names. `WP-11` (financial integrity) is the workstream currently proving this exact CDC path
+in staging; renaming it out from under that proof is a change that needs a human's explicit sign-off
+on timing, not a judgment call made mid-rename.
+
+**Suggested fix:** once `WP-11`'s staging CDC proof is complete and stable, rename in one atomic
+change: register a **new** connector named `morbeh-outbox` (new publication `morbeh_outbox`, new
+slot `morbeh_outbox`, new `topic.prefix: "morbeh"`) alongside the old one, cut the scheduler/watchdog
+config over, confirm no gap in consumption, THEN deregister/drop the old connector, publication, and
+replication slot. Never rename a live Debezium connector's identity in place — Kafka Connect treats
+a `PUT` to a _new_ name as a new connector with no offset history, and dropping/recreating the
+Postgres replication slot loses whatever WAL the old slot was retaining. Update, in the same change:
+`outbox-connector.json`, `register-connector.sh`, `70-debezium.yaml`, `01-roles-and-cdc.sql`'s
+comment, `scheduler.ts:217`, `config.ts`'s `KAFKA_CONNECT_CDC_CONNECTORS` default, `.env.example`,
+and every test fixture referencing `lumo-outbox`/`lumo_outbox` — all at once, so nothing is left
+half-migrated.
+
+## T12.7 (2/2) — Postgres and ClickHouse database name/user/connection strings deliberately NOT renamed
+
+**Expected:** `WP-12-brand-rename.md` T12.7's second mandatory deferral: do not touch the database
+name, user, or connection strings, and file a ticket instead of doing it inline.
+
+**Found:** the literal `lumo` (as Postgres/ClickHouse database name AND role/user AND password) and
+the connection-string shape `postgresql://lumo:lumo@<host>:5432/lumo` recur across:
+
+- `.env.example` — `DATABASE_URL`/`DIRECT_URL` (Postgres) and `CLICKHOUSE_USER`/
+  `CLICKHOUSE_PASSWORD`/`CLICKHOUSE_DATABASE`.
+- `infrastructure/docker/docker-compose.yml` — `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`,
+  `CLICKHOUSE_DB`/`CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`, and the `pg_isready -U lumo -d lumo`
+  healthcheck.
+- `infrastructure/docker/postgres/init/01-roles-and-cdc.sql` — the `lumo_app` least-privilege
+  application role (`CREATE ROLE lumo_app LOGIN PASSWORD 'lumo_app'`).
+- `infrastructure/k8s/secret.example.yaml` — example `DATABASE_URL` values ending `/lumo`.
+- Every `apps/runtime/src/*.test.ts` regression/composition test and every
+  `services/*/prisma-*.integration.test.ts` file, which all default `DATABASE_URL` to
+  `postgresql://lumo:lumo@localhost:5432/lumo` (or `..._test`) as their fixture.
+- `.github/workflows/db-integration.yml` and `docs/investigations/H-09-no-integration-tests-in-ci.md`
+  — CI's own Postgres service container credentials.
+
+**Why blocked:** exactly what T12.7 says — renaming a database name, role, or password is a data
+migration (or, for CI/local dev, a coordinated re-provisioning of every service container and every
+test fixture in lockstep), not a text rename. Doing it as a side effect of a branding pass risks a
+silent mismatch between what a file says to connect to and what actually exists, which is a much
+worse failure mode (a boot-time or CI-time connection failure with a misleading error) than leaving
+the old name in place a while longer.
+
+**Suggested fix:** roll the actual Postgres role/database and ClickHouse user/database rename as its
+own, deliberately-scoped migration task: provision the new `morbeh`-named role/database/user
+alongside the old ones, migrate data (`ALTER DATABASE ... RENAME TO` for Postgres is fast and
+in-place if nothing is actively connected during the switch; ClickHouse similarly supports renaming
+a database), cut every config file (`.env.example`, `docker-compose.yml`, k8s secrets, CI workflow,
+every test fixture default) over in one atomic change, verify the full gate suite, then drop the old
+role/database. Do not rename Postgres/ClickHouse credentials piecemeal across the ~40 files that
+reference them — that guarantees a period where some files say `lumo` and others say `morbeh` and
+nothing connects.
+
+## T12.8 — `ResourceUrn` prefix rename reverted (production defect, found and fixed) + crypto salt of the same class
+
+**Expected:** `WP-12-brand-rename.md` treats `services/security/src/domain/value-objects/
+resource-urn.ts` as ordinary code text — every other rename in this pass changed prose/comments or
+purely-internal identifiers with no stored counterpart, per the same D1 rule T12.7 (both halves)
+already applies to `@platform/*` package names and the Debezium/database identifiers above.
+
+**Found:** the rename script changed the URN's literal wire prefix, not just prose — `parts[0] !==
+"lumo"` became `parts[0] !== "morbeh"` in `ResourceUrn.parse()`, and `toString()` emits
+`morbeh:${context}:${type}:${id}` instead of `lumo:...`. `packages/db/prisma/schema/
+security.prisma:275`'s `SecurityAiGovernance.allowedResources Json` column persists patterns like
+`"lumo:catalog:*:*"` today. The failure is silent: `AiGovernanceProfile.permitsResource()`
+(`services/security/src/domain/ai-governance-profile.ts:123-131`) parses each stored pattern with
+`ResourceUrn.parse`, drops any that fail to parse via `p.ok &&` inside `.some()`, and an empty
+`.some()` result is `false` — so every AI identity with a configured resource sandbox (a non-empty
+`allowedResources`) would be denied every resource, with no error and no log, the moment this
+shipped. Confirmed by reading the guard directly, not inferred from the diff.
+
+**Ruling made:** reverted the literal prefix to `lumo` in `resource-urn.ts` (code + the two doc-comment
+example strings, since those illustrate the actual wire format, not general brand prose) and in every
+test asserting against it: `ai-governance-profile.test.ts`, `zero-trust.test.ts`, and
+`session-f.e2e.test.ts` (renamed by the same script in the same pass, not called out individually but
+exercising the identical parse path — left renamed, this e2e test would have masked the bug it
+reproduces end-to-end). `policy-condition.ts`'s doc-comment URN example was updated to match. No data
+migration: nothing outside this system ever reads a resource URN, so renaming it bought no brand
+value and would have cost a migration inside a security domain for zero benefit — same reasoning as
+T12.7's `@platform/*`/Debezium/database rulings.
+
+**Found (re-scan, same class) — `NodeCrypto`'s scrypt salt.** `services/security/src/infrastructure/
+in-memory-auth-adapters.ts:30` (`NodeCrypto`, this file's doc comment: "the default provider" — despite
+the filename, not a test double) derived every AES-256-GCM/HMAC key via `scryptSync(ref, "morbeh-security",
+32)`. Any ciphertext, wrapped key, or signature produced before this rename (MFA `secretRef`s included —
+wired through `mfa.use-cases.ts`/`composition.ts`) would fail to decrypt or verify against the new salt,
+since scrypt's output changes completely with either input. Reverted to `"lumo-security"` for the same
+reason as the URN fix.
+
+**Reported, not changed — same class, lower confidence or self-consistent, needs a human call:**
+
+- Storefront/admin-web session, cart, and locale cookie name constants (`apps/storefront/src/lib/
+cart.ts:20` `GUEST_SESSION_COOKIE`, `customer-session.ts:21` `CUSTOMER_SESSION_COOKIE`,
+  `apps/admin-web/src/lib/auth/config.ts:37` `SESSION_COOKIE`, plus both apps' `LOCALE_COOKIE`) were
+  renamed from `lumo-...` to `morbeh-...`. A cookie name is compared against what's already sitting in
+  every active user's/admin's browser: on deploy, every signed-in customer/admin is silently signed out
+  and every guest's up-to-30-day cart becomes unreachable (self-healing on next visit, but the old cart's
+  contents are lost from that user's perspective). No normal user ever sees a cookie name, so the same
+  "no brand value, real cost" argument as the URN applies — but unlike the URN/salt cases this is a
+  one-time cutover glitch, not a permanent failure, so it may be judged acceptable. Left unchanged
+  pending a decision.
+- `AUTH_AUDIENCE`/`AUTH_CLIENT_ID`/`AUTH_CLIENT_SECRET` defaults (`morbeh-admin`/`morbeh-admin-web`/
+  `morbeh-admin-web-secret-change-me`, `apps/admin-web/src/lib/auth/config.ts:17-23`,
+  `apps/runtime/src/config.ts:57`) are self-consistent with the Hydra client the operator registration
+  script (`scripts/ops/register-oauth-client.mjs`, `scripts/dev/seed-auth-local.mjs`) creates under the
+  _same_ new name — not a mismatch as long as that script is re-run against any environment's existing
+  Hydra instance as part of deploying this rename. Flagging because that re-run is an operator step this
+  diff cannot itself guarantee happened.
+- `apps/runtime/src/seed-demo.ts:225-232` looks up an existing demo brand by the new slug
+  `morbeh-originals`; an environment already seeded under the old `lumo-originals` slug will get a
+  duplicate demo brand rather than reusing the old row. Low severity (demo/seed data only).
+- `KAFKA_CLIENT_ID`/`OTEL_SERVICE_NAME` defaults (`morbeh-runtime`/`morbeh-service`) are cosmetic labels
+  nothing validates against; only risk is an existing Grafana/Prometheus dashboard or alert filtering on
+  the old service name, which is an observability-config concern, not an application defect.
+- Not a defect: the gRPC proto package (`packages/grpc/protos/morbeh/orders/v1/orders.proto`, package
+  `morbeh.orders.v1`) has no separate deployed consumer pinning the old path — proto, loader call, and
+  test all moved together in this same diff. Not a defect: Keto's authorization namespace is named
+  `permissions` (`infrastructure/docker/keto/keto.yml`), never `lumo`/`morbeh`, so it was untouched by
+  this rename and has nothing to revert.
+
+**Gates:** `pnpm -r --workspace-concurrency=4 run typecheck` — clean, all workspaces. `pnpm -r
+--workspace-concurrency=4 --no-bail run test` — one failure, `apps/runtime/src/security/
+wire-security-provisioning.test.ts`, matching this file's already-documented concurrency-only flake
+exactly; re-run alone (`pnpm --filter @platform/runtime run test -- src/security/
+wire-security-provisioning.test.ts`) and all 34 files/224 tests passed. `pnpm arch` — 0 violations,
+3228 modules, 12143 dependencies cruised.
+
+## T11.5 — CDC exactly-once proof left unchecked: no staging environment reachable from this session
+
+**Expected:** `WP-11-financial-integrity.md`'s T11.5 asks to prove, in a staging environment with
+CDC as the publication path and the relay disabled, that every outbox row reaches Kafka exactly
+once, `confirmed_flush_lsn` advances, and connector restart neither duplicates nor drops —
+explicitly covering connector-down-and-recovering, slot-lag-growing, and Kafka-unavailable. The
+WP's own instruction: if no staging environment is reachable, do not simulate one and do not claim
+this done — write the reproduction steps and the access this needs into `BLOCKERS.md`, leave the
+task unchecked, continue to T11.6.
+
+**Found:** this session has no live cluster access — same limitation `WP-12`'s Tier 3 hit (no
+Docker host, no staging Kafka/Postgres/Kafka-Connect reachable from here). Both publication paths
+were read directly, not assumed:
+
+- `packages/messaging/src/outbox/outbox-relay.ts` — `OutboxRelay.drainOnce()` polls
+  `OutboxStore.fetchPending`, publishes the batch, then `markPublished`s it. Its own doc comment
+  states the production model plainly: "In production Debezium (CDC) streams the outbox table
+  directly, so this relay is not deployed." Gated by `OUTBOX_RELAY_ENABLED`
+  (`apps/runtime/src/outbox-relay-runtime.ts:32`) — `startOutboxRelay` returns `null` when it is
+  off, and single-flights across worker instances via `RedisDistributedLock` when it is on.
+- `infrastructure/docker/debezium/outbox-connector.json` — a `io.debezium.connector.postgresql.
+PostgresConnector` on `pgoutput`, publication `lumo_outbox`, slot `lumo_outbox`, `topic.prefix:
+"lumo"`, routing via `transforms.outbox` (Debezium's own outbox `EventRouter`, keyed by the
+  `topic` column) straight onto the routed Kafka topic — the SAME `platform.outbox` table the relay
+  above also drains.
+- `apps/runtime/src/scheduler.ts`'s `outbox-prune` job (~line 195-224) already gates on CDC health
+  before deleting anything: it queries `SELECT confirmed_flush_lsn FROM pg_replication_slots WHERE
+slot_name = 'lumo_outbox'` and skips pruning entirely (logging a warning) if the slot is missing
+  or has never confirmed a flush — this is the exact signal T11.5 asks to observe advancing.
+- `apps/runtime/src/scheduler.ts`'s `cdc-watchdog` job (`runCdcWatchdog`, ~line 83) separately polls
+  Kafka Connect's `GET /connectors/<name>/status` per connector in `KAFKA_CONNECT_CDC_CONNECTORS`,
+  records per-task state via `metrics.recordCdcTaskState`, and restarts a `FAILED` task up to a
+  capped rate (`maxRestarts` within `restartWindowMs`) before giving up and logging loudly. No-ops
+  entirely when `KAFKA_CONNECT_URL` is unset (true in every environment reachable from this
+  session).
+
+**Why blocked:** no Docker host, no staging Postgres/Kafka/Kafka-Connect cluster, and no
+`KAFKA_CONNECT_URL`/live replication slot reachable from this session — there is nothing to point
+either the watchdog or a manual verification pass at. Simulating this (e.g. asserting against a
+mocked Connect REST response) would prove the mock, not Debezium's actual exactly-once behavior
+under connector restart, slot lag, or a Kafka outage — exactly what the WP's own instruction says
+not to do.
+
+**Exact verification procedure for whoever has staging access — run in this order:**
+
+1. **Provision.** Apply `infrastructure/k8s/70-debezium.yaml` (or run
+   `infrastructure/docker/debezium/register-connector.sh` against a docker-compose stack) against a
+   staging Postgres with logical replication enabled (`wal_level = logical`) and a reachable Kafka
+   Connect. Confirm the connector reaches `RUNNING`/`RUNNING` (connector/task) via
+   `GET $KAFKA_CONNECT_URL/connectors/lumo-outbox/status`.
+2. **Disable the relay.** Set `OUTBOX_RELAY_ENABLED=false` (or leave it at its default-off) on every
+   worker instance for this test — T11.5 explicitly wants CDC as the ONLY publication path during
+   this proof, not both racing.
+3. **Baseline the slot.** `SELECT slot_name, confirmed_flush_lsn, active FROM pg_replication_slots
+WHERE slot_name = 'lumo_outbox';` — record the starting LSN.
+4. **Exactly-once, happy path.** Drive N real outbox-writing operations (e.g. N payment captures
+   through the real API, not a fabricated insert) end to end. For each: confirm exactly one message
+   lands on the routed Kafka topic (consume from the beginning of the topic partition, or check the
+   consuming context's own inbox/processed-event table shows exactly one processed row per
+   `messageId`) — not zero, not two. Re-check `confirmed_flush_lsn` advanced past the baseline.
+5. **Connector-down-and-recovering.** Stop the Kafka Connect worker (or `DELETE` the connector)
+   mid-stream, write M more outbox rows while it is down, then restart/re-`PUT` the SAME connector
+   config (same `name`, same `slot.name`/`publication.name` — never a new name, per this WP's own
+   "Known traps" and `WP-12`'s explicit warning against renaming it). Confirm all M rows are
+   delivered after recovery, each exactly once (no gap, no duplicate) — this is what proves the
+   replication slot correctly retained WAL across the outage rather than silently dropping it.
+6. **Slot-lag-growing.** Pause the connector (or block its network path) while continuing to write
+   outbox rows; watch `confirmed_flush_lsn` stop advancing while `pg_current_wal_lsn()` keeps
+   moving (growing lag) and confirm `cdc-watchdog`'s per-task state metric
+   (`recordCdcTaskState(connector, taskId, failed)`) reflects it, and that WAL is not being
+   truncated out from under the still-open slot (a replication slot pins WAL retention — confirm
+   disk usage grows rather than the slot silently losing data). Resume and confirm full catch-up
+   with no gap.
+7. **Kafka-unavailable.** Block the connector's path to the Kafka brokers (not Postgres) while
+   outbox rows keep being written. Confirm the connector's task transitions to `FAILED` (or retries
+   per `errors.max.retries`/`errors.retry.delay.max.ms` in `outbox-connector.json`) rather than
+   silently dropping records, that the watchdog's capped-restart logic
+   (`recordCdcWatchdogRestartSkipped` once `maxRestarts` is hit within `restartWindowMs`) does not
+   restart-loop forever, and that once Kafka is reachable again every row written during the outage
+   is still delivered exactly once.
+8. **Record the evidence** (LSNs before/after, message counts per step, screenshots or exported
+   metrics of `recordCdcTaskState`/`recordCdcWatchdogRestart*`) in this file or a linked report, and
+   only then check T11.5's box in `WP-11-financial-integrity.md`.
+
+**Access this task needs:** a staging (or disposable) Kubernetes/docker-compose environment with
+Postgres (logical replication enabled), Kafka, Kafka Connect + the Debezium Postgres connector
+plugin installed, and network-level control to simulate steps 5-7 (stop/restart the connector,
+block Kafka Connect ↔ Kafka traffic). None of this is reachable from this session.
+
+**Left unchecked** in `WP-11-financial-integrity.md`, per the WP's own instruction — T11.1, T11.2,
+T11.3, T11.4, and T11.6 are otherwise complete; F-06 (outbox publication model) stays open/narrowed
+to exactly this proof, not closed.
+
+## Infra stand-up session (2026-09-09) — Docker unavailable, cloud infra has untracked migrations, WP-11's migration not yet deployed anywhere
+
+**Expected:** per `MIGRATIONS.md` §1 (as it read before this session), this was to be "the first
+Docker-host session": start the local compose stack (`pnpm dev:up:infra`) and run
+`prisma migrate deploy` against a fresh Postgres 16, validating all local migrations including
+WP-11's new one, then run WP-11's backfill script against seeded data.
+
+**Found — Docker Desktop is not installed on this host at all**, not merely needing the
+interactive GUI start G-41's original note described: no `docker` CLI on PATH, no process, no
+install at any of the standard locations (`C:\Program Files\Docker\Docker\Docker Desktop.exe`,
+`%LOCALAPPDATA%\Docker\Docker Desktop.exe`, `C:\ProgramData\DockerDesktop`), no registry
+uninstall entry. Stopped here on the local-stack path per this WP's own governing rule ("stop and
+report rather than working around").
+
+**Found — the premise itself is stale.** `docs/operations/CLOUD_RUNBOOK.md` and
+`docs/PROJECT_STATE.md` both already record (since 2026-09-04/08, before this session) that the
+platform moved off local Docker onto managed cloud infrastructure — Supabase Postgres, Upstash
+Redis, Ory Network — and `.env` already carries live credentials for all three. `MIGRATIONS.md`
+§1's "must run against a fresh Postgres 16" framing was written for a Docker-host session that
+this platform no longer expects to have. Corrected in `MIGRATIONS.md` §1 directly (2026-09-09).
+
+**Read-only investigation against the live Supabase database** (explicit user direction: no writes
+this session — `prisma migrate status`, `pg_policies`/`pg_class` introspection, and `SELECT COUNT`
+only; connection role `postgres` confirmed `rolbypassrls=true` so counts are not an RLS artifact):
+
+1. **`prisma migrate status`**: the live database has 39 rows in `_prisma_migrations`. 37 of them
+   (`20260704000000_init` through `20260814000000_a21_sprint5x_column_and_index_reconciliation`)
+   were bulk-applied in an 11-minute window on 2026-08-23 (06:59:23–07:10:10) — one `migrate
+deploy` run, not incremental. **WP-11's own migration
+   (`20260909000000_wp11_float_to_decimal_money_columns`) is confirmed genuinely unapplied
+   anywhere** — this is the one real, current gap `MIGRATIONS.md` §1 was pointing at, just against
+   cloud Postgres instead of a fresh local one.
+2. **Two migrations exist in the live database that do not exist anywhere in this repo's git
+   history, on any branch**: `20260823000000_rls_tenant_isolation` (applied 07:11:18, same day as
+   the bulk run) and `20260823010000_rls_nullable_tenant_write_check` (applied 13:50:24, six and a
+   half hours later — a separate intervention). Someone applied real RLS DDL directly against the
+   live database without ever committing the migration files. Prisma's migration tracking stores a
+   checksum, not the SQL text, so the original files cannot be recovered — reconstructed instead
+   from live introspection (`pg_policies`, `pg_class.relrowsecurity`/`relforcerowsecurity`): **130
+   `tenant_isolation` policies across 128 business tables**, `ENABLE`+`FORCE ROW LEVEL SECURITY`,
+   `USING`/`WITH CHECK` both `tenant_id = current_setting('app.tenant_id', true)`; `platform.outbox`
+   and `platform.audit_events` get the nullable variant
+   (`(tenant_id IS NULL) OR (tenant_id = current_setting(...))`) matching the second migration's
+   name. **This means the RLS layer `MIGRATIONS.md` §3 lists as a future to-do is in fact already
+   live in production.** This is directly relevant to `WP-10` (multi-tenant runtime): whoever
+   designs that WP needs to design against this existing RLS layer as defense-in-depth alongside
+   the adapter-level scoping, not assume it doesn't exist yet.
+3. **Row counts, WP-11's four affected tables**: `licensing.usage_counters`, `licensing.credits`,
+   `pricing.pricing_rules`, `finance.exchange_rates` are all genuinely 0 rows (verified with a
+   role confirmed to bypass RLS, so this isn't an RLS false-negative). The WP-11 migration file's
+   own comment claimed this but for a stale reason ("schema has never run against a populated
+   database") — corrected in the migration file directly (2026-09-09): the schema HAS run against
+   a real, populated database (3 seeded orders, 13 seeded products per `catalog.products`/
+   `orders.orders` counts), these four specific tables just happen to hold nothing.
+4. **No payment has ever been captured on this database**: `payments.payment_intents`,
+   `payments.refunds`, and `finance.journals` are all 0 rows, despite `orders.orders` holding 3
+   rows including (per `CLOUD_RUNBOOK.md` Task 8) demo orders in placed/paid/refunded states — the
+   demo seed wrote order status directly rather than driving the real payment-capture flow. **This
+   means WP-11's backfill (`T11.3`) has no real historical work to do on this database; it is
+   forward-looking only, not yet exercised against genuine settlement data.** Consistent with
+   `WP-11-financial-integrity.md`'s own T11.3 note that the real Prisma-backed backfill adapter is
+   untested against a live database.
+
+**Not done, deliberately, this session:** `prisma migrate deploy` was NOT run against the live
+Supabase database. It is real, shared infrastructure already holding seeded demo data and an
+undocumented RLS history — deploying WP-11's pending migration there needs a backup first
+(`scripts/ops/backup-postgres.sh` exists for this) and explicit operator sign-off, made with this
+report in hand rather than before it. The two untracked RLS migration files also do not yet exist
+in this repo — reconstructing them from the introspection above and committing them (so the repo's
+migration history matches what is actually live) should happen before any further migration is
+deployed against this database, so `migrate deploy`'s own drift detection has an accurate baseline
+to compare against.
+
+**What this unblocks:** the "is the cloud database actually reachable and in what state" question
+that blocked T11.5 (CDC proof) and WP-12 Tier 3 (staging redeploy) is now answered for Postgres
+specifically — it is reachable, mostly in sync, and the exact gap is enumerated above. Kafka/Kafka
+Connect/staging cluster access (T11.5's actual blocker) remains unaddressed; nothing here changes
+that entry's status.
+
+**Next action needed (operator decision, not this session's to make):** approve `prisma migrate
+deploy` of WP-11's pending migration against the live Supabase database (after a backup), and
+decide whether/how to commit the two reconstructed RLS migration files back into this repo so the
+migration history stops drifting from what is actually deployed.
+
+## Step 1 (admin-web live) — the handoff's premise for G-82 was false: `APP_ENV=production` cannot be made bootable with Ory variables alone (2026-10-03)
+
+**What the handoff said:** make `APP_ENV=production` bootable "once the real Ory vars are present", so the API stops being `local` and G-82 closes with it.
+
+**What the code says:** `config.ts:300` is only one of several refusals. Outside `local`, `startApi` collects and throws every failure of `assertProductionMfaConfigured`, `assertProductionPaymentProviderConfigured`, `assertProductionLicensingBillingConfigured`, `assertProductionObjectStorageConfigured`, `assertProductionIntegrationPortsConfigured`, `assertProductionSignupEmailConfigured` and `assertProductionDunningNotificationsConfigured` (`apps/runtime/src/api.ts`). `infrastructure/railway/README.md` §1 already said so ("Lifting it means building a real MFA provider, wiring Stripe, S3, and an Ory Kratos/Keto stack — separate work"); the handoff was written without that section in view.
+
+**What was done instead:** G-82 was closed by decoupling the exposure decision from `APP_ENV` (`apps/runtime/src/api-exposure.ts`, `994b169`, `ff03f30`), which is what the G-82 entry itself proposed ("a third mode or a separate switch"). `APP_ENV` stays `local` on the deployment. The remainder is recorded as **G-84** in both gap registers.
+
+**Next action needed (operator decision):** none for today. Before the first real merchant, G-84 needs scoping against WP-18 (tax/shipping), G-49 (email) and the payment/MFA work, alongside the Ory plan decision recorded in `docs/plans/UNIFIED-ROADMAP.md` (Status — 2026-10-03).

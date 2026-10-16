@@ -178,9 +178,9 @@ interface CustomerSeed {
 }
 
 const CUSTOMER_SEEDS: readonly CustomerSeed[] = [
-  { email: "amelia@lumo.local", name: "Amelia Ortiz" },
-  { email: "noah@lumo.local", name: "Noah Whitfield" },
-  { email: "sofia@lumo.local", name: "Sofia Andersen" },
+  { email: "amelia@morbeh.local", name: "Amelia Ortiz" },
+  { email: "noah@morbeh.local", name: "Noah Whitfield" },
+  { email: "sofia@morbeh.local", name: "Sofia Andersen" },
 ];
 
 async function main(): Promise<void> {
@@ -219,21 +219,28 @@ async function main(): Promise<void> {
       readonly slug: ValueLike;
     }
     const existingBrands = unwrap<{ items: readonly BrandRecord[] }>(
-      await catalog.brands.list({ first: 100 }),
+      await catalog.brands.list({ first: 100, tenantId: TENANT_ID }),
       "list brands",
     );
-    const existingBrand = existingBrands.items.find((b) => b.slug.value === "lumo-originals");
+    const existingBrand = existingBrands.items.find((b) => b.slug.value === "morbeh-originals");
     let brandId: string;
     if (existingBrand !== undefined) {
       brandId = existingBrand.id.toString();
-      logger.info("seed-demo: brand already exists, reusing", { brandId, slug: "lumo-originals" });
+      logger.info("seed-demo: brand already exists, reusing", {
+        brandId,
+        slug: "morbeh-originals",
+      });
     } else {
       const brand = unwrap<{ id: string }>(
-        await catalog.brands.create({ name: "Lumo Originals", slug: "lumo-originals" }),
+        await catalog.brands.create({
+          name: "Morbeh Originals",
+          slug: "morbeh-originals",
+          tenantId: TENANT_ID,
+        }),
         "create brand",
       );
       brandId = brand.id;
-      logger.info("seed-demo: created brand", { brandId, name: "Lumo Originals" });
+      logger.info("seed-demo: created brand", { brandId, name: "Morbeh Originals" });
     }
 
     // ---- Catalog: 3 categories (same list + match-by-slug approach as the brand above) ----
@@ -242,7 +249,7 @@ async function main(): Promise<void> {
       readonly slug: ValueLike;
     }
     const existingCategories = unwrap<{ items: readonly CategoryRecord[] }>(
-      await catalog.categories.list({ first: 100 }),
+      await catalog.categories.list({ first: 100, tenantId: TENANT_ID }),
       "list categories",
     );
     const categoriesBySlug = new Map<string, { id: string }>();
@@ -257,7 +264,7 @@ async function main(): Promise<void> {
         continue;
       }
       const category = unwrap<{ id: string }>(
-        await catalog.categories.create({ name: seed.name, slug: seed.slug }),
+        await catalog.categories.create({ name: seed.name, slug: seed.slug, tenantId: TENANT_ID }),
         `create category "${seed.slug}"`,
       );
       categoriesBySlug.set(seed.slug, category);
@@ -275,7 +282,7 @@ async function main(): Promise<void> {
     const products: Array<{ id: string; name: string; priceAmountMinor: number }> = [];
     for (const seed of PRODUCT_SEEDS) {
       const existing = unwrapOrNull<ProductRecord>(
-        await catalog.products.getBySlug({ slug: seed.slug }),
+        await catalog.products.getBySlug({ slug: seed.slug, tenantId: TENANT_ID }),
         `look up product "${seed.slug}"`,
       );
       if (existing !== null) {
@@ -298,23 +305,25 @@ async function main(): Promise<void> {
           variants: [
             { sku: seed.variantSku, priceAmountMinor: seed.priceAmountMinor, currency: CURRENCY },
           ],
+          tenantId: TENANT_ID,
         }),
         `create product "${seed.sku}"`,
       );
 
       unwrap(
-        await catalog.products.setBrand({ productId: created.id, brandId }),
+        await catalog.products.setBrand({ productId: created.id, brandId, tenantId: TENANT_ID }),
         `set brand on product "${seed.sku}"`,
       );
       unwrap(
         await catalog.products.assignCategories({
           productId: created.id,
           categoryIds: [category.id],
+          tenantId: TENANT_ID,
         }),
         `assign categories on product "${seed.sku}"`,
       );
       unwrap(
-        await catalog.products.publish({ productId: created.id }),
+        await catalog.products.publish({ productId: created.id, tenantId: TENANT_ID }),
         `publish product "${seed.sku}"`,
       );
 
@@ -348,6 +357,7 @@ async function main(): Promise<void> {
       const existingPrices = await pricing.priceRepository.findPublishedByProduct(
         product.id,
         CURRENCY,
+        TENANT_ID,
       );
       if (existingPrices.length > 0) {
         priceListId = priceListId ?? existingPrices[0]!.priceListId;
@@ -363,11 +373,15 @@ async function main(): Promise<void> {
     if (productsNeedingPrice.length > 0) {
       if (priceListId === null) {
         const priceList = unwrap<{ id: string }>(
-          await pricing.priceLists.create({ name: "Demo Retail", currency: CURRENCY }),
+          await pricing.priceLists.create({
+            tenantId: TENANT_ID,
+            name: "Demo Retail",
+            currency: CURRENCY,
+          }),
           "create price list",
         );
         unwrap(
-          await pricing.priceLists.activate({ priceListId: priceList.id }),
+          await pricing.priceLists.activate({ tenantId: TENANT_ID, priceListId: priceList.id }),
           "activate price list",
         );
         priceListId = priceList.id;
@@ -384,6 +398,7 @@ async function main(): Promise<void> {
       for (const product of productsNeedingPrice) {
         const price = unwrap<{ id: string }>(
           await pricing.prices.create({
+            tenantId: TENANT_ID,
             priceListId,
             productId: product.id,
             amountMinor: product.priceAmountMinor,
@@ -392,7 +407,7 @@ async function main(): Promise<void> {
           `create price for product "${product.id}"`,
         );
         unwrap(
-          await pricing.prices.publish({ priceId: price.id }),
+          await pricing.prices.publish({ tenantId: TENANT_ID, priceId: price.id }),
           `publish price for product "${product.id}"`,
         );
         logger.info("seed-demo: created + published price", {
@@ -412,14 +427,18 @@ async function main(): Promise<void> {
     // registration natural key, exposed directly via `warehouseRepository` (the same cross-context
     // read convention `WiredInventory` documents for Checkout's adapters) — a real read, not a raw
     // Prisma query. ----
-    const existingWarehouse = await inventory.warehouseRepository.findByCode("DEMO");
+    const existingWarehouse = await inventory.warehouseRepository.findByCode("DEMO", TENANT_ID);
     let warehouseId: string;
     if (existingWarehouse !== null) {
       warehouseId = existingWarehouse.id.toString();
       logger.info("seed-demo: warehouse already exists, reusing", { warehouseId, code: "DEMO" });
     } else {
       const warehouse = unwrap<{ warehouseId: string }>(
-        await inventory.warehouse.register({ code: "DEMO", name: "Demo Warehouse" }),
+        await inventory.warehouse.register({
+          tenantId: TENANT_ID,
+          code: "DEMO",
+          name: "Demo Warehouse",
+        }),
         "register warehouse",
       );
       warehouseId = warehouse.warehouseId;
@@ -436,6 +455,7 @@ async function main(): Promise<void> {
       const existingItem = await inventory.inventoryItemRepository.findByProductAndWarehouse(
         product.id,
         warehouseId,
+        TENANT_ID,
       );
       if (existingItem !== null && existingItem.stockLevel.onHand > 0) {
         logger.info("seed-demo: stock already received for product, skipping", {
@@ -447,6 +467,7 @@ async function main(): Promise<void> {
       }
       const received = unwrap<{ available: number }>(
         await inventory.inventory.receive({
+          tenantId: TENANT_ID,
           productId: product.id,
           warehouseId,
           quantity: 50,
@@ -470,7 +491,11 @@ async function main(): Promise<void> {
     const customers: Array<{ customerId: string; email: string }> = [];
     for (const seed of CUSTOMER_SEEDS) {
       const found = unwrap<{ items: readonly CustomerRecord[] }>(
-        await identity.customers.listCustomers({ search: seed.email, first: 5 }),
+        await identity.customers.listCustomers({
+          search: seed.email,
+          first: 5,
+          tenantId: TENANT_ID,
+        }),
         `look up customer "${seed.email}"`,
       );
       const existing = found.items.find((c) => c.email.value === seed.email);
@@ -484,7 +509,11 @@ async function main(): Promise<void> {
         continue;
       }
       const customer = unwrap<{ customerId: string }>(
-        await identity.customers.register({ email: seed.email, name: seed.name }),
+        await identity.customers.register({
+          email: seed.email,
+          name: seed.name,
+          tenantId: TENANT_ID,
+        }),
         `register customer "${seed.email}"`,
       );
       customers.push({ customerId: customer.customerId, email: seed.email });
@@ -507,7 +536,7 @@ async function main(): Promise<void> {
       readonly id: IdLike;
     }
     const existingOrders = unwrap<{ items: readonly OrderRecord[] }>(
-      await orders.listOrders({ first: 1 }),
+      await orders.listOrders({ tenantId: "TENANT_ID", first: 1 }),
       "list orders",
     );
     if (existingOrders.items.length > 0) {
@@ -525,6 +554,7 @@ async function main(): Promise<void> {
       // Order 1: placed only — awaiting payment.
       const order1 = unwrap<{ orderId: string; orderNumber: string }>(
         await orders.place({
+          tenantId: "TENANT_ID",
           customerRef: customers[0]!.customerId,
           currency: CURRENCY,
           items: [
@@ -547,6 +577,7 @@ async function main(): Promise<void> {
       // Order 2: placed -> paid.
       const order2 = unwrap<{ orderId: string; orderNumber: string }>(
         await orders.place({
+          tenantId: "TENANT_ID",
           customerRef: customers[1]!.customerId,
           currency: CURRENCY,
           items: [
@@ -563,6 +594,7 @@ async function main(): Promise<void> {
       );
       unwrap(
         await orders.markPaid({
+          tenantId: "TENANT_ID",
           orderId: order2.orderId,
           paymentRef: `seed-payment-${order2.orderId}`,
         }),
@@ -576,6 +608,7 @@ async function main(): Promise<void> {
       // Order 3: placed -> paid -> refunded.
       const order3 = unwrap<{ orderId: string; orderNumber: string }>(
         await orders.place({
+          tenantId: "TENANT_ID",
           customerRef: customers[2]!.customerId,
           currency: CURRENCY,
           items: [
@@ -598,12 +631,16 @@ async function main(): Promise<void> {
       );
       unwrap(
         await orders.markPaid({
+          tenantId: "TENANT_ID",
           orderId: order3.orderId,
           paymentRef: `seed-payment-${order3.orderId}`,
         }),
         "mark order 3 paid",
       );
-      unwrap(await orders.refund({ orderId: order3.orderId }), "refund order 3");
+      unwrap(
+        await orders.refund({ tenantId: "TENANT_ID", orderId: order3.orderId }),
+        "refund order 3",
+      );
       logger.info("seed-demo: order placed + paid + refunded (status=refunded)", {
         orderId: order3.orderId,
         orderNumber: order3.orderNumber,
@@ -638,7 +675,7 @@ async function main(): Promise<void> {
         readonly status: ValueLike;
       }
       const existingPromotions = unwrap<{ items: readonly PromotionRecord[] }>(
-        await promotions.list({ first: 100 }),
+        await promotions.list({ tenantId: TENANT_ID, first: 100 }),
         "list promotions",
       );
       const existingPromotion = existingPromotions.items.find(
@@ -652,7 +689,7 @@ async function main(): Promise<void> {
           });
         } else {
           unwrap(
-            await promotions.advance({ promotionId, toStatus: "active" }),
+            await promotions.advance({ tenantId: TENANT_ID, promotionId, toStatus: "active" }),
             "activate promotion",
           );
           logger.info("seed-demo: promotion already existed but was not active, activated", {
@@ -663,6 +700,7 @@ async function main(): Promise<void> {
       } else {
         const promotion = unwrap<{ promotionId: string; status: string }>(
           await promotions.create({
+            tenantId: TENANT_ID,
             name: "Demo 15% Off Everything",
             ruleType: "automatic",
             scope: "cart",
@@ -676,7 +714,11 @@ async function main(): Promise<void> {
           "create promotion",
         );
         unwrap(
-          await promotions.advance({ promotionId: promotion.promotionId, toStatus: "active" }),
+          await promotions.advance({
+            tenantId: TENANT_ID,
+            promotionId: promotion.promotionId,
+            toStatus: "active",
+          }),
           "activate promotion",
         );
         promotionId = promotion.promotionId;
@@ -730,7 +772,11 @@ async function main(): Promise<void> {
     ];
     for (const seed of reviewSeeds) {
       const forProduct = unwrap<{ items: readonly ReviewRecord[] }>(
-        await reviews.listByProduct({ productRef: seed.product.id, first: 100 }),
+        await reviews.listByProduct({
+          productRef: seed.product.id,
+          first: 100,
+          tenantId: TENANT_ID,
+        }),
         `look up reviews for product "${seed.product.id}"`,
       );
       const existing = forProduct.items.find((r) => r.customerRef === seed.customer.customerId);
@@ -743,7 +789,7 @@ async function main(): Promise<void> {
           });
         } else {
           unwrap(
-            await reviews.advance({ reviewId, toStatus: "published" }),
+            await reviews.advance({ reviewId, toStatus: "published", tenantId: TENANT_ID }),
             `publish review "${reviewId}"`,
           );
           logger.info("seed-demo: review already existed but was not published, published now", {
@@ -761,11 +807,16 @@ async function main(): Promise<void> {
           customerRef: seed.customer.customerId,
           rating: seed.rating,
           bodyText: seed.bodyText,
+          tenantId: TENANT_ID,
         }),
         `create review for product "${seed.product.id}"`,
       );
       unwrap(
-        await reviews.advance({ reviewId: review.reviewId, toStatus: "published" }),
+        await reviews.advance({
+          reviewId: review.reviewId,
+          toStatus: "published",
+          tenantId: TENANT_ID,
+        }),
         `publish review "${review.reviewId}"`,
       );
       logger.info("seed-demo: created + published review", {
@@ -786,7 +837,7 @@ async function main(): Promise<void> {
       readonly status: ValueLike;
     }
     const existingContent = unwrap<{ items: readonly ContentRecord[] }>(
-      await content.list({ first: 100 }),
+      await content.list({ first: 100, tenantId: TENANT_ID }),
       "list content blocks",
     );
     const contentSeeds = [
@@ -795,13 +846,13 @@ async function main(): Promise<void> {
         blockType: "hero",
         format: "html" as const,
         content:
-          "<section><h1>Welcome to Lumo Toys</h1><p>Playful gear for curious kids.</p></section>",
+          "<section><h1>Welcome to Morbeh Toys</h1><p>Playful gear for curious kids.</p></section>",
       },
       {
         name: "about-us",
         blockType: "page",
         format: "markdown" as const,
-        content: "# About Lumo\n\nWe build toys that make screen-free play irresistible.",
+        content: "# About Morbeh\n\nWe build toys that make screen-free play irresistible.",
       },
     ];
     for (const seed of contentSeeds) {
@@ -815,7 +866,7 @@ async function main(): Promise<void> {
           });
         } else {
           unwrap(
-            await content.advance({ contentBlockId, toStatus: "published" }),
+            await content.advance({ contentBlockId, toStatus: "published", tenantId: TENANT_ID }),
             `publish content block "${seed.name}"`,
           );
           logger.info(
@@ -836,11 +887,16 @@ async function main(): Promise<void> {
           blockType: seed.blockType,
           format: seed.format,
           content: seed.content,
+          tenantId: TENANT_ID,
         }),
         `create content block "${seed.name}"`,
       );
       unwrap(
-        await content.advance({ contentBlockId: block.contentBlockId, toStatus: "published" }),
+        await content.advance({
+          contentBlockId: block.contentBlockId,
+          toStatus: "published",
+          tenantId: TENANT_ID,
+        }),
         `publish content block "${seed.name}"`,
       );
       logger.info("seed-demo: created + published content block", {

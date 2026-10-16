@@ -1,7 +1,7 @@
 {
-  "uid": "lumo-security",
-  "title": "Lumo — Security (Zero-Trust)",
-  "tags": ["lumo", "security", "h-5"],
+  "uid": "morbeh-security",
+  "title": "Morbeh — Security (Zero-Trust)",
+  "tags": ["morbeh", "security", "h-5"],
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",

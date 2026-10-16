@@ -3,14 +3,13 @@ import {
   getCollectionProducts,
   getCollections,
   getInventory,
-  getPrices,
   getProductBySlug,
   getProducts,
   searchProducts,
   type CollectionSummary,
   type CursorPageInfo,
-  type PriceSummary,
   type ProductSummary,
+  type ProductVariantSummary,
 } from "./runtime-api";
 
 /** The collection page's own per-page size (T5.20) — a real page, not an attempt to fit everything on one request. */
@@ -22,10 +21,14 @@ export const COLLECTION_PRODUCTS_PAGE_SIZE = 24;
  * only soft-deleted rows — confirmed by reading `services/catalog`/`services/pricing`'s
  * in-memory repositories) — so "published" is enforced here, once, rather than trusted from
  * the wire. No product/collection this module resolves as `"ok"` can be a draft, a scheduled
- * item, or an archived one.
+ * item, or an archived one (an unlisted product resolves only by slug — see `resolveProductBySlug`).
  */
 
 export type PublishedProduct = Omit<ProductSummary, "status"> & { readonly status: "published" };
+/** Plan 2C-1: a product a shopper may open by its link and buy — published, or unlisted (never listed). */
+export type SellableProduct = Omit<ProductSummary, "status"> & {
+  readonly status: "published" | "unlisted";
+};
 export type PublishedCollection = Omit<CollectionSummary, "status"> & {
   readonly status: "published";
 };
@@ -34,12 +37,16 @@ function isPublishedProduct(product: ProductSummary): product is PublishedProduc
   return product.status === "published";
 }
 
+function isSellableProduct(product: ProductSummary): product is SellableProduct {
+  return product.status === "published" || product.status === "unlisted";
+}
+
 function isPublishedCollection(collection: CollectionSummary): collection is PublishedCollection {
   return collection.status === "published";
 }
 
 export type ProductLookupResult =
-  | { readonly status: "ok"; readonly product: PublishedProduct }
+  | { readonly status: "ok"; readonly product: SellableProduct }
   | { readonly status: "not-found" }
   | { readonly status: "error" };
 
@@ -87,11 +94,16 @@ export async function listPublishedCollections(): Promise<
   return { status: "ok", collections: collections.filter(isPublishedCollection) };
 }
 
-/** Resolves one product by slug via the public by-slug route. A product that exists but isn't published resolves to `"not-found"`, matching what a shopper should see: it isn't for sale yet. */
+/**
+ * Resolves one product by slug via the public by-slug route. A published OR unlisted product
+ * resolves (unlisted = reachable by its link, Plan 2C-1); anything else resolves to `"not-found"`,
+ * matching what a shopper should see: it isn't for sale. Lists and search keep `isPublishedProduct`,
+ * so an unlisted product never appears there.
+ */
 export async function resolveProductBySlug(slug: string): Promise<ProductLookupResult> {
   const product = await getProductBySlug(slug);
   if (product === null) return { status: "not-found" };
-  if (!isPublishedProduct(product)) return { status: "not-found" };
+  if (!isSellableProduct(product)) return { status: "not-found" };
   return { status: "ok", product };
 }
 
@@ -123,63 +135,67 @@ export async function resolveCollectionBySlug(
 }
 
 export type PriceResolution =
-  | { readonly status: "ok"; readonly amountMinor: number; readonly currency: string }
+  | {
+      readonly status: "ok";
+      readonly amountMinor: number;
+      readonly currency: string;
+      /** The struck-through "was" price of the lowest-priced variant; null when it has none. */
+      readonly compareAtMinor: number | null;
+      /** True when the variants are not all priced alike, so the display reads "From …". */
+      readonly varies: boolean;
+    }
   | { readonly status: "unavailable" }
-  /**
-   * More than one row is `"published"` for the same product — a real backend gap (Pricing has
-   * no invariant preventing concurrently-published prices; `CPI-3` in
-   * `docs/ui/PLATFORM_FEATURE_INVENTORY.md`). Picking one silently would risk showing a wrong
-   * amount to a shopper, so this is surfaced as its own state instead of guessed at.
-   */
+  /** Variants in two currencies — the backend forbids this since Plan 2C-1, so it is a data fault. */
   | { readonly status: "ambiguous" };
 
-/** A lookup table of every product's resolved published price, built from one `getPrices()` call. */
-export class PriceBook {
-  private readonly byProduct = new Map<string, PriceSummary[]>();
-
-  private constructor(prices: readonly PriceSummary[]) {
-    for (const price of prices) {
-      if (price.status !== "published") continue;
-      const bucket = this.byProduct.get(price.productId);
-      if (bucket === undefined) {
-        this.byProduct.set(price.productId, [price]);
-      } else {
-        bucket.push(price);
-      }
-    }
+/**
+ * Plan 2C-1 (closes G-94, storefront half): the displayed price comes from the product's own
+ * variants — the same source the cart charges — never from the Pricing screen. Several prices show
+ * the lowest as "from"; compare-at is shown only when it belongs to that lowest-priced variant.
+ */
+export function priceOf(product: Pick<ProductSummary, "variants">): PriceResolution {
+  const [first] = product.variants;
+  if (first === undefined) return { status: "unavailable" };
+  if (product.variants.some((v: ProductVariantSummary) => v.currency !== first.currency)) {
+    return { status: "ambiguous" };
   }
-
-  static async load(): Promise<PriceBook | null> {
-    const prices = await getPrices();
-    if (prices === null) return null;
-    return new PriceBook(prices);
-  }
-
-  resolve(productId: string): PriceResolution {
-    const bucket = this.byProduct.get(productId);
-    if (bucket === undefined || bucket.length === 0) return { status: "unavailable" };
-    if (bucket.length > 1) return { status: "ambiguous" };
-    const [price] = bucket;
-    if (price === undefined) return { status: "unavailable" };
-    return { status: "ok", amountMinor: price.amountMinor, currency: price.currency };
-  }
+  const lowest = product.variants.reduce((min: ProductVariantSummary, v: ProductVariantSummary) =>
+    v.priceAmountMinor < min.priceAmountMinor ? v : min,
+  );
+  return {
+    status: "ok",
+    amountMinor: lowest.priceAmountMinor,
+    currency: lowest.currency,
+    compareAtMinor: lowest.compareAtAmountMinor,
+    varies: product.variants.some(
+      (v: ProductVariantSummary) => v.priceAmountMinor !== lowest.priceAmountMinor,
+    ),
+  };
 }
 
 export type AvailabilityResolution =
   { readonly status: "ok"; readonly available: number } | { readonly status: "unknown" };
 
-/** A lookup table of every product's total availability (summed across warehouses). */
-export class AvailabilityBook {
-  private readonly byProduct = new Map<string, number>();
+/** One stock row as the public inventory route returns it (Plan 2B-1 added `variantId`). */
+interface AvailabilityRow {
+  readonly productId: string;
+  readonly variantId: string | null;
+  readonly available: number;
+}
 
-  private constructor(
-    items: readonly { readonly productId: string; readonly available: number }[],
-  ) {
+/**
+ * A lookup table of every product's availability (summed across warehouses), per variant since
+ * Plan 2B-1. Rows are summed across warehouses, so the legacy-row rule below is applied per
+ * product, not per warehouse (the backend's `resolveStockRow` applies it per warehouse).
+ */
+export class AvailabilityBook {
+  private readonly byProduct = new Map<string, AvailabilityRow[]>();
+
+  private constructor(items: readonly AvailabilityRow[]) {
     for (const item of items) {
-      this.byProduct.set(
-        item.productId,
-        (this.byProduct.get(item.productId) ?? 0) + item.available,
-      );
+      const rows = this.byProduct.get(item.productId);
+      if (rows === undefined) this.byProduct.set(item.productId, [item]);
+      else rows.push(item);
     }
   }
 
@@ -189,9 +205,28 @@ export class AvailabilityBook {
     return new AvailabilityBook(items);
   }
 
-  resolve(productId: string): AvailabilityResolution {
-    const available = this.byProduct.get(productId);
-    if (available === undefined) return { status: "unknown" };
-    return { status: "ok", available };
+  /**
+   * Plan 2B-1: one variant's availability (same legacy rule as the backend's `resolveStockRow`):
+   * the variant's own rows; else the product's variant-less rows, but only when ALL of the
+   * product's rows are variant-less; else zero. Without a `variantId`, the product's total.
+   */
+  resolve(productId: string, variantId?: string): AvailabilityResolution {
+    const rows = this.byProduct.get(productId) ?? [];
+    if (rows.length === 0) return { status: "unknown" };
+    const sum = (list: readonly AvailabilityRow[]) =>
+      list.reduce((total, row) => total + row.available, 0);
+    if (variantId === undefined) return { status: "ok", available: sum(rows) };
+    const exact = rows.filter((row) => row.variantId === variantId);
+    if (exact.length > 0) return { status: "ok", available: sum(exact) };
+    const legacyOnly = rows.every((row) => row.variantId === null);
+    return { status: "ok", available: legacyOnly ? sum(rows) : 0 };
+  }
+
+  /** The product as a whole: unlimited if any variant sells past zero; else the sum of its variants. */
+  resolveProduct(product: Pick<ProductSummary, "id" | "variants">): AvailabilityResolution {
+    if (product.variants.some((variant) => variant.sellableWhenOutOfStock)) {
+      return { status: "ok", available: Number.POSITIVE_INFINITY };
+    }
+    return this.resolve(product.id);
   }
 }

@@ -39,7 +39,7 @@ const ids: IdGenerator = { generate: () => crypto.randomUUID() };
  */
 const T0 = "2026-07-20T23:59:59.000Z";
 
-function wire(tenantId: string) {
+function wire() {
   const prisma = createTestPrismaClient(databaseUrl);
   const outbox = new OutboxWriter({
     store: new PrismaOutboxStore(prisma),
@@ -49,28 +49,26 @@ function wire(tenantId: string) {
     producer: "customer360",
   });
   const context = rootEventContext(ids);
-  const store = new PrismaAttributeStore({ prisma, idGenerator: ids, tenantId });
+  const store = new PrismaAttributeStore({ prisma, idGenerator: ids });
   const history = new PrismaAttributeHistoryStore({
     prisma,
     outbox,
     context,
     idGenerator: ids,
-    tenantId,
   });
-  const definitions = new PrismaAttributeDefinitionRegistry({ prisma, tenantId });
+  const definitions = new PrismaAttributeDefinitionRegistry({ prisma });
   const unitOfWork = new PrismaUnitOfWork(prisma);
   return { prisma, store, history, definitions, unitOfWork };
 }
 
 describe.runIf(Boolean(databaseUrl))("Prisma Computed Attributes stores (integration)", () => {
   runAttributeStoreContractTests("prisma", () => {
-    const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    return wire(tenantId).store;
+    return wire().store;
   });
 
   it("appends a snapshot inside a transaction and rehydrates it via listFor/latestFor", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { history, unitOfWork } = wire(tenantId);
+    const { history, unitOfWork } = wire();
     const identifier = { type: "customer_id" as const, value: `cust-${crypto.randomUUID()}` };
 
     const attribute = applyAttributeUpdate(
@@ -103,20 +101,25 @@ describe.runIf(Boolean(databaseUrl))("Prisma Computed Attributes stores (integra
     );
 
     await unitOfWork.run(async (tx) => {
-      await history.append(snapshot, event, tx);
+      await history.append(snapshot, tenantId, event, tx);
     });
 
-    const listed = await history.listFor(identifier);
+    const listed = await history.listFor(identifier, tenantId);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.attributes.get("is_vip")?.value).toBe(true);
 
-    const latest = await history.latestFor(identifier);
+    const latest = await history.latestFor(identifier, tenantId);
     expect(latest?.reason).toBe("created");
+
+    // ADR-0014: a second tenant sees none of it.
+    const otherTenant = `${tenantId}-other`;
+    expect(await history.listFor(identifier, otherTenant)).toEqual([]);
+    expect(await history.latestFor(identifier, otherTenant)).toBeNull();
   });
 
   it("append rejects a call without a transaction client (ADR-0003)", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { history } = wire(tenantId);
+    const { history } = wire();
     const identifier = { type: "customer_id" as const, value: `cust-${crypto.randomUUID()}` };
     const snapshot = toSnapshot(
       createEmptyComputedAttribute(identifier.type, identifier.value, T0),
@@ -139,12 +142,12 @@ describe.runIf(Boolean(databaseUrl))("Prisma Computed Attributes stores (integra
       },
     );
 
-    await expect(history.append(snapshot, event)).rejects.toThrow(/transaction client/);
+    await expect(history.append(snapshot, tenantId, event)).rejects.toThrow(/transaction client/);
   });
 
   it("stores and lists a computed attribute definition's rule set/dependencies losslessly", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { prisma, definitions } = wire(tenantId);
+    const { prisma, definitions } = wire();
 
     const ruleSet: RuleSet<AttributeValue> = {
       id: "is_vip",
@@ -169,11 +172,16 @@ describe.runIf(Boolean(databaseUrl))("Prisma Computed Attributes stores (integra
       ),
     });
 
-    const all = await definitions.list();
+    const all = await definitions.list(tenantId);
     expect(all).toHaveLength(1);
     expect(all[0]?.ruleSet).toEqual(ruleSet);
 
-    const byId = await definitions.getById("is_vip");
+    const byId = await definitions.getById("is_vip", tenantId);
     expect(byId?.dependencies).toEqual([]);
+
+    // ADR-0014: a second tenant sees none of it.
+    const otherTenant = `${tenantId}-other`;
+    expect(await definitions.list(otherTenant)).toEqual([]);
+    expect(await definitions.getById("is_vip", otherTenant)).toBeNull();
   });
 });

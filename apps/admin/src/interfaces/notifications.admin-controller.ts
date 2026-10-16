@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { NotificationsController } from "@platform/notifications";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -79,7 +78,10 @@ export class NotificationsAdminController {
     return this.notifications.callback(input);
   }
 
-  async list(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async list(
+    principal: Principal,
+    input: Parameters<NotificationsController["list"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "notifications:read");
     if (denied) return denied;
     return this.notifications.list(input);

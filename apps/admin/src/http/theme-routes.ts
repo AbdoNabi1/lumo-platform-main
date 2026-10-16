@@ -61,7 +61,8 @@ export function themeRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a theme, seeded from a frozen design-token preset",
       schema: { body: createThemeBody },
-      handle: ({ body, context }) => admin.theme.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.theme.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -72,7 +73,11 @@ export function themeRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Advance a theme's status",
       schema: { params: themeIdParams, body: advanceThemeBody },
       handle: ({ params, body, context }) =>
-        admin.theme.advance(context.principal, { themeId: params.themeId, ...body }),
+        admin.theme.advance(context.principal, {
+          themeId: params.themeId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -83,7 +88,11 @@ export function themeRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Update a draft theme's variables",
       schema: { params: themeIdParams, body: updateThemeVariablesBody },
       handle: ({ params, body, context }) =>
-        admin.theme.updateVariables(context.principal, { themeId: params.themeId, ...body }),
+        admin.theme.updateVariables(context.principal, {
+          themeId: params.themeId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -93,7 +102,10 @@ export function themeRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List themes (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.theme.list(context.principal, query), toThemeDto),
+        mapPage(
+          await admin.theme.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toThemeDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -103,7 +115,10 @@ export function themeRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one theme by id",
       schema: { params: themeIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.theme.get(context.principal, params);
+        const response = await admin.theme.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toThemeDto(response.body as Theme) };
       },

@@ -31,6 +31,7 @@ import {
   GrantRolePermission,
   RevokeRoleAssignment,
 } from "./application/authorization.use-cases";
+import { ListPrincipalRoleKeys } from "./application/principal-roles.use-cases";
 import {
   CheckAccess,
   DeleteRelationTuple,
@@ -151,7 +152,15 @@ import type {
   KmsPort,
   SessionRevocationPort,
 } from "./application/ports";
-import type { CryptoPort, MfaProviderResolver } from "./application/auth-ports";
+import type {
+  AuthenticationProviderPort,
+  CryptoPort,
+  MfaProviderResolver,
+} from "./application/auth-ports";
+import type { PasswordRegistrar } from "./application/password-credentials";
+import { PasswordResetService, type PasswordResetTokenStore } from "./application/password-reset";
+import { HashedPasswordAuthProvider } from "./infrastructure/hashed-password-auth-provider";
+import { InMemoryPasswordResetTokenStore } from "./infrastructure/in-memory-password-reset-token-store";
 import type { ThreatIntelResolver } from "./application/threat-ports";
 import type { RelationshipCheckPort } from "./application/authz-ports";
 import { CheckConsent } from "./application/consent.use-cases";
@@ -210,8 +219,6 @@ export interface SecurityWiringDeps {
   readonly clock: Clock;
   /** Production persistence (G-SEC-1). Present ⇒ Postgres-backed Prisma repositories; absent ⇒ in-memory (tests). */
   readonly prisma?: Database;
-  /** Row scope for every Prisma query/write (ADR-0008) — required when `prisma` is provided. */
-  readonly tenantId?: string;
   /** Seed known Identity subject refs so human principals can be registered offline (tests). */
   readonly knownSubjects?: readonly string[];
   /** Seed trusted device refs (tests). */
@@ -244,6 +251,13 @@ export interface SecurityWiringDeps {
    * responsible for refusing to boot outside `local` without a real one injected here.
    */
   readonly mfaProviders?: MfaProviderResolver;
+  /**
+   * Plan 1B-1: the production `"password"` provider (HashedPasswordAuthProvider over Postgres).
+   * Absent ⇒ the in-memory reference provider, exactly as before this field existed.
+   */
+  readonly passwordAuthProvider?: AuthenticationProviderPort & PasswordRegistrar;
+  /** Plan 1C: where password-reset tokens live. Absent ⇒ in-memory (tests/local). */
+  readonly passwordResetTokens?: PasswordResetTokenStore;
 }
 
 /** The persistence + outbox infrastructure — Prisma-backed in production, in-memory for tests. */
@@ -281,9 +295,6 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
   const translator = new SecurityEventTranslator();
   if (deps.prisma !== undefined) {
     const prisma = deps.prisma;
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined)
-      throw new Error("wireSecurity: tenantId is required when prisma is provided (ADR-0008).");
     const outbox = new OutboxWriter<TransactionClient>({
       store: new PrismaOutboxStore(prisma),
       translator,
@@ -291,8 +302,8 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
       clock: deps.clock,
       producer: "security",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const rd = { prisma, outbox, context, tenantId };
+    const context = rootEventContext(deps.idGenerator);
+    const rd = { prisma, outbox, context };
     return {
       principals: new PrismaPrincipalRepository(rd),
       credentials: new PrismaCredentialRepository(rd),
@@ -311,10 +322,12 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
       auditLedger: new PrismaAuditLedgerRepository(rd),
       unitOfWork: new PrismaUnitOfWork(prisma),
       securityOutbox: {
-        publish: (events, tx) =>
+        publish: (events, tenantId, tx) =>
           tx !== undefined
-            ? outbox.write(events, context, tx as TransactionClient)
-            : runInTransaction(prisma, (client) => outbox.write(events, context, client)),
+            ? outbox.write(events, { ...context, tenantId }, tx as TransactionClient)
+            : runInTransaction(prisma, (client) =>
+                outbox.write(events, { ...context, tenantId }, client),
+              ),
       },
       drainOutbox: async () => 0, // the OutboxRelay runs in the worker entrypoint in production
       deliveredEventTypes: [],
@@ -359,7 +372,9 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
     aiProfiles: new InMemoryAiGovernanceProfileRepository(rd),
     auditLedger: new InMemoryAuditLedgerRepository(),
     unitOfWork: new InMemoryUnitOfWork(),
-    securityOutbox: { publish: (events, tx) => outbox.write(events, context, tx) },
+    securityOutbox: {
+      publish: (events, tenantId, tx) => outbox.write(events, { ...context, tenantId }, tx),
+    },
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };
@@ -373,6 +388,10 @@ export interface WiredSecurity {
   readonly telemetry: InMemorySecurityTelemetry;
   /** Reference auth/MFA/geo adapters exposed so tests (and local dev) can seed them. */
   readonly passwordProvider: InMemoryPasswordAuthProvider;
+  /** Plan 1B-1: where passwords are written — the injected durable provider, else the reference one. */
+  readonly passwordRegistrar: PasswordRegistrar;
+  /** Plan 1C: built only when the durable (hashed) password provider is injected; else undefined. */
+  readonly passwordReset: PasswordResetService | undefined;
   readonly totpProvider: InMemoryTotpMfaProvider;
   readonly geoIp: InMemoryGeoIp;
   readonly threatProvider: InMemoryThreatIntelProvider;
@@ -436,7 +455,28 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
 
   const passwordProvider = new InMemoryPasswordAuthProvider();
   const totpProvider = new InMemoryTotpMfaProvider();
-  const authProviders = new MapAuthenticationProviderResolver([passwordProvider]);
+  const authProviders = new MapAuthenticationProviderResolver([
+    deps.passwordAuthProvider ?? passwordProvider,
+  ]);
+  // Plan 1B-1: the one write path for passwords. The injected provider when present; otherwise an
+  // adapter over the in-memory reference provider, which is not tenant-scoped (tests/local only).
+  const passwordRegistrar: PasswordRegistrar = deps.passwordAuthProvider ?? {
+    setPassword: (input) => {
+      passwordProvider.register(input.identifier, input.password, input.principalExternalId);
+      return Promise.resolve();
+    },
+    // The reference provider has no lookup; it is tests/local only, so the owner bootstrap simply re-runs.
+    hasCredential: () => Promise.resolve(false),
+  };
+  const passwordReset =
+    deps.passwordAuthProvider instanceof HashedPasswordAuthProvider
+      ? new PasswordResetService({
+          tokens: deps.passwordResetTokens ?? new InMemoryPasswordResetTokenStore(),
+          credentials: deps.passwordAuthProvider.credentialStore,
+          registrar: deps.passwordAuthProvider,
+          clock: deps.clock,
+        })
+      : undefined;
   // C2-4: `deps.mfaProviders` overrides the hardcoded-code reference stub — same seam pattern as
   // identityDirectory/kms/crypto below. Still exposed via WiredSecurity.totpProvider unconditionally
   // (tests/local dev seed it directly), but it only backs LIVE verification when nothing real was injected.
@@ -513,6 +553,9 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
 
   const readModels = new SecurityConsoleReadModels({
     principals,
+    tenantProfiles,
+    assignments,
+    relationTuples,
     roles,
     policies,
     devices,
@@ -557,6 +600,7 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const startImpersonation = new StartImpersonation(securityDeps);
   const configureTenantSecurity = new ConfigureTenantSecurity(securityDeps);
   const evaluateAccess = new EvaluateAccess(securityDeps);
+  const listPrincipalRoleKeys = new ListPrincipalRoleKeys(securityDeps);
   const verifyAuditChain = new VerifyAuditChain(securityDeps);
   const registerAuthMethod = new RegisterAuthMethod(securityDeps);
   const authenticate = new Authenticate(securityDeps);
@@ -624,6 +668,7 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     startImpersonation,
     configureTenantSecurity,
     evaluateAccess,
+    listPrincipalRoleKeys,
     verifyAuditChain,
     registerAuthMethod,
     authenticate,
@@ -689,6 +734,8 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     deviceTrust,
     telemetry,
     passwordProvider,
+    passwordRegistrar,
+    passwordReset,
     totpProvider,
     geoIp,
     threatProvider,

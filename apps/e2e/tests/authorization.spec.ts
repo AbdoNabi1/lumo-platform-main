@@ -14,19 +14,19 @@ import { loginToAdminWeb } from "./support/admin-login";
 test.describe("authorization", () => {
   test("viewer hitting an operator+ route is redirected to /forbidden", async ({ page }) => {
     await page.goto("/products/new");
-    await loginToAdminWeb(page, "e2e-viewer@lumo.local", requireEnv("E2E_PASSWORD"));
+    await loginToAdminWeb(page, "e2e-viewer@morbeh.local", requireEnv("E2E_PASSWORD"));
     await expect(page).toHaveURL(/\/forbidden/);
   });
 
   test("operator hitting an admin-only route is redirected to /forbidden", async ({ page }) => {
     await page.goto("/security");
-    await loginToAdminWeb(page, "e2e-operator@lumo.local", requireEnv("E2E_PASSWORD"));
+    await loginToAdminWeb(page, "e2e-operator@morbeh.local", requireEnv("E2E_PASSWORD"));
     await expect(page).toHaveURL(/\/forbidden/);
   });
 
   test("admin can reach a route above viewer/operator level", async ({ page }) => {
     await page.goto("/products/new");
-    await loginToAdminWeb(page, "e2e-admin@lumo.local", requireEnv("E2E_PASSWORD"));
+    await loginToAdminWeb(page, "e2e-admin@morbeh.local", requireEnv("E2E_PASSWORD"));
     await expect(page).not.toHaveURL(/\/forbidden/);
     await expect(page).toHaveURL(/\/products\/new/);
   });

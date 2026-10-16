@@ -4,7 +4,8 @@ import type { Cart, CartStatus } from "@platform/cart";
 import { logger, NotFoundError, toErrorEnvelope, ValidationError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { PageResponse } from "./public-catalog-routes";
-import { resolvePrice, priceUnresolvedResponse } from "./pricing-resolution";
+import { merchandiseUnresolvedResponse, resolveMerchandise } from "./merchandise-resolution";
+import { withLineImages } from "./product-images";
 
 const cartIdParams = z.object({ cartId: z.string().min(1) });
 /**
@@ -52,13 +53,15 @@ const createCartBody = z.object({
  * verbatim into the cart line. `.strict()` means an old-shaped request carrying either field now
  * fails zod validation (422) at the Fastify boundary rather than having them silently stripped;
  * the handler below also never reads them off `body` even when invoked directly (bypassing zod,
- * as `public-cart-routes.test.ts` does) — the price is always resolved server-side, see
- * {@link resolvePrice}.
+ * as `public-cart-routes.test.ts` does) — the price is always resolved server-side from the chosen
+ * VARIANT (Plan 2A), see {@link resolveMerchandise}.
  */
 const addItemBody = z
   .object({
     sessionRef: z.string().min(1),
     productId: z.string().min(1),
+    /** Plan 2A: the size/color being bought. Optional only for a single-variant product. */
+    variantId: z.string().min(1).optional(),
     quantity: z.number().int().positive(),
     inventoryAvailable: z.number().int().min(0).optional(),
     metadata: z.record(z.unknown()).optional(),
@@ -67,9 +70,14 @@ const addItemBody = z
 const changeQuantityBody = z.object({
   sessionRef: z.string().min(1),
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   quantity: z.number().int().positive(),
 });
-const removeItemBody = z.object({ sessionRef: z.string().min(1), productId: z.string().min(1) });
+const removeItemBody = z.object({
+  sessionRef: z.string().min(1),
+  productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
+});
 const sessionRefOnlyBody = z.object({ sessionRef: z.string().min(1) });
 
 /**
@@ -107,11 +115,18 @@ const sessionRefOnlyBody = z.object({ sessionRef: z.string().min(1) });
 
 export interface PublicCartItemDto {
   readonly productId: string;
+  /** Plan 2A: the variant this line sells, with its snapshot; all null on lines added before variants. */
+  readonly variantId: string | null;
+  readonly sku: string | null;
+  readonly title: string | null;
+  readonly variantTitle: string | null;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
   readonly lineTotalAmountMinor: number;
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /** Plan 2C-3: the line's picture (variant image, else the product's), or null for the placeholder. Filled in by `withLineImages`. */
+  readonly imageUrl: string | null;
 }
 
 export interface PublicCartDto {
@@ -139,11 +154,16 @@ function toCartDto(cart: Cart): PublicCartDto {
     isGuest: cart.isGuest,
     items: cart.items.map((item) => ({
       productId: item.productRef.value,
+      variantId: item.variantRef ?? null,
+      sku: item.sku ?? null,
+      title: item.title ?? null,
+      variantTitle: item.variantTitle ?? null,
       quantity: item.quantity.value,
       unitPriceAmountMinor: item.unitPrice.amountMinor,
       currency: item.unitPrice.currency,
       lineTotalAmountMinor: item.lineTotal.amountMinor,
       metadata: item.metadata,
+      imageUrl: null,
     })),
     subtotalAmountMinor: cart.totalAmount().amountMinor,
   };
@@ -176,11 +196,12 @@ async function requireOwnedCart(
   admin: WiredAdmin,
   cartId: string,
   sessionRef: string,
+  tenantId: string,
 ): Promise<
   | { readonly ok: true; readonly cart: Cart }
   | { readonly ok: false; readonly response: PageResponse }
 > {
-  const response = await admin.publicReads.cart.get({ cartId });
+  const response = await admin.publicReads.cart.get({ tenantId, cartId });
   if (response.status < 200 || response.status >= 300) {
     return { ok: false, response };
   }
@@ -192,7 +213,7 @@ async function requireOwnedCart(
 }
 
 export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
-  return [
+  return withLineImages(admin, [
     defineRoute({
       method: "GET",
       path: "/public/carts/current",
@@ -203,7 +224,10 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       schema: { querystring: sessionRefQuery },
       handle: async ({ query, context }) => {
         const sessionRef = resolveSessionRef(context, query.sessionRef);
-        const response = await admin.publicReads.cart.getCurrent({ sessionRef });
+        const response = await admin.publicReads.cart.getCurrent({
+          tenantId: context.tenantId,
+          sessionRef,
+        });
         if (response.status < 200 || response.status >= 300) return response;
         const cart = response.body as Cart | null;
         return { status: 200, body: { cart: cart === null ? null : toCartDto(cart) } };
@@ -219,7 +243,7 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       schema: { params: cartIdParams, querystring: sessionRefQuery },
       handle: async ({ params, query, context }) => {
         const sessionRef = resolveSessionRef(context, query.sessionRef);
-        const owned = await requireOwnedCart(admin, params.cartId, sessionRef);
+        const owned = await requireOwnedCart(admin, params.cartId, sessionRef, context.tenantId);
         if (!owned.ok) return owned.response;
         return { status: 200, body: toCartDto(owned.cart) };
       },
@@ -233,15 +257,16 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Public: open a new guest cart for the caller's session",
       schema: { body: createCartBody },
-      handle: async ({ body }) => {
+      handle: async ({ body, context }) => {
         const created = await admin.publicReads.cart.create({
+          tenantId: context.tenantId,
           sessionRef: body.sessionRef,
           currency: body.currency,
         });
         if (created.status < 200 || created.status >= 300) return created;
         const { cartId } = created.body as { cartId: string };
         const projected = mapItem<Cart, PublicCartDto>(
-          await admin.publicReads.cart.get({ cartId }),
+          await admin.publicReads.cart.get({ tenantId: context.tenantId, cartId }),
           toCartDto,
         );
         return projected.status === 200 ? { status: 201, body: projected.body } : projected;
@@ -255,22 +280,41 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       public: true,
       summary: "Public: add an item to the caller's own guest cart",
       schema: { params: cartIdParams, body: addItemBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedCart(admin, params.cartId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedCart(
+          admin,
+          params.cartId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!owned.ok) return owned.response;
-        const price = await resolvePrice(admin, body.productId);
-        if (price.status !== "ok") return priceUnresolvedResponse();
+        const merchandise = await resolveMerchandise(
+          admin,
+          { productId: body.productId, variantId: body.variantId },
+          context.tenantId,
+        );
+        if (merchandise.status !== "ok") return merchandiseUnresolvedResponse(merchandise);
         const result = await admin.publicReads.cart.add({
+          tenantId: context.tenantId,
           cartId: params.cartId,
           productId: body.productId,
           quantity: body.quantity,
-          unitPriceAmountMinor: price.amountMinor,
-          currency: price.currency,
+          unitPriceAmountMinor: merchandise.amountMinor,
+          currency: merchandise.currency,
           inventoryAvailable: body.inventoryAvailable,
           metadata: body.metadata,
+          merchandise: {
+            variantRef: merchandise.variantId,
+            sku: merchandise.sku,
+            title: merchandise.title,
+            variantTitle: merchandise.variantTitle,
+          },
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapItem<Cart, PublicCartDto>(await admin.publicReads.cart.get(params), toCartDto);
+        return mapItem<Cart, PublicCartDto>(
+          await admin.publicReads.cart.get({ ...params, tenantId: context.tenantId }),
+          toCartDto,
+        );
       },
     }),
     defineRoute({
@@ -282,16 +326,26 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Public: change a line's quantity in the caller's own guest cart",
       schema: { params: cartIdParams, body: changeQuantityBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedCart(admin, params.cartId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedCart(
+          admin,
+          params.cartId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!owned.ok) return owned.response;
         const result = await admin.publicReads.cart.changeQuantity({
+          tenantId: context.tenantId,
           cartId: params.cartId,
           productId: body.productId,
+          variantId: body.variantId,
           quantity: body.quantity,
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapItem<Cart, PublicCartDto>(await admin.publicReads.cart.get(params), toCartDto);
+        return mapItem<Cart, PublicCartDto>(
+          await admin.publicReads.cart.get({ ...params, tenantId: context.tenantId }),
+          toCartDto,
+        );
       },
     }),
     defineRoute({
@@ -303,15 +357,25 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Public: remove a line from the caller's own guest cart",
       schema: { params: cartIdParams, body: removeItemBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedCart(admin, params.cartId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedCart(
+          admin,
+          params.cartId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!owned.ok) return owned.response;
         const result = await admin.publicReads.cart.remove({
+          tenantId: context.tenantId,
           cartId: params.cartId,
           productId: body.productId,
+          variantId: body.variantId,
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapItem<Cart, PublicCartDto>(await admin.publicReads.cart.get(params), toCartDto);
+        return mapItem<Cart, PublicCartDto>(
+          await admin.publicReads.cart.get({ ...params, tenantId: context.tenantId }),
+          toCartDto,
+        );
       },
     }),
     defineRoute({
@@ -323,13 +387,24 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Public: clear all lines from the caller's own guest cart",
       schema: { params: cartIdParams, body: sessionRefOnlyBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedCart(admin, params.cartId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedCart(
+          admin,
+          params.cartId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!owned.ok) return owned.response;
-        const result = await admin.publicReads.cart.clear({ cartId: params.cartId });
+        const result = await admin.publicReads.cart.clear({
+          tenantId: context.tenantId,
+          cartId: params.cartId,
+        });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapItem<Cart, PublicCartDto>(await admin.publicReads.cart.get(params), toCartDto);
+        return mapItem<Cart, PublicCartDto>(
+          await admin.publicReads.cart.get({ ...params, tenantId: context.tenantId }),
+          toCartDto,
+        );
       },
     }),
-  ] as readonly RouteDefinition[];
+  ] as readonly RouteDefinition[]);
 }

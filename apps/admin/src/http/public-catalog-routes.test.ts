@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { wireCatalog, type WiredCatalog } from "@platform/catalog";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
+import { wireInventory } from "@platform/inventory";
 import { wirePricing, type WiredPricing } from "@platform/pricing";
 import type { WiredAdmin } from "../composition";
 import { publicCatalogRoutes } from "./public-catalog-routes";
@@ -83,22 +84,28 @@ describe("public catalog routes — DTO boundary", () => {
         name: "Wooden Building Blocks",
         slug: "wooden-building-blocks",
         variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+        tenantId: "tenant-local",
       }),
       "create product",
     );
     const collection = unwrap<{ id: string }>(
-      await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+      await catalog.collections.create({
+        name: "Featured Toys",
+        slug: "featured-toys",
+        tenantId: "tenant-local",
+      }),
       "create collection",
     );
     unwrap(
       await catalog.collections.addProduct({
         collectionId: collection.id,
         productId: product.id,
+        tenantId: "tenant-local",
       }),
       "add product to collection",
     );
     unwrap(
-      await catalog.collections.publish({ collectionId: collection.id }),
+      await catalog.collections.publish({ collectionId: collection.id, tenantId: "tenant-local" }),
       "publish collection",
     );
 
@@ -123,7 +130,11 @@ describe("public catalog routes — DTO boundary", () => {
   it("never puts aggregate internals on the wire (props / _id / _domainEvents / _version / deleted)", async () => {
     const catalog = catalogFixture();
     unwrap(
-      await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+      await catalog.collections.create({
+        name: "Featured Toys",
+        slug: "featured-toys",
+        tenantId: "tenant-local",
+      }),
       "create collection",
     );
 
@@ -142,8 +153,14 @@ describe("public catalog routes — DTO boundary", () => {
         name: "Wooden Building Blocks",
         slug: "wooden-building-blocks",
         variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+        tenantId: "tenant-local",
       }),
       "create product",
+    );
+    // Plan 2C-1: the public list shows listed (published) products only, so publish it first.
+    unwrap(
+      await catalog.products.publish({ productId: product.id, tenantId: "tenant-local" }),
+      "publish product",
     );
 
     const response = await invoke(stubAdmin(catalog), "/public/products");
@@ -158,27 +175,49 @@ describe("public catalog routes — DTO boundary", () => {
       sku: "WB-001",
       name: "Wooden Building Blocks",
       slug: "wooden-building-blocks",
-      status: "draft",
+      status: "published",
     });
+    expect(body.items[0]?.options).toEqual([]);
     expect(body.items[0]?.variants).toEqual([
-      { id: expect.any(String), sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" },
+      {
+        id: expect.any(String),
+        sku: "WB-001-STD",
+        priceAmountMinor: 2999,
+        currency: "USD",
+        selection: null,
+        title: null,
+        compareAtAmountMinor: null,
+        sellableWhenOutOfStock: false,
+        imageId: null,
+      },
     ]);
   });
 
   it("T5.15: forwards a `query` querystring param to the substring product search", async () => {
     const catalog = catalogFixture();
-    await catalog.products.create({
-      sku: "WB-001",
-      name: "Wooden Building Blocks",
-      slug: "wooden-building-blocks",
-      variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
-    });
-    await catalog.products.create({
-      sku: "MC-001",
-      name: "Metal Car",
-      slug: "metal-car",
-      variants: [{ sku: "MC-001-STD", priceAmountMinor: 1999, currency: "USD" }],
-    });
+    // Plan 2C-1: search, like the list, shows listed (published) products only.
+    for (const created of [
+      await catalog.products.create({
+        sku: "WB-001",
+        name: "Wooden Building Blocks",
+        slug: "wooden-building-blocks",
+        variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+        tenantId: "tenant-local",
+      }),
+      await catalog.products.create({
+        sku: "MC-001",
+        name: "Metal Car",
+        slug: "metal-car",
+        variants: [{ sku: "MC-001-STD", priceAmountMinor: 1999, currency: "USD" }],
+        tenantId: "tenant-local",
+      }),
+    ]) {
+      const { id } = unwrap<{ id: string }>(created, "create product");
+      unwrap(
+        await catalog.products.publish({ productId: id, tenantId: "tenant-local" }),
+        "publish product",
+      );
+    }
 
     const route = publicCatalogRoutes(stubAdmin(catalog)).find(
       (r) => r.path === "/public/products",
@@ -239,22 +278,34 @@ describe("public catalog routes — DTO boundary", () => {
           name: "Wooden Building Blocks",
           slug: "wooden-building-blocks",
           variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+          tenantId: "tenant-local",
         }),
         "create product",
       );
-      unwrap(await catalog.products.publish({ productId: first.id }), "publish product");
+      unwrap(
+        await catalog.products.publish({ productId: first.id, tenantId: "tenant-local" }),
+        "publish product",
+      );
       const second = unwrap<{ id: string }>(
         await catalog.products.create({
           sku: "MC-001",
           name: "Metal Car",
           slug: "metal-car",
           variants: [{ sku: "MC-001-STD", priceAmountMinor: 1999, currency: "USD" }],
+          tenantId: "tenant-local",
         }),
         "create product",
       );
-      unwrap(await catalog.products.publish({ productId: second.id }), "publish product");
+      unwrap(
+        await catalog.products.publish({ productId: second.id, tenantId: "tenant-local" }),
+        "publish product",
+      );
       const collection = unwrap<{ id: string }>(
-        await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+        await catalog.collections.create({
+          name: "Featured Toys",
+          slug: "featured-toys",
+          tenantId: "tenant-local",
+        }),
         "create collection",
       );
       // Added in reverse — the curated order (second, then first) must be preserved on the wire.
@@ -262,6 +313,7 @@ describe("public catalog routes — DTO boundary", () => {
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: second.id,
+          tenantId: "tenant-local",
         }),
         "add second product",
       );
@@ -269,11 +321,15 @@ describe("public catalog routes — DTO boundary", () => {
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: first.id,
+          tenantId: "tenant-local",
         }),
         "add first product",
       );
       unwrap(
-        await catalog.collections.publish({ collectionId: collection.id }),
+        await catalog.collections.publish({
+          collectionId: collection.id,
+          tenantId: "tenant-local",
+        }),
         "publish collection",
       );
 
@@ -300,7 +356,11 @@ describe("public catalog routes — DTO boundary", () => {
     it("404s for an unpublished (draft) collection — never leaks its membership", async () => {
       const catalog = catalogFixture();
       unwrap(
-        await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+        await catalog.collections.create({
+          name: "Featured Toys",
+          slug: "featured-toys",
+          tenantId: "tenant-local",
+        }),
         "create collection",
       );
       // Left as draft — never published.
@@ -320,28 +380,38 @@ describe("public catalog routes — DTO boundary", () => {
           name: "Wooden Building Blocks",
           slug: "wooden-building-blocks",
           variants: [{ sku: "WB-001-STD", priceAmountMinor: 2999, currency: "USD" }],
+          tenantId: "tenant-local",
         }),
         "create product",
       );
-      unwrap(await catalog.products.publish({ productId: published.id }), "publish product");
+      unwrap(
+        await catalog.products.publish({ productId: published.id, tenantId: "tenant-local" }),
+        "publish product",
+      );
       const draft = unwrap<{ id: string }>(
         await catalog.products.create({
           sku: "MC-001",
           name: "Metal Car",
           slug: "metal-car",
           variants: [{ sku: "MC-001-STD", priceAmountMinor: 1999, currency: "USD" }],
+          tenantId: "tenant-local",
         }),
         "create draft product",
       );
       // Left as draft — never published.
       const collection = unwrap<{ id: string }>(
-        await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+        await catalog.collections.create({
+          name: "Featured Toys",
+          slug: "featured-toys",
+          tenantId: "tenant-local",
+        }),
         "create collection",
       );
       unwrap(
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: published.id,
+          tenantId: "tenant-local",
         }),
         "add published product",
       );
@@ -349,11 +419,15 @@ describe("public catalog routes — DTO boundary", () => {
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: draft.id,
+          tenantId: "tenant-local",
         }),
         "add draft product",
       );
       unwrap(
-        await catalog.collections.publish({ collectionId: collection.id }),
+        await catalog.collections.publish({
+          collectionId: collection.id,
+          tenantId: "tenant-local",
+        }),
         "publish collection",
       );
 
@@ -371,6 +445,7 @@ describe("public catalog routes — DTO boundary", () => {
     const pricing = pricingFixture();
     const created = unwrap<{ id: string }>(
       await pricing.prices.create({
+        tenantId: "tenant-local",
         priceListId: "price-list-1",
         productId: "product-1",
         amountMinor: 2999,
@@ -392,6 +467,7 @@ describe("public catalog routes — DTO boundary", () => {
     const pricing = pricingFixture();
     const draft = unwrap<{ id: string }>(
       await pricing.prices.create({
+        tenantId: "tenant-local",
         priceListId: "price-list-1",
         productId: "product-1",
         amountMinor: 2999,
@@ -401,6 +477,7 @@ describe("public catalog routes — DTO boundary", () => {
     );
     const published = unwrap<{ id: string }>(
       await pricing.prices.create({
+        tenantId: "tenant-local",
         priceListId: "price-list-1",
         productId: "product-2",
         amountMinor: 1999,
@@ -408,7 +485,10 @@ describe("public catalog routes — DTO boundary", () => {
       }),
       "create published price",
     );
-    unwrap(await pricing.prices.publish({ priceId: published.id }), "publish price");
+    unwrap(
+      await pricing.prices.publish({ tenantId: "tenant-local", priceId: published.id }),
+      "publish price",
+    );
 
     const response = await invoke(stubAdmin(catalogFixture(), pricing), "/public/prices");
 
@@ -417,5 +497,230 @@ describe("public catalog routes — DTO boundary", () => {
     expect(body.items.map((price) => price.id)).toEqual([published.id]);
     expect(body.items.map((price) => price.id)).not.toContain(draft.id);
     expect(body.items.every((price) => price.status === "published")).toBe(true);
+  });
+});
+
+describe("public catalog routes — only listed products are listed, sellable ones open by slug (Plan 2C-1)", () => {
+  const tenantId = "tenant-local";
+
+  async function seed(
+    catalog: WiredCatalog,
+    slug: string,
+    state: "draft" | "published" | "unlisted" | "archived",
+  ) {
+    const created = unwrap<{ id: string }>(
+      await catalog.products.create({
+        sku: `SKU-${slug}`,
+        name: `Product ${slug}`,
+        slug,
+        variants: [{ sku: `SKU-${slug}-V`, priceAmountMinor: 1000, currency: "USD" }],
+        tenantId,
+      }),
+      "create product",
+    );
+    if (state === "published" || state === "unlisted") {
+      unwrap(await catalog.products.publish({ productId: created.id, tenantId }), "publish");
+    }
+    if (state === "unlisted") {
+      unwrap(await catalog.products.unlist({ productId: created.id, tenantId }), "unlist");
+    }
+    if (state === "archived") {
+      unwrap(await catalog.products.archive({ productId: created.id, tenantId }), "archive");
+    }
+    return created.id;
+  }
+
+  async function seedAllStates(): Promise<WiredCatalog> {
+    const catalog = catalogFixture();
+    await seed(catalog, "p-published", "published");
+    await seed(catalog, "p-draft", "draft");
+    await seed(catalog, "p-unlisted", "unlisted");
+    await seed(catalog, "p-archived", "archived");
+    return catalog;
+  }
+
+  async function invokeList(admin: WiredAdmin, query: Record<string, string>) {
+    const route = publicCatalogRoutes(admin).find((r) => r.path === "/public/products");
+    if (route === undefined) throw new Error("no /public/products route");
+    return (await route.handle({
+      body: undefined,
+      params: undefined,
+      query,
+      context: { tenantId, principal: { id: "anon", kind: "staff", roles: [] }, requestId: "r" },
+    } as never)) as { status: number; body: unknown };
+  }
+
+  it("the list returns the published product, not a draft, unlisted or archived one", async () => {
+    const response = await invoke(stubAdmin(await seedAllStates()), "/public/products");
+    expect(response.status).toBe(200);
+    const body = response.body as { items: readonly { slug: string }[] };
+    expect(body.items.map((item) => item.slug)).toEqual(["p-published"]);
+  });
+
+  it("search applies the same rule", async () => {
+    const response = await invokeList(stubAdmin(await seedAllStates()), { query: "p-" });
+    expect(response.status).toBe(200);
+    const body = response.body as { items: readonly { slug: string }[] };
+    expect(body.items.map((item) => item.slug)).toEqual(["p-published"]);
+  });
+
+  it("by slug: published and unlisted open (200); draft and archived are 404 like a missing slug", async () => {
+    const admin = stubAdmin(await seedAllStates());
+    const open = async (slug: string) => invoke(admin, "/public/products/:slug", { slug });
+    expect((await open("p-published")).status).toBe(200);
+    expect((await open("p-unlisted")).status).toBe(200);
+
+    const missing = await open("no-such-product");
+    expect(missing.status).toBe(404);
+    for (const slug of ["p-draft", "p-archived"]) {
+      const hidden = await open(slug);
+      expect(hidden.status).toBe(404);
+      expect(JSON.stringify(hidden.body)).toBe(JSON.stringify(missing.body));
+    }
+  });
+
+  it("SECURITY: the public DTO has description/type/tags/compare-at but never cost, barcode or weight", async () => {
+    const catalog = catalogFixture();
+    const created = unwrap<{ id: string }>(
+      await catalog.products.create({
+        sku: "SEC-1",
+        name: "Secret margin",
+        slug: "secret-margin",
+        description: "Soft cotton.",
+        productType: "Shirts",
+        tags: ["summer"],
+        variants: [
+          {
+            sku: "SEC-1-V",
+            priceAmountMinor: 1000,
+            currency: "USD",
+            compareAtAmountMinor: 1500,
+            costAmountMinor: 400,
+            barcode: "6221234567890",
+            weightGrams: 250,
+            requiresShipping: false,
+            taxable: false,
+          },
+        ],
+        tenantId,
+      }),
+      "create product",
+    );
+    unwrap(await catalog.products.publish({ productId: created.id, tenantId }), "publish");
+
+    const response = await invoke(stubAdmin(catalog), "/public/products/:slug", {
+      slug: "secret-margin",
+    });
+    expect(response.status).toBe(200);
+    const product = response.body as Record<string, unknown> & {
+      variants: readonly Record<string, unknown>[];
+    };
+    expect(product.description).toBe("Soft cotton.");
+    expect(product.productType).toBe("Shirts");
+    expect(product.tags).toEqual(["summer"]);
+    expect(product.variants[0]?.compareAtAmountMinor).toBe(1500);
+
+    const forbidden = [
+      "cost",
+      "costAmountMinor",
+      "barcode",
+      "weightGrams",
+      "requiresShipping",
+      "taxable",
+    ];
+    for (const key of forbidden) {
+      expect(Object.keys(product), `product leaks "${key}"`).not.toContain(key);
+      expect(Object.keys(product.variants[0] ?? {}), `variant leaks "${key}"`).not.toContain(key);
+    }
+    // Nor smuggled in under another key.
+    const wire = JSON.stringify(response.body);
+    expect(wire).not.toContain("6221234567890");
+    expect(wire).not.toContain('"cost');
+  });
+});
+
+describe("public stock per variant (Plan 2B-1)", () => {
+  const tenantId = "tenant-local";
+  function inventoryFixture() {
+    let n = 0;
+    const idGenerator: IdGenerator = { generate: () => `inv-id-${(n += 1)}` };
+    return wireInventory({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
+  }
+
+  it("GET /public/inventory rows carry the variant they belong to", async () => {
+    const inventory = inventoryFixture();
+    for (const [variantId, quantity] of [
+      ["v-m", 5],
+      ["v-l", 2],
+    ] as const) {
+      unwrap(
+        await inventory.inventory.receive({
+          tenantId,
+          productId: "p1",
+          variantId,
+          warehouseId: "wh-1",
+          quantity,
+        }),
+        "receive",
+      );
+    }
+    unwrap(
+      await inventory.inventory.receive({
+        tenantId,
+        productId: "p2",
+        warehouseId: "wh-1",
+        quantity: 3,
+      }),
+      "receive legacy",
+    );
+    const admin = {
+      publicReads: { inventory: inventory.inventory },
+    } as unknown as WiredAdmin;
+
+    const response = await invoke(admin, "/public/inventory");
+
+    const rows = (response.body as { items: { productId: string; variantId: string | null }[] })
+      .items;
+    expect(
+      rows
+        .filter((row) => row.productId === "p1")
+        .map((row) => row.variantId)
+        .sort(),
+    ).toEqual(["v-l", "v-m"]);
+    expect(rows.find((row) => row.productId === "p2")?.variantId).toBeNull();
+  });
+
+  it("the public variant says whether it sells past zero, and never exposes the raw switches", async () => {
+    const catalog = catalogFixture();
+    const created = unwrap<{ id: string }>(
+      await catalog.products.create({
+        sku: "SW-1",
+        name: "Switches",
+        slug: "switches",
+        variants: [
+          { sku: "SW-1-A", priceAmountMinor: 1000, currency: "USD" },
+          { sku: "SW-1-B", priceAmountMinor: 1000, currency: "USD", tracksInventory: false },
+          { sku: "SW-1-C", priceAmountMinor: 1000, currency: "USD", inventoryPolicy: "continue" },
+        ],
+        tenantId,
+      }),
+      "create product",
+    );
+    unwrap(await catalog.products.publish({ productId: created.id, tenantId }), "publish");
+
+    const response = await invoke(stubAdmin(catalog), "/public/products/:slug", {
+      slug: "switches",
+    });
+
+    const variants = (response.body as { variants: Record<string, unknown>[] }).variants;
+    expect(variants.map((variant) => variant["sellableWhenOutOfStock"])).toEqual([
+      false,
+      true,
+      true,
+    ]);
+    for (const variant of variants) {
+      expect(Object.keys(variant)).not.toContain("tracksInventory");
+      expect(Object.keys(variant)).not.toContain("inventoryPolicy");
+    }
   });
 });

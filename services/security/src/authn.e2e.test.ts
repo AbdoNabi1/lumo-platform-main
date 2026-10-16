@@ -26,16 +26,22 @@ describe("authentication / MFA / device / risk (end to end)", () => {
     app.geoIp.seed("9.9.9.9", { tor: true, ipReputation: 100 });
 
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "admin-1",
       kind: "human",
       displayName: "Admin",
       subjectRef: "user-1",
       tenantRef: "t1",
     });
-    await app.security.registerAuthMethod({ kind: "password", displayName: "Password" });
+    await app.security.registerAuthMethod({
+      tenantId: "tenant-a",
+      kind: "password",
+      displayName: "Password",
+    });
 
     // ── low-risk login → session established (no tenant MFA yet) ──
     const first = await app.security.authenticate({
+      tenantId: "tenant-a",
       method: "password",
       identifier: "admin@x.com",
       credential: "correct-horse",
@@ -53,6 +59,7 @@ describe("authentication / MFA / device / risk (end to end)", () => {
     // ── wrong password → failure (no session, audited) ──
     const bad = body<{ authenticated: boolean; reason?: string }>(
       await app.security.authenticate({
+        tenantId: "tenant-a",
         method: "password",
         identifier: "admin@x.com",
         credential: "nope",
@@ -61,24 +68,43 @@ describe("authentication / MFA / device / risk (end to end)", () => {
     expect(bad.authenticated).toBe(false);
 
     // ── disabled/unregistered method is rejected ──
-    expect((await app.security.authenticate({ method: "saml", identifier: "x" })).status).toBe(409);
+    expect(
+      (await app.security.authenticate({ tenantId: "tenant-a", method: "saml", identifier: "x" }))
+        .status,
+    ).toBe(409);
 
     // ── enable tenant MFA + enroll & verify TOTP ──
-    await app.security.configureTenantSecurity({ tenantRef: "t1", config: { mfaRequired: true } });
+    await app.security.configureTenantSecurity({
+      tenantId: "tenant-a",
+      tenantRef: "t1",
+      config: { mfaRequired: true },
+    });
     const enrolled = await app.security.enrollMfa({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       method: "totp",
     });
     const enrollmentId = body<{ id: string }>(enrolled).id;
-    const verified = await app.security.verifyMfaEnrollment({ enrollmentId, code: "123456" });
+    const verified = await app.security.verifyMfaEnrollment({
+      tenantId: "tenant-a",
+      enrollmentId,
+      code: "123456",
+    });
     expect(body<{ status: string }>(verified).status).toBe("active");
-    expect((await app.security.verifyMfaEnrollment({ enrollmentId, code: "000000" })).status).toBe(
-      409,
-    ); // wrong code (already active, but provider rejects)
+    expect(
+      (
+        await app.security.verifyMfaEnrollment({
+          tenantId: "tenant-a",
+          enrollmentId,
+          code: "000000",
+        })
+      ).status,
+    ).toBe(409); // wrong code (already active, but provider rejects)
 
     // ── with tenant MFA required, a login without a satisfied factor yields no session ──
     const needsMfa = body<{ sessionId: string | null; mfaRequirement: string }>(
       await app.security.authenticate({
+        tenantId: "tenant-a",
         method: "password",
         identifier: "admin@x.com",
         credential: "correct-horse",
@@ -91,6 +117,7 @@ describe("authentication / MFA / device / risk (end to end)", () => {
     // ── satisfying MFA establishes the session ──
     const withMfa = body<{ sessionId: string | null }>(
       await app.security.authenticate({
+        tenantId: "tenant-a",
         method: "password",
         identifier: "admin@x.com",
         credential: "correct-horse",
@@ -103,6 +130,7 @@ describe("authentication / MFA / device / risk (end to end)", () => {
     // ── high-risk login (Tor + bad IP) → adaptive step-up ──
     const risky = body<{ mfaRequirement: string; riskBand: string }>(
       await app.security.authenticate({
+        tenantId: "tenant-a",
         method: "password",
         identifier: "admin@x.com",
         credential: "correct-horse",
@@ -115,24 +143,25 @@ describe("authentication / MFA / device / risk (end to end)", () => {
 
     // ── backup codes are returned once; only hashes are stored ──
     const codes = body<{ codes: string[] }>(
-      await app.security.generateBackupCodes({ enrollmentId, count: 8 }),
+      await app.security.generateBackupCodes({ tenantId: "tenant-a", enrollmentId, count: 8 }),
     );
     expect(codes.codes).toHaveLength(8);
 
     // ── device trust + explorer ──
-    await app.security.trustDevice({ fingerprint: "dev-1" });
-    const explorer = await app.security.deviceExplorer();
+    await app.security.trustDevice({ tenantId: "tenant-a", fingerprint: "dev-1" });
+    const explorer = await app.security.deviceExplorer("tenant-a");
     expect(explorer.total).toBeGreaterThanOrEqual(1);
     expect(explorer.trusted).toBe(1);
 
     // ── explicit risk evaluation is explainable ──
     const riskEval = body<{ band: string; factors: { code: string }[] }>(
-      await app.security.evaluateRisk({ ip: "9.9.9.9" }),
+      await app.security.evaluateRisk({ tenantId: "tenant-a", ip: "9.9.9.9" }),
     );
     expect(riskEval.factors.some((f) => f.code === "tor")).toBe(true);
 
     // ── SDK surface ──
     const sdkOutcome = await app.sdk.authenticate({
+      tenantId: "tenant-a",
       method: "password",
       identifier: "admin@x.com",
       credential: "correct-horse",
@@ -140,7 +169,10 @@ describe("authentication / MFA / device / risk (end to end)", () => {
       mfaSatisfied: true,
     });
     expect(sdkOutcome.authenticated).toBe(true);
-    const revoked = await app.sdk.revokeSessions({ principalExternalId: "admin-1" });
+    const revoked = await app.sdk.revokeSessions({
+      tenantId: "tenant-a",
+      principalExternalId: "admin-1",
+    });
     expect(revoked.revoked).toBeGreaterThan(0);
 
     // ── canonical events published ──

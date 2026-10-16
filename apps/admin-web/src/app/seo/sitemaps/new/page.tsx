@@ -20,8 +20,8 @@ export default async function NewSitemapPage() {
             {t.sitemapCreate.back}
           </Link>
         </Button>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.sitemapCreate.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.sitemapCreate.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.sitemapCreate.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.sitemapCreate.subtitle}</p>
       </div>
 
       <Card>

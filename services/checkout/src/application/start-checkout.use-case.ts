@@ -8,6 +8,8 @@ import { CheckoutSession } from "../domain/checkout-session";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
 
 export interface StartCheckoutInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartRef: string;
   /** Omitted for a guest checkout. */
   readonly customerRef?: string;
@@ -59,7 +61,7 @@ export class StartCheckout implements UseCase<
         input.sessionRef,
         input.currency,
       );
-      await this.deps.sessions.save(session, tx);
+      await this.deps.sessions.save(session, input.tenantId, tx);
       return ok({ checkoutSessionId: id.toString() });
     });
   }

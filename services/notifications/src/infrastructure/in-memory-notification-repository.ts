@@ -4,6 +4,16 @@ import type { CursorPage, Paginated } from "@platform/types";
 import type { Notification } from "../domain/notification";
 import type { NotificationRepository } from "../domain/notification-repository";
 
+/** ADR-0014 (WP-10, T10.3): per-tenant bucket, so every store is keyed by `(tenantId, id)`. */
+function bucketFor<T>(store: Map<string, Map<string, T>>, tenantId: string): Map<string, T> {
+  let bucket = store.get(tenantId);
+  if (bucket === undefined) {
+    bucket = new Map();
+    store.set(tenantId, bucket);
+  }
+  return bucket;
+}
+
 export interface InMemoryNotificationRepositoryDeps {
   readonly outbox: OutboxWriter;
   readonly context: EventContext;
@@ -11,7 +21,7 @@ export interface InMemoryNotificationRepositoryDeps {
 
 /** In-memory `NotificationRepository`. Persists the aggregate and writes events to the outbox on save. */
 export class InMemoryNotificationRepository implements NotificationRepository {
-  private readonly store = new Map<string, Notification>();
+  private readonly store = new Map<string, Map<string, Notification>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,17 +30,20 @@ export class InMemoryNotificationRepository implements NotificationRepository {
     this.context = deps.context;
   }
 
-  async save(notification: Notification, tx?: unknown): Promise<void> {
-    this.store.set(notification.id.toString(), notification);
-    await this.outbox.write(notification.pullDomainEvents(), this.context, tx);
+  async save(notification: Notification, tenantId: string, tx?: unknown): Promise<void> {
+    bucketFor(this.store, tenantId).set(notification.id.toString(), notification);
+    await this.outbox.write(notification.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<Notification | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Notification | null> {
+    return bucketFor(this.store, tenantId).get(id) ?? null;
   }
 
-  async findByIdempotencyKey(idempotencyKey: string): Promise<Notification | null> {
-    for (const notification of this.store.values()) {
+  async findByIdempotencyKey(
+    idempotencyKey: string,
+    tenantId: string,
+  ): Promise<Notification | null> {
+    for (const notification of bucketFor(this.store, tenantId).values()) {
       if (notification.idempotencyKey === idempotencyKey) {
         return notification;
       }
@@ -39,8 +52,8 @@ export class InMemoryNotificationRepository implements NotificationRepository {
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<Notification>> {
-    const all = [...this.store.values()].sort((a, b) =>
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Notification>> {
+    const all = [...bucketFor(this.store, tenantId).values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;

@@ -7,6 +7,8 @@ import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
 
 export interface CheckOutCartInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
 }
 
@@ -32,7 +34,7 @@ export class CheckOutCart implements UseCase<CheckOutCartInput, CheckOutCartOutp
 
   async execute(input: CheckOutCartInput): Promise<Result<CheckOutCartOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<CheckOutCartOutput, DomainError>>(async (tx) => {
-      const cart = await this.deps.carts.findById(input.cartId, tx);
+      const cart = await this.deps.carts.findById(input.cartId, input.tenantId, tx);
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
@@ -44,7 +46,7 @@ export class CheckOutCart implements UseCase<CheckOutCartInput, CheckOutCartOutp
         throw error;
       }
 
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString(), totalAmountMinor: cart.totalAmount().amountMinor });
     });
   }

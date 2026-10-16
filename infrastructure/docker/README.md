@@ -32,23 +32,23 @@ First-boot sequence (one time, in order):
 
 ## Endpoints (local)
 
-| Service                  | URL / port                        | Credentials (dev only)   |
-| ------------------------ | --------------------------------- | ------------------------ |
-| PostgreSQL               | `localhost:5432`                  | lumo / lumo              |
-| Redis                    | `localhost:6379`                  | —                        |
-| ClickHouse               | `http://localhost:8123`           | lumo / lumo              |
-| MinIO S3 / console       | `:9000` / `http://localhost:9001` | minioadmin / minioadmin  |
-| Redpanda (host clients)  | `localhost:19092`                 | —                        |
-| Redpanda Console         | `http://localhost:8085`           | —                        |
-| Kafka Connect (Debezium) | `http://localhost:8083`           | —                        |
-| Apicurio Registry        | `http://localhost:8086`           | —                        |
-| OTel Collector (OTLP)    | `:4317` gRPC / `:4318` HTTP       | —                        |
-| Prometheus               | `http://localhost:9090`           | —                        |
-| Grafana                  | `http://localhost:3001`           | admin / admin            |
-| Loki / Tempo             | via Grafana datasources           | —                        |
-| Mailpit SMTP / UI        | `:1025` / `http://localhost:8025` | —                        |
-| pgAdmin                  | `http://localhost:5050`           | admin@lumo.local / admin |
-| RedisInsight             | `http://localhost:5540`           | —                        |
+| Service                  | URL / port                        | Credentials (dev only)     |
+| ------------------------ | --------------------------------- | -------------------------- |
+| PostgreSQL               | `localhost:5432`                  | lumo / lumo                |
+| Redis                    | `localhost:6379`                  | —                          |
+| ClickHouse               | `http://localhost:8123`           | lumo / lumo                |
+| MinIO S3 / console       | `:9000` / `http://localhost:9001` | minioadmin / minioadmin    |
+| Redpanda (host clients)  | `localhost:19092`                 | —                          |
+| Redpanda Console         | `http://localhost:8085`           | —                          |
+| Kafka Connect (Debezium) | `http://localhost:8083`           | —                          |
+| Apicurio Registry        | `http://localhost:8086`           | —                          |
+| OTel Collector (OTLP)    | `:4317` gRPC / `:4318` HTTP       | —                          |
+| Prometheus               | `http://localhost:9090`           | —                          |
+| Grafana                  | `http://localhost:3001`           | admin / admin              |
+| Loki / Tempo             | via Grafana datasources           | —                          |
+| Mailpit SMTP / UI        | `:1025` / `http://localhost:8025` | —                          |
+| pgAdmin                  | `http://localhost:5050`           | admin@morbeh.local / admin |
+| RedisInsight             | `http://localhost:5540`           | —                          |
 
 > **G0-6 (launch-readiness review):** `.env.example`'s Stage 2 rewrite dropped `GRAFANA_URL`,
 > `PROMETHEUS_URL`, and `SCHEMA_REGISTRY_URL` — correctly; no TypeScript process reads them, so

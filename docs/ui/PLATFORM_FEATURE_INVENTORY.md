@@ -230,7 +230,7 @@ brand/category management is unaffected.
 ## Full per-context dossiers
 
 Grouped by the six research areas. Every fact below was traced to source by the corresponding
-research pass; file paths are repo-relative to `lumo-platform/`.
+research pass; file paths are repo-relative to `morbeh-platform/`.
 
 ### Commerce Foundation
 
@@ -884,7 +884,7 @@ files directly.
 - **Components** (`@platform/components`): `ComponentDefinition` (schema-driven rendering
   contract). `CreateComponentDefinition`, `AdvanceComponentDefinition`. 2 routes.
 - **Theme** (`@platform/theme`): `Theme`, `ThemeVersion`. `CreateTheme` (seeds from a real
-  `@platform/design` preset — verified working end-to-end, including with the renamed Lumo
+  `@platform/design` preset — verified working end-to-end, including with the renamed Morbeh
   `#635BFF` tokens), `AdvanceTheme`, `UpdateThemeVariables`. 3 routes. The only one of these 7
   with a genuine (non-stub) cross-package dependency.
 - **Experience** (`@platform/experience`): `Experience` (Canvas→Section→Slot→ComponentInstance
@@ -905,7 +905,7 @@ frontend route.
 
 ## Recommended productization order
 
-Ranked by what should become real Lumo product UI first, given verified backend readiness —
+Ranked by what should become real Morbeh product UI first, given verified backend readiness —
 not aspiration. "Immediate" means buildable this sprint against what exists today; "needs
 backend work" names the exact gap to close first.
 

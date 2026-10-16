@@ -8,6 +8,8 @@ import { PricingRule, type PricingRuleType } from "../domain/pricing-rule";
 import type { PricingRuleRepository } from "../domain/pricing-rule-repository";
 
 export interface CreatePricingRuleInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly type: PricingRuleType;
   readonly value: number;
   readonly priority: number;
@@ -50,7 +52,7 @@ export class CreatePricingRule implements UseCase<
     if (!rule.ok) return err(rule.error);
 
     return this.deps.unitOfWork.run<Result<CreatePricingRuleOutput, DomainError>>(async (tx) => {
-      await this.deps.pricingRules.save(rule.value, tx);
+      await this.deps.pricingRules.save(rule.value, input.tenantId, tx);
       return ok({ id: rule.value.id.toString() });
     });
   }

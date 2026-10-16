@@ -14,9 +14,9 @@ export interface SegmentDefinitionRegistry {
   /** Every known definition — how `EvaluateAllSegments`/`SegmentProjectionWorker`/
    * `SegmentMembershipWorker` discover the full segment set without a caller having to enumerate it by
    * hand. */
-  list(tx?: unknown): Promise<readonly SegmentDefinition[]>;
+  list(tenantId: string, tx?: unknown): Promise<readonly SegmentDefinition[]>;
   /** `null` when no definition is registered under this id — not an error. */
-  getById(id: string, tx?: unknown): Promise<SegmentDefinition | null>;
+  getById(id: string, tenantId: string, tx?: unknown): Promise<SegmentDefinition | null>;
   /**
    * Upsert. **Optimistic concurrency (ADR-0060).** When `expectedVersion` is provided, this is a
    * compare-and-swap write: the write only applies if the store's currently-persisted version for this
@@ -29,6 +29,7 @@ export interface SegmentDefinitionRegistry {
    */
   save(
     definition: SegmentDefinition,
+    tenantId: string,
     expectedVersion?: number,
     event?: DomainEvent,
     tx?: unknown,
@@ -40,5 +41,11 @@ export interface SegmentDefinitionRegistry {
    * audit trail of memberships it once produced). `expectedVersion` is required (unlike `save`'s CAS
    * write) — there is no "rebuild" analog that would ever need an unconditional delete.
    */
-  delete(id: string, expectedVersion: number, event?: DomainEvent, tx?: unknown): Promise<void>;
+  delete(
+    id: string,
+    expectedVersion: number,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void>;
 }

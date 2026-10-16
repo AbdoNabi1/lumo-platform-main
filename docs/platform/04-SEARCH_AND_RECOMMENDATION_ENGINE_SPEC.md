@@ -1,7 +1,7 @@
 # 04 — Search & Recommendation Engine specification
 
 > **Status: CONTRACT (Phase 1 — Platform) — 2026-06-28.** Enterprise search + recommendations. No
-> application code. UI: Lumo Design System ([`../ui/`](../ui/README.md)); storefront search/recs render via the
+> application code. UI: Morbeh Design System ([`../ui/`](../ui/README.md)); storefront search/recs render via the
 > block registry, and a merchandising-admin surface is **net-new and requires approval**.
 
 ## 1. Business goals

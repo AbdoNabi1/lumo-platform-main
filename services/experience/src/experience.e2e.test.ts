@@ -21,17 +21,26 @@ function wire() {
 describe("experience (end to end)", () => {
   it("runs the full lifecycle: create -> update canvas -> publish, publishing canonical events", async () => {
     const app = wire();
-    const created = await app.experience.create({ name: "Homepage", experienceType: "storefront" });
+    const created = await app.experience.create({
+      name: "Homepage",
+      experienceType: "storefront",
+      tenantId: "tenant-local",
+    });
     expect(created.status).toBe(201);
     const experienceId = (created.body as { experienceId: string }).experienceId;
 
     const updated = await app.experience.updateCanvas({
       experienceId,
       sections: [{ key: "hero", slots: [{ key: "content", componentInstances: [] }] }],
+      tenantId: "tenant-local",
     });
     expect(updated.status).toBe(200);
 
-    const published = await app.experience.advance({ experienceId, toStatus: "published" });
+    const published = await app.experience.advance({
+      experienceId,
+      toStatus: "published",
+      tenantId: "tenant-local",
+    });
     expect(published.status).toBe(200);
 
     expect(await app.drainOutbox()).toBeGreaterThan(0);
@@ -40,10 +49,15 @@ describe("experience (end to end)", () => {
 
   it("rejects creating a duplicate name (409)", async () => {
     const app = wire();
-    await app.experience.create({ name: "Homepage", experienceType: "storefront" });
+    await app.experience.create({
+      name: "Homepage",
+      experienceType: "storefront",
+      tenantId: "tenant-local",
+    });
     const response = await app.experience.create({
       name: "Homepage",
       experienceType: "storefront",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(409);
   });
@@ -53,6 +67,7 @@ describe("experience (end to end)", () => {
     const response = await app.experience.advance({
       experienceId: "missing",
       toStatus: "published",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(404);
   });

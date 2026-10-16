@@ -1,27 +1,46 @@
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import type { RouteDefinition } from "@platform/http";
+import type { CheckoutSession } from "@platform/checkout";
+import { mapError, type RouteDefinition } from "@platform/http";
+import type { Customer } from "@platform/identity";
+import type { Order } from "@platform/orders";
+import { ValidationError } from "@platform/utils";
 import { wireAdmin, type WiredAdmin } from "../composition";
+import { publicAuthRoutes } from "./public-auth-routes";
 import { publicCartRoutes } from "./public-cart-routes";
+import { publicLoyaltyRoutes } from "./public-loyalty-routes";
+import { publicWishlistRoutes } from "./public-wishlist-routes";
 import { publicCheckoutRoutes, type PublicCheckoutSessionDto } from "./public-checkout-routes";
+import {
+  controllerDriver,
+  seedSingleVariantProduct,
+  type SeededProduct,
+} from "./testing/seed-catalog";
+import { controllerStockDriver, seedStock } from "./testing/seed-stock";
 
 /**
  * Public Checkout HTTP surface (Phase 2 — Public checkout). Drives the REAL `wireAdmin()`
  * composition (in-memory branch) through the actual `RouteDefinition.handle()` boundary — same
  * technique `public-cart-routes.test.ts` and `cart-checkout-pricing-security.e2e.test.ts` use.
  * `wireAdmin` is used (rather than `wireCheckout`/`wireCart` standalone) because the `items` route
- * re-derives line items from a real Cart, whose price in turn comes from a real, published Price —
- * exercising the same server-side price resolution the guest cart surface already relies on.
+ * re-derives line items from a real Cart, whose price in turn comes from a real, published Catalog
+ * variant (Plan 2A) — exercising the same server-side price resolution the guest cart surface
+ * already relies on.
  *
- * `complete()` for a genuine guest session is documented, not exercised as a success path — see
- * the `docs/plans/BLOCKERS.md` T2.3 entry: `OrderCreationAdapter` (the real `OrderCreationPort`
- * `wireAdmin` always wires in) throws for a session with no `customerRef`, which every session
- * this public surface creates has, by design (guest-only, `customerRef` dropped at `start`).
+ * `complete()` for a guest session is a real success path since WP-1 (G-52): the session carries a
+ * contact email, `OrderCreationAdapter` resolves a guest customer from it, and an order exists
+ * afterwards. (Before WP-1 this suite documented the C-2 rejection instead — see the
+ * `docs/plans/BLOCKERS.md` T2.3 entry for the history.)
  */
 
 const clock: Clock = { now: () => new Date("2026-08-29T00:00:00.000Z") };
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: Principal = {
+  id: "staff-1",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
 
 function buildAdmin(): WiredAdmin {
   let n = 0;
@@ -29,28 +48,23 @@ function buildAdmin(): WiredAdmin {
   return wireAdmin({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
 }
 
-async function seedPublishedPrice(
-  admin: WiredAdmin,
-  productId: string,
-  amountMinor: number,
-  currency = "USD",
-): Promise<void> {
-  const created = await admin.pricing.createPrice(staff, {
-    priceListId: "price-list-1",
-    productId,
+/**
+ * One published single-variant Catalog product — what the cart prices a line from (Plan 2A) — with
+ * stock at a location, because completing a checkout now refuses a line nothing can cover (Plan
+ * 2B-3, via the shared `seed-stock` helper).
+ */
+async function seedProduct(admin: WiredAdmin, amountMinor: number): Promise<SeededProduct> {
+  const product = await seedSingleVariantProduct(
+    controllerDriver(admin.publicReads.products, "tenant-local"),
+    "P-1",
     amountMinor,
-    currency,
+  );
+  await seedStock(controllerStockDriver(admin.inventory, staff, "tenant-local"), {
+    productId: product.productId,
+    variantId: product.variantId,
+    quantity: 100,
   });
-  if (created.status < 200 || created.status >= 300) {
-    throw new Error(`seedPublishedPrice: create failed (${created.status}): ${JSON.stringify(created.body)}`);
-  }
-  const { id } = created.body as { id: string };
-  const published = await admin.pricing.publishPrice(staff, { priceId: id });
-  if (published.status < 200 || published.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,
-    );
-  }
+  return product;
 }
 
 interface Response {
@@ -89,7 +103,12 @@ function routesFor(admin: WiredAdmin) {
       context: publicContext(),
     } as never) as Promise<Response>;
 
-  const addCartItem = (cartId: string, sessionRef: string, productId: string, quantity: number): Promise<Response> =>
+  const addCartItem = (
+    cartId: string,
+    sessionRef: string,
+    productId: string,
+    quantity: number,
+  ): Promise<Response> =>
     byPathAndMethod(cart, "POST", "/public/carts/:cartId/items").handle({
       body: { sessionRef, productId, quantity },
       params: { cartId },
@@ -122,7 +141,11 @@ function routesFor(admin: WiredAdmin) {
     } as never) as Promise<Response>;
 
   const billingAddress = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/billing-address").handle({
+    byPathAndMethod(
+      checkout,
+      "POST",
+      "/public/checkouts/:checkoutSessionId/billing-address",
+    ).handle({
       body,
       params: { checkoutSessionId },
       query: {},
@@ -130,7 +153,19 @@ function routesFor(admin: WiredAdmin) {
     } as never) as Promise<Response>;
 
   const shippingAddress = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/shipping-address").handle({
+    byPathAndMethod(
+      checkout,
+      "POST",
+      "/public/checkouts/:checkoutSessionId/shipping-address",
+    ).handle({
+      body,
+      params: { checkoutSessionId },
+      query: {},
+      context: publicContext(),
+    } as never) as Promise<Response>;
+
+  const contact = (checkoutSessionId: string, body: unknown): Promise<Response> =>
+    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/contact").handle({
       body,
       params: { checkoutSessionId },
       query: {},
@@ -138,15 +173,21 @@ function routesFor(admin: WiredAdmin) {
     } as never) as Promise<Response>;
 
   const shippingQuote = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/shipping-quote").handle({
-      body,
-      params: { checkoutSessionId },
-      query: {},
-      context: publicContext(),
-    } as never) as Promise<Response>;
+    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/shipping-quote").handle(
+      {
+        body,
+        params: { checkoutSessionId },
+        query: {},
+        context: publicContext(),
+      } as never,
+    ) as Promise<Response>;
 
   const shippingSelection = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/shipping-selection").handle({
+    byPathAndMethod(
+      checkout,
+      "POST",
+      "/public/checkouts/:checkoutSessionId/shipping-selection",
+    ).handle({
       body,
       params: { checkoutSessionId },
       query: {},
@@ -162,7 +203,11 @@ function routesFor(admin: WiredAdmin) {
     } as never) as Promise<Response>;
 
   const paymentSelection = (checkoutSessionId: string, body: unknown): Promise<Response> =>
-    byPathAndMethod(checkout, "POST", "/public/checkouts/:checkoutSessionId/payment-selection").handle({
+    byPathAndMethod(
+      checkout,
+      "POST",
+      "/public/checkouts/:checkoutSessionId/payment-selection",
+    ).handle({
       body,
       params: { checkoutSessionId },
       query: {},
@@ -185,7 +230,10 @@ function routesFor(admin: WiredAdmin) {
       context: publicContext(),
     } as never) as Promise<Response>;
 
-  const paymentIntentRequest = (checkoutSessionId: string, sessionRef: string | undefined): Promise<Response> =>
+  const paymentIntentRequest = (
+    checkoutSessionId: string,
+    sessionRef: string | undefined,
+  ): Promise<Response> =>
     byPathAndMethod(
       checkout,
       "GET",
@@ -207,6 +255,7 @@ function routesFor(admin: WiredAdmin) {
     items,
     billingAddress,
     shippingAddress,
+    contact,
     shippingQuote,
     shippingSelection,
     tax,
@@ -231,8 +280,85 @@ const address = {
   country: "US",
 };
 
+const seededProducts = new WeakMap<WiredAdmin, SeededProduct>();
+
+/**
+ * Drives a guest session all the way to "ready to complete" (items, both addresses, shipping,
+ * payment, totals) and — when `email` is given — a contact email. Seeds the one published product the
+ * cart needs, once per admin.
+ */
+async function readyGuestCheckout(rawAdmin: WiredAdmin, sessionRef: string, email?: string) {
+  let product = seededProducts.get(rawAdmin);
+  if (product === undefined) {
+    product = await seedProduct(rawAdmin, 1999);
+    seededProducts.set(rawAdmin, product);
+  }
+  const admin = routesFor(rawAdmin);
+  const cart = unwrap<{ id: string }>(await admin.createCart(sessionRef), "create cart");
+  await admin.addCartItem(cart.id, sessionRef, product.productId, 1);
+  const started = unwrap<PublicCheckoutSessionDto>(
+    await admin.start({ sessionRef, cartRef: cart.id, currency: "USD" }),
+    "start checkout",
+  );
+  const checkoutId = started.id;
+  await admin.items(checkoutId, { sessionRef, cartId: cart.id });
+  await admin.billingAddress(checkoutId, { sessionRef, ...address });
+  await admin.shippingAddress(checkoutId, { sessionRef, ...address });
+  await admin.shippingSelection(checkoutId, { sessionRef, method: "standard" });
+  await admin.paymentSelection(checkoutId, {
+    sessionRef,
+    paymentMethodRef: "pm_1",
+    provider: "stripe",
+  });
+  if (email !== undefined)
+    unwrap(await admin.contact(checkoutId, { sessionRef, email }), "contact");
+  await admin.recalculate(checkoutId, { sessionRef });
+  return { admin, checkoutId, sessionRef };
+}
+
+async function orderOf(rawAdmin: WiredAdmin, orderId: string): Promise<Order> {
+  const response = await rawAdmin.orders.getOrder(staff, { tenantId: "tenant-local", orderId });
+  if (response.status !== 200) {
+    throw new Error(
+      `order ${orderId} not found (${response.status}): ${JSON.stringify(response.body)}`,
+    );
+  }
+  return response.body as Order;
+}
+
+async function customerOf(rawAdmin: WiredAdmin, customerId: string): Promise<Customer> {
+  const response = await rawAdmin.publicReads.customers.getCustomer({
+    tenantId: "tenant-local",
+    customerId,
+  });
+  if (response.status !== 200) {
+    throw new Error(`customer ${customerId} not found (${response.status})`);
+  }
+  return response.body as Customer;
+}
+
+function callAuth(
+  rawAdmin: WiredAdmin,
+  method: string,
+  path: string,
+  options: { body?: unknown; headers?: Record<string, string> } = {},
+): Promise<Response> {
+  const route = byPathAndMethod(publicAuthRoutes(rawAdmin), method, path);
+  return route.handle({
+    body: options.body ?? {},
+    params: {},
+    query: {},
+    context: {
+      tenantId: "tenant-local",
+      principal: { id: "public", kind: "customer", roles: [] },
+      requestId: "req-1",
+      headers: options.headers ?? {},
+    },
+  } as never) as Promise<Response>;
+}
+
 describe("public checkout routes — route inventory", () => {
-  it("exposes exactly the 12 guest-completable routes, all public", () => {
+  it("exposes exactly the 17 guest-completable routes, all public", () => {
     const admin = routesFor(buildAdmin());
     const paths = admin.routes.map((r) => `${r.method} ${r.path}`).sort();
 
@@ -243,6 +369,7 @@ describe("public checkout routes — route inventory", () => {
         "POST /public/checkouts/:checkoutSessionId/items",
         "POST /public/checkouts/:checkoutSessionId/billing-address",
         "POST /public/checkouts/:checkoutSessionId/shipping-address",
+        "POST /public/checkouts/:checkoutSessionId/contact",
         "POST /public/checkouts/:checkoutSessionId/shipping-quote",
         "POST /public/checkouts/:checkoutSessionId/shipping-selection",
         "POST /public/checkouts/:checkoutSessionId/tax",
@@ -250,6 +377,12 @@ describe("public checkout routes — route inventory", () => {
         "POST /public/checkouts/:checkoutSessionId/recalculate",
         "POST /public/checkouts/:checkoutSessionId/complete",
         "GET /public/checkouts/:checkoutSessionId/payment-intent-request",
+        // WP-13: which methods the merchant offers, and opening payment for the selected one.
+        "GET /public/payment-methods",
+        "POST /public/checkouts/:checkoutSessionId/payment",
+        // Phase 2: a shopper enters and removes discount codes.
+        "POST /public/checkouts/:checkoutSessionId/discount-codes",
+        "DELETE /public/checkouts/:checkoutSessionId/discount-codes/:code",
       ].sort(),
     );
     expect(admin.routes.every((r) => r.public === true)).toBe(true);
@@ -267,12 +400,12 @@ describe("public checkout routes — route inventory", () => {
 describe("public checkout routes — full guest lifecycle", () => {
   it("start → items → addresses → shipping → tax → payment → recalculate → payment-intent-request", async () => {
     const rawAdmin = buildAdmin();
-    await seedPublishedPrice(rawAdmin, "product-1", 1999);
+    const product = await seedProduct(rawAdmin, 1999);
     const admin = routesFor(rawAdmin);
     const sessionRef = "session-guest";
 
     const cart = unwrap<{ id: string }>(await admin.createCart(sessionRef), "create cart");
-    await admin.addCartItem(cart.id, sessionRef, "product-1", 2);
+    await admin.addCartItem(cart.id, sessionRef, product.productId, 2);
 
     const started = unwrap<PublicCheckoutSessionDto>(
       await admin.start({ sessionRef, cartRef: cart.id, currency: "USD" }),
@@ -293,7 +426,17 @@ describe("public checkout routes — full guest lifecycle", () => {
       "load items",
     );
     expect(withItems.items).toEqual([
-      { productId: "product-1", quantity: 2, unitPriceAmountMinor: 1999 },
+      {
+        productId: product.productId,
+        // Plan 2A: the variant snapshot copied from the Cart line.
+        variantId: product.variantId,
+        sku: "P-1-STD",
+        title: "Product P-1",
+        variantTitle: null,
+        quantity: 2,
+        unitPriceAmountMinor: 1999,
+        imageUrl: null,
+      },
     ]);
 
     await admin.billingAddress(started.id, { sessionRef, ...address });
@@ -301,14 +444,29 @@ describe("public checkout routes — full guest lifecycle", () => {
       await admin.shippingAddress(started.id, { sessionRef, ...address }),
       "set shipping address",
     );
-    expect(withShippingAddress.billingAddress).toEqual(address);
-    expect(withShippingAddress.shippingAddress).toEqual(address);
+    // Plan 3A: the DTO now always carries the recipient keys; null when none were given. Plan 3C: so does the province.
+    expect(withShippingAddress.billingAddress).toEqual({
+      ...address,
+      name: null,
+      phone: null,
+      province: null,
+    });
+    expect(withShippingAddress.shippingAddress).toEqual({
+      ...address,
+      name: null,
+      phone: null,
+      province: null,
+    });
 
     const quoted = unwrap<{ quotes: readonly { method: string; rateAmountMinor: number }[] }>(
       await admin.shippingQuote(started.id, { sessionRef }),
       "shipping quote",
     );
-    expect(quoted.quotes).toContainEqual({ method: "standard", rateAmountMinor: 500 });
+    expect(quoted.quotes).toContainEqual({
+      method: "standard",
+      name: "Standard",
+      rateAmountMinor: 500,
+    });
 
     const withShipping = unwrap<PublicCheckoutSessionDto>(
       await admin.shippingSelection(started.id, { sessionRef, method: "standard" }),
@@ -317,7 +475,8 @@ describe("public checkout routes — full guest lifecycle", () => {
     expect(withShipping.selectedShippingMethod).toBe("standard");
 
     const taxed = unwrap<{ taxMinor: number }>(await admin.tax(started.id, { sessionRef }), "tax");
-    expect(taxed.taxMinor).toBe(400); // 10% of the 3998 subtotal, InMemoryTaxCalculationAdapter
+    // Plan 3C: the offline stub collects no tax (the real adapter reads the shop's tax settings).
+    expect(taxed.taxMinor).toBe(0);
 
     const withPayment = unwrap<PublicCheckoutSessionDto>(
       await admin.paymentSelection(started.id, {
@@ -336,48 +495,281 @@ describe("public checkout routes — full guest lifecycle", () => {
     expect(recalculated.totals).toEqual({
       subtotalMinor: 3998,
       shippingMinor: 500,
-      taxMinor: 400,
-      grandTotalMinor: 4898,
+      taxMinor: 0,
+      grandTotalMinor: 4498,
+      taxIncluded: true,
+      shippingName: "Standard",
+      discountMinor: 0,
+      shippingDiscountMinor: 0,
     });
 
     const paymentIntent = unwrap<{ amountMinor: number; currency: string; provider: string }>(
       await admin.paymentIntentRequest(started.id, sessionRef),
       "payment intent request",
     );
-    expect(paymentIntent.amountMinor).toBe(4898);
+    expect(paymentIntent.amountMinor).toBe(4498);
     expect(paymentIntent.currency).toBe("USD");
     expect(paymentIntent.provider).toBe("stripe");
   });
 
-  // See docs/plans/BLOCKERS.md T2.3: OrderCreationAdapter requires a customerRef, which a guest
-  // session (this surface's only kind) never has — documents current behavior rather than a
-  // success path.
-  it("complete() rejects for a guest session — pre-existing C-2 limitation, not fixed by this phase", async () => {
+  /**
+   * WP-1 (G-52): the pre-WP-1 version of this test asserted `complete()` REJECTED for a guest — the
+   * documented C-2 limitation. Guest checkout now completes: the adapter resolves a guest customer
+   * from the session's contact email and the order is placed against it.
+   */
+  it("complete() succeeds for a guest: an order exists, attached to a guest customer resolved from the contact email", async () => {
     const rawAdmin = buildAdmin();
-    await seedPublishedPrice(rawAdmin, "product-1", 1999);
-    const admin = routesFor(rawAdmin);
-    const sessionRef = "session-guest-complete";
-
-    const cart = unwrap<{ id: string }>(await admin.createCart(sessionRef), "create cart");
-    await admin.addCartItem(cart.id, sessionRef, "product-1", 1);
-    const started = unwrap<PublicCheckoutSessionDto>(
-      await admin.start({ sessionRef, cartRef: cart.id, currency: "USD" }),
-      "start checkout",
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(
+      rawAdmin,
+      "session-guest-complete",
+      "guest@example.com",
     );
-    await admin.items(started.id, { sessionRef, cartId: cart.id });
-    await admin.billingAddress(started.id, { sessionRef, ...address });
-    await admin.shippingAddress(started.id, { sessionRef, ...address });
-    await admin.shippingSelection(started.id, { sessionRef, method: "standard" });
-    await admin.paymentSelection(started.id, {
-      sessionRef,
-      paymentMethodRef: "pm_1",
-      provider: "stripe",
-    });
-    await admin.recalculate(started.id, { sessionRef });
 
-    await expect(
-      admin.complete(started.id, { sessionRef, idempotencyKey: "idem-1" }),
-    ).rejects.toThrow(/customerRef/);
+    const completed = unwrap<PublicCheckoutSessionDto>(
+      await admin.complete(checkoutId, { sessionRef, idempotencyKey: "idem-1" }),
+      "complete",
+    );
+
+    expect(completed.status).toBe("completed");
+    expect(completed.orderRef).not.toBeNull();
+    const order = await orderOf(rawAdmin, completed.orderRef as string);
+    const customer = await customerOf(rawAdmin, order.customerRef);
+    expect(customer.isGuest).toBe(true);
+    expect(customer.email.value).toBe("guest@example.com");
+    expect(customer.consents).toHaveLength(0);
+  });
+
+  it("a returning guest reusing the same email attaches to the same customer id", async () => {
+    const rawAdmin = buildAdmin();
+    const first = await readyGuestCheckout(rawAdmin, "session-return-1", "again@example.com");
+    const second = await readyGuestCheckout(rawAdmin, "session-return-2", "AGAIN@example.com");
+
+    const a = unwrap<PublicCheckoutSessionDto>(
+      await first.admin.complete(first.checkoutId, {
+        sessionRef: first.sessionRef,
+        idempotencyKey: "idem-a",
+      }),
+      "complete first",
+    );
+    const b = unwrap<PublicCheckoutSessionDto>(
+      await second.admin.complete(second.checkoutId, {
+        sessionRef: second.sessionRef,
+        idempotencyKey: "idem-b",
+      }),
+      "complete second",
+    );
+
+    const orderA = await orderOf(rawAdmin, a.orderRef as string);
+    const orderB = await orderOf(rawAdmin, b.orderRef as string);
+    expect(a.orderRef).not.toBe(b.orderRef);
+    expect(orderB.customerRef).toBe(orderA.customerRef);
+  });
+
+  it("complete() without a contact email fails as a ValidationError, which the transport maps to 422 — not a 500", async () => {
+    const rawAdmin = buildAdmin();
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(
+      rawAdmin,
+      "session-no-email",
+    );
+
+    const attempt = admin.complete(checkoutId, { sessionRef, idempotencyKey: "idem-1" });
+
+    await expect(attempt).rejects.toBeInstanceOf(ValidationError);
+    const thrown = await attempt.catch((error: unknown) => error);
+    expect(mapError(thrown).status).toBe(422);
+    // ...and no order was created for the failed attempt.
+    const fetched = unwrap<PublicCheckoutSessionDto>(
+      await admin.get(checkoutId, sessionRef),
+      "get checkout",
+    );
+    expect(fetched.status).toBe("started");
+    expect(fetched.orderRef).toBeNull();
+  });
+});
+
+/**
+ * T1.8 — the security half of the WP-1 decision. Resolving a guest's email to an EXISTING customer
+ * attaches the order to that customer; it must never confer session access to it. The guest still
+ * has no customer identity, and no route starts answering as that customer. The transport-level
+ * half of this (the real pipeline's anonymous, tenant-bound principal, ADR-0015) is in
+ * `guest-checkout.e2e.test.ts`.
+ */
+describe("public checkout routes — recipient name and phone (Plan 3A)", () => {
+  it("returns the name and phone on the caller's own session, and null when none were given", async () => {
+    const rawAdmin = buildAdmin();
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(
+      rawAdmin,
+      "session-recipient",
+    );
+
+    // The base fixture address carries neither: both come back null.
+    const plain = unwrap<PublicCheckoutSessionDto>(
+      await admin.get(checkoutId, sessionRef),
+      "get checkout",
+    );
+    expect(plain.shippingAddress).toMatchObject({ name: null, phone: null });
+
+    const withRecipient = unwrap<PublicCheckoutSessionDto>(
+      await admin.shippingAddress(checkoutId, {
+        sessionRef,
+        ...address,
+        name: "Mona Ali",
+        phone: "٠١٠ ١٢٣٤ ٥٦٧٨",
+        postalCode: "",
+      }),
+      "shipping address",
+    );
+    expect(withRecipient.shippingAddress).toMatchObject({
+      name: "Mona Ali",
+      phone: "01012345678",
+      postalCode: "",
+    });
+    const reread = unwrap<PublicCheckoutSessionDto>(
+      await admin.get(checkoutId, sessionRef),
+      "get checkout",
+    );
+    expect(reread.shippingAddress).toMatchObject({ name: "Mona Ali", phone: "01012345678" });
+  });
+
+  it("accepts an address with no postalCode key at all", async () => {
+    const rawAdmin = buildAdmin();
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(rawAdmin, "session-no-zip");
+    const { postalCode: _omitted, ...withoutPostalCode } = address;
+
+    const response = await admin.shippingAddress(checkoutId, { sessionRef, ...withoutPostalCode });
+
+    expect(
+      unwrap<PublicCheckoutSessionDto>(response, "shipping address").shippingAddress,
+    ).toMatchObject({ postalCode: "" });
+  });
+
+  it("refuses a malformed phone with a 422 that names the field", async () => {
+    const rawAdmin = buildAdmin();
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(
+      rawAdmin,
+      "session-bad-phone",
+    );
+
+    const response = await admin.shippingAddress(checkoutId, {
+      sessionRef,
+      ...address,
+      phone: "12ab",
+    });
+
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body)).toContain("phone");
+  });
+});
+
+describe("public checkout routes — a guest cannot escalate through a registered customer's email (T1.8)", () => {
+  const VICTIM = { email: "victim@example.com", name: "Vera Victim", password: "correct-horse" };
+
+  async function registerVictim(rawAdmin: WiredAdmin): Promise<string> {
+    const registered = (await callAuth(rawAdmin, "POST", "/public/auth/register", {
+      body: VICTIM,
+    })) as Response;
+    if (registered.status < 200 || registered.status >= 300) {
+      throw new Error(`register failed (${registered.status}): ${JSON.stringify(registered.body)}`);
+    }
+    const found = await rawAdmin.publicReads.customers.listCustomers({
+      tenantId: "tenant-local",
+      search: VICTIM.email,
+    });
+    const items = (found.body as { items: readonly Customer[] }).items;
+    const id = items[0]?.id.toString();
+    if (id === undefined) throw new Error("victim was not registered");
+    return id;
+  }
+
+  it("the order attaches to the victim, but the guest session gains no identity and every customer-scoped route stays 401", async () => {
+    const rawAdmin = buildAdmin();
+    const victimId = await registerVictim(rawAdmin);
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(
+      rawAdmin,
+      "session-attacker",
+      VICTIM.email,
+    );
+
+    const completed = unwrap<PublicCheckoutSessionDto>(
+      await admin.complete(checkoutId, { sessionRef, idempotencyKey: "idem-1" }),
+      "complete",
+    );
+
+    // Attached to the existing customer — and the registered customer was not touched.
+    const order = await orderOf(rawAdmin, completed.orderRef as string);
+    expect(order.customerRef).toBe(victimId);
+    const victim = await customerOf(rawAdmin, victimId);
+    expect(victim.isGuest).toBe(false);
+    expect(victim.name).toBe(VICTIM.name);
+
+    // The guest checkout session itself still has no customer identity.
+    const session = (
+      await rawAdmin.publicReads.checkout.get({
+        tenantId: "tenant-local",
+        checkoutSessionId: checkoutId,
+      })
+    ).body as CheckoutSession;
+    expect(session.customerRef).toBeUndefined();
+    expect(session.isGuest).toBe(true);
+
+    // Every way of presenting itself as that customer is still refused.
+    const attempts: Record<string, string>[] = [
+      { "x-cart-session": sessionRef },
+      { "x-customer-session": sessionRef },
+      { "x-customer-session": checkoutId },
+      { "x-customer-session": completed.orderRef as string },
+      { "x-customer-session": victimId },
+      { "x-customer-session": VICTIM.email },
+    ];
+    for (const headers of attempts) {
+      const me = await callAuth(rawAdmin, "GET", "/public/auth/me", { headers });
+      expect(me.status).toBe(401);
+    }
+    // Customer-scoped surfaces beyond /me are equally closed to that session.
+    for (const [routes, path] of [
+      [publicLoyaltyRoutes(rawAdmin), "/public/loyalty/accounts/me"],
+      [publicWishlistRoutes(rawAdmin), "/public/wishlists/me"],
+    ] as const) {
+      const route = byPathAndMethod(routes, "GET", path);
+      const response = (await route.handle({
+        body: undefined,
+        params: {},
+        query: {},
+        context: publicContext(sessionRef),
+      } as never)) as Response;
+      expect(response.status).toBe(401);
+    }
+  });
+
+  it("nothing on the completed session's wire shape exposes the victim's customer id, name or history", async () => {
+    const rawAdmin = buildAdmin();
+    const victimId = await registerVictim(rawAdmin);
+    const { admin, checkoutId, sessionRef } = await readyGuestCheckout(
+      rawAdmin,
+      "session-attacker-2",
+      VICTIM.email,
+    );
+
+    const completed = await admin.complete(checkoutId, { sessionRef, idempotencyKey: "idem-1" });
+    const fetched = await admin.get(checkoutId, sessionRef);
+
+    for (const response of [completed, fetched]) {
+      const wire = JSON.stringify(response.body);
+      expect(wire).not.toContain(victimId);
+      expect(wire).not.toContain(VICTIM.name);
+      expect(Object.keys(response.body as object)).not.toContain("customerRef");
+    }
+  });
+
+  it("knowing the victim's email grants no access to their checkout sessions — ownership stays sessionRef-based", async () => {
+    const rawAdmin = buildAdmin();
+    await registerVictim(rawAdmin);
+    const victimCheckout = await readyGuestCheckout(rawAdmin, "session-victim", VICTIM.email);
+    const attacker = await readyGuestCheckout(rawAdmin, "session-attacker-3", VICTIM.email);
+
+    expect((await attacker.admin.get(victimCheckout.checkoutId, attacker.sessionRef)).status).toBe(
+      404,
+    );
   });
 });
 
@@ -411,6 +803,7 @@ describe("public checkout routes — ownership", () => {
       admin.items(checkoutSessionId, { sessionRef: "session-b", cartId: "any" }),
       admin.billingAddress(checkoutSessionId, { sessionRef: "session-b", ...address }),
       admin.shippingAddress(checkoutSessionId, { sessionRef: "session-b", ...address }),
+      admin.contact(checkoutSessionId, { sessionRef: "session-b", email: "a@example.com" }),
       admin.shippingQuote(checkoutSessionId, { sessionRef: "session-b" }),
       admin.shippingSelection(checkoutSessionId, { sessionRef: "session-b", method: "standard" }),
       admin.tax(checkoutSessionId, { sessionRef: "session-b" }),
@@ -443,16 +836,23 @@ describe("public checkout routes — ownership", () => {
 
   it("a cart owned by another session cannot be loaded into the caller's checkout session", async () => {
     const rawAdmin = buildAdmin();
-    await seedPublishedPrice(rawAdmin, "product-1", 500);
+    const product = await seedProduct(rawAdmin, 500);
     const admin = routesFor(rawAdmin);
-    const victimCart = unwrap<{ id: string }>(await admin.createCart("session-victim"), "victim cart");
-    await admin.addCartItem(victimCart.id, "session-victim", "product-1", 1);
+    const victimCart = unwrap<{ id: string }>(
+      await admin.createCart("session-victim"),
+      "victim cart",
+    );
+    await admin.addCartItem(victimCart.id, "session-victim", product.productId, 1);
     const attackerCart = unwrap<{ id: string }>(
       await admin.createCart("session-attacker"),
       "attacker cart",
     );
     const started = unwrap<PublicCheckoutSessionDto>(
-      await admin.start({ sessionRef: "session-attacker", cartRef: attackerCart.id, currency: "USD" }),
+      await admin.start({
+        sessionRef: "session-attacker",
+        cartRef: attackerCart.id,
+        currency: "USD",
+      }),
       "start checkout",
     );
 
@@ -535,7 +935,10 @@ describe("public checkout routes — no forged amounts or spoofed identity (.str
 
   it("shipping-selection rejects a body carrying rateAmountMinor", () => {
     const admin = routesFor(buildAdmin());
-    const schema = admin.schemaOf("POST", "/public/checkouts/:checkoutSessionId/shipping-selection");
+    const schema = admin.schemaOf(
+      "POST",
+      "/public/checkouts/:checkoutSessionId/shipping-selection",
+    );
 
     const result = schema?.safeParse({
       sessionRef: "session-a",
@@ -548,11 +951,13 @@ describe("public checkout routes — no forged amounts or spoofed identity (.str
 
   it("shipping-selection still accepts the legitimate shape (method only)", () => {
     const admin = routesFor(buildAdmin());
-    const schema = admin.schemaOf("POST", "/public/checkouts/:checkoutSessionId/shipping-selection");
+    const schema = admin.schemaOf(
+      "POST",
+      "/public/checkouts/:checkoutSessionId/shipping-selection",
+    );
 
     const result = schema?.safeParse({ sessionRef: "session-a", method: "standard" }) as
-      | { success: boolean }
-      | undefined;
+      { success: boolean } | undefined;
 
     expect(result?.success).toBe(true);
   });

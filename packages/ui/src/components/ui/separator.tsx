@@ -4,7 +4,7 @@ import * as React from "react";
 import * as SeparatorPrimitive from "@radix-ui/react-separator";
 import { cn } from "../../lib/cn";
 
-/** Lumo Separator. Decorative by default, so it stays out of the accessibility tree. */
+/** Morbeh Separator. Decorative by default, so it stays out of the accessibility tree. */
 const Separator = React.forwardRef<
   React.ComponentRef<typeof SeparatorPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof SeparatorPrimitive.Root>

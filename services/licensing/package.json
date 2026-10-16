@@ -26,7 +26,8 @@
     "@platform/types": "workspace:*",
     "@platform/usage": "workspace:*",
     "@platform/utils": "workspace:*",
-    "@prisma/client": "^6.5.0"
+    "@prisma/client": "^6.5.0",
+    "decimal.js": "^10.4.3"
   },
   "devDependencies": {
     "@platform/eslint-config": "workspace:*",

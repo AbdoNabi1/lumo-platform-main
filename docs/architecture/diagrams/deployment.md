@@ -14,7 +14,7 @@ flowchart TB
     ING["Ingress runtime-api<br/>TLS1.2/1.3 · HSTS · CSP · security headers<br/>routes /api only"]
   end
 
-  subgraph K8s["Kubernetes — namespace lumo-runtime"]
+  subgraph K8s["Kubernetes — namespace morbeh-runtime"]
     subgraph apiset["Deployment runtime-api (HPA 2–10, PDB min 1)"]
       A1["pod (non-root, ro-rootfs,<br/>drop ALL caps, seccomp)"]
       A2["pod"]

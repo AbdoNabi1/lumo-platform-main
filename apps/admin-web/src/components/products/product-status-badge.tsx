@@ -7,6 +7,7 @@ const PRODUCT_STATUS_VARIANT: Readonly<
   draft: "neutral",
   scheduled: "warning",
   published: "success",
+  unlisted: "accent",
   archived: "outline",
 };
 

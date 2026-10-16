@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { UniqueEntityId } from "@platform/domain";
+import { BusinessRuleError } from "@platform/utils";
 import { CheckoutSession } from "../domain/checkout-session";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
 import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
-import type { OrderCreationPort } from "./ports";
+import { ContactEmail } from "../domain/value-objects/contact-email";
+import { ShippingSelection } from "../domain/value-objects/selections";
+import type {
+  InventoryValidationPort,
+  OrderCancellationPort,
+  OrderCreationPort,
+  OrderStockReservationPort,
+  StockReservationResult,
+} from "./ports";
 import { CompleteCheckout } from "./complete-checkout.use-case";
 
 function must<T>(r: { ok: boolean; value?: T }): T {
@@ -69,10 +78,14 @@ class NoopUnitOfWork {
 
 class FakeOrderCreationPort implements OrderCreationPort {
   callCount = 0;
+  lastInput: Parameters<OrderCreationPort["create"]>[0] | undefined;
   constructor(private readonly orderRef: string) {}
 
-  async create(): Promise<{ readonly orderRef: string }> {
+  async create(
+    input: Parameters<OrderCreationPort["create"]>[0],
+  ): Promise<{ readonly orderRef: string }> {
     this.callCount += 1;
+    this.lastInput = input;
     return { orderRef: this.orderRef };
   }
 }
@@ -85,6 +98,30 @@ function sequentialIds(): IdGenerator {
 const clock: Clock = { now: () => new Date("2026-06-30T00:00:00.000Z") };
 
 describe("CompleteCheckout", () => {
+  it("hands the shopper's selected shipping method to the order (Plan 3B)", async () => {
+    const sessions = new FakeSessionRepository();
+    const session = readySession();
+    session.selectShipping(must(ShippingSelection.create("standard", 500, "USD")));
+    session.recalculateTotals("evt-recalc", new Date(0));
+    sessions.seed(session);
+    const orderCreation = new FakeOrderCreationPort("order-abc");
+    const useCase = new CompleteCheckout({
+      sessions,
+      unitOfWork: new NoopUnitOfWork(),
+      idGenerator: sequentialIds(),
+      clock,
+      orderCreation,
+    });
+
+    await useCase.execute({
+      tenantId: "tenant-a",
+      checkoutSessionId: "cs-1",
+      idempotencyKey: "idem-1",
+    });
+
+    expect(orderCreation.lastInput?.shippingMethod).toBe("standard");
+  });
+
   it("creates the order via OrderCreationPort and completes the session", async () => {
     const sessions = new FakeSessionRepository();
     sessions.seed(readySession());
@@ -98,6 +135,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "cs-1",
       idempotencyKey: "idem-1",
     });
@@ -124,7 +162,7 @@ describe("CompleteCheckout", () => {
       clock,
       orderCreation,
     });
-    const input = { checkoutSessionId: "cs-1", idempotencyKey: "idem-1" };
+    const input = { tenantId: "tenant-a", checkoutSessionId: "cs-1", idempotencyKey: "idem-1" };
 
     const first = await useCase.execute(input);
     expect(first.ok).toBe(true);
@@ -148,6 +186,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "missing",
       idempotencyKey: "idem-1",
     });
@@ -169,7 +208,11 @@ describe("CompleteCheckout", () => {
       orderCreation,
     });
 
-    const result = await useCase.execute({ checkoutSessionId: "cs-1", idempotencyKey: "  " });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      checkoutSessionId: "cs-1",
+      idempotencyKey: "  ",
+    });
 
     expect(result.ok).toBe(false);
     expect(orderCreation.callCount).toBe(0);
@@ -196,6 +239,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "cs-empty",
       idempotencyKey: "idem-1",
     });
@@ -228,6 +272,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "cs-failed",
       idempotencyKey: "idem-1",
     });
@@ -258,6 +303,7 @@ describe("CompleteCheckout", () => {
     });
 
     const result = await useCase.execute({
+      tenantId: "tenant-a",
       checkoutSessionId: "cs-expired",
       idempotencyKey: "idem-1",
     });
@@ -266,5 +312,289 @@ describe("CompleteCheckout", () => {
     if (result.ok) throw new Error("expected err");
     expect(result.error.code).toBe("BUSINESS_RULE");
     expect(orderCreation.callCount).toBe(0);
+  });
+});
+
+describe("CompleteCheckout — guest contact email (WP-1)", () => {
+  type CreateInput = Parameters<OrderCreationPort["create"]>[0];
+
+  class CapturingOrderCreationPort implements OrderCreationPort {
+    readonly inputs: CreateInput[] = [];
+
+    async create(input: CreateInput): Promise<{ readonly orderRef: string }> {
+      this.inputs.push(input);
+      return { orderRef: "order-guest" };
+    }
+  }
+
+  function guestReadySession(email?: string): CheckoutSession {
+    const session = CheckoutSession.start(
+      UniqueEntityId.from("cs-guest"),
+      "cart-1",
+      undefined,
+      "session-1",
+      "USD",
+    );
+    session.loadItems([item()]);
+    session.setBillingAddress(address());
+    session.setShippingAddress(address());
+    if (email !== undefined) session.setContactEmail(must(ContactEmail.create(email)));
+    session.recalculateTotals("evt-totals", new Date(0));
+    session.pullDomainEvents();
+    return session;
+  }
+
+  async function complete(session: CheckoutSession, tenantId = "tenant-a") {
+    const sessions = new FakeSessionRepository();
+    sessions.seed(session);
+    const orderCreation = new CapturingOrderCreationPort();
+    const useCase = new CompleteCheckout({
+      sessions,
+      unitOfWork: new NoopUnitOfWork(),
+      idGenerator: sequentialIds(),
+      clock,
+      orderCreation,
+    });
+    await useCase.execute({
+      tenantId,
+      checkoutSessionId: session.id.toString(),
+      idempotencyKey: "idem-1",
+    });
+    return orderCreation.inputs;
+  }
+
+  it("hands the session's contact email and tenant to the order-creation port", async () => {
+    const inputs = await complete(guestReadySession("guest@example.com"), "tenant-b");
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]?.customerRef).toBeUndefined();
+    expect(inputs[0]?.contactEmail).toBe("guest@example.com");
+    expect(inputs[0]?.tenantId).toBe("tenant-b");
+  });
+
+  it("hands over no contact email when the session has none", async () => {
+    const inputs = await complete(guestReadySession());
+
+    expect(inputs[0]?.contactEmail).toBeUndefined();
+  });
+});
+
+describe("CompleteCheckout — stock gate (Plan 2B-3)", () => {
+  class FakeInventoryValidation implements InventoryValidationPort {
+    callCount = 0;
+    constructor(private readonly result: { valid: boolean; reason?: string }) {}
+
+    async validate(): Promise<{ valid: boolean; reason?: string }> {
+      this.callCount += 1;
+      return this.result;
+    }
+  }
+
+  function build(inventoryValidation?: InventoryValidationPort) {
+    const sessions = new FakeSessionRepository();
+    sessions.seed(readySession());
+    const orderCreation = new FakeOrderCreationPort("order-abc");
+    const useCase = new CompleteCheckout({
+      sessions,
+      unitOfWork: new NoopUnitOfWork(),
+      idGenerator: sequentialIds(),
+      clock,
+      orderCreation,
+      ...(inventoryValidation === undefined ? {} : { inventoryValidation }),
+    });
+    return { sessions, orderCreation, useCase };
+  }
+  const input = { tenantId: "tenant-a", checkoutSessionId: "cs-1", idempotencyKey: "idem-1" };
+
+  it("refuses with an OUT_OF_STOCK business-rule error, creates no order and leaves the session open", async () => {
+    const stock = new FakeInventoryValidation({
+      valid: false,
+      reason: 'insufficient stock for product "p1"',
+    });
+    const { sessions, orderCreation, useCase } = build(stock);
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error).toBeInstanceOf(BusinessRuleError);
+    expect(result.error.message.startsWith("OUT_OF_STOCK:")).toBe(true);
+    expect(result.error.message).toContain("p1");
+    expect(orderCreation.callCount).toBe(0);
+    const persisted = await sessions.findById("cs-1");
+    expect(persisted?.orderRef).toBeNull();
+    expect(persisted?.state.isOpen).toBe(true);
+  });
+
+  it("proceeds exactly as before when the stock is valid", async () => {
+    const stock = new FakeInventoryValidation({ valid: true });
+    const { orderCreation, useCase } = build(stock);
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.value.orderRef).toBe("order-abc");
+    expect(stock.callCount).toBe(1);
+    expect(orderCreation.callCount).toBe(1);
+  });
+
+  it("is unchanged without the dependency", async () => {
+    const { orderCreation, useCase } = build();
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(true);
+    expect(orderCreation.callCount).toBe(1);
+  });
+
+  it("an already completed session returns its order without validating the stock again", async () => {
+    const stock = new FakeInventoryValidation({ valid: true });
+    const { orderCreation, useCase } = build(stock);
+    await useCase.execute(input);
+
+    const again = await useCase.execute(input);
+
+    expect(again.ok).toBe(true);
+    if (!again.ok) throw new Error("expected ok");
+    expect(again.value.orderRef).toBe("order-abc");
+    expect(stock.callCount).toBe(1);
+    expect(orderCreation.callCount).toBe(1);
+  });
+});
+
+describe("CompleteCheckout — reserves the stock when the order is placed (Plan 3C, G-114)", () => {
+  class FakeReservation implements OrderStockReservationPort {
+    readonly calls: string[] = [];
+    reservedLines: readonly CheckoutItem[] = [];
+    constructor(private readonly result: StockReservationResult) {}
+
+    async reserve(
+      orderId: string,
+      items: readonly CheckoutItem[],
+      tenantId: string,
+    ): Promise<StockReservationResult> {
+      this.calls.push(`reserve:${orderId}:${tenantId}`);
+      this.reservedLines = items;
+      return this.result;
+    }
+
+    async release(orderId: string, tenantId: string): Promise<void> {
+      this.calls.push(`release:${orderId}:${tenantId}`);
+    }
+  }
+
+  class FakeCancellation implements OrderCancellationPort {
+    readonly calls: string[] = [];
+    async cancel(orderId: string, tenantId: string): Promise<void> {
+      this.calls.push(`cancel:${orderId}:${tenantId}`);
+    }
+  }
+
+  function build(options: {
+    reservation?: OrderStockReservationPort;
+    cancellation?: OrderCancellationPort;
+  }) {
+    const sessions = new FakeSessionRepository();
+    sessions.seed(readySession());
+    const orderCreation = new FakeOrderCreationPort("order-abc");
+    const useCase = new CompleteCheckout({
+      sessions,
+      unitOfWork: new NoopUnitOfWork(),
+      idGenerator: sequentialIds(),
+      clock,
+      orderCreation,
+      ...(options.reservation === undefined ? {} : { stockReservation: options.reservation }),
+      ...(options.cancellation === undefined ? {} : { orderCancellation: options.cancellation }),
+    });
+    return { sessions, orderCreation, useCase };
+  }
+  const input = { tenantId: "tenant-a", checkoutSessionId: "cs-1", idempotencyKey: "idem-1" };
+
+  it("reserves the stock for the new order, in the caller's tenant, then completes the session", async () => {
+    const reservation = new FakeReservation({ ok: true });
+    const cancellation = new FakeCancellation();
+    const { sessions, useCase } = build({ reservation, cancellation });
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(true);
+    expect(reservation.calls).toEqual(["reserve:order-abc:tenant-a"]);
+    expect(reservation.reservedLines).toHaveLength(1);
+    expect(cancellation.calls).toEqual([]);
+    expect((await sessions.findById("cs-1"))?.orderRef).toBe("order-abc");
+  });
+
+  it("the lost race: releases, cancels the order, refuses with OUT_OF_STOCK and leaves the session open to retry", async () => {
+    const reservation = new FakeReservation({ ok: false, reason: "insufficient stock" });
+    const cancellation = new FakeCancellation();
+    const { sessions, useCase } = build({ reservation, cancellation });
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error).toBeInstanceOf(BusinessRuleError);
+    expect(result.error.message).toBe("OUT_OF_STOCK: insufficient stock");
+    expect(reservation.calls).toEqual(["reserve:order-abc:tenant-a", "release:order-abc:tenant-a"]);
+    expect(cancellation.calls).toEqual(["cancel:order-abc:tenant-a"]);
+    const persisted = await sessions.findById("cs-1");
+    expect(persisted?.orderRef).toBeNull();
+    expect(persisted?.state.isOpen).toBe(true);
+  });
+
+  it("treats a reservation that throws as a lost race, never as a placed order", async () => {
+    const reservation = new FakeReservation({ ok: true });
+    reservation.reserve = async () => {
+      throw new Error("inventory down");
+    };
+    const cancellation = new FakeCancellation();
+    const { sessions, useCase } = build({ reservation, cancellation });
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message.startsWith("OUT_OF_STOCK:")).toBe(true);
+    expect(result.error.message).not.toContain("inventory down");
+    expect(cancellation.calls).toEqual(["cancel:order-abc:tenant-a"]);
+    expect((await sessions.findById("cs-1"))?.orderRef).toBeNull();
+  });
+
+  it("still refuses when cleaning up fails: a throwing release or cancel never masks OUT_OF_STOCK", async () => {
+    const reservation = new FakeReservation({ ok: false, reason: "insufficient stock" });
+    reservation.release = async () => {
+      throw new Error("release failed");
+    };
+    const cancellation: OrderCancellationPort = {
+      cancel: async () => {
+        throw new Error("cancel failed");
+      },
+    };
+    const { useCase } = build({ reservation, cancellation });
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message).toBe("OUT_OF_STOCK: insufficient stock");
+  });
+
+  it("without a reservation port, completes exactly as before", async () => {
+    const { useCase } = build({});
+
+    const result = await useCase.execute(input);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("a retried complete after success does not reserve again", async () => {
+    const reservation = new FakeReservation({ ok: true });
+    const { useCase } = build({ reservation });
+
+    await useCase.execute(input);
+    await useCase.execute(input);
+
+    expect(reservation.calls).toEqual(["reserve:order-abc:tenant-a"]);
   });
 });

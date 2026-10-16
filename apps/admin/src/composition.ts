@@ -1,4 +1,5 @@
 import { wireAnalytics } from "@platform/analytics";
+import type { NativeTokenIssuer } from "@platform/auth";
 import { wireAutomation } from "@platform/automation";
 import { wireCart, type CartController } from "@platform/cart";
 import {
@@ -10,9 +11,15 @@ import {
 import {
   wireCheckout,
   type CheckoutController,
+  type CheckoutSession,
   type InventoryValidationPort,
+  type OrderCancellationPort as CheckoutOrderCancellationPort,
+  type OrderStockReservationPort as CheckoutStockReservationPort,
   type OrderCreationPort,
+  type PaymentInitiationPort,
+  type PaymentMethodPort,
   type PricingValidationPort,
+  type DiscountUsagePort,
   type PromotionValidationPort,
   type ShippingCalculationPort,
   type TaxCalculationPort,
@@ -36,13 +43,24 @@ import { wireFeatureFlags } from "@platform/feature-flags-service";
 import { wireFeatureRegistry } from "@platform/feature-registry";
 import { wireFinance } from "@platform/finance";
 import type { PostingAccounts } from "@platform/finance";
-import { wireFulfillment } from "@platform/fulfillment";
+import { type FulfillmentController, wireFulfillment } from "@platform/fulfillment";
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
-import { wireLicensing, type FinanceLedgerPort, type PaymentsPort } from "@platform/licensing";
+import {
+  wireLicensing,
+  type FinanceLedgerPort,
+  type PaymentsPort,
+  type StoredMethodBillingDeps,
+  type WiredLicensing,
+} from "@platform/licensing";
 import { wireLocalization } from "@platform/localization";
 import { wireLoyalty, type LoyaltyController } from "@platform/loyalty";
-import { wireMediaLibrary, type ObjectStoragePort } from "@platform/media";
+import {
+  wireMediaLibrary,
+  type LegacyStorageKeys,
+  type ObjectStoragePort,
+  type ResolveMediaImages,
+} from "@platform/media";
 import { wireNotifications } from "@platform/notifications";
 import {
   wireOrders,
@@ -50,6 +68,9 @@ import {
   type NotificationPort as OrdersNotificationPort,
   type OrderController,
   type PaymentPort as OrdersPaymentPort,
+  type FulfillmentCancelPort as OrdersFulfillmentCancelPort,
+  type PaymentVoidPort as OrdersPaymentVoidPort,
+  type StockReleasePort as OrdersStockReleasePort,
   type PaymentVerificationPort,
   type ShippingPort as OrdersShippingPort,
 } from "@platform/orders";
@@ -60,6 +81,9 @@ import {
   type NotificationPort as PaymentsNotificationPort,
   type OrdersPort as PaymentsOrdersPort,
   type PaymentController,
+  type PaymentCredentialVault,
+  type PaymentProviderResolver,
+  type ProviderRegistration,
 } from "@platform/payments";
 import { wirePlatformConsole } from "@platform/platform-console";
 import { wirePricing, type PriceController } from "@platform/pricing";
@@ -75,30 +99,59 @@ import { wireReviews, type ReviewsController } from "@platform/reviews";
 import { wireSearch } from "@platform/search";
 import {
   wireSecurity,
+  HashedPasswordAuthProvider,
+  type AuthenticationProviderPort,
   type MfaProviderResolver,
+  type PasswordRegistrar,
+  type PasswordResetTokenStore,
   type SecurityController,
+  type WiredSecurity,
 } from "@platform/security";
 import { wireSeo } from "@platform/seo";
 import { wireShipping } from "@platform/shipping";
-import { wireTenancy } from "@platform/tenancy";
+import { wireTenancy, type DnsVerifier, type TenantAvailability } from "@platform/tenancy";
+import { logger as adminLogger } from "@platform/utils";
+import { TenantProvisioner } from "./tenant-provisioning";
 import { wireTheme } from "@platform/theme";
 import { wireWishlist, type WishlistController } from "@platform/wishlist";
 import { AllowAllAccessControl } from "./infrastructure/allow-all-access-control";
+import {
+  CheckoutShippingQuoteAdapter,
+  CheckoutTaxCalculationAdapter,
+} from "./infrastructure/cross-context/checkout-shipping-tax.adapters";
 import { InventoryValidationAdapter } from "./infrastructure/cross-context/inventory-validation.adapter";
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
+import { OrdersFulfillmentCancelAdapter } from "./infrastructure/cross-context/orders-fulfillment-cancel.adapter";
+import { OrdersPaymentVoidAdapter } from "./infrastructure/cross-context/orders-payment-void.adapter";
+import { OrdersStockReleaseAdapter } from "./infrastructure/cross-context/orders-stock-release.adapter";
+import {
+  CheckoutOrderCancellationAdapter,
+  CheckoutStockReservationAdapter,
+} from "./infrastructure/cross-context/checkout-stock-reservation.adapters";
+import { CatalogPricingValidationAdapter } from "./infrastructure/cross-context/catalog-pricing-validation.adapter";
+import {
+  CheckoutPaymentInitiationAdapter,
+  CheckoutPaymentMethodsAdapter,
+} from "./infrastructure/cross-context/checkout-payment.adapters";
 import { PaymentsNotificationAdapter } from "./infrastructure/cross-context/payments-notification.adapter";
+import { StoreCurrencyRelabelAdapter } from "./infrastructure/cross-context/store-currency-relabel.adapter";
 import { PaymentsOrdersAdapter } from "./infrastructure/cross-context/payments-orders.adapter";
-import { PricingValidationAdapter } from "./infrastructure/cross-context/pricing-validation.adapter";
+import { DiscountUsageAdapter } from "./infrastructure/cross-context/discount-usage.adapter";
 import { PromotionValidationAdapter } from "./infrastructure/cross-context/promotion-validation.adapter";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
+import { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email-adapter";
+import type { AdminResponse } from "./interfaces/admin-response";
 import { AccessAdminController } from "./interfaces/access.admin-controller";
 import { AdminGuard } from "./interfaces/admin-guard";
 import { CustomerAuthAdminController } from "./interfaces/customer-auth.admin-controller";
 import type { CustomerCredentialsPort } from "./interfaces/customer-credentials.port";
 import { CustomerGuard } from "./interfaces/customer-guard";
+import { StaffAuthAdminController } from "./interfaces/staff-auth.admin-controller";
+import type { EmailSender } from "./interfaces/email-sender.port";
+import type { SignupEmailPort } from "./interfaces/signup-email.port";
 import { AnalyticsAdminController } from "./interfaces/analytics.admin-controller";
 import { AutomationAdminController } from "./interfaces/automation.admin-controller";
 import { CartAdminController } from "./interfaces/cart.admin-controller";
@@ -113,6 +166,7 @@ import { ExperimentationAdminController } from "./interfaces/experimentation.adm
 import { FeatureFlagsAdminController } from "./interfaces/feature-flags.admin-controller";
 import { FeatureRegistryAdminController } from "./interfaces/feature-registry.admin-controller";
 import { FinanceAdminController } from "./interfaces/finance.admin-controller";
+import { TaxSettingsAdminController } from "./interfaces/tax-settings.admin-controller";
 import { FulfillmentAdminController } from "./interfaces/fulfillment.admin-controller";
 import { InventoryAdminController } from "./interfaces/inventory.admin-controller";
 import { LicensingAdminController } from "./interfaces/licensing.admin-controller";
@@ -127,6 +181,7 @@ import { PlatformConsoleAdminController } from "./interfaces/platform-console.ad
 import { PricingAdminController } from "./interfaces/pricing.admin-controller";
 import { ProductsAdminController } from "./interfaces/products.admin-controller";
 import { PromotionsAdminController } from "./interfaces/promotions.admin-controller";
+import { DiscountsAdminController } from "./interfaces/discounts/discounts.admin-controller";
 import { RecommendationsAdminController } from "./interfaces/recommendations.admin-controller";
 import { ReportingAdminController } from "./interfaces/reporting.admin-controller";
 import { ReturnsAdminController } from "./interfaces/returns.admin-controller";
@@ -140,6 +195,7 @@ import { SecuritySecretsAdminController } from "./interfaces/security-secrets.ad
 import { SecuritySessionsAdminController } from "./interfaces/security-sessions.admin-controller";
 import { SeoAdminController } from "./interfaces/seo.admin-controller";
 import { ShippingAdminController } from "./interfaces/shipping.admin-controller";
+import { ShippingZonesAdminController } from "./interfaces/shipping-zones.admin-controller";
 import { TenancyAdminController } from "./interfaces/tenancy.admin-controller";
 import { ThemeAdminController } from "./interfaces/theme.admin-controller";
 import { WishlistAdminController } from "./interfaces/wishlist.admin-controller";
@@ -187,6 +243,18 @@ export interface AdminWiringDeps {
   /** Required alongside `prisma` (ADR-0008) by every context that reads it. */
   readonly tenantId?: string;
   /**
+   * WP-14 (T14.2): the platform-operator tenant. Passed straight through to `wireLicensing(deps)`,
+   * whose controller refuses plan/subscription/billing writes from any other tenant. Absent ⇒ single
+   * tenant deployment. `createAdminHttpApi` sets it under `TENANT_MODE=multi` (fail-closed).
+   */
+  readonly platformTenantId?: string;
+  /** Plan 1A: e.g. `morbeh.store`; new shops get `<slug>.<this>`. */
+  readonly platformStoreDomain?: string;
+  /** Plan 1A: verifies custom domains' DNS; absent ⇒ custom domains stay pending. */
+  readonly dnsVerifier?: DnsVerifier;
+  /** In-memory Security only (tests/dev): Identity subject refs treated as known, so an owner can be registered offline. */
+  readonly knownSubjects?: readonly string[];
+  /**
    * Gates Orders' admin backoffice `markOrderPaid` action against Payments (Sprint A1 Task 5).
    * Passed straight through to `wireOrders(deps)` below; defaults to Orders' own always-verify
    * in-memory stub when absent — no behavior change for existing callers/tests.
@@ -213,12 +281,40 @@ export interface AdminWiringDeps {
    */
   readonly mfaProviders?: MfaProviderResolver;
   /**
+   * Plan 1B-1: the durable password provider, passed straight through to `wireSecurity(deps)`.
+   * Absent ⇒ Security's in-memory reference provider (tests/local), as before.
+   */
+  readonly passwordAuthProvider?: AuthenticationProviderPort & PasswordRegistrar;
+  /** Plan 1B-2: the platform's own token issuer; absent ⇒ staff login/JWKS answer 503. */
+  readonly staffTokenIssuer?: NativeTokenIssuer;
+  /** Plan 1C: the platform's one email sender; absent ⇒ forgot-password answers 202 and sends nothing. */
+  readonly emailSender?: EmailSender;
+  /** Plan 1C: public origin of admin-web, used to build the reset link (e.g. https://admin.example.com). */
+  readonly adminPublicUrl?: string;
+  /** Plan 1C: where reset tokens live; passed straight through to `wireSecurity(deps)`. Absent ⇒ in-memory. */
+  readonly passwordResetTokens?: PasswordResetTokenStore;
+  /** Plan 1B-2: staff session/token lifetime in seconds (default 7200). */
+  readonly staffTokenTtlSeconds?: number;
+  /**
    * Production PSP-backed billing collection for Licensing (M2-3). Passed straight through to
    * `wireLicensing(deps)` below; absent ⇒ Licensing's own always-succeeds in-memory stub, same as
    * before this field existed. `apps/runtime/src/api.ts` refuses to boot outside `local` without a
    * real one.
    */
   readonly payments?: PaymentsPort;
+  /**
+   * TEST SEAM: an already-wired Licensing to serve instead of building one from `deps`. It exists so
+   * a test can feed the SAME Licensing instance from another context's consumer and then read it
+   * back through the real admin HTTP routes (`apps/runtime`'s usage-metering e2e). Production never
+   * sets it: `apps/runtime/src/api.ts` passes no `licensing`, so `wireLicensing(deps)` runs as before.
+   */
+  readonly licensing?: WiredLicensing;
+  /**
+   * Charging a merchant's saved card off-session on Morbeh's own PSP account (G-74 (1)). Passed
+   * straight through to `wireLicensing(deps)`; present ⇒ renewals collect through the stored card and
+   * the card-enrolment / token-callback use cases exist. Absent ⇒ unchanged.
+   */
+  readonly storedMethodBilling?: StoredMethodBillingDeps;
   /**
    * Production Finance-ledger settlement posting for Licensing (M2-3). Passed straight through to
    * `wireLicensing(deps)` below; absent ⇒ Licensing's own no-op in-memory stub. Same boot guard as
@@ -234,12 +330,32 @@ export interface AdminWiringDeps {
    */
   readonly objectStorage?: ObjectStoragePort;
   /**
+   * Where the public media bucket is served from (`MEDIA_PUBLIC_BASE_URL`, Plan 2C-3). Passed straight
+   * through to `wireMediaLibrary(deps)`; absent ⇒ product-image uploads answer 503 and no image url is
+   * ever produced.
+   */
+  readonly publicMediaBaseUrl?: string;
+  /**
+   * Whether the Media Library may still sign an existing asset whose key is not tenant-prefixed
+   * (G-68). Default `"refuse"`; `createAdminHttpApi` passes `"allow"` under `TENANT_MODE=single` so
+   * existing rows keep working, and `"refuse"` under multi. Registration is strict either way.
+   */
+  readonly legacyStorageKeys?: LegacyStorageKeys;
+  /**
    * Production PSP adapter for Payments (C2-2). Passed straight through to `wirePayments(deps)`
    * below; absent ⇒ Payments' own `InMemoryPaymentProvider` (`verifyWebhook()` always `true`, every
    * money operation a no-op), same as before this field existed. `apps/runtime/src/api.ts` refuses
    * to boot outside `local` without a real one.
    */
   readonly paymentProvider?: PaymentProvider;
+  /**
+   * WP-13: the payment providers registered from outside Payments (a key, declared capabilities, a
+   * factory each — see `ProviderRegistration`), and the vault merchants' secrets are sealed with.
+   * Both pass straight through to `wirePayments(deps)`; absent ⇒ only the built-in providers /
+   * an in-memory STUB vault that `apps/runtime` refuses outside `local`.
+   */
+  readonly providerRegistrations?: readonly ProviderRegistration[];
+  readonly paymentCredentialVault?: PaymentCredentialVault;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 4 outbound ports Orders' `RequestPaymentCapture`/
    * `RequestFulfillment` use-cases call. Passed straight through to `wireOrders(deps)` below;
@@ -251,6 +367,12 @@ export interface AdminWiringDeps {
   readonly inventoryPort?: OrdersInventoryPort;
   readonly shippingPort?: OrdersShippingPort;
   readonly notifications?: OrdersNotificationPort;
+  /** G-126: voids the payment of an order cancelled before it was paid. Defaults to the real adapter over Payments. */
+  readonly paymentVoid?: OrdersPaymentVoidPort;
+  /** G-130: cancels the open fulfillment order of a cancelled order. Defaults to the real adapter over Fulfillment. */
+  readonly fulfillmentCancel?: OrdersFulfillmentCancelPort;
+  /** G-130: releases the stock held for a cancelled order. Defaults to the real adapter over Inventory. */
+  readonly stockRelease?: OrdersStockReleasePort;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 5 orchestration ports Checkout's
    * `ValidateCheckout`/`RequestTaxCalculation`/`RequestShippingQuote`/`ValidatePromotion`/
@@ -259,9 +381,27 @@ export interface AdminWiringDeps {
    */
   readonly pricingValidation?: PricingValidationPort;
   readonly inventoryValidation?: InventoryValidationPort;
+  /** Plan 3C (G-114): reserves the order's stock when it is placed. Defaults to the real adapter over Inventory. */
+  readonly stockReservation?: CheckoutStockReservationPort;
+  /** Plan 3C: cancels an order whose stock could not be reserved. Defaults to the real adapter over Orders. */
+  readonly orderCancellation?: CheckoutOrderCancellationPort;
   readonly taxCalculation?: TaxCalculationPort;
   readonly shippingCalculation?: ShippingCalculationPort;
+  /**
+   * Plan 3C: wire the REAL shipping and tax adapters into Checkout — the shop's shipping zones and
+   * rates, and its own tax settings, with each line's weight / `taxable` read from Catalog.
+   * Defaults to `true` whenever production persistence (`prisma`) is present, `false` otherwise: tests
+   * and local runs without a database keep Checkout's offline stubs (a fixed Standard 5 / Express 15
+   * quote, no tax) unless they ask for the real ones. An explicit `taxCalculation` /
+   * `shippingCalculation` above always wins. The runtime passes `true` outright.
+   */
+  readonly realShippingAndTax?: boolean;
   readonly promotionValidation?: PromotionValidationPort;
+  /**
+   * Phase 2: records each discount's use once an order is placed. Absent ⇒ the real
+   * `DiscountUsageAdapter` over Promotions + Coupons.
+   */
+  readonly discountUsage?: DiscountUsagePort;
   /**
    * C-2: the outbound seam `CompleteCheckout` uses to materialize an order from a completed
    * session. Passed straight through to `wireCheckout(deps)` below; absent ⇒ Checkout's own
@@ -271,6 +411,9 @@ export interface AdminWiringDeps {
    * 5 orchestration ports above do.
    */
   readonly orderCreation?: OrderCreationPort;
+  /** WP-13: overrides for the checkout-to-Payments seams (tests). Absent ⇒ the real adapters over Payments. */
+  readonly paymentMethods?: PaymentMethodPort;
+  readonly paymentInitiation?: PaymentInitiationPort;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 3 outbound reference-only ports Payments'
    * lifecycle use-cases call. Passed straight through to `wirePayments(deps)` below; absent ⇒
@@ -282,6 +425,20 @@ export interface AdminWiringDeps {
   readonly ordersPort?: PaymentsOrdersPort;
   readonly financePort?: PaymentsFinancePort;
   readonly paymentsNotifications?: PaymentsNotificationPort;
+  /**
+   * G-72: dispatches the "complete your account" / "you already have an account" signup emails.
+   * Absent ⇒ `LoggingSignupEmailAdapter` (logs instead of sending), same as before this field
+   * existed. `apps/runtime/src/api.ts` refuses to boot outside `local` while the resolved adapter
+   * is still that logging one — see `assertProductionSignupEmailConfigured`. A real provider
+   * (Resend/SendGrid/SES/...) is deliberately out of scope (D4); this is the seam for one.
+   */
+  readonly signupEmail?: SignupEmailPort;
+  /**
+   * G-72: the storefront's public origin, used to build the signup-completion link
+   * (`${storefrontPublicUrl}/account/signup/complete?token=...`). Absent ⇒ `http://localhost:3000`
+   * (matches the storefront's own `RUNTIME_API_URL` local-default convention).
+   */
+  readonly storefrontPublicUrl?: string;
 }
 
 export interface WiredAdmin {
@@ -322,6 +479,8 @@ export interface WiredAdmin {
   readonly fulfillment: FulfillmentAdminController;
   /** Shipping screen → Shipping (Sprint 4.10 — Shipping's first admin-transport wiring). */
   readonly shipping: ShippingAdminController;
+  /** Plan 3C: Settings → Shipping and delivery (zones and rates). */
+  readonly shippingZones: ShippingZonesAdminController;
   /** Returns screen → Returns (Sprint 4.11 — Returns' first admin-transport wiring). */
   readonly returns: ReturnsAdminController;
   /** Reviews screen → Reviews (Sprint S1 — Reviews' first admin-transport wiring). */
@@ -349,6 +508,8 @@ export interface WiredAdmin {
   readonly notifications: NotificationsAdminController;
   /** Finance screen → Finance (ADR-0024). */
   readonly finance: FinanceAdminController;
+  /** Plan 3C: Settings → Taxes and duties. */
+  readonly taxes: TaxSettingsAdminController;
   /** Content Blocks screen → Content (Sprint 5.4 — Content's first admin-transport wiring). */
   readonly content: ContentAdminController;
   /** Coupons screen → Coupons (Sprint S1 — Coupons' first admin-transport wiring). */
@@ -361,6 +522,8 @@ export interface WiredAdmin {
   readonly featureRegistry: FeatureRegistryAdminController;
   /** Promotions screen → Promotions (Sprint S1 — Promotions' first admin-transport wiring). */
   readonly promotions: PromotionsAdminController;
+  /** Discounts screen → one Shopify-style facade over Promotions + Coupons (Phase 2). */
+  readonly discounts: DiscountsAdminController;
   /** Recommendations screen → Recommendations (Sprint S1 — Recommendations' first admin-transport wiring). */
   readonly recommendations: RecommendationsAdminController;
   /** Reporting screen → Reporting (Sprint S1 — Reporting's first admin-transport wiring). */
@@ -381,8 +544,19 @@ export interface WiredAdmin {
   readonly pages: PagesAdminController;
   /** Media Library screen → Media Library extension (Sprint 5.4 — Media's first admin-transport wiring). */
   readonly mediaLibrary: MediaLibraryAdminController;
+  /**
+   * Plan 2C-3: media ids → images (url, alt, size) in one tenant-scoped read. Used by the product,
+   * order, cart and checkout readers; it authorizes nothing itself — the route that calls it does.
+   */
+  readonly mediaImages: ResolveMediaImages;
   /** Tenancy screen → Tenancy (Sprint 5.5/5.6 — Tenancy's first admin-transport wiring). */
   readonly tenancy: TenancyAdminController;
+  /** Plan 3C: relabels the shop's variant prices when the store currency changes. */
+  readonly storeCurrency: StoreCurrencyRelabelAdapter;
+  /** T10.6: a tenant's lifecycle status straight from the source of truth (the gate caches it). */
+  readonly tenantAvailability: (tenantId: string) => Promise<TenantAvailability>;
+  /** T10.6: runs / inspects a tenant's security baseline (idempotent, resumable). */
+  readonly tenantProvisioner: TenantProvisioner;
   /** Licensing screen → Licensing (Sprint 5.5/5.6 — Licensing's first admin-transport wiring). */
   readonly licensing: LicensingAdminController;
   /** Platform Console screen → Platform Console (Sprint 5.6, ADR-0018 addendum-2 §J — read-model only). */
@@ -397,6 +571,13 @@ export interface WiredAdmin {
    * its `requireSession` seam rather than building a second one.
    */
   readonly customerAuth: CustomerAuthAdminController;
+  /** Plan 1B-2: native staff sign-in (password → role keys → platform-signed token) and JWKS. */
+  readonly staffAuth: StaffAuthAdminController;
+  /** Plan 1B-2: the parts of Security the staff login and the owner bootstrap drive directly. */
+  readonly securityWiring: Pick<
+    WiredSecurity,
+    "security" | "identityDirectory" | "passwordRegistrar"
+  >;
   /** Drains every wired context's outbox once; returns the total number of events published. */
   readonly drainOutbox: () => Promise<number>;
   /** Integration-event types delivered so far across all wired contexts (for demonstration/tests). */
@@ -444,6 +625,12 @@ export interface WiredAdmin {
      * methods are used by `public-cart-routes.ts`, and one seam is easier to audit than two.
      */
     readonly checkout: CheckoutController;
+    /**
+     * Plan 3C: the countries the shop's shipping zones ship to (`{ countries, restOfWorld }`) — all the
+     * storefront's country select needs. A function, not the zones controller: the public side can ask this
+     * one question and nothing else about the shop's shipping setup.
+     */
+    readonly shippableCountries: (tenantId: string) => Promise<AdminResponse>;
     /**
      * Reviews' guest read surface (T5.18 — product review display). Same reasoning as `cart`/
      * `checkout` above: every route in `reviews-routes.ts` goes through the guarded
@@ -501,8 +688,17 @@ export interface WiredAdmin {
    */
   readonly paymentsWebhook: {
     readonly recordWebhook: PaymentController["recordWebhook"];
-    readonly verifyWebhook: PaymentProvider["verifyWebhook"];
+    /**
+     * WP-13 (ADR-0014): verified against the RECEIVING TENANT's own provider credentials, resolved
+     * per request — not a process-wide provider. `false` for anything unauthenticated.
+     */
+    readonly verifyWebhook: PaymentController["verifyWebhook"];
   };
+  /**
+   * The per-request payment-provider resolver, exposed ONLY so `apps/runtime`'s production boot guard
+   * can ask what really backs each method. Nothing at request time reaches a provider through this.
+   */
+  readonly paymentProviders: PaymentProviderResolver;
 }
 
 interface DrainableContext {
@@ -518,7 +714,9 @@ interface DrainableContext {
  * in-memory persistence + outbox. Serializer/id/clock are injected and shared across contexts.
  */
 export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
-  const catalog = wireCatalog(deps);
+  // Plan 2C-3: Media is wired first because Catalog asks it whether an attached asset is the tenant's own.
+  const mediaLibrary = wireMediaLibrary(deps);
+  const catalog = wireCatalog({ ...deps, mediaLookup: mediaLibrary.images });
   const inventory = wireInventory(deps);
   // Phase 3 Task 12 (C-3): `notifications` must exist before `ordersDeps` below is built — Orders
   // cannot receive a real NotificationPort adapter built from `notifications` if `notifications`
@@ -543,6 +741,9 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // inbound port needing Orders' own outbound read surface, resolved entirely inside this single
   // `wireOrders` call.
   const ordersControllerCell: { controller?: Pick<OrderController, "getOrder"> } = {};
+  // WP-13: Orders' payment adapter needs the order's checkout session to learn which method the
+  // shopper selected. Checkout is wired AFTER Orders, so it is reached through the same lazy-cell idiom.
+  const checkoutControllerCell: { controller?: Pick<CheckoutController, "get"> } = {};
   const lazyOrdersController: Pick<OrderController, "getOrder"> = {
     getOrder: (input) => {
       if (ordersControllerCell.controller === undefined) {
@@ -568,12 +769,41 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // `wireOrders` and `wirePayments` have completed, so the cell is always populated by the time it
   // matters.
   const paymentsControllerCell: {
-    controller?: Pick<PaymentController, "createIntentLifecycle" | "captureLifecycle">;
+    controller?: Pick<
+      PaymentController,
+      | "createIntentLifecycle"
+      | "captureLifecycle"
+      | "getMerchantPaymentSettings"
+      | "getPaymentIntent"
+      | "advance"
+    >;
   } = {};
   const lazyPaymentsController: Pick<
     PaymentController,
-    "createIntentLifecycle" | "captureLifecycle"
+    | "createIntentLifecycle"
+    | "captureLifecycle"
+    | "getMerchantPaymentSettings"
+    | "getPaymentIntent"
+    | "advance"
   > = {
+    getMerchantPaymentSettings: (input) => {
+      if (paymentsControllerCell.controller === undefined) {
+        throw new Error("PaymentController requested before wirePayments() completed");
+      }
+      return paymentsControllerCell.controller.getMerchantPaymentSettings(input);
+    },
+    getPaymentIntent: (input) => {
+      if (paymentsControllerCell.controller === undefined) {
+        throw new Error("PaymentController requested before wirePayments() completed");
+      }
+      return paymentsControllerCell.controller.getPaymentIntent(input);
+    },
+    advance: (input) => {
+      if (paymentsControllerCell.controller === undefined) {
+        throw new Error("PaymentController requested before wirePayments() completed");
+      }
+      return paymentsControllerCell.controller.advance(input);
+    },
     createIntentLifecycle: (input) => {
       if (paymentsControllerCell.controller === undefined) {
         throw new Error(
@@ -591,18 +821,75 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       return paymentsControllerCell.controller.captureLifecycle(input);
     },
   };
+  // G-130: Fulfillment is wired AFTER Orders, so cancelling an order reaches it through the same
+  // one-shot lazy cell as Payments above; it is filled right after `wireFulfillment(deps)` below, long
+  // before any order can be cancelled.
+  const fulfillmentControllerCell: {
+    controller?: Pick<FulfillmentController, "getByOrder" | "advance">;
+  } = {};
+  const lazyFulfillmentController: Pick<FulfillmentController, "getByOrder" | "advance"> = {
+    getByOrder: (input) => {
+      if (fulfillmentControllerCell.controller === undefined) {
+        throw new Error("FulfillmentController requested before wireFulfillment() completed");
+      }
+      return fulfillmentControllerCell.controller.getByOrder(input);
+    },
+    advance: (input) => {
+      if (fulfillmentControllerCell.controller === undefined) {
+        throw new Error("FulfillmentController requested before wireFulfillment() completed");
+      }
+      return fulfillmentControllerCell.controller.advance(input);
+    },
+  };
   const ordersDeps = {
     ...deps,
     inventoryPort:
       deps.inventoryPort ??
       new OrdersInventoryAdapter(
+        catalog.products,
         inventory.inventory,
         inventory.warehouseRepository,
         inventory.inventoryItemRepository,
         lazyOrdersController,
       ),
     notifications: deps.notifications ?? new OrdersNotificationAdapter(notifications.notifications),
-    paymentPort: deps.paymentPort ?? new OrdersPaymentAdapter(lazyPaymentsController),
+    // G-126: cancelling an unpaid order cancels its payment intent too (best-effort).
+    paymentVoid: deps.paymentVoid ?? new OrdersPaymentVoidAdapter(lazyPaymentsController),
+    // G-130: cancelling an order cancels its open fulfillment order and releases its held stock.
+    fulfillmentCancel:
+      deps.fulfillmentCancel ?? new OrdersFulfillmentCancelAdapter(lazyFulfillmentController),
+    stockRelease:
+      deps.stockRelease ??
+      new OrdersStockReleaseAdapter(
+        lazyOrdersController,
+        inventory.inventoryItemRepository,
+        inventory.inventory,
+      ),
+    paymentPort:
+      deps.paymentPort ??
+      new OrdersPaymentAdapter(lazyPaymentsController, async (orderId, tenantId) => {
+        // WP-13: the method comes from the shopper's own selection on the order's checkout session —
+        // never a default. An order with no such selection (e.g. created by an operator, not through
+        // checkout) has no method to charge through, so this refuses instead of choosing one.
+        const orderResponse = await ordersControllerCell.controller?.getOrder({
+          tenantId,
+          orderId,
+        });
+        const checkoutRef =
+          orderResponse !== undefined && orderResponse.status === 200
+            ? (orderResponse.body as { checkoutRef?: string }).checkoutRef
+            : undefined;
+        if (checkoutRef === undefined || checkoutControllerCell.controller === undefined) {
+          return undefined;
+        }
+        const sessionResponse = await checkoutControllerCell.controller.get({
+          tenantId,
+          checkoutSessionId: checkoutRef,
+        });
+        return sessionResponse.status === 200
+          ? (sessionResponse.body as CheckoutSession).paymentSelection?.provider
+          : undefined;
+      }),
   };
   const orders = wireOrders(ordersDeps);
   ordersControllerCell.controller = orders.orders;
@@ -610,6 +897,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const customer360 = wireCustomer360(deps);
   const pricing = wirePricing(deps);
   const finance = wireFinance({ ...deps, postingAccounts: DEFAULT_FINANCE_POSTING_ACCOUNTS });
+  // Plan 3C: wired before Checkout, whose real shipping adapter quotes the shop's zones.
+  const shipping = wireShipping(deps);
   const automation = wireAutomation(deps);
   const analytics = wireAnalytics();
   const cart = wireCart(deps);
@@ -618,11 +907,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // doesn't exist yet. Moved here (alongside `catalog`/`inventory`/`pricing` above, all wired
   // early for the same reason) from its previous position after `checkout` further down.
   const promotions = wirePromotions(deps);
-  // Phase 3 Task 9 (C-3, closes H-1): a real PricingValidationPort over Pricing's own
-  // published-price data, wired here (after `pricing` above) rather than left to `wireCheckout`'s
-  // own `deps.pricingValidation ?? new InMemoryPricingValidationAdapter()` fallback — the
-  // fallback there stays reachable for callers who want to override it (e.g. tests), but
-  // `wireAdmin` itself no longer boots Checkout against the offline stub by default.
+  // Phase 2: Checkout's discount adapters read and redeem coupons, so Coupons is wired here too.
+  const coupons = wireCoupons(deps);
+  // Phase 3 Task 9 (C-3, closes H-1), re-pointed by Plan 2C-1 (closes G-94): a real
+  // PricingValidationPort over the Catalog VARIANT price — the one price source, the same one the
+  // cart routes charge — wired here rather than left to `wireCheckout`'s own
+  // `deps.pricingValidation ?? new InMemoryPricingValidationAdapter()` fallback. The fallback there
+  // stays reachable for callers who want to override it (e.g. tests), but `wireAdmin` itself no
+  // longer boots Checkout against the offline stub by default.
   //
   // Phase 3 Task 10 (C-3): same treatment for InventoryValidationPort, wired here (after
   // `inventory` above) rather than left to `wireCheckout`'s own
@@ -635,19 +927,78 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // Task 17a (C-2): a real `OrderCreationPort` adapter over Orders' `CreateOrderFromCheckout`,
   // wired here (after `orders` above) rather than left to `wireCheckout`'s own
   // `deps.orderCreation ?? new InMemoryOrderCreationAdapter()` fallback.
+  const realShippingAndTax = deps.realShippingAndTax ?? deps.prisma !== undefined;
   const checkoutDeps = {
     ...deps,
+    ...(realShippingAndTax
+      ? {
+          // Plan 3C: the shop's own zones/rates and tax settings, lines resolved from Catalog.
+          taxCalculation:
+            deps.taxCalculation ??
+            new CheckoutTaxCalculationAdapter(catalog.products, finance.taxes),
+          shippingCalculation:
+            deps.shippingCalculation ??
+            new CheckoutShippingQuoteAdapter(catalog.products, shipping.zones),
+        }
+      : {}),
     pricingValidation:
-      deps.pricingValidation ?? new PricingValidationAdapter(pricing.priceRepository),
+      deps.pricingValidation ?? new CatalogPricingValidationAdapter(catalog.products),
     inventoryValidation:
       deps.inventoryValidation ??
-      new InventoryValidationAdapter(inventory.inventory, inventory.warehouseRepository),
+      new InventoryValidationAdapter(
+        catalog.products,
+        inventory.inventory,
+        inventory.warehouseRepository,
+      ),
     promotionValidation:
       deps.promotionValidation ??
-      new PromotionValidationAdapter(catalog.products, promotions.promotions),
-    orderCreation: deps.orderCreation ?? new OrderCreationAdapter(orders.orders),
+      new PromotionValidationAdapter(
+        catalog.products,
+        promotions.promotions,
+        coupons.coupons,
+        deps.clock,
+      ),
+    discountUsage:
+      deps.discountUsage ?? new DiscountUsageAdapter(promotions.promotions, coupons.coupons),
+    orderCreation:
+      deps.orderCreation ?? new OrderCreationAdapter(orders.orders, identity.customers),
+    // Plan 3C (G-114): the stock is held the moment the order is placed — the same Inventory logic
+    // RequestFulfillment uses later (so that later call finds the reservation and adds none), with the
+    // real release (G-130) and Orders' own cancellation behind it. Both read the REAL order, so they are
+    // the default only while the order is created for real; a caller that substitutes a stub
+    // `orderCreation` (fabricated order refs) has no order to reserve for and keeps its own choice.
+    ...(deps.orderCreation === undefined || deps.stockReservation !== undefined
+      ? {
+          stockReservation:
+            deps.stockReservation ??
+            new CheckoutStockReservationAdapter(
+              new OrdersInventoryAdapter(
+                catalog.products,
+                inventory.inventory,
+                inventory.warehouseRepository,
+                inventory.inventoryItemRepository,
+                orders.orders,
+              ),
+              new OrdersStockReleaseAdapter(
+                orders.orders,
+                inventory.inventoryItemRepository,
+                inventory.inventory,
+              ),
+            ),
+          orderCancellation:
+            deps.orderCancellation ?? new CheckoutOrderCancellationAdapter(orders.orders),
+        }
+      : {}),
   };
-  const checkout = wireCheckout(checkoutDeps);
+  const checkout = wireCheckout({
+    ...checkoutDeps,
+    paymentMethods:
+      deps.paymentMethods ?? new CheckoutPaymentMethodsAdapter(lazyPaymentsController),
+    paymentInitiation:
+      deps.paymentInitiation ??
+      new CheckoutPaymentInitiationAdapter(lazyPaymentsController, orders.orders),
+  });
+  checkoutControllerCell.controller = checkout.checkout;
   // Phase 3 Task 13 (C-3): real `ordersPort`/`paymentsNotifications` adapters for Payments'
   // outbound `notifyBestEffort` calls (`reportPaymentOutcome`/`notify`), wired here rather than
   // left to `wirePayments`'s own `deps.ordersPort ?? new InMemoryOrdersAdapter()` /
@@ -682,7 +1033,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // `PaymentController` instead of throwing.
   paymentsControllerCell.controller = payments.payments;
   const fulfillment = wireFulfillment(deps);
-  const shipping = wireShipping(deps);
+  fulfillmentControllerCell.controller = fulfillment.fulfillment;
   const recommendations = wireRecommendations(deps);
   const reporting = wireReporting(deps);
   const returns = wireReturns(deps);
@@ -690,7 +1041,6 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const search = wireSearch(deps);
   const security = wireSecurity(deps);
   const content = wireContent(deps);
-  const coupons = wireCoupons(deps);
   const localization = wireLocalization(deps);
   const loyalty = wireLoyalty(deps);
   const seo = wireSeo(deps);
@@ -701,9 +1051,15 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const featureFlags = wireFeatureFlags(deps);
   const featureRegistry = wireFeatureRegistry(deps);
   const pages = wirePages(deps);
-  const mediaLibrary = wireMediaLibrary(deps);
-  const tenancy = wireTenancy(deps);
-  const licensing = wireLicensing(deps);
+  // T10.6: the platform tenant (WP-14) — and the deployment scope it is — cannot be suspended or
+  // cancelled through the ordinary lifecycle: that would stop Morbeh billing anyone.
+  const tenancy = wireTenancy({
+    ...deps,
+    protectedTenantIds: [deps.platformTenantId, deps.tenantId].filter(
+      (id): id is string => id !== undefined && id !== "",
+    ),
+  });
+  const licensing = deps.licensing ?? wireLicensing(deps);
   const platformConsole = wirePlatformConsole();
   const wishlist = wireWishlist(deps);
   const accessControl = deps.accessControl ?? new AllowAllAccessControl();
@@ -732,12 +1088,10 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
    * **Two limitations, both inherited from those reference adapters and neither introduced here**
    * (recorded in full in `docs/plans/BLOCKERS.md`'s T5.17 entry):
    *
-   * 1. `InMemoryPasswordAuthProvider` holds its account map in process memory, so credentials
-   *    registered here do not survive a restart and are not shared across replicas. It is the ONLY
-   *    `AuthenticationProviderPort` `wireSecurity` registers for `"password"` today, and it already
-   *    backs the admin console's `POST /security/authenticate` — this task reuses that seam rather
-   *    than inventing a second credential store beside it, which is what "reuse the machinery, do
-   *    not reimplement password storage" requires.
+   * 1. Resolved by Plan 1B-1 whenever `passwordAuthProvider` is injected: passwords then go through
+   *    `security.passwordRegistrar` into a durable, tenant-scoped, scrypt-hashed store. Only without
+   *    it (tests/local) does `InMemoryPasswordAuthProvider` hold the account map in process memory,
+   *    so credentials do not survive a restart and are not shared across replicas.
    * 2. `wireSecurity` returns its own in-memory `identityDirectory` on `WiredSecurity` even when a
    *    live one (Kratos) was injected, so `registerSubject` only takes effect on the in-memory
    *    branch. With a live directory the customer must already exist in it before registration —
@@ -750,10 +1104,19 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     registerSubject: async (subjectRef) => {
       security.identityDirectory.register(subjectRef);
     },
-    setPassword: async (identifier, password, principalExternalId) => {
-      security.passwordProvider.register(identifier, password, principalExternalId);
+    setPassword: async (identifier, password, principalExternalId, tenantId) => {
+      await security.passwordRegistrar.setPassword({
+        tenantId,
+        identifier,
+        password,
+        principalExternalId,
+      });
     },
   };
+  // G-72: absent ⇒ the logging dev adapter, guarded out of production by
+  // `apps/runtime/src/api.ts`'s `assertProductionSignupEmailConfigured`.
+  const signupEmail: SignupEmailPort = deps.signupEmail ?? new LoggingSignupEmailAdapter();
+  const signupCompletionUrlBase = `${deps.storefrontPublicUrl ?? "http://localhost:3000"}/account/signup/complete`;
 
   const contexts: readonly DrainableContext[] = [
     catalog,
@@ -806,7 +1169,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       warehouse: inventory.warehouse,
       guard,
     }),
-    orders: new OrdersAdminController({ orders: orders.orders, guard }),
+    orders: new OrdersAdminController({
+      orders: orders.orders,
+      fulfillment: fulfillment.fulfillment,
+      payments: payments.payments,
+      guard,
+    }),
     customers: new CustomersAdminController({ customers: identity.customers, guard }),
     customer360: new Customer360AdminController({
       customer360: customer360.customer360,
@@ -822,6 +1190,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     finance: new FinanceAdminController({ finance: finance.finance, guard }),
+    taxes: new TaxSettingsAdminController({ taxes: finance.taxes, guard }),
     cart: new CartAdminController({ cart: cart.cart, guard }),
     checkout: new CheckoutAdminController({ checkout: checkout.checkout, guard }),
     payments: new PaymentsAdminController({ payments: payments.payments, guard }),
@@ -830,6 +1199,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     shipping: new ShippingAdminController({ shipping: shipping.shipping, guard }),
+    shippingZones: new ShippingZonesAdminController({ zones: shipping.zones, guard }),
     returns: new ReturnsAdminController({ returns: returns.returns, guard }),
     reviews: new ReviewsAdminController({ reviews: reviews.reviews, guard }),
     search: new SearchAdminController({ search: search.search, guard }),
@@ -876,6 +1246,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     promotions: new PromotionsAdminController({ promotions: promotions.promotions, guard }),
+    discounts: new DiscountsAdminController({
+      promotions: promotions.promotions,
+      coupons: coupons.coupons,
+      guard,
+      clock: deps.clock,
+    }),
     recommendations: new RecommendationsAdminController({
       recommendations: recommendations.recommendations,
       guard,
@@ -895,7 +1271,11 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       mediaLibrary: mediaLibrary.mediaLibrary,
       guard,
     }),
+    mediaImages: mediaLibrary.images,
     tenancy: new TenancyAdminController({ tenancy: tenancy.tenancy, guard }),
+    storeCurrency: new StoreCurrencyRelabelAdapter(catalog.products),
+    tenantAvailability: tenancy.tenantAvailability,
+    tenantProvisioner: new TenantProvisioner({ security: security.security, logger: adminLogger }),
     licensing: new LicensingAdminController({ licensing: licensing.licensing, guard }),
     platformConsole: new PlatformConsoleAdminController({
       platformConsole: platformConsole.platformConsole,
@@ -909,7 +1289,24 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard: customerGuard,
       idGenerator: deps.idGenerator,
       sessionTtlSeconds: CUSTOMER_SESSION_TTL_SECONDS,
+      signupEmail,
+      signupCompletionUrlBase,
     }),
+    staffAuth: new StaffAuthAdminController({
+      security: security.security,
+      ...(deps.staffTokenIssuer === undefined ? {} : { issuer: deps.staffTokenIssuer }),
+      sessionTtlSeconds: deps.staffTokenTtlSeconds ?? 7200,
+      ...(security.passwordReset === undefined ? {} : { passwordReset: security.passwordReset }),
+      ...(deps.emailSender === undefined ? {} : { emailSender: deps.emailSender }),
+      ...(deps.adminPublicUrl === undefined ? {} : { adminPublicUrl: deps.adminPublicUrl }),
+      ...(deps.passwordAuthProvider instanceof HashedPasswordAuthProvider
+        ? {
+            passwordRegistrar: deps.passwordAuthProvider,
+            credentialStore: deps.passwordAuthProvider.credentialStore,
+          }
+        : {}),
+    }),
+    securityWiring: security,
     drainOutbox: async () => {
       let total = 0;
       for (const context of contexts) {
@@ -928,6 +1325,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       inventory: inventory.inventory,
       cart: cart.cart,
       checkout: checkout.checkout,
+      shippableCountries: (tenantId) => shipping.zones.shippableCountries({ tenantId }),
       reviews: reviews.reviews,
       security: security.security,
       customers: identity.customers,
@@ -936,8 +1334,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     },
     paymentsWebhook: {
       recordWebhook: (input) => payments.payments.recordWebhook(input),
-      verifyWebhook: (payload, signature) =>
-        payments.paymentProvider.verifyWebhook(payload, signature),
+      verifyWebhook: (input) => payments.payments.verifyWebhook(input),
     },
+    paymentProviders: payments.providers,
   };
 }

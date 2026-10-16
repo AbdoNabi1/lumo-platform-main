@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -11,8 +11,6 @@ export interface PrismaWishlistRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `WishlistRepository` on the `wishlist` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -23,9 +21,8 @@ export class PrismaWishlistRepository implements WishlistRepository {
     this.deps = deps;
   }
 
-  async save(wishlist: Wishlist, tx?: unknown): Promise<void> {
+  async save(wishlist: Wishlist, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const wishlistId = wishlist.id.toString();
     const row = WishlistMapper.toRow(wishlist, tenantId);
 
@@ -47,37 +44,51 @@ export class PrismaWishlistRepository implements WishlistRepository {
       }
     }
 
-    await this.deps.outbox.write(wishlist.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      wishlist.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Wishlist | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.wishlist.findFirst({ where: { id, tenantId: this.deps.tenantId } });
-    if (row === null) return null;
-    return WishlistMapper.toDomain(this.toMapperRow(row));
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Wishlist | null> {
+    const run = (client: TransactionClient) =>
+      client.wishlist.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : WishlistMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findByCustomerRef(customerRef: string, tx?: unknown): Promise<Wishlist | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.wishlist.findFirst({
-      where: { customerRef, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return WishlistMapper.toDomain(this.toMapperRow(row));
+  async findByCustomerRef(
+    customerRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Wishlist | null> {
+    const run = (client: TransactionClient) =>
+      client.wishlist.findFirst({ where: { customerRef, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : WishlistMapper.toDomain(this.toMapperRow(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Wishlist>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Wishlist>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.wishlist.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.wishlist.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       rows.map((row) => WishlistMapper.toDomain(this.toMapperRow(row))),
       limit,

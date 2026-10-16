@@ -38,13 +38,12 @@ export interface FeatureFlagsWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaFeatureFlagRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wireExperimentation`); absent ⇒ in-memory, unchanged. `evaluator` wraps whichever repository
-   * is actually wired, in both branches.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. `evaluator` wraps whichever repository is
+   * actually wired, in both branches. No `tenantId` here (ADR-0014, WP-10 T10.3): both the
+   * repository and the `AggregateFeatureFlags` evaluator take `tenantId` per call now, not at
+   * composition time — this context needs no tenant to build its object graph.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Feature Flags table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredFeatureFlags {
@@ -80,10 +79,6 @@ function buildController(
  */
 export function wireFeatureFlags(deps: FeatureFlagsWiringDeps): WiredFeatureFlags {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireFeatureFlags: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new FeatureFlagsEventTranslator(),
@@ -91,13 +86,11 @@ export function wireFeatureFlags(deps: FeatureFlagsWiringDeps): WiredFeatureFlag
       clock: deps.clock,
       producer: "feature_flags",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const flags = new PrismaFeatureFlagRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — PrismaFeatureFlagRepository and
+    // AggregateFeatureFlags both take it per call now, so the object graph is a process-wide
+    // singleton with no tenant baked in.
+    const context = rootEventContext(deps.idGenerator);
+    const flags = new PrismaFeatureFlagRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {

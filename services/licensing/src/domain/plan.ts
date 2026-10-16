@@ -4,6 +4,16 @@ import { LicensingChanged } from "./events/licensing-changed.event";
 import { PlanVersion } from "./plan-version";
 import type { PlanSpec } from "./value-objects/plan-spec";
 
+/**
+ * A plan version's id is `<planId>-v<n>` (see `createDraft`), so a subscription's pinned
+ * `planVersionRef` names its plan without a second lookup key. `null` for a ref that is not of
+ * that shape.
+ */
+export function planIdOfVersionRef(planVersionRef: string): string | null {
+  const match = /^(.+)-v(\d+)$/.exec(planVersionRef);
+  return match === null ? null : (match[1] ?? null);
+}
+
 export type PlanTier = "free" | "starter" | "growth" | "pro" | "enterprise" | "custom";
 
 interface PlanProps {
@@ -15,6 +25,9 @@ interface PlanProps {
 }
 
 /**
+ * A PLATFORM-OWNED plan product (WP-14, T14.2) — defined once by Morbeh and sold to many merchants.
+ * It carries no tenant: a plan is not a merchant's data, so no tenant's RLS scope contains it and no
+ * merchant tenant can create or reprice one (writes are platform-only, enforced at the controller).
  * A plan product with an append-only version history (ADR-0018 Sprint-5.5 addendum §A) — stable
  * identity (`key`/`name`/`tier`) + the version history + the currently published version pointer.
  * Publishing a new `PlanVersion` never affects existing subscribers (they stay pinned to their id).
@@ -93,6 +106,11 @@ export class Plan extends AggregateRoot<PlanProps> {
     const a = this.findVersion(versionAId);
     const b = this.findVersion(versionBId);
     return a.sections().diff(b.sections());
+  }
+
+  /** The version with this id, or `undefined` — the read a subscription's pinned ref resolves through. */
+  versionById(versionId: string): PlanVersion | undefined {
+    return this.props.versions.find((v) => v.id.toString() === versionId);
   }
 
   private findVersion(versionId: string): PlanVersion {

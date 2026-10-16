@@ -25,19 +25,20 @@ export class InMemoryPaymentAdapter implements PaymentPort {
 
 /**
  * Reference implementation of `InventoryPort`'s Phase A.16 idempotency contract (see `ports.ts`):
- * dedupes by `orderId` alone, so a retried `requestReservation()` for the same order reuses the same
+ * dedupes by `(tenantId, orderId)`, so a retried `requestReservation()` for the same order reuses the same
  * `reservationRef` instead of minting a second one.
  */
 export class InMemoryInventoryAdapter implements InventoryPort {
   private counter = 0;
   private readonly byOrderId = new Map<string, InventoryReservationResult>();
 
-  async requestReservation(orderId: string): Promise<InventoryReservationResult> {
-    const existing = this.byOrderId.get(orderId);
+  async requestReservation(orderId: string, tenantId: string): Promise<InventoryReservationResult> {
+    const key = JSON.stringify([tenantId, orderId]);
+    const existing = this.byOrderId.get(key);
     if (existing !== undefined) return existing;
     this.counter += 1;
     const result = { reservationRef: `reservation-${orderId}-${this.counter}` };
-    this.byOrderId.set(orderId, result);
+    this.byOrderId.set(key, result);
     return result;
   }
 }
@@ -47,12 +48,13 @@ export class InMemoryShippingAdapter implements ShippingPort {
   private counter = 0;
   private readonly byOrderId = new Map<string, ShipmentResult>();
 
-  async requestShipment(orderId: string): Promise<ShipmentResult> {
-    const existing = this.byOrderId.get(orderId);
+  async requestShipment(orderId: string, tenantId: string): Promise<ShipmentResult> {
+    const key = JSON.stringify([tenantId, orderId]);
+    const existing = this.byOrderId.get(key);
     if (existing !== undefined) return existing;
     this.counter += 1;
     const result = { shipmentRef: `shipment-${orderId}-${this.counter}` };
-    this.byOrderId.set(orderId, result);
+    this.byOrderId.set(key, result);
     return result;
   }
 }

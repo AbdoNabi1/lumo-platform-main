@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { PagesController } from "@platform/pages";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -55,7 +54,10 @@ export class PagesAdminController {
     return this.pages.archiveTemplate(input);
   }
 
-  async listPages(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listPages(
+    principal: Principal,
+    input: Parameters<PagesController["listPages"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "pages:read");
     if (denied) return denied;
     return this.pages.listPages(input);
@@ -70,7 +72,10 @@ export class PagesAdminController {
     return this.pages.getPage(input);
   }
 
-  async listTemplates(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listTemplates(
+    principal: Principal,
+    input: Parameters<PagesController["listTemplates"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "pages:read");
     if (denied) return denied;
     return this.pages.listTemplates(input);

@@ -12,3 +12,15 @@ export {
   type KetoRelationCheck,
   type KetoRelationTuple,
 } from "./keto-relationships";
+export {
+  NativeTokenIssuer,
+  loadSigningKey,
+  localKeyResolver,
+  type NativeStaffClaims,
+  type NativeTokenIssuerOptions,
+} from "./native-token-issuer";
+export {
+  ROLE_PERMISSIONS,
+  RoleTableAccessControl,
+  permissionMatches,
+} from "./role-table-access-control";

@@ -35,8 +35,8 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
     <AppShell t={t} locale={locale} activeNavId="customers" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.customersPage.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.customersPage.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.customersPage.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.customersPage.subtitle}</p>
         </header>
 
         <CustomersToolbar t={t} />

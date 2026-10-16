@@ -6,6 +6,9 @@ import type { JourneyStore } from "../ports/journey-store";
 import type { SessionStore } from "../ports/session-store";
 
 export interface GetJourneyStateInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly visitorId: string;
 }
 
@@ -38,8 +41,8 @@ export class GetJourneyState implements UseCase<
 
   async execute(input: GetJourneyStateInput): Promise<Result<GetJourneyStateOutput, DomainError>> {
     const [sessions, transitions] = await Promise.all([
-      this.deps.sessions.listForVisitor(input.visitorId),
-      this.deps.journey.listForVisitor(input.visitorId),
+      this.deps.sessions.listForVisitor(input.visitorId, input.tenantId),
+      this.deps.journey.listForVisitor(input.visitorId, input.tenantId),
     ]);
 
     return ok({ state: journeyState(input.visitorId, sessions, transitions) });

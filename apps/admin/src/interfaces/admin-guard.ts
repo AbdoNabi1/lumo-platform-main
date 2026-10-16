@@ -28,6 +28,7 @@ export class AdminGuard {
     await this.deps.auditTrail.record({
       principalId: principal.id,
       principalKind: principal.kind,
+      tenantId: principal.tenantId,
       permission,
       decision: allowed ? "allow" : "deny",
       occurredAt: this.deps.clock.now().toISOString(),

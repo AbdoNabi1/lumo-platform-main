@@ -55,7 +55,8 @@ export function contentRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a content block",
       schema: { body: createContentBlockBody },
-      handle: ({ body, context }) => admin.content.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.content.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -69,6 +70,7 @@ export function contentRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.content.advance(context.principal, {
           contentBlockId: params.contentBlockId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -79,7 +81,10 @@ export function contentRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List content blocks, most recently created first (cursor-paginated)",
       schema: { querystring: listContentBlocksQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.content.list(context.principal, query), toContentBlockListItemDto),
+        mapPage(
+          await admin.content.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toContentBlockListItemDto,
+        ),
     }),
     defineRoute({
       method: "POST",
@@ -93,6 +98,7 @@ export function contentRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.content.updateBody(context.principal, {
           contentBlockId: params.contentBlockId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
   ] as readonly RouteDefinition[];

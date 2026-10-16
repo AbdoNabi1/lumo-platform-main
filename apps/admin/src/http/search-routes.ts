@@ -64,7 +64,8 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a search index",
       schema: { body: createIndexBody },
-      handle: ({ body, context }) => admin.search.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.search.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -75,7 +76,11 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Advance an index's status (rebuild/activate/disable)",
       schema: { params: indexIdParams, body: advanceIndexBody },
       handle: ({ params, body, context }) =>
-        admin.search.advance(context.principal, { indexId: params.indexId, ...body }),
+        admin.search.advance(context.principal, {
+          indexId: params.indexId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -86,7 +91,11 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Upsert a product document snapshot via IndexProviderPort",
       schema: { params: indexIdParams, body: upsertDocumentBody },
       handle: ({ params, body, context }) =>
-        admin.search.upsertDocument(context.principal, { indexId: params.indexId, ...body }),
+        admin.search.upsertDocument(context.principal, {
+          indexId: params.indexId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -97,7 +106,11 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Remove a product document via IndexProviderPort",
       schema: { params: indexIdParams, body: deleteDocumentBody },
       handle: ({ params, body, context }) =>
-        admin.search.deleteDocument(context.principal, { indexId: params.indexId, ...body }),
+        admin.search.deleteDocument(context.principal, {
+          indexId: params.indexId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -108,7 +121,11 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Add (or replace) a merchant synonym entry",
       schema: { params: indexIdParams, body: synonymBody },
       handle: ({ params, body, context }) =>
-        admin.search.addSynonym(context.principal, { indexId: params.indexId, ...body }),
+        admin.search.addSynonym(context.principal, {
+          indexId: params.indexId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -119,7 +136,11 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Remove a merchant synonym entry",
       schema: { params: indexIdParams, body: synonymBody },
       handle: ({ params, body, context }) =>
-        admin.search.removeSynonym(context.principal, { indexId: params.indexId, ...body }),
+        admin.search.removeSynonym(context.principal, {
+          indexId: params.indexId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -130,7 +151,11 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Add an autocomplete suggestion term",
       schema: { params: indexIdParams, body: suggestionBody },
       handle: ({ params, body, context }) =>
-        admin.search.addSuggestion(context.principal, { indexId: params.indexId, ...body }),
+        admin.search.addSuggestion(context.principal, {
+          indexId: params.indexId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -140,7 +165,11 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Log a search query for analytics",
       schema: { params: indexIdParams, body: logQueryBody },
       handle: ({ params, body, context }) =>
-        admin.search.logQuery(context.principal, { indexId: params.indexId, ...body }),
+        admin.search.logQuery(context.principal, {
+          indexId: params.indexId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -150,7 +179,10 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List search indexes (cursor pagination) — what indexes exist at all",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.search.list(context.principal, query), toSearchIndexDto),
+        mapPage(
+          await admin.search.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toSearchIndexDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -160,7 +192,10 @@ export function searchRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one search index by id",
       schema: { params: indexIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.search.get(context.principal, params);
+        const response = await admin.search.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toSearchIndexDto(response.body as SearchIndex) };
       },

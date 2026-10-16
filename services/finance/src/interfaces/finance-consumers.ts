@@ -1,5 +1,5 @@
 import { Money, UniqueEntityId } from "@platform/domain";
-import type { IntegrationEvent } from "@platform/domain-events";
+import { requireEnvelopeTenant, type IntegrationEvent } from "@platform/domain-events";
 import type { EventHandler } from "@platform/messaging";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { LedgerPoster, type PostingAccounts } from "../domain/services/ledger-poster";
@@ -12,18 +12,46 @@ export interface FinanceConsumerDeps {
   readonly clock: Clock;
 }
 
+/**
+ * ADR-0014 (WP-10 T10.3): `tenantId` is read from the event envelope, never defaulted — a message
+ * with no resolvable tenant is rejected (retry → DLQ) rather than posted against a guessed tenant.
+ */
+function requireTenantId(event: IntegrationEvent<unknown>): string {
+  // Off the wire the envelope is whatever `JSON.parse` returned: absent, empty, blank, null or a
+  // non-string are all "no tenant" (a ledger entry against tenant "" or 42 is not a guess we may make).
+  return requireEnvelopeTenant(event, "Finance consumer");
+}
+
 async function postAndAppend(
   deps: FinanceConsumerDeps,
   build: (id: UniqueEntityId) => ReturnType<typeof LedgerPoster.forSale>,
   event: IntegrationEvent<unknown>,
 ): Promise<void> {
+  const tenantId = requireTenantId(event);
   const id = UniqueEntityId.from(deps.idGenerator.generate());
   const result = build(id);
   if (!result.ok) {
     throw result.error;
   }
-  result.value.post(event.messageId, deps.clock.now());
-  await deps.journals.append(result.value);
+  // The LedgerPosted event gets a FRESH id, never `event.messageId`. That id becomes the
+  // `platform.outbox` primary key of the entry this append writes (`OutboxWriter.toEntry`:
+  // `id: envelope.messageId`, which is the domain event's `eventId`) — and the incoming message
+  // IS a row in that same table, under exactly that id. Reusing it made every append collide with
+  // the message that triggered it:
+  //
+  //   Invalid `prisma.outboxEntry.createMany()` invocation:
+  //   Unique constraint failed on the fields: (`id`)
+  //
+  // deterministically, for every paid order, so no sale ever reached the ledger. Observed in
+  // production on 2026-10-02, on the first deployment that ever ran these consumers.
+  //
+  // A fresh id does not weaken redelivery safety, because that was never what guarded it: the
+  // append is not idempotent (see `FinanceOrdersPaidConsumer.handle`, which refuses the
+  // non-atomic path outright), and what prevents a second posting is the inbox marker written in
+  // the SAME transaction (ADR-0005). The causal link to the triggering message is carried by the
+  // envelope's `causationId`, which is the `EventContext`'s job, not the event id's.
+  result.value.post(deps.idGenerator.generate(), deps.clock.now());
+  await deps.journals.append(result.value, tenantId);
 }
 
 /**

@@ -2,7 +2,7 @@
   "name": "@platform/design",
   "version": "0.0.0",
   "private": true,
-  "description": "Lumo Design System — the platform's canonical design tokens (docs/ui/LUMO_DESIGN_SYSTEM.md).",
+  "description": "Morbeh Design System — the platform's canonical design tokens (docs/ui/MORBEH_DESIGN_SYSTEM.md).",
   "type": "module",
   "sideEffects": [
     "**/*.css"

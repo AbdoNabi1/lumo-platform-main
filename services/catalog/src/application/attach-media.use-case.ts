@@ -5,10 +5,13 @@ import { err, ok, type Result } from "@platform/types";
 import { type DomainError, isDomainError, NotFoundError } from "@platform/utils";
 import type { ProductRepository } from "../domain/product-repository";
 import { MediaRef } from "../domain/value-objects/media-ref";
+import type { MediaLookupPort } from "./media-lookup.port";
 
 export interface AttachMediaInput {
   readonly productId: string;
   readonly assetId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface AttachMediaOutput {
@@ -20,6 +23,11 @@ export interface AttachMediaDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  /**
+   * Plan 2C-3: when present, the asset must be one of the caller's own (another tenant's id and an
+   * unknown id are the same not-found). Absent only in compositions with no Media at all.
+   */
+  readonly mediaLookup?: MediaLookupPort;
 }
 
 /** Attaches a media asset (by bare id, Media context owns the bytes) to a product. */
@@ -34,8 +42,13 @@ export class AttachMedia implements UseCase<AttachMediaInput, AttachMediaOutput,
     const media = MediaRef.create(input.assetId);
     if (!media.ok) return err(media.error);
 
+    if (this.deps.mediaLookup !== undefined) {
+      const owned = await this.deps.mediaLookup.existingIds([input.assetId], input.tenantId);
+      if (!owned.includes(input.assetId)) return err(new NotFoundError("Media asset not found"));
+    }
+
     return this.deps.unitOfWork.run<Result<AttachMediaOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }
@@ -45,7 +58,7 @@ export class AttachMedia implements UseCase<AttachMediaInput, AttachMediaOutput,
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.products.save(product, tx);
+      await this.deps.products.save(product, input.tenantId, tx);
       return ok({ productId: product.id.toString() });
     });
   }

@@ -6,6 +6,7 @@ import type { RobotsPolicy } from "../domain/robots-policy";
 
 export interface PolicyIdInput {
   readonly policyId: string;
+  readonly tenantId: string;
 }
 
 export interface GetRobotsPolicyDeps {
@@ -21,7 +22,7 @@ export class GetRobotsPolicy implements UseCase<PolicyIdInput, RobotsPolicy, Dom
   }
 
   async execute(input: PolicyIdInput): Promise<Result<RobotsPolicy, DomainError>> {
-    const policy = await this.deps.robotsPolicies.findById(input.policyId);
+    const policy = await this.deps.robotsPolicies.findById(input.policyId, input.tenantId);
     return policy === null ? err(new NotFoundError("Robots policy not found")) : ok(policy);
   }
 }

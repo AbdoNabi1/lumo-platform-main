@@ -179,6 +179,7 @@ describe("access flow (end to end)", () => {
     const registered = await app.customers.register({
       email: "customer@example.com",
       name: "Carol",
+      tenantId: "tenant-1",
     });
     expect(registered.status).toBe(201);
   });

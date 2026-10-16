@@ -7,14 +7,14 @@ import type {
   IdGenerator,
   IdempotencyClaim,
   IdempotencyKeyStore,
-  Principal,
+  AuthenticatedIdentity,
   RateLimiter,
 } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { createAdminHttpApi } from "./server";
 
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: AuthenticatedIdentity = { id: "staff-1", kind: "staff", roles: ["admin"] };
 const clock: Clock = { now: () => new Date("2026-07-05T00:00:00.000Z") };
 
 function fakes() {
@@ -283,6 +283,12 @@ describe("GET /orders (list)", () => {
         currency: "USD",
         totalMinor: 1999,
         createdAt: expect.any(String),
+        // Plan 3B: a legacy `place` order has no recipient name, one line, no shipping method, no payment and no fulfillment.
+        customerName: null,
+        itemCount: 1,
+        shippingMethod: null,
+        paymentStatus: "pending",
+        fulfillmentStatus: "unfulfilled",
       });
     }
 
@@ -423,9 +429,15 @@ describe("GET /orders/:orderId (detail)", () => {
         id: expect.any(String),
         productId: "p-1",
         name: "Toy Wagon",
+        // Plan 2A: a legacy line (placed without a variant) carries all three as null.
+        variantRef: null,
+        sku: null,
+        variantTitle: null,
         unitPriceMinor: 1999,
         quantity: 2,
         lineTotalMinor: 3998,
+        // Plan 2C-3: no picture for a line whose product has none.
+        imageUrl: null,
       },
     ]);
     expect(body.history).toEqual([{ type: "placed", occurredAt: expect.any(String) }]);
@@ -497,6 +509,7 @@ describe("GET /products (list) and /products/:productId (detail)", () => {
       variantCount: 1,
       priceAmountMinor: 1999,
       currency: "USD",
+      featuredImage: null,
     });
 
     const getRes = await app.inject({
@@ -512,6 +525,10 @@ describe("GET /products (list) and /products/:productId (detail)", () => {
       name: "Toy Wagon",
       slug: "toy-wagon-dto",
       status: "draft",
+      // Plan 2C-1: a product created the old way comes back with the new fields at their defaults.
+      description: null,
+      productType: null,
+      tags: [],
       scheduledAt: null,
       brandId: null,
       categoryIds: [],
@@ -525,9 +542,19 @@ describe("GET /products (list) and /products/:productId (detail)", () => {
           priceAmountMinor: 1999,
           currency: "USD",
           selection: null,
+          compareAtAmountMinor: null,
+          costAmountMinor: null,
+          barcode: null,
+          weightGrams: null,
+          requiresShipping: true,
+          taxable: true,
+          tracksInventory: true,
+          inventoryPolicy: "deny",
+          imageId: null,
         },
       ],
       mediaAssetIds: [],
+      media: [],
     });
   });
 });
@@ -666,7 +693,9 @@ describe("GET /products/:productId/inventory", () => {
       headers: authed,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual([{ warehouseId: "wh-1", onHand: 10, reserved: 0, available: 10 }]);
+    expect(res.json()).toEqual([
+      { warehouseId: "wh-1", variantId: null, onHand: 10, reserved: 0, available: 10 },
+    ]);
   });
 });
 
@@ -1121,5 +1150,48 @@ describe("GET /customers/:customerId", () => {
       headers: authed,
     });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("G-82: createAdminHttpApi forwards how /metrics may be read", () => {
+  // The composition root (apps/runtime/src/api.ts) decides this; the wrapper in ./server.ts used to
+  // forward exposeDocs and readinessDetail but drop metricsAccess, so a closed /metrics stayed open on
+  // the live deployment even though every unit test of the transport passed.
+  async function build(metricsAccess?: "open" | "closed" | { readonly bearerToken: string }) {
+    const f = fakes();
+    return createAdminHttpApi({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: f.idGenerator,
+      clock,
+      auditTrail: new InMemoryAuditTrail(),
+      authenticator: f.authenticator,
+      rateLimiter: f.rateLimiter,
+      idempotencyKeys: f.idempotencyKeys,
+      responseCache: f.cache,
+      ...(metricsAccess === undefined ? {} : { metricsAccess }),
+    });
+  }
+
+  it('metricsAccess: "closed" makes /metrics a 404', async () => {
+    const app = await build("closed");
+    expect((await app.inject({ url: "/metrics" })).statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("a bearer token makes /metrics refuse anonymous callers and serve the right token", async () => {
+    const app = await build({ bearerToken: "metrics-token-0123456789" });
+    expect((await app.inject({ url: "/metrics" })).statusCode).toBe(401);
+    const ok = await app.inject({
+      url: "/metrics",
+      headers: { authorization: "Bearer metrics-token-0123456789" },
+    });
+    expect(ok.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it("without metricsAccess /metrics stays open, as before", async () => {
+    const app = await build();
+    expect((await app.inject({ url: "/metrics" })).statusCode).toBe(200);
+    await app.close();
   });
 });

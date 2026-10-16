@@ -31,13 +31,13 @@ describe.runIf(Boolean(databaseUrl))("PrismaCartRepository (integration)", () =>
       clock,
       producer: "cart",
     });
-    const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaCartRepository({ prisma, tenantId, outbox, context });
+    const context = rootEventContext(ids);
+    const repository = new PrismaCartRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       repository,
-      save: (cart: Cart) => unitOfWork.run((tx) => repository.save(cart, tx)),
+      save: (cart: Cart) => unitOfWork.run((tx) => repository.save(cart, tenantId, tx)),
     };
   }
 
@@ -56,15 +56,18 @@ describe.runIf(Boolean(databaseUrl))("PrismaCartRepository (integration)", () =>
     }
     await saveOther(newCart("session-x"));
 
-    const page = await repository.list({ first: 2 });
+    const page = await repository.list({ first: 2 }, tenantId);
     expect(page.items).toHaveLength(2);
     expect(page.pageInfo.hasNextPage).toBe(true);
 
-    const rest = await repository.list({ first: 10, after: page.pageInfo.endCursor ?? undefined });
+    const rest = await repository.list(
+      { first: 10, after: page.pageInfo.endCursor ?? undefined },
+      tenantId,
+    );
     expect(rest.items).toHaveLength(1);
     expect(rest.pageInfo.hasNextPage).toBe(false);
 
-    const otherPage = await otherRepository.list({ first: 10 });
+    const otherPage = await otherRepository.list({ first: 10 }, other);
     expect(otherPage.items).toHaveLength(1);
     await prisma.$disconnect();
   });
@@ -79,7 +82,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaCartRepository (integration)", () =>
     await save(active);
     await save(abandoned);
 
-    const page = await repository.list({ first: 10 }, { status: "abandoned" });
+    const page = await repository.list({ first: 10 }, tenantId, { status: "abandoned" });
     expect(page.items).toHaveLength(1);
     expect(page.items[0]?.sessionRef).toBe("session-abandoned");
     await prisma.$disconnect();

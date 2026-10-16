@@ -1,4 +1,5 @@
-import { ConsumerSupervisor, KafkaMessageProducer } from "@platform/kafka";
+import { ConsumerSupervisor, KafkaMessageProducer, type SupervisedConsumer } from "@platform/kafka";
+import type { DirectConsumer } from "@platform/messaging";
 import { logger } from "@platform/utils";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
@@ -7,11 +8,97 @@ import {
   buildTrackingIngestRuntime,
   type RuntimeCore,
 } from "./composition";
+import { buildDunningNotificationsConsumerRuntimes } from "./consumers/dunning-notifications.consumers";
+import { buildFinanceSettlementConsumerRuntimes } from "./consumers/finance-settlement.consumers";
 import { buildOrdersPaidConsumerRuntimes } from "./consumers/orders-paid.consumers";
+import { buildUsageRecordedConsumerRuntimes } from "./consumers/usage-recorded.consumers";
+import { assertWorkerTenantModeSupported } from "./tenant-mode-guard";
 import { startHealthServer } from "./health-server";
+import { startOutboxDelivery } from "./outbox-delivery-runtime";
 import { startOutboxRelay } from "./outbox-relay-runtime";
 import { wireSecurityProvisioning } from "./security/wire-security-provisioning";
 import { startRuntimeTelemetry } from "./telemetry";
+
+/**
+ * Every consumer the worker registers UNCONDITIONALLY, in registration order. Extracted from
+ * {@link startWorker} so `worker-topics-provisioned.test.ts` checks exactly the list the worker
+ * runs: under `EVENT_TRANSPORT=kafka` a consumer whose topic is not provisioned makes
+ * `ConsumerSupervisor.startAll()` throw, and the outbox relay is only started after that call
+ * returns, so one unprovisioned topic here stops the whole worker, relay included
+ * (`allowAutoTopicCreation: false`, `packages/kafka`). Under `postgres` there are no topics, and
+ * this list is instead what the delivery loop is handed — a consumer missing from it receives
+ * nothing under either transport.
+ */
+export function buildAlwaysOnConsumerRuntimes(runtime: RuntimeCore): readonly SupervisedConsumer[] {
+  return [
+    buildPaymentCapturedRuntime(runtime),
+
+    // C-2 (Task 17b): nothing subscribed to `orders.order.paid` anywhere in this repo, so a paid
+    // order posted no ledger entry (Finance's `OrdersPaidConsumer` had zero callers), earned no
+    // loyalty points, updated no customer profile, and created no confirmation notification (the
+    // delivery half — QueueNotification/SendNotification — is still a separately-tracked gap, since
+    // every delivery provider in this codebase remains an in-memory stub).
+    //
+    // WHICH orders actually reach these four, stated plainly because the obvious reading is wrong:
+    // ONLY orders that reach `paid`/`payment_received` via the LEGACY `PlaceOrder` + admin-mark-paid
+    // path, because `orders.order.paid` is raised solely by `markPaid`/`completePayment`
+    // (`services/orders/src/domain/order.ts`). Orders created by the checkout flow
+    // (`CreateOrderFromCheckout` → `Order.createFromCheckout`) sit at status `created` and never
+    // transition further under any code path that exists today, so NONE of these four fire for the
+    // checkout flow. That is an OPEN C-2 sub-gap awaiting a product decision on how payment capture
+    // integrates with checkout completion — not something to close by fabricating a payment
+    // reference, which would push wrong-but-plausible entries into Finance's ledger. The current
+    // behavior is regression-pinned by
+    // `apps/admin/src/http/cart-checkout-pricing-security.e2e.test.ts`; full reasoning in
+    // `api.ts`'s `assertProductionIntegrationPortsConfigured` doc comment.
+    //
+    // Registered UNCONDITIONALLY, unlike the two gated blocks below: those depend on external
+    // infrastructure (Ory, a seeded tracking registry) that is genuinely absent in some environments,
+    // whereas these four need only Kafka + Prisma — always present wherever the worker runs at all.
+    // Same reasoning as `buildPaymentCapturedRuntime` above, the closest sibling, which is also
+    // ungated; a flag here would be a speculative switch whose "off" position is a silently broken
+    // paid-order flow.
+    ...buildOrdersPaidConsumerRuntimes(runtime, runtime.metrics),
+
+    // WP-11 (F-11): `PaymentsCapturedConsumer`/`RefundsIssuedConsumer` (`services/finance`) had zero
+    // callers — every captured payment posted no fee entry and every issued refund posted no contra
+    // entry, silently. Registered unconditionally, same reasoning as `buildOrdersPaidConsumerRuntimes`
+    // just above: needs only Kafka + Prisma, always present wherever the worker runs at all.
+    ...buildFinanceSettlementConsumerRuntimes(runtime, runtime.metrics),
+
+    // G-79 (usage metering, link 2): `platform.usage.recorded` had a producer path (`CreateProduct`) and a
+    // writer (`RecordUsage`) with nothing between them, so `GET /usage-counters` could never return a
+    // number. Registered unconditionally, same reasoning as the blocks above: needs only Kafka + Prisma.
+    ...buildUsageRecordedConsumerRuntimes(runtime, runtime.metrics),
+
+    // T14.5 (dunning): opens a durable Notification row (never a provider call — see that file's doc
+    // comment) on entered_grace/recovered_from_grace/dunning_exhausted. Registered unconditionally,
+    // same reasoning as the two blocks above: needs only Kafka + Prisma, always present. Whether the
+    // resulting notification is ever actually DELIVERED is gated at boot by `api.ts`'s
+    // `assertProductionDunningNotificationsConfigured`, not by anything here.
+    ...buildDunningNotificationsConsumerRuntimes(runtime, runtime.metrics),
+  ];
+}
+
+/**
+ * The consumers, as the broker-less transport needs them. Refuses — naming the consumer — if any
+ * registered consumer cannot be delivered to directly: silently leaving one out would be a consumer
+ * that is registered, reported, and never receives an event.
+ */
+export function asDirectConsumers(
+  consumers: readonly SupervisedConsumer[],
+): readonly DirectConsumer[] {
+  return consumers.map((consumer) => {
+    const candidate = consumer as Partial<DirectConsumer>;
+    if (typeof candidate.deliver !== "function" || typeof candidate.deadLetter !== "function") {
+      throw new Error(
+        `EVENT_TRANSPORT=postgres: consumer "${consumer.consumerGroup}" on "${consumer.topic}" has no ` +
+          "broker-less delivery (deliver/deadLetter) and would never receive an event.",
+      );
+    }
+    return candidate as DirectConsumer;
+  });
+}
 
 /**
  * Worker entrypoint (Sprint 2.9): the Kafka consumer fleet under the `ConsumerSupervisor`
@@ -24,52 +111,40 @@ import { startRuntimeTelemetry } from "./telemetry";
  * implementation, and payments carrying the checkout-session ref for the signal bridge
  * (ADR-0012 follow-up, G-40). Registering a worker whose activities cannot exist would be a
  * fake adapter, which this codebase does not do.
+ *
+ * `EVENT_TRANSPORT=postgres` runs the SAME registered consumers with no broker: none of them is
+ * started against Kafka, and `startOutboxDelivery` hands them outbox rows directly instead. The
+ * supervisor is still built and returned (it is the list of what is registered), but under that
+ * transport its `status()` reports every consumer as not running — they have no Kafka consumer to
+ * run — and its health check is not registered; the delivery loop's is.
  */
 export async function startWorker(
   config: RuntimeConfig,
   core?: RuntimeCore,
 ): Promise<ConsumerSupervisor> {
+  // T10.4 / G-64: the consumers route by the envelope's tenant, so multi mode is possible here. The
+  // guard still refuses for anything genuinely bound to one tenant (see tenant-mode-guard.ts).
+  // Refuse BEFORE building anything.
+  assertWorkerTenantModeSupported(config.TENANT_MODE, config);
   const runtime = core ?? buildRuntimeCore(config);
   // H-03: see api.ts — same activation, this process's role suffix.
   const telemetry = startRuntimeTelemetry(config, "worker");
   const supervisor = new ConsumerSupervisor(runtime.kafka, runtime.logger);
-  supervisor.register(buildPaymentCapturedRuntime(runtime));
-
-  // C-2 (Task 17b): nothing subscribed to `orders.order.paid` anywhere in this repo, so a paid
-  // order posted no ledger entry (Finance's `OrdersPaidConsumer` had zero callers), earned no
-  // loyalty points, updated no customer profile, and created no confirmation notification (the
-  // delivery half — QueueNotification/SendNotification — is still a separately-tracked gap, since
-  // every delivery provider in this codebase remains an in-memory stub).
-  //
-  // WHICH orders actually reach these four, stated plainly because the obvious reading is wrong:
-  // ONLY orders that reach `paid`/`payment_received` via the LEGACY `PlaceOrder` + admin-mark-paid
-  // path, because `orders.order.paid` is raised solely by `markPaid`/`completePayment`
-  // (`services/orders/src/domain/order.ts`). Orders created by the checkout flow
-  // (`CreateOrderFromCheckout` → `Order.createFromCheckout`) sit at status `created` and never
-  // transition further under any code path that exists today, so NONE of these four fire for the
-  // checkout flow. That is an OPEN C-2 sub-gap awaiting a product decision on how payment capture
-  // integrates with checkout completion — not something to close by fabricating a payment
-  // reference, which would push wrong-but-plausible entries into Finance's ledger. The current
-  // behavior is regression-pinned by
-  // `apps/admin/src/http/cart-checkout-pricing-security.e2e.test.ts`; full reasoning in
-  // `api.ts`'s `assertProductionIntegrationPortsConfigured` doc comment.
-  //
-  // Registered UNCONDITIONALLY, unlike the two gated blocks below: those depend on external
-  // infrastructure (Ory, a seeded tracking registry) that is genuinely absent in some environments,
-  // whereas these four need only Kafka + Prisma — always present wherever the worker runs at all.
-  // Same reasoning as `buildPaymentCapturedRuntime` above, the closest sibling, which is also
-  // ungated; a flag here would be a speculative switch whose "off" position is a silently broken
-  // paid-order flow.
-  for (const consumerRuntime of buildOrdersPaidConsumerRuntimes(runtime, runtime.metrics)) {
+  const registered: SupervisedConsumer[] = [];
+  const register = (consumerRuntime: SupervisedConsumer): void => {
     supervisor.register(consumerRuntime);
+    registered.push(consumerRuntime);
+  };
+  for (const consumerRuntime of buildAlwaysOnConsumerRuntimes(runtime)) {
+    register(consumerRuntime);
   }
 
   // C-07: the consumer of `tracking.event.captured.v1`. Until this line the collector published to
   // that topic and nothing subscribed — every beacon was accepted, written to Kafka and aged out
   // unprocessed. Config-gated (`TRACKING_INGEST_ENABLED`, default off) because the registry must be
   // seeded first; `buildTrackingIngestRuntime` returns null when it is off.
-  const trackingIngest = await buildTrackingIngestRuntime(runtime);
-  if (trackingIngest !== null) supervisor.register(trackingIngest);
+  const trackingIngest = buildTrackingIngestRuntime(runtime);
+  if (trackingIngest !== null) register(trackingIngest);
 
   // H-04: bootstrapSecurity + the three principal-provisioning consumers (security-provisioning.
   // consumers.ts) had zero callers — the Security principal/role store was never populated from
@@ -77,19 +152,34 @@ export async function startWorker(
   // it is off, same convention as buildTrackingIngestRuntime above.
   const securityProvisioning = await wireSecurityProvisioning(runtime, runtime.metrics);
   if (securityProvisioning !== null) {
-    for (const consumerRuntime of securityProvisioning.runtimes)
-      supervisor.register(consumerRuntime);
+    for (const consumerRuntime of securityProvisioning.runtimes) register(consumerRuntime);
   }
 
-  runtime.health.register(supervisor.healthCheck());
+  let stopDelivery: () => Promise<void>;
+  if (config.EVENT_TRANSPORT === "postgres") {
+    // No broker: nothing is started against Kafka and no producer is connected. Checked BEFORE the
+    // loop starts, so a consumer that cannot be delivered to fails the boot, not the first event.
+    const delivery = startOutboxDelivery(runtime, asDirectConsumers(registered));
+    runtime.health.register(delivery.healthCheck());
+    stopDelivery = () => {
+      delivery.stop();
+      return Promise.resolve();
+    };
+  } else {
+    runtime.health.register(supervisor.healthCheck());
 
-  await supervisor.startAll();
+    await supervisor.startAll();
 
-  // C-8: the publishing half of the outbox pattern. Without this the rows every repository writes
-  // inside its aggregate transaction are never delivered to anyone.
-  const outboxProducer = new KafkaMessageProducer(runtime.kafka);
-  await outboxProducer.connect();
-  const outboxRelay = startOutboxRelay(runtime, outboxProducer);
+    // C-8: the publishing half of the outbox pattern. Without this the rows every repository writes
+    // inside its aggregate transaction are never delivered to anyone.
+    const outboxProducer = new KafkaMessageProducer(runtime.kafka);
+    await outboxProducer.connect();
+    const outboxRelay = startOutboxRelay(runtime, outboxProducer);
+    stopDelivery = async () => {
+      outboxRelay?.stop();
+      await outboxProducer.disconnect();
+    };
+  }
 
   // F5/F3: the worker serves no business traffic, so it has no Fastify server — but its k8s manifest
   // probes /healthz + /readyz and Prometheus scrapes /metrics on the same port (21-deployment-worker
@@ -97,13 +187,16 @@ export async function startWorker(
   // `messaging_messages_*_total` series (emitted in THIS process) would be unscrapeable.
   const health = startHealthServer(runtime.health, config.PORT, runtime.metrics);
 
-  logger.info("worker started", { consumers: supervisor.status().length, env: config.APP_ENV });
+  logger.info("worker started", {
+    consumers: supervisor.status().length,
+    env: config.APP_ENV,
+    transport: config.EVENT_TRANSPORT,
+  });
 
   const shutdown = async (): Promise<void> => {
     logger.info("worker shutting down");
     health.close();
-    outboxRelay?.stop();
-    await outboxProducer.disconnect();
+    await stopDelivery();
     await supervisor.stopAll();
     await runtime.redis.disconnect();
     await runtime.prisma.$disconnect();

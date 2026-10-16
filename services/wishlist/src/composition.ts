@@ -41,13 +41,11 @@ export interface WishlistWiringDeps {
   /** Defaults to the in-memory stub until a real cross-context adapter is wired (deferred, G-39). */
   readonly cart?: CartPort;
   /**
-   * Production persistence (G-39/C-01). Present ⇒ `PrismaWishlistRepository` + `PrismaUnitOfWork`
-   * (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/`wireLicensing`); absent ⇒
-   * in-memory, unchanged.
+   * Production persistence (G-39/C-01). Present ⇒ `PrismaWishlistRepository` + `PrismaUnitOfWork`;
+   * absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository built here is a
+   * tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Wishlist table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredWishlist {
@@ -85,10 +83,6 @@ function buildController(
  */
 export function wireWishlist(deps: WishlistWiringDeps): WiredWishlist {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireWishlist: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new WishlistEventTranslator(),
@@ -96,13 +90,10 @@ export function wireWishlist(deps: WishlistWiringDeps): WiredWishlist {
       clock: deps.clock,
       producer: "wishlist",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const wishlists = new PrismaWishlistRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see WishlistWiringDeps'
+    // doc comment) — the repository built below takes tenantId per call instead.
+    const context = rootEventContext(deps.idGenerator);
+    const wishlists = new PrismaWishlistRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {

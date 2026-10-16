@@ -3,6 +3,7 @@ import type { NotificationsController } from "@platform/notifications";
 import { OrdersNotificationAdapter } from "./orders-notification.adapter";
 
 interface CreateCall {
+  readonly tenantId: string;
   readonly idempotencyKey: string;
   readonly sourceRef: string;
   readonly recipientRef: string;
@@ -17,8 +18,8 @@ interface CreateCall {
 interface FakeCalls {
   readonly sequence: string[];
   readonly create: CreateCall[];
-  readonly queue: { notificationId: string }[];
-  readonly send: { notificationId: string }[];
+  readonly queue: { notificationId: string; tenantId: string }[];
+  readonly send: { notificationId: string; tenantId: string }[];
 }
 
 /** A fake `NotificationsController` narrowed to `create`/`queue`/`send` — the 3 methods this adapter calls — recording both the sequence and the arguments of every call. */
@@ -66,11 +67,26 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
     const notifications = fakeNotificationsController(calls);
     const adapter = new OrdersNotificationAdapter(notifications);
 
-    await adapter.notify("customer-1", "ORD-1001", "fulfillment_requested");
+    await adapter.notify("customer-1", "ORD-1001", "fulfillment_requested", "tenant-a");
 
     expect(calls.sequence).toEqual(["create", "queue", "send"]);
     expect(calls.queue[0]?.notificationId).toBe("notif-1");
     expect(calls.send[0]?.notificationId).toBe("notif-1");
+    expect(
+      [calls.create[0], calls.queue[0], calls.send[0]].map(
+        (c) => (c as { tenantId?: string } | undefined)?.tenantId,
+      ),
+    ).toEqual(["tenant-a", "tenant-a", "tenant-a"]);
+  });
+
+  it("one adapter instance serves two tenants, each call carrying its own tenant (ADR-0014)", async () => {
+    const calls = emptyCalls();
+    const adapter = new OrdersNotificationAdapter(fakeNotificationsController(calls));
+
+    await adapter.notify("customer-1", "ORD-1001", "shipped", "tenant-a");
+    await adapter.notify("customer-1", "ORD-1001", "shipped", "tenant-b");
+
+    expect(calls.send.map((c) => c.tenantId)).toEqual(["tenant-a", "tenant-b"]);
   });
 
   it("maps customerRef/orderNumber/status into a minimal, sane CreateNotificationInput", async () => {
@@ -78,7 +94,7 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
     const notifications = fakeNotificationsController(calls);
     const adapter = new OrdersNotificationAdapter(notifications);
 
-    await adapter.notify("customer-42", "ORD-2002", "fulfillment_requested");
+    await adapter.notify("customer-42", "ORD-2002", "fulfillment_requested", "tenant-a");
 
     const created = calls.create[0];
     expect(created).toBeDefined();
@@ -100,8 +116,8 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
     const notifications = fakeNotificationsController(calls);
     const adapter = new OrdersNotificationAdapter(notifications);
 
-    await adapter.notify("customer-1", "ORD-3003", "shipped");
-    await adapter.notify("customer-1", "ORD-3003", "shipped");
+    await adapter.notify("customer-1", "ORD-3003", "shipped", "tenant-a");
+    await adapter.notify("customer-1", "ORD-3003", "shipped", "tenant-a");
 
     expect(calls.create).toHaveLength(2);
     expect(calls.create[0]?.idempotencyKey).toBe(calls.create[1]?.idempotencyKey);
@@ -112,8 +128,8 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
     const notifications = fakeNotificationsController(calls);
     const adapter = new OrdersNotificationAdapter(notifications);
 
-    await adapter.notify("customer-1", "ORD-4004", "fulfillment_requested");
-    await adapter.notify("customer-1", "ORD-4004", "shipped");
+    await adapter.notify("customer-1", "ORD-4004", "fulfillment_requested", "tenant-a");
+    await adapter.notify("customer-1", "ORD-4004", "shipped", "tenant-a");
 
     expect(calls.create[0]?.idempotencyKey).not.toBe(calls.create[1]?.idempotencyKey);
   });
@@ -123,7 +139,7 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
     const notifications = fakeNotificationsController(calls, { failAt: "create" });
     const adapter = new OrdersNotificationAdapter(notifications);
 
-    await expect(adapter.notify("customer-1", "ORD-5005", "shipped")).rejects.toThrow();
+    await expect(adapter.notify("customer-1", "ORD-5005", "shipped", "tenant-a")).rejects.toThrow();
     expect(calls.sequence).toEqual(["create"]);
   });
 
@@ -132,7 +148,7 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
     const notifications = fakeNotificationsController(calls, { failAt: "queue" });
     const adapter = new OrdersNotificationAdapter(notifications);
 
-    await expect(adapter.notify("customer-1", "ORD-6006", "shipped")).rejects.toThrow();
+    await expect(adapter.notify("customer-1", "ORD-6006", "shipped", "tenant-a")).rejects.toThrow();
     expect(calls.sequence).toEqual(["create", "queue"]);
   });
 
@@ -141,7 +157,7 @@ describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
     const notifications = fakeNotificationsController(calls, { failAt: "send" });
     const adapter = new OrdersNotificationAdapter(notifications);
 
-    await expect(adapter.notify("customer-1", "ORD-7007", "shipped")).rejects.toThrow();
+    await expect(adapter.notify("customer-1", "ORD-7007", "shipped", "tenant-a")).rejects.toThrow();
     expect(calls.sequence).toEqual(["create", "queue", "send"]);
   });
 });

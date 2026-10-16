@@ -2,7 +2,7 @@
 // Phase A.34 (A.33 P0 #10) — production OAuth2 client registration for admin-web.
 // scripts/dev/seed-auth-local.mjs is dev-only (default client id/secret/redirect_uri, all pointing
 // at localhost:3100) and was, until this file existed, the ONLY client-registration path in the
-// repo — meaning there was no production-safe way to register the `lumo-admin-web` Hydra client at
+// repo — meaning there was no production-safe way to register the `morbeh-admin-web` Hydra client at
 // all. This script has none of seed-auth-local.mjs's defaults: every value is required, and it
 // refuses to run without them, same "never invent/print a credential" rule that script's own
 // ADMIN_DEV_PASSWORD handling already follows.
@@ -17,10 +17,10 @@
 //
 // Required (no defaults — this is deliberate, see A.33 P0 #3/#10):
 //   HYDRA_ADMIN_URL        Hydra's admin API base (cluster-internal only — never expose publicly)
-//   AUTH_CLIENT_ID         e.g. lumo-admin-web
+//   AUTH_CLIENT_ID         e.g. morbeh-admin-web
 //   AUTH_CLIENT_SECRET     the real production secret — from the secret manager, never typed here
-//   AUTH_AUDIENCE          e.g. lumo-admin
-//   ADMIN_WEB_CALLBACK_URL e.g. https://admin.lumo.example.com/auth/callback
+//   AUTH_AUDIENCE          e.g. morbeh-admin
+//   ADMIN_WEB_CALLBACK_URL e.g. https://admin.morbeh.example.com/auth/callback
 // Optional:
 //   OAUTH_CLIENT_ROTATE    "true" to overwrite an already-registered client (default: verify only)
 
@@ -48,12 +48,12 @@ if (!REDIRECT_URI.startsWith("https://") && !REDIRECT_URI.startsWith("http://loc
 const desiredClient = {
   client_id: CLIENT_ID,
   client_secret: CLIENT_SECRET,
-  client_name: "Lumo Admin Web",
+  client_name: "Morbeh Admin Web",
   grant_types: ["authorization_code"],
   response_types: ["code"],
   redirect_uris: [REDIRECT_URI],
   token_endpoint_auth_method: "client_secret_post",
-  scope: "openid lumo.admin",
+  scope: "openid morbeh.admin",
   audience: [AUDIENCE],
   subject_type: "public",
 };

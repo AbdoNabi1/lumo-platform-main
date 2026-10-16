@@ -1,0 +1,115 @@
+"use client";
+
+import { useEffect, useId, useState } from "react";
+import { AddToCartButton } from "@/components/add-to-cart-button";
+import { formatCurrency } from "@/lib/format";
+import type { Locale } from "@/lib/i18n";
+import type { ProductSummary } from "@/lib/runtime-api";
+import type { Dictionary } from "@/messages/en";
+import { useProductSelection } from "./product-selection";
+
+/**
+ * Plan 2A — the shopper buys a specific variant (a size, a colour), not "the product". One
+ * `<select>` per declared option, each starting on its first value; the chosen combination resolves
+ * to the variant whose `selection` matches every choice, and THAT variant's price is the one shown
+ * (the server prices the cart line from the same variant — this price is a display, never an input).
+ *
+ * A combination with no variant (an option matrix with holes) shows {@link Dictionary} copy instead
+ * of a price and leaves add-to-cart disabled. A product with no options (a single variant) renders
+ * just its price and the button, wired to that one variant's id.
+ */
+export function VariantPicker({
+  product,
+  availabilityByVariant,
+  t,
+  locale,
+}: {
+  readonly product: ProductSummary;
+  /**
+   * Plan 2B-1: each variant's stock — a count, or `"unlimited"` for one that sells past zero. A
+   * variant missing from the map has unknown stock and is never blocked on that account.
+   */
+  readonly availabilityByVariant: Readonly<Record<string, number | "unlimited">>;
+  readonly t: Dictionary;
+  readonly locale: Locale;
+}) {
+  const idPrefix = useId();
+  const [chosen, setChosen] = useState<Readonly<Record<string, string>>>(() =>
+    Object.fromEntries(product.options.map((option) => [option.name, option.values[0] ?? ""])),
+  );
+
+  const variant =
+    product.options.length === 0
+      ? product.variants[0]
+      : product.variants.find((candidate) =>
+          product.options.every(
+            (option) => candidate.selection?.[option.name] === chosen[option.name],
+          ),
+        );
+
+  // Plan 2C-3: tell the gallery which picture belongs to the variant picked (none: it keeps its own).
+  const { setVariantImageId } = useProductSelection();
+  const variantImageId = variant?.imageId ?? null;
+  useEffect(() => {
+    setVariantImageId(variantImageId);
+  }, [variantImageId, setVariantImageId]);
+
+  const stock = variant === undefined ? undefined : availabilityByVariant[variant.id];
+  const outOfStock = stock !== undefined && stock !== "unlimited" && stock <= 0;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {product.options.map((option, index) => {
+        const id = `${idPrefix}-${index}`;
+        return (
+          <div key={option.name} className="flex flex-col gap-1">
+            <label htmlFor={id} className="text-sm font-medium">
+              {t.product.chooseOption.replace("{option}", option.name)}
+            </label>
+            <select
+              id={id}
+              value={chosen[option.name]}
+              onChange={(event) => setChosen({ ...chosen, [option.name]: event.target.value })}
+              className="border-border bg-background rounded-md border px-3 py-2 text-sm"
+            >
+              {option.values.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+      })}
+
+      {variant !== undefined ? (
+        <p className="flex items-baseline gap-2 text-lg font-semibold">
+          <span>{formatCurrency(locale, variant.priceAmountMinor, variant.currency)}</span>
+          {variant.compareAtAmountMinor !== null && (
+            <s className="text-muted-foreground text-sm font-normal">
+              {formatCurrency(locale, variant.compareAtAmountMinor, variant.currency)}
+            </s>
+          )}
+        </p>
+      ) : (
+        <p role="status" className="text-destructive text-sm">
+          {t.product.unavailableCombination}
+        </p>
+      )}
+
+      {outOfStock && (
+        <p role="status" className="text-destructive text-sm">
+          {t.product.outOfStock}
+        </p>
+      )}
+
+      <AddToCartButton
+        productId={product.id}
+        variantId={variant?.id}
+        outOfStock={outOfStock || variant === undefined}
+        sellableWhenOutOfStock={stock === "unlimited"}
+        t={t}
+      />
+    </div>
+  );
+}

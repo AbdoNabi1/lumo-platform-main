@@ -44,6 +44,7 @@ describe.runIf(Boolean(brokers))("Kafka runtime (integration)", () => {
       occurredAt: clock.now().toISOString(),
       correlationId: "corr-1",
       causationId: "cause-1",
+      tenantId: "tenant-test",
       payload: { label },
       metadata: {},
     };

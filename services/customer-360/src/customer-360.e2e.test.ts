@@ -5,6 +5,7 @@ import { Expr } from "@platform/expression";
 import type { RuleSet } from "@platform/rules";
 import { wireCustomer360 } from "./composition";
 import type { AttributeValue } from "./domain/attribute-value";
+import { TENANT_A } from "./test-support/tenants";
 
 function sequentialIds(): IdGenerator {
   let counter = 0;
@@ -26,6 +27,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     const app = wire();
 
     const observed = await app.observeIdentityLink.execute({
+      tenantId: TENANT_A,
       visitorId: "visitor-1",
       identifiers: [
         { type: "email_hash", value: "hash-alice" },
@@ -41,7 +43,11 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     const published = await app.drainOutbox();
     expect(published).toBe(2);
 
-    const resolved = await app.resolveIdentity.execute({ type: "visitor_id", value: "visitor-1" });
+    const resolved = await app.resolveIdentity.execute({
+      tenantId: TENANT_A,
+      type: "visitor_id",
+      value: "visitor-1",
+    });
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) throw new Error("unreachable");
     expect(resolved.value.cluster).not.toBeNull();
@@ -52,12 +58,14 @@ describe("Customer 360 Identity Engine (end to end)", () => {
   it("merge links two previously-unrelated identifiers with provenance, resolved together afterwards", async () => {
     const app = wire();
     await app.observeIdentityLink.execute({
+      tenantId: TENANT_A,
       visitorId: "visitor-guest",
       identifiers: [{ type: "device_id", value: "device-shared" }],
       observedAt: clock.now().toISOString(),
       source: "guest_checkout",
     });
     await app.observeIdentityLink.execute({
+      tenantId: TENANT_A,
       visitorId: "visitor-known",
       identifiers: [{ type: "customer_id", value: "cust-1" }],
       observedAt: clock.now().toISOString(),
@@ -65,6 +73,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     });
 
     const merge = await app.mergeIdentities.execute({
+      tenantId: TENANT_A,
       subject: { type: "visitor_id", value: "visitor-guest" },
       related: { type: "visitor_id", value: "visitor-known" },
       reason: "confirmed same person via support ticket",
@@ -73,6 +82,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     expect(merge.ok).toBe(true);
 
     const resolved = await app.resolveIdentity.execute({
+      tenantId: TENANT_A,
       type: "visitor_id",
       value: "visitor-guest",
     });
@@ -86,6 +96,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
   it("rejects merging an identifier with itself", async () => {
     const app = wire();
     const result = await app.mergeIdentities.execute({
+      tenantId: TENANT_A,
       subject: { type: "visitor_id", value: "v1" },
       related: { type: "visitor_id", value: "v1" },
       reason: "n/a",
@@ -98,6 +109,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     const app = wire();
     const observedAt = clock.now().toISOString();
     await app.observeIdentityLink.execute({
+      tenantId: TENANT_A,
       visitorId: "visitor-family",
       identifiers: [{ type: "device_id", value: "shared-tablet" }],
       observedAt,
@@ -105,6 +117,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     });
 
     const preSplit = await app.resolveIdentity.execute({
+      tenantId: TENANT_A,
       type: "visitor_id",
       value: "visitor-family",
     });
@@ -112,6 +125,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     expect(preSplit.value.cluster?.resolved.members).toHaveLength(2);
 
     const split = await app.splitIdentity.execute({
+      tenantId: TENANT_A,
       edge: {
         fromType: "visitor_id",
         fromValue: "visitor-family",
@@ -127,6 +141,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     expect(split.ok).toBe(true);
 
     const postSplit = await app.resolveIdentity.execute({
+      tenantId: TENANT_A,
       type: "visitor_id",
       value: "visitor-family",
     });
@@ -134,6 +149,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     expect(postSplit.value.cluster?.resolved.members).toHaveLength(1);
 
     const timeline = await app.getIdentityTimeline.execute({
+      tenantId: TENANT_A,
       identifier: { type: "visitor_id", value: "visitor-family" },
     });
     if (!timeline.ok) throw new Error("unreachable");
@@ -143,6 +159,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
   it("rejects splitting an edge that was never observed instead of silently no-oping", async () => {
     const app = wire();
     const result = await app.splitIdentity.execute({
+      tenantId: TENANT_A,
       edge: {
         fromType: "visitor_id",
         fromValue: "visitor-nonexistent",
@@ -162,6 +179,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     const app = wire();
     const observedAt = clock.now().toISOString();
     await app.observeIdentityLink.execute({
+      tenantId: TENANT_A,
       visitorId: "visitor-swap",
       identifiers: [{ type: "device_id", value: "shared-tablet-2" }],
       observedAt,
@@ -169,6 +187,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     });
 
     const split = await app.splitIdentity.execute({
+      tenantId: TENANT_A,
       edge: {
         // Reversed relative to how ObserveIdentityLink stored it (visitor as `from`).
         fromType: "device_id",
@@ -185,6 +204,7 @@ describe("Customer 360 Identity Engine (end to end)", () => {
     expect(split.ok).toBe(true);
 
     const resolved = await app.resolveIdentity.execute({
+      tenantId: TENANT_A,
       type: "visitor_id",
       value: "visitor-swap",
     });
@@ -199,6 +219,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
     const identifier = { type: "customer_id" as const, value: "cust-1" };
 
     const update = await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "email",
       value: "a@example.com",
@@ -214,6 +235,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
     expect(published).toBe(1);
 
     const read = await app.getCustomerProfile.execute({
+      tenantId: TENANT_A,
       identifier,
       now: clock.now().toISOString(),
     });
@@ -229,6 +251,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
 
     // Two separate identifiers, each with their own profile fields...
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: guestVisitor,
       field: "device",
       value: "device-42",
@@ -237,6 +260,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
       occurredAt: clock.now().toISOString(),
     });
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: knownCustomer,
       field: "email",
       value: "known@example.com",
@@ -247,6 +271,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
 
     // ...linked by Identity Engine's own merge (Phase 6.1), reused here rather than reimplemented.
     await app.mergeIdentities.execute({
+      tenantId: TENANT_A,
       subject: guestVisitor,
       related: knownCustomer,
       reason: "confirmed same person via support ticket",
@@ -254,6 +279,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
     });
 
     const read = await app.getCustomerProfile.execute({
+      tenantId: TENANT_A,
       identifier: guestVisitor,
       now: clock.now().toISOString(),
     });
@@ -268,6 +294,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
     const identifier = { type: "customer_id" as const, value: "cust-3" };
 
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "email",
       value: "current@example.com",
@@ -276,6 +303,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
       occurredAt: "2026-07-20T00:00:10.000Z",
     });
     const stale = await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "email",
       value: "stale@example.com",
@@ -288,6 +316,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
     expect(stale.value.applied).toBe(false);
 
     const read = await app.getCustomerProfile.execute({
+      tenantId: TENANT_A,
       identifier,
       now: "2026-07-20T00:01:00.000Z",
     });
@@ -300,6 +329,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
     const identifier = { type: "customer_id" as const, value: "cust-4" };
 
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier,
       field: "email",
       value: "a@example.com",
@@ -308,7 +338,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
       occurredAt: clock.now().toISOString(),
     });
 
-    const rebuilt = await app.rebuildProfileProjection.execute({ identifier });
+    const rebuilt = await app.rebuildProfileProjection.execute({ tenantId: TENANT_A, identifier });
     if (!rebuilt.ok) throw new Error("unreachable");
     expect(rebuilt.value.profile?.fields.get("email")?.value).toBe("a@example.com");
     expect(rebuilt.value.profile?.version).toBe(1); // rebuild must not inflate the version
@@ -320,6 +350,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
   it("ProfileProjectionWorker rebuilds every known profile in one batch", async () => {
     const app = wire();
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: { type: "customer_id", value: "cust-5" },
       field: "email",
       value: "a@example.com",
@@ -328,6 +359,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
       occurredAt: clock.now().toISOString(),
     });
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: { type: "customer_id", value: "cust-6" },
       field: "email",
       value: "b@example.com",
@@ -336,7 +368,7 @@ describe("Customer 360 Profile Engine (end to end, Phase 6.2)", () => {
       occurredAt: clock.now().toISOString(),
     });
 
-    const result = await app.profileProjectionWorker.execute({});
+    const result = await app.profileProjectionWorker.execute({ tenantId: TENANT_A });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 2, failed: 0 });
   });
@@ -347,6 +379,7 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     const app = wire();
 
     const first = await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       deviceId: "device-1",
@@ -357,6 +390,7 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     expect(first.value).toEqual({ sessionId: "sess-1", opened: true, rolledOverFrom: undefined });
 
     const second = await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: "2026-07-20T00:05:00.000Z",
@@ -372,11 +406,13 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     const app = wire();
 
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: "2026-07-20T00:00:00.000Z",
     });
     const rollover = await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-2",
       visitorId: "visitor-1",
       occurredAt: "2026-07-20T01:00:00.000Z", // 60 minutes later — past the 30-minute default window
@@ -384,7 +420,10 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     if (!rollover.ok) throw new Error("unreachable");
     expect(rollover.value).toEqual({ sessionId: "sess-2", opened: true, rolledOverFrom: "sess-1" });
 
-    const timeline = await app.getJourneyTimeline.execute({ visitorId: "visitor-1" });
+    const timeline = await app.getJourneyTimeline.execute({
+      tenantId: TENANT_A,
+      visitorId: "visitor-1",
+    });
     if (!timeline.ok) throw new Error("unreachable");
     const kinds = timeline.value.entries.map((e) => e.kind);
     expect(kinds).toEqual(["session_started", "session_closed", "session_started", "transition"]);
@@ -400,12 +439,14 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("explicitly closes a session and rejects closing it again", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: clock.now().toISOString(),
     });
 
     const closed = await app.closeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       reason: "manual_logout",
       occurredAt: "2026-07-20T00:10:00.000Z",
@@ -413,6 +454,7 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     expect(closed.ok).toBe(true);
 
     const again = await app.closeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       reason: "manual_logout",
       occurredAt: "2026-07-20T00:11:00.000Z",
@@ -423,17 +465,20 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("resumes a closed session into a new one, linked by a resumed transition", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: "2026-07-20T00:00:00.000Z",
     });
     await app.closeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       reason: "manual_logout",
       occurredAt: "2026-07-20T00:10:00.000Z",
     });
 
     const resumed = await app.resumeSession.execute({
+      tenantId: TENANT_A,
       closedSessionId: "sess-1",
       sessionId: "sess-2",
       visitorId: "visitor-1",
@@ -442,7 +487,10 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error("unreachable");
 
-    const timeline = await app.getJourneyTimeline.execute({ visitorId: "visitor-1" });
+    const timeline = await app.getJourneyTimeline.execute({
+      tenantId: TENANT_A,
+      visitorId: "visitor-1",
+    });
     if (!timeline.ok) throw new Error("unreachable");
     const transition = timeline.value.entries.find((e) => e.kind === "transition");
     expect(transition).toMatchObject({
@@ -455,12 +503,14 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("rejects resuming a session that is still open", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: clock.now().toISOString(),
     });
 
     const resumed = await app.resumeSession.execute({
+      tenantId: TENANT_A,
       closedSessionId: "sess-1",
       sessionId: "sess-2",
       visitorId: "visitor-1",
@@ -472,6 +522,7 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("splits a shared-device session into two, closing the original and opening a new one", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-shared",
       visitorId: "visitor-family",
       deviceId: "shared-tablet",
@@ -479,6 +530,7 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     });
 
     const split = await app.splitSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-shared",
       newSessionId: "sess-shared-2",
       splitAt: "2026-07-20T00:15:00.000Z",
@@ -487,12 +539,18 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     });
     expect(split.ok).toBe(true);
 
-    const original = await app.rebuildSessions.execute({ sessionId: "sess-shared" });
+    const original = await app.rebuildSessions.execute({
+      tenantId: TENANT_A,
+      sessionId: "sess-shared",
+    });
     if (!original.ok) throw new Error("unreachable");
     expect(original.value.session?.status).toBe("closed");
     expect(original.value.session?.closeReason).toBe("explicit_split");
 
-    const timeline = await app.getJourneyTimeline.execute({ visitorId: "visitor-family" });
+    const timeline = await app.getJourneyTimeline.execute({
+      tenantId: TENANT_A,
+      visitorId: "visitor-family",
+    });
     if (!timeline.ok) throw new Error("unreachable");
     const transition = timeline.value.entries.find((e) => e.kind === "transition");
     expect(transition).toMatchObject({
@@ -505,6 +563,7 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("rejects splitting a session that was never observed", async () => {
     const app = wire();
     const split = await app.splitSession.execute({
+      tenantId: TENANT_A,
       sessionId: "never-seen",
       newSessionId: "sess-2",
       splitAt: clock.now().toISOString(),
@@ -517,32 +576,44 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("merges two independently tracked sessions into one journey without touching either session", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-desktop",
       visitorId: "visitor-desktop",
       deviceId: "device-desktop",
       occurredAt: "2026-07-20T00:00:00.000Z",
     });
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-mobile",
       visitorId: "visitor-mobile",
       deviceId: "device-mobile",
       occurredAt: "2026-07-20T01:00:00.000Z",
     });
 
-    const before = await app.rebuildSessions.execute({ sessionId: "sess-desktop" });
+    const before = await app.rebuildSessions.execute({
+      tenantId: TENANT_A,
+      sessionId: "sess-desktop",
+    });
     const merge = await app.mergeSession.execute({
+      tenantId: TENANT_A,
       fromSessionId: "sess-desktop",
       toSessionId: "sess-mobile",
       reason: "confirmed same shopper via support ticket",
       actor: "operator-1",
     });
     expect(merge.ok).toBe(true);
-    const after = await app.rebuildSessions.execute({ sessionId: "sess-desktop" });
+    const after = await app.rebuildSessions.execute({
+      tenantId: TENANT_A,
+      sessionId: "sess-desktop",
+    });
 
     if (!before.ok || !after.ok) throw new Error("unreachable");
     expect(after.value.session).toEqual(before.value.session); // merge never mutates either session
 
-    const timeline = await app.getJourneyTimeline.execute({ visitorId: "visitor-desktop" });
+    const timeline = await app.getJourneyTimeline.execute({
+      tenantId: TENANT_A,
+      visitorId: "visitor-desktop",
+    });
     if (!timeline.ok) throw new Error("unreachable");
     const transition = timeline.value.entries.find((e) => e.kind === "transition");
     expect(transition).toMatchObject({ transitionKind: "explicit_merge" });
@@ -551,12 +622,14 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("rejects merging a session with itself and rejects merging never-observed sessions", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: clock.now().toISOString(),
     });
 
     const selfMerge = await app.mergeSession.execute({
+      tenantId: TENANT_A,
       fromSessionId: "sess-1",
       toSessionId: "sess-1",
       reason: "n/a",
@@ -565,6 +638,7 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     expect(selfMerge.ok).toBe(false);
 
     const neverObserved = await app.mergeSession.execute({
+      tenantId: TENANT_A,
       fromSessionId: "sess-1",
       toSessionId: "never-seen",
       reason: "n/a",
@@ -576,11 +650,13 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("resolves the current session across devices via Identity Engine reuse (never a second stitching implementation)", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-guest",
       visitorId: "visitor-guest",
       occurredAt: "2026-07-20T00:00:00.000Z",
     });
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-known",
       visitorId: "visitor-known",
       occurredAt: "2026-07-20T01:00:00.000Z", // more recently active
@@ -589,6 +665,7 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     // Two visitor_ids linked via Identity Engine's own merge — Session Stitching reuses this, never
     // reimplements it.
     await app.mergeIdentities.execute({
+      tenantId: TENANT_A,
       subject: { type: "visitor_id", value: "visitor-guest" },
       related: { type: "visitor_id", value: "visitor-known" },
       reason: "confirmed same person",
@@ -596,6 +673,7 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     });
 
     const current = await app.resolveCurrentSession.execute({
+      tenantId: TENANT_A,
       identifier: { type: "visitor_id", value: "visitor-guest" },
     });
     if (!current.ok) throw new Error("unreachable");
@@ -609,12 +687,16 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("tracks the anonymous -> identified journey transition and journey state", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: "2026-07-20T00:00:00.000Z",
     });
 
-    const beforeState = await app.getJourneyState.execute({ visitorId: "visitor-1" });
+    const beforeState = await app.getJourneyState.execute({
+      tenantId: TENANT_A,
+      visitorId: "visitor-1",
+    });
     if (!beforeState.ok) throw new Error("unreachable");
     expect(beforeState.value.state.identified).toBe(false);
     expect(beforeState.value.state.sessionCount).toBe(1);
@@ -623,17 +705,24 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
     // A later activity on the same session carries a known-identity signal (e.g. login) — the
     // caller passes `identified: true` (its own `isKnownIdentity` result), never re-derived here.
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: "2026-07-20T00:05:00.000Z",
       identified: true,
     });
 
-    const afterState = await app.getJourneyState.execute({ visitorId: "visitor-1" });
+    const afterState = await app.getJourneyState.execute({
+      tenantId: TENANT_A,
+      visitorId: "visitor-1",
+    });
     if (!afterState.ok) throw new Error("unreachable");
     expect(afterState.value.state.identified).toBe(true);
 
-    const timeline = await app.getJourneyTimeline.execute({ visitorId: "visitor-1" });
+    const timeline = await app.getJourneyTimeline.execute({
+      tenantId: TENANT_A,
+      visitorId: "visitor-1",
+    });
     if (!timeline.ok) throw new Error("unreachable");
     const transition = timeline.value.entries.find((e) => e.kind === "transition");
     expect(transition).toMatchObject({
@@ -643,12 +732,16 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
 
     // A later call with `identified: true` again must not record a second transition.
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: "2026-07-20T00:10:00.000Z",
       identified: true,
     });
-    const finalTimeline = await app.getJourneyTimeline.execute({ visitorId: "visitor-1" });
+    const finalTimeline = await app.getJourneyTimeline.execute({
+      tenantId: TENANT_A,
+      visitorId: "visitor-1",
+    });
     if (!finalTimeline.ok) throw new Error("unreachable");
     expect(finalTimeline.value.entries.filter((e) => e.kind === "transition")).toHaveLength(1);
   });
@@ -656,16 +749,20 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("rebuilds a session's cache from history and reports null for a session with no history", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: clock.now().toISOString(),
     });
 
-    const rebuilt = await app.rebuildSessions.execute({ sessionId: "sess-1" });
+    const rebuilt = await app.rebuildSessions.execute({ tenantId: TENANT_A, sessionId: "sess-1" });
     if (!rebuilt.ok) throw new Error("unreachable");
     expect(rebuilt.value.session?.sessionId).toBe("sess-1");
 
-    const missing = await app.rebuildSessions.execute({ sessionId: "never-seen" });
+    const missing = await app.rebuildSessions.execute({
+      tenantId: TENANT_A,
+      sessionId: "never-seen",
+    });
     if (!missing.ok) throw new Error("unreachable");
     expect(missing.value.session).toBeNull();
   });
@@ -673,17 +770,19 @@ describe("Customer 360 Session Stitching Engine (end to end, Phase 6.3)", () => 
   it("SessionProjectionWorker rebuilds every known session in one batch", async () => {
     const app = wire();
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-1",
       visitorId: "visitor-1",
       occurredAt: clock.now().toISOString(),
     });
     await app.observeSession.execute({
+      tenantId: TENANT_A,
       sessionId: "sess-2",
       visitorId: "visitor-2",
       occurredAt: clock.now().toISOString(),
     });
 
-    const result = await app.sessionProjectionWorker.execute({});
+    const result = await app.sessionProjectionWorker.execute({ tenantId: TENANT_A });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ rebuilt: 2, failed: 0 });
   });
@@ -743,13 +842,17 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
       serializer: new InMemoryEventSerializer(),
       idGenerator: sequentialIds(),
       clock,
-      computedAttributeDefinitions: [clvTierDefinition(), isVipDefinition(), unrelatedDefinition()],
+      computedAttributeDefinitions: {
+        tenantId: TENANT_A,
+        definitions: [clvTierDefinition(), isVipDefinition(), unrelatedDefinition()],
+      },
     });
   }
 
   it("evaluates a computed attribute from merged profile facts and persists it with full explainability", async () => {
     const app = wireWithDefinitions();
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000,
@@ -759,6 +862,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
     });
 
     const evaluated = await app.evaluateComputedAttribute.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       definition: clvTierDefinition(),
     });
@@ -768,6 +872,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
     expect(evaluated.value.result.inputs.get("profile.lifetime_value")).toBe(5000);
 
     const persisted = await app.updateComputedAttributeProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       result: evaluated.value.result,
     });
@@ -775,6 +880,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
     expect(persisted.value.applied).toBe(true);
 
     const read = await app.getComputedAttributes.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       now: clock.now().toISOString(),
     });
@@ -793,6 +899,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
   it("EvaluateAttributeGraph evaluates a dependency chain in one run, dependent sees dependency's fresh value", async () => {
     const app = wireWithDefinitions();
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000,
@@ -802,6 +909,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
     });
 
     const result = await app.evaluateAttributeGraph.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       definitions: [isVipDefinition(), clvTierDefinition()], // deliberately out of order
     });
@@ -814,6 +922,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
   it("RecalculateComputedAttributes recomputes only the changed attribute's dependents, never an unrelated attribute", async () => {
     const app = wireWithDefinitions();
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 50, // below the gold threshold
@@ -822,7 +931,10 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
       occurredAt: clock.now().toISOString(),
     });
 
-    const initial = await app.recalculateComputedAttributes.execute({ identifier: customer });
+    const initial = await app.recalculateComputedAttributes.execute({
+      tenantId: TENANT_A,
+      identifier: customer,
+    });
     if (!initial.ok) throw new Error("unreachable");
     expect([...initial.value.recomputed].sort()).toEqual([
       "clv_tier",
@@ -833,6 +945,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
     // A profile field clv_tier reads just changed — the caller (an upstream consumer, not built in
     // this phase) names exactly which attribute's raw inputs moved.
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000, // now above the gold threshold
@@ -842,6 +955,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
     });
 
     const incremental = await app.recalculateComputedAttributes.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       changed: ["clv_tier"],
     });
@@ -851,6 +965,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
     expect([...incremental.value.applied].sort()).toEqual(["clv_tier", "is_vip"]); // both actually changed value
 
     const read = await app.getComputedAttributes.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       now: clock.now().toISOString(),
     });
@@ -870,13 +985,19 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
       serializer: new InMemoryEventSerializer(),
       idGenerator: sequentialIds(),
       clock,
-      computedAttributeDefinitions: [
-        { id: "a", version: 1, ruleSet: cyclicRuleSet, dependencies: ["b"] },
-        { id: "b", version: 1, ruleSet: cyclicRuleSet, dependencies: ["a"] },
-      ],
+      computedAttributeDefinitions: {
+        tenantId: TENANT_A,
+        definitions: [
+          { id: "a", version: 1, ruleSet: cyclicRuleSet, dependencies: ["b"] },
+          { id: "b", version: 1, ruleSet: cyclicRuleSet, dependencies: ["a"] },
+        ],
+      },
     });
 
-    const result = await app.recalculateComputedAttributes.execute({ identifier: customer });
+    const result = await app.recalculateComputedAttributes.execute({
+      tenantId: TENANT_A,
+      identifier: customer,
+    });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.error.message).toMatch(/cycle/i);
@@ -885,6 +1006,7 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
   it("RebuildComputedAttributes and ComputedAttributeProjectionWorker rebuild the cache from history", async () => {
     const app = wireWithDefinitions();
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000,
@@ -892,13 +1014,16 @@ describe("Customer 360 Computed Attributes Engine (end to end)", () => {
       confidence: "verified",
       occurredAt: clock.now().toISOString(),
     });
-    await app.recalculateComputedAttributes.execute({ identifier: customer });
+    await app.recalculateComputedAttributes.execute({ tenantId: TENANT_A, identifier: customer });
 
-    const rebuilt = await app.rebuildComputedAttributes.execute({ identifier: customer });
+    const rebuilt = await app.rebuildComputedAttributes.execute({
+      tenantId: TENANT_A,
+      identifier: customer,
+    });
     if (!rebuilt.ok) throw new Error("unreachable");
     expect(rebuilt.value.attribute?.attributes.get("clv_tier")?.value).toBe("gold");
 
-    const worker = await app.computedAttributeProjectionWorker.execute({});
+    const worker = await app.computedAttributeProjectionWorker.execute({ tenantId: TENANT_A });
     if (!worker.ok) throw new Error("unreachable");
     expect(worker.value.rebuilt).toBeGreaterThanOrEqual(1);
     expect(worker.value.failed).toBe(0);
@@ -945,6 +1070,7 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
   it("CreateSegment authors a definition, then EvaluateSegment/RecalculateMemberships evaluate it end to end with full explainability", async () => {
     const app = wire();
     const created = await app.createSegment.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "High value",
       ruleSet: highValueRuleSet(),
@@ -952,6 +1078,7 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
     expect(created.ok).toBe(true);
 
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000,
@@ -961,6 +1088,7 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
     });
 
     const recalculated = await app.recalculateMemberships.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       changed: ["profile.lifetime_value"],
     });
@@ -971,11 +1099,17 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
     expect(recalculated.value.results[0]?.isMember).toBe(true);
     expect(recalculated.value.results[0]?.matchedRuleIds).toEqual(["high-value-rule"]);
 
-    const members = await app.getCustomerSegments.execute({ identifier: customer });
+    const members = await app.getCustomerSegments.execute({
+      tenantId: TENANT_A,
+      identifier: customer,
+    });
     if (!members.ok) throw new Error("unreachable");
     expect(members.value.segment.memberships.get("high_value")?.status).toBe("entered");
 
-    const segmentMembers = await app.getSegmentMembers.execute({ segmentId: "high_value" });
+    const segmentMembers = await app.getSegmentMembers.execute({
+      tenantId: TENANT_A,
+      segmentId: "high_value",
+    });
     if (!segmentMembers.ok) throw new Error("unreachable");
     expect(segmentMembers.value.members.map((m) => m.identifierValue)).toEqual([customer.value]);
 
@@ -985,11 +1119,13 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
   it("transitions to exited when a fact no longer matches, and GetSegmentMembers no longer lists the identifier", async () => {
     const app = wire();
     await app.createSegment.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "High value",
       ruleSet: highValueRuleSet(),
     });
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000,
@@ -998,11 +1134,13 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
       occurredAt: clock.now().toISOString(),
     });
     await app.recalculateMemberships.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       changed: ["profile.lifetime_value"],
     });
 
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 10,
@@ -1011,17 +1149,24 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
       occurredAt: "2026-07-20T01:00:00.000Z",
     });
     const recalculated = await app.recalculateMemberships.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       changed: ["profile.lifetime_value"],
     });
     if (!recalculated.ok) throw new Error("unreachable");
     expect(recalculated.value.results[0]?.isMember).toBe(false);
 
-    const members = await app.getCustomerSegments.execute({ identifier: customer });
+    const members = await app.getCustomerSegments.execute({
+      tenantId: TENANT_A,
+      identifier: customer,
+    });
     if (!members.ok) throw new Error("unreachable");
     expect(members.value.segment.memberships.get("high_value")?.status).toBe("exited");
 
-    const segmentMembers = await app.getSegmentMembers.execute({ segmentId: "high_value" });
+    const segmentMembers = await app.getSegmentMembers.execute({
+      tenantId: TENANT_A,
+      segmentId: "high_value",
+    });
     if (!segmentMembers.ok) throw new Error("unreachable");
     expect(segmentMembers.value.members).toEqual([]);
   });
@@ -1029,11 +1174,13 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
   it("RecalculateMemberships never recomputes an unrelated segment for a changed fact path it does not depend on", async () => {
     const app = wire();
     await app.createSegment.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "High value",
       ruleSet: highValueRuleSet(),
     });
     await app.createSegment.execute({
+      tenantId: TENANT_A,
       id: "email_present",
       name: "Has email",
       ruleSet: {
@@ -1046,6 +1193,7 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
     });
 
     const recalculated = await app.recalculateMemberships.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       changed: ["profile.lifetime_value"],
     });
@@ -1059,40 +1207,47 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
       serializer: new InMemoryEventSerializer(),
       idGenerator: sequentialIds(),
       clock,
-      computedAttributeDefinitions: [
-        {
-          id: "clv_tier",
-          version: 1,
-          ruleSet: {
+      computedAttributeDefinitions: {
+        tenantId: TENANT_A,
+        definitions: [
+          {
             id: "clv_tier",
             version: 1,
-            mode: "first_match",
-            rules: [
-              {
-                id: "gold",
-                priority: 1,
-                when: Expr.where("profile.lifetime_value", "gte", 1000),
-                then: "gold",
-              },
-            ],
-            fallback: "bronze",
+            ruleSet: {
+              id: "clv_tier",
+              version: 1,
+              mode: "first_match",
+              rules: [
+                {
+                  id: "gold",
+                  priority: 1,
+                  when: Expr.where("profile.lifetime_value", "gte", 1000),
+                  then: "gold",
+                },
+              ],
+              fallback: "bronze",
+            },
+            dependencies: [],
           },
-          dependencies: [],
-        },
-      ],
-      segmentDefinitions: [
-        {
-          id: "gold_tier_customers",
-          name: "Gold tier",
-          version: 1,
-          ruleSet: goldTierSegmentRuleSet(),
-          createdAt: "t0",
-          updatedAt: "t0",
-        },
-      ],
+        ],
+      },
+      segmentDefinitions: {
+        tenantId: TENANT_A,
+        definitions: [
+          {
+            id: "gold_tier_customers",
+            name: "Gold tier",
+            version: 1,
+            ruleSet: goldTierSegmentRuleSet(),
+            createdAt: "t0",
+            updatedAt: "t0",
+          },
+        ],
+      },
     });
 
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000,
@@ -1100,9 +1255,10 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
       confidence: "verified",
       occurredAt: clock.now().toISOString(),
     });
-    await app.recalculateComputedAttributes.execute({ identifier: customer });
+    await app.recalculateComputedAttributes.execute({ tenantId: TENANT_A, identifier: customer });
 
     const recalculated = await app.recalculateMemberships.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       changed: ["attributes.clv_tier"],
     });
@@ -1114,11 +1270,13 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
   it("RebuildSegmentMembership and SegmentProjectionWorker rebuild the cache from history", async () => {
     const app = wire();
     await app.createSegment.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "High value",
       ruleSet: highValueRuleSet(),
     });
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000,
@@ -1126,16 +1284,17 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
       confidence: "verified",
       occurredAt: clock.now().toISOString(),
     });
-    await app.recalculateMemberships.execute({ identifier: customer });
+    await app.recalculateMemberships.execute({ tenantId: TENANT_A, identifier: customer });
 
     const rebuilt = await app.rebuildSegmentMembership.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       segmentId: "high_value",
     });
     if (!rebuilt.ok) throw new Error("unreachable");
     expect(rebuilt.value.membership?.status).toBe("entered");
 
-    const worker = await app.segmentProjectionWorker.execute({});
+    const worker = await app.segmentProjectionWorker.execute({ tenantId: TENANT_A });
     if (!worker.ok) throw new Error("unreachable");
     expect(worker.value.rebuilt).toBeGreaterThanOrEqual(1);
     expect(worker.value.failed).toBe(0);
@@ -1144,11 +1303,13 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
   it("SegmentMembershipWorker re-evaluates every known identifier against the full registered segment set", async () => {
     const app = wire();
     await app.createSegment.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "High value",
       ruleSet: highValueRuleSet(),
     });
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000,
@@ -1156,9 +1317,9 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
       confidence: "verified",
       occurredAt: clock.now().toISOString(),
     });
-    await app.recalculateMemberships.execute({ identifier: customer });
+    await app.recalculateMemberships.execute({ tenantId: TENANT_A, identifier: customer });
 
-    const sweep = await app.segmentMembershipWorker.execute({});
+    const sweep = await app.segmentMembershipWorker.execute({ tenantId: TENANT_A });
     if (!sweep.ok) throw new Error("unreachable");
     expect(sweep.value.evaluated).toBe(1);
     expect(sweep.value.failed).toBe(0);
@@ -1167,11 +1328,13 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
   it("UpdateSegment bumps version and re-evaluation carries the new definitionVersion; DeleteSegment never cascades into membership/history", async () => {
     const app = wire();
     await app.createSegment.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "High value",
       ruleSet: highValueRuleSet(),
     });
     await app.updateProfileProjection.execute({
+      tenantId: TENANT_A,
       identifier: customer,
       field: "lifetime_value",
       value: 5000,
@@ -1179,9 +1342,10 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
       confidence: "verified",
       occurredAt: clock.now().toISOString(),
     });
-    await app.recalculateMemberships.execute({ identifier: customer });
+    await app.recalculateMemberships.execute({ tenantId: TENANT_A, identifier: customer });
 
     const updated = await app.updateSegment.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       expectedVersion: 1,
       ruleSet: {
@@ -1201,14 +1365,24 @@ describe("Customer 360 Segmentation Engine (end to end, Phase 6.5)", () => {
     });
     expect(updated.ok).toBe(true);
 
-    const recalculated = await app.recalculateMemberships.execute({ identifier: customer });
+    const recalculated = await app.recalculateMemberships.execute({
+      tenantId: TENANT_A,
+      identifier: customer,
+    });
     if (!recalculated.ok) throw new Error("unreachable");
     expect(recalculated.value.results[0]?.definitionVersion).toBe(2);
 
-    const deleted = await app.deleteSegment.execute({ id: "high_value", expectedVersion: 2 });
+    const deleted = await app.deleteSegment.execute({
+      tenantId: TENANT_A,
+      id: "high_value",
+      expectedVersion: 2,
+    });
     expect(deleted.ok).toBe(true);
 
-    const members = await app.getCustomerSegments.execute({ identifier: customer });
+    const members = await app.getCustomerSegments.execute({
+      tenantId: TENANT_A,
+      identifier: customer,
+    });
     if (!members.ok) throw new Error("unreachable");
     // Existing membership/history survive the definition's deletion — never cascaded.
     expect(members.value.segment.memberships.get("high_value")?.status).toBe("entered");

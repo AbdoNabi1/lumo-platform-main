@@ -7,6 +7,8 @@ import type { BrandRepository } from "../domain/brand-repository";
 
 export interface DeleteBrandInput {
   readonly brandId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface DeleteBrandOutput {
@@ -30,7 +32,7 @@ export class DeleteBrand implements UseCase<DeleteBrandInput, DeleteBrandOutput,
 
   async execute(input: DeleteBrandInput): Promise<Result<DeleteBrandOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DeleteBrandOutput, DomainError>>(async (tx) => {
-      const brand = await this.deps.brands.findById(input.brandId, tx);
+      const brand = await this.deps.brands.findById(input.brandId, input.tenantId, tx);
       if (brand === null) {
         return err(new NotFoundError("Brand not found"));
       }
@@ -40,7 +42,7 @@ export class DeleteBrand implements UseCase<DeleteBrandInput, DeleteBrandOutput,
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.brands.delete(brand, tx);
+      await this.deps.brands.delete(brand, input.tenantId, tx);
       return ok({ brandId: brand.id.toString() });
     });
   }

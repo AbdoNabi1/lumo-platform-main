@@ -34,10 +34,18 @@ model CartItem {
   inventorySnapshot    Json?   @map("inventory_snapshot")
   /// Free-form caller metadata (e.g. selected variant options), stored verbatim (Sprint 4.5).
   metadata             Json?
+  /// Plan 2A: the catalog variant this line sells; null on lines written before variants were tracked.
+  variantRef           String? @map("variant_ref")
+  /// Plan 2A: snapshot of the variant SKU, product title and variant label at add-time.
+  sku                  String?
+  title                String?
+  variantTitle         String? @map("variant_title")
 
   cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
 
-  @@unique([cartId, productRef])
+  // Plan 2A: widened from (cartId, productRef). The migration adds NULLS NOT DISTINCT, which Prisma
+  // cannot express, so legacy variant-less lines stay unique per product.
+  @@unique([cartId, productRef, variantRef])
   @@map("cart_items")
   @@schema("cart")
 }

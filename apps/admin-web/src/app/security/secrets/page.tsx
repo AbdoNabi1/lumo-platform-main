@@ -40,8 +40,8 @@ export default async function SecuritySecretsPage({ searchParams }: SecretsPageP
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.securitySecretsPage.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.securitySecretsPage.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.securitySecretsPage.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.securitySecretsPage.subtitle}</p>
       </header>
 
       <Suspense fallback={<TableCardSkeleton />}>
@@ -102,10 +102,20 @@ export default async function SecuritySecretsPage({ searchParams }: SecretsPageP
 async function SecretExplorerSection({ t }: { readonly t: Dictionary }) {
   const result = await fetchSecretExplorer();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securitySecretsPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securitySecretsPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securitySecretsPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securitySecretsPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -114,16 +124,20 @@ async function SecretExplorerSection({ t }: { readonly t: Dictionary }) {
         <CardTitle>{t.securitySecretsPage.secretsTitle}</CardTitle>
         <div className="flex gap-4 text-sm">
           <span className="text-muted-foreground">
-            {t.securitySecretsPage.total}: <span className="text-foreground font-medium">{data.total}</span>
+            {t.securitySecretsPage.total}:{" "}
+            <span className="text-foreground font-medium">{data.total}</span>
           </span>
           <span className="text-muted-foreground">
-            {t.securitySecretsPage.rotationDue}: <span className="text-foreground font-medium">{data.rotationDue}</span>
+            {t.securitySecretsPage.rotationDue}:{" "}
+            <span className="text-foreground font-medium">{data.rotationDue}</span>
           </span>
         </div>
       </CardHeader>
       <CardContent className="p-0 sm:p-0">
         {data.credentials.length === 0 ? (
-          <p className="text-muted-foreground p-5 text-center text-base">{t.securitySecretsPage.empty}</p>
+          <p className="text-muted-foreground p-5 text-center text-base">
+            {t.securitySecretsPage.empty}
+          </p>
         ) : (
           <Table aria-label={t.securitySecretsPage.secretsTitle}>
             <TableHeader>
@@ -167,7 +181,8 @@ async function CredentialLineageResult({
   readonly t: Dictionary;
 }) {
   const result = await getCredentialLineage(credentialId);
-  if (result.outcome === "unauthorized") return <ResultPanel message={t.securityLookup.unauthorized} />;
+  if (result.outcome === "unauthorized")
+    return <ResultPanel message={t.securityLookup.unauthorized} />;
   if (result.outcome === "not_found") return <ResultPanel message={t.securityLookup.notFound} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;

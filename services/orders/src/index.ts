@@ -26,10 +26,34 @@ export {
   type PaymentTruthShadowPort,
 } from "./application/payment-truth-shadow";
 export type {
+  FulfillmentCancelPort,
   InventoryPort,
   NotificationPort,
+  OrderNumberAllocator,
   PaymentPort,
   PaymentVerificationPort,
+  PaymentVoidPort,
   ShippingPort,
+  StockReleasePort,
 } from "./application/ports";
 export { ORDERS_PUBLISHED_EVENTS } from "./infrastructure/order-event-translator";
+export { derivePaymentStatus, isOpenOrder } from "./domain/order-statuses";
+export {
+  isSalesRangePreset,
+  localDay,
+  MAX_SALES_RANGE_DAYS,
+  previousPresetRange,
+  previousSalesRange,
+  resolveSalesRange,
+  SALES_RANGE_PRESETS,
+  validateSalesRange,
+} from "./application/sales-summary";
+export type { SalesRangePreset } from "./application/sales-summary";
+export type {
+  DailySales,
+  SalesSummary,
+  SalesSummaryInput,
+  TopProduct as SalesTopProduct,
+} from "./application/sales-summary";
+export { RefundPolicy } from "./domain/refund-policy";
+export type { OrderFulfillmentStatus, OrderPaymentStatus } from "./domain/order-statuses";

@@ -11,6 +11,8 @@ export interface CustomerRow {
   readonly id: string;
   readonly email: string;
   readonly name: string;
+  readonly isGuest: boolean;
+  readonly emailVerifiedAt: Date | null;
   readonly version: number;
 }
 export interface AddressRow {
@@ -63,6 +65,8 @@ export class CustomerMapper {
         ),
       ),
       row.version,
+      row.isGuest,
+      row.emailVerifiedAt,
     );
   }
 
@@ -72,6 +76,8 @@ export class CustomerMapper {
       tenantId,
       email: customer.email.value,
       name: customer.name,
+      isGuest: customer.isGuest,
+      emailVerifiedAt: customer.emailVerifiedAt,
       version: 1,
     };
   }

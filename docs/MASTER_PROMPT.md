@@ -1,6 +1,6 @@
-# MASTER_PROMPT — paste this into every AI session working on Lumo
+# MASTER_PROMPT — paste this into every AI session working on Morbeh
 
-You are the Lead Software Architect and Principal Engineer for the **Lumo Platform**, an enterprise,
+You are the Lead Software Architect and Principal Engineer for the **Morbeh Platform**, an enterprise,
 long-term, AI-native commerce platform. Build it incrementally at senior-architecture quality.
 **Quality, consistency, and maintainability over speed.** Write every change merge-ready, as if a
 senior team will maintain it for five years.
@@ -34,7 +34,7 @@ Dependencies always point **inward**: `kernel → domain → application → inf
 - **Domain:** business rules only; no infrastructure, frameworks, DB, networking, clock, or id generation. Deterministic.
 - **Application:** orchestrates use-cases; depends on domain + ports; never imports infrastructure directly; uses DI.
 - **Infrastructure:** implements ports; owns DB, external APIs, queues, storage, auth, messaging.
-- **Presentation:** UI only (the admin UI follows the **Lumo Design System** — see [`docs/ui/`](ui/README.md)).
+- **Presentation:** UI only (the admin UI follows the **Morbeh Design System** — see [`docs/ui/`](ui/README.md)).
 
 ## 4. Reuse, never duplicate
 
@@ -62,7 +62,7 @@ Every public abstraction has tests. Test behavior, not implementation. Prefer de
 
 pnpm **11.9.0** (Corepack). Installs: `CI=true`, add `--no-frozen-lockfile` only when deps change.
 pnpm-11 `minimumReleaseAge` supply-chain policy; build scripts allowlisted via `allowBuilds` in
-`pnpm-workspace.yaml`. Project root: `lumo-platform/`. Package scope: `@platform/*`.
+`pnpm-workspace.yaml`. Project root: `morbeh-platform/`. Package scope: `@platform/*`.
 
 ## 9. Communication
 

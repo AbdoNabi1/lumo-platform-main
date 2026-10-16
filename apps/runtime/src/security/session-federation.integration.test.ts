@@ -44,6 +44,7 @@ function makeEvent<T>(type: string, payload: T): IntegrationEvent<T> {
     occurredAt: new Date("2026-07-19T00:00:00.000Z").toISOString(),
     correlationId: "corr-1",
     causationId: "cause-1",
+    tenantId: TENANT,
     payload,
     metadata: {},
   };
@@ -87,19 +88,19 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
 
   it("ALLOWS a human carrying only a Kratos sid — the mirror is established on first sight", async () => {
     await provision(HUMAN_USER);
-    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     // No Security session exists; the request carries only the upstream sid.
     const denied = await guard.ensure(principal, "orders:read", {
+      tenantId: TENANT,
       sessionId: KRATOS_SID,
       deviceRef: DEVICE,
       ip: "203.0.113.7",
-      tenantId: TENANT,
     });
     expect(denied).toBeNull(); // null ⇒ allowed
 
     // A mirror now exists, bound to the upstream id.
-    const explorer = await wired.security.sessionExplorer();
+    const explorer = await wired.security.sessionExplorer(TENANT);
     const mirror = explorer.sessions.find((s) => s.externalRef === KRATOS_SID);
     expect(mirror?.status).toBe("active");
     expect(wired.telemetry.snapshot()["security.session.federated"]).toBe(1);
@@ -107,9 +108,10 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
 
   it("is the missing half: the same request without a federator fails closed (P2.0.2 behaviour)", async () => {
     await provision(HUMAN_USER);
-    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     const denied = await unfederatedGuard.ensure(principal, "orders:read", {
+      tenantId: TENANT,
       sessionId: KRATOS_SID,
       deviceRef: DEVICE,
     });
@@ -119,17 +121,18 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
 
   it("federates idempotently — repeated requests reuse the one mirror, they do not mint sessions", async () => {
     await provision(HUMAN_USER);
-    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     for (let i = 0; i < 3; i += 1) {
       const denied = await guard.ensure(principal, "orders:read", {
+        tenantId: TENANT,
         sessionId: KRATOS_SID,
         deviceRef: DEVICE,
       });
       expect(denied).toBeNull();
     }
 
-    const explorer = await wired.security.sessionExplorer();
+    const explorer = await wired.security.sessionExplorer(TENANT);
     expect(explorer.sessions.filter((s) => s.externalRef === KRATOS_SID)).toHaveLength(1);
     // Establishment happened once; the other two requests resolved the existing mirror.
     expect(wired.telemetry.snapshot()["security.session.federated"]).toBe(1);
@@ -137,25 +140,33 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
 
   it("refuses to resurrect a REVOKED mirror — revocation actually holds against a replayed sid", async () => {
     await provision(HUMAN_USER);
-    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT };
     expect(
-      await guard.ensure(principal, "orders:read", { sessionId: KRATOS_SID, deviceRef: DEVICE }),
+      await guard.ensure(principal, "orders:read", {
+        tenantId: TENANT,
+        sessionId: KRATOS_SID,
+        deviceRef: DEVICE,
+      }),
     ).toBeNull();
 
     // Revoke the mirror (the "logout everywhere" / compromise path), then replay the same sid.
-    const explorer = await wired.security.sessionExplorer();
+    const explorer = await wired.security.sessionExplorer(TENANT);
     const mirrorId = explorer.sessions.find((s) => s.externalRef === KRATOS_SID)?.id ?? "";
     expect(mirrorId).not.toBe("");
-    const revoked = await wired.security.revokeSession({ sessionId: mirrorId });
+    const revoked = await wired.security.revokeSession({
+      tenantId: TENANT,
+      sessionId: mirrorId,
+    });
     expect(revoked.status).toBeLessThan(300);
 
     const denied = await guard.ensure(principal, "orders:read", {
+      tenantId: TENANT,
       sessionId: KRATOS_SID,
       deviceRef: DEVICE,
     });
     expect(denied?.status).toBe(403);
     // Refused rather than re-established: still exactly one mirror for that sid.
-    const after = await wired.security.sessionExplorer();
+    const after = await wired.security.sessionExplorer(TENANT);
     expect(after.sessions.filter((s) => s.externalRef === KRATOS_SID)).toHaveLength(1);
     expect(wired.telemetry.snapshot()["security.session.federation_rejected"]).toBeGreaterThan(0);
   });
@@ -164,23 +175,34 @@ describe("P2.0.3 external session federation — human zero-trust enforcement", 
     await provision(HUMAN_USER);
     await provision(OTHER_USER);
     expect(
-      await guard.ensure({ id: HUMAN_USER, kind: "staff", roles: [] }, "orders:read", {
-        sessionId: KRATOS_SID,
-        deviceRef: DEVICE,
-      }),
+      await guard.ensure(
+        { id: HUMAN_USER, kind: "staff", roles: [], tenantId: TENANT },
+        "orders:read",
+        {
+          tenantId: TENANT,
+          sessionId: KRATOS_SID,
+          deviceRef: DEVICE,
+        },
+      ),
     ).toBeNull();
 
     // A second principal presenting the first principal's sid gets no session → fail-closed deny.
-    const denied = await guard.ensure({ id: OTHER_USER, kind: "staff", roles: [] }, "orders:read", {
-      sessionId: KRATOS_SID,
-      deviceRef: DEVICE,
-    });
+    const denied = await guard.ensure(
+      { id: OTHER_USER, kind: "staff", roles: [], tenantId: TENANT },
+      "orders:read",
+      {
+        tenantId: TENANT,
+        sessionId: KRATOS_SID,
+        deviceRef: DEVICE,
+      },
+    );
     expect(denied?.status).toBe(403);
     expect(JSON.stringify(denied?.body)).toContain("no valid session");
   });
 
   it("refuses federation for an unprovisioned principal (no principal ⇒ no session ⇒ deny)", async () => {
     const outcome = await wired.sdk.federateSession({
+      tenantId: TENANT,
       principalExternalId: "user-never-provisioned",
       externalRef: "kratos-session-zzz",
       refreshFingerprint: "fp-x",

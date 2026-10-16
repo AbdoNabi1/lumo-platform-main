@@ -32,6 +32,8 @@ function present(i: Incident): IncidentOutput {
 }
 
 export interface OpenIncidentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly title: string;
   readonly severity: IncidentSeverity;
   readonly category: string;
@@ -45,7 +47,7 @@ export class OpenIncident implements UseCase<OpenIncidentInput, IncidentOutput, 
   async execute(input: OpenIncidentInput): Promise<Result<IncidentOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<IncidentOutput, DomainError>>(async (tx) => {
       const reference = input.reference ?? `INC-${this.deps.idGenerator.generate()}`;
-      const existing = await this.deps.incidents.findByReference(reference, tx);
+      const existing = await this.deps.incidents.findByReference(reference, input.tenantId, tx);
       if (existing !== null) return ok(present(existing));
       let incident: Incident;
       try {
@@ -65,8 +67,9 @@ export class OpenIncident implements UseCase<OpenIncidentInput, IncidentOutput, 
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.incidents.save(incident, tx);
+      await this.deps.incidents.save(incident, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: "system",
         action: "security.incident.opened",
         decision: "review",
@@ -82,12 +85,13 @@ type IncidentMutation = (incident: Incident, eventId: string, now: Date) => void
 
 async function advance(
   deps: SecurityDeps,
+  tenantId: string,
   reference: string,
   action: string,
   mutate: IncidentMutation,
 ): Promise<Result<IncidentOutput, DomainError>> {
   return deps.unitOfWork.run<Result<IncidentOutput, DomainError>>(async (tx) => {
-    const incident = await deps.incidents.findByReference(reference, tx);
+    const incident = await deps.incidents.findByReference(reference, tenantId, tx);
     if (incident === null) return err(new NotFoundError("Incident not found"));
     try {
       mutate(incident, deps.idGenerator.generate(), deps.clock.now());
@@ -95,8 +99,9 @@ async function advance(
       if (isDomainError(error)) return err(error);
       throw error;
     }
-    await deps.incidents.save(incident, tx);
+    await deps.incidents.save(incident, tenantId, tx);
     await recordAudit(deps, tx, {
+      tenantId,
       principalRef: "system",
       action,
       decision: "allow",
@@ -108,6 +113,8 @@ async function advance(
 }
 
 export interface TriageIncidentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly reference: string;
   readonly assignee: string;
   readonly note: string;
@@ -116,13 +123,19 @@ export interface TriageIncidentInput {
 export class TriageIncident implements UseCase<TriageIncidentInput, IncidentOutput, DomainError> {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: TriageIncidentInput): Promise<Result<IncidentOutput, DomainError>> {
-    return advance(this.deps, input.reference, "security.incident.triaged", (i, e, n) =>
-      i.triage(input.assignee, input.note, e, n),
+    return advance(
+      this.deps,
+      input.tenantId,
+      input.reference,
+      "security.incident.triaged",
+      (i, e, n) => i.triage(input.assignee, input.note, e, n),
     );
   }
 }
 
 export interface IncidentNoteInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly reference: string;
   readonly note: string;
 }
@@ -130,13 +143,19 @@ export interface IncidentNoteInput {
 export class MitigateIncident implements UseCase<IncidentNoteInput, IncidentOutput, DomainError> {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: IncidentNoteInput): Promise<Result<IncidentOutput, DomainError>> {
-    return advance(this.deps, input.reference, "security.incident.mitigated", (i, e, n) =>
-      i.mitigate(input.note, e, n),
+    return advance(
+      this.deps,
+      input.tenantId,
+      input.reference,
+      "security.incident.mitigated",
+      (i, e, n) => i.mitigate(input.note, e, n),
     );
   }
 }
 
 export interface ResolveIncidentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly reference: string;
   readonly resolution: string;
 }
@@ -144,8 +163,12 @@ export interface ResolveIncidentInput {
 export class ResolveIncident implements UseCase<ResolveIncidentInput, IncidentOutput, DomainError> {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: ResolveIncidentInput): Promise<Result<IncidentOutput, DomainError>> {
-    return advance(this.deps, input.reference, "security.incident.resolved", (i, e, n) =>
-      i.resolve(input.resolution, e, n),
+    return advance(
+      this.deps,
+      input.tenantId,
+      input.reference,
+      "security.incident.resolved",
+      (i, e, n) => i.resolve(input.resolution, e, n),
     );
   }
 }
@@ -154,13 +177,19 @@ export class ResolveIncident implements UseCase<ResolveIncidentInput, IncidentOu
 export class CloseIncident implements UseCase<IncidentNoteInput, IncidentOutput, DomainError> {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: IncidentNoteInput): Promise<Result<IncidentOutput, DomainError>> {
-    return advance(this.deps, input.reference, "security.incident.closed", (i, e, n) =>
-      i.close(input.note, e, n),
+    return advance(
+      this.deps,
+      input.tenantId,
+      input.reference,
+      "security.incident.closed",
+      (i, e, n) => i.close(input.note, e, n),
     );
   }
 }
 
 export interface AddIncidentEvidenceInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly reference: string;
   readonly kind: string;
   readonly ref: string;
@@ -173,8 +202,12 @@ export class AddIncidentEvidence implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: AddIncidentEvidenceInput): Promise<Result<IncidentOutput, DomainError>> {
-    return advance(this.deps, input.reference, "security.incident.evidence_added", (i, e, n) =>
-      i.addEvidence(input.kind, input.ref, e, n),
+    return advance(
+      this.deps,
+      input.tenantId,
+      input.reference,
+      "security.incident.evidence_added",
+      (i, e, n) => i.addEvidence(input.kind, input.ref, e, n),
     );
   }
 }

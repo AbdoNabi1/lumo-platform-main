@@ -1,11 +1,11 @@
 /**
- * `@platform/ui` — the Lumo Design System component library.
+ * `@platform/ui` — the Morbeh Design System component library.
  *
- * These primitives are the only sanctioned way to build a Lumo surface. They consume
+ * These primitives are the only sanctioned way to build a Morbeh surface. They consume
  * semantic tokens from `@platform/design` exclusively; none of them contains a hex value,
  * a raw pixel colour, or a second opinion about the design language.
  *
- * Docs: docs/ui/LUMO_DESIGN_SYSTEM.md
+ * Docs: docs/ui/MORBEH_DESIGN_SYSTEM.md
  */
 
 export * from "./lib/cn";

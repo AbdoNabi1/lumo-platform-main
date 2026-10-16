@@ -3,6 +3,8 @@ import type {
   CreateOrderFromCheckoutInput,
 } from "../application/create-order-from-checkout.use-case";
 import type { GetOrder, GetOrderInput } from "../application/get-order.use-case";
+import type { GetSalesSummary } from "../application/get-sales-summary.use-case";
+import type { SalesSummaryInput } from "../application/sales-summary";
 import type { ListOrders, ListOrdersInput } from "../application/list-orders.use-case";
 import type { MarkOrderPaid, MarkOrderPaidInput } from "../application/mark-order-paid.use-case";
 import type {
@@ -13,6 +15,10 @@ import type {
   RequestPaymentCapture,
 } from "../application/order-lifecycle.use-cases";
 import type { PlaceOrder, PlaceOrderInput } from "../application/place-order.use-case";
+import type {
+  RecordCheckoutPayment,
+  RecordCheckoutPaymentInput,
+} from "../application/record-checkout-payment.use-case";
 import type { RefundOrder, RefundOrderInput } from "../application/refund-order.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
@@ -24,8 +30,10 @@ export interface OrderControllerDeps {
   readonly advanceOrder: AdvanceOrder;
   readonly requestPaymentCapture: RequestPaymentCapture;
   readonly requestFulfillment: RequestFulfillment;
+  readonly recordCheckoutPayment: RecordCheckoutPayment;
   readonly getOrder: GetOrder;
   readonly listOrders: ListOrders;
+  readonly getSalesSummary: GetSalesSummary;
 }
 
 /** Framework-agnostic interface boundary for order use-cases (no HTTP server). */
@@ -64,11 +72,21 @@ export class OrderController {
     return present(await this.deps.requestFulfillment.execute(input), 200);
   }
 
+  /** Links the payment Payments opened for a checkout order to that order (closes G-121). */
+  async recordCheckoutPayment(input: RecordCheckoutPaymentInput): Promise<ControllerResponse> {
+    return present(await this.deps.recordCheckoutPayment.execute(input), 200);
+  }
+
   async getOrder(input: GetOrderInput): Promise<ControllerResponse> {
     return present(await this.deps.getOrder.execute(input), 200);
   }
 
   async listOrders(input: ListOrdersInput): Promise<ControllerResponse> {
     return present(await this.deps.listOrders.execute(input), 200);
+  }
+
+  /** The dashboard's sales figures for one range (Plan 3D); a read model, nothing is written. */
+  async salesSummary(input: SalesSummaryInput): Promise<ControllerResponse> {
+    return present(await this.deps.getSalesSummary.execute(input), 200);
   }
 }

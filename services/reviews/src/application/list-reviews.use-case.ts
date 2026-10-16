@@ -9,6 +9,8 @@ import type { ReviewStatusValue } from "../domain/value-objects/review-status";
 export interface ListReviewsInput extends CursorPage {
   /** Filters to one status — this is what makes the same endpoint the moderation queue. */
   readonly status?: ReviewStatusValue;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface ListReviewsDeps {
@@ -24,7 +26,9 @@ export class ListReviews implements UseCase<ListReviewsInput, Paginated<Review>,
   }
 
   async execute(input: ListReviewsInput): Promise<Result<Paginated<Review>, DomainError>> {
-    const { status, ...page } = input;
-    return ok(await this.deps.reviews.list(page, status !== undefined ? { status } : undefined));
+    const { status, tenantId, ...page } = input;
+    return ok(
+      await this.deps.reviews.list(page, tenantId, status !== undefined ? { status } : undefined),
+    );
   }
 }

@@ -12,6 +12,8 @@ export interface CreateCategoryInput {
   readonly name: string;
   readonly slug: string;
   readonly parentId?: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface CreateCategoryOutput {
@@ -43,7 +45,7 @@ export class CreateCategory implements UseCase<
 
     return this.deps.unitOfWork.run<Result<CreateCategoryOutput, DomainError>>(async (tx) => {
       if (input.parentId !== undefined) {
-        const parent = await this.deps.categories.findById(input.parentId, tx);
+        const parent = await this.deps.categories.findById(input.parentId, input.tenantId, tx);
         if (parent === null) {
           return err(new NotFoundError(`Parent category not found: ${input.parentId}`));
         }
@@ -58,7 +60,7 @@ export class CreateCategory implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.categories.save(category, tx);
+      await this.deps.categories.save(category, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

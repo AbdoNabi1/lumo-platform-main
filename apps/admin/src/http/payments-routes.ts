@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { Order } from "@platform/orders";
-import type { PaymentIntent } from "@platform/payments";
+import { isWellFormedProviderKey, type PaymentIntent } from "@platform/payments";
 import { ValidationError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
@@ -13,7 +13,51 @@ import type { AdminResponse } from "../interfaces/admin-response";
  * re-derives them from the authoritative `Order` (`orders:read`'s own `getOrder`, already wired on
  * this same admin composition) named by `orderRef`.
  */
-const createIntentBody = z.object({ orderRef: z.string().min(1) }).strict();
+/**
+ * A payment method key, checked for SHAPE only. Which keys exist is decided by the providers
+ * registered at composition time, and Payments refuses one nothing registered — this route lists no
+ * provider names, so adding a provider never edits it.
+ */
+const providerKey = z.string().refine(isWellFormedProviderKey, "Malformed payment method key");
+
+const createIntentBody = z
+  .object({
+    orderRef: z.string().min(1),
+    /**
+     * WP-13 decision 3: the payment method is stated by the caller and never inferred. A staff
+     * member opening an intent names the method the customer chose.
+     */
+    provider: providerKey,
+  })
+  .strict();
+const codCollectionBody = z
+  .object({ collectedAmountMinor: z.number().int().positive(), currency: z.string().length(3) })
+  .strict();
+/**
+ * WRITE-ONLY credentials: accepted here, sealed by the vault before storage, never echoed back by
+ * any response (see `MerchantPaymentSettingsDto`, which has no field a secret could occupy).
+ */
+const settingsBody = z
+  .object({
+    enabledMethods: z.array(providerKey).min(1).optional(),
+    /**
+     * Per provider: its own non-secret `config` (shaped and validated by that provider's
+     * registration, not here) and its write-only `credentials` (the field names the provider
+     * declares).
+     */
+    providerSettings: z
+      .record(
+        providerKey,
+        z
+          .object({
+            config: z.record(z.string(), z.unknown()).optional(),
+            credentials: z.record(z.string(), z.string().min(1).max(512)),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict();
 const paymentIntentIdParams = z.object({ paymentIntentId: z.string().min(1) });
 const authorizeBody = z.object({
   pspReference: z.string().min(1),
@@ -36,6 +80,8 @@ const refundBody = z.object({
 export interface PaymentIntentDto {
   readonly id: string;
   readonly orderRef: string;
+  /** The method the shopper selected (a registered provider key). */
+  readonly provider: string;
   readonly status: string;
   readonly currency: string;
   readonly amountMinor: number;
@@ -56,6 +102,7 @@ function toPaymentIntentDto(intent: PaymentIntent): PaymentIntentDto {
   return {
     id: intent.id.toString(),
     orderRef: intent.orderRef,
+    provider: intent.provider,
     status: intent.status.value,
     currency: intent.amount.currency,
     amountMinor: intent.amount.amountMinor,
@@ -86,6 +133,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { body: createIntentBody },
       handle: async ({ body, context }): Promise<AdminResponse> => {
         const orderResponse = await admin.orders.getOrder(context.principal, {
+          tenantId: context.tenantId,
           orderId: body.orderRef,
         });
         if (orderResponse.status < 200 || orderResponse.status >= 300) {
@@ -94,10 +142,52 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         const order = orderResponse.body as Order;
         return admin.payments.createIntent(context.principal, {
           orderRef: body.orderRef,
+          provider: body.provider,
           amountMinor: order.totalAmount().amountMinor,
           currency: order.currency,
+          tenantId: context.tenantId,
         });
       },
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/payments/settings",
+      version: 1,
+      permission: "payments:read_settings",
+      summary: "The merchant's payment settings: which methods are offered (never any credential)",
+      schema: {},
+      handle: ({ context }) =>
+        admin.payments.getSettings(context.principal, { tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "PUT",
+      path: "/payments/settings",
+      version: 1,
+      permission: "payments:update_settings",
+      summary:
+        "Enable/disable payment methods and set each provider's configuration and credentials (write-only; sealed before storage)",
+      schema: { body: settingsBody },
+      handle: ({ body, context }) =>
+        admin.payments.updateSettings(context.principal, {
+          tenantId: context.tenantId,
+          ...body,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/payment-intents/:paymentIntentId/cod-collection",
+      version: 1,
+      permission: "payments:confirm_cod_collection",
+      idempotent: true,
+      summary:
+        "Confirm that cash was collected on delivery — the ONLY action that marks a cash-on-delivery payment paid",
+      schema: { params: paymentIntentIdParams, body: codCollectionBody },
+      handle: ({ params, body, context }) =>
+        admin.payments.confirmCodCollection(context.principal, {
+          tenantId: context.tenantId,
+          paymentIntentId: params.paymentIntentId,
+          ...body,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -111,6 +201,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.payments.authorize(context.principal, {
           paymentIntentId: params.paymentIntentId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -121,7 +212,8 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Request capture from the PSP",
       schema: { params: paymentIntentIdParams },
-      handle: ({ params, context }) => admin.payments.capture(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.payments.capture(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -145,7 +237,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
        * mask a same-key-different-amount tamper attempt instead of rejecting it — the domain-level
        * check (`PaymentIntent.requestRefund`) already does the correct thing. A missing/empty key
        * fails closed (422 VALIDATION, this repo's existing convention for a boundary validation
-       * failure — `pricing-resolution.ts`'s `priceUnresolvedResponse`) rather than silently
+       * failure — `merchandise-resolution.ts`'s `merchandiseUnresolvedResponse`) rather than silently
        * defaulting to unsafe no-dedup behavior, per this mutation's real external PSP effect.
        */
       handle: ({ params, body, context }) => {
@@ -164,6 +256,7 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
           paymentIntentId: params.paymentIntentId,
           ...body,
           idempotencyKey,
+          tenantId: context.tenantId,
         });
       },
     }),
@@ -175,7 +268,10 @@ export function paymentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get a single payment intent",
       schema: { params: paymentIntentIdParams },
       handle: async ({ params, context }): Promise<AdminResponse> => {
-        const response = await admin.payments.getPaymentIntent(context.principal, params);
+        const response = await admin.payments.getPaymentIntent(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) {
           return response;
         }

@@ -33,6 +33,8 @@ import type {
  * instance stamped with the row's current version (never the same in-memory object mutated across
  * reads), exactly like a real DB round-trip.
  */
+const TENANT = "tenant-a";
+
 class TrackingUnitOfWork implements TransactionalUnitOfWork<unknown> {
   openCount = 0;
   async run<T>(work: (context: unknown) => Promise<T>): Promise<T> {
@@ -48,7 +50,7 @@ class TrackingUnitOfWork implements TransactionalUnitOfWork<unknown> {
 class PostgresLikeShipmentRepository implements ShipmentRepository {
   private readonly rows = new Map<string, { shipment: Shipment; version: number }>();
 
-  async save(shipment: Shipment, _tx?: unknown): Promise<void> {
+  async save(shipment: Shipment, _tenantId: string, _tx?: unknown): Promise<void> {
     const id = shipment.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -63,7 +65,7 @@ class PostgresLikeShipmentRepository implements ShipmentRepository {
     this.rows.set(id, { shipment, version: existing.version + 1 });
   }
 
-  async findById(id: string, _tx?: unknown): Promise<Shipment | null> {
+  async findById(id: string, _tenantId: string, _tx?: unknown): Promise<Shipment | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     const s = row.shipment;
@@ -160,12 +162,12 @@ function packages(): readonly ShipmentPackage[] {
 
 async function seedCreatedShipment(shipments: ShipmentRepository, id: string): Promise<void> {
   const shipment = Shipment.create(UniqueEntityId.from(id), "fulfillment-1", packages());
-  await shipments.save(shipment);
+  await shipments.save(shipment, TENANT);
 }
 
 async function seedLabeledShipment(shipments: ShipmentRepository, id: string): Promise<void> {
   await seedCreatedShipment(shipments, id);
-  const shipment = await shipments.findById(id);
+  const shipment = await shipments.findById(id, TENANT);
   if (shipment === null) throw new Error("test fixture: seed failed");
   const labelVo = ShippingLabel.create("label-seed", "track-seed");
   const carrierVo = Carrier.create("ups");
@@ -182,7 +184,7 @@ async function seedLabeledShipment(shipments: ShipmentRepository, id: string): P
     "evt-seed-label",
     clock.now(),
   );
-  await shipments.save(shipment);
+  await shipments.save(shipment, TENANT);
 }
 
 describe("Task 1/2 — exploit proof: carrier createLabel()/voidLabel() run while a DB transaction is open", () => {
@@ -193,7 +195,7 @@ describe("Task 1/2 — exploit proof: carrier createLabel()/voidLabel() run whil
     const carrier = new RecordingCarrierProvider(uow);
     const useCase = new CreateLabel(buildCreateLabelDeps(shipments, uow, carrier));
 
-    const result = await useCase.execute({ shipmentId: "ship-1" });
+    const result = await useCase.execute({ tenantId: TENANT, shipmentId: "ship-1" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("label_created");
@@ -209,7 +211,7 @@ describe("Task 1/2 — exploit proof: carrier createLabel()/voidLabel() run whil
     const carrier = new RecordingCarrierProvider(uow);
     const useCase = new VoidLabel(buildVoidLabelDeps(shipments, uow, carrier));
 
-    const result = await useCase.execute({ shipmentId: "ship-2" });
+    const result = await useCase.execute({ tenantId: TENANT, shipmentId: "ship-2" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("voided");
@@ -236,7 +238,7 @@ describe("Task 1/2 — exploit proof: carrier createLabel()/voidLabel() run whil
     };
     const useCase = new CreateLabel(buildCreateLabelDeps(shipments, uow, carrier));
 
-    await useCase.execute({ shipmentId: "ship-3" });
+    await useCase.execute({ tenantId: TENANT, shipmentId: "ship-3" });
 
     expect(sizeDuringCarrierCall).toBe(1);
   });
@@ -254,11 +256,11 @@ describe("Task 1/2 — carrier-call failure recovery", () => {
     // mutates the shipment — there is no intermediate "label_requested" status to reserve and no
     // in-flight state to unwind on failure. So the correct recovery is simply: nothing changed,
     // rethrow. This mirrors exactly what the pre-fix single-transaction version did on rollback.
-    await expect(useCase.execute({ shipmentId: "ship-fail-1" })).rejects.toThrow(
+    await expect(useCase.execute({ tenantId: TENANT, shipmentId: "ship-fail-1" })).rejects.toThrow(
       /simulated carrier createLabel failure/,
     );
 
-    const persisted = await shipments.findById("ship-fail-1");
+    const persisted = await shipments.findById("ship-fail-1", TENANT);
     expect(persisted?.status.value).toBe("created");
     expect(persisted?.label).toBeUndefined();
   });
@@ -270,11 +272,11 @@ describe("Task 1/2 — carrier-call failure recovery", () => {
     const carrier = new RecordingCarrierProvider(uow, false, true);
     const useCase = new VoidLabel(buildVoidLabelDeps(shipments, uow, carrier));
 
-    await expect(useCase.execute({ shipmentId: "ship-fail-2" })).rejects.toThrow(
+    await expect(useCase.execute({ tenantId: TENANT, shipmentId: "ship-fail-2" })).rejects.toThrow(
       /simulated carrier voidLabel failure/,
     );
 
-    const persisted = await shipments.findById("ship-fail-2");
+    const persisted = await shipments.findById("ship-fail-2", TENANT);
     expect(persisted?.status.value).toBe("label_created");
   });
 });
@@ -287,8 +289,8 @@ describe("Task 1/2 — idempotent resume", () => {
     const carrier = new RecordingCarrierProvider(uow);
     const useCase = new CreateLabel(buildCreateLabelDeps(shipments, uow, carrier));
 
-    const first = await useCase.execute({ shipmentId: "ship-idem-1" });
-    const second = await useCase.execute({ shipmentId: "ship-idem-1" });
+    const first = await useCase.execute({ tenantId: TENANT, shipmentId: "ship-idem-1" });
+    const second = await useCase.execute({ tenantId: TENANT, shipmentId: "ship-idem-1" });
 
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
@@ -303,8 +305,8 @@ describe("Task 1/2 — idempotent resume", () => {
     const carrier = new RecordingCarrierProvider(uow);
     const useCase = new VoidLabel(buildVoidLabelDeps(shipments, uow, carrier));
 
-    const first = await useCase.execute({ shipmentId: "ship-idem-2" });
-    const second = await useCase.execute({ shipmentId: "ship-idem-2" });
+    const first = await useCase.execute({ tenantId: TENANT, shipmentId: "ship-idem-2" });
+    const second = await useCase.execute({ tenantId: TENANT, shipmentId: "ship-idem-2" });
 
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
@@ -330,8 +332,8 @@ describe("Task 1/2 — concurrent-call behavior", () => {
         const useCaseB = new CreateLabel(buildCreateLabelDeps(shipments, uow, carrier));
 
         const [a, b] = await Promise.all([
-          useCaseA.execute({ shipmentId: "ship-concurrent" }),
-          useCaseB.execute({ shipmentId: "ship-concurrent" }),
+          useCaseA.execute({ tenantId: TENANT, shipmentId: "ship-concurrent" }),
+          useCaseB.execute({ tenantId: TENANT, shipmentId: "ship-concurrent" }),
         ]);
 
         // Neither call result leaks an uncaught ConcurrencyError to the caller — `withConcurrencyRetry`
@@ -376,8 +378,8 @@ describe("Task 1/2 — concurrent-call behavior", () => {
         const useCaseB = new VoidLabel(buildVoidLabelDeps(shipments, uow, carrier));
 
         const [a, b] = await Promise.all([
-          useCaseA.execute({ shipmentId: "ship-void-concurrent" }),
-          useCaseB.execute({ shipmentId: "ship-void-concurrent" }),
+          useCaseA.execute({ tenantId: TENANT, shipmentId: "ship-void-concurrent" }),
+          useCaseB.execute({ tenantId: TENANT, shipmentId: "ship-void-concurrent" }),
         ]);
 
         expect(a.ok).toBe(true);

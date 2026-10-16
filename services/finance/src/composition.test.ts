@@ -33,8 +33,10 @@ const staff: Principal = {
   id: "staff-1",
   kind: "staff",
   roles: ["finance:manage", "finance:read"],
+  tenantId: "tenant-1",
 };
-const stranger: Principal = { id: "guest-1", kind: "customer", roles: [] };
+const stranger: Principal = { id: "guest-1", kind: "customer", roles: [], tenantId: "tenant-1" };
+const tenantId = "tenant-1";
 
 function wire(): WiredFinance {
   return wireFinance({
@@ -55,6 +57,7 @@ describe("wireFinance", () => {
   it("creates an account for an authorized principal", async () => {
     const response = await finance.finance.createAccount({
       principal: staff,
+      tenantId,
       code: "1200-AR",
       name: "Accounts Receivable",
       type: "asset",
@@ -65,6 +68,7 @@ describe("wireFinance", () => {
   it("denies an unauthorized principal and still audits the decision", async () => {
     const response = await finance.finance.createAccount({
       principal: stranger,
+      tenantId,
       code: "1200-AR",
       name: "Accounts Receivable",
       type: "asset",
@@ -76,6 +80,7 @@ describe("wireFinance", () => {
   it("denies a step-up command until the principal steps up", async () => {
     const denied = await finance.finance.recordManualAdjustment({
       principal: staff,
+      tenantId,
       sourceRef: "manual:1",
       debitAccountRef: "6000-EXPENSES",
       creditAccountRef: "1000-CASH",
@@ -87,6 +92,7 @@ describe("wireFinance", () => {
     finance.security.markSteppedUp(staff.id);
     const allowed = await finance.finance.recordManualAdjustment({
       principal: staff,
+      tenantId,
       sourceRef: "manual:1",
       debitAccountRef: "6000-EXPENSES",
       creditAccountRef: "1000-CASH",
@@ -99,6 +105,7 @@ describe("wireFinance", () => {
   it("round-trips through create -> trial balance -> read-model query", async () => {
     await finance.finance.createBudget({
       principal: staff,
+      tenantId,
       costCenterRef: "cc-1",
       period: "2026-07",
       amountMinor: 100_000,
@@ -108,6 +115,7 @@ describe("wireFinance", () => {
     finance.security.markSteppedUp(staff.id);
     const posted = await finance.finance.recordManualAdjustment({
       principal: staff,
+      tenantId,
       sourceRef: "manual:2",
       debitAccountRef: "6000-EXPENSES",
       creditAccountRef: "1000-CASH",
@@ -118,6 +126,7 @@ describe("wireFinance", () => {
 
     const trialBalance = await finance.finance.trialBalance({
       principal: staff,
+      tenantId,
       startDate: new Date("2026-07-01T00:00:00Z"),
       endDate: new Date("2026-07-31T23:59:59Z"),
       currency: "USD",

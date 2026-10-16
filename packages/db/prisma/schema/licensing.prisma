@@ -1,9 +1,16 @@
 // `licensing` schema — Plan, Subscription, MerchantFeatureOverride, MerchantCapabilities,
 // UsageCounter, Credit, Invoice (services/licensing). ADR-0018 Sprint 5.5/5.6 addenda.
 
+/// WP-14 (T14.2, Morbeh F-16): PLATFORM-GLOBAL. A plan is defined once by Morbeh and sold to many
+/// merchants, so it carries NO `tenant_id` and — deliberately — NO `tenant_isolation` RLS policy: a
+/// tenant-scoped policy would hide the catalogue from every merchant's read scope. What protects it
+/// instead: writes are reachable only through the platform-only guard in `LicensingController`
+/// (`platformTenantId`), and a published `versions[]` entry is an immutable, deep-frozen snapshot that
+/// a `Subscription` pins by id (`planVersionRef`). See migration `20260924000000_wp14_platform_plans`.
 model Plan {
   id                 String   @id @db.Uuid
-  tenantId           String   @map("tenant_id")
+  /// Provenance only: the tenant this row belonged to before it became platform-global. NEVER a scope.
+  originTenantId     String?  @map("origin_tenant_id")
   key                String
   name               String
   tier               String // free | starter | growth | pro | enterprise | custom
@@ -14,7 +21,7 @@ model Plan {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  @@unique([tenantId, key])
+  @@unique([key])
   @@map("plans")
   @@schema("licensing")
 }
@@ -76,7 +83,12 @@ model UsageCounter {
   tenantId       String    @map("tenant_id")
   tenantRef      String    @map("tenant_ref")
   resource       String
-  amount         Float
+  /// WP-11 (F-07): was Float — binary floating point cannot hold an exact decimal fraction, and
+  /// this column is incremented repeatedly (`recordUsage`), so error compounds. Decimal(19,4)
+  /// per the WP-11 decision (19 total digits, 4 after the point); see migration
+  /// `20260909000000_wp11_float_to_decimal_money_columns` for the exact rounding rule applied to
+  /// existing rows.
+  amount         Decimal   @db.Decimal(19, 4)
   unit           String
   lastRecordedAt DateTime? @map("last_recorded_at")
   version        Int       @default(0)
@@ -92,7 +104,10 @@ model Credit {
   id        String   @id @db.Uuid
   tenantId  String   @map("tenant_id")
   tenantRef String   @map("tenant_ref")
-  amount    Float
+  /// WP-11 (F-07): was Float, same reasoning as UsageCounter.amount above — `consume`/`grant`
+  /// mutate this repeatedly over a credit's lifetime. Decimal(19,4); see migration
+  /// `20260909000000_wp11_float_to_decimal_money_columns` for the rounding rule.
+  amount    Decimal  @db.Decimal(19, 4)
   reason    String
   status    String // granted | consumed | expired
   version   Int      @default(0)
@@ -109,13 +124,83 @@ model Invoice {
   tenantRef         String   @map("tenant_ref")
   subscriptionRef    String   @map("subscription_ref")
   currency          String
+  /// WP-14: `[{ description, amountMinor }]` — `amountMinor` an INTEGER of the currency's minor units.
   lineItems         Json     @default("[]") @map("line_items")
   status            String // draft | issued | paid | failed | voided
   paymentReference  String?  @map("payment_reference")
+  /// T14.3 (D-072): the invoice's ONE coupon discount, in integer minor units of `currency` — NOT a
+  /// negative line item (`Money` is non-negative). Both null or both set (CHECK in the migration).
+  /// `total = sum(lineItems) - discount_minor`. See migration `20260928000000_billing_coupons`.
+  discountMinor     Int?     @map("discount_minor")
+  discountCouponRef String?  @map("discount_coupon_ref")
   version           Int      @default(0)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@map("invoices")
+  @@schema("licensing")
+}
+
+/// G-74 (1): the saved card Morbeh charges to renew a MERCHANT's subscription. Morbeh's record about
+/// a customer of the platform, so it is scoped to the PLATFORM tenant (`tenant_id`, like
+/// `subscriptions`/`invoices`, under `tenant_isolation` RLS) and NEVER to the merchant's own tenant: a
+/// merchant that could read, edit or delete the token that bills it would control whether it gets
+/// billed. `tenant_ref` is the merchant being billed. `sealed_token` is the card token SEALED with the
+/// payments credential vault envelope, bound to `tenant_ref` — never plaintext. One `active` row per
+/// merchant is enforced by a partial unique index that only the migration can express. See migration
+/// `20260924020000_billing_payment_methods`.
+model BillingPaymentMethod {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id")
+  tenantRef       String   @map("tenant_ref")
+  provider        String
+  /// The PSP order id of the interactive first payment: how its token callback is correlated.
+  providerOrderId String   @map("provider_order_id")
+  /// G-74 (8): the invoice `BeginCardEnrolment` started this checkout for — how the billing
+  /// TRANSACTION callback reaches an invoice via the signed `order.id` alone. Nullable: absent on a
+  /// row created before this column existed. See migration `20260927000000_billing_payment_methods_invoice_ref`.
+  invoiceRef      String?  @map("invoice_ref")
+  status          String // pending | active | revoked
+  tokenId         String?  @map("token_id")
+  sealedToken     String?  @map("sealed_token")
+  maskedPan       String?  @map("masked_pan")
+  cardSubtype     String?  @map("card_subtype")
+  version         Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, provider, providerOrderId])
+  @@index([tenantId, tenantRef, status])
+  @@map("billing_payment_methods")
+  @@schema("licensing")
+}
+
+/// T14.3 (D-072): a Morbeh-issued billing coupon — platform-scoped (`tenant_id` is the ADR-0014 platform
+/// scope, RLS forced, exactly like `invoices`), `tenant_ref` the merchant it is ADDRESSED to (null = a
+/// bearer coupon). A percentage carries `percent_basis_points` and no currency; a fixed amount carries
+/// `amount_minor` (integer minor units — never Decimal, never Float) and `currency`; the CHECKs in the
+/// migration make the two shapes exclusive. `version` is the optimistic lock that makes redemption
+/// once-only. See migration `20260928000000_billing_coupons`.
+model BillingCoupon {
+  id                 String    @id @db.Uuid
+  tenantId           String    @map("tenant_id")
+  tenantRef          String?   @map("tenant_ref")
+  code               String
+  kind               String // percentage | fixed
+  percentBasisPoints Int?      @map("percent_basis_points")
+  amountMinor        Int?      @map("amount_minor")
+  currency           String?
+  expiresAt          DateTime  @map("expires_at")
+  status             String // issued | redeemed | expired | revoked
+  redeemedInvoiceRef String?   @map("redeemed_invoice_ref")
+  redeemedAt         DateTime? @map("redeemed_at")
+  revokedReason      String?   @map("revoked_reason")
+  version            Int       @default(0)
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, code])
+  @@index([tenantId, tenantRef, status])
+  @@map("billing_coupons")
   @@schema("licensing")
 }

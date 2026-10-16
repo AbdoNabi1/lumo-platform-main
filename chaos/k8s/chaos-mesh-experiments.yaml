@@ -1,6 +1,6 @@
 # H-5 chaos — Chaos Mesh experiment library (reference). Apply these ONLY on a non-prod cluster that
 # has Chaos Mesh installed (https://chaos-mesh.org). They are declarative equivalents of the shell
-# experiments, for teams that run scheduled game-days. Each is scoped to the lumo-runtime namespace
+# experiments, for teams that run scheduled game-days. Each is scoped to the morbeh-runtime namespace
 # and time-boxed so it auto-reverts.
 ---
 # Pod kill: verify PDB + rolling replacement keep the API available (cf. pod-fault.sh).
@@ -8,12 +8,12 @@ apiVersion: chaos-mesh.org/v1alpha1
 kind: PodChaos
 metadata:
   name: runtime-api-pod-kill
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   action: pod-kill
   mode: one
   selector:
-    namespaces: [lumo-runtime]
+    namespaces: [morbeh-runtime]
     labelSelectors:
       app.kubernetes.io/name: runtime-api
   duration: "30s"
@@ -23,19 +23,19 @@ apiVersion: chaos-mesh.org/v1alpha1
 kind: NetworkChaos
 metadata:
   name: db-latency
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   action: delay
   mode: all
   selector:
-    namespaces: [lumo-runtime]
+    namespaces: [morbeh-runtime]
     labelSelectors:
       app.kubernetes.io/name: runtime-api
   direction: to
   target:
     mode: all
     selector:
-      namespaces: [lumo-data]
+      namespaces: [morbeh-data]
       labelSelectors:
         app: postgres
   delay:
@@ -49,19 +49,19 @@ apiVersion: chaos-mesh.org/v1alpha1
 kind: NetworkChaos
 metadata:
   name: redis-partition
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   action: partition
   mode: all
   selector:
-    namespaces: [lumo-runtime]
+    namespaces: [morbeh-runtime]
     labelSelectors:
       app.kubernetes.io/name: runtime-api
   direction: to
   target:
     mode: all
     selector:
-      namespaces: [lumo-data]
+      namespaces: [morbeh-data]
       labelSelectors:
         app: redis
   duration: "1m"
@@ -71,11 +71,11 @@ apiVersion: chaos-mesh.org/v1alpha1
 kind: StressChaos
 metadata:
   name: runtime-api-memory-stress
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
 spec:
   mode: one
   selector:
-    namespaces: [lumo-runtime]
+    namespaces: [morbeh-runtime]
     labelSelectors:
       app.kubernetes.io/name: runtime-api
   stressors:

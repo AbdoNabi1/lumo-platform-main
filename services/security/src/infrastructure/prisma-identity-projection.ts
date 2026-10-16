@@ -1,5 +1,5 @@
 import type { IdGenerator } from "@platform/contracts";
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type {
   IdentityMembershipRecord,
   IdentityOrganizationRecord,
@@ -9,8 +9,6 @@ import type {
 
 export interface PrismaIdentityProjectionDeps {
   readonly prisma: Database;
-  /** Row scope for every query/write (ADR-0008). */
-  readonly tenantId: string;
   readonly idGenerator: IdGenerator;
 }
 
@@ -24,32 +22,44 @@ export interface PrismaIdentityProjectionDeps {
 export class PrismaIdentityProjectionStore implements IdentityProjectionStore {
   constructor(private readonly deps: PrismaIdentityProjectionDeps) {}
 
-  private reader(tx: unknown): TransactionClient | Database {
-    return (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  /** ADR-0014: reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  private scoped<T>(
+    tenantId: string,
+    tx: unknown,
+    run: (client: TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return tx !== undefined && tx !== null
+      ? run(tx as TransactionClient)
+      : runReadScoped(this.deps.prisma, tenantId, run);
   }
 
-  async upsertUser(record: IdentityUserRecord, tx?: unknown): Promise<void> {
-    const client = this.reader(tx);
-    const existing = await client.securityIdentityUser.findFirst({
-      where: { tenantId: this.deps.tenantId, userId: record.userId },
-    });
-    if (existing === null) {
-      await client.securityIdentityUser.create({
+  async upsertUser(record: IdentityUserRecord, tenantId: string, tx?: unknown): Promise<void> {
+    await this.scoped(tenantId, tx, async (client) => {
+      const existing = await client.securityIdentityUser.findFirst({
+        where: { tenantId, userId: record.userId },
+      });
+      if (existing === null) {
+        await client.securityIdentityUser.create({
+          data: {
+            id: this.deps.idGenerator.generate(),
+            tenantId,
+            userId: record.userId,
+            userTenant: record.userTenant,
+            status: record.status,
+            occurredAt: record.occurredAt,
+          },
+        });
+        return;
+      }
+      if (existing.occurredAt > record.occurredAt) return;
+      await client.securityIdentityUser.updateMany({
+        where: { tenantId, userId: record.userId },
         data: {
-          id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
-          userId: record.userId,
           userTenant: record.userTenant,
           status: record.status,
           occurredAt: record.occurredAt,
         },
       });
-      return;
-    }
-    if (existing.occurredAt > record.occurredAt) return;
-    await client.securityIdentityUser.updateMany({
-      where: { tenantId: this.deps.tenantId, userId: record.userId },
-      data: { userTenant: record.userTenant, status: record.status, occurredAt: record.occurredAt },
     });
   }
 
@@ -57,36 +67,44 @@ export class PrismaIdentityProjectionStore implements IdentityProjectionStore {
     userId: string,
     status: IdentityUserRecord["status"],
     occurredAt: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<void> {
-    const client = this.reader(tx);
-    const existing = await client.securityIdentityUser.findFirst({
-      where: { tenantId: this.deps.tenantId, userId },
-    });
-    if (existing === null) {
-      await client.securityIdentityUser.create({
-        data: {
-          id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
-          userId,
-          userTenant: null,
-          status,
-          occurredAt,
-        },
+    await this.scoped(tenantId, tx, async (client) => {
+      const existing = await client.securityIdentityUser.findFirst({
+        where: { tenantId, userId },
       });
-      return;
-    }
-    if (existing.occurredAt > occurredAt) return;
-    await client.securityIdentityUser.updateMany({
-      where: { tenantId: this.deps.tenantId, userId },
-      data: { status, occurredAt },
+      if (existing === null) {
+        await client.securityIdentityUser.create({
+          data: {
+            id: this.deps.idGenerator.generate(),
+            tenantId,
+            userId,
+            userTenant: null,
+            status,
+            occurredAt,
+          },
+        });
+        return;
+      }
+      if (existing.occurredAt > occurredAt) return;
+      await client.securityIdentityUser.updateMany({
+        where: { tenantId, userId },
+        data: { status, occurredAt },
+      });
     });
   }
 
-  async getUser(userId: string, tx?: unknown): Promise<IdentityUserRecord | null> {
-    const row = await this.reader(tx).securityIdentityUser.findFirst({
-      where: { tenantId: this.deps.tenantId, userId },
-    });
+  async getUser(
+    userId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<IdentityUserRecord | null> {
+    const row = await this.scoped(tenantId, tx, (c) =>
+      c.securityIdentityUser.findFirst({
+        where: { tenantId, userId },
+      }),
+    );
     return row === null
       ? null
       : {
@@ -97,38 +115,46 @@ export class PrismaIdentityProjectionStore implements IdentityProjectionStore {
         };
   }
 
-  async upsertOrganization(record: IdentityOrganizationRecord, tx?: unknown): Promise<void> {
-    const client = this.reader(tx);
-    const existing = await client.securityIdentityOrganization.findFirst({
-      where: { tenantId: this.deps.tenantId, organizationId: record.organizationId },
-    });
-    if (existing === null) {
-      await client.securityIdentityOrganization.create({
-        data: {
-          id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
-          organizationId: record.organizationId,
-          slug: record.slug,
-          orgTenant: record.orgTenant,
-          occurredAt: record.occurredAt,
-        },
+  async upsertOrganization(
+    record: IdentityOrganizationRecord,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<void> {
+    await this.scoped(tenantId, tx, async (client) => {
+      const existing = await client.securityIdentityOrganization.findFirst({
+        where: { tenantId, organizationId: record.organizationId },
       });
-      return;
-    }
-    if (existing.occurredAt > record.occurredAt) return;
-    await client.securityIdentityOrganization.updateMany({
-      where: { tenantId: this.deps.tenantId, organizationId: record.organizationId },
-      data: { slug: record.slug, orgTenant: record.orgTenant, occurredAt: record.occurredAt },
+      if (existing === null) {
+        await client.securityIdentityOrganization.create({
+          data: {
+            id: this.deps.idGenerator.generate(),
+            tenantId,
+            organizationId: record.organizationId,
+            slug: record.slug,
+            orgTenant: record.orgTenant,
+            occurredAt: record.occurredAt,
+          },
+        });
+        return;
+      }
+      if (existing.occurredAt > record.occurredAt) return;
+      await client.securityIdentityOrganization.updateMany({
+        where: { tenantId, organizationId: record.organizationId },
+        data: { slug: record.slug, orgTenant: record.orgTenant, occurredAt: record.occurredAt },
+      });
     });
   }
 
   async getOrganization(
     organizationId: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<IdentityOrganizationRecord | null> {
-    const row = await this.reader(tx).securityIdentityOrganization.findFirst({
-      where: { tenantId: this.deps.tenantId, organizationId },
-    });
+    const row = await this.scoped(tenantId, tx, (c) =>
+      c.securityIdentityOrganization.findFirst({
+        where: { tenantId, organizationId },
+      }),
+    );
     return row === null
       ? null
       : {
@@ -139,34 +165,39 @@ export class PrismaIdentityProjectionStore implements IdentityProjectionStore {
         };
   }
 
-  async upsertMembership(record: IdentityMembershipRecord, tx?: unknown): Promise<void> {
-    const client = this.reader(tx);
-    const existing = await client.securityIdentityMembership.findFirst({
-      where: { tenantId: this.deps.tenantId, membershipId: record.membershipId },
-    });
-    if (existing === null) {
-      await client.securityIdentityMembership.create({
+  async upsertMembership(
+    record: IdentityMembershipRecord,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<void> {
+    await this.scoped(tenantId, tx, async (client) => {
+      const existing = await client.securityIdentityMembership.findFirst({
+        where: { tenantId, membershipId: record.membershipId },
+      });
+      if (existing === null) {
+        await client.securityIdentityMembership.create({
+          data: {
+            id: this.deps.idGenerator.generate(),
+            tenantId,
+            membershipId: record.membershipId,
+            userId: record.userId,
+            organizationId: record.organizationId,
+            role: record.role,
+            occurredAt: record.occurredAt,
+          },
+        });
+        return;
+      }
+      if (existing.occurredAt > record.occurredAt) return;
+      await client.securityIdentityMembership.updateMany({
+        where: { tenantId, membershipId: record.membershipId },
         data: {
-          id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
-          membershipId: record.membershipId,
           userId: record.userId,
           organizationId: record.organizationId,
           role: record.role,
           occurredAt: record.occurredAt,
         },
       });
-      return;
-    }
-    if (existing.occurredAt > record.occurredAt) return;
-    await client.securityIdentityMembership.updateMany({
-      where: { tenantId: this.deps.tenantId, membershipId: record.membershipId },
-      data: {
-        userId: record.userId,
-        organizationId: record.organizationId,
-        role: record.role,
-        occurredAt: record.occurredAt,
-      },
     });
   }
 
@@ -174,26 +205,31 @@ export class PrismaIdentityProjectionStore implements IdentityProjectionStore {
     membershipId: string,
     role: string,
     occurredAt: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<void> {
-    const client = this.reader(tx);
-    const existing = await client.securityIdentityMembership.findFirst({
-      where: { tenantId: this.deps.tenantId, membershipId },
-    });
-    if (existing === null || existing.occurredAt > occurredAt) return; // create precedes role-change; LWW
-    await client.securityIdentityMembership.updateMany({
-      where: { tenantId: this.deps.tenantId, membershipId },
-      data: { role, occurredAt },
+    await this.scoped(tenantId, tx, async (client) => {
+      const existing = await client.securityIdentityMembership.findFirst({
+        where: { tenantId, membershipId },
+      });
+      if (existing === null || existing.occurredAt > occurredAt) return; // create precedes role-change; LWW
+      await client.securityIdentityMembership.updateMany({
+        where: { tenantId, membershipId },
+        data: { role, occurredAt },
+      });
     });
   }
 
   async listMembershipsByUser(
     userId: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<readonly IdentityMembershipRecord[]> {
-    const rows = await this.reader(tx).securityIdentityMembership.findMany({
-      where: { tenantId: this.deps.tenantId, userId },
-    });
+    const rows = await this.scoped(tenantId, tx, (c) =>
+      c.securityIdentityMembership.findMany({
+        where: { tenantId, userId },
+      }),
+    );
     return rows.map((r) => ({
       membershipId: r.membershipId,
       userId: r.userId,

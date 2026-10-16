@@ -4,7 +4,7 @@ import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { mapPage } from "./public-catalog-routes";
-import { resolvePrice, priceUnresolvedResponse } from "./pricing-resolution";
+import { merchandiseUnresolvedResponse, resolveMerchandise } from "./merchandise-resolution";
 
 const createCartBody = z.object({
   customerRef: z.string().min(1).optional(),
@@ -12,14 +12,7 @@ const createCartBody = z.object({
   currency: z.string().length(3),
 });
 const cartIdParams = z.object({ cartId: z.string().min(1) });
-const cartStatusEnum = z.enum([
-  "active",
-  "checked_out",
-  "abandoned",
-  "locked",
-  "saved",
-  "expired",
-]);
+const cartStatusEnum = z.enum(["active", "checked_out", "abandoned", "locked", "saved", "expired"]);
 const cartListQuery = z.object({
   first: z.coerce.number().int().positive().optional(),
   after: z.string().optional(),
@@ -30,6 +23,11 @@ const cartListQuery = z.object({
 
 export interface CartItemDto {
   readonly productRef: string;
+  /** Plan 2A: the variant this line sells, with its snapshot; all null on lines added before variants. */
+  readonly variantRef: string | null;
+  readonly sku: string | null;
+  readonly title: string | null;
+  readonly variantTitle: string | null;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
@@ -64,6 +62,10 @@ function toCartDto(cart: Cart): CartDto {
     isGuest: cart.isGuest,
     items: cart.items.map((item) => ({
       productRef: item.productRef.value,
+      variantRef: item.variantRef ?? null,
+      sku: item.sku ?? null,
+      title: item.title ?? null,
+      variantTitle: item.variantTitle ?? null,
       quantity: item.quantity.value,
       unitPriceAmountMinor: item.unitPrice.amountMinor,
       currency: item.unitPrice.currency,
@@ -78,26 +80,34 @@ function toCartDto(cart: Cart): CartDto {
  * `unitPriceAmountMinor`/`currency` are deliberately NOT accepted here (Phase 17.2 security
  * follow-up to H-01 — same defect on the admin-authenticated surface, same fix). `.strict()` means
  * a request still carrying either field fails zod validation (422) at the boundary; the price is
- * always resolved server-side from Pricing, see {@link resolvePrice} (`./pricing-resolution.ts`).
+ * always resolved server-side from the chosen variant in Catalog (Plan 2A), see
+ * {@link resolveMerchandise} (`./merchandise-resolution.ts`).
  */
 const addItemBody = z
   .object({
     productId: z.string().min(1),
+    variantId: z.string().min(1).optional(),
     quantity: z.number().int().positive(),
     inventoryAvailable: z.number().int().min(0).optional(),
     metadata: z.record(z.unknown()).optional(),
   })
   .strict();
-const removeItemBody = z.object({ productId: z.string().min(1) });
+const removeItemBody = z.object({
+  productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
+});
 const changeQuantityBody = z.object({
   productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
   quantity: z.number().int().positive(),
 });
 /** Same H-01-style remediation as {@link addItemBody} — `unitPriceAmountMinor`/`currency` are never accepted. */
 const replaceVariantBody = z
   .object({
     oldProductId: z.string().min(1),
+    oldVariantId: z.string().min(1).optional(),
     newProductId: z.string().min(1),
+    newVariantId: z.string().min(1).optional(),
     quantity: z.number().int().positive(),
     inventoryAvailable: z.number().int().min(0).optional(),
     metadata: z.record(z.unknown()).optional(),
@@ -121,7 +131,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Open a new cart (customerRef optional — guest cart)",
       schema: { body: createCartBody },
-      handle: ({ body, context }) => admin.cart.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.cart.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -131,13 +142,25 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Add a line to a cart (merges quantity if the product is already present)",
       schema: { params: cartIdParams, body: addItemBody },
       handle: async ({ params, body, context }): Promise<AdminResponse> => {
-        const price = await resolvePrice(admin, body.productId);
-        if (price.status !== "ok") return priceUnresolvedResponse();
+        const { variantId, ...line } = body;
+        const merchandise = await resolveMerchandise(
+          admin,
+          { productId: body.productId, variantId },
+          context.tenantId,
+        );
+        if (merchandise.status !== "ok") return merchandiseUnresolvedResponse(merchandise);
         return admin.cart.addItem(context.principal, {
           cartId: params.cartId,
-          ...body,
-          unitPriceAmountMinor: price.amountMinor,
-          currency: price.currency,
+          ...line,
+          unitPriceAmountMinor: merchandise.amountMinor,
+          currency: merchandise.currency,
+          merchandise: {
+            variantRef: merchandise.variantId,
+            sku: merchandise.sku,
+            title: merchandise.title,
+            variantTitle: merchandise.variantTitle,
+          },
+          tenantId: context.tenantId,
         });
       },
     }),
@@ -150,7 +173,11 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Remove a line from a cart",
       schema: { params: cartIdParams, body: removeItemBody },
       handle: ({ params, body, context }) =>
-        admin.cart.removeItem(context.principal, { cartId: params.cartId, ...body }),
+        admin.cart.removeItem(context.principal, {
+          cartId: params.cartId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -161,7 +188,11 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Change a line's quantity",
       schema: { params: cartIdParams, body: changeQuantityBody },
       handle: ({ params, body, context }) =>
-        admin.cart.changeItemQuantity(context.principal, { cartId: params.cartId, ...body }),
+        admin.cart.changeItemQuantity(context.principal, {
+          cartId: params.cartId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -171,13 +202,25 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Replace a line's product (e.g. a different variant)",
       schema: { params: cartIdParams, body: replaceVariantBody },
       handle: async ({ params, body, context }): Promise<AdminResponse> => {
-        const price = await resolvePrice(admin, body.newProductId);
-        if (price.status !== "ok") return priceUnresolvedResponse();
+        const { newVariantId, ...line } = body;
+        const merchandise = await resolveMerchandise(
+          admin,
+          { productId: body.newProductId, variantId: newVariantId },
+          context.tenantId,
+        );
+        if (merchandise.status !== "ok") return merchandiseUnresolvedResponse(merchandise);
         return admin.cart.replaceVariant(context.principal, {
           cartId: params.cartId,
-          ...body,
-          unitPriceAmountMinor: price.amountMinor,
-          currency: price.currency,
+          ...line,
+          unitPriceAmountMinor: merchandise.amountMinor,
+          currency: merchandise.currency,
+          newMerchandise: {
+            variantRef: merchandise.variantId,
+            sku: merchandise.sku,
+            title: merchandise.title,
+            variantTitle: merchandise.variantTitle,
+          },
+          tenantId: context.tenantId,
         });
       },
     }),
@@ -189,7 +232,11 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Merge a guest cart's lines into this (customer) cart",
       schema: { params: cartIdParams, body: mergeBody },
       handle: ({ params, body, context }) =>
-        admin.cart.merge(context.principal, { targetCartId: params.cartId, ...body }),
+        admin.cart.merge(context.principal, {
+          targetCartId: params.cartId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -199,7 +246,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Lock a cart against further modification",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.lock(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.lock(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -209,7 +257,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Unlock a previously-locked cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.unlock(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.unlock(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -219,7 +268,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Save an active cart for later",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.saveForLater(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.saveForLater(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -229,7 +279,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Restore a saved cart back to active",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.restore(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.restore(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -239,7 +290,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Expire a still-live cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.expire(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.expire(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -249,7 +301,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Clear all lines from an active cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.clear(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.clear(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -259,7 +312,8 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Check out a cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.checkOut(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.checkOut(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -269,17 +323,22 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Abandon an active cart",
       schema: { params: cartIdParams },
-      handle: ({ params, context }) => admin.cart.abandon(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.cart.abandon(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
       path: "/carts",
       version: 1,
       permission: "cart:read",
-      summary: "List carts (cursor pagination; an optional status filter is abandoned-cart recovery)",
+      summary:
+        "List carts (cursor pagination; an optional status filter is abandoned-cart recovery)",
       schema: { querystring: cartListQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.cart.list(context.principal, query), toCartDto),
+        mapPage(
+          await admin.cart.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toCartDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -289,7 +348,10 @@ export function cartRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one cart by id",
       schema: { params: cartIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.cart.get(context.principal, params);
+        const response = await admin.cart.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toCartDto(response.body as Cart) };
       },

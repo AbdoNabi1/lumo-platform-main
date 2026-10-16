@@ -45,6 +45,12 @@ model MediaAsset {
   version   Int      @default(0)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  // Plan 2C-3 — what an image is and how it is described; null for assets registered earlier.
+  contentType String? @map("content_type")
+  byteSize    Int?    @map("byte_size")
+  width       Int?
+  height      Int?
+  alt         String?
 
   @@unique([tenantId, storageKey])
   @@map("media_assets")

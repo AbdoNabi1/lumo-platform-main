@@ -47,9 +47,9 @@ describe("requireProdEnv", () => {
 
   it("returns the real value when set, regardless of APP_ENV", () => {
     vi.stubEnv("APP_ENV", "production");
-    vi.stubEnv("HYDRA_PUBLIC_URL", "https://auth.lumo.example.com");
+    vi.stubEnv("HYDRA_PUBLIC_URL", "https://auth.morbeh.example.com");
     expect(requireProdEnv("HYDRA_PUBLIC_URL", "http://localhost:4444")).toBe(
-      "https://auth.lumo.example.com",
+      "https://auth.morbeh.example.com",
     );
   });
 });
@@ -57,12 +57,12 @@ describe("requireProdEnv", () => {
 describe("optionalEnv", () => {
   it("returns the fallback when unset", () => {
     delete process.env["AUTH_AUDIENCE"];
-    expect(optionalEnv("AUTH_AUDIENCE", "lumo-admin")).toBe("lumo-admin");
+    expect(optionalEnv("AUTH_AUDIENCE", "morbeh-admin")).toBe("morbeh-admin");
   });
 
   it("returns the real value when set, even in production", () => {
     vi.stubEnv("APP_ENV", "production");
     vi.stubEnv("AUTH_AUDIENCE", "custom-audience");
-    expect(optionalEnv("AUTH_AUDIENCE", "lumo-admin")).toBe("custom-audience");
+    expect(optionalEnv("AUTH_AUDIENCE", "morbeh-admin")).toBe("custom-audience");
   });
 });

@@ -16,6 +16,7 @@ import { InMemorySegmentDefinitionRegistry } from "../infrastructure/in-memory-s
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { CreateSegment } from "./create-segment.use-case";
 import { UpdateSegment } from "./update-segment.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -47,6 +48,7 @@ describe("UpdateSegment", () => {
   it("bumps version and publishes SegmentUpdated", async () => {
     const { create, update, definitions, relay } = wire();
     await create.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "High value",
       ruleSet: {
@@ -59,6 +61,7 @@ describe("UpdateSegment", () => {
     await relay.drainOnce();
 
     const result = await update.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       expectedVersion: 1,
       name: "High value (v2)",
@@ -67,7 +70,7 @@ describe("UpdateSegment", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.definition.version).toBe(2);
 
-    const stored = await definitions.getById("high_value");
+    const stored = await definitions.getById("high_value", TENANT_A);
     expect(stored?.name).toBe("High value (v2)");
     expect(await relay.drainOnce()).toBe(1);
   });
@@ -75,6 +78,7 @@ describe("UpdateSegment", () => {
   it("rejects a stale expectedVersion with ConcurrencyError and never applies the write", async () => {
     const { create, update, definitions } = wire();
     await create.execute({
+      tenantId: TENANT_A,
       id: "high_value",
       name: "High value",
       ruleSet: {
@@ -86,14 +90,19 @@ describe("UpdateSegment", () => {
     });
 
     await expect(
-      update.execute({ id: "high_value", expectedVersion: 99, name: "Stale" }),
+      update.execute({ tenantId: TENANT_A, id: "high_value", expectedVersion: 99, name: "Stale" }),
     ).rejects.toBeInstanceOf(ConcurrencyError);
-    expect((await definitions.getById("high_value"))?.name).toBe("High value");
+    expect((await definitions.getById("high_value", TENANT_A))?.name).toBe("High value");
   });
 
   it("rejects updating a segment that does not exist", async () => {
     const { update } = wire();
-    const result = await update.execute({ id: "does_not_exist", expectedVersion: 1, name: "X" });
+    const result = await update.execute({
+      tenantId: TENANT_A,
+      id: "does_not_exist",
+      expectedVersion: 1,
+      name: "X",
+    });
     expect(result.ok).toBe(false);
   });
 });

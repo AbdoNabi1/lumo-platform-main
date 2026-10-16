@@ -21,7 +21,10 @@ function wire(cart = new InMemoryCartPort()) {
 }
 
 async function newWishlistId(app: ReturnType<typeof wire>): Promise<string> {
-  const created = await app.wishlist.create({ customerRef: "customer-1" });
+  const created = await app.wishlist.create({
+    customerRef: "customer-1",
+    tenantId: "tenant-local",
+  });
   expect(created.status).toBe(201);
   return (created.body as { wishlistId: string }).wishlistId;
 }
@@ -32,15 +35,27 @@ describe("wishlist (end to end)", () => {
     const app = wire(cart);
     const id = await newWishlistId(app);
 
-    const added = await app.wishlist.addItem({ wishlistId: id, productRef: "product-1" });
+    const added = await app.wishlist.addItem({
+      wishlistId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
     expect(added.status).toBe(200);
     expect((added.body as { itemCount: number }).itemCount).toBe(1);
 
-    const shared = await app.wishlist.shareItem({ wishlistId: id, productRef: "product-1" });
+    const shared = await app.wishlist.shareItem({
+      wishlistId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
     expect(shared.status).toBe(200);
     expect((shared.body as { shareToken: string }).shareToken).toBeTruthy();
 
-    const moved = await app.wishlist.moveItemToCart({ wishlistId: id, productRef: "product-1" });
+    const moved = await app.wishlist.moveItemToCart({
+      wishlistId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
     expect(moved.status).toBe(200);
     expect((moved.body as { itemCount: number }).itemCount).toBe(0);
     expect(cart.addedItems).toHaveLength(1);
@@ -54,29 +69,48 @@ describe("wishlist (end to end)", () => {
   it("adding the same product twice is idempotent", async () => {
     const app = wire();
     const id = await newWishlistId(app);
-    await app.wishlist.addItem({ wishlistId: id, productRef: "product-1" });
-    const replay = await app.wishlist.addItem({ wishlistId: id, productRef: "product-1" });
+    await app.wishlist.addItem({
+      wishlistId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
+    const replay = await app.wishlist.addItem({
+      wishlistId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
     expect((replay.body as { itemCount: number }).itemCount).toBe(1);
   });
 
   it("rejects creating a second wishlist for the same customer (409)", async () => {
     const app = wire();
     await newWishlistId(app);
-    const response = await app.wishlist.create({ customerRef: "customer-1" });
+    const response = await app.wishlist.create({
+      customerRef: "customer-1",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(409);
   });
 
   it("rejects adding an item to an archived wishlist (409)", async () => {
     const app = wire();
     const id = await newWishlistId(app);
-    await app.wishlist.advance({ wishlistId: id, toStatus: "archived" });
-    const response = await app.wishlist.addItem({ wishlistId: id, productRef: "product-1" });
+    await app.wishlist.advance({ wishlistId: id, toStatus: "archived", tenantId: "tenant-local" });
+    const response = await app.wishlist.addItem({
+      wishlistId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(409);
   });
 
   it("returns 404 for an unknown wishlist", async () => {
     const app = wire();
-    const response = await app.wishlist.addItem({ wishlistId: "missing", productRef: "product-1" });
+    const response = await app.wishlist.addItem({
+      wishlistId: "missing",
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(404);
   });
 });

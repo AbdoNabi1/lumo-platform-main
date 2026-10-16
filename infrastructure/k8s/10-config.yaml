@@ -5,17 +5,17 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: lumo-runtime-config
-  namespace: lumo-runtime
+  name: morbeh-runtime-config
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
 data:
   APP_ENV: "production"
   NODE_ENV: "production"
   PORT: "3080"
-  REDIS_KEY_PREFIX: "lumo:"
+  REDIS_KEY_PREFIX: "morbeh:"
   KAFKA_BROKERS: "redpanda.data.svc.cluster.local:9092"
-  KAFKA_CLIENT_ID: "lumo-runtime"
+  KAFKA_CLIENT_ID: "morbeh-runtime"
   KETO_READ_URL: "http://keto.data.svc.cluster.local:4466"
   # H-2 (G-SEC-4): the live Ory identity binding. Required outside APP_ENV=local (config.ts
   # superRefine) — without these three the runtime fails closed at boot rather than falling back to
@@ -24,10 +24,10 @@ data:
   KRATOS_PUBLIC_URL: "http://kratos.data.svc.cluster.local:4433"
   KRATOS_ADMIN_URL: "http://kratos.data.svc.cluster.local:4434"
   # AUTH_ISSUER_URL must equal the token `iss` claim exactly (Hydra's public issuer).
-  AUTH_ISSUER_URL: "https://auth.lumo.example.com/"
+  AUTH_ISSUER_URL: "https://auth.morbeh.example.com/"
   # JWKS may be resolved in-cluster; keys are cached lazily by the verifier.
   AUTH_JWKS_URL: "http://hydra.data.svc.cluster.local:4444/.well-known/jwks.json"
-  AUTH_AUDIENCE: "lumo-admin"
+  AUTH_AUDIENCE: "morbeh-admin"
   TENANT_DEFAULT_ID: "tenant-local"
   OUTBOX_RETENTION_DAYS: "7"
   # Phase A.13 (Task 1/2): explicit production pool size — matches the value already declared as
@@ -41,7 +41,7 @@ data:
   # P2.0.1 (blocker B): activate OpenTelemetry export to the collector so traces + OTel metrics
   # (incl. the security dashboards) receive data. The collector is provisioned in the observability
   # plane; disable by setting these to "false" if no collector is present.
-  OTEL_SERVICE_NAME: "lumo-runtime"
+  OTEL_SERVICE_NAME: "morbeh-runtime"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
   OTEL_TRACES_ENABLED: "true"
   OTEL_METRICS_ENABLED: "true"
@@ -61,4 +61,4 @@ data:
   # (KAFKA_CONNECT_CDC_CONNECTORS=lumo-outbox, CDC_WATCHDOG_INTERVAL_MS=30000,
   # CDC_WATCHDOG_MAX_RESTARTS=5, CDC_WATCHDOG_RESTART_WINDOW_MS=3600000) — no production-specific
   # override is justified by any evidence gathered in this phase.
-  KAFKA_CONNECT_URL: "http://debezium-connect.lumo-runtime.svc.cluster.local:8083"
+  KAFKA_CONNECT_URL: "http://debezium-connect.morbeh-runtime.svc.cluster.local:8083"

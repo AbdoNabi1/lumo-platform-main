@@ -1,3 +1,4 @@
+import { staticProviders } from "./test-support/static-provider-resolver";
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
@@ -41,7 +42,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, 1);
   }
 
-  async save(intent: PaymentIntent): Promise<void> {
+  async save(intent: PaymentIntent, _tenantId: string): Promise<void> {
     const id = intent.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -56,7 +57,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, existing.intentRow.version + 1);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
+  async findById(id: string, _tenantId: string): Promise<PaymentIntent | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     return PaymentIntentMapper.toDomain(
@@ -67,11 +68,11 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     );
   }
 
-  async findByIdempotencyKey(): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(_key: string, _tenantId: string): Promise<PaymentIntent | null> {
     return null;
   }
 
-  async findByPspReference(pspReference: string): Promise<PaymentIntent | null> {
+  async findByPspReference(pspReference: string, _tenantId: string): Promise<PaymentIntent | null> {
     for (const row of this.rows.values()) {
       if (row.intentRow.pspReference === pspReference) {
         return PaymentIntentMapper.toDomain(
@@ -123,7 +124,12 @@ function seedProcessingIntent(
   id: string,
   amountMinor: number,
 ): void {
-  const pi = PaymentIntent.createIntent(UniqueEntityId.from(id), `order-${id}`, usd(amountMinor));
+  const pi = PaymentIntent.createIntent(
+    UniqueEntityId.from(id),
+    `order-${id}`,
+    usd(amountMinor),
+    "stripe",
+  );
   pi.markProcessing("seed-1", new Date(0));
   pi.pullDomainEvents();
   repo.seed(pi);
@@ -136,7 +142,7 @@ function buildDeps(repo: PostgresLikePaymentIntentRepository): PaymentLifecycleD
     idGenerator: sequentialIds("evt"),
     clock,
     // Not used by AuthorizePayment; provided to satisfy the shared deps shape.
-    paymentProvider: {
+    providers: staticProviders({
       createIntent: () => {
         throw new Error("not used");
       },
@@ -144,7 +150,7 @@ function buildDeps(repo: PostgresLikePaymentIntentRepository): PaymentLifecycleD
       cancel: async () => {},
       refund: async () => {},
       verifyWebhook: async () => true,
-    },
+    }),
   };
 }
 
@@ -155,6 +161,7 @@ describe("Task 1/14 — AuthorizePayment retried for an already-authorized inten
     const lifecycle = new AuthorizePayment(buildDeps(repo));
 
     const input = {
+      tenantId: "tenant-a",
       paymentIntentId: "pi-auth-retry",
       pspReference: "psp-ref-1",
       paymentMethodToken: "tok_abc",
@@ -172,7 +179,7 @@ describe("Task 1/14 — AuthorizePayment retried for an already-authorized inten
     expect(second.ok).toBe(true);
     if (second.ok) expect(second.value.status).toBe("authorized");
 
-    const final = await repo.findById("pi-auth-retry");
+    const final = await repo.findById("pi-auth-retry", "tenant-a");
     expect(final?.status.value).toBe("authorized");
     // No duplicate authorize attempt recorded — the second call was a pure no-op read, not a second write.
     expect(final?.attempts.filter((a) => a.kind === "authorize")).toHaveLength(1);
@@ -184,6 +191,7 @@ describe("Task 1/14 — AuthorizePayment retried for an already-authorized inten
     const lifecycle = new AuthorizePayment(buildDeps(repo));
 
     const first = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-auth-conflict",
       pspReference: "psp-ref-A",
       paymentMethodToken: "tok_abc",
@@ -193,6 +201,7 @@ describe("Task 1/14 — AuthorizePayment retried for an already-authorized inten
     expect(first.ok).toBe(true);
 
     const conflicting = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-auth-conflict",
       pspReference: "psp-ref-B", // different PSP reference — not the same logical retry
       paymentMethodToken: "tok_abc",
@@ -202,7 +211,7 @@ describe("Task 1/14 — AuthorizePayment retried for an already-authorized inten
     expect(conflicting.ok).toBe(false);
     if (!conflicting.ok) expect(conflicting.error.code).toBe("BUSINESS_RULE");
 
-    const final = await repo.findById("pi-auth-conflict");
+    const final = await repo.findById("pi-auth-conflict", "tenant-a");
     expect(final?.pspReference?.value).toBe("psp-ref-A"); // untouched by the rejected conflicting call
   });
 
@@ -212,6 +221,7 @@ describe("Task 1/14 — AuthorizePayment retried for an already-authorized inten
     const lifecycle = new AuthorizePayment(buildDeps(repo));
 
     const authorized = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-auth-captured",
       pspReference: "psp-ref-1",
       paymentMethodToken: "tok_abc",
@@ -219,13 +229,14 @@ describe("Task 1/14 — AuthorizePayment retried for an already-authorized inten
     });
     expect(authorized.ok).toBe(true);
 
-    const intent = await repo.findById("pi-auth-captured");
+    const intent = await repo.findById("pi-auth-captured", "tenant-a");
     if (intent === null) throw new Error("fixture missing");
     intent.requestCapture("evt-cap-req", new Date(0));
     intent.markCaptured("evt-cap", new Date(0));
-    await repo.save(intent);
+    await repo.save(intent, "tenant-a");
 
     const reAuthorize = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-auth-captured",
       pspReference: "psp-ref-1",
       paymentMethodToken: "tok_abc",

@@ -21,12 +21,22 @@ function leaves(value: unknown, path: string[] = []): Leaf[] {
 /** Keys whose Arabic value is legitimately identical to English (keyboard glyphs, symbols). */
 const SHARED_VERBATIM = new Set([
   "topbar.searchHint",
+  // Plan 3B — order page templates that carry only placeholders and a symbol, no words: "{status}
+  // ({count})", "{price} × {quantity}", and the em dash for "no payment method". Nothing to translate.
+  "orderPage.fulfillmentTitle",
+  "orderPage.unitTimesQuantity",
+  "orderPage.noPaymentMethod",
   "securityAuditPage.timelineColumns.sequence",
   // The ISO-8601 format token an operator must type literally into the `effectiveFrom`/
   // `effectiveTo` text inputs (`app/pricing/page.tsx`) — a machine format string, not natural
   // language, so it stays identical in both locales, same rationale as `topbar.searchHint`'s
   // "Ctrl K" above.
   "pricingPage.datetimePlaceholder",
+  // Plan 3C - shipping rate texts that are only placeholders and a symbol, no words: "{min} - {max}"
+  // and the dash for "no condition". Nothing to translate (same rationale as the 3B entries above).
+  "shippingSettings.between",
+  "shippingSettings.noCondition",
+  "taxSettings.noOverrides",
   // T5.9a — the three `ContentBlock` body format names (`ContentCreateForm`'s format `<select>`).
   // "HTML"/"Markdown"/"JSON" are technical format identifiers, not natural-language words, and are
   // conventionally left untransliterated in Arabic UI copy — same rationale as the entries above.
@@ -62,6 +72,26 @@ const SHARED_VERBATIM = new Set([
   "securityAccessPage.publishPolicyVersion.rulesPlaceholder",
   "securityAccessPage.checkAccess.abacPlaceholder",
   "securityAccessPage.registerPolicyFragment.expressionPlaceholder",
+  // Plan 2B-3 — value suggestions for an option the merchant names in English ("Size", "Color")
+  // while the dashboard is in Arabic. The Arabic names ("المقاس", "اللون") have their own lists;
+  // these two are the same words as the English dictionary on purpose, because they are the values
+  // the merchant will type into a Latin-named option.
+  "productEditor.valueSuggestions.size.0",
+  "productEditor.valueSuggestions.size.1",
+  "productEditor.valueSuggestions.size.2",
+  "productEditor.valueSuggestions.size.3",
+  "productEditor.valueSuggestions.size.4",
+  "productEditor.valueSuggestions.size.5",
+  "productEditor.valueSuggestions.color.0",
+  "productEditor.valueSuggestions.color.1",
+  "productEditor.valueSuggestions.color.2",
+  "productEditor.valueSuggestions.color.3",
+  "productEditor.valueSuggestions.color.4",
+  "productEditor.valueSuggestions.color.5",
+  "productEditor.valueSuggestions.color.6",
+  "productEditor.valueSuggestions.color.7",
+  "productEditor.valueSuggestions.color.8",
+  "productEditor.valueSuggestions.color.9",
 ]);
 
 describe("locales", () => {

@@ -1,18 +1,34 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { Prisma } from "@prisma/client";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
 import { ConcurrencyError } from "@platform/utils";
 import type { Promotion } from "../domain/promotion";
-import type { PromotionRepository } from "../domain/promotion-repository";
-import { PromotionMapper, type PromotionRow } from "./promotion.mapper";
+import type { AdminPromotionQuery, PromotionRepository } from "../domain/promotion-repository";
+import { PromotionMapper, promotionRowFromRecord } from "./promotion.mapper";
 
 export interface PrismaPromotionRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
+}
+
+/** Prisma requires an explicit SQL-NULL sentinel for nullable `Json?` columns — bare `null` is ambiguous. */
+function jsonOrDbNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  return value === null || value === undefined ? Prisma.DbNull : value;
+}
+
+/** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
 }
 
 /** Production `PromotionRepository` on the `promotions` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -23,28 +39,39 @@ export class PrismaPromotionRepository implements PromotionRepository {
     this.deps = deps;
   }
 
-  async save(promotion: Promotion, tx?: unknown): Promise<void> {
+  async save(promotion: Promotion, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const promotionId = promotion.id.toString();
     const row = PromotionMapper.toRow(promotion, tenantId);
 
+    const data = {
+      name: row.name,
+      ruleType: row.ruleType,
+      scope: row.scope,
+      targetRefs: row.targetRefs,
+      minimumQuantity: row.minimumQuantity,
+      minimumSubtotalAmountMinor: row.minimumSubtotalAmountMinor,
+      reward: row.reward as Prisma.InputJsonValue,
+      stackable: row.stackable,
+      priority: row.priority,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      customerRefs: jsonOrDbNull(row.customerRefs),
+      segmentRefs: jsonOrDbNull(row.segmentRefs),
+      campaignRef: row.campaignRef,
+      usageLimit: row.usageLimit,
+      usageCount: row.usageCount,
+      status: row.status,
+      method: row.method,
+      discountClass: row.discountClass,
+      combinesWith: row.combinesWith as Prisma.InputJsonValue,
+    };
     if (promotion.version === 0) {
-      await client.promotion.create({
-        data: {
-          ...row,
-          reward: row.reward,
-          targetRefs: row.targetRefs,
-        },
-      });
+      await client.promotion.create({ data: { id: row.id, tenantId, ...data } });
     } else {
       const updated = await client.promotion.updateMany({
         where: { id: promotionId, tenantId, version: promotion.version },
-        data: {
-          usageCount: row.usageCount,
-          status: row.status,
-          version: { increment: 1 },
-        },
+        data: { ...data, version: { increment: 1 } },
       });
       if (updated.count === 0) {
         throw new ConcurrencyError(
@@ -53,94 +80,108 @@ export class PrismaPromotionRepository implements PromotionRepository {
       }
     }
 
-    await this.deps.outbox.write(promotion.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      promotion.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Promotion | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.promotion.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Promotion | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.promotion.findFirst({ where: { id, tenantId } }),
+    );
     if (row === null) return null;
-    return PromotionMapper.toDomain(this.toMapperRow(row));
+    return PromotionMapper.toDomain(promotionRowFromRecord(row));
   }
 
-  async findActive(tx?: unknown): Promise<readonly Promotion[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.promotion.findMany({
-      where: { tenantId: this.deps.tenantId, status: "active" },
-    });
-    return rows.map((row) => PromotionMapper.toDomain(this.toMapperRow(row)));
+  async findActive(tenantId: string, tx?: unknown): Promise<readonly Promotion[]> {
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.promotion.findMany({
+        where: { tenantId, status: "active" },
+      }),
+    );
+    return rows.map((row) => PromotionMapper.toDomain(promotionRowFromRecord(row)));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Promotion>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Promotion>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.promotion.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.promotion.findMany({
+        where: {
+          tenantId,
+          ...(after ? { id: { gt: after } } : {}),
+        },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
-      rows.map((row) => PromotionMapper.toDomain(this.toMapperRow(row))),
+      rows.map((row) => PromotionMapper.toDomain(promotionRowFromRecord(row))),
       limit,
       (p) => p.id.toString(),
     );
   }
 
-  private toMapperRow(row: {
-    readonly id: string;
-    readonly name: string;
-    readonly ruleType: string;
-    readonly scope: string;
-    readonly targetRefs: unknown;
-    readonly minimumQuantity: number | null;
-    readonly minimumSubtotalAmountMinor: number | null;
-    readonly reward: unknown;
-    readonly stackable: boolean;
-    readonly priority: number;
-    readonly startsAt: Date;
-    readonly endsAt: Date | null;
-    readonly customerRefs: unknown;
-    readonly segmentRefs: unknown;
-    readonly campaignRef: string | null;
-    readonly usageLimit: number | null;
-    readonly usageCount: number;
-    readonly status: string;
-    readonly version: number;
-  }): PromotionRow {
-    const reward = row.reward as {
-      type: string;
-      buyQuantity?: number;
-      getQuantity?: number;
-      value?: number;
+  async findActiveAutomatic(tenantId: string, tx?: unknown): Promise<readonly Promotion[]> {
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.promotion.findMany({ where: { tenantId, status: "active", method: "automatic" } }),
+    );
+    return rows.map((row) => PromotionMapper.toDomain(promotionRowFromRecord(row)));
+  }
+
+  async listForAdmin(
+    query: AdminPromotionQuery,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<Promotion>> {
+    const after = query.after !== undefined ? decodeCursor(query.after) : undefined;
+    const limit = normalizePageSize(query.first);
+    const now = query.now;
+    const view: Prisma.PromotionWhereInput =
+      query.view === "active"
+        ? {
+            status: "active",
+            startsAt: { lte: now },
+            OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+          }
+        : query.view === "scheduled"
+          ? { status: { in: ["active", "scheduled"] }, startsAt: { gt: now } }
+          : query.view === "expired"
+            ? {
+                OR: [
+                  { status: { in: ["draft", "paused", "expired", "depleted", "cancelled"] } },
+                  { endsAt: { lte: now } },
+                ],
+              }
+            : {};
+    const search = query.search?.trim();
+    const where: Prisma.PromotionWhereInput = {
+      AND: [
+        { tenantId, status: { not: "archived" } },
+        view,
+        ...(search === undefined || search === ""
+          ? []
+          : [
+              {
+                OR: [
+                  { name: { contains: search, mode: "insensitive" as const } },
+                  { id: { in: [...(query.alsoIds ?? [])] } },
+                ],
+              },
+            ]),
+        ...(after === undefined ? [] : [{ id: { lt: after } }]),
+      ],
     };
-    return {
-      id: row.id,
-      name: row.name,
-      ruleType: row.ruleType as PromotionRow["ruleType"],
-      scope: row.scope as PromotionRow["scope"],
-      targetRefs: row.targetRefs as readonly string[],
-      minimumQuantity: row.minimumQuantity ?? undefined,
-      minimumSubtotalAmountMinor: row.minimumSubtotalAmountMinor ?? undefined,
-      rewardType: reward.type as PromotionRow["rewardType"],
-      rewardValue: reward.value,
-      buyQuantity: reward.buyQuantity,
-      getQuantity: reward.getQuantity,
-      stackable: row.stackable,
-      priority: row.priority,
-      startsAt: row.startsAt,
-      endsAt: row.endsAt,
-      customerRefs: row.customerRefs as readonly string[] | null,
-      segmentRefs: row.segmentRefs as readonly string[] | null,
-      campaignRef: row.campaignRef,
-      usageLimit: row.usageLimit,
-      usageCount: row.usageCount,
-      status: row.status,
-      version: row.version,
-    };
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.promotion.findMany({ where, orderBy: { id: "desc" }, take: limit + 1 }),
+    );
+    return buildPaginatedPage(
+      rows.map((row) => PromotionMapper.toDomain(promotionRowFromRecord(row))),
+      limit,
+      (p) => p.id.toString(),
+    );
   }
 
   private requireTx(tx: unknown): TransactionClient {

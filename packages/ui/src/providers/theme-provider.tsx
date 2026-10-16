@@ -4,7 +4,7 @@ import * as React from "react";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 
 /**
- * App-wide theme provider for the Lumo Design System.
+ * App-wide theme provider for the Morbeh Design System.
  *
  * Puts `.dark` on `<html>` so the dark semantic tokens in `@platform/design/styles.css`
  * take over. Three modes are supported — light, dark, and system — with system as the

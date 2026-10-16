@@ -20,7 +20,7 @@ describe.runIf(Boolean(databaseUrl))("PrismaIdentityProjectionStore (integration
 
   function store() {
     const prisma = createTestPrismaClient(databaseUrl);
-    return new PrismaIdentityProjectionStore({ prisma, tenantId, idGenerator: ids });
+    return new PrismaIdentityProjectionStore({ prisma, idGenerator: ids });
   }
 
   it("projects users/orgs/memberships, transitions status, updates role, and enforces LWW", async () => {
@@ -29,41 +29,50 @@ describe.runIf(Boolean(databaseUrl))("PrismaIdentityProjectionStore (integration
     const org = `o-${crypto.randomUUID()}`;
     const mem = `m-${crypto.randomUUID()}`;
 
-    await s.upsertUser({
-      userId: user,
-      userTenant: "t1",
-      status: "active",
-      occurredAt: "2026-07-18T00:00:00.000Z",
-    });
-    expect((await s.getUser(user))?.status).toBe("active");
+    await s.upsertUser(
+      {
+        userId: user,
+        userTenant: "t1",
+        status: "active",
+        occurredAt: "2026-07-18T00:00:00.000Z",
+      },
+      tenantId,
+    );
+    expect((await s.getUser(user, tenantId))?.status).toBe("active");
 
-    await s.setUserStatus(user, "deactivated", "2026-07-18T01:00:00.000Z");
-    const u = await s.getUser(user);
+    await s.setUserStatus(user, "deactivated", "2026-07-18T01:00:00.000Z", tenantId);
+    const u = await s.getUser(user, tenantId);
     expect(u?.status).toBe("deactivated");
     expect(u?.userTenant).toBe("t1"); // preserved
 
     // Older redelivery ignored.
-    await s.setUserStatus(user, "active", "2026-07-18T00:30:00.000Z");
-    expect((await s.getUser(user))?.status).toBe("deactivated");
+    await s.setUserStatus(user, "active", "2026-07-18T00:30:00.000Z", tenantId);
+    expect((await s.getUser(user, tenantId))?.status).toBe("deactivated");
 
-    await s.upsertOrganization({
-      organizationId: org,
-      slug: "acme",
-      orgTenant: "t1",
-      occurredAt: "2026-07-18T00:00:00.000Z",
-    });
-    await s.upsertMembership({
-      membershipId: mem,
-      userId: user,
-      organizationId: org,
-      role: "member",
-      occurredAt: "2026-07-18T00:10:00.000Z",
-    });
-    await s.setMembershipRole(mem, "admin", "2026-07-18T00:20:00.000Z");
+    await s.upsertOrganization(
+      {
+        organizationId: org,
+        slug: "acme",
+        orgTenant: "t1",
+        occurredAt: "2026-07-18T00:00:00.000Z",
+      },
+      tenantId,
+    );
+    await s.upsertMembership(
+      {
+        membershipId: mem,
+        userId: user,
+        organizationId: org,
+        role: "member",
+        occurredAt: "2026-07-18T00:10:00.000Z",
+      },
+      tenantId,
+    );
+    await s.setMembershipRole(mem, "admin", "2026-07-18T00:20:00.000Z", tenantId);
 
-    const memberships = await s.listMembershipsByUser(user);
+    const memberships = await s.listMembershipsByUser(user, tenantId);
     expect(memberships).toHaveLength(1);
     expect(memberships[0]?.role).toBe("admin");
-    expect((await s.getOrganization(org))?.slug).toBe("acme");
+    expect((await s.getOrganization(org, tenantId))?.slug).toBe("acme");
   });
 });

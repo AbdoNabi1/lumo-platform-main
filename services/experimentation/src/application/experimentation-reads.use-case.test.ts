@@ -40,6 +40,7 @@ function createInput(name: string) {
       { key: "treatment", allocationPercentage: 50, isControl: false },
     ],
     goalMetricRef: "conversion_rate",
+    tenantId: "tenant-1",
   };
 }
 
@@ -51,7 +52,7 @@ describe("Experimentation read use-cases (Phase 4 T4.17)", () => {
       await create.execute(createInput(`experiment-${i}`));
     }
 
-    const page = await new ListExperiments(h).execute({ first: 2 });
+    const page = await new ListExperiments(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -60,6 +61,7 @@ describe("Experimentation read use-cases (Phase 4 T4.17)", () => {
     const rest = await new ListExperiments(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -75,12 +77,16 @@ describe("Experimentation read use-cases (Phase 4 T4.17)", () => {
 
     const found = await new GetExperiment(h).execute({
       experimentId: created.value.experimentId,
+      tenantId: "tenant-1",
     });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.name).toBe("Checkout button color");
 
-    const missing = await new GetExperiment(h).execute({ experimentId: "nope" });
+    const missing = await new GetExperiment(h).execute({
+      experimentId: "nope",
+      tenantId: "tenant-1",
+    });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

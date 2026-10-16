@@ -32,22 +32,17 @@ describe.runIf(Boolean(databaseUrl))("Prisma reporting repositories — list (in
       clock,
       producer: "reporting",
     });
-    const context = rootEventContext(ids, tenantId);
-    const reportDefinitions = new PrismaReportDefinitionRepository({
-      prisma,
-      tenantId,
-      outbox,
-      context,
-    });
-    const dashboards = new PrismaDashboardRepository({ prisma, tenantId, outbox, context });
+    const context = rootEventContext(ids);
+    const reportDefinitions = new PrismaReportDefinitionRepository({ prisma, outbox, context });
+    const dashboards = new PrismaDashboardRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       reportDefinitions,
       dashboards,
       saveDefinition: (d: ReportDefinition) =>
-        unitOfWork.run((tx) => reportDefinitions.save(d, tx)),
-      saveDashboard: (d: Dashboard) => unitOfWork.run((tx) => dashboards.save(d, tx)),
+        unitOfWork.run((tx) => reportDefinitions.save(d, tenantId, tx)),
+      saveDashboard: (d: Dashboard) => unitOfWork.run((tx) => dashboards.save(d, tenantId, tx)),
     };
   }
 
@@ -59,18 +54,28 @@ describe.runIf(Boolean(databaseUrl))("Prisma reporting repositories — list (in
 
     for (let i = 0; i < 3; i += 1) {
       await saveDefinition(
-        ReportDefinition.create(UniqueEntityId.from(ids.generate()), `report-${i}`, "table", [], [], []),
+        ReportDefinition.create(
+          UniqueEntityId.from(ids.generate()),
+          `report-${i}`,
+          "table",
+          [],
+          [],
+          [],
+        ),
       );
     }
     await saveOther(
       ReportDefinition.create(UniqueEntityId.from(ids.generate()), "report-x", "table", [], [], []),
     );
 
-    const page = await reportDefinitions.list({ first: 2 });
+    const page = await reportDefinitions.list({ first: 2 }, tenantId);
     expect(page.items).toHaveLength(2);
     expect(page.pageInfo.hasNextPage).toBe(true);
 
-    const rest = await reportDefinitions.list({ first: 10, after: page.pageInfo.endCursor ?? undefined });
+    const rest = await reportDefinitions.list(
+      { first: 10, after: page.pageInfo.endCursor ?? undefined },
+      tenantId,
+    );
     expect(rest.items).toHaveLength(1);
     expect(rest.pageInfo.hasNextPage).toBe(false);
 
@@ -84,15 +89,20 @@ describe.runIf(Boolean(databaseUrl))("Prisma reporting repositories — list (in
     const { saveDashboard: saveOther } = wire(other);
 
     for (let i = 0; i < 3; i += 1) {
-      await saveDashboard(Dashboard.create(UniqueEntityId.from(ids.generate()), `dashboard-${i}`, []));
+      await saveDashboard(
+        Dashboard.create(UniqueEntityId.from(ids.generate()), `dashboard-${i}`, []),
+      );
     }
     await saveOther(Dashboard.create(UniqueEntityId.from(ids.generate()), "dashboard-x", []));
 
-    const page = await dashboards.list({ first: 2 });
+    const page = await dashboards.list({ first: 2 }, tenantId);
     expect(page.items).toHaveLength(2);
     expect(page.pageInfo.hasNextPage).toBe(true);
 
-    const rest = await dashboards.list({ first: 10, after: page.pageInfo.endCursor ?? undefined });
+    const rest = await dashboards.list(
+      { first: 10, after: page.pageInfo.endCursor ?? undefined },
+      tenantId,
+    );
     expect(rest.items).toHaveLength(1);
     expect(rest.pageInfo.hasNextPage).toBe(false);
 

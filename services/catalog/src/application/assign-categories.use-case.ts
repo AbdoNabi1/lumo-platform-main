@@ -10,6 +10,8 @@ import { CategoryRef } from "../domain/value-objects/category-ref";
 export interface AssignCategoriesInput {
   readonly productId: string;
   readonly categoryIds: readonly string[];
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface AssignCategoriesOutput {
@@ -47,18 +49,18 @@ export class AssignCategories implements UseCase<
     }
 
     return this.deps.unitOfWork.run<Result<AssignCategoriesOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }
       for (const ref of refs) {
-        const category = await this.deps.categories.findById(ref.categoryId, tx);
+        const category = await this.deps.categories.findById(ref.categoryId, input.tenantId, tx);
         if (category === null) {
           return err(new NotFoundError(`Category not found: ${ref.categoryId}`));
         }
       }
       product.assignCategories(refs, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.products.save(product, tx);
+      await this.deps.products.save(product, input.tenantId, tx);
       return ok({ productId: product.id.toString() });
     });
   }

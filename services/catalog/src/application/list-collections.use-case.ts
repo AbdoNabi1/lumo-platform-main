@@ -7,6 +7,8 @@ import type { CollectionRepository } from "../domain/collection-repository";
 
 export interface ListCollectionsInput extends CursorPage {
   readonly query?: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface ListCollectionsDeps {
@@ -26,11 +28,11 @@ export class ListCollections implements UseCase<
   }
 
   async execute(input: ListCollectionsInput): Promise<Result<Paginated<Collection>, DomainError>> {
-    const { query, ...page } = input;
+    const { query, tenantId, ...page } = input;
     return ok(
       query !== undefined
-        ? await this.deps.collections.search(query, page)
-        : await this.deps.collections.list(page),
+        ? await this.deps.collections.search(query, page, tenantId)
+        : await this.deps.collections.list(page, tenantId),
     );
   }
 }

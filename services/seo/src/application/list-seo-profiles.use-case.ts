@@ -5,19 +5,27 @@ import type { DomainError } from "@platform/utils";
 import type { SeoProfileRepository } from "../domain/repositories";
 import type { SeoProfile } from "../domain/seo-profile";
 
+export interface ListSeoProfilesInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListSeoProfilesDeps {
   readonly profiles: SeoProfileRepository;
 }
 
 /** Cursor-paginated SEO-profile listing. */
-export class ListSeoProfiles implements UseCase<CursorPage, Paginated<SeoProfile>, DomainError> {
+export class ListSeoProfiles implements UseCase<
+  ListSeoProfilesInput,
+  Paginated<SeoProfile>,
+  DomainError
+> {
   private readonly deps: ListSeoProfilesDeps;
 
   constructor(deps: ListSeoProfilesDeps) {
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<SeoProfile>, DomainError>> {
-    return ok(await this.deps.profiles.list(input));
+  async execute(input: ListSeoProfilesInput): Promise<Result<Paginated<SeoProfile>, DomainError>> {
+    return ok(await this.deps.profiles.list(input, input.tenantId));
   }
 }

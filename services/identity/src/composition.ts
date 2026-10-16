@@ -13,18 +13,24 @@ import {
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { AddAddress } from "./application/add-address.use-case";
 import { ChangeConsent } from "./application/change-consent.use-case";
+import { CompleteSignup } from "./application/complete-signup.use-case";
 import { GetCustomer } from "./application/get-customer.use-case";
+import { GetCustomerContacts } from "./application/get-customer-contacts.use-case";
 import { ListCustomers } from "./application/list-customers.use-case";
 import { AddMembership, ChangeMembershipRole } from "./application/membership.use-cases";
 import { ArchiveOrganization, CreateOrganization } from "./application/organization.use-cases";
 import { RegisterCustomer } from "./application/register-customer.use-case";
+import { RequestSignupLink } from "./application/request-signup-link.use-case";
+import { ResolveGuestCustomer } from "./application/resolve-guest-customer.use-case";
+import type { TokenPort } from "./application/token-port";
 import { CreateUser, DeactivateUser, RenameUser } from "./application/user.use-cases";
 import type {
   MembershipRepository,
   OrganizationRepository,
   UserRepository,
 } from "./domain/access-repositories";
-import type { CustomerRepository } from "./domain/customer-repository";
+import type { CustomerContactReader, CustomerRepository } from "./domain/customer-repository";
+import type { SignupTokenRepository } from "./domain/signup-token-repository";
 import { IdentityEventTranslator } from "./infrastructure/identity-event-translator";
 import {
   InMemoryMembershipRepository,
@@ -32,13 +38,16 @@ import {
   InMemoryUserRepository,
 } from "./infrastructure/in-memory-access-repositories";
 import { InMemoryCustomerRepository } from "./infrastructure/in-memory-customer-repository";
+import { InMemorySignupTokenRepository } from "./infrastructure/in-memory-signup-token-repository";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
+import { NodeTokenPort } from "./infrastructure/node-token-port";
 import {
   PrismaMembershipRepository,
   PrismaOrganizationRepository,
   PrismaUserRepository,
 } from "./infrastructure/prisma-access-repositories";
 import { PrismaCustomerRepository } from "./infrastructure/prisma-customer-repository";
+import { PrismaSignupTokenRepository } from "./infrastructure/prisma-signup-token-repository";
 import { AccessController } from "./interfaces/access.controller";
 import { CustomerController } from "./interfaces/customer.controller";
 
@@ -47,16 +56,14 @@ export interface IdentityWiringDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   /**
-   * Production persistence (G-39/C-01). Present ⇒ `PrismaCustomerRepository` (tenant-scoped via
-   * injected `tenantId`, same convention as `wireOrders`) + `PrismaUserRepository`/
-   * `PrismaOrganizationRepository`/`PrismaMembershipRepository` (tenant-scoped via the aggregate's
-   * own `tenantId` field instead — `PrismaAccessRepositoryDeps` takes no `tenantId`, an existing,
-   * different-but-real convention in this file, unchanged here) + `PrismaUnitOfWork`; absent ⇒
-   * in-memory, unchanged.
+   * Production persistence (G-39/C-01). Present ⇒ `PrismaCustomerRepository` (ADR-0014, WP-10
+   * T10.3: per-call `tenantId`, no `deps.tenantId` — same shape as `PrismaUserRepository`/
+   * `PrismaOrganizationRepository`/`PrismaMembershipRepository`) + `PrismaUnitOfWork`; absent ⇒
+   * in-memory, unchanged. No repository built here is tenant-pinned any more, so `wireIdentity`
+   * itself takes no `tenantId` (a caller's `deps` object may still carry one for an unrelated
+   * wireX call sharing the same literal — an unused excess field, not consumed here).
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) for the Customer repository. */
-  readonly tenantId?: string;
 }
 
 export interface WiredIdentity {
@@ -68,7 +75,8 @@ export interface WiredIdentity {
 }
 
 interface IdentityRepos {
-  readonly customers: CustomerRepository;
+  readonly customers: CustomerRepository & CustomerContactReader;
+  readonly signupTokens: SignupTokenRepository;
   readonly users: UserRepository;
   readonly organizations: OrganizationRepository;
   readonly memberships: MembershipRepository;
@@ -79,14 +87,36 @@ function buildControllers(
   repos: IdentityRepos,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   deps: IdentityWiringDeps,
+  tokenPort: TokenPort,
 ): { customers: CustomerController; access: AccessController } {
-  const { customers, users, organizations, memberships } = repos;
+  const { customers, signupTokens, users, organizations, memberships } = repos;
 
   const controller = new CustomerController({
     registerCustomer: new RegisterCustomer({
       customers,
       unitOfWork,
       idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    }),
+    resolveGuestCustomer: new ResolveGuestCustomer({
+      customers,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    }),
+    requestSignupLink: new RequestSignupLink({
+      customers,
+      signupTokens,
+      tokenPort,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    }),
+    completeSignup: new CompleteSignup({
+      customers,
+      signupTokens,
+      tokenPort,
+      unitOfWork,
       clock: deps.clock,
     }),
     addAddress: new AddAddress({ customers, unitOfWork, idGenerator: deps.idGenerator }),
@@ -98,6 +128,7 @@ function buildControllers(
     }),
     getCustomer: new GetCustomer({ customers }),
     listCustomers: new ListCustomers({ customers }),
+    getCustomerContacts: new GetCustomerContacts({ customers }),
   });
 
   const access = new AccessController({
@@ -153,11 +184,10 @@ function buildControllers(
  * `PrismaUnitOfWork`) when `prisma` is present; else in-memory.
  */
 export function wireIdentity(deps: IdentityWiringDeps): WiredIdentity {
+  // Stateless (no deps of its own) — one instance is enough for either branch (G-72).
+  const tokenPort: TokenPort = new NodeTokenPort();
+
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireIdentity: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new IdentityEventTranslator(),
@@ -165,16 +195,19 @@ export function wireIdentity(deps: IdentityWiringDeps): WiredIdentity {
       clock: deps.clock,
       producer: "identity",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see IdentityWiringDeps'
+    // doc comment) — every repository built below takes tenantId per call instead.
+    const context = rootEventContext(deps.idGenerator);
     const accessDeps = { prisma: deps.prisma, outbox, context };
     const repos: IdentityRepos = {
-      customers: new PrismaCustomerRepository({ prisma: deps.prisma, tenantId, outbox, context }),
+      customers: new PrismaCustomerRepository({ prisma: deps.prisma, outbox, context }),
+      signupTokens: new PrismaSignupTokenRepository({ prisma: deps.prisma }),
       users: new PrismaUserRepository(accessDeps),
       organizations: new PrismaOrganizationRepository(accessDeps),
       memberships: new PrismaMembershipRepository(accessDeps),
     };
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
-    const controllers = buildControllers(repos, unitOfWork, deps);
+    const controllers = buildControllers(repos, unitOfWork, deps, tokenPort);
 
     return { ...controllers, drainOutbox: async () => 0, deliveredEventTypes: [] };
   }
@@ -191,12 +224,13 @@ export function wireIdentity(deps: IdentityWiringDeps): WiredIdentity {
 
   const repos: IdentityRepos = {
     customers: new InMemoryCustomerRepository({ outbox: outboxWriter, context }),
+    signupTokens: new InMemorySignupTokenRepository(),
     users: new InMemoryUserRepository({ outbox: outboxWriter, context }),
     organizations: new InMemoryOrganizationRepository({ outbox: outboxWriter, context }),
     memberships: new InMemoryMembershipRepository({ outbox: outboxWriter, context }),
   };
   const unitOfWork = new InMemoryUnitOfWork();
-  const controllers = buildControllers(repos, unitOfWork, deps);
+  const controllers = buildControllers(repos, unitOfWork, deps, tokenPort);
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];

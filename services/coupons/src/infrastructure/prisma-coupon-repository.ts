@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -11,8 +11,6 @@ export interface PrismaCouponRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `CouponRepository` on the `coupons` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -23,9 +21,8 @@ export class PrismaCouponRepository implements CouponRepository {
     this.deps = deps;
   }
 
-  async save(coupon: Coupon, tx?: unknown): Promise<void> {
+  async save(coupon: Coupon, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const couponId = coupon.id.toString();
     const row = CouponMapper.toRow(coupon, tenantId);
 
@@ -37,6 +34,9 @@ export class PrismaCouponRepository implements CouponRepository {
       const updated = await client.coupon.updateMany({
         where: { id: couponId, tenantId, version: coupon.version },
         data: {
+          code: row.code,
+          multiUse: row.multiUse,
+          usageLimit: row.usageLimit,
           usageCount: row.usageCount,
           status: row.status,
           redemptions: row.redemptions,
@@ -50,29 +50,81 @@ export class PrismaCouponRepository implements CouponRepository {
       }
     }
 
-    await this.deps.outbox.write(coupon.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      coupon.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Coupon | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.coupon.findFirst({ where: { id, tenantId: this.deps.tenantId } });
-    if (row === null) return null;
-    return CouponMapper.toDomain(this.toMapperRow(row));
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Coupon | null> {
+    const run = (client: TransactionClient) => client.coupon.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : CouponMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findByCode(code: string, tx?: unknown): Promise<Coupon | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.coupon.findFirst({ where: { code, tenantId: this.deps.tenantId } });
-    if (row === null) return null;
-    return CouponMapper.toDomain(this.toMapperRow(row));
+  async findByCode(code: string, tenantId: string, tx?: unknown): Promise<Coupon | null> {
+    const run = (client: TransactionClient) =>
+      client.coupon.findFirst({ where: { code, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : CouponMapper.toDomain(this.toMapperRow(row));
   }
 
-  async hasRedemption(couponId: string, idempotencyKey: string, tx?: unknown): Promise<boolean> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.coupon.findFirst({
-      where: { id: couponId, tenantId: this.deps.tenantId },
-      select: { redemptions: true },
-    });
+  async findByPromotionRefs(
+    promotionRefs: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Coupon[]> {
+    if (promotionRefs.length === 0) return [];
+    const run = (client: TransactionClient) =>
+      client.coupon.findMany({ where: { tenantId, promotionRef: { in: [...promotionRefs] } } });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return rows.map((row) => CouponMapper.toDomain(this.toMapperRow(row)));
+  }
+
+  async findPromotionRefsByCode(
+    fragment: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly string[]> {
+    const run = (client: TransactionClient) =>
+      client.coupon.findMany({
+        where: { tenantId, code: { contains: fragment.trim().toUpperCase() } },
+        select: { promotionRef: true },
+        take: 50,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return [...new Set(rows.map((row) => row.promotionRef))];
+  }
+
+  async hasRedemption(
+    couponId: string,
+    idempotencyKey: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<boolean> {
+    const run = (client: TransactionClient) =>
+      client.coupon.findFirst({
+        where: { id: couponId, tenantId },
+        select: { redemptions: true },
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     if (row === null) return false;
     // Prisma's `JsonValue` union has no structural overlap with a concrete element shape
     // (comparability fails, not just assignability).
@@ -80,18 +132,19 @@ export class PrismaCouponRepository implements CouponRepository {
     return redemptions.some((r) => r.idempotencyKey === idempotencyKey);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Coupon>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Coupon>> {
     const limit = normalizePageSize(page.first);
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
-    const rows = await client.coupon.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after !== undefined ? { id: { lt: after } } : {}),
-      },
-      orderBy: { id: "desc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.coupon.findMany({
+        where: { tenantId, ...(after !== undefined ? { id: { lt: after } } : {}) },
+        orderBy: { id: "desc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     const coupons = rows.map((row) => CouponMapper.toDomain(this.toMapperRow(row)));
     return buildPaginatedPage(coupons, limit, (coupon) => coupon.id.toString());
   }

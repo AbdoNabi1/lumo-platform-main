@@ -8,8 +8,12 @@ import type { InventoryItemRepository } from "../domain/inventory-item-repositor
 import { WarehouseId } from "../domain/value-objects/warehouse-id";
 
 export interface ReleaseReservationInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly productId: string;
   readonly warehouseId: string;
+  /** Plan 2B-1: the variant whose stock this is; absent = the product's only row (legacy). */
+  readonly variantId?: string;
   readonly reservationId: string;
 }
 
@@ -48,7 +52,9 @@ export class ReleaseReservation implements UseCase<
       const item = await this.deps.items.findByProductAndWarehouse(
         product.value.value,
         warehouse.value.value,
+        input.tenantId,
         tx,
+        input.variantId,
       );
       if (item === null) {
         return err(new NotFoundError("Inventory item not found"));
@@ -65,7 +71,7 @@ export class ReleaseReservation implements UseCase<
         throw error;
       }
 
-      await this.deps.items.save(item, tx);
+      await this.deps.items.save(item, input.tenantId, tx);
       return ok({ available: item.stockLevel.available });
     });
   }

@@ -83,7 +83,8 @@ export function reviewsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary:
         "Create a review (one per customer/product; verified-purchase decided by OrdersPort)",
       schema: { body: createReviewBody },
-      handle: ({ body, context }) => admin.reviews.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.reviews.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -94,7 +95,11 @@ export function reviewsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Advance a review's status (publish/reject/flag/remove)",
       schema: { params: reviewIdParams, body: advanceReviewBody },
       handle: ({ params, body, context }) =>
-        admin.reviews.advance(context.principal, { reviewId: params.reviewId, ...body }),
+        admin.reviews.advance(context.principal, {
+          reviewId: params.reviewId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -105,7 +110,11 @@ export function reviewsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Record (or replace) a helpful/unhelpful vote",
       schema: { params: reviewIdParams, body: voteReviewBody },
       handle: ({ params, body, context }) =>
-        admin.reviews.vote(context.principal, { reviewId: params.reviewId, ...body }),
+        admin.reviews.vote(context.principal, {
+          reviewId: params.reviewId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -115,7 +124,11 @@ export function reviewsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Record an abuse report (auto-flags once the threshold is reached)",
       schema: { params: reviewIdParams, body: reportReviewBody },
       handle: ({ params, body, context }) =>
-        admin.reviews.report(context.principal, { reviewId: params.reviewId, ...body }),
+        admin.reviews.report(context.principal, {
+          reviewId: params.reviewId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -126,7 +139,11 @@ export function reviewsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Record the merchant's response to a review",
       schema: { params: reviewIdParams, body: respondReviewBody },
       handle: ({ params, body, context }) =>
-        admin.reviews.respond(context.principal, { reviewId: params.reviewId, ...body }),
+        admin.reviews.respond(context.principal, {
+          reviewId: params.reviewId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -137,17 +154,25 @@ export function reviewsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Apply a moderator action (replay-safe by actionId)",
       schema: { params: reviewIdParams, body: moderateReviewBody },
       handle: ({ params, body, context }) =>
-        admin.reviews.moderate(context.principal, { reviewId: params.reviewId, ...body }),
+        admin.reviews.moderate(context.principal, {
+          reviewId: params.reviewId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
       path: "/reviews",
       version: 1,
       permission: "reviews:read",
-      summary: "List reviews (cursor pagination; an optional status filter is the moderation queue)",
+      summary:
+        "List reviews (cursor pagination; an optional status filter is the moderation queue)",
       schema: { querystring: reviewListQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.reviews.list(context.principal, query), toReviewDto),
+        mapPage(
+          await admin.reviews.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toReviewDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -158,7 +183,11 @@ export function reviewsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       schema: { params: productRefParams, querystring: pageQuery },
       handle: async ({ params, query, context }) =>
         mapPage(
-          await admin.reviews.listByProduct(context.principal, { productRef: params.productRef, ...query }),
+          await admin.reviews.listByProduct(context.principal, {
+            productRef: params.productRef,
+            ...query,
+            tenantId: context.tenantId,
+          }),
           toReviewDto,
         ),
     }),
@@ -170,7 +199,10 @@ export function reviewsRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one review by id",
       schema: { params: reviewIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.reviews.get(context.principal, params);
+        const response = await admin.reviews.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toReviewDto(response.body as Review) };
       },

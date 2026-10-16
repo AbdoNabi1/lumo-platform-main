@@ -18,7 +18,7 @@ export class GetExperience implements UseCase<ExperienceIdInput, Experience, Dom
   }
 
   async execute(input: ExperienceIdInput): Promise<Result<Experience, DomainError>> {
-    const experience = await this.deps.experiences.findById(input.experienceId);
+    const experience = await this.deps.experiences.findById(input.experienceId, input.tenantId);
     return experience === null ? err(new NotFoundError("Experience not found")) : ok(experience);
   }
 }

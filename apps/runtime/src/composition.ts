@@ -12,10 +12,10 @@ import {
   PrismaOutboxStore,
   PrismaProcessedEventStore,
   PrismaUnitOfWork,
+  runReadScoped,
   type Database,
 } from "@platform/db";
-import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import type { EventSerializer } from "@platform/domain-events";
+import { JsonEventSerializer, type EventSerializer } from "@platform/domain-events";
 import { HealthRegistry } from "@platform/health";
 import { CryptoIdGenerator } from "@platform/id";
 import {
@@ -39,8 +39,24 @@ import {
   type PaymentCapturedPayload,
   type PaymentVerificationPort,
 } from "@platform/orders";
-import { wirePayments, type PaymentController } from "@platform/payments";
+import {
+  EnvelopePaymentCredentialVault,
+  wirePayments,
+  type PaymentController,
+  type PaymentCredentialVault,
+  type ProviderRegistration,
+} from "@platform/payments";
+import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
+import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
+import {
+  PlatformBillingPaymentsAdapter,
+  wireLicensing,
+  type PaymentsPort,
+  type StoredMethodBillingDeps,
+  type WiredLicensing,
+} from "@platform/licensing";
+import { buildPlatformBillingStoredMethod } from "./platform-billing-stored-method";
 import {
   NodeCrypto,
   TotpMfaProvider,
@@ -58,8 +74,16 @@ import {
   RedisRateLimiter,
   type RedisHandle,
 } from "@platform/redis";
-import { CachedAccessControl, JwtVerifier, KetoAccessControl } from "@platform/auth";
-import { createSecretProvider } from "@platform/secrets";
+import {
+  CachedAccessControl,
+  JwtVerifier,
+  KetoAccessControl,
+  NativeTokenIssuer,
+  RoleTableAccessControl,
+  loadSigningKey,
+  localKeyResolver,
+} from "@platform/auth";
+import { EnvelopeCipher, KeyAliasRegistry, createSecretProvider } from "@platform/secrets";
 import { createS3Client, S3StorageService } from "@platform/storage";
 import { logger, type Logger } from "@platform/utils";
 import type { RuntimeConfig } from "./config";
@@ -71,7 +95,8 @@ import {
   TrackingRegistryHandle,
   TrackingRegistryWatcher,
 } from "./tracking/tracking-registry-handle";
-import { wireTrackingRuntime } from "./tracking/wire-tracking-runtime";
+import { TenantRuntimes } from "./tracking/tenant-runtimes";
+import { wireTrackingRuntime, type TrackingRuntime } from "./tracking/wire-tracking-runtime";
 
 /**
  * The production composition root (Sprint 2.9, D-050). EVERY dependency is wired here — no
@@ -94,6 +119,8 @@ export interface RuntimeCore {
   readonly serializer: EventSerializer;
   readonly authenticator: Authenticator;
   readonly accessControl: AccessControl;
+  /** Plan 1B-2: the platform's own staff token issuer. Present only when AUTH_MODE=native. */
+  readonly staffTokenIssuer?: NativeTokenIssuer;
   readonly rateLimiter: RedisRateLimiter;
   readonly idempotencyKeys: RedisIdempotencyKeyStore;
   readonly distributedLock: RedisDistributedLock;
@@ -121,6 +148,49 @@ export interface RuntimeCore {
    */
   readonly paymentProvider: PaymentProvider | undefined;
   /**
+   * The payment providers registered from outside `services/payments` (which ships Stripe's binding
+   * and cash on delivery itself) — the whole of "adding a provider": a key, declared capabilities
+   * and a factory, registered once here at composition time (ADR-0014). Today that is Paymob
+   * (`@platform/psp-paymob`), present only when `PAYMENT_CREDENTIALS_KEK_REF` is configured — and
+   * then together with the real envelope vault their credentials are sealed with — otherwise it is
+   * simply not registered: unavailable, never stubbed. A registration holds no merchant credential;
+   * its factory receives one per call.
+   */
+  readonly providerRegistrations: readonly ProviderRegistration[];
+  readonly paymentCredentialVault: PaymentCredentialVault | undefined;
+  /**
+   * WP-14 T14.4: Licensing's REAL `PaymentsPort` — Morbeh charging a merchant through MORBEH'S OWN
+   * PSP account (`PLATFORM_BILLING_STRIPE_*`), as a caller of the same `PaymentProvider` port
+   * (`buildPlatformBillingPayments`). `undefined` ⇒ not configured: Licensing then keeps its
+   * always-succeeds in-memory stub, which `assertProductionLicensingBillingConfigured` refuses
+   * outside `local`. Holds no tenant and no merchant credential, and is built from nothing the
+   * per-tenant resolvers use.
+   */
+  readonly platformBillingPayments: PaymentsPort | undefined;
+  /**
+   * G-74 (1): Morbeh charging a merchant's SAVED card off-session on MORBEH'S OWN Paymob account
+   * (`PLATFORM_BILLING_PAYMOB_*`) — the only path that can actually collect a renewal, since the
+   * on-session `platformBillingPayments` can never complete without a payer. `undefined` ⇒ not
+   * configured. Holds no merchant credential; the card token it stores is sealed with the real vault.
+   */
+  readonly platformBillingStoredMethod: StoredMethodBillingDeps | undefined;
+  /**
+   * T14.5/G-74 (7): Licensing's own composition root, wired independently of `apps/admin`'s (same
+   * shared `prisma` client, separate object graph — the same duplication `platformBillingPayments`
+   * above already accepts, since the scheduler/worker processes never go through
+   * `createAdminHttpApi`). The renewal-billing and dunning-retry scheduler jobs (`scheduler.ts`) call
+   * `licensing.licensing` (the `LicensingController`, so the platform-only guard applies to a
+   * scheduled job exactly like an HTTP caller) and read `licensing.subscriptions` directly for the
+   * due-subscription sweep.
+   */
+  readonly licensing: WiredLicensing;
+  /**
+   * The ADR-0014 platform-operator tenant scope every Licensing call in this process uses — always a
+   * concrete id (never the merchant's own `tenantRef`), same value under `single` and `multi`
+   * (`apps/admin`'s `deploymentScope` computes the same thing for the HTTP surface).
+   */
+  readonly platformTenantId: string;
+  /**
    * Production MFA provider resolver (C2-4). Real RFC 6238 `TotpMfaProvider` over `NodeCrypto`,
    * built unconditionally — unlike `objectStorage`/`paymentProvider`, this needs no external
    * account/credentials to be "real," only a `CryptoPort`, which is always available.
@@ -128,22 +198,29 @@ export interface RuntimeCore {
    * provider is still the in-memory reference stub, which this composition never produces.
    */
   readonly mfaProviders: MfaProviderResolver;
+  /**
+   * G-72: dispatches the two signup-related emails (complete-account / already-registered). Always
+   * `LoggingSignupEmailAdapter` today — no real provider is wired anywhere in this composition (D4:
+   * "the user's choice", not in scope). `apps/runtime/src/api.ts` refuses to boot outside `local`
+   * while this is still that logging adapter.
+   */
+  readonly signupEmail: SignupEmailPort;
 }
 
 export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
-  // C2-6: every wireX({ prisma, tenantId }) branch pins its repositories to ONE tenantId at
-  // construction (ADR-0008) — TENANT_DEFAULT_ID, threaded through from here in api.ts/worker.ts.
-  // There is no per-request re-composition, so TENANT_MODE=multi would boot successfully and then
-  // either silently mis-scope every non-default-tenant request to TENANT_DEFAULT_ID's rows (if the
-  // HTTP tenant guard were absent) or reject every one of them (with it present) — neither is
-  // multi-tenancy. Fail closed at boot rather than advertise a mode nothing here implements.
-  if (config.TENANT_MODE === "multi") {
-    throw new Error(
-      "Runtime composition does not support TENANT_MODE=multi: every Prisma repository is pinned " +
-        "to one tenantId at construction (ADR-0008), never per request. Implementing multi-tenant " +
-        "composition is a design change (ADR), not a configuration switch.",
-    );
-  }
+  // T10.4: TENANT_MODE=multi no longer fails here. What holds instead — and where it is enforced:
+  //  - API: createAdminHttpApi resolves the tenant per request (verified claim, then header; an
+  //    unresolved tenant is rejected, never defaulted) and, under multi, runs assertMultiTenantReady
+  //    (apps/admin/src/tenant-mode-guard.ts): a behavioural probe of the resolver chain plus a scan
+  //    of the composed graph for any construction-time tenant. The one recorded exception is
+  //    services/tenancy (ADR-0014 8f), whose routes are pinned to TENANT_DEFAULT_ID and 403 every
+  //    other tenant.
+  //  - Worker: its event consumers route by the envelope's required tenantId (G-64), so nothing in
+  //    the consumer path is pinned. startWorker still runs assertWorkerTenantModeSupported, which
+  //    refuses multi for whatever is genuinely single-tenant (tenant-mode-guard.ts). This function
+  //    is shared by both processes and no longer decides for them.
+  // Multi mode is now POSSIBLE, not SAFE: T10.5 (adversarial isolation suite) has not been written.
+  // Do not enable TENANT_MODE=multi anywhere until it has.
   const clock = new SystemClock();
   const idGenerator = new CryptoIdGenerator();
   // Phase A.13 (Task 1/2): previously an unsafe `as` cast supplied only `url`/`logQueries` — the real
@@ -169,44 +246,73 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
 
   // JSON envelope serializer: byte-compatible with everything written so far; the Apicurio
   // Avro/Protobuf serializer replaces it behind the same contract in the schema-registry sprint.
-  const serializer: EventSerializer = new InMemoryEventSerializer();
+  // WP-17 (Morbeh F-14): this was `InMemoryEventSerializer` from `@platform/domain-events/testing`
+  // — a test-only double ("never import it from production code", per its own doc comment) —
+  // imported into the production composition root unconditionally, with no boot-refusal guard.
+  // `JsonEventSerializer` is byte-identical (same `contentType`, same JSON encode/decode) but is
+  // the package's actual production export, not a test double.
+  const serializer: EventSerializer = new JsonEventSerializer();
 
-  if (config.AUTH_JWKS_URL === undefined || config.AUTH_ISSUER_URL === undefined) {
-    throw new Error(
-      "Runtime composition requires AUTH_ISSUER_URL + AUTH_JWKS_URL — there is no fake identity provider (D-048).",
-    );
-  }
-  const authenticator = new JwtVerifier({
-    issuer: config.AUTH_ISSUER_URL,
-    audience: config.AUTH_AUDIENCE,
-    jwksUrl: config.AUTH_JWKS_URL,
-    logger,
-  });
-
+  let authenticator: Authenticator;
   let accessControl: AccessControl;
-  if (config.KETO_READ_URL !== undefined) {
-    accessControl = new CachedAccessControl(
-      new KetoAccessControl({
-        readUrl: config.KETO_READ_URL,
-        fetch: createOryFetch(config.ORY_API_KEY),
-        // Same signal createOryFetch uses (isOryNetworkApiKey, not a bare !== undefined — a
-        // blank-but-set key must resolve the same way in both places, see that function's doc):
-        // an API key means Ory Network, whose OPL-compiled namespaces require subject-set tuples
-        // (see keto.ts's subjectConvention doc). Absent ⇒ self-hosted Keto
-        // (infrastructure/docker/keto/keto.yml), unchanged subject_id behavior.
-        subjectConvention: isOryNetworkApiKey(config.ORY_API_KEY) ? "subject_set" : "subject_id",
-        logger,
-      }),
-      redis.cache,
-    );
-  } else if (config.APP_ENV === "local") {
-    // Local-only escape hatch; anything else without Keto fails CLOSED at startup.
-    accessControl = { authorize: () => Promise.resolve(true) };
-    logger.warn("authorization is permissive: KETO_READ_URL unset and APP_ENV=local");
+  let staffTokenIssuer: NativeTokenIssuer | undefined;
+  if (config.AUTH_MODE === "native") {
+    if (config.AUTH_SIGNING_KEY === undefined || config.AUTH_ISSUER_URL === undefined) {
+      throw new Error("AUTH_MODE=native requires AUTH_SIGNING_KEY + AUTH_ISSUER_URL (Plan 1B-2).");
+    }
+    staffTokenIssuer = new NativeTokenIssuer({
+      privateKey: loadSigningKey(config.AUTH_SIGNING_KEY),
+      issuer: config.AUTH_ISSUER_URL,
+      audience: config.AUTH_AUDIENCE,
+      ttlSeconds: config.STAFF_TOKEN_TTL_SECONDS,
+    });
+    // buildRuntimeCore is synchronous: resolve the local JWKS lazily, once.
+    const resolver = localKeyResolver(staffTokenIssuer);
+    authenticator = new JwtVerifier({
+      issuer: config.AUTH_ISSUER_URL,
+      audience: config.AUTH_AUDIENCE,
+      getKey: (header, token) => resolver.then((getKey) => getKey(header, token)),
+      logger,
+    });
+    accessControl = new RoleTableAccessControl();
+    logger.info("auth: native staff sign-in (own ES256 issuer, role-table authorization)");
   } else {
-    throw new Error(
-      "KETO_READ_URL is required outside APP_ENV=local (authorization fails closed).",
-    );
+    if (config.AUTH_JWKS_URL === undefined || config.AUTH_ISSUER_URL === undefined) {
+      throw new Error(
+        "Runtime composition requires AUTH_ISSUER_URL + AUTH_JWKS_URL — there is no fake identity provider (D-048).",
+      );
+    }
+    authenticator = new JwtVerifier({
+      issuer: config.AUTH_ISSUER_URL,
+      audience: config.AUTH_AUDIENCE,
+      jwksUrl: config.AUTH_JWKS_URL,
+      logger,
+    });
+
+    if (config.KETO_READ_URL !== undefined) {
+      accessControl = new CachedAccessControl(
+        new KetoAccessControl({
+          readUrl: config.KETO_READ_URL,
+          fetch: createOryFetch(config.ORY_API_KEY),
+          // Same signal createOryFetch uses (isOryNetworkApiKey, not a bare !== undefined — a
+          // blank-but-set key must resolve the same way in both places, see that function's doc):
+          // an API key means Ory Network, whose OPL-compiled namespaces require subject-set tuples
+          // (see keto.ts's subjectConvention doc). Absent ⇒ self-hosted Keto
+          // (infrastructure/docker/keto/keto.yml), unchanged subject_id behavior.
+          subjectConvention: isOryNetworkApiKey(config.ORY_API_KEY) ? "subject_set" : "subject_id",
+          logger,
+        }),
+        redis.cache,
+      );
+    } else if (config.APP_ENV === "local") {
+      // Local-only escape hatch; anything else without Keto fails CLOSED at startup.
+      accessControl = { authorize: () => Promise.resolve(true) };
+      logger.warn("authorization is permissive: KETO_READ_URL unset and APP_ENV=local");
+    } else {
+      throw new Error(
+        "KETO_READ_URL is required outside APP_ENV=local (authorization fails closed).",
+      );
+    }
   }
 
   const health = new HealthRegistry();
@@ -244,7 +350,12 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
   // config presence. `assertProductionMfaConfigured` (api.ts) checks the resolved provider's
   // identity, not this composition's branching, so `local` and non-local share this exact path.
   const mfaProviders: MfaProviderResolver = new MapMfaProviderResolver([
-    new TotpMfaProvider(new NodeCrypto(), clock),
+    // G-87: secrets are encrypted under MFA_TOTP_KEY when set; absent ⇒ the legacy constant (local only).
+    new TotpMfaProvider(
+      new NodeCrypto(),
+      clock,
+      config.MFA_TOTP_KEY === undefined ? {} : { keyRef: config.MFA_TOTP_KEY },
+    ),
   ]);
 
   // C2-2: same present/absent convention as `objectStorage` above — `undefined` here is the exact
@@ -260,6 +371,37 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
         })
       : undefined;
 
+  // WP-13: merchant PSP credentials. The vault and the Paymob factory come together or not at all,
+  // so a merchant can never be handed a Paymob provider whose secrets were sealed by a stub.
+  const paymentCredentialVault: PaymentCredentialVault | undefined =
+    config.PAYMENT_CREDENTIALS_KEK_REF !== undefined
+      ? buildPaymentCredentialVault(config.PAYMENT_CREDENTIALS_KEK_REF)
+      : undefined;
+  const providerRegistrations: readonly ProviderRegistration[] =
+    paymentCredentialVault !== undefined ? [paymobRegistration(logger)] : [];
+
+  const platformBillingPayments = buildPlatformBillingPayments(config);
+  const platformBillingStoredMethod = buildPlatformBillingStoredMethod(
+    config,
+    paymentCredentialVault,
+    logger,
+  );
+
+  // ADR-0014 8f shape: the platform-operator tenant scope. Under `multi` it is the deployment
+  // tenant (`TENANT_DEFAULT_ID`) and `LicensingController`'s platformOnly guard is live; under
+  // `single` there is only one tenant, so it IS the platform and the guard is inert — the same
+  // `deploymentScope` logic `apps/admin/src/http/server.ts` uses for the HTTP surface.
+  const platformTenantId = config.TENANT_DEFAULT_ID;
+  const licensing = wireLicensing({
+    prisma,
+    serializer,
+    idGenerator,
+    clock,
+    payments: platformBillingPayments,
+    storedMethodBilling: platformBillingStoredMethod,
+    platformTenantId: config.TENANT_MODE === "multi" ? platformTenantId : undefined,
+  });
+
   return {
     config,
     logger,
@@ -271,6 +413,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     serializer,
     authenticator,
     accessControl,
+    ...(staffTokenIssuer === undefined ? {} : { staffTokenIssuer }),
     rateLimiter: new RedisRateLimiter(redis.client),
     idempotencyKeys: new RedisIdempotencyKeyStore(redis.client),
     distributedLock: new RedisDistributedLock(redis.client),
@@ -278,8 +421,69 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     metrics: new RuntimeMetrics(),
     objectStorage,
     paymentProvider,
+    providerRegistrations,
+    paymentCredentialVault,
+    platformBillingPayments,
+    platformBillingStoredMethod,
+    licensing,
+    platformTenantId,
     mfaProviders,
+    signupEmail: new LoggingSignupEmailAdapter(),
   };
+}
+
+/**
+ * Morbeh's own billing PSP as Licensing's `PaymentsPort` (WP-14 T14.4). Reads ONLY the dedicated
+ * `PLATFORM_BILLING_STRIPE_*` pair — never `STRIPE_*` (the store's account) and never anything a
+ * merchant configured — and takes no tenant, so it cannot resolve a provider from one. The adapter is
+ * handed a bare `PaymentProvider`, not a resolver: see `PlatformBillingPaymentsAdapter`.
+ *
+ * Half-configured (one of the two set) ⇒ `undefined` and the boot guard names what is missing.
+ * The billing webhook secret equal to the store's ⇒ throws: the same Stripe endpoint would deliver
+ * billing events to the store's webhook handler.
+ */
+export function buildPlatformBillingPayments(
+  config: Pick<
+    RuntimeConfig,
+    | "PLATFORM_BILLING_STRIPE_SECRET_KEY"
+    | "PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET"
+    | "STRIPE_WEBHOOK_SECRET"
+    | "STRIPE_API_BASE"
+  >,
+): PaymentsPort | undefined {
+  const secretKey = config.PLATFORM_BILLING_STRIPE_SECRET_KEY;
+  const webhookSecret = config.PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET;
+  if (secretKey === undefined || webhookSecret === undefined) return undefined;
+  if (webhookSecret === config.STRIPE_WEBHOOK_SECRET) {
+    throw new Error(
+      "PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET must not equal STRIPE_WEBHOOK_SECRET: billing needs its own " +
+        "Stripe webhook endpoint, or its events would be delivered to the merchant-store webhook handler (WP-14).",
+    );
+  }
+  return new PlatformBillingPaymentsAdapter({
+    provider: new StripePaymentProvider({
+      secretKey,
+      webhookSecret,
+      apiBase: config.STRIPE_API_BASE,
+      fetch: async (url, init) => fetch(url, init),
+      logger,
+    }),
+  });
+}
+
+/**
+ * The real credential vault (WP-13): `@platform/secrets`' envelope encryption over
+ * `@platform/security`'s `NodeCrypto` (AES-256-GCM; the data key is wrapped under a KEK derived from
+ * `kekRef`). A KMS-backed `CryptoPort` satisfies the same `KeyWrapCipher` shape and can replace
+ * `NodeCrypto` here without touching Payments.
+ */
+function buildPaymentCredentialVault(kekRef: string): PaymentCredentialVault {
+  const aliases = new KeyAliasRegistry();
+  aliases.set("payments-credentials", kekRef);
+  return new EnvelopePaymentCredentialVault(
+    new EnvelopeCipher(new NodeCrypto(), aliases),
+    "payments-credentials",
+  );
 }
 
 /**
@@ -291,18 +495,23 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
  */
 export class PrismaPaymentVerificationAdapter implements PaymentVerificationPort {
   private readonly prisma: RuntimeCore["prisma"];
-  private readonly tenantId: string;
 
-  constructor(prisma: RuntimeCore["prisma"], tenantId: string) {
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `PaymentVerificationPort.hasCapturedPayment` carries `tenantId` per call. */
+  constructor(prisma: RuntimeCore["prisma"]) {
     this.prisma = prisma;
-    this.tenantId = tenantId;
   }
 
-  async hasCapturedPayment(orderId: string, paymentRef: string): Promise<boolean> {
-    const row = await this.prisma.paymentIntent.findFirst({
-      where: { id: paymentRef, orderRef: orderId, tenantId: this.tenantId, status: "captured" },
-      select: { id: true },
-    });
+  async hasCapturedPayment(
+    orderId: string,
+    paymentRef: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    const row = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.paymentIntent.findFirst({
+        where: { id: paymentRef, orderRef: orderId, tenantId, status: "captured" },
+        select: { id: true },
+      }),
+    );
     return row !== null;
   }
 }
@@ -319,18 +528,24 @@ export class PrismaPaymentVerificationAdapter implements PaymentVerificationPort
  */
 export class PrismaRefundVerificationAdapter implements RefundVerificationPort {
   private readonly prisma: RuntimeCore["prisma"];
-  private readonly tenantId: string;
 
-  constructor(prisma: RuntimeCore["prisma"], tenantId: string) {
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `RefundVerificationPort.isRefundable` carries `tenantId` per call. */
+  constructor(prisma: RuntimeCore["prisma"]) {
     this.prisma = prisma;
-    this.tenantId = tenantId;
   }
 
-  async isRefundable(orderRef: string, amountMinor: number, currency: string): Promise<boolean> {
-    const intents = await this.prisma.paymentIntent.findMany({
-      where: { orderRef, tenantId: this.tenantId, currency },
-      include: { charges: true, refunds: true },
-    });
+  async isRefundable(
+    orderRef: string,
+    amountMinor: number,
+    currency: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    const intents = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.paymentIntent.findMany({
+        where: { orderRef, tenantId, currency },
+        include: { charges: true, refunds: true },
+      }),
+    );
     const totalCaptured = intents.reduce(
       (sum, intent) =>
         sum + intent.charges.reduce((chargeSum, charge) => chargeSum + charge.amountMinor, 0),
@@ -399,12 +614,11 @@ export class PrismaRefundVerificationAdapter implements RefundVerificationPort {
  */
 export class PrismaPaymentsPortAdapter implements ReturnsPaymentsPort {
   private readonly prisma: RuntimeCore["prisma"];
-  private readonly tenantId: string;
   private readonly payments: PaymentController;
 
-  constructor(prisma: RuntimeCore["prisma"], tenantId: string, payments: PaymentController) {
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `PaymentsPort.requestRefund` carries `tenantId` per call. */
+  constructor(prisma: RuntimeCore["prisma"], payments: PaymentController) {
     this.prisma = prisma;
-    this.tenantId = tenantId;
     this.payments = payments;
   }
 
@@ -413,11 +627,14 @@ export class PrismaPaymentsPortAdapter implements ReturnsPaymentsPort {
     amountMinor: number,
     currency: string,
     idempotencyKey: string,
+    tenantId: string,
   ): Promise<void> {
-    const intents = await this.prisma.paymentIntent.findMany({
-      where: { orderRef, tenantId: this.tenantId, currency },
-      include: { charges: true, refunds: true },
-    });
+    const intents = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.paymentIntent.findMany({
+        where: { orderRef, tenantId, currency },
+        include: { charges: true, refunds: true },
+      }),
+    );
     const target = intents.find((intent) => {
       const captured = intent.charges.reduce((sum, charge) => sum + charge.amountMinor, 0);
       // Phase A.10 (Task 3): mirrors `PaymentIntent.remaining()` (`services/payments/src/domain/
@@ -441,6 +658,7 @@ export class PrismaPaymentsPortAdapter implements ReturnsPaymentsPort {
     }
 
     const response = await this.payments.refundLifecycle({
+      tenantId,
       paymentIntentId: target.id,
       amountMinor,
       currency,
@@ -463,16 +681,17 @@ export class PrismaPaymentsPortAdapter implements ReturnsPaymentsPort {
  * not duplicated persistence.
  */
 export function buildReturnsPaymentsPortAdapter(core: RuntimeCore): PrismaPaymentsPortAdapter {
-  const tenantId = core.config.TENANT_DEFAULT_ID;
   const { payments } = wirePayments({
     serializer: core.serializer,
     idGenerator: core.idGenerator,
     clock: core.clock,
     prisma: core.prisma,
-    tenantId,
     paymentProvider: core.paymentProvider,
+    // WP-13: a Returns refund of a Paymob payment goes out through the same per-merchant provider.
+    providerRegistrations: core.providerRegistrations,
+    paymentCredentialVault: core.paymentCredentialVault,
   });
-  return new PrismaPaymentsPortAdapter(core.prisma, tenantId, payments);
+  return new PrismaPaymentsPortAdapter(core.prisma, payments);
 }
 
 /**
@@ -495,8 +714,7 @@ export function buildPaymentCapturedRuntime(
   const orders = new PrismaOrderRepository({
     prisma: core.prisma,
     outbox,
-    context: rootEventContext(core.idGenerator, core.config.TENANT_DEFAULT_ID),
-    tenantId: core.config.TENANT_DEFAULT_ID,
+    context: rootEventContext(core.idGenerator),
   });
   const markOrderPaid = new MarkOrderPaid({
     orders,
@@ -506,15 +724,15 @@ export function buildPaymentCapturedRuntime(
     // M2-7: this consumer path omitted the same verification gate the admin path (`api.ts`) already
     // wires — reuses the identical `PrismaPaymentVerificationAdapter`, no new class, no contract
     // change (the field is already optional on `MarkOrderPaidDeps`).
-    paymentVerification: new PrismaPaymentVerificationAdapter(
-      core.prisma,
-      core.config.TENANT_DEFAULT_ID,
-    ),
+    paymentVerification: new PrismaPaymentVerificationAdapter(core.prisma),
   });
   const producer = new KafkaMessageProducer(core.kafka);
   return new KafkaConsumerRuntime({
     kafka: core.kafka,
-    handler: new PaymentCapturedConsumer({ markOrderPaid, logger: core.logger }),
+    handler: new PaymentCapturedConsumer({
+      markOrderPaid,
+      logger: core.logger,
+    }),
     consumerGroup,
     serializer: core.serializer,
     processedEvents: new PrismaProcessedEventStore(core.prisma, consumerGroup),
@@ -554,49 +772,58 @@ export function buildPaymentCapturedRuntime(
  *
  * Returns `null` when `TRACKING_INGEST_ENABLED` is off, so an unseeded deployment is unchanged.
  */
-export async function buildTrackingIngestRuntime(
+export function buildTrackingIngestRuntime(
   core: RuntimeCore,
-): Promise<KafkaConsumerRuntime<TrackingCapturedPayload> | null> {
+): KafkaConsumerRuntime<TrackingCapturedPayload> | null {
   if (!core.config.TRACKING_INGEST_ENABLED) return null;
 
-  const tenantId = core.config.TENANT_DEFAULT_ID;
   const registryStore = new PrismaTrackingRegistryStore(core.prisma, core.idGenerator);
-
-  // Loaded once at boot, then hot-reloaded by the watcher. `loadTrackingRegistry` throws on an empty
-  // registry rather than starting: a runtime that captured events and forwarded them nowhere is the
-  // exact silent-loss failure this milestone exists to remove.
-  const snapshot = await loadTrackingRegistry(registryStore, tenantId);
-  const handle = new TrackingRegistryHandle(snapshot, await registryStore.signal(tenantId));
-  new TrackingRegistryWatcher({
-    handle,
-    store: registryStore,
-    tenantId,
-    logger: core.logger,
-    intervalMs: core.config.TRACKING_REGISTRY_POLL_MS,
-  }).start();
 
   const consumerGroup = "tracking.ingest";
   const producer = new KafkaMessageProducer(core.kafka);
   const deadLetters = new PrismaDeadLetterStore(core.prisma, consumerGroup, core.idGenerator);
+  const secrets = createSecretProvider();
 
-  const tracking = wireTrackingRuntime({
-    db: core.prisma,
-    idGenerator: core.idGenerator,
-    secrets: createSecretProvider(),
-    registry: handle,
-    ruleSetKey: core.config.TRACKING_RULE_SET_KEY,
-    clock: core.clock,
-    processed: new PrismaProcessedEventStore(core.prisma, consumerGroup),
-    deadLetters,
-    logger: core.logger,
+  // G-64: one registry, one hot-reload watcher and one ingest engine PER TENANT, built lazily on the
+  // first event that names the tenant (the envelope's tenant — never a deployment default). The old
+  // shape loaded a single tenant's registry at boot and routed every tenant's events through it.
+  //
+  // `loadTrackingRegistry` still throws on an empty registry, so a tenant with no definitions fails
+  // its event loudly (retry → DLQ) instead of being forwarded nowhere. The trade against the old
+  // boot-time load: a tenant whose registry is unseeded is now discovered on its first event, not
+  // at process start — the process no longer knows which tenants to check.
+  const tenantRuntimes = new TenantRuntimes<TrackingRuntime>(async (tenantId) => {
+    const snapshot = await loadTrackingRegistry(registryStore, tenantId);
+    const handle = new TrackingRegistryHandle(snapshot, await registryStore.signal(tenantId));
+    const watcher = new TrackingRegistryWatcher({
+      handle,
+      store: registryStore,
+      tenantId,
+      logger: core.logger,
+      intervalMs: core.config.TRACKING_REGISTRY_POLL_MS,
+    });
+    watcher.start();
+    const runtime = wireTrackingRuntime({
+      db: core.prisma,
+      idGenerator: core.idGenerator,
+      secrets,
+      registry: handle,
+      ruleSetKey: core.config.TRACKING_RULE_SET_KEY,
+      clock: core.clock,
+      processed: new PrismaProcessedEventStore(core.prisma, consumerGroup),
+      deadLetters,
+      logger: core.logger,
+    });
+    return { runtime, stop: () => watcher.stop() };
   });
 
   return new KafkaConsumerRuntime({
     kafka: core.kafka,
     handler: new TrackingIngestHandler({
       // A provider, not a fixed object: each call pins the snapshot current at that moment, so a
-      // hot reload landing mid-event cannot change the definitions under it.
-      ingest: () => tracking.ingest(),
+      // hot reload landing mid-event cannot change the definitions under it. Keyed by the
+      // envelope's tenant (G-64).
+      ingest: async (tenantId) => (await tenantRuntimes.for(tenantId)).ingest(),
       deadLetters,
       logger: core.logger,
       clock: core.clock,

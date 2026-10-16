@@ -42,12 +42,10 @@ export interface RecommendationsWiringDeps {
   readonly search?: SearchQueryPort;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaRecommendationModelRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wirePromotions`); absent ⇒ in-memory, unchanged.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository
+   * built here is a tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Recommendations table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredRecommendations {
@@ -84,12 +82,6 @@ function buildController(
  */
 export function wireRecommendations(deps: RecommendationsWiringDeps): WiredRecommendations {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error(
-        "wireRecommendations: tenantId is required when prisma is provided (ADR-0008).",
-      );
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new RecommendationsEventTranslator(),
@@ -97,10 +89,12 @@ export function wireRecommendations(deps: RecommendationsWiringDeps): WiredRecom
       clock: deps.clock,
       producer: "recommendations",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see
+    // RecommendationsWiringDeps' doc comment) — the repository built below takes tenantId per
+    // call instead.
+    const context = rootEventContext(deps.idGenerator);
     const models = new PrismaRecommendationModelRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });

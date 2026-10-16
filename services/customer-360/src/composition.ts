@@ -92,6 +92,7 @@ import type { SegmentHistoryStore } from "./ports/segment-history-store";
 import type { SegmentStore } from "./ports/segment-store";
 import type { SessionHistoryStore } from "./ports/session-history-store";
 import type { SessionStore } from "./ports/session-store";
+import type { TenantSeed } from "./infrastructure/tenant-seed";
 
 export interface Customer360WiringDeps {
   readonly serializer: EventSerializer;
@@ -102,19 +103,16 @@ export interface Customer360WiringDeps {
    * `wireIdentity`/`wireFinance`'s own `prisma`-presence branch exactly — same convention, same
    * package (`@platform/db`'s `Database`). */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every table in the `customer_360` schema is
-   * tenant-scoped. */
-  readonly tenantId?: string;
   /** Seeds the in-memory `AttributeDefinitionRegistry` (Phase 6.4) — definitions are authored
    * configuration, not something this composition root invents, so an empty registry (the default)
    * is a perfectly valid wiring with nothing yet to evaluate. Dev/test-only: the Prisma registry is
    * seed-script-populated (see `PrismaAttributeDefinitionRegistry`'s own doc), never seeded here. */
-  readonly computedAttributeDefinitions?: readonly ComputedAttributeDefinition[];
+  readonly computedAttributeDefinitions?: TenantSeed<ComputedAttributeDefinition>;
   /** Seeds the in-memory `SegmentDefinitionRegistry` (Phase 6.5) — unlike
    * `computedAttributeDefinitions`, this registry stays mutable at runtime via `CreateSegment`/
    * `UpdateSegment`/`DeleteSegment`; the seed is only a starting point, not the whole story.
    * Dev/test-only, same reasoning as `computedAttributeDefinitions` above. */
-  readonly segmentDefinitions?: readonly SegmentDefinition[];
+  readonly segmentDefinitions?: TenantSeed<SegmentDefinition>;
 }
 
 export interface WiredCustomer360 {
@@ -464,10 +462,6 @@ function buildWiredCustomer360(
 export function wireCustomer360(deps: Customer360WiringDeps): WiredCustomer360 {
   // Production path: Prisma stores across all five engines + tx-scoped outbox (ADR-0003/0008).
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireCustomer360: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new IdentityEventTranslator(),
@@ -475,17 +469,16 @@ export function wireCustomer360(deps: Customer360WiringDeps): WiredCustomer360 {
       clock: deps.clock,
       producer: "customer360",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    const context = rootEventContext(deps.idGenerator);
     // Deps shared by every append-only (event-emitting) store.
     const ledgerDeps = {
       prisma: deps.prisma,
       outbox,
       context,
       idGenerator: deps.idGenerator,
-      tenantId,
     };
     // Deps shared by every upsertable-cache store (no outbox — caches never emit their own events).
-    const cacheDeps = { prisma: deps.prisma, idGenerator: deps.idGenerator, tenantId };
+    const cacheDeps = { prisma: deps.prisma, idGenerator: deps.idGenerator };
 
     const stores: Customer360Stores = {
       graph: new PrismaIdentityGraphStore(ledgerDeps),
@@ -497,10 +490,7 @@ export function wireCustomer360(deps: Customer360WiringDeps): WiredCustomer360 {
       journey: new PrismaJourneyStore(ledgerDeps),
       computedAttributes: new PrismaAttributeStore(cacheDeps),
       attributeHistory: new PrismaAttributeHistoryStore(ledgerDeps),
-      attributeDefinitions: new PrismaAttributeDefinitionRegistry({
-        prisma: deps.prisma,
-        tenantId,
-      }),
+      attributeDefinitions: new PrismaAttributeDefinitionRegistry({ prisma: deps.prisma }),
       segments: new PrismaSegmentStore(cacheDeps),
       segmentHistory: new PrismaSegmentHistoryStore(ledgerDeps),
       segmentDefinitions: new PrismaSegmentDefinitionRegistry(ledgerDeps),
@@ -532,13 +522,13 @@ export function wireCustomer360(deps: Customer360WiringDeps): WiredCustomer360 {
     computedAttributes: new InMemoryAttributeStore(),
     attributeHistory: new InMemoryAttributeHistoryStore({ outbox, context }),
     attributeDefinitions: new InMemoryAttributeDefinitionRegistry(
-      deps.computedAttributeDefinitions ?? [],
+      deps.computedAttributeDefinitions,
     ),
     segments: new InMemorySegmentStore(),
     segmentHistory: new InMemorySegmentHistoryStore({ outbox, context }),
     segmentDefinitions: new InMemorySegmentDefinitionRegistry(
       { outbox, context },
-      deps.segmentDefinitions ?? [],
+      deps.segmentDefinitions,
     ),
     unitOfWork: new InMemoryUnitOfWork(),
   };

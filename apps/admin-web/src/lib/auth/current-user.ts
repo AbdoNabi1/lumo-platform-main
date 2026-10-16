@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import type { CurrentUser } from "@/components/app-shell";
+import { isNativeAuth } from "@/lib/auth/native";
 import { highestRole, readSession } from "@/lib/auth/session";
 
 const ROLE_LABEL: Record<string, string> = {
@@ -30,5 +31,6 @@ export async function getCurrentUser(): Promise<CurrentUser> {
     name,
     role: role !== undefined ? (ROLE_LABEL[role] ?? role) : "Staff",
     initials,
+    canChangePassword: isNativeAuth(),
   };
 }

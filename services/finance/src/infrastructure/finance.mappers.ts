@@ -290,14 +290,20 @@ export class FinanceMapper {
     id: string;
     baseCurrency: string;
     quoteCurrency: string;
-    rate: number;
+    // WP-11 (F-07): `rate` is `Decimal` in the schema now (was `Float`) — Prisma returns a
+    // `Prisma.Decimal` instance for it at runtime, not a plain `number`. `unknown` (rather than
+    // a convenience-lie `number`) forces the explicit `Number(...)` conversion below.
+    rate: unknown;
     effectiveAt: Date;
   }): ExchangeRate {
     return ExchangeRate.reconstitute(
       UniqueEntityId.from(row.id),
       row.baseCurrency,
       row.quoteCurrency,
-      row.rate,
+      // `Number(x)` on a `Prisma.Decimal` calls its `valueOf()`/`toString()` (decimal.js), the
+      // exact decimal string — a correct, one-time conversion. `ExchangeRate` is immutable (its
+      // own doc comment: "never updated"), so no repeated-arithmetic drift risk exists here.
+      Number(row.rate),
       row.effectiveAt,
       0,
     );

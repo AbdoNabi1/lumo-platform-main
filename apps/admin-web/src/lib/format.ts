@@ -1,4 +1,5 @@
 import type { Locale } from "./i18n";
+import { currencyExponent } from "./products/money";
 
 /**
  * Locale-aware formatting. Everything numeric on the dashboard goes through here so the
@@ -6,13 +7,15 @@ import type { Locale } from "./i18n";
  * and correctly placed currency symbols — rather than English strings in a flipped layout.
  */
 
+/** Plan 2B-1: scales by the currency's own minor-unit exponent (EGP 2, JPY 0, KWD 3), not a fixed 100. */
 export function formatCurrency(locale: Locale, amountMinor: number, currency: string): string {
+  const digits = currencyExponent(currency);
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amountMinor / 100);
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(amountMinor / 10 ** digits);
 }
 
 /** Compact currency for axis ticks — "$80K" / "٨٠ ألف US$". */
@@ -26,7 +29,7 @@ export function formatCurrencyCompact(
     currency,
     notation: "compact",
     maximumFractionDigits: 0,
-  }).format(amountMinor / 100);
+  }).format(amountMinor / 10 ** currencyExponent(currency));
 }
 
 export function formatNumber(locale: Locale, value: number): string {
@@ -64,6 +67,36 @@ export function formatDateRange(locale: Locale, startIso: string, endIso: string
   return formatter.formatRange(new Date(startIso), new Date(endIso));
 }
 
+const DAY_MS = 86_400_000;
+
+/** A `YYYY-MM-DD` in the shop's calendar as a UTC midnight: a label, not an instant. */
+function shopDayAsUtc(day: string): Date {
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
+/**
+ * "Oct 12" for a day in the SHOP's calendar (`YYYY-MM-DD`, what the sales API sends). Formatted in UTC
+ * on purpose: the string already names the shop's day, so the server's or the browser's time zone
+ * must not move it to the day before or after.
+ */
+export function formatCalendarDay(locale: Locale, day: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(shopDayAsUtc(day));
+}
+
+/** "Oct 6 – 12" for `[from, toExclusive)` in the shop's calendar; a single day reads as that day. */
+export function formatCalendarRange(locale: Locale, from: string, toExclusive: string): string {
+  const first = shopDayAsUtc(from);
+  const last = new Date(shopDayAsUtc(toExclusive).getTime() - DAY_MS);
+  if (last.getTime() <= first.getTime()) return formatCalendarDay(locale, from);
+  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", timeZone: "UTC" })
+    .formatRange(first, last)
+    .replace(/[\u2009\u202f\u00a0]/g, " ");
+}
+
 export function formatShortDate(locale: Locale, iso: string): string {
   return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(iso));
 }
@@ -74,4 +107,63 @@ export function formatDateTime(locale: Locale, iso: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(iso));
+}
+
+/**
+ * A clock time in the locale — "8:27 pm" in English (lowercase day period, as Shopify writes it),
+ * "٨:٢٧ م" in Arabic. Intl separates the day period with a narrow no-break space; a plain space is
+ * what a reader (and a test) expects.
+ */
+export function formatClockTime(locale: Locale, date: Date): string {
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" })
+    .formatToParts(date)
+    .map((part) =>
+      part.type === "dayPeriod" && locale === "en" ? part.value.toLowerCase() : part.value,
+    )
+    .join("")
+    .replace(/[\u202f\u00a0]/g, " ");
+}
+
+export type OrderDateWhen = "today" | "yesterday" | "other";
+
+export interface OrderDateParts {
+  /** Which wording to use: "Today at …", "Yesterday at …", or "{date} at …". */
+  readonly when: OrderDateWhen;
+  /** The short date, "Oct 7" — used when `when` is "other". */
+  readonly date: string;
+  /** The clock time, "8:27 pm". */
+  readonly time: string;
+  /** The full date and time, for a tooltip. */
+  readonly full: string;
+}
+
+/** The runtime's calendar day as a whole number, so "yesterday" is a calendar day, not 24 hours ago. */
+function calendarDay(date: Date): number {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000);
+}
+
+/**
+ * The pieces of a Shopify-style order date ("Today at 8:27 pm", "Yesterday at …", "Oct 7 at …"). The
+ * words around them ("Today", "at") are copy and live in the messages; this only decides which
+ * wording applies and formats the date and time in the page locale. A date in the future (clock skew
+ * between servers) reads as today rather than inventing a label.
+ */
+export function orderDateParts(
+  locale: Locale,
+  iso: string,
+  now: Date = new Date(),
+): OrderDateParts {
+  const placed = new Date(iso);
+  const daysAgo = calendarDay(now) - calendarDay(placed);
+  return {
+    when: daysAgo <= 0 ? "today" : daysAgo === 1 ? "yesterday" : "other",
+    date: formatShortDate(locale, iso),
+    time: formatClockTime(locale, placed),
+    full: formatDateTime(locale, iso),
+  };
+}
+
+/** "October 9, 2026" / the Arabic equivalent — the order page header's date. */
+export function formatLongDate(locale: Locale, iso: string): string {
+  return new Intl.DateTimeFormat(locale, { dateStyle: "long" }).format(new Date(iso));
 }

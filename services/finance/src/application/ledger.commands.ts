@@ -30,6 +30,7 @@ export interface LedgerCommandDeps {
 
 export interface RecordExpenseInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly costCenterRef: string;
   readonly categoryRef: string;
   readonly amountMinor: number;
@@ -69,7 +70,7 @@ export class RecordExpense implements UseCase<RecordExpenseInput, { expenseId: s
     );
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.expenses.save(expense, tx);
+      await this.deps.expenses.save(expense, input.tenantId, tx);
       return ok({ expenseId: expense.id.toString() });
     });
   }
@@ -77,6 +78,7 @@ export class RecordExpense implements UseCase<RecordExpenseInput, { expenseId: s
 
 export interface CreateBudgetInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly costCenterRef: string;
   readonly period: string;
   readonly amountMinor: number;
@@ -111,7 +113,7 @@ export class CreateBudget implements UseCase<CreateBudgetInput, { budgetId: stri
     );
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.budgets.save(budget, tx);
+      await this.deps.budgets.save(budget, input.tenantId, tx);
       return ok({ budgetId: budget.id.toString() });
     });
   }
@@ -119,6 +121,7 @@ export class CreateBudget implements UseCase<CreateBudgetInput, { budgetId: stri
 
 export interface ReviseBudgetInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly budgetId: string;
   readonly amountMinor: number;
 }
@@ -144,14 +147,14 @@ export class ReviseBudget implements UseCase<
     if (!authz.ok) return err(authz.error);
 
     return this.deps.unitOfWork.run(async (tx) => {
-      const budget = await this.deps.budgets.findById(input.budgetId, tx);
+      const budget = await this.deps.budgets.findById(input.budgetId, input.tenantId, tx);
       if (budget === null) return err(new NotFoundError("Budget not found"));
 
       const amount = Money.create(input.amountMinor, budget.amount.currency);
       if (!amount.ok) return err(amount.error);
 
       budget.revise(amount.value, this.deps.idGenerator.generate(), now);
-      await this.deps.budgets.save(budget, tx);
+      await this.deps.budgets.save(budget, input.tenantId, tx);
       return ok({ budgetId: budget.id.toString(), revisions: budget.revisions });
     });
   }
@@ -159,6 +162,7 @@ export class ReviseBudget implements UseCase<
 
 export interface RecordManualAdjustmentInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly sourceRef: string;
   readonly debitAccountRef: string;
   readonly creditAccountRef: string;
@@ -215,7 +219,7 @@ export class RecordManualAdjustment implements UseCase<
     }
 
     return this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.journals.append(created.value, tx);
+      await this.deps.journals.append(created.value, input.tenantId, tx);
       return ok({ journalId: created.value.id.toString() });
     });
   }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { applyFieldUpdate, createEmptyProfile } from "../domain/customer-profile";
 import type { ProfileStore } from "../ports/profile-store";
 
@@ -21,11 +21,17 @@ export function runProfileStoreContractTests(
   makeStore: () => ProfileStore,
 ): void {
   describe(`ProfileStore contract — ${adapterName}`, () => {
+    // A fresh tenant per test keeps the Prisma run isolated from rows earlier tests left behind.
+    let tenantId: string;
+    beforeEach(() => {
+      tenantId = `tenant-contract-${crypto.randomUUID()}`;
+    });
+
     const identifier = { type: "customer_id" as const, value: `contract-${adapterName}` };
 
     it("getCurrent returns null for an identifier that was never saved", async () => {
       const store = makeStore();
-      expect(await store.getCurrent(identifier)).toBeNull();
+      expect(await store.getCurrent(identifier, tenantId)).toBeNull();
     });
 
     it("saveCurrent then getCurrent round-trips the same fields/version/updatedAt", async () => {
@@ -41,8 +47,8 @@ export function runProfileStoreContractTests(
         },
       ).profile;
 
-      await store.saveCurrent(profile);
-      const loaded = await store.getCurrent(identifier);
+      await store.saveCurrent(profile, tenantId);
+      const loaded = await store.getCurrent(identifier, tenantId);
 
       expect(loaded).not.toBeNull();
       expect(loaded?.version).toBe(profile.version);
@@ -69,9 +75,9 @@ export function runProfileStoreContractTests(
         occurredAt: "2026-07-21T00:00:02.000Z",
       }).profile;
 
-      await store.saveCurrent(first);
-      await store.saveCurrent(second);
-      const loaded = await store.getCurrent(identifier);
+      await store.saveCurrent(first, tenantId);
+      await store.saveCurrent(second, tenantId);
+      const loaded = await store.getCurrent(identifier, tenantId);
 
       expect(loaded?.fields.get("email")?.value).toBe("new@example.com");
       expect(loaded?.version).toBe(2);
@@ -80,14 +86,39 @@ export function runProfileStoreContractTests(
     it("listIdentifiers reports every saved identifier exactly once", async () => {
       const store = makeStore();
       const other = { type: "customer_id" as const, value: `contract-${adapterName}-2` };
-      await store.saveCurrent(createEmptyProfile(identifier.type, identifier.value, T0));
-      await store.saveCurrent(createEmptyProfile(other.type, other.value, T0));
+      await store.saveCurrent(createEmptyProfile(identifier.type, identifier.value, T0), tenantId);
+      await store.saveCurrent(createEmptyProfile(other.type, other.value, T0), tenantId);
       // Re-saving the first identifier must not duplicate it in the listing.
-      await store.saveCurrent(createEmptyProfile(identifier.type, identifier.value, T1));
+      await store.saveCurrent(createEmptyProfile(identifier.type, identifier.value, T1), tenantId);
 
-      const ids = await store.listIdentifiers();
+      const ids = await store.listIdentifiers(tenantId);
       const values = ids.map((id) => id.value).sort();
       expect(values).toEqual([identifier.value, other.value].sort());
+    });
+
+    it("isolates tenants — a profile saved under one tenant is invisible to another (ADR-0014)", async () => {
+      const store = makeStore();
+      const otherTenant = `${tenantId}-other`;
+      const profile = applyFieldUpdate(
+        createEmptyProfile(identifier.type, identifier.value, "2026-07-21T00:00:00.000Z"),
+        "email",
+        {
+          value: "a@example.com",
+          source: "orders",
+          confidence: "verified",
+          occurredAt: "2026-07-21T00:00:01.000Z",
+        },
+      ).profile;
+
+      await store.saveCurrent(profile, tenantId);
+
+      expect(await store.getCurrent(identifier, otherTenant)).toBeNull();
+      expect(await store.listIdentifiers(otherTenant)).toEqual([]);
+      expect(await store.listIdentifiers(tenantId)).toEqual([identifier]);
+
+      // A write for the same identifier under the other tenant must not touch the first tenant's row.
+      await store.saveCurrent({ ...profile, version: profile.version + 5 }, otherTenant);
+      expect((await store.getCurrent(identifier, tenantId))?.version).toBe(profile.version);
     });
   });
 }

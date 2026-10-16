@@ -2,13 +2,15 @@ import type { UseCase } from "@platform/application";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { Guard, isDomainError, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
-import { err, ok, type Result } from "@platform/types";
+import { err, ok, type Paginated, type Result } from "@platform/types";
 import { ConflictError, type DomainError } from "@platform/utils";
 import { NotFoundError } from "@platform/utils";
 import { Warehouse } from "../domain/warehouse";
 import type { WarehouseRepository } from "../domain/warehouse-repository";
 
 export interface RegisterWarehouseInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly code: string;
   readonly name: string;
 }
@@ -46,7 +48,7 @@ export class RegisterWarehouse implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<WarehouseOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.warehouses.findByCode(input.code, tx);
+      const existing = await this.deps.warehouses.findByCode(input.code, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Warehouse code '${input.code}' is already registered`));
       }
@@ -58,7 +60,7 @@ export class RegisterWarehouse implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.warehouses.save(warehouse, tx);
+      await this.deps.warehouses.save(warehouse, input.tenantId, tx);
 
       return ok({
         warehouseId: warehouse.id.toString(),
@@ -70,7 +72,47 @@ export class RegisterWarehouse implements UseCase<
   }
 }
 
+export interface ListWarehousesInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
+  readonly first?: number;
+  readonly after?: string;
+}
+
+/** Plan 2B-1: the tenant's stock locations, so a screen can show names instead of ids. */
+export class ListWarehouses implements UseCase<
+  ListWarehousesInput,
+  Paginated<WarehouseOutput>,
+  DomainError
+> {
+  private readonly warehouses: WarehouseRepository;
+
+  constructor(deps: { readonly warehouses: WarehouseRepository }) {
+    this.warehouses = deps.warehouses;
+  }
+
+  async execute(
+    input: ListWarehousesInput,
+  ): Promise<Result<Paginated<WarehouseOutput>, DomainError>> {
+    const page = await this.warehouses.list(
+      { first: input.first ?? 50, ...(input.after === undefined ? {} : { after: input.after }) },
+      input.tenantId,
+    );
+    return ok({
+      items: page.items.map((warehouse) => ({
+        warehouseId: warehouse.id.toString(),
+        code: warehouse.code,
+        name: warehouse.name,
+        status: warehouse.status,
+      })),
+      pageInfo: page.pageInfo,
+    });
+  }
+}
+
 export interface DeactivateWarehouseInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly warehouseId: string;
 }
 
@@ -88,7 +130,7 @@ export class DeactivateWarehouse implements UseCase<
 
   async execute(input: DeactivateWarehouseInput): Promise<Result<WarehouseOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<WarehouseOutput, DomainError>>(async (tx) => {
-      const warehouse = await this.deps.warehouses.findById(input.warehouseId, tx);
+      const warehouse = await this.deps.warehouses.findById(input.warehouseId, input.tenantId, tx);
       if (warehouse === null) {
         return err(new NotFoundError("Warehouse not found"));
       }
@@ -100,7 +142,7 @@ export class DeactivateWarehouse implements UseCase<
         throw error;
       }
 
-      await this.deps.warehouses.save(warehouse, tx);
+      await this.deps.warehouses.save(warehouse, input.tenantId, tx);
       return ok({
         warehouseId: warehouse.id.toString(),
         code: warehouse.code,

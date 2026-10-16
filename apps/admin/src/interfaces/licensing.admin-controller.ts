@@ -117,6 +117,58 @@ export class LicensingAdminController {
     return this.licensing.createInvoice(input);
   }
 
+  async billSubscriptionRenewal(
+    principal: Principal,
+    input: Parameters<LicensingController["billSubscriptionRenewal"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.billSubscriptionRenewal(input);
+  }
+
+  /** G-74 (1) step 1: start the merchant's interactive first payment (which saves their card). */
+  async beginCardEnrolment(
+    principal: Principal,
+    input: Parameters<LicensingController["beginCardEnrolment"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.beginCardEnrolment(input);
+  }
+
+  /** Removes a merchant's saved card; the next renewal then fails visibly. */
+  async revokeBillingPaymentMethod(
+    principal: Principal,
+    input: Parameters<LicensingController["revokeBillingPaymentMethod"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.revokeBillingPaymentMethod(input);
+  }
+
+  /**
+   * G-74 (1) step 2: the PSP's card-token callback. Deliberately NOT behind the staff guard — the
+   * caller is the PSP, which presents no Bearer token; its authentication is the callback HMAC, which
+   * the use case verifies before anything is stored, and the scope it writes under is pinned to the
+   * platform tenant inside the controller.
+   */
+  recordCardToken(
+    input: Parameters<LicensingController["recordCardToken"]>[0],
+  ): Promise<AdminResponse> {
+    return this.licensing.recordCardToken(input);
+  }
+
+  /**
+   * G-74 (8): Morbeh's billing TRANSACTION callback — settles the merchant's first invoice. Same
+   * reason as `recordCardToken` for staying off the staff guard: the caller is the PSP, authenticated
+   * by the callback's own signature (verified inside the use case), not a staff Bearer token.
+   */
+  recordInvoiceTransaction(
+    input: Parameters<LicensingController["recordInvoiceTransaction"]>[0],
+  ): Promise<AdminResponse> {
+    return this.licensing.recordInvoiceTransaction(input);
+  }
+
   async collectInvoice(
     principal: Principal,
     input: Parameters<LicensingController["collectInvoice"]>[0],
@@ -133,5 +185,56 @@ export class LicensingAdminController {
     const denied = await this.guard.ensure(principal, "licensing:billing:manage");
     if (denied) return denied;
     return this.licensing.grantCredit(input);
+  }
+
+  /**
+   * T14.3 coupons. Gated by `licensing:billing:manage` like every other billing operation (there is
+   * no `licensing:billing:read`; the read reuses this one so no new grant needs provisioning, and
+   * because a coupon lookup is at least as sensitive as issuing one). Whether the caller's TENANT may
+   * act is decided at `LicensingController`, not here.
+   */
+  async issueCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["issueCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.issueCoupon(input);
+  }
+
+  async redeemCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["redeemCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.redeemCoupon(input);
+  }
+
+  async expireCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["expireCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.expireCoupon(input);
+  }
+
+  async revokeCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["revokeCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.revokeCoupon(input);
+  }
+
+  async getCoupon(
+    principal: Principal,
+    input: Parameters<LicensingController["getCoupon"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "licensing:billing:manage");
+    if (denied) return denied;
+    return this.licensing.getCoupon(input);
   }
 }

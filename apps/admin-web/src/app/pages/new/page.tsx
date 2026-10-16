@@ -24,8 +24,8 @@ export default async function NewPagePage() {
               {t.pageDetail.back}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.pageCreate.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.pageCreate.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.pageCreate.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.pageCreate.subtitle}</p>
         </div>
 
         <Card>

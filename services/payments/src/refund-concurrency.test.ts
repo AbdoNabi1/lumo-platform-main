@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { staticProviders } from "./test-support/static-provider-resolver";
 import type { Clock, IdGenerator, PaymentProvider, ProviderIntent } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
@@ -42,7 +43,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, 1);
   }
 
-  async save(intent: PaymentIntent): Promise<void> {
+  async save(intent: PaymentIntent, _tenantId: string): Promise<void> {
     const id = intent.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -57,7 +58,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, existing.intentRow.version + 1);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
+  async findById(id: string, _tenantId: string): Promise<PaymentIntent | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     return PaymentIntentMapper.toDomain(
@@ -68,11 +69,11 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     );
   }
 
-  async findByIdempotencyKey(): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(_key: string, _tenantId: string): Promise<PaymentIntent | null> {
     return null;
   }
 
-  async findByPspReference(pspReference: string): Promise<PaymentIntent | null> {
+  async findByPspReference(pspReference: string, _tenantId: string): Promise<PaymentIntent | null> {
     for (const row of this.rows.values()) {
       if (row.intentRow.pspReference === pspReference) {
         return PaymentIntentMapper.toDomain(
@@ -168,6 +169,7 @@ function seedCapturedIntent(
     UniqueEntityId.from(id),
     `order-${id}`,
     usd(capturedAmountMinor),
+    "stripe",
   );
   pi.markProcessing("seed-1", new Date(0));
   const pspRef = PspReference.create(`psp-ref-${id}`);
@@ -189,7 +191,7 @@ function buildDeps(
     unitOfWork: new PassthroughUnitOfWork(),
     idGenerator: sequentialIds("evt"),
     clock,
-    paymentProvider,
+    providers: staticProviders(paymentProvider),
   };
 }
 
@@ -201,8 +203,18 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     const [a, b] = await Promise.all([
-      lifecycle.execute({ paymentIntentId: "pi-1", amountMinor: 700, currency: "USD" }),
-      lifecycle.execute({ paymentIntentId: "pi-1", amountMinor: 700, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-1",
+        amountMinor: 700,
+        currency: "USD",
+      }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-1",
+        amountMinor: 700,
+        currency: "USD",
+      }),
     ]);
 
     const outcomes = [a, b];
@@ -218,7 +230,7 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     expect(provider.calls).toHaveLength(1);
     expect(provider.calls[0]?.amountMinor).toBe(700);
 
-    const finalIntent = await repo.findById("pi-1");
+    const finalIntent = await repo.findById("pi-1", "tenant-a");
     const totalRefunded = finalIntent?.refunds
       .filter((r) => r.status !== "failed")
       .reduce((sum, r) => sum + r.amount.amountMinor, 0);
@@ -233,8 +245,18 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     const [a, b] = await Promise.all([
-      lifecycle.execute({ paymentIntentId: "pi-2", amountMinor: 500, currency: "USD" }),
-      lifecycle.execute({ paymentIntentId: "pi-2", amountMinor: 500, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-2",
+        amountMinor: 500,
+        currency: "USD",
+      }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-2",
+        amountMinor: 500,
+        currency: "USD",
+      }),
     ]);
 
     expect(a.ok).toBe(true);
@@ -244,7 +266,7 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     // Two distinct reservations must never share one idempotency key.
     expect(new Set(provider.calls.map((c) => c.idempotencyKey)).size).toBe(2);
 
-    const finalIntent = await repo.findById("pi-2");
+    const finalIntent = await repo.findById("pi-2", "tenant-a");
     const totalRefunded = finalIntent?.refunds
       .filter((r) => r.status !== "failed")
       .reduce((sum, r) => sum + r.amount.amountMinor, 0);
@@ -259,8 +281,18 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     const [a, b] = await Promise.all([
-      lifecycle.execute({ paymentIntentId: "pi-3", amountMinor: 500, currency: "USD" }),
-      lifecycle.execute({ paymentIntentId: "pi-3", amountMinor: 600, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-3",
+        amountMinor: 500,
+        currency: "USD",
+      }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-3",
+        amountMinor: 600,
+        currency: "USD",
+      }),
     ]);
 
     const outcomes = [a, b];
@@ -268,7 +300,7 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     expect(outcomes.filter((r) => !r.ok)).toHaveLength(1);
     expect(provider.calls).toHaveLength(1);
 
-    const finalIntent = await repo.findById("pi-3");
+    const finalIntent = await repo.findById("pi-3", "tenant-a");
     const totalRefunded = finalIntent?.refunds
       .filter((r) => r.status !== "failed")
       .reduce((sum, r) => sum + r.amount.amountMinor, 0);
@@ -283,14 +315,24 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     const [a, b] = await Promise.all([
-      lifecycle.execute({ paymentIntentId: "pi-4", amountMinor: 1000, currency: "USD" }),
-      lifecycle.execute({ paymentIntentId: "pi-4", amountMinor: 1000, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-4",
+        amountMinor: 1000,
+        currency: "USD",
+      }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-4",
+        amountMinor: 1000,
+        currency: "USD",
+      }),
     ]);
 
     expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
     expect(provider.calls).toHaveLength(1);
 
-    const finalIntent = await repo.findById("pi-4");
+    const finalIntent = await repo.findById("pi-4", "tenant-a");
     expect(finalIntent?.status.value).toBe("refunded");
   });
 
@@ -301,8 +343,18 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     const [a, b] = await Promise.all([
-      lifecycle.execute({ paymentIntentId: "pi-5", amountMinor: 700, currency: "USD" }),
-      lifecycle.execute({ paymentIntentId: "pi-5", amountMinor: 700, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-5",
+        amountMinor: 700,
+        currency: "USD",
+      }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-5",
+        amountMinor: 700,
+        currency: "USD",
+      }),
     ]);
 
     expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
@@ -316,16 +368,22 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     await expect(
-      lifecycle.execute({ paymentIntentId: "pi-6", amountMinor: 700, currency: "USD" }),
+      lifecycle.execute({
+        tenantId: "tenant-a",
+        paymentIntentId: "pi-6",
+        amountMinor: 700,
+        currency: "USD",
+      }),
     ).rejects.toThrow(/simulated PSP failure/);
 
-    const afterFailure = await repo.findById("pi-6");
+    const afterFailure = await repo.findById("pi-6", "tenant-a");
     expect(afterFailure?.refunds).toHaveLength(1);
     expect(afterFailure?.refunds[0]?.status).toBe("failed");
     // Capacity was released — a fresh refund for the same 700 (now succeeding) must be accepted.
     const provider2 = new RecordingPaymentProvider();
     const lifecycle2 = new RefundPaymentLifecycle(buildDeps(repo, provider2));
     const retried = await lifecycle2.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-6",
       amountMinor: 700,
       currency: "USD",
@@ -340,9 +398,14 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     const provider = new RecordingPaymentProvider();
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
-    await lifecycle.execute({ paymentIntentId: "pi-7", amountMinor: 300, currency: "USD" });
+    await lifecycle.execute({
+      tenantId: "tenant-a",
+      paymentIntentId: "pi-7",
+      amountMinor: 300,
+      currency: "USD",
+    });
 
-    const intent = await repo.findById("pi-7");
+    const intent = await repo.findById("pi-7", "tenant-a");
     const refundId = intent?.refunds[0]?.id.toString();
     expect(provider.calls[0]?.idempotencyKey).toBe(`pi-7:refund:${refundId}`);
   });
@@ -354,6 +417,7 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     const lifecycle = new RefundPaymentLifecycle(buildDeps(repo, provider));
 
     const partial = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-8",
       amountMinor: 400,
       currency: "USD",
@@ -362,6 +426,7 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     if (partial.ok) expect(partial.value.status).toBe("partially_refunded");
 
     const excessive = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-8",
       amountMinor: 9999,
       currency: "USD",
@@ -371,6 +436,7 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     expect(provider.calls).toHaveLength(1); // the excessive request never reached the PSP
 
     const full = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-8",
       amountMinor: 600,
       currency: "USD",
@@ -380,6 +446,7 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     expect(provider.calls).toHaveLength(2);
 
     const alreadyFullyRefunded = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-8",
       amountMinor: 1,
       currency: "USD",
@@ -387,6 +454,7 @@ describe("RefundPaymentLifecycle — concurrency proof (Phase A.4)", () => {
     expect(alreadyFullyRefunded.ok).toBe(false);
 
     const missing = await lifecycle.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "missing-intent",
       amountMinor: 100,
       currency: "USD",

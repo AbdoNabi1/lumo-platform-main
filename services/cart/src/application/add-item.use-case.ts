@@ -5,9 +5,12 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
+import type { CartLineMerchandise } from "../domain/cart-item";
 import { Quantity } from "../domain/value-objects/quantity";
 
 export interface AddItemInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
   readonly productId: string;
   readonly quantity: number;
@@ -18,6 +21,8 @@ export interface AddItemInput {
   readonly inventoryAvailable?: number;
   /** Free-form caller metadata (e.g. selected variant options), stored verbatim (Sprint 4.5). */
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /** Plan 2A: the exact variant being sold, resolved server-side (never client-supplied). */
+  readonly merchandise?: CartLineMerchandise;
 }
 
 export interface AddItemOutput {
@@ -48,7 +53,7 @@ export class AddItem implements UseCase<AddItemInput, AddItemOutput, DomainError
     if (!unitPrice.ok) return err(unitPrice.error);
 
     return this.deps.unitOfWork.run<Result<AddItemOutput, DomainError>>(async (tx) => {
-      const cart = await this.deps.carts.findById(input.cartId, tx);
+      const cart = await this.deps.carts.findById(input.cartId, input.tenantId, tx);
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
@@ -59,14 +64,18 @@ export class AddItem implements UseCase<AddItemInput, AddItemOutput, DomainError
           productRef.value,
           quantity.value,
           unitPrice.value,
-          { inventoryAvailable: input.inventoryAvailable, metadata: input.metadata },
+          {
+            inventoryAvailable: input.inventoryAvailable,
+            metadata: input.metadata,
+            merchandise: input.merchandise,
+          },
         );
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;
       }
 
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString(), totalAmountMinor: cart.totalAmount().amountMinor });
     });
   }

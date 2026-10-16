@@ -5,6 +5,8 @@ import type { Cart } from "../domain/cart";
 import type { CartRepository } from "../domain/cart-repository";
 
 export interface GetCartInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
 }
 
@@ -21,7 +23,7 @@ export class GetCart implements UseCase<GetCartInput, Cart, DomainError> {
   }
 
   async execute(input: GetCartInput): Promise<Result<Cart, DomainError>> {
-    const cart = await this.deps.carts.findById(input.cartId);
+    const cart = await this.deps.carts.findById(input.cartId, input.tenantId);
     if (cart === null) {
       return err(new NotFoundError("Cart not found"));
     }

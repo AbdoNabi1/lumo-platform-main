@@ -15,6 +15,9 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
   RATE_LIMITED: 429,
+  PAYLOAD_TOO_LARGE: 413,
+  UNSUPPORTED_MEDIA_TYPE: 415,
+  UNAVAILABLE: 503,
 };
 
 export interface MappedError {

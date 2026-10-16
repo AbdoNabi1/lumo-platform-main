@@ -25,6 +25,7 @@ import type {
 import { EvaluateComputedAttribute } from "./evaluate-computed-attribute.use-case";
 import { UpdateComputedAttributeProjection } from "./update-computed-attribute-projection.use-case";
 import { EvaluateAttributeGraph } from "./evaluate-attribute-graph.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -145,6 +146,7 @@ describe("EvaluateAttributeGraph", () => {
 
     // Deliberately out-of-order input — the use case must still evaluate clv_tier before is_vip.
     const result = await graph.execute({
+      tenantId: TENANT_A,
       identifier,
       definitions: [isVipFromTierDefinition(), lifetimeValueTierDefinition()],
     });
@@ -156,7 +158,7 @@ describe("EvaluateAttributeGraph", () => {
     expect(byId.get("is_vip")?.value).toBe(true);
     expect([...result.value.applied].sort()).toEqual(["clv_tier", "is_vip"]);
 
-    const persisted = await attributes.getCurrent(identifier);
+    const persisted = await attributes.getCurrent(identifier, TENANT_A);
     expect(persisted?.attributes.get("clv_tier")?.value).toBe("gold");
     expect(persisted?.attributes.get("is_vip")?.value).toBe(true);
   });
@@ -187,7 +189,7 @@ describe("EvaluateAttributeGraph", () => {
       },
     };
 
-    const result = await graph.execute({ identifier, definitions: [a, b] });
+    const result = await graph.execute({ tenantId: TENANT_A, identifier, definitions: [a, b] });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.error.message).toMatch(/cycle/i);
@@ -197,6 +199,7 @@ describe("EvaluateAttributeGraph", () => {
     const { graph } = wire(50); // below the gold threshold -> "bronze", stable across re-evaluations
 
     const first = await graph.execute({
+      tenantId: TENANT_A,
       identifier,
       definitions: [lifetimeValueTierDefinition(), isVipFromTierDefinition()],
     });
@@ -204,6 +207,7 @@ describe("EvaluateAttributeGraph", () => {
     expect([...first.value.applied].sort()).toEqual(["clv_tier", "is_vip"]); // both new, both applied
 
     const second = await graph.execute({
+      tenantId: TENANT_A,
       identifier,
       definitions: [lifetimeValueTierDefinition(), isVipFromTierDefinition()],
     });

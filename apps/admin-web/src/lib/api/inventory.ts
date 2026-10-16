@@ -1,4 +1,4 @@
-import { mutateAdminApi, type MutationResult } from "./client";
+import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
 /**
  * T5.5 — the 8 Inventory/Warehouse write routes (`admin-routes.ts` lines ~1503-1581). Every one of
@@ -12,17 +12,53 @@ import { mutateAdminApi, type MutationResult } from "./client";
  * (`ProductInventoryCard`, via `fetchProductInventory` in this same directory), never trusting this
  * response for anything beyond "did it succeed."
  *
- * There is no `GET /warehouses` (or any warehouse list) route in this codebase — see
- * `docs/plans/BLOCKERS.md`'s T5.5 entry. Every `warehouseId`/`sourceWarehouseId`/
- * `destinationWarehouseId` parameter below is therefore a plain operator-typed string, not resolved
- * against a picker, same fallback T5.1's brand/category fields used.
+ * Plan 2B-1 added `GET /warehouses` (see {@link fetchWarehouses}), so a screen can now offer a
+ * warehouse picker by name; the `warehouseId` parameters below are still plain strings on the wire.
  */
 function isUnknown(_value: unknown): _value is unknown {
   return true;
 }
 
+/** One stock location (`GET /warehouses`, Plan 2B-1). */
+export interface WarehouseDto {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly status: string;
+}
+
+interface WarehousesPageDto {
+  readonly items: readonly WarehouseDto[];
+}
+
+function isWarehousesPageDto(value: unknown): value is WarehousesPageDto {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { items?: unknown }).items)
+  );
+}
+
+export type FetchWarehousesResult =
+  | { readonly outcome: "ok"; readonly items: readonly WarehouseDto[] }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "error"; readonly message: string };
+
+/** `GET /warehouses?first=100` (`inventory:read`) — the tenant's stock locations, by name. */
+export async function fetchWarehouses(): Promise<FetchWarehousesResult> {
+  const result = await getAdminApi("/api/v1/warehouses?first=100", isWarehousesPageDto);
+  if (result.outcome === "ok") return { outcome: "ok", items: result.data.items };
+  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
+  return {
+    outcome: "error",
+    message: result.outcome === "not_found" ? "Not found" : result.message,
+  };
+}
+
 export interface ReceiveStockInput {
   readonly productId: string;
+  /** Plan 2B-1: the variant whose stock this is; absent = the product's only row (legacy). */
+  readonly variantId?: string;
   readonly warehouseId: string;
   readonly quantity: number;
 }
@@ -41,6 +77,8 @@ export function receiveStock(
 
 export interface AdjustStockInput {
   readonly productId: string;
+  /** Plan 2B-1: the variant whose stock this is; absent = the product's only row (legacy). */
+  readonly variantId?: string;
   readonly warehouseId: string;
   readonly onHand: number;
 }

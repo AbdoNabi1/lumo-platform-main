@@ -1,4 +1,8 @@
-import type { IntegrationEvent } from "@platform/domain-events";
+import {
+  MissingEnvelopeTenantError,
+  readEnvelopeTenant,
+  type IntegrationEvent,
+} from "@platform/domain-events";
 import type { EventHandler } from "@platform/messaging";
 import type { Logger } from "@platform/utils";
 import type { ConsentProjectionStore } from "../application/ports";
@@ -46,11 +50,29 @@ export class ConsentChangedConsumer implements EventHandler<ConsentChangedPayloa
       });
       return;
     }
-    await this.deps.store.upsert({
-      subjectRef,
-      purpose: event.payload.scope,
-      granted: event.payload.granted,
-      occurredAt: event.occurredAt,
-    });
+    // G-64: the projection row is scoped by the envelope's tenant. With none, the two directions
+    // differ (a skipped write denies, a skipped delete allows): a GRANT is refused (nothing written,
+    // error logged), but a WITHDRAWAL throws to the DLQ — acking a skipped withdrawal would leave the
+    // subject's consent live in the projection.
+    const tenantId = readEnvelopeTenant(event);
+    if (tenantId === null) {
+      this.deps.logger.error("consent_changed has no tenant on the envelope", {
+        messageId: event.messageId,
+        granted: event.payload.granted,
+      });
+      if (!event.payload.granted) {
+        throw new MissingEnvelopeTenantError("ConsentChangedConsumer", event);
+      }
+      return;
+    }
+    await this.deps.store.upsert(
+      {
+        subjectRef,
+        purpose: event.payload.scope,
+        granted: event.payload.granted,
+        occurredAt: event.occurredAt,
+      },
+      tenantId,
+    );
   }
 }

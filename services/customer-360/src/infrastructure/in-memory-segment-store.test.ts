@@ -4,6 +4,7 @@ import { INITIAL_SEGMENT_VERSION } from "../domain/segment-version";
 import { applyMembershipUpdate } from "../domain/segment-membership";
 import { InMemorySegmentStore } from "./in-memory-segment-store";
 import { runSegmentStoreContractTests } from "./segment-store.contract";
+import { TENANT_A } from "../test-support/tenants";
 
 runSegmentStoreContractTests("in-memory", () => new InMemorySegmentStore());
 
@@ -25,16 +26,16 @@ describe("InMemorySegmentStore — create-branch CAS conflict (adapter-specific,
       inputs: new Map(),
       evaluatedAt: "t0",
     }).membership!;
-    await store.saveCurrent(first, INITIAL_SEGMENT_VERSION);
+    await store.saveCurrent(first, TENANT_A, INITIAL_SEGMENT_VERSION);
 
     // A second create attempt for the same (identifier, segmentId) pair, expecting no row to exist
     // yet — must lose the race against the row `first` already occupies.
     const fabricated = { ...first, status: "exited" as const, version: 1 };
-    await expect(store.saveCurrent(fabricated, INITIAL_SEGMENT_VERSION)).rejects.toBeInstanceOf(
-      ConcurrencyError,
-    );
+    await expect(
+      store.saveCurrent(fabricated, TENANT_A, INITIAL_SEGMENT_VERSION),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
 
-    const loaded = await store.getCurrent(identifier, segmentId);
+    const loaded = await store.getCurrent(identifier, segmentId, TENANT_A);
     expect(loaded?.status).toBe("entered");
   });
 });

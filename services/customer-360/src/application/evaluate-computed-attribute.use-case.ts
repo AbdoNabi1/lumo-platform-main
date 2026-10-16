@@ -16,6 +16,9 @@ import type { GetCustomerProfile } from "./get-customer-profile.use-case";
 import type { GetJourneyState } from "./get-journey-state.use-case";
 
 export interface EvaluateComputedAttributeInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   readonly definition: ComputedAttributeDefinition;
 }
@@ -84,6 +87,7 @@ export class EvaluateComputedAttribute implements UseCase<
     const now = this.deps.clock.now().toISOString();
 
     const profileResult = await this.deps.getCustomerProfile.execute({
+      tenantId: input.tenantId,
       identifier: input.identifier,
       now,
     });
@@ -107,6 +111,7 @@ export class EvaluateComputedAttribute implements UseCase<
     const journeyFacts = new Map<string, AttributeValue>();
     if (input.identifier.type === "visitor_id") {
       const journeyResult = await this.deps.getJourneyState.execute({
+        tenantId: input.tenantId,
         visitorId: input.identifier.value,
       });
       if (journeyResult.ok) {
@@ -117,7 +122,7 @@ export class EvaluateComputedAttribute implements UseCase<
       }
     }
 
-    const current = await this.deps.attributes.getCurrent(input.identifier);
+    const current = await this.deps.attributes.getCurrent(input.identifier, input.tenantId);
     const dependencyFacts = new Map<string, AttributeValue>();
     for (const dependencyId of input.definition.dependencies) {
       const dependencyValue = current?.attributes.get(dependencyId);

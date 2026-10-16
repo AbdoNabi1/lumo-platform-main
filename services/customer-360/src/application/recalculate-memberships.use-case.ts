@@ -11,6 +11,9 @@ import {
 } from "./evaluate-all-segments.use-case";
 
 export interface RecalculateMembershipsInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   /**
    * Fact paths known to have changed upstream (e.g. `"profile.ltv"` after `UpdateProfileProjection`,
@@ -65,7 +68,7 @@ export class RecalculateMemberships implements UseCase<
   async execute(
     input: RecalculateMembershipsInput,
   ): Promise<Result<RecalculateMembershipsOutput, DomainError>> {
-    const all = await this.deps.definitions.list();
+    const all = await this.deps.definitions.list(input.tenantId);
     const byId = new Map(all.map((definition) => [definition.id, definition]));
 
     const edges = toSegmentDependencyEdges(all);
@@ -86,6 +89,7 @@ export class RecalculateMemberships implements UseCase<
     const scopedDefinitions = recomputed.map((id) => byId.get(id)!);
 
     const evaluated = await this.deps.evaluateAll.execute({
+      tenantId: input.tenantId,
       identifier: input.identifier,
       definitions: scopedDefinitions,
     });

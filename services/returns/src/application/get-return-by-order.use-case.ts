@@ -5,6 +5,8 @@ import type { ReturnRequest } from "../domain/return-request";
 import type { ReturnRequestRepository } from "../domain/return-request-repository";
 
 export interface GetReturnByOrderInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderRef: string;
 }
 
@@ -25,7 +27,10 @@ export class GetReturnByOrder implements UseCase<
   }
 
   async execute(input: GetReturnByOrderInput): Promise<Result<ReturnRequest, DomainError>> {
-    const returnRequest = await this.deps.returnRequests.findByOrderRef(input.orderRef);
+    const returnRequest = await this.deps.returnRequests.findByOrderRef(
+      input.orderRef,
+      input.tenantId,
+    );
     if (returnRequest === null) {
       return err(new NotFoundError("No return request found for this order"));
     }

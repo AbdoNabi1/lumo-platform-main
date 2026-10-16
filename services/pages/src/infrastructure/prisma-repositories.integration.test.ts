@@ -34,15 +34,16 @@ describe.runIf(Boolean(databaseUrl))("Prisma Pages repositories (integration)", 
       producer: "pages",
     });
     const context = rootEventContext(ids, tenantId);
-    const pages = new PrismaPageRepository({ prisma, tenantId, outbox, context });
-    const templates = new PrismaTemplateRepository({ prisma, tenantId, outbox, context });
+    const pages = new PrismaPageRepository({ prisma, outbox, context });
+    const templates = new PrismaTemplateRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       pages,
       templates,
-      savePage: (page: Page) => unitOfWork.run((tx) => pages.save(page, tx)),
-      saveTemplate: (template: Template) => unitOfWork.run((tx) => templates.save(template, tx)),
+      savePage: (page: Page) => unitOfWork.run((tx) => pages.save(page, tenantId, tx)),
+      saveTemplate: (template: Template) =>
+        unitOfWork.run((tx) => templates.save(template, tenantId, tx)),
     };
   }
 
@@ -63,15 +64,18 @@ describe.runIf(Boolean(databaseUrl))("Prisma Pages repositories (integration)", 
     }
     await saveOtherPage(newPage("/page-x"));
 
-    const page = await pages.list({ first: 2 });
+    const page = await pages.list({ first: 2 }, tenantId);
     expect(page.items).toHaveLength(2);
     expect(page.pageInfo.hasNextPage).toBe(true);
 
-    const rest = await pages.list({ first: 10, after: page.pageInfo.endCursor ?? undefined });
+    const rest = await pages.list(
+      { first: 10, after: page.pageInfo.endCursor ?? undefined },
+      tenantId,
+    );
     expect(rest.items).toHaveLength(1);
     expect(rest.pageInfo.hasNextPage).toBe(false);
 
-    const otherPage = await otherPages.list({ first: 10 });
+    const otherPage = await otherPages.list({ first: 10 }, other);
     expect(otherPage.items).toHaveLength(1);
     await prisma.$disconnect();
   });
@@ -91,11 +95,11 @@ describe.runIf(Boolean(databaseUrl))("Prisma Pages repositories (integration)", 
       Template.create(UniqueEntityId.from(ids.generate()), "template-x", "experience-1"),
     );
 
-    const page = await templates.list({ first: 2 });
+    const page = await templates.list({ first: 2 }, tenantId);
     expect(page.items).toHaveLength(2);
     expect(page.pageInfo.hasNextPage).toBe(true);
 
-    const otherPage = await otherTemplates.list({ first: 10 });
+    const otherPage = await otherTemplates.list({ first: 10 }, other);
     expect(otherPage.items).toHaveLength(1);
     await prisma.$disconnect();
   });

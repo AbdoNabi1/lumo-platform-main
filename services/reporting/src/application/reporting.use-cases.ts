@@ -36,6 +36,8 @@ export interface ReportingDeps {
 }
 
 export interface CreateReportDefinitionInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly name: string;
   readonly type: ReportType;
   readonly metricRefs: readonly string[];
@@ -69,7 +71,11 @@ export class CreateReportDefinition implements UseCase<
 
     return this.deps.unitOfWork.run<Result<ReportDefinitionStatusOutput, DomainError>>(
       async (tx) => {
-        const existing = await this.deps.reportDefinitions.findByName(input.name, tx);
+        const existing = await this.deps.reportDefinitions.findByName(
+          input.name,
+          input.tenantId,
+          tx,
+        );
         if (existing !== null) {
           return err(new ConflictError(`Report definition "${input.name}" already exists`));
         }
@@ -85,7 +91,7 @@ export class CreateReportDefinition implements UseCase<
             ? undefined
             : CronSchedule.create(input.cronExpression),
         );
-        await this.deps.reportDefinitions.save(definition, tx);
+        await this.deps.reportDefinitions.save(definition, input.tenantId, tx);
         return ok({ reportDefinitionId: id.toString(), status: definition.status.value });
       },
     );
@@ -93,6 +99,8 @@ export class CreateReportDefinition implements UseCase<
 }
 
 export interface ReportDefinitionIdInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly reportDefinitionId: string;
 }
 
@@ -117,7 +125,11 @@ export class AdvanceReportDefinition implements UseCase<
   ): Promise<Result<ReportDefinitionStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ReportDefinitionStatusOutput, DomainError>>(
       async (tx) => {
-        const definition = await this.deps.reportDefinitions.findById(input.reportDefinitionId, tx);
+        const definition = await this.deps.reportDefinitions.findById(
+          input.reportDefinitionId,
+          input.tenantId,
+          tx,
+        );
         if (definition === null) return err(new NotFoundError("Report definition not found"));
 
         try {
@@ -131,7 +143,7 @@ export class AdvanceReportDefinition implements UseCase<
           throw error;
         }
 
-        await this.deps.reportDefinitions.save(definition, tx);
+        await this.deps.reportDefinitions.save(definition, input.tenantId, tx);
         return ok({
           reportDefinitionId: definition.id.toString(),
           status: definition.status.value,
@@ -166,7 +178,11 @@ export class GenerateReport implements UseCase<
 
   async execute(input: GenerateReportInput): Promise<Result<GenerateReportOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<GenerateReportOutput, DomainError>>(async (tx) => {
-      const definition = await this.deps.reportDefinitions.findById(input.reportDefinitionId, tx);
+      const definition = await this.deps.reportDefinitions.findById(
+        input.reportDefinitionId,
+        input.tenantId,
+        tx,
+      );
       if (definition === null) return err(new NotFoundError("Report definition not found"));
 
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
@@ -194,13 +210,15 @@ export class GenerateReport implements UseCase<
         );
       }
 
-      await this.deps.analyticsReports.save(report, tx);
+      await this.deps.analyticsReports.save(report, input.tenantId, tx);
       return ok({ reportId: id.toString(), outcome: report.outcome });
     });
   }
 }
 
 export interface CreateDashboardInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly name: string;
   readonly tileRefs: readonly string[];
 }
@@ -227,19 +245,21 @@ export class CreateDashboard implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<DashboardStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.dashboards.findByName(input.name, tx);
+      const existing = await this.deps.dashboards.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Dashboard "${input.name}" already exists`));
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const dashboard = Dashboard.create(id, input.name, input.tileRefs);
-      await this.deps.dashboards.save(dashboard, tx);
+      await this.deps.dashboards.save(dashboard, input.tenantId, tx);
       return ok({ dashboardId: id.toString(), status: dashboard.status.value });
     });
   }
 }
 
 export interface DashboardIdInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly dashboardId: string;
 }
 
@@ -261,7 +281,7 @@ export class AdvanceDashboard implements UseCase<
 
   async execute(input: AdvanceDashboardInput): Promise<Result<DashboardStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DashboardStatusOutput, DomainError>>(async (tx) => {
-      const dashboard = await this.deps.dashboards.findById(input.dashboardId, tx);
+      const dashboard = await this.deps.dashboards.findById(input.dashboardId, input.tenantId, tx);
       if (dashboard === null) return err(new NotFoundError("Dashboard not found"));
 
       try {
@@ -275,7 +295,7 @@ export class AdvanceDashboard implements UseCase<
         throw error;
       }
 
-      await this.deps.dashboards.save(dashboard, tx);
+      await this.deps.dashboards.save(dashboard, input.tenantId, tx);
       return ok({ dashboardId: dashboard.id.toString(), status: dashboard.status.value });
     });
   }

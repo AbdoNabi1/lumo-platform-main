@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -13,8 +13,6 @@ export interface PrismaPricingRegistryRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 function requireTx(tx: unknown, repo: string): TransactionClient {
@@ -22,6 +20,18 @@ function requireTx(tx: unknown, repo: string): TransactionClient {
     throw new Error(`${repo}.save requires the unit of work's transaction client (ADR-0003).`);
   }
   return tx as TransactionClient;
+}
+
+/** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
 }
 
 /** Production `TaxClassRepository` on the `pricing` schema (ADR-0003 locking + same-tx outbox), `(tenant_id, code)` unique. */
@@ -32,9 +42,8 @@ export class PrismaTaxClassRepository implements TaxClassRepository {
     this.deps = deps;
   }
 
-  async save(taxClass: TaxClass, tx?: unknown): Promise<void> {
+  async save(taxClass: TaxClass, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaTaxClassRepository");
-    const tenantId = this.deps.tenantId;
     const row = TaxClassMapper.toRow(taxClass, tenantId);
 
     if (taxClass.version === 0) {
@@ -51,42 +60,41 @@ export class PrismaTaxClassRepository implements TaxClassRepository {
       }
     }
 
-    await this.deps.outbox.write(taxClass.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      taxClass.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<TaxClass | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.taxClass.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<TaxClass | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.taxClass.findFirst({ where: { id, tenantId, deletedAt: null } }),
+    );
     return row === null ? null : TaxClassMapper.toDomain(row);
   }
 
-  async findByCode(code: string, tx?: unknown): Promise<TaxClass | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.taxClass.findFirst({
-      where: { tenantId: this.deps.tenantId, code, deletedAt: null },
-    });
+  async findByCode(code: string, tenantId: string, tx?: unknown): Promise<TaxClass | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.taxClass.findFirst({ where: { tenantId, code, deletedAt: null } }),
+    );
     return row === null ? null : TaxClassMapper.toDomain(row);
   }
 
-  async delete(taxClass: TaxClass, tx?: unknown): Promise<void> {
-    await this.save(taxClass, tx);
+  async delete(taxClass: TaxClass, tenantId: string, tx?: unknown): Promise<void> {
+    await this.save(taxClass, tenantId, tx);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<TaxClass>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<TaxClass>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.taxClass.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        deletedAt: null,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.taxClass.findMany({
+        where: { tenantId, deletedAt: null, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => TaxClassMapper.toDomain(row)),
       limit,
@@ -103,9 +111,8 @@ export class PrismaPricingRuleRepository implements PricingRuleRepository {
     this.deps = deps;
   }
 
-  async save(rule: PricingRule, tx?: unknown): Promise<void> {
+  async save(rule: PricingRule, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaPricingRuleRepository");
-    const tenantId = this.deps.tenantId;
     const row = PricingRuleMapper.toRow(rule, tenantId);
 
     if (rule.version === 0) {
@@ -122,27 +129,30 @@ export class PrismaPricingRuleRepository implements PricingRuleRepository {
       }
     }
 
-    await this.deps.outbox.write(rule.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      rule.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<PricingRule | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.pricingRule.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<PricingRule | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.pricingRule.findFirst({ where: { id, tenantId } }),
+    );
     return row === null ? null : PricingRuleMapper.toDomain(row);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<PricingRule>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<PricingRule>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.pricingRule.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.pricingRule.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => PricingRuleMapper.toDomain(row)),
       limit,

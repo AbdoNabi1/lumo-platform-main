@@ -64,10 +64,12 @@ export default async function SitemapDetailPage({ params }: SitemapDetailPagePro
             {t.sitemapDetail.back}
           </Link>
         </Button>
-        <h1 className="text-4xl font-semibold tracking-tight">{sitemap.name}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{sitemap.name}</h1>
         <p className="text-muted-foreground mt-1 text-sm">
           {t.sitemapDetail.lastGeneratedAt}:{" "}
-          <span className="font-mono">{sitemap.lastGeneratedAt ?? t.sitemapDetail.neverGenerated}</span>
+          <span className="font-mono">
+            {sitemap.lastGeneratedAt ?? t.sitemapDetail.neverGenerated}
+          </span>
         </p>
       </div>
 
@@ -79,7 +81,7 @@ export default async function SitemapDetailPage({ params }: SitemapDetailPagePro
           ) : (
             <ul className="flex flex-col gap-1">
               {sitemap.urls.map((url) => (
-                <li key={url} className="font-mono text-xs break-all">
+                <li key={url} className="break-all font-mono text-xs">
                   {url}
                 </li>
               ))}

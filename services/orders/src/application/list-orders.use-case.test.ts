@@ -44,7 +44,7 @@ describe("ListOrders", () => {
     const repo = { findById: notCalled, save: notCalled, list: async () => empty };
     const useCase = new ListOrders({ orders: repo });
 
-    const result = await useCase.execute({});
+    const result = await useCase.execute({ tenantId: "tenant-a" });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toEqual(empty);
   });
@@ -65,7 +65,7 @@ describe("ListOrders", () => {
     };
     const useCase = new ListOrders({ orders: repo });
 
-    const result = await useCase.execute({ first: 2, after: "order-0" });
+    const result = await useCase.execute({ tenantId: "tenant-a", first: 2, after: "order-0" });
     expect(result.ok).toBe(true);
     expect(received).toEqual({ first: 2, after: "order-0" });
   });
@@ -80,6 +80,6 @@ describe("ListOrders", () => {
     };
     const useCase = new ListOrders({ orders: repo });
 
-    await expect(useCase.execute({})).rejects.toThrow("connection reset");
+    await expect(useCase.execute({ tenantId: "tenant-a" })).rejects.toThrow("connection reset");
   });
 });

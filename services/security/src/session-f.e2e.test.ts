@@ -25,6 +25,7 @@ describe("session intelligence / console explorers / AI governance (end to end)"
 
     // ── §5 session intelligence: concurrent sessions + an impersonation ──
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "admin-1",
       kind: "human",
       displayName: "Admin",
@@ -32,6 +33,7 @@ describe("session intelligence / console explorers / AI governance (end to end)"
       tenantRef: "t1",
     });
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "support-1",
       kind: "human",
       displayName: "Support",
@@ -39,27 +41,31 @@ describe("session intelligence / console explorers / AI governance (end to end)"
       tenantRef: "t1",
     });
     await app.security.establishSession({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       refreshFingerprint: "rt-a",
       ttlSeconds: 3600,
     });
     await app.security.establishSession({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       refreshFingerprint: "rt-b",
       ttlSeconds: 3600,
     });
     const delegation = await app.security.grantDelegation({
+      tenantId: "tenant-a",
       delegatorExternalId: "admin-1",
       delegateExternalId: "support-1",
       ttlSeconds: 600,
     });
     await app.security.startImpersonation({
+      tenantId: "tenant-a",
       delegationId: body<{ id: string }>(delegation).id,
       refreshFingerprint: "imp-rt",
       ttlSeconds: 300,
     });
 
-    const sessions = await app.security.sessionExplorer();
+    const sessions = await app.security.sessionExplorer("tenant-a");
     expect(sessions.total).toBe(3); // 2 concurrent + 1 impersonation
     expect(sessions.active).toBe(3);
     expect(sessions.impersonations).toBe(1);
@@ -67,26 +73,33 @@ describe("session intelligence / console explorers / AI governance (end to end)"
 
     // ── §17 remaining explorers ──
     await app.security.issueCredential({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       kind: "api_key",
       material: "seed",
     });
-    const secrets = await app.security.secretExplorer();
+    const secrets = await app.security.secretExplorer("tenant-a");
     expect(secrets.total).toBeGreaterThanOrEqual(1);
     expect(secrets.credentials.every((c) => !("fingerprint" in c))).toBe(true); // never exposes secret values
 
-    await app.security.definePolicy({ key: "p1", name: "P1", mode: "balanced" });
-    await app.security.publishPolicyVersion({ key: "p1", rules: [] });
-    const policies = await app.security.policyExplorer();
+    await app.security.definePolicy({
+      tenantId: "tenant-a",
+      key: "p1",
+      name: "P1",
+      mode: "balanced",
+    });
+    await app.security.publishPolicyVersion({ tenantId: "tenant-a", key: "p1", rules: [] });
+    const policies = await app.security.policyExplorer("tenant-a");
     expect(policies.policies.find((p) => p.key === "p1")?.activeVersion).toBe(1);
 
-    await app.security.evaluateRisk({ ip: "1.2.3.4" });
+    await app.security.evaluateRisk({ tenantId: "tenant-a", ip: "1.2.3.4" });
     const risk = app.security.riskExplorer();
     expect(risk.total).toBeGreaterThanOrEqual(1);
     expect(risk.dominantBand).not.toBeNull();
 
     // ── §20 AI security governance ──
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "ai-agent-1",
       kind: "ai",
       displayName: "Copilot",
@@ -94,9 +107,16 @@ describe("session intelligence / console explorers / AI governance (end to end)"
     });
     // a human cannot be AI-governed
     expect(
-      (await app.security.governAiIdentity({ principalExternalId: "admin-1", config: {} })).status,
+      (
+        await app.security.governAiIdentity({
+          tenantId: "tenant-a",
+          principalExternalId: "admin-1",
+          config: {},
+        })
+      ).status,
     ).toBe(409);
     const governed = await app.security.governAiIdentity({
+      tenantId: "tenant-a",
       principalExternalId: "ai-agent-1",
       config: {
         tokenBudget: 1000,
@@ -110,6 +130,7 @@ describe("session intelligence / console explorers / AI governance (end to end)"
     // allowed tool + resource + within budget
     const ok = body<{ allowed: boolean }>(
       await app.security.checkAiAction({
+        tenantId: "tenant-a",
         principalExternalId: "ai-agent-1",
         tool: "search",
         resource: "lumo:catalog:product:p1",
@@ -121,13 +142,18 @@ describe("session intelligence / console explorers / AI governance (end to end)"
     // forbidden tool (sandbox)
     expect(
       body<{ allowed: boolean }>(
-        await app.security.checkAiAction({ principalExternalId: "ai-agent-1", tool: "delete_all" }),
+        await app.security.checkAiAction({
+          tenantId: "tenant-a",
+          principalExternalId: "ai-agent-1",
+          tool: "delete_all",
+        }),
       ).allowed,
     ).toBe(false);
     // forbidden resource (isolation)
     expect(
       body<{ allowed: boolean }>(
         await app.security.checkAiAction({
+          tenantId: "tenant-a",
           principalExternalId: "ai-agent-1",
           resource: "lumo:finance:ledger:l1",
         }),
@@ -136,6 +162,7 @@ describe("session intelligence / console explorers / AI governance (end to end)"
     // over budget
     const over = body<{ allowed: boolean; reason?: string }>(
       await app.security.checkAiAction({
+        tenantId: "tenant-a",
         principalExternalId: "ai-agent-1",
         tool: "search",
         tokens: 2000,
@@ -145,7 +172,7 @@ describe("session intelligence / console explorers / AI governance (end to end)"
     expect(over.allowed).toBe(false);
     expect(over.reason).toBe("token budget exceeded");
 
-    const aiExplorer = await app.security.aiGovernanceExplorer();
+    const aiExplorer = await app.security.aiGovernanceExplorer("tenant-a");
     expect(aiExplorer.total).toBe(1);
     expect(aiExplorer.identities[0]?.tokensConsumed).toBe(100);
 

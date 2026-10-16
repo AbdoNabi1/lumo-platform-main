@@ -43,12 +43,14 @@ async function sessionFor(
   ttlSeconds = 3600,
 ): Promise<string> {
   await wired.security.registerPrincipal({
+    tenantId: "tenant-a",
     externalId: subjectRef,
     kind: "human",
     displayName: subjectRef,
     subjectRef,
   });
   const established = await wired.security.establishSession({
+    tenantId: "tenant-a",
     principalExternalId: subjectRef,
     refreshFingerprint: "fp-1",
     ttlSeconds,
@@ -62,7 +64,9 @@ describe("IntrospectSessionSubject (T5.17)", () => {
     const wired = app();
     const sessionId = await sessionFor(wired);
 
-    const resolved = subject(await wired.security.introspectSessionSubject({ sessionId }));
+    const resolved = subject(
+      await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId }),
+    );
 
     expect(resolved.active).toBe(true);
     expect(resolved.subjectRef).toBe("customer-1");
@@ -75,7 +79,9 @@ describe("IntrospectSessionSubject (T5.17)", () => {
     const wired = app();
     const sessionId = await sessionFor(wired);
 
-    const resolved = subject(await wired.security.introspectSessionSubject({ sessionId }));
+    const resolved = subject(
+      await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId }),
+    );
 
     // `Entity` exposes `props`/`_id`/`_domainEvents`/`_version` at runtime; none may be present.
     expect(Object.keys(resolved).sort()).toEqual([
@@ -89,7 +95,10 @@ describe("IntrospectSessionSubject (T5.17)", () => {
 
   it("answers 200 + inactive (never 404) for an unknown session id", async () => {
     const wired = app();
-    const response = await wired.security.introspectSessionSubject({ sessionId: "no-such-id" });
+    const response = await wired.security.introspectSessionSubject({
+      tenantId: "tenant-a",
+      sessionId: "no-such-id",
+    });
 
     expect(response.status).toBe(200);
     expect(subject(response)).toEqual({
@@ -103,27 +112,37 @@ describe("IntrospectSessionSubject (T5.17)", () => {
 
   it("treats an empty session id as inactive without hitting the repository", async () => {
     const wired = app();
-    expect(subject(await wired.security.introspectSessionSubject({ sessionId: "" })).active).toBe(
-      false,
-    );
+    expect(
+      subject(
+        await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId: "" }),
+      ).active,
+    ).toBe(false);
   });
 
   it("goes inactive once the session has expired (sliding-window TTL enforcement)", async () => {
     const wired = app();
     const sessionId = await sessionFor(wired, "customer-1", 60);
 
-    expect(subject(await wired.security.introspectSessionSubject({ sessionId })).active).toBe(true);
+    expect(
+      subject(await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId }))
+        .active,
+    ).toBe(true);
     now = new Date(NOW.getTime() + 61_000);
-    expect(subject(await wired.security.introspectSessionSubject({ sessionId })).active).toBe(false);
+    expect(
+      subject(await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId }))
+        .active,
+    ).toBe(false);
   });
 
   it("goes inactive immediately after RevokeSession — logout takes effect on the next request", async () => {
     const wired = app();
     const sessionId = await sessionFor(wired);
 
-    await wired.security.revokeSession({ sessionId });
+    await wired.security.revokeSession({ tenantId: "tenant-a", sessionId });
 
-    const resolved = subject(await wired.security.introspectSessionSubject({ sessionId }));
+    const resolved = subject(
+      await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId }),
+    );
     expect(resolved.active).toBe(false);
     expect(resolved.subjectRef).toBeNull();
   });
@@ -132,35 +151,52 @@ describe("IntrospectSessionSubject (T5.17)", () => {
     const wired = app();
     const sessionId = await sessionFor(wired);
 
-    await wired.security.revokeAllSessions({ principalExternalId: "customer-1" });
+    await wired.security.revokeAllSessions({
+      tenantId: "tenant-a",
+      principalExternalId: "customer-1",
+    });
 
-    expect(subject(await wired.security.introspectSessionSubject({ sessionId })).active).toBe(false);
+    expect(
+      subject(await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId }))
+        .active,
+    ).toBe(false);
   });
 
   it("goes inactive when the principal is suspended or disabled, even while the session is unexpired", async () => {
     const wired = app();
     const sessionId = await sessionFor(wired);
 
-    await wired.security.transitionPrincipal({ externalId: "customer-1", to: "suspended" });
+    await wired.security.transitionPrincipal({
+      tenantId: "tenant-a",
+      externalId: "customer-1",
+      to: "suspended",
+    });
 
-    expect(subject(await wired.security.introspectSessionSubject({ sessionId })).active).toBe(false);
+    expect(
+      subject(await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId }))
+        .active,
+    ).toBe(false);
   });
 
   it("refuses to resolve a NON-human principal's session to a customer identity", async () => {
     const wired = app();
     await wired.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "svc-robot",
       kind: "service_account",
       displayName: "Robot",
     });
     const established = await wired.security.establishSession({
+      tenantId: "tenant-a",
       principalExternalId: "svc-robot",
       refreshFingerprint: "fp-svc",
       ttlSeconds: 3600,
     });
     const sessionId = (established.body as { id: string }).id;
 
-    const resolved = subject(await wired.security.introspectSessionSubject({ sessionId }));
+    const resolved = subject(
+      await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId }),
+    );
     expect(resolved.active).toBe(false);
     expect(resolved.subjectRef).toBeNull();
   });
@@ -171,6 +207,7 @@ describe("IntrospectSessionSubject (T5.17)", () => {
 
     now = new Date(NOW.getTime() + 30_000);
     const refreshed = await wired.security.refreshSession({
+      tenantId: "tenant-a",
       sessionId,
       newRefreshFingerprint: "fp-2",
       ttlSeconds: 3600,
@@ -178,7 +215,9 @@ describe("IntrospectSessionSubject (T5.17)", () => {
     expect(refreshed.status).toBeLessThan(300);
 
     now = new Date(NOW.getTime() + 120_000);
-    const resolved = subject(await wired.security.introspectSessionSubject({ sessionId }));
+    const resolved = subject(
+      await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId }),
+    );
     expect(resolved.active).toBe(true);
     expect(resolved.subjectRef).toBe("customer-1");
   });
@@ -188,9 +227,15 @@ describe("IntrospectSessionSubject (T5.17)", () => {
     const first = await sessionFor(wired, "customer-1");
     const second = await sessionFor(wired, "customer-2");
 
-    expect(subject(await wired.security.introspectSessionSubject({ sessionId: first })).subjectRef)
-      .toBe("customer-1");
-    expect(subject(await wired.security.introspectSessionSubject({ sessionId: second })).subjectRef)
-      .toBe("customer-2");
+    expect(
+      subject(
+        await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId: first }),
+      ).subjectRef,
+    ).toBe("customer-1");
+    expect(
+      subject(
+        await wired.security.introspectSessionSubject({ tenantId: "tenant-a", sessionId: second }),
+      ).subjectRef,
+    ).toBe("customer-2");
   });
 });

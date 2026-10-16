@@ -61,6 +61,36 @@ export class PaymentsAdminController {
     return this.payments.refundLifecycle(input);
   }
 
+  /** WP-13: the merchant's payment settings (which methods are offered). Never carries a credential. */
+  async getSettings(
+    principal: Principal,
+    input: Parameters<PaymentController["getMerchantPaymentSettings"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "payments:read_settings");
+    if (denied) return denied;
+    return this.payments.getMerchantPaymentSettings(input);
+  }
+
+  /** WP-13: enable/disable methods and set the merchant's Paymob credentials (write-only, sealed). */
+  async updateSettings(
+    principal: Principal,
+    input: Parameters<PaymentController["updateMerchantPaymentSettings"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "payments:update_settings");
+    if (denied) return denied;
+    return this.payments.updateMerchantPaymentSettings(input);
+  }
+
+  /** WP-13: the only thing that marks a cash-on-delivery payment paid. */
+  async confirmCodCollection(
+    principal: Principal,
+    input: Parameters<PaymentController["confirmCodCollection"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "payments:confirm_cod_collection");
+    if (denied) return denied;
+    return this.payments.confirmCodCollection(input);
+  }
+
   async getPaymentIntent(
     principal: Principal,
     input: Parameters<PaymentController["getPaymentIntent"]>[0],

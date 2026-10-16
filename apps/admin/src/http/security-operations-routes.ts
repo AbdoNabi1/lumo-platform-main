@@ -60,7 +60,11 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       idempotent: true,
       summary: "Open a security incident",
       schema: { body: openIncidentBody },
-      handle: ({ body, context }) => admin.securityOperations.openIncident(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.securityOperations.openIncident(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -72,6 +76,7 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       schema: { params: referenceParams, body: triageIncidentBody },
       handle: ({ params, body, context }) =>
         admin.securityOperations.triageIncident(context.principal, {
+          tenantId: context.tenantId,
           reference: params.reference,
           ...body,
         }),
@@ -86,6 +91,7 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       schema: { params: referenceParams, body: incidentNoteBody },
       handle: ({ params, body, context }) =>
         admin.securityOperations.mitigateIncident(context.principal, {
+          tenantId: context.tenantId,
           reference: params.reference,
           ...body,
         }),
@@ -100,6 +106,7 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       schema: { params: referenceParams, body: resolveIncidentBody },
       handle: ({ params, body, context }) =>
         admin.securityOperations.resolveIncident(context.principal, {
+          tenantId: context.tenantId,
           reference: params.reference,
           ...body,
         }),
@@ -114,6 +121,7 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       schema: { params: referenceParams, body: incidentNoteBody },
       handle: ({ params, body, context }) =>
         admin.securityOperations.closeIncident(context.principal, {
+          tenantId: context.tenantId,
           reference: params.reference,
           ...body,
         }),
@@ -127,6 +135,7 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       schema: { params: referenceParams, body: addIncidentEvidenceBody },
       handle: ({ params, body, context }) =>
         admin.securityOperations.addIncidentEvidence(context.principal, {
+          tenantId: context.tenantId,
           reference: params.reference,
           ...body,
         }),
@@ -139,7 +148,10 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       summary: "Check an indicator across every registered threat-intel provider",
       schema: { body: checkThreatIndicatorBody },
       handle: ({ body, context }) =>
-        admin.securityOperations.checkThreatIndicator(context.principal, body),
+        admin.securityOperations.checkThreatIndicator(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -150,6 +162,7 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       schema: { querystring: verifyAuditChainQuery },
       handle: ({ query, context }) =>
         admin.securityOperations.verifyAuditChain(context.principal, {
+          tenantId: context.tenantId,
           tenantRef: query.tenantRef ?? null,
         }),
     }),
@@ -161,7 +174,10 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       summary: "Evaluate a tenant's posture against a compliance framework's rule pack",
       schema: { body: evaluateComplianceBody },
       handle: ({ body, context }) =>
-        admin.securityOperations.evaluateCompliance(context.principal, body),
+        admin.securityOperations.evaluateCompliance(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -172,7 +188,10 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       summary: "Register a compliance control into the versioned catalog",
       schema: { body: registerComplianceRuleBody },
       handle: ({ body, context }) =>
-        admin.securityOperations.registerComplianceRule(context.principal, body),
+        admin.securityOperations.registerComplianceRule(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -181,7 +200,8 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       permission: "security:incident_explorer",
       summary: "Console read model — incident explorer",
       schema: {},
-      handle: ({ context }) => admin.securityOperations.incidentExplorer(context.principal),
+      handle: ({ context }) =>
+        admin.securityOperations.incidentExplorer(context.principal, context.tenantId),
     }),
     defineRoute({
       method: "GET",
@@ -191,7 +211,11 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       summary: "Console read model — audit explorer, optionally scoped to a tenant",
       schema: { querystring: tenantRefQuery },
       handle: ({ query, context }) =>
-        admin.securityOperations.auditExplorer(context.principal, query.tenantRef ?? null),
+        admin.securityOperations.auditExplorer(
+          context.principal,
+          context.tenantId,
+          query.tenantRef ?? null,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -201,7 +225,11 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       summary: "Console read model — security dashboard, optionally scoped to a tenant",
       schema: { querystring: tenantRefQuery },
       handle: ({ query, context }) =>
-        admin.securityOperations.securityDashboard(context.principal, query.tenantRef ?? null),
+        admin.securityOperations.securityDashboard(
+          context.principal,
+          context.tenantId,
+          query.tenantRef ?? null,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -211,7 +239,11 @@ export function securityOperationsRoutes(admin: WiredAdmin): readonly RouteDefin
       summary: "Console read model — trust center, optionally scoped to a tenant",
       schema: { querystring: tenantRefQuery },
       handle: ({ query, context }) =>
-        admin.securityOperations.trustCenter(context.principal, query.tenantRef ?? null),
+        admin.securityOperations.trustCenter(
+          context.principal,
+          context.tenantId,
+          query.tenantRef ?? null,
+        ),
     }),
     defineRoute({
       method: "GET",

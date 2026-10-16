@@ -1,4 +1,4 @@
-# Lumo Platform — Phase A Architecture Execution Matrix
+# Morbeh Platform — Phase A Architecture Execution Matrix
 
 **Status:** Validation only. No code was changed to produce this document.
 **Scope:** the 11 Phase A remediation items from `ARCHITECTURE_REMEDIATION_PLAN.md` (§3), re-examined for cross-context blast radius before any implementation sprint starts.

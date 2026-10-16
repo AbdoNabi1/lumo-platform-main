@@ -38,14 +38,14 @@ describe("GetOrder", () => {
   it("returns the order when found", async () => {
     const repo = { findById: async () => order(), save: async () => {}, list: notListed };
     const useCase = new GetOrder({ orders: repo });
-    const result = await useCase.execute({ orderId: "order-1" });
+    const result = await useCase.execute({ tenantId: "tenant-a", orderId: "order-1" });
     expect(result.ok).toBe(true);
   });
 
   it("returns 404 when not found", async () => {
     const repo = { findById: async () => null, save: async () => {}, list: notListed };
     const useCase = new GetOrder({ orders: repo });
-    const result = await useCase.execute({ orderId: "missing" });
+    const result = await useCase.execute({ tenantId: "tenant-a", orderId: "missing" });
     expect(result.ok).toBe(false);
   });
 });

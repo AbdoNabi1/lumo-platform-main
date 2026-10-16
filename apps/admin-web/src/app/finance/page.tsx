@@ -74,8 +74,8 @@ export default async function FinancePage({ searchParams }: FinancePageProps) {
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-semibold tracking-tight">{t.financePage.title}</h1>
-            <p className="text-md text-muted-foreground mt-1">{t.financePage.subtitle}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{t.financePage.title}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">{t.financePage.subtitle}</p>
           </div>
           <Link
             href="/finance/read-models"
@@ -93,10 +93,7 @@ export default async function FinancePage({ searchParams }: FinancePageProps) {
           defaultCurrency={currency}
         />
 
-        <Suspense
-          key={`${startDate}:${endDate}:${currency}`}
-          fallback={<StatementsSkeleton />}
-        >
+        <Suspense key={`${startDate}:${endDate}:${currency}`} fallback={<StatementsSkeleton />}>
           <FinanceStatements
             startDate={startDate}
             endDate={endDate}
@@ -197,7 +194,9 @@ function TrialBalancePanel({
             <TableRow>
               <TableHead>{t.financePage.trialBalance.columns.account}</TableHead>
               <TableHead className="text-end">{t.financePage.trialBalance.columns.debit}</TableHead>
-              <TableHead className="text-end">{t.financePage.trialBalance.columns.credit}</TableHead>
+              <TableHead className="text-end">
+                {t.financePage.trialBalance.columns.credit}
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -255,7 +254,9 @@ function IncomeStatementPanel({
     [t.financePage.incomeStatement.netIncome, result.data.netIncome],
   ];
 
-  return <AmountTable rows={rows} t={t} locale={locale} ariaLabel={t.financePage.tabs.incomeStatement} />;
+  return (
+    <AmountTable rows={rows} t={t} locale={locale} ariaLabel={t.financePage.tabs.incomeStatement} />
+  );
 }
 
 function BalanceSheetPanel({
@@ -293,7 +294,9 @@ function BalanceSheetPanel({
     [t.financePage.balanceSheet.equity, result.data.equity],
   ];
 
-  return <AmountTable rows={rows} t={t} locale={locale} ariaLabel={t.financePage.tabs.balanceSheet} />;
+  return (
+    <AmountTable rows={rows} t={t} locale={locale} ariaLabel={t.financePage.tabs.balanceSheet} />
+  );
 }
 
 function AmountTable({

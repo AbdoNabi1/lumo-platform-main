@@ -10,10 +10,10 @@ the design is written and complete, not because anything was implemented.
 ## Files changed
 
 1. `docs/plans/BLOCKERS.md` — new `## T5.16 — Customer account and order history: DESIGN ONLY, no
-   code written` entry, inserted immediately before the existing `## T5.15` entry. Covers, in order:
+code written` entry, inserted immediately before the existing `## T5.15` entry. Covers, in order:
    why the decision blocks four tasks, the authentication-flow recommendation (reuse Security's
    existing `Authenticate`/`EstablishSession`/session/MFA use cases via a new customer-facing guard,
-   not a second auth stack), the session mechanism (new `lumo-storefront-customer-session` cookie,
+   not a second auth stack), the session mechanism (new `morbeh-storefront-customer-session` cookie,
    carries an opaque Security `Session.id` never a raw `customerRef`, validation via
    session→principal→customer resolution, expiry/rotation via the existing `RefreshSession`/
    `RevokeSession`/`RevokeAllSessions` use cases, and the guest-cart-to-customer-account merge
@@ -39,7 +39,7 @@ much lighter `CustomerGuard` (session-validity only, no ABAC permission check) i
 `AdminGuard`, and link Identity's `Customer` to Security's `Principal` via `Principal.subjectRef =
 customer.id` (the same "human principal references an Identity subject" pattern `Principal`'s own
 doc comment already describes). Session identity travels in a new cookie
-(`lumo-storefront-customer-session`, distinct from the existing anonymous `GUEST_SESSION_COOKIE`)
+(`morbeh-storefront-customer-session`, distinct from the existing anonymous `GUEST_SESSION_COOKIE`)
 that carries only an opaque Security session id — never a raw customer id — resolved server-side
 on every request via session→principal→customer lookup, so revocation takes effect immediately.
 On login, the existing (currently admin-only) `Cart.assignCustomer`/`Cart.merge` domain methods

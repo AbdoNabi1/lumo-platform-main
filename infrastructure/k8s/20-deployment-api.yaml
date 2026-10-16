@@ -2,9 +2,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: runtime-api
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: runtime-api
     app.kubernetes.io/component: api
 spec:
@@ -22,7 +22,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/part-of: morbeh
         app.kubernetes.io/name: runtime-api
         app.kubernetes.io/component: api
       annotations:
@@ -30,7 +30,7 @@ spec:
         prometheus.io/port: "3080"
         prometheus.io/path: "/metrics"
     spec:
-      serviceAccountName: lumo-runtime
+      serviceAccountName: morbeh-runtime
       automountServiceAccountToken: false
       # F4 graceful shutdown is bounded at 10s; allow that + preStop drain + buffer.
       terminationGracePeriodSeconds: 30
@@ -65,7 +65,7 @@ spec:
                     app.kubernetes.io/name: runtime-api
       containers:
         - name: runtime-api
-          image: lumo-runtime:local # production: a registry-pushed, immutable tag or digest
+          image: morbeh-runtime:local # production: a registry-pushed, immutable tag or digest
           imagePullPolicy: IfNotPresent
           # Override args only (keeps the image's tini ENTRYPOINT → SIGTERM forwarding, F4).
           args: ["node", "--import", "tsx", "src/api.ts"]
@@ -74,9 +74,9 @@ spec:
               containerPort: 3080
           envFrom:
             - configMapRef:
-                name: lumo-runtime-config
+                name: morbeh-runtime-config
             - secretRef:
-                name: lumo-runtime-secrets
+                name: morbeh-runtime-secrets
           startupProbe: # protects a slow boot (tsx transpile + lazy client connect) from liveness
             httpGet:
               path: /healthz

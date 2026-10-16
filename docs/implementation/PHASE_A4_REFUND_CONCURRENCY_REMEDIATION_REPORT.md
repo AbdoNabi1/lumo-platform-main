@@ -4,7 +4,7 @@
 **Scope:** the A3-02 concurrency/TOCTOU defect in `RefundPaymentLifecycle` — the last open item from
 [`PHASE_A3_REFUND_EXECUTION_PRODUCTION_AUDIT.md`](./PHASE_A3_REFUND_EXECUTION_PRODUCTION_AUDIT.md).
 **Status:** Audited, minimally remediated, uncommitted (per
-[[lumo-sprint-isolation-discipline]] / the project's sprint-isolation rule — no commit made).
+[[morbeh-sprint-isolation-discipline]] / the project's sprint-isolation rule — no commit made).
 **Prior context:** [`PHASE_A1_...`](./PHASE_A1_FINANCIAL_SECURITY_REMEDIATION_REPORT.md) (F-01/F-02/F-03),
 [`PHASE_A2_REFUND_SECURITY_CLOSURE_AUDIT.md`](./PHASE_A2_REFUND_SECURITY_CLOSURE_AUDIT.md) (F-04),
 [`PHASE_A3_REFUND_EXECUTION_PRODUCTION_AUDIT.md`](./PHASE_A3_REFUND_EXECUTION_PRODUCTION_AUDIT.md) (A3-01
@@ -117,7 +117,7 @@ domain ledger** (never more than one logical refund is persisted for a given sli
 **does not protect the PSP call**, which already happened for both replicas by the time this is decided. This
 is the precise reasoning documented (not runtime-proven against a live Postgres — Docker/WSL2 confirmed broken
 in this sandbox again, consistent with every prior session in this project) in
-[[lumo-phase-a3-refund-execution-audit]] and re-verified against the current code in this phase, unchanged
+[[morbeh-phase-a3-refund-execution-audit]] and re-verified against the current code in this phase, unchanged
 until the fix below.
 
 ---

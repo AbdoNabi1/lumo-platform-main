@@ -7,7 +7,7 @@ import { cn } from "../../lib/cn";
 import { focusRing } from "../../lib/focus";
 
 /**
- * Lumo Dialog — Radix underneath, which supplies the focus management the design system
+ * Morbeh Dialog — Radix underneath, which supplies the focus management the design system
  * requires: focus moves into the dialog on open, is trapped while it is open, returns to
  * the trigger on close, and the rest of the page is inert to assistive tech.
  *

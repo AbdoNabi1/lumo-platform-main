@@ -6,7 +6,10 @@ import { OrderEvent, type OrderEventType } from "../domain/order-event";
 import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
-import { OrderTotalsSnapshot } from "../domain/value-objects/order-totals-snapshot";
+import {
+  type OrderDiscountLine,
+  OrderTotalsSnapshot,
+} from "../domain/value-objects/order-totals-snapshot";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
 
 /** Row shapes (structural — matches the Prisma payloads without importing Prisma types). */
@@ -28,6 +31,10 @@ export interface OrderItemRow {
   readonly name: string;
   readonly unitPriceAmountMinor: number;
   readonly quantity: number;
+  /** Plan 2A: nullable columns; null/absent on orders placed before variants were tracked. */
+  readonly variantRef?: string | null;
+  readonly sku?: string | null;
+  readonly variantTitle?: string | null;
 }
 export interface OrderEventRow {
   readonly id: string;
@@ -39,6 +46,23 @@ export interface OrderAddressRow {
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3A: nullable; null/absent on orders placed before the recipient was captured. */
+  readonly recipientName?: string | null;
+  readonly phone?: string | null;
+  readonly line2?: string | null;
+  /** Plan 3C: nullable column; null/absent on orders placed before the province was captured. */
+  readonly province?: string | null;
+}
+
+function toExtra(address: OrderAddressRow) {
+  return {
+    recipientName: address.recipientName ?? undefined,
+    phone: address.phone ?? undefined,
+    line2: address.line2 ?? undefined,
+    ...(address.province === null || address.province === undefined
+      ? {}
+      : { province: address.province }),
+  };
 }
 export interface OrderTotalsJson {
   readonly subtotalMinor: number;
@@ -47,6 +71,14 @@ export interface OrderTotalsJson {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3B: a JSON key, so no migration; absent (or null) on orders placed before it was captured. */
+  readonly shippingMethod?: string | null;
+  /** Plan 3C: JSON keys, no migration; absent on orders placed before they were captured. */
+  readonly shippingName?: string | null;
+  readonly taxIncluded?: boolean;
+  /** Phase 2: JSON keys, no migration; absent on orders placed before discounts applied at checkout. */
+  readonly shippingDiscountMinor?: number;
+  readonly discounts?: readonly OrderDiscountLine[];
 }
 
 /** Unwraps a VO `Result`; a failure here means the row violates a domain invariant (corrupt data). */
@@ -76,6 +108,13 @@ export class OrderMapper {
             item.productRef,
             item.name,
             must(Money.create(item.unitPriceAmountMinor, row.currency), "item unit price"),
+            item.variantRef === undefined || item.variantRef === null
+              ? undefined
+              : {
+                  variantRef: item.variantRef,
+                  sku: item.sku ?? "",
+                  variantTitle: item.variantTitle ?? null,
+                },
           ),
           "product snapshot",
         ),
@@ -96,7 +135,13 @@ export class OrderMapper {
       row.currency,
       orderItems,
       must(
-        AddressSnapshot.create(address.line1, address.city, address.postalCode, address.country),
+        AddressSnapshot.create(
+          address.line1,
+          address.city,
+          address.postalCode,
+          address.country,
+          toExtra(address),
+        ),
         "shipping address",
       ),
       history,
@@ -111,10 +156,19 @@ export class OrderMapper {
                   row.billingAddress.city,
                   row.billingAddress.postalCode,
                   row.billingAddress.country,
+                  toExtra(row.billingAddress),
                 ),
                 "billing address",
               ),
-        totals: row.totals === null ? undefined : OrderTotalsSnapshot.create(row.totals),
+        totals:
+          row.totals === null
+            ? undefined
+            : OrderTotalsSnapshot.create({
+                ...row.totals,
+                shippingMethod: row.totals.shippingMethod ?? undefined,
+                shippingName: row.totals.shippingName ?? undefined,
+                taxIncluded: row.totals.taxIncluded ?? false,
+              }),
         checkoutRef: row.checkoutRef ?? undefined,
         paymentRef: row.paymentRef ?? undefined,
         fulfillmentRef: row.fulfillmentRef ?? undefined,
@@ -140,6 +194,12 @@ export class OrderMapper {
               city: order.billingAddress.city,
               postalCode: order.billingAddress.postalCode,
               country: order.billingAddress.country,
+              recipientName: order.billingAddress.recipientName ?? null,
+              phone: order.billingAddress.phone ?? null,
+              line2: order.billingAddress.line2 ?? null,
+              ...(order.billingAddress.province === undefined
+                ? {}
+                : { province: order.billingAddress.province }),
             },
       totals:
         order.totals === undefined
@@ -151,6 +211,19 @@ export class OrderMapper {
               discountMinor: order.totals.discountMinor,
               totalMinor: order.totals.totalMinor,
               currency: order.totals.currency,
+              ...(order.totals.shippingMethod === undefined
+                ? {}
+                : { shippingMethod: order.totals.shippingMethod }),
+              ...(order.totals.shippingName === undefined
+                ? {}
+                : { shippingName: order.totals.shippingName }),
+              ...(order.totals.shippingDiscountMinor === 0
+                ? {}
+                : { shippingDiscountMinor: order.totals.shippingDiscountMinor }),
+              ...(order.totals.discounts.length === 0
+                ? {}
+                : { discounts: order.totals.discounts.map((d) => ({ ...d })) }),
+              taxIncluded: order.totals.taxIncluded,
             },
       version: 1, // first persisted version; reconstitution reads it back
     };
@@ -165,6 +238,9 @@ export class OrderMapper {
       name: item.snapshot.name,
       unitPriceAmountMinor: item.snapshot.unitPrice.amountMinor,
       quantity: item.quantity,
+      variantRef: item.snapshot.variantRef ?? null,
+      sku: item.snapshot.sku ?? null,
+      variantTitle: item.snapshot.variantTitle ?? null,
     }));
   }
 
@@ -187,6 +263,10 @@ export class OrderMapper {
       city: order.shippingAddress.city,
       postalCode: order.shippingAddress.postalCode,
       country: order.shippingAddress.country,
+      recipientName: order.shippingAddress.recipientName ?? null,
+      phone: order.shippingAddress.phone ?? null,
+      line2: order.shippingAddress.line2 ?? null,
+      province: order.shippingAddress.province ?? null,
     };
   }
 }

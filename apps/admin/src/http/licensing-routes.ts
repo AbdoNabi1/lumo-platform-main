@@ -13,7 +13,9 @@ const createPlanDraftBody = z.object({
     limits: z.record(z.string(), z.number()),
     featureEntitlements: z.array(z.string()),
     pricing: z.object({
-      basePrice: z.number(),
+      // WP-14: an INTEGER of `currency`'s minor units, and the currency it is in.
+      basePriceMinor: z.number().int().nonnegative(),
+      currency: z.string().regex(/^[A-Z]{3}$/),
       billingCycle: z.enum(["monthly", "annual"]),
       trialDays: z.number().optional(),
       creditAllowances: z.record(z.string(), z.number()),
@@ -49,7 +51,9 @@ const createInvoiceBody = z.object({
   tenantRef: z.string().min(1),
   subscriptionRef: z.string().min(1),
   currency: z.string().min(1),
-  lineItems: z.array(z.object({ description: z.string().min(1), amount: z.number() })),
+  lineItems: z.array(
+    z.object({ description: z.string().min(1), amountMinor: z.number().int().nonnegative() }),
+  ),
 });
 const invoiceIdParams = z.object({ invoiceId: z.string().min(1) });
 const grantCreditBody = z.object({
@@ -57,8 +61,40 @@ const grantCreditBody = z.object({
   amount: z.number(),
   reason: z.string().min(1),
 });
+// T14.3. `.strict()` on the bodies that create money-affecting state: a stripped, mistyped
+// `merchantRef` would otherwise issue a BEARER coupon any merchant may present.
+const couponValue = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("percentage"), basisPoints: z.number().int() }).strict(),
+  z
+    .object({
+      kind: z.literal("fixed"),
+      amountMinor: z.number().int(),
+      currency: z.string().min(1),
+    })
+    .strict(),
+]);
+const issueCouponBody = z
+  .object({
+    code: z.string().min(1),
+    value: couponValue,
+    expiresAt: z.coerce.date(),
+    merchantRef: z.string().min(1).optional(),
+  })
+  .strict();
+const redeemCouponBody = z
+  .object({ code: z.string().min(1), invoiceId: z.string().min(1) })
+  .strict();
+const couponIdParams = z.object({ couponId: z.string().min(1) });
+const revokeCouponBody = z.object({ reason: z.string().min(1) }).strict();
 
-/** The Licensing admin HTTP surface (Sprint 5.5/5.6). Pure delegation. */
+/**
+ * The Licensing admin HTTP surface (Sprint 5.5/5.6). Pure delegation.
+ *
+ * WP-14 (T14.2): every write here is PLATFORM-owned — `LicensingController` refuses (403) any caller
+ * whose tenant is not the platform-operator tenant, so a merchant tenant granted a `licensing:*`
+ * permission still cannot price or grant its own subscription. The permission strings below gate
+ * WHO within the platform may act; the tenant guard gates WHICH tenant may.
+ */
 export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
   return [
     defineRoute({
@@ -69,7 +105,8 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a plan",
       schema: { body: createPlanBody },
-      handle: ({ body, context }) => admin.licensing.createPlan(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.licensing.createPlan(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -80,7 +117,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Create a plan draft version",
       schema: { params: planIdParams, body: createPlanDraftBody },
       handle: ({ params, body, context }) =>
-        admin.licensing.createPlanDraft(context.principal, { ...params, ...body }),
+        admin.licensing.createPlanDraft(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -91,7 +132,10 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Publish a plan version",
       schema: { params: planVersionParams },
       handle: ({ params, context }) =>
-        admin.licensing.publishPlanVersion(context.principal, params),
+        admin.licensing.publishPlanVersion(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -101,7 +145,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Roll back the published plan version pointer",
       schema: { params: planVersionParams },
-      handle: ({ params, context }) => admin.licensing.rollbackPlan(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.licensing.rollbackPlan(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -111,7 +159,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Start a subscription",
       schema: { body: createSubscriptionBody },
-      handle: ({ body, context }) => admin.licensing.createSubscription(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.licensing.createSubscription(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -122,7 +174,25 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Re-pin a subscription to a different plan version",
       schema: { params: subscriptionIdParams, body: repinSubscriptionBody },
       handle: ({ params, body, context }) =>
-        admin.licensing.repinSubscription(context.principal, { ...params, ...body }),
+        admin.licensing.repinSubscription(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/subscriptions/:subscriptionId/renew",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary: "Bill one renewal period at the subscription's pinned plan-version price",
+      schema: { params: subscriptionIdParams },
+      handle: ({ params, context }) =>
+        admin.licensing.billSubscriptionRenewal(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -133,7 +203,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Cancel a subscription",
       schema: { params: subscriptionIdParams, body: cancelSubscriptionBody },
       handle: ({ params, body, context }) =>
-        admin.licensing.cancelSubscription(context.principal, { ...params, ...body }),
+        admin.licensing.cancelSubscription(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -144,7 +218,10 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Set the legacy merchant feature override",
       schema: { body: setMerchantFeatureOverrideBody },
       handle: ({ body, context }) =>
-        admin.licensing.setMerchantFeatureOverride(context.principal, body),
+        admin.licensing.setMerchantFeatureOverride(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -155,7 +232,10 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Grant a merchant capability",
       schema: { body: grantMerchantCapabilityBody },
       handle: ({ body, context }) =>
-        admin.licensing.grantMerchantCapability(context.principal, body),
+        admin.licensing.grantMerchantCapability(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -165,7 +245,11 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Read a tenant's current usage for one resource",
       schema: { querystring: usageCounterQuery },
-      handle: ({ query, context }) => admin.licensing.getUsageCounter(context.principal, query),
+      handle: ({ query, context }) =>
+        admin.licensing.getUsageCounter(context.principal, {
+          ...query,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -175,7 +259,8 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a draft invoice",
       schema: { body: createInvoiceBody },
-      handle: ({ body, context }) => admin.licensing.createInvoice(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.licensing.createInvoice(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -185,7 +270,43 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Collect an issued invoice through Payments and post to Finance",
       schema: { params: invoiceIdParams },
-      handle: ({ params, context }) => admin.licensing.collectInvoice(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.licensing.collectInvoice(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/invoices/:invoiceId/card-enrolment",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      // T10.6: paying an overdue invoice is how a suspended tenant cures its suspension.
+      allowWhenSuspended: true,
+      summary:
+        "Start the merchant's interactive first payment for an issued invoice (a 3DS checkout that also saves their card for renewals)",
+      schema: { params: invoiceIdParams },
+      handle: ({ params, context }) =>
+        admin.licensing.beginCardEnrolment(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/billing/payment-methods/:tenantRef/revoke",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary:
+        "Remove a merchant's saved card (platform operator); their next renewal fails visibly",
+      schema: { params: z.object({ tenantRef: z.string().min(1) }) },
+      handle: ({ params, context }) =>
+        admin.licensing.revokeBillingPaymentMethod(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -195,7 +316,73 @@ export function licensingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Grant a billing credit",
       schema: { body: grantCreditBody },
-      handle: ({ body, context }) => admin.licensing.grantCredit(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.licensing.grantCredit(context.principal, { ...body, tenantId: context.tenantId }),
+    }),
+    // T14.3 coupons. Under `/billing/coupons`, not `/coupons`: that prefix is the MERCHANT's own
+    // promotions surface (`coupons-routes.ts`). Status codes are the controller's, passed through.
+    defineRoute({
+      method: "POST",
+      path: "/billing/coupons",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary: "Issue a billing coupon (platform operator)",
+      schema: { body: issueCouponBody },
+      handle: ({ body, context }) =>
+        admin.licensing.issueCoupon(context.principal, { ...body, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/billing/coupons/redeem",
+      version: 1,
+      permission: "licensing:billing:manage",
+      // A duplicate Idempotency-Key replays the first answer; a genuinely second redeem (a new key, or
+      // none) still reaches the state machine and is refused 409.
+      idempotent: true,
+      summary: "Redeem a coupon by code onto a draft invoice (platform operator)",
+      schema: { body: redeemCouponBody },
+      handle: ({ body, context }) =>
+        admin.licensing.redeemCoupon(context.principal, { ...body, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/billing/coupons/:couponId",
+      version: 1,
+      permission: "licensing:billing:manage",
+      // Deliberately NOT `idempotent`: a replayed read would keep answering `issued` for a coupon
+      // that has since been redeemed.
+      summary:
+        "Read one billing coupon: its status and, once spent, the invoice (platform operator)",
+      schema: { params: couponIdParams },
+      handle: ({ params, context }) =>
+        admin.licensing.getCoupon(context.principal, { ...params, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/billing/coupons/:couponId/expire",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary: "Mark an issued coupon expired once its expiry has passed (platform operator)",
+      schema: { params: couponIdParams },
+      handle: ({ params, context }) =>
+        admin.licensing.expireCoupon(context.principal, { ...params, tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/billing/coupons/:couponId/revoke",
+      version: 1,
+      permission: "licensing:billing:manage",
+      idempotent: true,
+      summary: "Withdraw an issued coupon (platform operator)",
+      schema: { params: couponIdParams, body: revokeCouponBody },
+      handle: ({ params, body, context }) =>
+        admin.licensing.revokeCoupon(context.principal, {
+          ...params,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
   ] as readonly RouteDefinition[];
 }

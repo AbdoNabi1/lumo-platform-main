@@ -32,7 +32,7 @@ describe("GetCustomer", () => {
       list: notUsed,
     };
     const useCase = new GetCustomer({ customers: repo });
-    const result = await useCase.execute({ customerId: "cust-1" });
+    const result = await useCase.execute({ customerId: "cust-1", tenantId: "tenant-1" });
     expect(result.ok).toBe(true);
   });
 
@@ -44,7 +44,7 @@ describe("GetCustomer", () => {
       list: notUsed,
     };
     const useCase = new GetCustomer({ customers: repo });
-    const result = await useCase.execute({ customerId: "missing" });
+    const result = await useCase.execute({ customerId: "missing", tenantId: "tenant-1" });
     expect(result.ok).toBe(false);
   });
 });

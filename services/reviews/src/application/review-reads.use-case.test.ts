@@ -45,10 +45,11 @@ describe("Reviews read use-cases (Phase 4 T4.1)", () => {
         customerRef: `customer-${i}`,
         rating: 5,
         bodyText: "Great!",
+        tenantId: "tenant-1",
       });
     }
 
-    const page = await new ListReviews(h).execute({ first: 2 });
+    const page = await new ListReviews(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -58,6 +59,7 @@ describe("Reviews read use-cases (Phase 4 T4.1)", () => {
     const rest = await new ListReviews(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -65,12 +67,15 @@ describe("Reviews read use-cases (Phase 4 T4.1)", () => {
     expect(rest.value.pageInfo.hasNextPage).toBe(false);
 
     // every created review defaults to "pending" — the moderation queue filter
-    const pending = await new ListReviews(h).execute({ status: "pending" });
+    const pending = await new ListReviews(h).execute({ status: "pending", tenantId: "tenant-1" });
     expect(pending.ok).toBe(true);
     if (!pending.ok) return;
     expect(pending.value.items).toHaveLength(3);
 
-    const published = await new ListReviews(h).execute({ status: "published" });
+    const published = await new ListReviews(h).execute({
+      status: "published",
+      tenantId: "tenant-1",
+    });
     expect(published.ok).toBe(true);
     if (!published.ok) return;
     expect(published.value.items).toHaveLength(0);
@@ -83,16 +88,20 @@ describe("Reviews read use-cases (Phase 4 T4.1)", () => {
       customerRef: "customer-1",
       rating: 4,
       bodyText: "Pretty good",
+      tenantId: "tenant-1",
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetReview(h).execute({ reviewId: created.value.reviewId });
+    const found = await new GetReview(h).execute({
+      reviewId: created.value.reviewId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.id.toString()).toBe(created.value.reviewId);
 
-    const missing = await new GetReview(h).execute({ reviewId: "nope" });
+    const missing = await new GetReview(h).execute({ reviewId: "nope", tenantId: "tenant-1" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");
@@ -106,15 +115,20 @@ describe("Reviews read use-cases (Phase 4 T4.1)", () => {
       customerRef: "customer-1",
       rating: 5,
       bodyText: "Loved it",
+      tenantId: "tenant-1",
     });
     await create.execute({
       productRef: "product-b",
       customerRef: "customer-1",
       rating: 3,
       bodyText: "It was fine",
+      tenantId: "tenant-1",
     });
 
-    const page = await new ListReviewsByProduct(h).execute({ productRef: "product-a" });
+    const page = await new ListReviewsByProduct(h).execute({
+      productRef: "product-a",
+      tenantId: "tenant-1",
+    });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(1);

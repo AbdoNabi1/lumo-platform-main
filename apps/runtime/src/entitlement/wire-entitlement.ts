@@ -19,6 +19,9 @@ import { EntitlementMiddleware } from "./entitlement-middleware";
  * real adapters — Licensing PDP + Feature Registry read model (`EntitlementPort`), optional policy/quota ports, a
  * distributed-or-memory cache, audit, metrics and telemetry — and exposes the {@link EntitlementMiddleware} seam
  * every surface composes. No business logic; pure DI over the frozen kernel.
+ *
+ * Tenant-free by construction (T10.7): the graph is a process-wide singleton and the tenant arrives on each
+ * `EntitlementRequest`. The cache it builds is keyed `entitlement:<tenant>:<feature>:<action>`.
  */
 export interface EntitlementWiringDeps {
   readonly featureRegistry: FeatureRegistryReader;

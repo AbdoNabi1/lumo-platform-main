@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { staticCapabilities, staticProviders } from "./test-support/static-provider-resolver";
 import type { Clock, IdGenerator, PaymentProvider, ProviderIntent } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
@@ -37,7 +38,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, 1);
   }
 
-  async save(intent: PaymentIntent): Promise<void> {
+  async save(intent: PaymentIntent, _tenantId: string): Promise<void> {
     const id = intent.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -52,7 +53,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, existing.intentRow.version + 1);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
+  async findById(id: string, _tenantId: string): Promise<PaymentIntent | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     return PaymentIntentMapper.toDomain(
@@ -63,11 +64,11 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     );
   }
 
-  async findByIdempotencyKey(): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(_key: string, _tenantId: string): Promise<PaymentIntent | null> {
     return null;
   }
 
-  async findByPspReference(pspReference: string): Promise<PaymentIntent | null> {
+  async findByPspReference(pspReference: string, _tenantId: string): Promise<PaymentIntent | null> {
     for (const row of this.rows.values()) {
       if (row.intentRow.pspReference === pspReference) {
         return PaymentIntentMapper.toDomain(
@@ -174,7 +175,12 @@ function seedAuthorizedIntent(
   id: string,
   amountMinor: number,
 ): void {
-  const pi = PaymentIntent.createIntent(UniqueEntityId.from(id), `order-${id}`, usd(amountMinor));
+  const pi = PaymentIntent.createIntent(
+    UniqueEntityId.from(id),
+    `order-${id}`,
+    usd(amountMinor),
+    "stripe",
+  );
   pi.markProcessing("seed-1", new Date(0));
   const pspRef = PspReference.create(`psp-ref-${id}`);
   const method = PaymentMethod.create("tok_seed", "visa");
@@ -189,10 +195,10 @@ async function seedReservedIntent(
   repo: PostgresLikePaymentIntentRepository,
   id: string,
 ): Promise<void> {
-  const intent = await repo.findById(id);
+  const intent = await repo.findById(id, "tenant-a");
   if (intent === null) throw new Error("fixture missing — call seedAuthorizedIntent first");
   intent.requestCapture("evt-reserve", new Date(0));
-  await repo.save(intent);
+  await repo.save(intent, "tenant-a");
 }
 
 function buildLifecycleDeps(
@@ -209,7 +215,7 @@ function buildLifecycleDeps(
     unitOfWork: new PassthroughUnitOfWork(),
     idGenerator: sequentialIds("evt"),
     clock,
-    paymentProvider,
+    providers: staticProviders(paymentProvider),
     financePort: extra?.financePort,
     notifications: extra?.notifications,
     ordersPort: extra?.ordersPort,
@@ -226,6 +232,7 @@ function buildWebhookDeps(
     idGenerator: sequentialIds("wh"),
     clock,
     processedWebhooks: new InMemoryProcessedWebhookStore(),
+    providers: staticCapabilities(),
     ...extra,
   };
 }
@@ -252,6 +259,7 @@ describe("Task 3 — exploit proof: webhook-only recovery after a PSP-success-th
     // Recovery attempt: ONLY a webhook arrives — no client ever retries the capture request.
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo, { captureSettlement }));
     const result = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-crash-1",
       provider: "stripe",
       eventId: "evt_stripe_1",
@@ -259,7 +267,7 @@ describe("Task 3 — exploit proof: webhook-only recovery after a PSP-success-th
     });
 
     expect(result.ok).toBe(true);
-    const afterWebhook = await repo.findById("pi-crash-1");
+    const afterWebhook = await repo.findById("pi-crash-1", "tenant-a");
     expect(afterWebhook?.status.value).toBe("captured");
 
     // The exploit: the status transition alone is not full settlement. Desired/safe behavior: the
@@ -284,6 +292,7 @@ describe("Task 3 — exploit proof: webhook-only recovery after a PSP-success-th
 
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo)); // no captureSettlement wired
     const result = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-fallback",
       provider: "stripe",
       eventId: "evt_stripe_fallback",
@@ -291,7 +300,7 @@ describe("Task 3 — exploit proof: webhook-only recovery after a PSP-success-th
     });
 
     expect(result.ok).toBe(true);
-    const after = await repo.findById("pi-fallback");
+    const after = await repo.findById("pi-fallback", "tenant-a");
     expect(after?.status.value).toBe("captured");
     expect(after?.charges).toHaveLength(0); // pre-existing fallback shape, unchanged by this phase
   });
@@ -312,6 +321,7 @@ describe("Task 10 — process restart simulation: Instance A reserves+crashes, I
     );
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo, { captureSettlement }));
     const reconciled = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-restart",
       provider: "stripe",
       eventId: "evt_restart_1",
@@ -323,13 +333,16 @@ describe("Task 10 — process restart simulation: Instance A reserves+crashes, I
     // client retried after a timeout). It must converge to the identical final state, not error.
     const provider = new RecordingCaptureProvider();
     const retryLifecycle = new CapturePaymentLifecycle(buildLifecycleDeps(repo, provider));
-    const retried = await retryLifecycle.execute({ paymentIntentId: "pi-restart" });
+    const retried = await retryLifecycle.execute({
+      tenantId: "tenant-a",
+      paymentIntentId: "pi-restart",
+    });
 
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.status).toBe("captured");
     expect(provider.calls).toHaveLength(0); // already captured — reserve() short-circuited before any PSP call
 
-    const final = await repo.findById("pi-restart");
+    const final = await repo.findById("pi-restart", "tenant-a");
     expect(final?.status.value).toBe("captured");
     expect(final?.charges).toHaveLength(1); // exactly one Charge, not two
     expect(finance.calls).toHaveLength(1); // exactly one Finance record, not two
@@ -354,19 +367,20 @@ describe("Task 11 — webhook race: retry and webhook both attempt settlement", 
 
     const outcomes = await Promise.allSettled([
       recordWebhook.execute({
+        tenantId: "tenant-a",
         paymentIntentId: "pi-race-1",
         provider: "stripe",
         eventId: "evt_race_1",
         kind: "captured",
       }),
-      retryLifecycle.execute({ paymentIntentId: "pi-race-1" }),
+      retryLifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-race-1" }),
     ]);
 
     for (const outcome of outcomes) {
       expect(outcome.status).toBe("fulfilled");
     }
 
-    const final = await repo.findById("pi-race-1");
+    const final = await repo.findById("pi-race-1", "tenant-a");
     expect(final?.status.value).toBe("captured");
     expect(final?.charges).toHaveLength(1);
     expect(finance.calls).toHaveLength(1);
@@ -387,10 +401,14 @@ describe("Task 11 — webhook race: retry and webhook both attempt settlement", 
     );
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo, { captureSettlement }));
 
-    const retried = await retryLifecycle.execute({ paymentIntentId: "pi-race-2" });
+    const retried = await retryLifecycle.execute({
+      tenantId: "tenant-a",
+      paymentIntentId: "pi-race-2",
+    });
     expect(retried.ok).toBe(true);
 
     const webhooked = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-race-2",
       provider: "stripe",
       eventId: "evt_race_2",
@@ -398,7 +416,7 @@ describe("Task 11 — webhook race: retry and webhook both attempt settlement", 
     });
     expect(webhooked.ok).toBe(true);
 
-    const final = await repo.findById("pi-race-2");
+    const final = await repo.findById("pi-race-2", "tenant-a");
     expect(final?.charges).toHaveLength(1);
     expect(finance.calls).toHaveLength(1);
   });
@@ -420,6 +438,7 @@ describe("Task 12 — duplicate webhook delivery", () => {
     );
 
     const input = {
+      tenantId: "tenant-a",
       paymentIntentId: "pi-dup",
       provider: "stripe",
       eventId: "evt_dup_1", // same eventId every time — a real Stripe redelivery
@@ -436,7 +455,7 @@ describe("Task 12 — duplicate webhook delivery", () => {
     expect(third.ok).toBe(true);
     if (third.ok) expect(third.value.duplicate).toBe(true);
 
-    const final = await repo.findById("pi-dup");
+    const final = await repo.findById("pi-dup", "tenant-a");
     expect(final?.charges).toHaveLength(1);
     expect(finance.calls).toHaveLength(1);
   });
@@ -452,13 +471,14 @@ describe("Task 9 — partial settlement failure and PSP-failure-before-settlemen
     // wrapping the repository's save() to throw on the first call only.
     let saveAttempts = 0;
     const flaky: PaymentIntentRepository = {
-      findById: (id) => repo.findById(id),
-      findByIdempotencyKey: () => repo.findByIdempotencyKey(),
-      findByPspReference: (pspReference) => repo.findByPspReference(pspReference),
-      save: async (intent) => {
+      findById: (id, tenantId) => repo.findById(id, tenantId),
+      findByIdempotencyKey: (key, tenantId) => repo.findByIdempotencyKey(key, tenantId),
+      findByPspReference: (pspReference, tenantId) =>
+        repo.findByPspReference(pspReference, tenantId),
+      save: async (intent, tenantId) => {
         saveAttempts += 1;
         if (saveAttempts === 1) throw new Error("simulated transient DB failure during settlement");
-        return repo.save(intent);
+        return repo.save(intent, tenantId);
       },
     };
     const finance = new RecordingFinancePort();
@@ -468,17 +488,17 @@ describe("Task 9 — partial settlement failure and PSP-failure-before-settlemen
     };
     const captureSettlement = new CapturePaymentLifecycle(flakyDeps);
 
-    await expect(captureSettlement.settle("pi-settle-fail")).rejects.toThrow(
+    await expect(captureSettlement.settle("pi-settle-fail", "tenant-a")).rejects.toThrow(
       /simulated transient DB failure/,
     );
-    const afterFailedSettle = await repo.findById("pi-settle-fail");
+    const afterFailedSettle = await repo.findById("pi-settle-fail", "tenant-a");
     expect(afterFailedSettle?.status.value).toBe("capture_requested"); // unsettled, but not corrupted
     expect(afterFailedSettle?.charges).toHaveLength(0);
 
     // Retry: settle() again (e.g. driven by a subsequent webhook or client retry) succeeds cleanly.
-    const retried = await captureSettlement.settle("pi-settle-fail");
+    const retried = await captureSettlement.settle("pi-settle-fail", "tenant-a");
     expect(retried.ok).toBe(true);
-    const final = await repo.findById("pi-settle-fail");
+    const final = await repo.findById("pi-settle-fail", "tenant-a");
     expect(final?.status.value).toBe("captured");
     expect(final?.charges).toHaveLength(1); // exactly one, not duplicated by the failed first attempt
     expect(finance.calls).toHaveLength(1);
@@ -491,14 +511,17 @@ describe("Task 9 — partial settlement failure and PSP-failure-before-settlemen
       buildLifecycleDeps(repo, new RecordingCaptureProvider(true)),
     );
 
-    await expect(failingLifecycle.execute({ paymentIntentId: "pi-psp-fail" })).rejects.toThrow(
-      /simulated PSP capture failure/,
-    );
+    await expect(
+      failingLifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-psp-fail" }),
+    ).rejects.toThrow(/simulated PSP capture failure/);
 
     const workingLifecycle = new CapturePaymentLifecycle(
       buildLifecycleDeps(repo, new RecordingCaptureProvider()),
     );
-    const retried = await workingLifecycle.execute({ paymentIntentId: "pi-psp-fail" });
+    const retried = await workingLifecycle.execute({
+      tenantId: "tenant-a",
+      paymentIntentId: "pi-psp-fail",
+    });
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.status).toBe("captured");
   });
@@ -512,12 +535,12 @@ describe("Task 8 — idempotency key preservation through the webhook-mediated s
     const provider = new RecordingCaptureProvider();
     const lifecycle = new CapturePaymentLifecycle(buildLifecycleDeps(repo, provider));
 
-    const first = await lifecycle.execute({ paymentIntentId: "pi-idem" });
+    const first = await lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-idem" });
     expect(first.ok).toBe(true);
 
     // A second full request (e.g. a client retry believing the first was lost) presents the SAME
     // deterministic key <paymentIntentId>:capture — never a fresh one.
-    const second = await lifecycle.execute({ paymentIntentId: "pi-idem" });
+    const second = await lifecycle.execute({ tenantId: "tenant-a", paymentIntentId: "pi-idem" });
     expect(second.ok).toBe(true);
 
     expect(new Set(provider.calls.map((c) => c.idempotencyKey)).size).toBeLessThanOrEqual(1);
@@ -536,13 +559,14 @@ describe("Task 15 — financial invariants after recovery", () => {
     );
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo, { captureSettlement }));
     await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-invariant",
       provider: "stripe",
       eventId: "evt_invariant",
       kind: "captured",
     });
 
-    const final = await repo.findById("pi-invariant");
+    const final = await repo.findById("pi-invariant", "tenant-a");
     expect(final?.status.value).toBe("captured");
     expect(final?.charges).toHaveLength(1);
     const totalCaptured = final?.charges.reduce((sum, c) => sum + c.amount.amountMinor, 0) ?? 0;

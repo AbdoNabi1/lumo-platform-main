@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { ExperienceController } from "@platform/experience";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -46,7 +45,10 @@ export class ExperienceAdminController {
     return this.experience.updateCanvas(input);
   }
 
-  async list(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async list(
+    principal: Principal,
+    input: Parameters<ExperienceController["list"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "experience:read");
     if (denied) return denied;
     return this.experience.list(input);

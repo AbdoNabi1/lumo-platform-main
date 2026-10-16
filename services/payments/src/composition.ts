@@ -12,6 +12,12 @@ import {
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { CapturePayment } from "./application/capture-payment.use-case";
+import { ConfirmCodCollection } from "./application/confirm-cod-collection.use-case";
+import {
+  GetMerchantPaymentSettings,
+  UpdateMerchantPaymentSettings,
+} from "./application/merchant-payment-settings.use-cases";
+import { VerifyPaymentWebhook } from "./application/verify-payment-webhook";
 import { CreatePaymentIntent } from "./application/create-payment-intent.use-case";
 import { FailPayment } from "./application/fail-payment.use-case";
 import { GetPaymentIntent } from "./application/get-payment-intent.use-case";
@@ -28,15 +34,26 @@ import type {
   FinancePort,
   NotificationPort,
   OrdersPort,
+  PaymentCredentialVault,
+  PaymentProviderResolver,
   ProcessedWebhookStore,
 } from "./application/ports";
+import {
+  PaymentProviderRegistry,
+  type ProviderRegistration,
+} from "./application/provider-registry";
+import type { MerchantPaymentSettingsRepository } from "./domain/merchant-payment-settings-repository";
 import type { PaymentIntentRepository } from "./domain/payment-intent-repository";
+import { composePaymentProviderRegistrations } from "./infrastructure/built-in-provider-registrations";
+import { InMemoryPaymentCredentialVault } from "./infrastructure/envelope-payment-credential-vault";
+import { InMemoryMerchantPaymentSettingsRepository } from "./infrastructure/in-memory-merchant-payment-settings-repository";
+import { PrismaMerchantPaymentSettingsRepository } from "./infrastructure/prisma-merchant-payment-settings-repository";
+import { TenantPaymentProviderResolver } from "./infrastructure/tenant-payment-provider-resolver";
 import { InMemoryPaymentIntentRepository } from "./infrastructure/in-memory-payment-intent-repository";
 import {
   InMemoryFinanceAdapter,
   InMemoryNotificationAdapter,
   InMemoryOrdersAdapter,
-  InMemoryPaymentProvider,
   InMemoryProcessedWebhookStore,
 } from "./infrastructure/in-memory-port-adapters";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
@@ -54,21 +71,32 @@ export interface PaymentsWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaPaymentIntentRepository` +
-   * `PrismaUnitOfWork` + `PrismaProcessedWebhookStore` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wireFinance`); absent ⇒ in-memory, unchanged. `ordersPort`/
-   * `financePort`/`notifications` stay in-memory in both branches — reference-only outbound ports,
-   * not persistence, out of scope for C-01.
+   * `PrismaUnitOfWork` + `PrismaProcessedWebhookStore`; absent ⇒ in-memory, unchanged.
+   * `ordersPort`/`financePort`/`notifications` stay in-memory in both branches — reference-only
+   * outbound ports, not persistence, out of scope for C-01. ADR-0014 (WP-10, T10.3): the
+   * repository and store built here are tenant-agnostic singletons — no `tenantId` at composition
+   * time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Payments table is tenant-scoped. */
-  readonly tenantId?: string;
   /**
-   * Production PSP adapter (C2-2). Absent ⇒ `InMemoryPaymentProvider` — the offline stub whose
-   * `verifyWebhook()` always returns `true` and whose money operations no-op. Same `deps.X ?? default`
-   * convention as `payments`/`financeLedger` in Licensing's composition root; `apps/runtime` refuses
-   * to boot outside `local` without a real one injected here.
+   * The PLATFORM's Stripe adapter (C2-2) — one Stripe account for the whole platform, injected as
+   * before. Absent ⇒ `InMemoryPaymentProvider`, the offline stub whose `verifyWebhook()` always
+   * returns `true` and whose money operations no-op; `apps/runtime` refuses to boot outside `local`
+   * with that stub backing Stripe. Since WP-13 this is only ONE registration among several — it is
+   * no longer what every payment goes through.
    */
   readonly paymentProvider?: PaymentProvider;
+  /**
+   * Every provider registered from outside this service — the whole of "adding a provider" (a key,
+   * declared capabilities, a factory). Registered here once, at composition time (ADR-0014);
+   * resolved per request. Cash on delivery and the Stripe binding above are built in and need no
+   * entry. A key that collides with a built-in is refused at boot.
+   */
+  readonly providerRegistrations?: readonly ProviderRegistration[];
+  /** Seals merchant PSP secrets (`@platform/secrets` envelope). Absent ⇒ an in-memory STUB the boot guard refuses outside `local`. */
+  readonly paymentCredentialVault?: PaymentCredentialVault;
+  /** Full override of the per-request provider resolver (tests). Absent ⇒ built from the inputs above. */
+  readonly paymentProviders?: PaymentProviderResolver;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 3 outbound reference-only ports the payment
    * lifecycle use-cases call. Same `deps.X ?? new InMemoryXAdapter()` convention as
@@ -89,13 +117,12 @@ export interface PaymentsWiringDeps {
 export interface WiredPayments {
   readonly payments: PaymentController;
   /**
-   * The PSP port (C2-2/C2-6). Exposed so the webhook HTTP ingress (`payments-webhook-routes.ts`) can
-   * call `verifyWebhook` itself — a webhook has no admin Bearer token to check via `AdminGuard`, its
-   * verification IS the PSP signature check, so it cannot go through the guarded `PaymentController`
-   * facade the same way `payments:capture` etc. do. `deps.paymentProvider` when injected (production:
-   * `StripePaymentProvider`, `@platform/psp-stripe`), else the offline `InMemoryPaymentProvider` stub.
+   * The per-request provider resolver (ADR-0014). Exposed for the production boot guard
+   * (`assertProductionPaymentProviderConfigured`), which asks it what really backs each method.
+   * The webhook ingress verifies through `payments.verifyWebhook`, which resolves the TENANT's own
+   * provider — there is deliberately no process-wide provider left to hand out.
    */
-  readonly paymentProvider: PaymentProvider;
+  readonly providers: PaymentProviderResolver;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
 }
@@ -105,9 +132,14 @@ function buildController(
   intents: PaymentIntentRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   processedWebhooks: ProcessedWebhookStore,
+  settings: MerchantPaymentSettingsRepository,
   deps: PaymentsWiringDeps,
-): { readonly controller: PaymentController; readonly paymentProvider: PaymentProvider } {
-  const paymentProvider = deps.paymentProvider ?? new InMemoryPaymentProvider();
+): { readonly controller: PaymentController; readonly providers: PaymentProviderResolver } {
+  const credentialVault = deps.paymentCredentialVault ?? new InMemoryPaymentCredentialVault();
+  const registry = PaymentProviderRegistry.from(composePaymentProviderRegistrations(deps));
+  const providers =
+    deps.paymentProviders ??
+    new TenantPaymentProviderResolver({ settings, registry, vault: credentialVault });
   const ordersPort = deps.ordersPort ?? new InMemoryOrdersAdapter();
   const financePort = deps.financePort ?? new InMemoryFinanceAdapter();
   const notifications = deps.paymentsNotifications ?? new InMemoryNotificationAdapter();
@@ -117,7 +149,7 @@ function buildController(
     unitOfWork,
     idGenerator: deps.idGenerator,
     clock: deps.clock,
-    paymentProvider,
+    providers,
     ordersPort,
     financePort,
     notifications,
@@ -129,6 +161,7 @@ function buildController(
       intents,
       unitOfWork,
       idGenerator: deps.idGenerator,
+      providers,
     }),
     capturePayment: new CapturePayment({
       intents,
@@ -159,14 +192,35 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       processedWebhooks,
+      providers,
       // Phase A.9: routes a `captured` PSP webhook through the SAME settlement code a normal
       // client retry uses (Charge/notify/Finance), closing the crash-recovery gap for both the
       // Prisma-backed and in-memory composition branches (this function is shared by both).
       captureSettlement: capturePaymentLifecycle,
     }),
     getPaymentIntent: new GetPaymentIntent({ intents }),
+    confirmCodCollection: new ConfirmCodCollection({
+      intents,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      providers,
+      captureSettlement: capturePaymentLifecycle,
+    }),
+    getMerchantPaymentSettings: new GetMerchantPaymentSettings({
+      settings,
+      registry,
+      vault: credentialVault,
+    }),
+    updateMerchantPaymentSettings: new UpdateMerchantPaymentSettings({
+      settings,
+      registry,
+      vault: credentialVault,
+      unitOfWork,
+    }),
+    verifyPaymentWebhook: new VerifyPaymentWebhook(providers),
   });
-  return { controller, paymentProvider };
+  return { controller, providers };
 }
 
 /**
@@ -178,10 +232,6 @@ function buildController(
  */
 export function wirePayments(deps: PaymentsWiringDeps): WiredPayments {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wirePayments: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new PaymentEventTranslator(),
@@ -189,20 +239,23 @@ export function wirePayments(deps: PaymentsWiringDeps): WiredPayments {
       clock: deps.clock,
       producer: "payments",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const intents = new PrismaPaymentIntentRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — every repository takes it per
+    // call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const intents = new PrismaPaymentIntentRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
-    const processedWebhooks = new PrismaProcessedWebhookStore(deps.prisma, tenantId);
-    const built = buildController(intents, unitOfWork, processedWebhooks, deps);
+    const processedWebhooks = new PrismaProcessedWebhookStore(deps.prisma);
+    const built = buildController(
+      intents,
+      unitOfWork,
+      processedWebhooks,
+      new PrismaMerchantPaymentSettingsRepository(deps.prisma),
+      deps,
+    );
 
     return {
       payments: built.controller,
-      paymentProvider: built.paymentProvider,
+      providers: built.providers,
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -221,7 +274,13 @@ export function wirePayments(deps: PaymentsWiringDeps): WiredPayments {
   const intents = new InMemoryPaymentIntentRepository({ outbox: outboxWriter, context });
   const unitOfWork = new InMemoryUnitOfWork();
   const processedWebhooks = new InMemoryProcessedWebhookStore();
-  const built = buildController(intents, unitOfWork, processedWebhooks, deps);
+  const built = buildController(
+    intents,
+    unitOfWork,
+    processedWebhooks,
+    new InMemoryMerchantPaymentSettingsRepository(),
+    deps,
+  );
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];
@@ -240,7 +299,7 @@ export function wirePayments(deps: PaymentsWiringDeps): WiredPayments {
 
   return {
     payments: built.controller,
-    paymentProvider: built.paymentProvider,
+    providers: built.providers,
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

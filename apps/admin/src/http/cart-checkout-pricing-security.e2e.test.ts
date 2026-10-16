@@ -6,6 +6,13 @@ import { wireAdmin, type AdminWiringDeps, type WiredAdmin } from "../composition
 import { cartRoutes } from "./cart-routes";
 import { checkoutRoutes } from "./checkout-routes";
 import type { RouteDefinition } from "@platform/http";
+import {
+  controllerDriver,
+  seedCatalogProduct,
+  seedSingleVariantProduct,
+  type SeededProduct,
+} from "./testing/seed-catalog";
+import { controllerStockDriver, seedStock } from "./testing/seed-stock";
 
 /**
  * Phase 17.2 — Authenticated Cart & Checkout pricing-manipulation regression suite.
@@ -30,7 +37,13 @@ const clock: Clock = { now: () => new Date("2026-08-10T00:00:00.000Z") };
 function buildAdmin(overrides: Partial<AdminWiringDeps> = {}): WiredAdmin {
   let n = 0;
   const idGenerator: IdGenerator = { generate: () => `id-${(n += 1)}` };
-  return wireAdmin({ serializer: new InMemoryEventSerializer(), idGenerator, clock, ...overrides });
+  return wireAdmin({
+    serializer: new InMemoryEventSerializer(),
+    idGenerator,
+    clock,
+    tenantId: "tenant-local",
+    ...overrides,
+  });
 }
 
 /** Records calls and returns a fixed `orderRef` — proves the C-2 wiring without a real Orders adapter (a separate task). */
@@ -44,11 +57,26 @@ class FakeOrderCreationPort implements OrderCreationPort {
 }
 
 /** The attacker: an ordinary authenticated customer — never granted any staff/admin role. */
-const attacker: Principal = { id: "customer-attacker", kind: "customer", roles: [] };
+const attacker: Principal = {
+  id: "customer-attacker",
+  kind: "customer",
+  roles: [],
+  tenantId: "tenant-local",
+};
 /** A second, distinct customer identity — used for the cross-user cart-access check. */
-const victim: Principal = { id: "customer-victim", kind: "customer", roles: [] };
-/** Used only to seed price fixtures — any principal works under the current stub guard. */
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const victim: Principal = {
+  id: "customer-victim",
+  kind: "customer",
+  roles: [],
+  tenantId: "tenant-local",
+};
+/** Used only to seed fixtures — any principal works under the current stub guard. */
+const staff: Principal = {
+  id: "staff-1",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
 
 interface Response {
   readonly status: number;
@@ -79,46 +107,40 @@ function call(
   } as never) as Promise<Response>;
 }
 
-async function createPrice(
+/** One published single-variant Catalog product — what the cart prices a line from (Plan 2A). */
+function seedProduct(
   admin: WiredAdmin,
-  productId: string,
   amountMinor: number,
   currency = "USD",
-): Promise<string> {
-  const created = await admin.pricing.createPrice(staff, {
-    priceListId: "price-list-1",
-    productId,
+): Promise<SeededProduct> {
+  return seedSingleVariantProduct(
+    controllerDriver(admin.publicReads.products, "tenant-local"),
+    "P-1",
     amountMinor,
     currency,
-  });
-  if (created.status < 200 || created.status >= 300) {
-    throw new Error(`createPrice failed (${created.status}): ${JSON.stringify(created.body)}`);
-  }
-  return (created.body as { id: string }).id;
+  );
 }
 
-/** Creates and publishes a real `Price` through the admin Pricing facade (never fabricated repository state). */
-async function seedPublishedPrice(
-  admin: WiredAdmin,
-  productId: string,
-  amountMinor: number,
-  currency = "USD",
-): Promise<void> {
-  const id = await createPrice(admin, productId, amountMinor, currency);
-  const published = await admin.pricing.publishPrice(staff, { priceId: id });
-  if (published.status < 200 || published.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,
-    );
-  }
+/**
+ * `seedProduct` plus stock at a location, for the tests that COMPLETE a checkout — completing now
+ * refuses a line nothing can cover (Plan 2B-3). Uses the shared `seed-stock` helper; the tests that
+ * only price a cart, or that seed their own warehouse below, keep using plain `seedProduct`.
+ */
+async function seedSellableProduct(admin: WiredAdmin, amountMinor: number): Promise<SeededProduct> {
+  const product = await seedProduct(admin, amountMinor);
+  await seedStock(controllerStockDriver(admin.inventory, staff, "tenant-local"), {
+    productId: product.productId,
+    variantId: product.variantId,
+    quantity: 100,
+  });
+  return product;
 }
 
 /**
  * Registers a warehouse and receives stock through the admin Inventory facade (Phase 3 Task 10) —
  * `validate` below now runs the REAL `InventoryValidationAdapter`, which requires exactly one
  * warehouse to be registered (the adapter's disclosed single-warehouse-tenant limitation) before
- * it will check any product's stock at all. Never fabricates repository state directly, same
- * convention as `seedPublishedPrice` above.
+ * it will check any product's stock at all. Never fabricates repository state directly.
  */
 async function seedInventory(
   admin: WiredAdmin,
@@ -126,6 +148,7 @@ async function seedInventory(
   quantity: number,
 ): Promise<void> {
   const registered = await admin.inventory.registerWarehouse(staff, {
+    tenantId: "tenant-local",
     code: "wh-1",
     name: "Warehouse 1",
   });
@@ -135,7 +158,12 @@ async function seedInventory(
     );
   }
   const { warehouseId } = registered.body as { warehouseId: string };
-  const received = await admin.inventory.receiveStock(staff, { productId, warehouseId, quantity });
+  const received = await admin.inventory.receiveStock(staff, {
+    tenantId: "tenant-local",
+    productId,
+    warehouseId,
+    quantity,
+  });
   if (received.status < 200 || received.status >= 300) {
     throw new Error(
       `seedInventory: receiveStock failed (${received.status}): ${JSON.stringify(received.body)}`,
@@ -151,9 +179,9 @@ function unwrap<T>(response: Response, action: string): T {
 }
 
 describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignored", () => {
-  it("legitimate request: real published price is used", async () => {
+  it("legitimate request: the variant's real price is used", async () => {
     const admin = buildAdmin();
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
+    const product = await seedProduct(admin, 1999);
     const routes = cartRoutes(admin);
     const create = byPathAndMethod(routes, "POST", "/carts");
     const addItem = byPathAndMethod(routes, "POST", "/carts/:cartId/items");
@@ -167,7 +195,7 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
         addItem,
         attacker,
         { cartId: created.cartId },
-        { productId: "product-1", quantity: 1 },
+        { productId: product.productId, quantity: 1 },
       ),
       "add item",
     );
@@ -177,7 +205,7 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
   it("Attack A (cheap price) — a forged 1-cent price is ignored; the real seeded price is used", async () => {
     const admin = buildAdmin();
     const REAL_PRICE = 1999;
-    await seedPublishedPrice(admin, "product-1", REAL_PRICE, "USD");
+    const product = await seedProduct(admin, REAL_PRICE);
     const routes = cartRoutes(admin);
     const create = byPathAndMethod(routes, "POST", "/carts");
     const addItem = byPathAndMethod(routes, "POST", "/carts/:cartId/items");
@@ -192,7 +220,7 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
       attacker,
       { cartId: created.cartId },
       {
-        productId: "product-1",
+        productId: product.productId,
         quantity: 1,
         unitPriceAmountMinor: 1,
         currency: "USD",
@@ -206,7 +234,7 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
   it("Attack B (inflated price) — a forged huge price is ignored; the real seeded price is used", async () => {
     const admin = buildAdmin();
     const REAL_PRICE = 1999;
-    await seedPublishedPrice(admin, "product-1", REAL_PRICE, "USD");
+    const product = await seedProduct(admin, REAL_PRICE);
     const routes = cartRoutes(admin);
     const create = byPathAndMethod(routes, "POST", "/carts");
     const addItem = byPathAndMethod(routes, "POST", "/carts/:cartId/items");
@@ -220,7 +248,7 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
       attacker,
       { cartId: created.cartId },
       {
-        productId: "product-1",
+        productId: product.productId,
         quantity: 1,
         unitPriceAmountMinor: 999_999_999,
         currency: "USD",
@@ -231,10 +259,10 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
     expect((added.body as { totalAmountMinor: number }).totalAmountMinor).toBe(REAL_PRICE);
   });
 
-  it("Attack C (currency forgery) — a forged currency cannot smuggle a price past Pricing; mismatched cart currency 409s instead", async () => {
+  it("Attack C (currency forgery) — a forged currency cannot smuggle a price past Catalog; mismatched cart currency 409s instead", async () => {
     const admin = buildAdmin();
-    // The product is only ever published in USD.
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
+    // The product is only ever priced in USD.
+    const product = await seedProduct(admin, 1999);
     const routes = cartRoutes(admin);
     const create = byPathAndMethod(routes, "POST", "/carts");
     const addItem = byPathAndMethod(routes, "POST", "/carts/:cartId/items");
@@ -248,19 +276,19 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
       attacker,
       { cartId: created.cartId },
       {
-        productId: "product-1",
+        productId: product.productId,
         quantity: 1,
         unitPriceAmountMinor: 1,
         currency: "EUR",
       },
     );
 
-    // The resolved price is USD 19.99; the cart is EUR — Cart's pre-existing currency-match
+    // The resolved variant price is USD 19.99; the cart is EUR — Cart's pre-existing currency-match
     // invariant (unrelated to this fix) rejects it with 409, never with the forged EUR amount.
     expect(added.status).toBe(409);
   });
 
-  it("unknown product (no price at all) → 422, no item persisted", async () => {
+  it("unknown product → 422, no item persisted", async () => {
     const admin = buildAdmin();
     const routes = cartRoutes(admin);
     const create = byPathAndMethod(routes, "POST", "/carts");
@@ -282,9 +310,36 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
     expect(added.status).toBe(422);
   });
 
-  it("draft (unpublished) price → 422, treated as unavailable", async () => {
+  it("unknown variantId on a real product → 422, no item persisted", async () => {
     const admin = buildAdmin();
-    await createPrice(admin, "product-draft", 999, "USD"); // created but never published
+    const product = await seedProduct(admin, 999);
+    const routes = cartRoutes(admin);
+    const create = byPathAndMethod(routes, "POST", "/carts");
+    const addItem = byPathAndMethod(routes, "POST", "/carts/:cartId/items");
+
+    const created = unwrap<{ cartId: string }>(
+      await call(create, attacker, {}, { sessionRef: "session-attacker", currency: "USD" }),
+      "create cart",
+    );
+    const added = await call(
+      addItem,
+      attacker,
+      { cartId: created.cartId },
+      { productId: product.productId, variantId: "no-such-variant", quantity: 1 },
+    );
+    expect(added.status).toBe(422);
+  });
+
+  it("draft (unpublished) product → 422, treated as unavailable", async () => {
+    const admin = buildAdmin();
+    const draft = await seedCatalogProduct(
+      controllerDriver(admin.publicReads.products, "tenant-local"),
+      {
+        sku: "DRAFT-1",
+        variants: [{ sku: "DRAFT-1-STD", priceAmountMinor: 999 }],
+        publish: false, // created but never published
+      },
+    );
     const routes = cartRoutes(admin);
     const create = byPathAndMethod(routes, "POST", "/carts");
     const addItem = byPathAndMethod(routes, "POST", "/carts/:cartId/items");
@@ -298,17 +353,30 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
       attacker,
       { cartId: created.cartId },
       {
-        productId: "product-draft",
+        productId: draft.productId,
         quantity: 1,
       },
     );
     expect(added.status).toBe(422);
   });
 
-  it("ambiguous price (two published rows for one product) → 422, never guessed at", async () => {
+  // Replaces "ambiguous price (two published rows for one product) → 422, never guessed at".
+  // Obsolete since Plan 2A (one price source): Pricing no longer prices the cart, so two published
+  // Price rows cannot make a line ambiguous. The remaining "which price?" question is "which
+  // variant?" — a multi-variant product with no variantId must never be guessed at.
+  it("multi-variant product with no variantId → 422 VARIANT_REQUIRED, never guessed at", async () => {
     const admin = buildAdmin();
-    await seedPublishedPrice(admin, "product-ambiguous", 500, "USD");
-    await seedPublishedPrice(admin, "product-ambiguous", 700, "USD");
+    const shirt = await seedCatalogProduct(
+      controllerDriver(admin.publicReads.products, "tenant-local"),
+      {
+        sku: "SHIRT",
+        options: [{ name: "Size", values: ["S", "L"] }],
+        variants: [
+          { sku: "SHIRT-S", priceAmountMinor: 500, selection: { Size: "S" } },
+          { sku: "SHIRT-L", priceAmountMinor: 700, selection: { Size: "L" } },
+        ],
+      },
+    );
     const routes = cartRoutes(admin);
     const create = byPathAndMethod(routes, "POST", "/carts");
     const addItem = byPathAndMethod(routes, "POST", "/carts/:cartId/items");
@@ -322,11 +390,12 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
       attacker,
       { cartId: created.cartId },
       {
-        productId: "product-ambiguous",
+        productId: shirt.productId,
         quantity: 1,
       },
     );
     expect(added.status).toBe(422);
+    expect((added.body as { code: string }).code).toBe("VARIANT_REQUIRED");
   });
 
   it("schema-level rejection: a real HTTP request carrying unitPriceAmountMinor/currency fails Zod validation", () => {
@@ -357,7 +426,7 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
   it("cross-cart access: an authenticated customer can still act on another customer's cart id (unchanged, pre-existing admin-facade characteristic), but the price is always authoritative", async () => {
     const admin = buildAdmin();
     const REAL_PRICE = 1999;
-    await seedPublishedPrice(admin, "product-1", REAL_PRICE, "USD");
+    const product = await seedProduct(admin, REAL_PRICE);
     const routes = cartRoutes(admin);
     const create = byPathAndMethod(routes, "POST", "/carts");
     const addItem = byPathAndMethod(routes, "POST", "/carts/:cartId/items");
@@ -371,7 +440,7 @@ describe("Phase 17.2 — authenticated Cart admin route: forged pricing is ignor
       attacker,
       { cartId: victimCart.cartId },
       {
-        productId: "product-1",
+        productId: product.productId,
         quantity: 1,
         unitPriceAmountMinor: 1,
         currency: "USD",
@@ -389,7 +458,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
   it("legitimate flow: payment-intent-request amount matches the real Cart total", async () => {
     const admin = buildAdmin();
     const REAL_PRICE = 1999;
-    await seedPublishedPrice(admin, "product-1", REAL_PRICE, "USD");
+    const product = await seedProduct(admin, REAL_PRICE);
 
     const cart = cartRoutes(admin);
     const createCart = byPathAndMethod(cart, "POST", "/carts");
@@ -403,7 +472,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
         addItem,
         attacker,
         { cartId: createdCart.cartId },
-        { productId: "product-1", quantity: 2 },
+        { productId: product.productId, quantity: 2 },
       ),
       "add item",
     );
@@ -470,7 +539,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
     const orderCreation = new FakeOrderCreationPort();
     const admin = buildAdmin({ orderCreation });
     const REAL_PRICE = 1999;
-    await seedPublishedPrice(admin, "product-1", REAL_PRICE, "USD");
+    const product = await seedSellableProduct(admin, REAL_PRICE);
 
     const cart = cartRoutes(admin);
     const createCart = byPathAndMethod(cart, "POST", "/carts");
@@ -484,7 +553,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
         addItem,
         attacker,
         { cartId: createdCart.cartId },
-        { productId: "product-1", quantity: 2 },
+        { productId: product.productId, quantity: 2 },
       ),
       "add item",
     );
@@ -580,7 +649,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
     // No `orderCreation` override — this resolves to the real `OrderCreationAdapter`.
     const admin = buildAdmin();
     const REAL_PRICE = 1999;
-    await seedPublishedPrice(admin, "product-1", REAL_PRICE, "USD");
+    const product = await seedSellableProduct(admin, REAL_PRICE);
 
     const cart = cartRoutes(admin);
     const createCart = byPathAndMethod(cart, "POST", "/carts");
@@ -594,7 +663,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
         addItem,
         attacker,
         { cartId: createdCart.cartId },
-        { productId: "product-1", quantity: 2 },
+        { productId: product.productId, quantity: 2 },
       ),
       "add item",
     );
@@ -657,7 +726,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
     // A REAL aggregate now exists behind that ref — read back through the real Orders controller,
     // never through a fake or a repository poke.
     const order = unwrap<{ status: string; orderNumber: { value: string } }>(
-      await admin.orders.getOrder(staff, { orderId: completed.orderRef }),
+      await admin.orders.getOrder(staff, { tenantId: "tenant-local", orderId: completed.orderRef }),
       "read back the created order",
     );
     expect(order.status).toBe("created");
@@ -673,8 +742,10 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
   it("Attack D — a forged raw items[] body is ignored; items are always re-derived from the named Cart", async () => {
     const admin = buildAdmin();
     const REAL_PRICE = 1999;
-    await seedPublishedPrice(admin, "product-1", REAL_PRICE, "USD");
-    await seedInventory(admin, "product-1", 10);
+    // Plan 2C-1: `/validate` checks the snapshot against the Catalog variant (the one price source),
+    // so the seeded product alone is enough — no Pricing row is needed.
+    const product = await seedProduct(admin, REAL_PRICE);
+    await seedInventory(admin, product.productId, 10);
 
     const cart = cartRoutes(admin);
     const createCart = byPathAndMethod(cart, "POST", "/carts");
@@ -688,7 +759,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
         addItem,
         attacker,
         { cartId: createdCart.cartId },
-        { productId: "product-1", quantity: 1 },
+        { productId: product.productId, quantity: 1 },
       ),
       "add item",
     );
@@ -739,7 +810,9 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
     unwrap(
       await call(loadItems, attacker, params, {
         cartId: createdCart.cartId,
-        items: [{ productId: "product-1", quantity: 1, unitPriceAmountMinor: 1, currency: "USD" }],
+        items: [
+          { productId: product.productId, quantity: 1, unitPriceAmountMinor: 1, currency: "USD" },
+        ],
       }),
       "load items (with smuggled forged items[])",
     );
@@ -756,7 +829,7 @@ describe("Phase 17.2 — Checkout: the payment-intent amount is always re-derive
     // InventoryValidationAdapter (C-3), not the offline stubs — still `true` here because
     // `loadItems` re-derives every item's price from Cart (never the smuggled forged `items[]`
     // above, so the snapshot legitimately matches the published price) and `seedInventory` above
-    // stocked enough of `product-1` at the test's single registered warehouse.
+    // stocked enough of the product at the test's single registered warehouse.
     expect(validated.valid).toBe(true);
 
     unwrap(await call(recalc, attacker, params, undefined), "recalculate");

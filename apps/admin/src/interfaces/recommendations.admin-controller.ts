@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { RecommendationsController } from "@platform/recommendations";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -55,7 +54,10 @@ export class RecommendationsAdminController {
     return this.recommendations.regenerate(input);
   }
 
-  async list(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async list(
+    principal: Principal,
+    input: Parameters<RecommendationsController["list"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "recommendations:read");
     if (denied) return denied;
     return this.recommendations.list(input);

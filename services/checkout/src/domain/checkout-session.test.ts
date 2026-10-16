@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BusinessRuleError, UniqueEntityId } from "@platform/domain";
 import { CheckoutSession } from "./checkout-session";
 import { CheckoutAddress } from "./value-objects/checkout-address";
+import { ContactEmail } from "./value-objects/contact-email";
 import { CheckoutItem } from "./value-objects/checkout-item";
 import { PaymentSelection, ShippingSelection } from "./value-objects/selections";
 
@@ -139,6 +140,23 @@ describe("CheckoutSession", () => {
     expect(draft.totals.totalMinor).toBeGreaterThan(0);
   });
 
+  it("carries the shopper's selected shipping method on the order draft (Plan 3B), none when none was chosen", () => {
+    const withoutMethod = session();
+    withoutMethod.loadItems([item()]);
+    withoutMethod.setBillingAddress(address());
+    withoutMethod.setShippingAddress(address());
+    withoutMethod.recalculateTotals("evt-1", new Date(0));
+    expect(withoutMethod.generateOrderDraft().shippingMethod).toBeUndefined();
+
+    const withMethod = session();
+    withMethod.loadItems([item()]);
+    withMethod.setBillingAddress(address());
+    withMethod.setShippingAddress(address());
+    withMethod.selectShipping(must(ShippingSelection.create("express", 900, "USD")));
+    withMethod.recalculateTotals("evt-2", new Date(0));
+    expect(withMethod.generateOrderDraft().shippingMethod).toBe("express");
+  });
+
   it("generates a payment intent request only once a payment selection and totals are present", () => {
     const cs = session();
     cs.loadItems([item()]);
@@ -151,5 +169,49 @@ describe("CheckoutSession", () => {
     const request = cs.generatePaymentIntentRequest();
     expect(request.paymentMethodRef).toBe("pm-1");
     expect(request.amountMinor).toBe(cs.totals?.totalMinor);
+  });
+
+  describe("contact email", () => {
+    it("is unset on a fresh session", () => {
+      expect(guestSession().contactEmail).toBeUndefined();
+    });
+
+    it("records the contact email on an open session, emitting nothing", () => {
+      const cs = guestSession();
+      cs.setContactEmail(must(ContactEmail.create("guest@example.com")));
+      expect(cs.contactEmail?.value).toBe("guest@example.com");
+      expect(cs.pullDomainEvents()).toHaveLength(0);
+    });
+
+    it("replaces a previously set contact email", () => {
+      const cs = guestSession();
+      cs.setContactEmail(must(ContactEmail.create("a@example.com")));
+      cs.setContactEmail(must(ContactEmail.create("b@example.com")));
+      expect(cs.contactEmail?.value).toBe("b@example.com");
+    });
+
+    it("rejects a change once the session is completed", () => {
+      const cs = guestSession();
+      cs.complete("order-1", "evt-1", new Date(0));
+      expect(() => cs.setContactEmail(must(ContactEmail.create("a@example.com")))).toThrow(
+        BusinessRuleError,
+      );
+    });
+
+    it("survives reconstitute", () => {
+      const cs = CheckoutSession.reconstitute(
+        UniqueEntityId.from("cs-r"),
+        "cart-r",
+        undefined,
+        "session-r",
+        "USD",
+        guestSession().state,
+        null,
+        [],
+        1,
+        { contactEmail: must(ContactEmail.create("r@example.com")) },
+      );
+      expect(cs.contactEmail?.value).toBe("r@example.com");
+    });
   });
 });

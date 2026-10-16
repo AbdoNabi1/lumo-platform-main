@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineRoute, type RequestContext, type RouteDefinition } from "@platform/http";
 import type { Cart } from "@platform/cart";
+import type { RateLimiter } from "@platform/contracts";
 import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 
@@ -72,6 +73,15 @@ const loginBody = z
   })
   .strict();
 
+/** G-72: token + the two fields `completeSignup` needs to finish provisioning (name, password). */
+const completeSignupBody = z
+  .object({
+    token: z.string().min(16).max(512),
+    name: z.string().min(1).max(200),
+    password: z.string().min(8).max(200),
+  })
+  .strict();
+
 /**
  * `.strict()` on the empty object matters: it makes a body that tries to smuggle a `customerRef`,
  * `sessionId`, or `principalExternalId` fail zod validation (422) at the boundary rather than being
@@ -92,7 +102,17 @@ function cartNotFound(): { readonly status: number; readonly body: unknown } {
   return { status: 404, body: toErrorEnvelope(new NotFoundError("Cart not found")) };
 }
 
-export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
+/**
+ * `rateLimiter` is optional so every existing single-argument call site (tests that don't care
+ * about signup rate limiting) keeps compiling unchanged; `createAdminHttpApi`'s real wiring always
+ * passes it (see `admin-routes.ts`). D3: this reuses the SAME `RateLimiter` port/instance every
+ * other route already uses — a distinct key (`rl:${tenantId}:signup:${email}`), not a second
+ * limiter implementation.
+ */
+export function publicAuthRoutes(
+  admin: WiredAdmin,
+  rateLimiter?: RateLimiter,
+): readonly RouteDefinition[] {
   return [
     defineRoute({
       method: "POST",
@@ -102,9 +122,47 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       permission: "identity:register_customer",
       public: true,
       idempotent: true,
-      summary: "Public: register a customer account (profile + security principal + credential)",
+      summary:
+        "Public: signup — registers immediately for a brand-new email; for an email that's " +
+        "already known (guest or registered), emails a link instead and returns the identical " +
+        "response either way (G-72, D2)",
       schema: { body: registerBody },
-      handle: ({ body }) => admin.customerAuth.register(body),
+      handle: async ({ body, context }) => {
+        if (rateLimiter !== undefined) {
+          const key = `rl:${context.tenantId}:signup:${body.email.trim().toLowerCase()}`;
+          const decision = await rateLimiter.consume(key, 5, 60 * 60 * 1000);
+          if (!decision.allowed) {
+            return {
+              status: 429,
+              body: {
+                code: "RATE_LIMITED",
+                message: "Too many signup requests for this email",
+                retryable: true,
+                fields: [],
+                retryAfterMs: decision.retryAfterMs,
+              },
+              headers: {
+                "retry-after": String(Math.max(1, Math.ceil(decision.retryAfterMs / 1000))),
+              },
+            };
+          }
+        }
+        return admin.customerAuth.requestSignup({ ...body, tenantId: context.tenantId });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/signup/complete",
+      version: 1,
+      permission: "identity:register_customer",
+      public: true,
+      // NOT idempotent: consuming a single-use token must not be safe to replay from a cached
+      // response — a retry has to re-execute and see the real (by then "already used") outcome,
+      // same reasoning as `/login` above.
+      summary: "Public: complete a guest-to-account signup upgrade using an emailed token (G-72)",
+      schema: { body: completeSignupBody },
+      handle: ({ body, context }) =>
+        admin.customerAuth.completeSignup({ ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -122,8 +180,9 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
        */
       summary: "Public: authenticate a customer and establish a session",
       schema: { body: loginBody },
-      handle: ({ body }) =>
+      handle: ({ body, context }) =>
         admin.customerAuth.login({
+          tenantId: context.tenantId,
           email: body.email,
           password: body.password,
           ...(body.deviceFingerprint !== undefined
@@ -140,7 +199,8 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Public: revoke the caller's own customer session (logout)",
       schema: { body: emptyBody },
-      handle: ({ context }) => admin.customerAuth.logout(resolveCustomerSessionId(context)),
+      handle: ({ context }) =>
+        admin.customerAuth.logout(resolveCustomerSessionId(context), context.tenantId),
     }),
     defineRoute({
       method: "POST",
@@ -155,7 +215,8 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
        */
       summary: "Public: slide the caller's own session window forward (rotates the refresh token)",
       schema: { body: emptyBody },
-      handle: ({ context }) => admin.customerAuth.refresh(resolveCustomerSessionId(context)),
+      handle: ({ context }) =>
+        admin.customerAuth.refresh(resolveCustomerSessionId(context), context.tenantId),
     }),
     defineRoute({
       method: "POST",
@@ -167,7 +228,7 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "Public: revoke every session for the caller's own principal (sign out everywhere)",
       schema: { body: emptyBody },
       handle: ({ context }) =>
-        admin.customerAuth.revokeAllSessions(resolveCustomerSessionId(context)),
+        admin.customerAuth.revokeAllSessions(resolveCustomerSessionId(context), context.tenantId),
     }),
     defineRoute({
       method: "GET",
@@ -177,7 +238,8 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       public: true,
       summary: "Public: the signed-in customer's own profile (401 when there is no valid session)",
       schema: {},
-      handle: ({ context }) => admin.customerAuth.me(resolveCustomerSessionId(context)),
+      handle: ({ context }) =>
+        admin.customerAuth.me(resolveCustomerSessionId(context), context.tenantId),
     }),
     defineRoute({
       method: "POST",
@@ -199,15 +261,22 @@ export function publicAuthRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
        * cart id does, never a 403 that would confirm the cart exists.
        */
       handle: async ({ body, context }) => {
-        const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
+        const guarded = await admin.customerAuth.requireSession(
+          resolveCustomerSessionId(context),
+          context.tenantId,
+        );
         if (!guarded.ok) return guarded.response;
 
-        const found = await admin.publicReads.cart.get({ cartId: body.cartId });
+        const found = await admin.publicReads.cart.get({
+          tenantId: context.tenantId,
+          cartId: body.cartId,
+        });
         if (found.status < 200 || found.status >= 300) return cartNotFound();
         const cart = found.body as Cart;
         if (cart.sessionRef !== body.sessionRef) return cartNotFound();
 
         return admin.publicReads.cart.assignCustomer({
+          tenantId: context.tenantId,
           cartId: body.cartId,
           customerRef: guarded.session.customerRef,
         });

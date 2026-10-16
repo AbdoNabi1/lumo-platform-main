@@ -13,6 +13,10 @@ import type {
   GetFulfillmentByOrderInput,
 } from "../application/get-fulfillment-by-order.use-case";
 import type {
+  GetFulfillmentsByOrders,
+  GetFulfillmentsByOrdersInput,
+} from "../application/get-fulfillments-by-orders.use-case";
+import type {
   RecordCarrierWebhook,
   RecordCarrierWebhookInput,
 } from "../application/record-carrier-webhook.use-case";
@@ -26,6 +30,7 @@ export interface FulfillmentControllerDeps {
   readonly createShipment: CreateShipment;
   readonly recordCarrierWebhook: RecordCarrierWebhook;
   readonly getFulfillmentByOrder: GetFulfillmentByOrder;
+  readonly getFulfillmentsByOrders: GetFulfillmentsByOrders;
 }
 
 /** Framework-agnostic interface boundary for fulfillment use-cases (no HTTP server). */
@@ -58,5 +63,10 @@ export class FulfillmentController {
 
   async getByOrder(input: GetFulfillmentByOrderInput): Promise<ControllerResponse> {
     return present(await this.deps.getFulfillmentByOrder.execute(input), 200);
+  }
+
+  /** Plan 3B: the fulfillment orders of a whole page of orders, in one read. */
+  async getByOrders(input: GetFulfillmentsByOrdersInput): Promise<ControllerResponse> {
+    return present(await this.deps.getFulfillmentsByOrders.execute(input), 200);
   }
 }

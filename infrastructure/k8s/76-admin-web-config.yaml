@@ -1,6 +1,6 @@
 # Phase A.34 (A.33 Task 1: admin-web had no deployment story at all) — non-secret runtime
 # configuration for admin-web. Same convention as 10-config.yaml/27-storefront-config.yaml: no
-# secrets here (AUTH_CLIENT_SECRET lives in lumo-admin-web-secrets, secret.example.yaml).
+# secrets here (AUTH_CLIENT_SECRET lives in morbeh-admin-web-secrets, secret.example.yaml).
 #
 # Public-facing values (AUTH_ISSUER_URL, HYDRA_PUBLIC_URL, KRATOS_PUBLIC_URL) are the real public
 # HTTPS origins — the browser is redirected to these directly by middleware.ts/login/page.tsx, so
@@ -13,24 +13,24 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: lumo-admin-web-config
-  namespace: lumo-runtime
+  name: morbeh-admin-web-config
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
 data:
   NODE_ENV: "production"
   APP_ENV: "production"
   PORT: "3100"
-  RUNTIME_API_URL: "http://runtime-api.lumo-runtime.svc.cluster.local:3080"
+  RUNTIME_API_URL: "http://runtime-api.morbeh-runtime.svc.cluster.local:3080"
   TENANT_DEFAULT_ID: "tenant-local"
-  AUTH_ISSUER_URL: "https://auth.lumo.example.com/"
-  AUTH_JWKS_URL: "http://hydra.lumo-runtime.svc.cluster.local:4444/.well-known/jwks.json"
-  AUTH_AUDIENCE: "lumo-admin"
-  AUTH_CLIENT_ID: "lumo-admin-web"
-  HYDRA_PUBLIC_URL: "https://auth.lumo.example.com"
-  HYDRA_ADMIN_URL: "http://hydra.lumo-runtime.svc.cluster.local:4445"
-  KRATOS_PUBLIC_URL: "https://identity.lumo.example.com"
+  AUTH_ISSUER_URL: "https://auth.morbeh.example.com/"
+  AUTH_JWKS_URL: "http://hydra.morbeh-runtime.svc.cluster.local:4444/.well-known/jwks.json"
+  AUTH_AUDIENCE: "morbeh-admin"
+  AUTH_CLIENT_ID: "morbeh-admin-web"
+  HYDRA_PUBLIC_URL: "https://auth.morbeh.example.com"
+  HYDRA_ADMIN_URL: "http://hydra.morbeh-runtime.svc.cluster.local:4445"
+  KRATOS_PUBLIC_URL: "https://identity.morbeh.example.com"
   # Shared registrable parent domain with Kratos (SESSION_COOKIE_DOMAIN in 72-kratos.yaml) — both
   # sides MUST match, or the login bridge breaks (A.33 P0 #6; lib/auth/config.ts's doc comment).
-  COOKIE_DOMAIN: ".lumo.example.com"
+  COOKIE_DOMAIN: ".morbeh.example.com"
   COOKIE_SAME_SITE: "lax"

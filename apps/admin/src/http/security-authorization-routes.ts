@@ -161,7 +161,10 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       summary: "Define a role in the registry (idempotent per key)",
       schema: { body: defineRoleBody },
       handle: ({ body, context }) =>
-        admin.securityAuthorization.defineRole(context.principal, body),
+        admin.securityAuthorization.defineRole(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -173,6 +176,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       schema: { params: roleKeyParams, body: grantRolePermissionBody },
       handle: ({ params, body, context }) =>
         admin.securityAuthorization.grantRolePermission(context.principal, {
+          tenantId: context.tenantId,
           roleKey: params.roleKey,
           ...body,
         }),
@@ -186,7 +190,10 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       summary: "Assign a role to a principal (delegated admin via grantedBy, optional TTL)",
       schema: { body: assignRoleBody },
       handle: ({ body, context }) =>
-        admin.securityAuthorization.assignRole(context.principal, body),
+        admin.securityAuthorization.assignRole(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -198,6 +205,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       schema: { params: assignmentIdParams },
       handle: ({ params, context }) =>
         admin.securityAuthorization.revokeRoleAssignment(context.principal, {
+          tenantId: context.tenantId,
           assignmentId: params.assignmentId,
         }),
     }),
@@ -210,7 +218,10 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       summary: "Define a policy in the Policy Registry (idempotent per key; starts draft)",
       schema: { body: definePolicyBody },
       handle: ({ body, context }) =>
-        admin.securityAuthorization.definePolicy(context.principal, body),
+        admin.securityAuthorization.definePolicy(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -222,6 +233,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       schema: { params: policyKeyParams, body: publishPolicyVersionBody },
       handle: ({ params, body, context }) =>
         admin.securityAuthorization.publishPolicyVersion(context.principal, {
+          tenantId: context.tenantId,
           key: params.policyKey,
           rules: body.rules as readonly PolicyRule[],
           ...(body.defaultEffect !== undefined ? { defaultEffect: body.defaultEffect } : {}),
@@ -236,7 +248,10 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       summary: "Archive a policy",
       schema: { params: policyKeyParams },
       handle: ({ params, context }) =>
-        admin.securityAuthorization.archivePolicy(context.principal, { key: params.policyKey }),
+        admin.securityAuthorization.archivePolicy(context.principal, {
+          tenantId: context.tenantId,
+          key: params.policyKey,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -247,6 +262,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       schema: { params: policyKeyParams, body: simulatePolicyBody },
       handle: ({ params, body, context }) =>
         admin.securityAuthorization.simulatePolicy(context.principal, {
+          tenantId: context.tenantId,
           key: params.policyKey,
           ...body,
         }),
@@ -260,7 +276,10 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       summary: "Write a ReBAC relation tuple (idempotent by key)",
       schema: { body: relationTupleBody },
       handle: ({ body, context }) =>
-        admin.securityAuthorization.writeRelationTuple(context.principal, body),
+        admin.securityAuthorization.writeRelationTuple(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -271,7 +290,10 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       summary: "Remove a ReBAC relation tuple by its components",
       schema: { body: relationTupleBody },
       handle: ({ body, context }) =>
-        admin.securityAuthorization.deleteRelationTuple(context.principal, body),
+        admin.securityAuthorization.deleteRelationTuple(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -283,6 +305,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       handle: ({ body, context }) => {
         const { abac, ...rest } = body;
         return admin.securityAuthorization.checkAccess(context.principal, {
+          tenantId: context.tenantId,
           ...rest,
           ...(abac !== undefined ? { abac: abac as AbacCondition } : {}),
         });
@@ -296,7 +319,10 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       summary: "The zero-trust access evaluation (the platform's single authorization entry point)",
       schema: { body: evaluateAccessBody },
       handle: ({ body, context }) =>
-        admin.securityAuthorization.evaluateAccess(context.principal, body),
+        admin.securityAuthorization.evaluateAccess(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -308,6 +334,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       schema: { body: registerPolicyFragmentBody },
       handle: ({ body, context }) =>
         admin.securityAuthorization.registerPolicyFragment(context.principal, {
+          tenantId: context.tenantId,
           key: body.key,
           ...(body.description !== undefined ? { description: body.description } : {}),
           expression: body.expression as PolicyExpression,
@@ -322,7 +349,10 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       summary: "Register a permission definition into the discoverable, versioned catalog",
       schema: { body: registerPermissionBody },
       handle: ({ body, context }) =>
-        admin.securityAuthorization.registerPermission(context.principal, body),
+        admin.securityAuthorization.registerPermission(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -333,7 +363,10 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       summary: "Grant a delegation (one principal may act as another, time-boxed)",
       schema: { body: grantDelegationBody },
       handle: ({ body, context }) =>
-        admin.securityAuthorization.grantDelegation(context.principal, body),
+        admin.securityAuthorization.grantDelegation(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -345,6 +378,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       schema: { params: delegationIdParams },
       handle: ({ params, context }) =>
         admin.securityAuthorization.revokeDelegation(context.principal, {
+          tenantId: context.tenantId,
           delegationId: params.delegationId,
         }),
     }),
@@ -358,6 +392,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       schema: { params: delegationIdParams, body: startImpersonationBody },
       handle: ({ params, body, context }) =>
         admin.securityAuthorization.startImpersonation(context.principal, {
+          tenantId: context.tenantId,
           delegationId: params.delegationId,
           ...body,
         }),
@@ -371,6 +406,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       schema: { params: subjectRefParams, querystring: checkConsentQuery },
       handle: ({ params, query, context }) =>
         admin.securityAuthorization.checkConsent(context.principal, {
+          tenantId: context.tenantId,
           subjectRef: params.subjectRef,
           ...query,
         }),
@@ -386,6 +422,7 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       schema: { params: tenantRefParams, body: configureTenantSecurityBody },
       handle: ({ params, body, context }) =>
         admin.securityAuthorization.configureTenantSecurity(context.principal, {
+          tenantId: context.tenantId,
           tenantRef: params.tenantRef,
           config: body,
         }),
@@ -397,7 +434,8 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       permission: "security:permission_explorer",
       summary: "Console read model — permission explorer",
       schema: {},
-      handle: ({ context }) => admin.securityAuthorization.permissionExplorer(context.principal),
+      handle: ({ context }) =>
+        admin.securityAuthorization.permissionExplorer(context.principal, context.tenantId),
     }),
     defineRoute({
       method: "GET",
@@ -406,7 +444,8 @@ export function securityAuthorizationRoutes(admin: WiredAdmin): readonly RouteDe
       permission: "security:policy_explorer",
       summary: "Console read model — policy explorer",
       schema: {},
-      handle: ({ context }) => admin.securityAuthorization.policyExplorer(context.principal),
+      handle: ({ context }) =>
+        admin.securityAuthorization.policyExplorer(context.principal, context.tenantId),
     }),
     defineRoute({
       method: "GET",

@@ -136,7 +136,9 @@ export class OutboxEntitlementEventEmitter implements EntitlementTelemetry {
       },
     );
     void this.deps.outbox
-      .write([event], this.deps.context, undefined)
+      // G-64: the decision names its own tenant; the envelope requires one, so it is merged per call
+      // rather than taken from a context built without a tenant.
+      .write([event], { ...this.deps.context, tenantId: e.request.tenant }, undefined)
       .catch((error) => this.deps.onError?.(error));
   }
 }

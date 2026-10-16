@@ -11,6 +11,7 @@ vi.mock("jose", () => ({
 }));
 
 const {
+  fetchWarehouses,
   receiveStock,
   adjustStock,
   reserveStock,
@@ -159,5 +160,60 @@ describe("T5.5 inventory/warehouse write functions", () => {
       "key-9",
     );
     expect(result).toEqual({ outcome: "forbidden" });
+  });
+});
+
+describe("Plan 2B-1 stock per variant", () => {
+  function stubOk(body: unknown = {}): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, body));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+    return fetchMock;
+  }
+
+  it("receiveStock sends the variant when one is named", async () => {
+    const fetchMock = stubOk();
+    await receiveStock(
+      { productId: "p1", variantId: "v-m", warehouseId: "w1", quantity: 5 },
+      "key-1",
+    );
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      productId: "p1",
+      variantId: "v-m",
+      warehouseId: "w1",
+      quantity: 5,
+    });
+  });
+
+  it("adjustStock sends the variant when one is named", async () => {
+    const fetchMock = stubOk();
+    await adjustStock({ productId: "p1", variantId: "v-l", warehouseId: "w1", onHand: 9 }, "key-2");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({ variantId: "v-l", onHand: 9 });
+  });
+
+  it("fetchWarehouses reads GET /warehouses?first=100 and returns the page's items", async () => {
+    const items = [
+      { id: "w1", code: "MAIN", name: "Main warehouse", status: "active" },
+      { id: "w2", code: "ALEX", name: "Alexandria", status: "active" },
+    ];
+    const fetchMock = stubOk({ items, pageInfo: { hasNextPage: false, endCursor: null } });
+
+    const result = await fetchWarehouses();
+
+    expect(result).toEqual({ outcome: "ok", items });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://runtime.test/api/v1/warehouses?first=100");
+    expect(init.method ?? "GET").toBe("GET");
+  });
+
+  it("fetchWarehouses maps a 401 to unauthorized and a 500 to error", async () => {
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, {})));
+    expect(await fetchWarehouses()).toEqual({ outcome: "unauthorized" });
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(500, { message: "boom" })));
+    expect((await fetchWarehouses()).outcome).toBe("error");
   });
 });

@@ -87,7 +87,7 @@ export default async function ComponentDetailPage({ params }: ComponentDetailPag
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-4xl font-semibold tracking-tight">{component.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{component.name}</h1>
             <ComponentStatusBadge status={component.status} t={t} />
           </div>
           <p className="text-muted-foreground mt-1 font-mono text-sm">{component.key}</p>
@@ -174,13 +174,7 @@ export default async function ComponentDetailPage({ params }: ComponentDetailPag
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  readonly label: string;
-  readonly children: ReactNode;
-}) {
+function Field({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-muted-foreground text-xs">{label}</span>

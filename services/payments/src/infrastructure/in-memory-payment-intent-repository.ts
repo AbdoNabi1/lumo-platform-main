@@ -7,9 +7,9 @@ export interface InMemoryPaymentIntentRepositoryDeps {
   readonly context: EventContext;
 }
 
-/** In-memory `PaymentIntentRepository`. Persists the aggregate and writes events to the outbox on save. */
+/** In-memory `PaymentIntentRepository`. Persists the aggregate and writes events to the outbox on save. ADR-0014 (WP-10, T10.3): keyed by `(tenantId, intentId)`. */
 export class InMemoryPaymentIntentRepository implements PaymentIntentRepository {
-  private readonly store = new Map<string, PaymentIntent>();
+  private readonly store = new Map<string, Map<string, PaymentIntent>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -18,13 +18,18 @@ export class InMemoryPaymentIntentRepository implements PaymentIntentRepository 
     this.context = deps.context;
   }
 
-  async save(intent: PaymentIntent, tx?: unknown): Promise<void> {
-    this.store.set(intent.id.toString(), intent);
-    await this.outbox.write(intent.pullDomainEvents(), this.context, tx);
+  async save(intent: PaymentIntent, tenantId: string, tx?: unknown): Promise<void> {
+    let bucket = this.store.get(tenantId);
+    if (bucket === undefined) {
+      bucket = new Map();
+      this.store.set(tenantId, bucket);
+    }
+    bucket.set(intent.id.toString(), intent);
+    await this.outbox.write(intent.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<PaymentIntent | null> {
+    return this.store.get(tenantId)?.get(id) ?? null;
   }
 
   /**
@@ -32,13 +37,16 @@ export class InMemoryPaymentIntentRepository implements PaymentIntentRepository 
    * use case. Always returns `null` — the domain aggregate carries no `idempotencyKey` field yet,
    * so there is nothing to match against (mirrors the Prisma adapter's always-NULL column today).
    */
-  async findByIdempotencyKey(_idempotencyKey: string): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(
+    _idempotencyKey: string,
+    _tenantId: string,
+  ): Promise<PaymentIntent | null> {
     return null;
   }
 
   /** Phase A.10 (Tasks 4-6): mirrors `PrismaPaymentIntentRepository.findByPspReference`. */
-  async findByPspReference(pspReference: string): Promise<PaymentIntent | null> {
-    for (const intent of this.store.values()) {
+  async findByPspReference(pspReference: string, tenantId: string): Promise<PaymentIntent | null> {
+    for (const intent of this.store.get(tenantId)?.values() ?? []) {
       if (intent.pspReference?.value === pspReference) return intent;
     }
     return null;

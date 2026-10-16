@@ -35,6 +35,7 @@ export function securityAiGovernanceRoutes(admin: WiredAdmin): readonly RouteDef
       schema: { params: principalExternalIdParams, body: governAiIdentityBody },
       handle: ({ params, body, context }) =>
         admin.securityAiGovernance.governAiIdentity(context.principal, {
+          tenantId: context.tenantId,
           principalExternalId: params.externalId,
           ...body,
         }),
@@ -49,6 +50,7 @@ export function securityAiGovernanceRoutes(admin: WiredAdmin): readonly RouteDef
       schema: { params: principalExternalIdParams },
       handle: ({ params, context }) =>
         admin.securityAiGovernance.suspendAiIdentity(context.principal, {
+          tenantId: context.tenantId,
           principalExternalId: params.externalId,
         }),
     }),
@@ -61,6 +63,7 @@ export function securityAiGovernanceRoutes(admin: WiredAdmin): readonly RouteDef
       schema: { params: principalExternalIdParams, body: checkAiActionBody },
       handle: ({ params, body, context }) =>
         admin.securityAiGovernance.checkAiAction(context.principal, {
+          tenantId: context.tenantId,
           principalExternalId: params.externalId,
           ...body,
         }),
@@ -72,7 +75,8 @@ export function securityAiGovernanceRoutes(admin: WiredAdmin): readonly RouteDef
       permission: "security:ai_governance_explorer",
       summary: "Console read model — AI governance explorer",
       schema: {},
-      handle: ({ context }) => admin.securityAiGovernance.aiGovernanceExplorer(context.principal),
+      handle: ({ context }) =>
+        admin.securityAiGovernance.aiGovernanceExplorer(context.principal, context.tenantId),
     }),
   ] as readonly RouteDefinition[];
 }

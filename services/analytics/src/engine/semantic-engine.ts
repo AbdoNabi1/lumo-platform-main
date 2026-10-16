@@ -29,12 +29,15 @@ type FetchedRows = ReadonlyMap<string, readonly Record<string, unknown>[]>;
  * models on the dimension key -> evaluate calculated metrics in dependency order. Without
  * requested dimensions, every fetched row is one global group (a scalar total per metric); with
  * requested dimensions, rows are grouped by each read model's configured join key first.
+ * `tenantId` is an explicit per-call parameter (ADR-0014) forwarded to every `store.fetch` call —
+ * `SemanticQuery` carries no tenant/org field to thread it through instead.
  */
 export const SemanticEngine = {
   async execute(
     registry: SemanticRegistry,
     store: AnalyticsReadStore,
     query: SemanticQuery,
+    tenantId: string,
   ): Promise<Result<SemanticQueryResult, NotFoundError | BusinessRuleError | ValidationError>> {
     const planned = SemanticQueryPlanner.plan(registry, query);
     if (!planned.ok) return planned;
@@ -46,7 +49,7 @@ export const SemanticEngine = {
     for (const rmq of compiled.value) {
       fetched.set(
         rmq.readModelId,
-        await store.fetch(rmq.readModelId, { fields: rmq.fields, filters: rmq.filters }),
+        await store.fetch(rmq.readModelId, tenantId, { fields: rmq.fields, filters: rmq.filters }),
       );
     }
 

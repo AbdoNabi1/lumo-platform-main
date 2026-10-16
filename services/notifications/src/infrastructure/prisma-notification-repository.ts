@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -11,8 +11,6 @@ export interface PrismaNotificationRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -22,6 +20,18 @@ export interface PrismaNotificationRepositoryDeps {
  * are rewritten on every save, which is safe because they are only ever appended to in memory
  * before the aggregate is persisted. No contact PII (G-27, ADR-0006).
  */
+/** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
+}
+
 export class PrismaNotificationRepository implements NotificationRepository {
   private readonly deps: PrismaNotificationRepositoryDeps;
 
@@ -29,9 +39,8 @@ export class PrismaNotificationRepository implements NotificationRepository {
     this.deps = deps;
   }
 
-  async save(notification: Notification, tx?: unknown): Promise<void> {
+  async save(notification: Notification, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const notificationId = notification.id.toString();
     const row = NotificationMapper.toRow(notification, tenantId);
 
@@ -67,39 +76,50 @@ export class PrismaNotificationRepository implements NotificationRepository {
       }
     }
 
-    await this.deps.outbox.write(notification.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      notification.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Notification | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.notification.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Notification | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.notification.findFirst({
+        where: { id, tenantId },
+      }),
+    );
     if (row === null) return null;
     return NotificationMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findByIdempotencyKey(idempotencyKey: string, tx?: unknown): Promise<Notification | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.notification.findFirst({
-      where: { idempotencyKey, tenantId: this.deps.tenantId },
-    });
+  async findByIdempotencyKey(
+    idempotencyKey: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Notification | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.notification.findFirst({
+        where: { idempotencyKey, tenantId },
+      }),
+    );
     if (row === null) return null;
     return NotificationMapper.toDomain(this.toMapperRow(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Notification>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Notification>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.notification.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.notification.findMany({
+        where: {
+          tenantId,
+          ...(after ? { id: { gt: after } } : {}),
+        },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => NotificationMapper.toDomain(this.toMapperRow(row))),
       limit,

@@ -37,9 +37,9 @@ node perf/bench/http-bench.mjs --url $BASE_URL/readyz --requests 2000 --concurre
 ## Reading results
 
 - k6 prints per-threshold pass/fail; a red `http_req_failed` or `api_latency_ms` threshold = SLO miss.
-- During any run, watch **Grafana → Lumo / Platform Overview (SLO)**: availability, burn rate,
+- During any run, watch **Grafana → Morbeh / Platform Overview (SLO)**: availability, burn rate,
   latency, and `nodejs_heap_used_bytes` (the soak leak signal).
-- Stress: confirm `kubectl -n lumo-runtime get hpa` shows replicas rising, then falling on recovery.
+- Stress: confirm `kubectl -n morbeh-runtime get hpa` shows replicas rising, then falling on recovery.
 
 ## Interpreting against SLOs
 

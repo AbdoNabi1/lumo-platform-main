@@ -4,7 +4,7 @@ import { loginToAdminWeb } from "./support/admin-login";
 /**
  * T6.1 spec 2/3 — operator create: log in → create product → see it in the storefront.
  *
- * Uses the seeded `e2e-operator@lumo.local` identity (`../scripts/seed-e2e-identities.mjs`), which —
+ * Uses the seeded `e2e-operator@morbeh.local` identity (`../scripts/seed-e2e-identities.mjs`), which —
  * unlike `scripts/dev/seed-auth-local.mjs`'s default seed — carries the `products:create`/
  * `products:publish` Keto grants this flow actually needs against the real backend, plus the
  * `operator` role `apps/admin-web/src/middleware.ts` requires for `/products/new`.
@@ -18,7 +18,7 @@ test.describe("operator create", () => {
     context,
   }) => {
     await page.goto("/products/new");
-    await loginToAdminWeb(page, "e2e-operator@lumo.local", requireEnv("E2E_PASSWORD"));
+    await loginToAdminWeb(page, "e2e-operator@morbeh.local", requireEnv("E2E_PASSWORD"));
     await expect(page).toHaveURL(/\/products\/new/);
 
     // Field ids from `apps/admin-web/src/components/products/product-create-form.tsx`:

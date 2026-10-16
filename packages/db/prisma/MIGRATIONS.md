@@ -16,10 +16,49 @@ Prisma-7 `prisma.config.ts` migration (§4) will pin it explicitly via `migratio
 ## 1. Workflow
 
 - **Bootstrap:** the initial migration (`20260704000000_init`) was generated **offline** with
-  `prisma migrate diff --from-empty --to-schema-datamodel prisma/schema --script` (this
-  environment has no database host). It has **not run against a real database yet** — the first
-  Docker-host session must run `prisma migrate deploy` against a fresh Postgres 16 and fix any
-  drift before anything else builds on it.
+  `prisma migrate diff --from-empty --to-schema-datamodel prisma/schema --script` (that particular
+  environment had no database host). **This paragraph is now stale — corrected 2026-09-09.** The
+  platform since moved off local Docker onto managed cloud infrastructure (Supabase Postgres,
+  `docs/operations/CLOUD_RUNBOOK.md`), and `20260704000000_init` through
+  `20260814000000_a21_sprint5x_column_and_index_reconciliation` (37 migrations) were bulk-applied
+  there on 2026-08-23 (`prisma migrate status` against the live `.env`-configured `DATABASE_URL`
+  shows all 37 with a `finished_at` within an 11-minute window that day). Two more migrations exist
+  **in the live database's `_prisma_migrations` table but nowhere in this repo's git history, on
+  any branch**: `20260823000000_rls_tenant_isolation` and `20260823010000_rls_nullable_tenant_write_
+check` — applied 2026-08-23 07:11 and 13:50 respectively (six and a half hours apart, so two
+  separate manual interventions, not one script). Reconstructed from the live schema (Prisma stores
+  a checksum, not the SQL text, so the original files are not recoverable): every business table
+  gets `ENABLE`+`FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy
+  (`tenant_id = current_setting('app.tenant_id', true)` for both `USING` and `WITH CHECK`, 130
+  policies total across 128 tables), except `platform.outbox`/`platform.audit_events`, whose
+  `USING` clause is `(tenant_id IS NULL) OR (tenant_id = current_setting(...))` — matching the
+  second migration's "nullable" name and this file's own §3 RLS plan below. **This means the RLS
+  layer §3 describes as a to-do is in fact already live in production** — see
+  `docs/plans/BLOCKERS.md`'s 2026-09-09 entry for the full drift report.
+
+  **Both halves of that drift are CLOSED as of 2026-09-19 — 40 migrations, files and history in
+  agreement.** What closed them, and one correction worth keeping:
+
+  - The two RLS migrations were reconstructed a second time from live introspection on 2026-09-19
+    (130 tables carrying `tenant_id`, 130 `tenant_isolation` policies, 130 tables with `FORCE ROW
+LEVEL SECURITY`, and — checked explicitly — **no** tenant-scoped table without a policy) and
+    committed as real migration files. The nullable-read variant is on exactly two tables,
+    `platform.audit_events` and `platform.outbox`, confirming the earlier reading.
+  - **`prisma migrate resolve --applied` was NOT needed and does not work here.** Running it
+    returns `P3008`, "already recorded as applied". The live database always had the history rows
+    — that is precisely how `migrate status` surfaced the gap ("found in the database but not
+    locally"). Only the files were missing, so committing them was the entire fix, with no write
+    to the live database at all. `migrate resolve --applied` is for the opposite drift: a file
+    that exists locally which the database has never recorded. Recorded here because the obvious
+    reading of "the history is out of sync" points at the wrong command.
+  - WP-11's `20260909000000_wp11_float_to_decimal_money_columns` was deployed on 2026-09-19 via
+    `migrate deploy`, after confirming by direct query that all four affected tables
+    (`licensing.usage_counters`, `licensing.credits`, `pricing.pricing_rules`,
+    `finance.exchange_rates`) held **zero rows** — so the type change rewrote no data and the
+    absent backup (Supabase free tier keeps none, and this environment has no `pg_dump`) bounded
+    no real risk. Do not read that as a precedent for deploying without a backup; it was a
+    measured, empty-table exception.
+
 - **Development:** `pnpm db:migrate` (`prisma migrate dev`) against local compose Postgres —
   never edit an applied migration; always add a new one.
 - **Production:** `prisma migrate deploy` in CD, before the new app version serves traffic.

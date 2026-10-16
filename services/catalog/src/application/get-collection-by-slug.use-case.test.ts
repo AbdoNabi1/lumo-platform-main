@@ -14,7 +14,7 @@ describe("GetCollectionBySlug", () => {
       search: async () => ({ items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
     };
     const useCase = new GetCollectionBySlug({ collections });
-    const result = await useCase.execute({ slug: "featured-toys" });
+    const result = await useCase.execute({ slug: "featured-toys", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -32,7 +32,7 @@ describe("GetCollectionBySlug", () => {
       search: async () => ({ items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
     };
     const useCase = new GetCollectionBySlug({ collections });
-    const result = await useCase.execute({ slug: "no-such-slug" });
+    const result = await useCase.execute({ slug: "no-such-slug", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {

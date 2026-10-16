@@ -37,7 +37,7 @@ const ids: IdGenerator = { generate: () => crypto.randomUUID() };
  */
 const T0 = "2026-07-20T23:59:59.000Z";
 
-function wire(tenantId: string) {
+function wire() {
   const prisma = createTestPrismaClient(databaseUrl);
   const outbox = new OutboxWriter({
     store: new PrismaOutboxStore(prisma),
@@ -47,20 +47,18 @@ function wire(tenantId: string) {
     producer: "customer360",
   });
   const context = rootEventContext(ids);
-  const store = new PrismaSegmentStore({ prisma, idGenerator: ids, tenantId });
+  const store = new PrismaSegmentStore({ prisma, idGenerator: ids });
   const history = new PrismaSegmentHistoryStore({
     prisma,
     outbox,
     context,
     idGenerator: ids,
-    tenantId,
   });
   const definitions = new PrismaSegmentDefinitionRegistry({
     prisma,
     outbox,
     context,
     idGenerator: ids,
-    tenantId,
   });
   const unitOfWork = new PrismaUnitOfWork(prisma);
   return { prisma, store, history, definitions, unitOfWork };
@@ -68,18 +66,16 @@ function wire(tenantId: string) {
 
 describe.runIf(Boolean(databaseUrl))("Prisma Segmentation stores (integration)", () => {
   runSegmentStoreContractTests("prisma", () => {
-    const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    return wire(tenantId).store;
+    return wire().store;
   });
 
   runSegmentDefinitionRegistryContractTests("prisma", () => {
-    const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    return wire(tenantId).definitions;
+    return wire().definitions;
   });
 
   it("appends a history entry inside a transaction and rehydrates it via listFor/latestFor", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { history, unitOfWork } = wire(tenantId);
+    const { history, unitOfWork } = wire();
     const identifier = { type: "customer_id" as const, value: `cust-${crypto.randomUUID()}` };
     const segmentId = "high_value";
 
@@ -109,20 +105,25 @@ describe.runIf(Boolean(databaseUrl))("Prisma Segmentation stores (integration)",
     );
 
     await unitOfWork.run(async (tx) => {
-      await history.append(snapshot, event, tx);
+      await history.append(snapshot, tenantId, event, tx);
     });
 
-    const listed = await history.listFor(identifier, segmentId);
+    const listed = await history.listFor(identifier, segmentId, tenantId);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.status).toBe("entered");
 
-    const latest = await history.latestFor(identifier, segmentId);
+    const latest = await history.latestFor(identifier, segmentId, tenantId);
     expect(latest?.reason).toBe("entered");
+
+    // ADR-0014: a second tenant sees none of it.
+    const otherTenant = `${tenantId}-other`;
+    expect(await history.listFor(identifier, segmentId, otherTenant)).toEqual([]);
+    expect(await history.latestFor(identifier, segmentId, otherTenant)).toBeNull();
   });
 
   it("history append rejects a call without a transaction client (ADR-0003)", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { history } = wire(tenantId);
+    const { history } = wire();
     const identifier = { type: "customer_id" as const, value: `cust-${crypto.randomUUID()}` };
     const segmentId = "high_value";
     const membership = applyMembershipUpdate(null, identifier.type, identifier.value, segmentId, {
@@ -135,12 +136,14 @@ describe.runIf(Boolean(databaseUrl))("Prisma Segmentation stores (integration)",
     }).membership!;
     const snapshot = toSnapshot(membership, "entered", clock.now().toISOString());
 
-    await expect(history.append(snapshot, undefined)).rejects.toThrow(/transaction client/);
+    await expect(history.append(snapshot, tenantId, undefined)).rejects.toThrow(
+      /transaction client/,
+    );
   });
 
   it("registry save with an event rejects a call without a transaction client, but succeeds without one when no event is given", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { definitions } = wire(tenantId);
+    const { definitions } = wire();
     const ruleSet: RuleSet<boolean> = {
       id: "high_value",
       version: 1,
@@ -166,16 +169,22 @@ describe.runIf(Boolean(databaseUrl))("Prisma Segmentation stores (integration)",
     );
 
     await expect(
-      definitions.save(definition, INITIAL_SEGMENT_DEFINITION_VERSION, event, undefined),
+      definitions.save(definition, tenantId, INITIAL_SEGMENT_DEFINITION_VERSION, event, undefined),
     ).rejects.toThrow(/transaction client/);
 
-    await definitions.save(definition, INITIAL_SEGMENT_DEFINITION_VERSION, undefined, undefined);
-    expect(await definitions.getById("high_value")).not.toBeNull();
+    await definitions.save(
+      definition,
+      tenantId,
+      INITIAL_SEGMENT_DEFINITION_VERSION,
+      undefined,
+      undefined,
+    );
+    expect(await definitions.getById("high_value", tenantId)).not.toBeNull();
   });
 
   it("stores and lists a segment definition's rule set losslessly", async () => {
     const tenantId = `tenant-itest-${crypto.randomUUID()}`;
-    const { definitions } = wire(tenantId);
+    const { definitions } = wire();
 
     const ruleSet: RuleSet<boolean> = {
       id: "high_value",
@@ -201,14 +210,15 @@ describe.runIf(Boolean(databaseUrl))("Prisma Segmentation stores (integration)",
         createdAt: T0,
         updatedAt: T0,
       },
+      tenantId,
       INITIAL_SEGMENT_DEFINITION_VERSION,
     );
 
-    const all = await definitions.list();
+    const all = await definitions.list(tenantId);
     expect(all).toHaveLength(1);
     expect(all[0]?.ruleSet).toEqual(ruleSet);
 
-    const byId = await definitions.getById("high_value");
+    const byId = await definitions.getById("high_value", tenantId);
     expect(byId?.name).toBe("High value");
   });
 });

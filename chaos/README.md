@@ -27,7 +27,7 @@ Bring up the stack (`docker compose … up -d`) then:
 
 | Experiment   | How                                                      | Validates                                                                                       |
 | ------------ | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Pod fault    | `NS=lumo-runtime chaos/k8s/pod-fault.sh`                 | PDB + rolling replace keep availability (plain kubectl)                                         |
+| Pod fault    | `NS=morbeh-runtime chaos/k8s/pod-fault.sh`               | PDB + rolling replace keep availability (plain kubectl)                                         |
 | Full library | `kubectl apply -f chaos/k8s/chaos-mesh-experiments.yaml` | pod-kill / net-latency / partition / memory-stress (needs [Chaos Mesh](https://chaos-mesh.org)) |
 
 ## What "pass" looks like

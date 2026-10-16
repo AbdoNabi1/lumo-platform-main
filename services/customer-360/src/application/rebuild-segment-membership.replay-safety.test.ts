@@ -32,6 +32,7 @@ import type {
 import { RebuildSegmentMembership } from "./rebuild-segment-membership.use-case";
 import { RecalculateMemberships } from "./recalculate-memberships.use-case";
 import { UpdateSegmentMembershipProjection } from "./update-segment-membership-projection.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 /**
  * Segmentation analogue of the Phase 6.4.1 hardening suite's Replay Safety task
@@ -123,39 +124,48 @@ describe("Segmentation — Replay Safety", () => {
         clock,
       });
       const evaluateAll = new EvaluateAllSegments({ evaluate, updateProjection });
-      const registry = new InMemorySegmentDefinitionRegistry({ outbox, context }, [definition]);
+      const registry = new InMemorySegmentDefinitionRegistry(
+        { outbox, context },
+        { tenantId: TENANT_A, definitions: [definition] },
+      );
       return new RecalculateMemberships({ definitions: registry, evaluateAll });
     }
 
     // "Day 1": definition v1 — matches.
     const v1Result = await recalculateAgainst(segmentDefinition("high_value", 1, true)).execute({
+      tenantId: TENANT_A,
       identifier,
     });
     expect(v1Result.ok).toBe(true);
 
-    const afterV1 = await segments.getCurrent(identifier, "high_value");
+    const afterV1 = await segments.getCurrent(identifier, "high_value", TENANT_A);
     expect(afterV1?.status).toBe("entered");
     expect(afterV1?.definitionVersion).toBe(1);
 
     // "Day 2": the rule author changes the definition — v2 no longer matches.
     const v2Result = await recalculateAgainst(segmentDefinition("high_value", 2, false)).execute({
+      tenantId: TENANT_A,
       identifier,
     });
     expect(v2Result.ok).toBe(true);
 
-    const afterV2 = await segments.getCurrent(identifier, "high_value");
+    const afterV2 = await segments.getCurrent(identifier, "high_value", TENANT_A);
     expect(afterV2?.status).toBe("exited");
     expect(afterV2?.definitionVersion).toBe(2);
 
     // The ledger still holds BOTH entries — history is never pruned or overwritten.
-    const allEntries = await history.listFor(identifier, "high_value");
+    const allEntries = await history.listFor(identifier, "high_value", TENANT_A);
     expect(allEntries.length).toBe(2);
     expect(allEntries[0]?.definitionVersion).toBe(1);
     expect(allEntries[1]?.definitionVersion).toBe(2);
 
     // Ground truth #1: RebuildSegmentMembership reconstructs from the LATEST entry only — "exited"/v2,
     // never "entered"/v1, even though v1's entry is still sitting in the ledger.
-    const rebuilt = await rebuild.execute({ identifier, segmentId: "high_value" });
+    const rebuilt = await rebuild.execute({
+      tenantId: TENANT_A,
+      identifier,
+      segmentId: "high_value",
+    });
     expect(rebuilt.ok).toBe(true);
     if (!rebuilt.ok) throw new Error("unreachable");
     expect(rebuilt.value.membership?.status).toBe("exited");

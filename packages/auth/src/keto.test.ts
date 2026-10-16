@@ -12,7 +12,7 @@ const silent: Logger = {
   child: () => silent,
 };
 
-const principal = { id: "principal:a", kind: "staff" as const, roles: [] };
+const principal = { id: "principal:a", kind: "staff" as const, roles: [], tenantId: "tenant-a" };
 
 describe("KetoAccessControl — subject_id convention (default, self-hosted Keto)", () => {
   it("checks with subject_id and no subject_set params, honors allowed=true", async () => {
@@ -32,7 +32,7 @@ describe("KetoAccessControl — subject_id convention (default, self-hosted Keto
     expect(await ac.authorize(principal, "products:read")).toBe(true);
     const parsed = new URL(calledUrl!);
     expect(parsed.searchParams.get("namespace")).toBe("permissions");
-    expect(parsed.searchParams.get("object")).toBe("products:read");
+    expect(parsed.searchParams.get("object")).toBe("tenant/tenant-a/products:read");
     expect(parsed.searchParams.get("relation")).toBe("granted");
     expect(parsed.searchParams.get("subject_id")).toBe("principal:a");
     expect(parsed.searchParams.has("subject_set.namespace")).toBe(false);
@@ -42,6 +42,21 @@ describe("KetoAccessControl — subject_id convention (default, self-hosted Keto
     const ac = new KetoAccessControl({
       readUrl: "http://keto:4466",
       fetch: async () => ({ status: 200, json: async () => ({ allowed: false }) }),
+      logger: silent,
+    });
+    expect(await ac.authorize(principal, "products:read")).toBe(false);
+  });
+
+  it.each([
+    ["an empty object", {}],
+    ["allowed: null", { allowed: null }],
+    ["allowed: the string 'true'", { allowed: "true" }],
+    ["allowed: 1", { allowed: 1 }],
+    ["an array", []],
+  ])("ONLY a literal allowed:true allows — a 200 whose body is %s denies", async (_label, body) => {
+    const ac = new KetoAccessControl({
+      readUrl: "http://keto:4466",
+      fetch: async () => ({ status: 200, json: async () => body }),
       logger: silent,
     });
     expect(await ac.authorize(principal, "products:read")).toBe(false);
@@ -83,7 +98,7 @@ describe("KetoAccessControl — subject_set convention (Ory Network)", () => {
     expect(await ac.authorize(principal, "products:read")).toBe(true);
     const parsed = new URL(calledUrl!);
     expect(parsed.searchParams.get("namespace")).toBe("permissions");
-    expect(parsed.searchParams.get("object")).toBe("products:read");
+    expect(parsed.searchParams.get("object")).toBe("tenant/tenant-a/products:read");
     expect(parsed.searchParams.get("relation")).toBe("granted");
     expect(parsed.searchParams.has("subject_id")).toBe(false);
     expect(parsed.searchParams.get("subject_set.namespace")).toBe("User");

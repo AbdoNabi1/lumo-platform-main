@@ -50,4 +50,4 @@ esac
 # security context (KeyProtector.rotate port); trigger it operationally via its admin surface rather
 # than reimplementing crypto here. See docs/operations/BACKUP_AND_RECOVERY.md#key-rotation.
 log "KEK rotated. Trigger DEK re-wrap via the security admin API (KeyProtector.rotate), then:"
-log "  kubectl -n lumo-runtime rollout restart deploy/runtime-api deploy/runtime-worker deploy/runtime-scheduler"
+log "  kubectl -n morbeh-runtime rollout restart deploy/runtime-api deploy/runtime-worker deploy/runtime-scheduler"

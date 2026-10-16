@@ -5,19 +5,23 @@ import type { DomainError } from "@platform/utils";
 import type { Folder } from "../domain/folder";
 import type { FolderRepository } from "../domain/library-repositories";
 
+export interface ListFoldersInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListFoldersDeps {
   readonly folders: FolderRepository;
 }
 
 /** Cursor-paginated folder listing. */
-export class ListFolders implements UseCase<CursorPage, Paginated<Folder>, DomainError> {
+export class ListFolders implements UseCase<ListFoldersInput, Paginated<Folder>, DomainError> {
   private readonly deps: ListFoldersDeps;
 
   constructor(deps: ListFoldersDeps) {
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<Folder>, DomainError>> {
-    return ok(await this.deps.folders.list(input));
+  async execute(input: ListFoldersInput): Promise<Result<Paginated<Folder>, DomainError>> {
+    return ok(await this.deps.folders.list(input, input.tenantId));
   }
 }

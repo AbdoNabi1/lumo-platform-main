@@ -86,7 +86,7 @@ export default async function OrderShipmentPage({ params }: OrderShipmentPagePro
           {t.shipmentScreen.back}
         </Link>
       </Button>
-      <h1 className="text-4xl font-semibold tracking-tight">{t.shipmentScreen.title}</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{t.shipmentScreen.title}</h1>
       <p className="text-muted-foreground mt-1 text-sm">#{order.orderNumber}</p>
     </div>
   );

@@ -9,14 +9,33 @@ import type { OrderRepository } from "../domain/order-repository";
 import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
-import { OrderTotalsSnapshot } from "../domain/value-objects/order-totals-snapshot";
+import {
+  type OrderDiscountLine,
+  OrderTotalsSnapshot,
+} from "../domain/value-objects/order-totals-snapshot";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
+import type { OrderNumberAllocator } from "./ports";
 
 export interface CreateOrderFromCheckoutAddressInput {
+  /** Plan 3A: who receives the order, and the second address line. */
+  readonly name?: string;
+  readonly phone?: string;
+  readonly line2?: string;
   readonly line1: string;
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: the governorate / region / emirate (ISO 3166-2). */
+  readonly province?: string;
+}
+
+function toExtra(address: CreateOrderFromCheckoutAddressInput) {
+  return {
+    recipientName: address.name,
+    phone: address.phone,
+    line2: address.line2,
+    ...(address.province === undefined ? {} : { province: address.province }),
+  };
 }
 
 export interface CreateOrderFromCheckoutItemInput {
@@ -24,6 +43,10 @@ export interface CreateOrderFromCheckoutItemInput {
   readonly name: string;
   readonly unitPriceAmountMinor: number;
   readonly quantity: number;
+  /** Plan 2A: the variant sold (all three together, or none for a legacy line). */
+  readonly variantRef?: string;
+  readonly sku?: string;
+  readonly variantTitle?: string | null;
 }
 
 export interface CreateOrderFromCheckoutTotalsInput {
@@ -32,9 +55,21 @@ export interface CreateOrderFromCheckoutTotalsInput {
   readonly shippingMinor: number;
   readonly discountMinor: number;
   readonly totalMinor: number;
+  /** Plan 3B: the shipping method the shopper selected, snapshotted into the order's totals. */
+  readonly shippingMethod?: string;
+  /** Plan 3C: the rate's name as the shopper saw it. */
+  readonly shippingName?: string;
+  /** Plan 3C: whether the tax is already inside the prices. */
+  readonly taxIncluded?: boolean;
+  /** Phase 2: the free-shipping part of the discounts; absent on older orders. */
+  readonly shippingDiscountMinor?: number;
+  /** Phase 2: each discount the shopper got; absent on older orders. */
+  readonly discounts?: readonly OrderDiscountLine[];
 }
 
 export interface CreateOrderFromCheckoutInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutRef: string;
   readonly customerRef: string;
   readonly currency: string;
@@ -55,6 +90,7 @@ export interface CreateOrderFromCheckoutDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  readonly orderNumbers: OrderNumberAllocator;
 }
 
 /** Creates an order from Checkout's order-draft snapshot — the only entry point to the full Sprint 4.7 lifecycle. */
@@ -95,7 +131,18 @@ export class CreateOrderFromCheckout implements UseCase<
       }
       const unitPrice = Money.create(item.unitPriceAmountMinor, input.currency);
       if (!unitPrice.ok) return err(unitPrice.error);
-      const snapshot = ProductSnapshot.create(item.productId, item.name, unitPrice.value);
+      const snapshot = ProductSnapshot.create(
+        item.productId,
+        item.name,
+        unitPrice.value,
+        item.variantRef === undefined
+          ? undefined
+          : {
+              variantRef: item.variantRef,
+              sku: item.sku ?? "",
+              variantTitle: item.variantTitle ?? null,
+            },
+      );
       if (!snapshot.ok) return err(snapshot.error);
       items.push(
         OrderItem.create(
@@ -111,6 +158,7 @@ export class CreateOrderFromCheckout implements UseCase<
       input.billingAddress.city,
       input.billingAddress.postalCode,
       input.billingAddress.country,
+      toExtra(input.billingAddress),
     );
     if (!billingAddress.ok) return err(billingAddress.error);
     const shippingAddress = AddressSnapshot.create(
@@ -118,16 +166,19 @@ export class CreateOrderFromCheckout implements UseCase<
       input.shippingAddress.city,
       input.shippingAddress.postalCode,
       input.shippingAddress.country,
+      toExtra(input.shippingAddress),
     );
     if (!shippingAddress.ok) return err(shippingAddress.error);
-
-    const orderNumber = OrderNumber.create(`ORD-${this.deps.idGenerator.generate()}`);
-    if (!orderNumber.ok) return err(orderNumber.error);
 
     const totals = OrderTotalsSnapshot.create({ ...input.totals, currency: input.currency });
 
     return this.deps.unitOfWork.run<Result<CreateOrderFromCheckoutOutput, DomainError>>(
       async (tx) => {
+        // Allocated inside the order's transaction: a failed save rolls the counter back too.
+        const orderNumber = OrderNumber.create(
+          await this.deps.orderNumbers.next(input.tenantId, tx),
+        );
+        if (!orderNumber.ok) return err(orderNumber.error);
         const id = UniqueEntityId.from(this.deps.idGenerator.generate());
         const order = Order.createFromCheckout(
           id,
@@ -142,7 +193,7 @@ export class CreateOrderFromCheckout implements UseCase<
           this.deps.idGenerator.generate(),
           this.deps.clock.now(),
         );
-        await this.deps.orders.save(order, tx);
+        await this.deps.orders.save(order, input.tenantId, tx);
         return ok({
           orderId: id.toString(),
           orderNumber: orderNumber.value.value,

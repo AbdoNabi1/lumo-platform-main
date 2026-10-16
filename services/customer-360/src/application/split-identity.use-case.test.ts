@@ -7,6 +7,7 @@ import type { IdentityDecision } from "../ports/identity-decision";
 import type { IdentityDecisionStore } from "../ports/identity-decision-store";
 import type { IdentityGraphStore } from "../ports/identity-graph-store";
 import { SplitIdentity } from "./split-identity.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 function fakeDeps(observed: IdentityGraph = EMPTY_IDENTITY_GRAPH) {
   const recorded: IdentityDecision[] = [];
@@ -43,7 +44,12 @@ describe("SplitIdentity", () => {
   it("rejects a blank reason", async () => {
     const deps = fakeDeps();
     const useCase = new SplitIdentity(deps);
-    const result = await useCase.execute({ edge, reason: "  ", actor: "operator-1" });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      edge,
+      reason: "  ",
+      actor: "operator-1",
+    });
     expect(result.ok).toBe(false);
     expect(deps.recorded).toHaveLength(0);
   });
@@ -51,14 +57,24 @@ describe("SplitIdentity", () => {
   it("rejects a blank actor", async () => {
     const deps = fakeDeps();
     const useCase = new SplitIdentity(deps);
-    const result = await useCase.execute({ edge, reason: "wrong stitch", actor: "  " });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      edge,
+      reason: "wrong stitch",
+      actor: "  ",
+    });
     expect(result.ok).toBe(false);
   });
 
   it("records the decision with the retracted edge and full provenance", async () => {
     const deps = fakeDeps(graphWithEdge);
     const useCase = new SplitIdentity(deps);
-    const result = await useCase.execute({ edge, reason: "wrong stitch", actor: "operator-1" });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      edge,
+      reason: "wrong stitch",
+      actor: "operator-1",
+    });
 
     expect(result.ok).toBe(true);
     expect(deps.recorded).toHaveLength(1);
@@ -78,7 +94,12 @@ describe("SplitIdentity", () => {
     // the caller sees success ("split.ok === true") while resolution is completely unaffected.
     const deps = fakeDeps(EMPTY_IDENTITY_GRAPH);
     const useCase = new SplitIdentity(deps);
-    const result = await useCase.execute({ edge, reason: "wrong stitch", actor: "operator-1" });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      edge,
+      reason: "wrong stitch",
+      actor: "operator-1",
+    });
 
     expect(result.ok).toBe(false);
     expect(deps.recorded).toHaveLength(0);
@@ -95,6 +116,7 @@ describe("SplitIdentity", () => {
       toValue: edge.fromValue,
     };
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       edge: swapped,
       reason: "wrong stitch",
       actor: "operator-1",

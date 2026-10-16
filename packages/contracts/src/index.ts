@@ -1,6 +1,6 @@
 export type { IdGenerator } from "./id-generator";
 export type { Clock } from "./clock";
-export type { Principal, PrincipalKind } from "./principal";
+export type { AuthenticatedIdentity, Principal, PrincipalKind } from "./principal";
 export type { AuthenticatedContext, Authenticator, ClaimsAuthenticator } from "./authenticator";
 export type { Permission } from "./permission";
 export type { AccessControl } from "./access-control";
@@ -26,4 +26,12 @@ export type {
   ImageTransformSpec,
   ScanVerdict,
 } from "./content-safety";
-export type { PaymentIntentRequest, PaymentProvider, ProviderIntent } from "./payment-provider";
+export type {
+  OffSessionCharge,
+  OffSessionChargeRequest,
+  OffSessionCharger,
+  OffSessionPaymentProvider,
+  PaymentIntentRequest,
+  PaymentProvider,
+  ProviderIntent,
+} from "./payment-provider";

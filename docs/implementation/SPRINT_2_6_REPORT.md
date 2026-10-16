@@ -30,7 +30,7 @@
   `/openapi.json` — **generated from the same zod schemas that validate**, so spec and
   enforcement cannot drift. Versioned routing under `/api/v<n>`.
 
-**`@platform/grpc`:** versioned proto contracts (`lumo.orders.v1` — Place/MarkPaid/Refund,
+**`@platform/grpc`:** versioned proto contracts (`morbeh.orders.v1` — Place/MarkPaid/Refund,
 tenant-scoped messages), runtime loading via proto-loader (no manual serialization; buf codegen
 replaces the loader for clients when `@platform/api-clients` lands, G-18), server factory with
 the interceptor seam, insecure creds only inside the mesh (mTLS per doc 14 §5).

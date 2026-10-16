@@ -18,7 +18,12 @@ function feature(
     policy?: "general_availability" | "experimental";
   } = {},
 ): FeatureDefinition {
-  const f = FeatureDefinition.register(id(), { key, name: key, category: "ai" }, "e", now);
+  const f = FeatureDefinition.register(
+    id(),
+    { key, name: key, category: "ai", tenantId: "tenant-1" },
+    "e",
+    now,
+  );
   if (opts.deps !== undefined)
     f.setDependencies(
       opts.deps.map((d) => ({ featureKey: d, minVersion: 0 })),
@@ -61,7 +66,12 @@ describe("FeatureRegistryValidator (P1.1.2 §7)", () => {
   });
 
   it("flags requires ∩ conflicts as invalid compatibility", () => {
-    const f = FeatureDefinition.register(id(), { key: "x", name: "x", category: "ai" }, "e", now);
+    const f = FeatureDefinition.register(
+      id(),
+      { key: "x", name: "x", category: "ai", tenantId: "tenant-1" },
+      "e",
+      now,
+    );
     f.setCompatibility({ requires: ["y"], conflictsWith: ["y"] }, "e", now);
     f.publish("e", now);
     const report = new FeatureRegistryValidator().validate([f, feature("y")]);
@@ -69,7 +79,12 @@ describe("FeatureRegistryValidator (P1.1.2 §7)", () => {
   });
 
   it("warns on a GA feature with no documentation, and on a non-canonical constraint", () => {
-    const f = FeatureDefinition.register(id(), { key: "ga", name: "ga", category: "ai" }, "e", now);
+    const f = FeatureDefinition.register(
+      id(),
+      { key: "ga", name: "ga", category: "ai", tenantId: "tenant-1" },
+      "e",
+      now,
+    );
     f.setMetadata(
       { lifecyclePolicy: "general_availability", constraints: { maxWidgets: 5 } },
       "e",
@@ -89,7 +104,7 @@ describe("FeatureRegistryValidator (P1.1.2 §7)", () => {
   it("flags a bundle referencing an unknown feature", () => {
     const bundle = FeatureBundle.create(
       id(),
-      { key: "ai.pack", name: "AI Pack", featureKeys: ["ghost"] },
+      { key: "ai.pack", name: "AI Pack", featureKeys: ["ghost"], tenantId: "tenant-1" },
       "e",
       now,
     );

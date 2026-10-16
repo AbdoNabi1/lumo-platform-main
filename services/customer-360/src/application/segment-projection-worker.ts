@@ -4,7 +4,10 @@ import type { DomainError } from "@platform/utils";
 import type { SegmentStore } from "../ports/segment-store";
 import type { RebuildSegmentMembership } from "./rebuild-segment-membership.use-case";
 
-export type SegmentProjectionWorkerInput = Record<string, never>;
+export interface SegmentProjectionWorkerInput {
+  /** The tenant this sweep is scoped to (ADR-0014). */
+  readonly tenantId: string;
+}
 
 export interface SegmentProjectionWorkerOutput {
   readonly rebuilt: number;
@@ -34,15 +37,16 @@ export class SegmentProjectionWorker implements UseCase<
   }
 
   async execute(
-    _input: SegmentProjectionWorkerInput,
+    input: SegmentProjectionWorkerInput,
   ): Promise<Result<SegmentProjectionWorkerOutput, DomainError>> {
-    const pairs = await this.deps.segments.listIdentifiers();
+    const pairs = await this.deps.segments.listIdentifiers(input.tenantId);
     let rebuilt = 0;
     let failed = 0;
 
     for (const pair of pairs) {
       try {
         const result = await this.deps.rebuild.execute({
+          tenantId: input.tenantId,
           identifier: pair.identifier,
           segmentId: pair.segmentId,
         });

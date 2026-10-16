@@ -1,11 +1,9 @@
 import type { IdGenerator } from "@platform/contracts";
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { ConsentProjectionRecord, ConsentProjectionStore } from "../application/ports";
 
 export interface PrismaConsentProjectionDeps {
   readonly prisma: Database;
-  /** Row scope for every query/write (ADR-0008). */
-  readonly tenantId: string;
   readonly idGenerator: IdGenerator;
 }
 
@@ -20,51 +18,62 @@ export interface PrismaConsentProjectionDeps {
 export class PrismaConsentProjectionStore implements ConsentProjectionStore {
   constructor(private readonly deps: PrismaConsentProjectionDeps) {}
 
-  private reader(tx: unknown): TransactionClient | Database {
-    return (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  /** ADR-0014: reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  private scoped<T>(
+    tenantId: string,
+    tx: unknown,
+    run: (client: TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return tx !== undefined && tx !== null
+      ? run(tx as TransactionClient)
+      : runReadScoped(this.deps.prisma, tenantId, run);
   }
 
-  async upsert(record: ConsentProjectionRecord, tx?: unknown): Promise<void> {
-    const client = this.reader(tx);
-    const existing = await client.securityConsentProjection.findFirst({
-      where: {
-        tenantId: this.deps.tenantId,
-        subjectRef: record.subjectRef,
-        purpose: record.purpose,
-      },
-    });
-    if (existing === null) {
-      await client.securityConsentProjection.create({
-        data: {
-          id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
+  async upsert(record: ConsentProjectionRecord, tenantId: string, tx?: unknown): Promise<void> {
+    await this.scoped(tenantId, tx, async (client) => {
+      const existing = await client.securityConsentProjection.findFirst({
+        where: {
+          tenantId,
           subjectRef: record.subjectRef,
           purpose: record.purpose,
-          granted: record.granted,
-          occurredAt: record.occurredAt,
         },
       });
-      return;
-    }
-    if (existing.occurredAt >= record.occurredAt) return; // LWW: keep the newer decision
-    await client.securityConsentProjection.updateMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        subjectRef: record.subjectRef,
-        purpose: record.purpose,
-      },
-      data: { granted: record.granted, occurredAt: record.occurredAt },
+      if (existing === null) {
+        await client.securityConsentProjection.create({
+          data: {
+            id: this.deps.idGenerator.generate(),
+            tenantId,
+            subjectRef: record.subjectRef,
+            purpose: record.purpose,
+            granted: record.granted,
+            occurredAt: record.occurredAt,
+          },
+        });
+        return;
+      }
+      if (existing.occurredAt >= record.occurredAt) return; // LWW: keep the newer decision
+      await client.securityConsentProjection.updateMany({
+        where: {
+          tenantId,
+          subjectRef: record.subjectRef,
+          purpose: record.purpose,
+        },
+        data: { granted: record.granted, occurredAt: record.occurredAt },
+      });
     });
   }
 
   async get(
     subjectRef: string,
     purpose: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<ConsentProjectionRecord | null> {
-    const row = await this.reader(tx).securityConsentProjection.findFirst({
-      where: { tenantId: this.deps.tenantId, subjectRef, purpose },
-    });
+    const row = await this.scoped(tenantId, tx, (c) =>
+      c.securityConsentProjection.findFirst({
+        where: { tenantId, subjectRef, purpose },
+      }),
+    );
     if (row === null) return null;
     return {
       subjectRef: row.subjectRef,

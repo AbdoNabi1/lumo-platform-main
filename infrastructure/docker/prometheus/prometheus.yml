@@ -19,11 +19,11 @@ scrape_configs:
     static_configs:
       - targets: ["redpanda:9644"]
 
-  # H-08: SLO recording rules and alerts (rules/*.yml) select on job="lumo-runtime" — this job did
-  # not exist, so up{job="lumo-runtime"}, RuntimeProcessDown, MessagingDeadLettering and
+  # H-08: SLO recording rules and alerts (rules/*.yml) select on job="morbeh-runtime" — this job did
+  # not exist, so up{job="morbeh-runtime"}, RuntimeProcessDown, MessagingDeadLettering and
   # RuntimeHighMemory could never evaluate. Targets are docker-compose.runtime.yml's three
   # processes (added alongside this), each on the shared internal port 3080.
-  - job_name: lumo-runtime
+  - job_name: morbeh-runtime
     static_configs:
       - targets: ["api:3080"]
         labels: { component: api }

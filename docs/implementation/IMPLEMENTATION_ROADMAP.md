@@ -4,7 +4,7 @@
 > This roadmap sequences the implementation of the **already-approved contract** — it adds no new
 > requirements. The contract is authoritative:
 > [`../architecture/`](../architecture/README.md) (system architecture, 01–21 + ADRs),
-> [`../ui/`](../ui/README.md) (Lumo Design System), [`../growth/`](../growth/) (01–10),
+> [`../ui/`](../ui/README.md) (Morbeh Design System), [`../growth/`](../growth/) (01–10),
 > [`../analytics/01`](../analytics/01-ANALYTICS_HUB_SPEC.md), [`../admin/01`](../admin/01-ADMIN_DASHBOARD_SPEC.md),
 > and [`../platform/`](../platform/) (01–05).
 >
@@ -15,12 +15,12 @@
 ## 1. Implementation principles
 
 1. **Build to the contract, not beyond it.** Every PR traces to a spec section. Anything not covered ⇒ ADR first; no improvisation.
-2. **UI follows the Lumo Design System.** Implement the admin 1:1 against [`../ui/`](../ui/README.md); wire functionality behind existing controls per [`../admin/01`](../admin/01-ADMIN_DASHBOARD_SPEC.md). Any net-new surface (workflow builder, integrations hub, Customer 360 view, etc.) requires UI approval before its slice starts.
+2. **UI follows the Morbeh Design System.** Implement the admin 1:1 against [`../ui/`](../ui/README.md); wire functionality behind existing controls per [`../admin/01`](../admin/01-ADMIN_DASHBOARD_SPEC.md). Any net-new surface (workflow builder, integrations hub, Customer 360 view, etc.) requires UI approval before its slice starts.
 3. **Modular monolith first** ([ADR-0001](../architecture/adr/0001-modular-monolith-with-strangler-extraction.md)); the data-plane/high-throughput services run separately from day one; extract others only on measured need.
 4. **Thin vertical slices (walking skeleton).** Ship an end-to-end path early, then deepen — never a horizontal layer in isolation.
 5. **Everything behind a flag** ([`../growth/06`](../growth/06-FEATURE_MANAGEMENT_SPEC.md)); deploy ≠ release; instant kill switch.
 6. **Quality + observability from line one** — tests, contracts, telemetry, audit are part of "done", not a later phase.
-7. **No spec drift.** Contract changes go through ADRs; UI changes through the the Lumo Design System contract.
+7. **No spec drift.** Contract changes go through ADRs; UI changes through the the Morbeh Design System contract.
 
 ## 2. Phase map and dependencies
 
@@ -50,7 +50,7 @@ Phases 2 and 3 overlap once the core is stable; Phase 4 depends on both the data
 
 - **Goal:** the end-to-end purchase path works.
 - **Scope / contexts:** catalog, media, pricing, inventory, cart, checkout, orders, payments, identity/customers ([arch 03](../architecture/03-domain-and-database-boundaries.md)); checkout/fulfillment sagas in Temporal ([arch 05](../architecture/05-events-queues-workers-and-jobs.md)); storefront browse→PDP→cart→checkout→order; admin functionality behind the **Products, Inventory, Orders, Customers, Discounts, Coupons** screens ([admin/01](../admin/01-ADMIN_DASHBOARD_SPEC.md)).
-- **Exit criteria:** a real order can be placed and paid (test PSP), inventory reserved/decremented atomically, order events immutable, refunds work; admin screens render 1:1 with the Lumo Design System and operate on real data; contract tests green.
+- **Exit criteria:** a real order can be placed and paid (test PSP), inventory reserved/decremented atomically, order events immutable, refunds work; admin screens render 1:1 with the Morbeh Design System and operate on real data; contract tests green.
 
 ### Phase 2 — Tracking & data plane _(indicative L)_
 
@@ -89,7 +89,7 @@ Phases 2 and 3 overlap once the core is stable; Phase 4 depends on both the data
 
 ## 5. Definition of done (every vertical slice)
 
-Conforms to its spec · admin renders 1:1 with the Lumo Design System (if it has a surface) · tests pass at ≥80% coverage · contract tests green · fitness functions pass · instrumented (traces/metrics/logs) · emits the specified events + audit records · behind a feature flag with a kill switch · errors handled explicitly (no silent catch) · no hardcoded secrets · accessible + localized where user-facing · spec/runbook updated.
+Conforms to its spec · admin renders 1:1 with the Morbeh Design System (if it has a surface) · tests pass at ≥80% coverage · contract tests green · fitness functions pass · instrumented (traces/metrics/logs) · emits the specified events + audit records · behind a feature flag with a kill switch · errors handled explicitly (no silent catch) · no hardcoded secrets · accessible + localized where user-facing · spec/runbook updated.
 
 ## 6. Governance and gates
 

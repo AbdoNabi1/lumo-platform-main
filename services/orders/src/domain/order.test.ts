@@ -79,6 +79,46 @@ describe("Order", () => {
     expect(order.pullDomainEvents()[0]?.eventName).toBe("order.refunded");
   });
 
+  it("refunds a checkout order once its payment was received (G-127), emitting order.refunded", () => {
+    const totals = OrderTotalsSnapshot.create({
+      subtotalMinor: 1000,
+      taxMinor: 0,
+      shippingMinor: 0,
+      discountMinor: 0,
+      totalMinor: 1000,
+      currency: "USD",
+    });
+    const order = Order.createFromCheckout(
+      UniqueEntityId.from("order-checkout-refund"),
+      orderNumber(),
+      "customer-1",
+      "USD",
+      [line("p1", 1000, 1)],
+      address(),
+      address(),
+      totals,
+      "checkout-refund",
+      "evt-create",
+      new Date(0),
+    );
+    order.confirm("evt-1", new Date(0));
+    order.markAwaitingPayment("evt-2", new Date(0));
+    order.requestPayment("intent-1", "evt-3", new Date(0));
+    expect(() => order.refund(new RefundPolicy(), "evt-early", new Date(0))).toThrow(
+      BusinessRuleError,
+    );
+    order.completePayment("intent-1", "evt-4", new Date(0));
+    order.pullDomainEvents();
+
+    order.refund(new RefundPolicy(), "evt-refund", new Date(0));
+
+    expect(order.status).toBe("refunded");
+    expect(order.pullDomainEvents()[0]?.eventName).toBe("order.refunded");
+    expect(() => order.refund(new RefundPolicy(), "evt-again", new Date(0))).toThrow(
+      BusinessRuleError,
+    );
+  });
+
   it("rejects refunding an unpaid order (RefundPolicy)", () => {
     const order = placedOrder();
     expect(() => order.refund(new RefundPolicy(), "evt", new Date(0))).toThrow(BusinessRuleError);

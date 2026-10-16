@@ -34,7 +34,7 @@ Per the T5.16 design:
    `apps/admin/src/http/public-auth-routes.ts` (matching the existing `public-cart-routes.ts`/
    `public-checkout-routes.ts`/`public-reviews-routes.ts` one-domain-per-file convention).
 5. **Session cookie** — `apps/storefront/src/lib/`: a new `CUSTOMER_SESSION_COOKIE =
-   "lumo-storefront-customer-session"`, distinct from `GUEST_SESSION_COOKIE`, same
+"morbeh-storefront-customer-session"`, distinct from `GUEST_SESSION_COOKIE`, same
    `HttpOnly`/`Secure`-in-prod/`SameSite: "lax"` shape as the guest cookie's options but a shorter
    sliding TTL (~30–120 minutes, refreshed on activity via `RefreshSession`). Never carries a raw
    `customerRef` — only an opaque session id, resolved server-side on every request.
@@ -45,7 +45,7 @@ Per the T5.16 design:
    cookie.
 7. **Storefront pages**: `apps/storefront/src/app/account/login/page.tsx`,
    `.../register/page.tsx`, a logout action, and a minimal `apps/storefront/src/app/account/
-   page.tsx` landing page (just enough to prove the session works — the full account/profile UI
+page.tsx` landing page (just enough to prove the session works — the full account/profile UI
    is not required by this task, only auth + wishlist are).
 8. Every new backend piece gets tests at the layer it's introduced (use-case, controller, route) —
    follow the nearest existing analogous test's style (e.g. `public-cart-routes.test.ts` for the
@@ -62,7 +62,7 @@ comment for exactly why, then do the same for `wishlist`), add public routes sco
 authenticated customer session from Part A — never a client-supplied `customerRef`. Cover:
 get-my-wishlist (create-on-first-access if none exists, since a customer has at most one),
 add-item, remove-item, share-item (a share token is meant to be given to someone without an
-account — the route that *resolves* a share token, if the backend has one, may stay public
+account — the route that _resolves_ a share token, if the backend has one, may stay public
 without auth; check `wishlist-routes.ts`/`services/wishlist` for a share-token-resolution
 capability and wire it as a separate, unauthenticated public route if it exists), move-item-to-cart.
 

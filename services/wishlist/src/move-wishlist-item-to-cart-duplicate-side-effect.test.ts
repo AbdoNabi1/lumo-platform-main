@@ -37,7 +37,10 @@ function wire(cart = new InMemoryCartPort()) {
 }
 
 async function newWishlistId(app: ReturnType<typeof wire>): Promise<string> {
-  const created = await app.wishlist.create({ customerRef: "customer-1" });
+  const created = await app.wishlist.create({
+    customerRef: "customer-1",
+    tenantId: "tenant-local",
+  });
   expect(created.status).toBe(201);
   return (created.body as { wishlistId: string }).wishlistId;
 }
@@ -51,6 +54,7 @@ describe("MoveWishlistItemToCart duplicate side-effect (Phase A.17)", () => {
     const response = await app.wishlist.moveItemToCart({
       wishlistId: id,
       productRef: "never-added",
+      tenantId: "tenant-local",
     });
 
     expect(response.status).not.toBe(200);
@@ -61,13 +65,25 @@ describe("MoveWishlistItemToCart duplicate side-effect (Phase A.17)", () => {
     const cart = new InMemoryCartPort();
     const app = wire(cart);
     const id = await newWishlistId(app);
-    await app.wishlist.addItem({ wishlistId: id, productRef: "product-1" });
+    await app.wishlist.addItem({
+      wishlistId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
 
-    const first = await app.wishlist.moveItemToCart({ wishlistId: id, productRef: "product-1" });
+    const first = await app.wishlist.moveItemToCart({
+      wishlistId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
     expect(first.status).toBe(200);
     expect(cart.addedItems).toHaveLength(1);
 
-    const retry = await app.wishlist.moveItemToCart({ wishlistId: id, productRef: "product-1" });
+    const retry = await app.wishlist.moveItemToCart({
+      wishlistId: id,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
     expect(retry.status).not.toBe(200);
     expect(cart.addedItems).toHaveLength(1);
   });

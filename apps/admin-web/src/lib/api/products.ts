@@ -1,5 +1,14 @@
 import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
+/** Plan 2C-3: a product picture as the staff API serves it. */
+export interface ProductImageDto {
+  readonly id: string;
+  readonly url: string;
+  readonly alt: string | null;
+  readonly width: number | null;
+  readonly height: number | null;
+}
+
 export interface ProductListItemDto {
   readonly id: string;
   readonly sku: string;
@@ -9,6 +18,8 @@ export interface ProductListItemDto {
   readonly variantCount: number;
   readonly priceAmountMinor: number | null;
   readonly currency: string | null;
+  /** Plan 2C-3: the list thumbnail; null/absent shows the placeholder. */
+  readonly featuredImage?: ProductImageDto | null;
 }
 
 export interface ProductsPageInfo {
@@ -66,12 +77,27 @@ export async function fetchProductsPage(
   };
 }
 
+/** Plan 2B-1: `deny` stops selling at zero stock; `continue` keeps selling. */
+export type InventoryPolicy = "deny" | "continue";
+
 export interface ProductVariantDto {
   readonly id: string;
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
   readonly selection: Readonly<Record<string, string>> | null;
+  readonly compareAtAmountMinor: number | null;
+  readonly costAmountMinor: number | null;
+  readonly barcode: string | null;
+  readonly weightGrams: number | null;
+  readonly requiresShipping: boolean;
+  readonly taxable: boolean;
+  /** Plan 2B-1: Shopify "Track quantity". */
+  readonly tracksInventory: boolean;
+  /** Plan 2B-1: Shopify "Continue selling when out of stock". */
+  readonly inventoryPolicy: InventoryPolicy;
+  /** Plan 2C-3: the media shown for this variant (one of the product's own); null/absent when unset. */
+  readonly imageId?: string | null;
 }
 
 export interface ProductOptionDto {
@@ -91,8 +117,13 @@ export interface ProductDetailDto {
   readonly options: readonly ProductOptionDto[];
   readonly seoTitle: string | null;
   readonly seoDescription: string | null;
+  readonly description: string | null;
+  readonly productType: string | null;
+  readonly tags: readonly string[];
   readonly variants: readonly ProductVariantDto[];
   readonly mediaAssetIds: readonly string[];
+  /** Plan 2C-3: the pictures in order (first = featured). Absent from an older runtime. */
+  readonly media?: readonly ProductImageDto[];
 }
 
 function isProductDetailDto(value: unknown): value is ProductDetailDto {
@@ -127,6 +158,8 @@ export async function fetchProduct(productId: string): Promise<FetchProductResul
 
 export interface ProductInventoryRowDto {
   readonly warehouseId: string;
+  /** Plan 2B-1: the variant this stock belongs to; null on a legacy product-level row. */
+  readonly variantId: string | null;
   readonly onHand: number;
   readonly reserved: number;
   readonly available: number;
@@ -141,7 +174,19 @@ export type FetchProductInventoryResult =
   | { readonly outcome: "unauthorized" }
   | { readonly outcome: "error"; readonly message: string };
 
-export interface CreateProductVariantInput {
+/** The Plan 2C-1 variant attributes, named exactly as the API names them. `null` clears one. */
+export interface VariantAttributesInput {
+  readonly compareAtAmountMinor?: number | null;
+  readonly costAmountMinor?: number | null;
+  readonly barcode?: string | null;
+  readonly weightGrams?: number | null;
+  readonly requiresShipping?: boolean;
+  readonly taxable?: boolean;
+  readonly tracksInventory?: boolean;
+  readonly inventoryPolicy?: InventoryPolicy;
+}
+
+export interface CreateProductVariantInput extends VariantAttributesInput {
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
@@ -151,6 +196,9 @@ export interface CreateProductInput {
   readonly sku: string;
   readonly name: string;
   readonly slug: string;
+  readonly description?: string | null;
+  readonly productType?: string | null;
+  readonly tags?: readonly string[];
   readonly variants: readonly CreateProductVariantInput[];
 }
 
@@ -184,10 +232,16 @@ function isUnknown(_value: unknown): _value is unknown {
   return true;
 }
 
-/** Updates a product's name/slug (`POST /products/:productId`, `idempotent: true`). */
+/** Updates a product's name/slug and details (`POST /products/:productId`, `idempotent: true`). */
 export function updateProduct(
   productId: string,
-  input: { readonly name: string; readonly slug: string },
+  input: {
+    readonly name: string;
+    readonly slug: string;
+    readonly description?: string | null;
+    readonly productType?: string | null;
+    readonly tags?: readonly string[];
+  },
   idempotencyKey: string,
 ): Promise<MutationResult<unknown>> {
   return mutateAdminApi(
@@ -239,6 +293,14 @@ export function publishProduct(
   return mutateAdminApi(path(productId, "/publish"), { method: "POST", idempotencyKey }, isUnknown);
 }
 
+/** `POST /products/:productId/unlist` (`idempotent: true`, `products:publish`) — Plan 2C-1. */
+export function unlistProduct(
+  productId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(path(productId, "/unlist"), { method: "POST", idempotencyKey }, isUnknown);
+}
+
 /** `POST /products/:productId/schedule-publish` (`idempotent: true`, `products:publish`). */
 export function schedulePublishProduct(
   productId: string,
@@ -280,11 +342,19 @@ export function deleteProduct(
   return mutateAdminApi(path(productId, "/delete"), { method: "POST", idempotencyKey }, isUnknown);
 }
 
-export interface AddProductVariantInput {
+export interface AddProductVariantInput extends VariantAttributesInput {
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
   readonly selection?: Readonly<Record<string, string>>;
+}
+
+export interface UpdateProductVariantInput extends VariantAttributesInput {
+  readonly sku: string;
+  readonly priceAmountMinor: number;
+  readonly currency: string;
+  /** Omitted keeps the current selection; `null` clears it; an object assigns it. */
+  readonly selection?: Readonly<Record<string, string>> | null;
 }
 
 /** `POST /products/:productId/variants` (`idempotent: true`, `products:update`) — add a variant. */
@@ -317,7 +387,7 @@ export function removeProductVariant(
 export function updateProductVariant(
   productId: string,
   variantId: string,
-  input: CreateProductVariantInput,
+  input: UpdateProductVariantInput,
   idempotencyKey: string,
 ): Promise<MutationResult<unknown>> {
   return mutateAdminApi(
@@ -411,6 +481,23 @@ export function detachProductMedia(
   return mutateAdminApi(
     path(productId, `/media/${encodeURIComponent(assetId)}`),
     { method: "DELETE", idempotencyKey },
+    isUnknown,
+  );
+}
+
+/**
+ * `PUT /products/:productId/variants/:variantId/image` (`products:update`) — the variant's image: one
+ * of the product's own media, or `null` to clear it.
+ */
+export function setProductVariantImage(
+  productId: string,
+  variantId: string,
+  mediaId: string | null,
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(
+    path(productId, `/variants/${encodeURIComponent(variantId)}/image`),
+    { method: "PUT", body: { mediaId }, idempotencyKey },
     isUnknown,
   );
 }

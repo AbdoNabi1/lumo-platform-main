@@ -7,6 +7,7 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { OutboxWriter, rootEventContext } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import { CheckoutSession } from "../domain/checkout-session";
+import { ContactEmail } from "../domain/value-objects/contact-email";
 import { CheckoutEventTranslator } from "./checkout-event-translator";
 import { PrismaCheckoutSessionRepository } from "./prisma-checkout-session-repository";
 
@@ -38,8 +39,8 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
       clock,
       producer: "checkout",
     });
-    const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaCheckoutSessionRepository({ prisma, outbox, context, tenantId });
+    const context = rootEventContext(ids);
+    const repository = new PrismaCheckoutSessionRepository({ prisma, outbox, context });
     return { prisma, repository, unitOfWork: new PrismaUnitOfWork(prisma), outboxStore };
   }
 
@@ -60,8 +61,8 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
     const cartRef = `cart-${ids.generate()}`;
     const session = startSession(cartRef);
 
-    await unitOfWork.run((tx) => repository.save(session, tx));
-    const loaded = await repository.findById(session.id.toString());
+    await unitOfWork.run((tx) => repository.save(session, tenantId, tx));
+    const loaded = await repository.findById(session.id.toString(), tenantId);
 
     expect(loaded).not.toBeNull();
     expect(loaded?.cartRef).toBe(cartRef);
@@ -70,21 +71,39 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
     await prisma.$disconnect();
   });
 
+  it("persists the contact email through an update (WP-1 guest checkout)", async () => {
+    const { prisma, repository, unitOfWork } = wire();
+    const session = startSession(`cart-${ids.generate()}`);
+    await unitOfWork.run((tx) => repository.save(session, tenantId, tx));
+
+    const loaded = await repository.findById(session.id.toString(), tenantId);
+    if (loaded === null) throw new Error("setup failed");
+    expect(loaded.contactEmail).toBeUndefined();
+    const email = ContactEmail.create("guest@example.com");
+    if (!email.ok) throw new Error("setup failed");
+    loaded.setContactEmail(email.value);
+    await unitOfWork.run((tx) => repository.save(loaded, tenantId, tx));
+
+    const final = await repository.findById(session.id.toString(), tenantId);
+    expect(final?.contactEmail?.value).toBe("guest@example.com");
+    await prisma.$disconnect();
+  });
+
   // --- Order creation boundary -------------------------------------------------------------------
 
   it("records the order boundary on complete() and persists it (order creation boundary)", async () => {
     const { prisma, repository, unitOfWork } = wire();
     const session = startSession(`cart-${ids.generate()}`);
-    await unitOfWork.run((tx) => repository.save(session, tx));
+    await unitOfWork.run((tx) => repository.save(session, tenantId, tx));
 
-    const loaded = await repository.findById(session.id.toString());
+    const loaded = await repository.findById(session.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     const orderRef = `order-${ids.generate()}`;
     loaded.lock(ids.generate(), clock.now());
     loaded.complete(orderRef, ids.generate(), clock.now());
-    await unitOfWork.run((tx) => repository.save(loaded, tx));
+    await unitOfWork.run((tx) => repository.save(loaded, tenantId, tx));
 
-    const final = await repository.findById(session.id.toString());
+    const final = await repository.findById(session.id.toString(), tenantId);
     expect(final?.state.value).toBe("completed");
     expect(final?.orderRef).toBe(orderRef);
     await prisma.$disconnect();
@@ -95,14 +114,14 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
   it("writes the outbox row in the SAME transaction as the session (transaction atomicity)", async () => {
     const { prisma, repository, unitOfWork, outboxStore } = wire();
     const session = startSession(`cart-${ids.generate()}`);
-    await unitOfWork.run((tx) => repository.save(session, tx));
+    await unitOfWork.run((tx) => repository.save(session, tenantId, tx));
 
     // `start()` raises no domain event by design — only state transitions (lock/complete/fail/
     // expire/recalculate) do, so the outbox row appears once the session is actually locked.
-    const loaded = await repository.findById(session.id.toString());
+    const loaded = await repository.findById(session.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     loaded.lock(ids.generate(), clock.now());
-    await unitOfWork.run((tx) => repository.save(loaded, tx));
+    await unitOfWork.run((tx) => repository.save(loaded, tenantId, tx));
 
     const pending = await outboxStore.fetchPending(10_000);
     expect(pending.some((e) => e.key === session.id.toString())).toBe(true);
@@ -115,12 +134,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
 
     await expect(
       unitOfWork.run(async (tx) => {
-        await repository.save(session, tx);
+        await repository.save(session, tenantId, tx);
         throw new Error("simulated downstream failure after the checkout-session write");
       }),
     ).rejects.toThrow("simulated downstream failure");
 
-    const loaded = await repository.findById(session.id.toString());
+    const loaded = await repository.findById(session.id.toString(), tenantId);
     expect(loaded).toBeNull();
     await prisma.$disconnect();
   });
@@ -133,11 +152,11 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
     const first = startSession(cartRef);
     const second = startSession(cartRef);
 
-    await unitOfWork.run((tx) => repository.save(first, tx));
-    await unitOfWork.run((tx) => repository.save(second, tx));
+    await unitOfWork.run((tx) => repository.save(first, tenantId, tx));
+    await unitOfWork.run((tx) => repository.save(second, tenantId, tx));
 
-    const loadedFirst = await repository.findById(first.id.toString());
-    const loadedSecond = await repository.findById(second.id.toString());
+    const loadedFirst = await repository.findById(first.id.toString(), tenantId);
+    const loadedSecond = await repository.findById(second.id.toString(), tenantId);
     expect(loadedFirst?.cartRef).toBe(cartRef);
     expect(loadedSecond?.cartRef).toBe(cartRef);
     expect(loadedFirst?.id.toString()).not.toBe(loadedSecond?.id.toString());
@@ -147,35 +166,35 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
   it("detects a concurrent update via ConcurrencyError rather than silently overwriting (concurrent checkout attempts)", async () => {
     const { prisma, repository, unitOfWork } = wire();
     const session = startSession(`cart-${ids.generate()}`);
-    await unitOfWork.run((tx) => repository.save(session, tx));
+    await unitOfWork.run((tx) => repository.save(session, tenantId, tx));
 
-    const copyA = await repository.findById(session.id.toString());
-    const copyB = await repository.findById(session.id.toString());
+    const copyA = await repository.findById(session.id.toString(), tenantId);
+    const copyB = await repository.findById(session.id.toString(), tenantId);
     if (copyA === null || copyB === null) throw new Error("setup failed");
     copyA.lock(ids.generate(), clock.now());
     copyB.lock(ids.generate(), clock.now());
 
-    await unitOfWork.run((tx) => repository.save(copyA, tx));
-    await expect(unitOfWork.run((tx) => repository.save(copyB, tx))).rejects.toBeInstanceOf(
-      ConcurrencyError,
-    );
+    await unitOfWork.run((tx) => repository.save(copyA, tenantId, tx));
+    await expect(
+      unitOfWork.run((tx) => repository.save(copyB, tenantId, tx)),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
     await prisma.$disconnect();
   });
 
   it("rejects true concurrent writes to the same session under real simultaneous transactions", async () => {
     const { prisma, repository, unitOfWork } = wire();
     const session = startSession(`cart-${ids.generate()}`);
-    await unitOfWork.run((tx) => repository.save(session, tx));
+    await unitOfWork.run((tx) => repository.save(session, tenantId, tx));
 
-    const copyA = await repository.findById(session.id.toString());
-    const copyB = await repository.findById(session.id.toString());
+    const copyA = await repository.findById(session.id.toString(), tenantId);
+    const copyB = await repository.findById(session.id.toString(), tenantId);
     if (copyA === null || copyB === null) throw new Error("setup failed");
     copyA.lock(ids.generate(), clock.now());
     copyB.lock(ids.generate(), clock.now());
 
     const results = await Promise.allSettled([
-      unitOfWork.run((tx) => repository.save(copyA, tx)),
-      unitOfWork.run((tx) => repository.save(copyB, tx)),
+      unitOfWork.run((tx) => repository.save(copyA, tenantId, tx)),
+      unitOfWork.run((tx) => repository.save(copyB, tenantId, tx)),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
@@ -187,9 +206,9 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
   it("rejects completing a session that was never locked/started open (constraints)", async () => {
     const { prisma, repository, unitOfWork } = wire();
     const session = startSession(`cart-${ids.generate()}`);
-    await unitOfWork.run((tx) => repository.save(session, tx));
+    await unitOfWork.run((tx) => repository.save(session, tenantId, tx));
 
-    const loaded = await repository.findById(session.id.toString());
+    const loaded = await repository.findById(session.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     loaded.lock(ids.generate(), clock.now());
     loaded.complete(`order-${ids.generate()}`, ids.generate(), clock.now());

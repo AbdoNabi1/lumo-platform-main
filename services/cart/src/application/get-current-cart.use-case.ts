@@ -6,6 +6,8 @@ import type { Cart } from "../domain/cart";
 import type { CartRepository } from "../domain/cart-repository";
 
 export interface GetCurrentCartInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly sessionRef: string;
 }
 
@@ -29,7 +31,7 @@ export class GetCurrentCart implements UseCase<GetCurrentCartInput, Cart | null,
     const sessionRef = Guard.againstEmpty(input.sessionRef, "sessionRef");
     if (!sessionRef.ok) return err(sessionRef.error);
 
-    const cart = await this.deps.carts.findBySessionRef(input.sessionRef);
+    const cart = await this.deps.carts.findBySessionRef(input.sessionRef, input.tenantId);
     return ok(cart);
   }
 }

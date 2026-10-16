@@ -20,7 +20,21 @@ import type {
   RefundPaymentLifecycle,
   RefundPaymentLifecycleInput,
 } from "../application/payment-lifecycle.use-cases";
+import type {
+  ConfirmCodCollection,
+  ConfirmCodCollectionInput,
+} from "../application/confirm-cod-collection.use-case";
+import type {
+  GetMerchantPaymentSettings,
+  GetMerchantPaymentSettingsInput,
+  UpdateMerchantPaymentSettings,
+  UpdateMerchantPaymentSettingsInput,
+} from "../application/merchant-payment-settings.use-cases";
 import type { RecordWebhook, RecordWebhookInput } from "../application/record-webhook.use-case";
+import type {
+  VerifyPaymentWebhook,
+  VerifyPaymentWebhookInput,
+} from "../application/verify-payment-webhook";
 import type { RefundPayment, RefundPaymentInput } from "../application/refund-payment.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
@@ -36,6 +50,10 @@ export interface PaymentControllerDeps {
   readonly refundPaymentLifecycle: RefundPaymentLifecycle;
   readonly recordWebhook: RecordWebhook;
   readonly getPaymentIntent: GetPaymentIntent;
+  readonly confirmCodCollection: ConfirmCodCollection;
+  readonly getMerchantPaymentSettings: GetMerchantPaymentSettings;
+  readonly updateMerchantPaymentSettings: UpdateMerchantPaymentSettings;
+  readonly verifyPaymentWebhook: VerifyPaymentWebhook;
 }
 
 /** Framework-agnostic interface boundary for payment use-cases (no HTTP server). */
@@ -90,5 +108,27 @@ export class PaymentController {
 
   async getPaymentIntent(input: GetPaymentIntentInput): Promise<ControllerResponse> {
     return present(await this.deps.getPaymentIntent.execute(input), 200);
+  }
+
+  /** The only thing that settles a cash-on-delivery payment (WP-13). */
+  async confirmCodCollection(input: ConfirmCodCollectionInput): Promise<ControllerResponse> {
+    return present(await this.deps.confirmCodCollection.execute(input), 200);
+  }
+
+  async getMerchantPaymentSettings(
+    input: GetMerchantPaymentSettingsInput,
+  ): Promise<ControllerResponse> {
+    return present(await this.deps.getMerchantPaymentSettings.execute(input), 200);
+  }
+
+  async updateMerchantPaymentSettings(
+    input: UpdateMerchantPaymentSettingsInput,
+  ): Promise<ControllerResponse> {
+    return present(await this.deps.updateMerchantPaymentSettings.execute(input), 200);
+  }
+
+  /** Verifies a webhook against the tenant's own provider credentials; `false` for anything unauthenticated. */
+  verifyWebhook(input: VerifyPaymentWebhookInput): Promise<boolean> {
+    return this.deps.verifyPaymentWebhook.execute(input);
   }
 }

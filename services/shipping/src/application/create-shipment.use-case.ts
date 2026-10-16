@@ -15,6 +15,8 @@ export interface CreateShipmentPackageInput {
 }
 
 export interface CreateShipmentInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly fulfillmentRef: string;
   readonly packages: readonly CreateShipmentPackageInput[];
 }
@@ -68,7 +70,7 @@ export class CreateShipment implements UseCase<
     return this.deps.unitOfWork.run<Result<ShipmentStatusOutput, DomainError>>(async (tx) => {
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const shipment = Shipment.create(id, input.fulfillmentRef, packages);
-      await this.deps.shipments.save(shipment, tx);
+      await this.deps.shipments.save(shipment, input.tenantId, tx);
       return ok({ shipmentId: id.toString(), status: shipment.status.value });
     });
   }

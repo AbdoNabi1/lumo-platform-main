@@ -1,7 +1,7 @@
 import { neutral, primary, status } from "./primitives";
 
 /**
- * Lumo Design System — semantic tokens.
+ * Morbeh Design System — semantic tokens.
  *
  * This is the layer components are allowed to consume. Every entry answers a *role*
  * ("what is a card's background?"), never an appearance ("what is slate-100?").
@@ -38,7 +38,7 @@ export interface SemanticColors extends Readonly<Record<string, string>> {
   /** Neutral hover/active wash for interactive rows and nav items. */
   readonly accent: string;
   readonly accentForeground: string;
-  /** Hairline separation — the primary separation mechanism in Lumo. */
+  /** Hairline separation — the primary separation mechanism in Morbeh. */
   readonly border: string;
   readonly borderStrong: string;
   /** Form control boundary. Held at ≥3:1 against its surface (WCAG 1.4.11). */
@@ -138,7 +138,7 @@ const dark: SemanticColors = {
   input: neutral[500],
   ring: primary[400],
   // The brand fill is held at #635BFF in both themes: it is the one value that clears AA
-  // against a white label while still reading as "Lumo purple". Dark-mode *text* uses the
+  // against a white label while still reading as "Morbeh purple". Dark-mode *text* uses the
   // lighter ramp steps instead (see `primarySubtleForeground` / `ring`).
   primary: primary[500],
   primaryForeground: neutral[0],

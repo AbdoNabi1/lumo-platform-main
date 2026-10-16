@@ -7,6 +7,8 @@ import type { ReviewRepository } from "../domain/review-repository";
 
 export interface ListReviewsByProductInput extends CursorPage {
   readonly productRef: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface ListReviewsByProductDeps {
@@ -14,19 +16,19 @@ export interface ListReviewsByProductDeps {
 }
 
 /** Cursor-paginated reviews for one product — the customer-facing product page's read. */
-export class ListReviewsByProduct
-  implements UseCase<ListReviewsByProductInput, Paginated<Review>, DomainError>
-{
+export class ListReviewsByProduct implements UseCase<
+  ListReviewsByProductInput,
+  Paginated<Review>,
+  DomainError
+> {
   private readonly deps: ListReviewsByProductDeps;
 
   constructor(deps: ListReviewsByProductDeps) {
     this.deps = deps;
   }
 
-  async execute(
-    input: ListReviewsByProductInput,
-  ): Promise<Result<Paginated<Review>, DomainError>> {
-    const { productRef, ...page } = input;
-    return ok(await this.deps.reviews.findByProductRef(productRef, page));
+  async execute(input: ListReviewsByProductInput): Promise<Result<Paginated<Review>, DomainError>> {
+    const { productRef, tenantId, ...page } = input;
+    return ok(await this.deps.reviews.findByProductRef(productRef, page, tenantId));
   }
 }

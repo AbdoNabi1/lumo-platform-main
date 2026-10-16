@@ -33,13 +33,13 @@ channels, feeds, payment methods, and automation steps are added.
 
 ### 2.1 Extension point types
 
-| Type                   | Mechanism                                                 | Examples                                                            |
-| ---------------------- | --------------------------------------------------------- | ------------------------------------------------------------------- |
-| Adapter plugins        | Implement a port                                          | a new PSP, channel, feed destination, CAPI sink                     |
-| Event subscribers      | Subscribe to domain events                                | a custom side-effect on `order.placed`                              |
-| Workflow steps         | Register a Temporal activity                              | a custom automation/fulfillment step                                |
-| Admin surface (future) | Declared extension slots in the admin                     | **must be built from Lumo Design System primitives — see `../ui/`** |
-| Storefront blocks      | page-builder block registry (`packages/page-builder-kit`) | a new content block                                                 |
+| Type                   | Mechanism                                                 | Examples                                                              |
+| ---------------------- | --------------------------------------------------------- | --------------------------------------------------------------------- |
+| Adapter plugins        | Implement a port                                          | a new PSP, channel, feed destination, CAPI sink                       |
+| Event subscribers      | Subscribe to domain events                                | a custom side-effect on `order.placed`                                |
+| Workflow steps         | Register a Temporal activity                              | a custom automation/fulfillment step                                  |
+| Admin surface (future) | Declared extension slots in the admin                     | **must be built from Morbeh Design System primitives — see `../ui/`** |
+| Storefront blocks      | page-builder block registry (`packages/page-builder-kit`) | a new content block                                                   |
 
 ### 2.2 Plugin contract and isolation
 
@@ -51,7 +51,7 @@ channels, feeds, payment methods, and automation steps are added.
 ## 3. Relationship to UI
 
 Any plugin that needs an admin or storefront surface must use existing extension slots; introducing
-a new visible surface is a UI change governed by the Lumo Design System contract (`../ui/`).
+a new visible surface is a UI change governed by the Morbeh Design System contract (`../ui/`).
 
 ## Requires ADR to change
 

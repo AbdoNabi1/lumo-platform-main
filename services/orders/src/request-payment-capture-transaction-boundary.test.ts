@@ -236,7 +236,7 @@ describe("Task 1/2 — PaymentPort.requestCapture() no longer runs while a DB tr
     const provider = new RecordingPaymentPort(uow);
     const useCase = new RequestPaymentCapture(buildDeps(repo, provider, uow));
 
-    const result = await useCase.execute({ orderId: "order-1" });
+    const result = await useCase.execute({ tenantId: "tenant-a", orderId: "order-1" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("payment_requested");
@@ -253,7 +253,7 @@ describe("Task 1/2 — PaymentPort.requestCapture() no longer runs while a DB tr
     const provider = new RecordingPaymentPort(uow);
     const useCase = new RequestPaymentCapture(buildDeps(repo, provider, uow));
 
-    await useCase.execute({ orderId: "order-2" });
+    await useCase.execute({ tenantId: "tenant-a", orderId: "order-2" });
 
     const persisted = await repo.findById("order-2");
     expect(persisted?.status).toBe("payment_requested");
@@ -269,7 +269,7 @@ describe("Idempotent resume", () => {
     const provider = new RecordingPaymentPort(uow);
     const useCase = new RequestPaymentCapture(buildDeps(repo, provider, uow));
 
-    const result = await useCase.execute({ orderId: "order-3" });
+    const result = await useCase.execute({ tenantId: "tenant-a", orderId: "order-3" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("payment_requested");
@@ -285,7 +285,7 @@ describe("Idempotent resume", () => {
     const provider = new RecordingPaymentPort(uow, true);
     const useCase = new RequestPaymentCapture(buildDeps(repo, provider, uow));
 
-    await expect(useCase.execute({ orderId: "order-4" })).rejects.toThrow(
+    await expect(useCase.execute({ tenantId: "tenant-a", orderId: "order-4" })).rejects.toThrow(
       /simulated PSP requestCapture failure/,
     );
 
@@ -300,7 +300,7 @@ describe("Idempotent resume", () => {
     const provider = new RecordingPaymentPort(uow);
     const useCase = new RequestPaymentCapture(buildDeps(repo, provider, uow));
 
-    const result = await useCase.execute({ orderId: "missing" });
+    const result = await useCase.execute({ tenantId: "tenant-a", orderId: "missing" });
 
     expect(result.ok).toBe(false);
     expect(provider.calls).toHaveLength(0);
@@ -318,8 +318,8 @@ describe("Task — concurrent capture requests, run repeatedly to rule out flaki
       const useCase = new RequestPaymentCapture(buildDeps(repo, provider, uow));
 
       const [a, b] = await Promise.all([
-        useCase.execute({ orderId }),
-        useCase.execute({ orderId }),
+        useCase.execute({ tenantId: "tenant-a", orderId }),
+        useCase.execute({ tenantId: "tenant-a", orderId }),
       ]);
 
       expect(a.ok).toBe(true);

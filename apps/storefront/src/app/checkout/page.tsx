@@ -5,8 +5,9 @@ import { CheckoutView } from "@/components/checkout-view";
 import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
 import { CHECKOUT_SESSION_COOKIE, GUEST_SESSION_COOKIE } from "@/lib/cart";
+import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
-import { getCheckoutSession } from "@/lib/runtime-api";
+import { getCheckoutSession, getPaymentMethods, getShippableCountries } from "@/lib/runtime-api";
 
 /**
  * Checkout page (Phase 2 — Public checkout). Resolves the caller's OWN active checkout session
@@ -35,8 +36,20 @@ export default async function CheckoutPage() {
       ? await getCheckoutSession(checkoutSessionId, sessionRef)
       : null;
 
+  // A signed-in customer's contact email is pre-filled and applied without re-entry. Resolved
+  // server-side from their opaque session cookie (a real round trip) — "error"/"signed-out" both
+  // simply mean "ask for an email", never a reason to block checkout.
+  const customer = await resolveCurrentCustomer(jar.get(CUSTOMER_SESSION_COOKIE)?.value);
+  const accountEmail = customer.status === "signed-in" ? customer.customer.email : null;
+
+  // What this merchant offers, in API order (no priority). Read on every render so a merchant who
+  // disables a method is reflected immediately; `null` (unreachable) fails closed at the payment step.
+  const paymentMethods = await getPaymentMethods();
+  // The countries the shop's shipping zones cover (Plan 3C); `null` (unreachable) fails closed in the form.
+  const shippableCountries = await getShippableCountries();
+
   return (
-    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 p-8">
+    <main className="mx-auto flex min-h-dvh max-w-5xl flex-col gap-6 p-8">
       <SiteHeader t={t} locale={locale} />
 
       <Link href="/cart" className="text-muted-foreground inline-flex items-center gap-1.5 text-sm">
@@ -44,7 +57,10 @@ export default async function CheckoutPage() {
         {t.checkout.backToCart}
       </Link>
 
-      {session === null || session.status < 200 || session.status >= 300 || session.body === null ? (
+      {session === null ||
+      session.status < 200 ||
+      session.status >= 300 ||
+      session.body === null ? (
         <StatePanel
           icon={<AlertTriangleIcon className="size-6" />}
           title={t.checkout.ownershipErrorTitle}
@@ -52,7 +68,14 @@ export default async function CheckoutPage() {
           action={{ href: "/cart", label: t.checkout.backToCart }}
         />
       ) : (
-        <CheckoutView session={session.body} t={t} locale={locale} />
+        <CheckoutView
+          session={session.body}
+          t={t}
+          locale={locale}
+          accountEmail={accountEmail}
+          paymentMethods={paymentMethods}
+          shippableCountries={shippableCountries}
+        />
       )}
     </main>
   );

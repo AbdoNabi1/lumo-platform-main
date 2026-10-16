@@ -14,6 +14,9 @@ import type { ProfileHistoryStore } from "../ports/profile-history-store";
 import type { ProfileStore } from "../ports/profile-store";
 
 export interface UpdateProfileProjectionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   readonly field: string;
   readonly value: unknown;
@@ -72,7 +75,7 @@ export class UpdateProfileProjection implements UseCase<
       );
     }
 
-    const current = await this.deps.profiles.getCurrent(input.identifier);
+    const current = await this.deps.profiles.getCurrent(input.identifier, input.tenantId);
     const wasNew = current === null;
     const base =
       current ??
@@ -124,8 +127,8 @@ export class UpdateProfileProjection implements UseCase<
               eventData,
             );
 
-        await this.deps.history.append(snapshot, event, tx);
-        await this.deps.profiles.saveCurrent(result.profile, tx);
+        await this.deps.history.append(snapshot, event, input.tenantId, tx);
+        await this.deps.profiles.saveCurrent(result.profile, input.tenantId, tx);
 
         return ok({ applied: true, version: result.profile.version });
       },

@@ -57,27 +57,30 @@ describe("InMemoryOrderRepository.list", () => {
 
   it("returns an empty page when no orders have been saved", async () => {
     const { repository } = wire();
-    const page = await repository.list({});
+    const page = await repository.list({}, "tenant-a");
     expect(page).toEqual({ items: [], pageInfo: { hasNextPage: false, endCursor: null } });
   });
 
   it("pages most-recently-saved first", async () => {
     const { repository, nextId } = wire();
     const first = placeOrder(nextId);
-    await repository.save(first);
+    await repository.save(first, "tenant-a");
     const second = placeOrder(nextId);
-    await repository.save(second);
+    await repository.save(second, "tenant-a");
     const third = placeOrder(nextId);
-    await repository.save(third);
+    await repository.save(third, "tenant-a");
 
-    const page1 = await repository.list({ first: 2 });
+    const page1 = await repository.list({ first: 2 }, "tenant-a");
     expect(page1.items.map((o) => o.id.toString())).toEqual([
       third.id.toString(),
       second.id.toString(),
     ]);
     expect(page1.pageInfo.hasNextPage).toBe(true);
 
-    const page2 = await repository.list({ first: 2, after: page1.pageInfo.endCursor ?? undefined });
+    const page2 = await repository.list(
+      { first: 2, after: page1.pageInfo.endCursor ?? undefined },
+      "tenant-a",
+    );
     expect(page2.items.map((o) => o.id.toString())).toEqual([first.id.toString()]);
     expect(page2.pageInfo.hasNextPage).toBe(false);
   });
@@ -85,12 +88,12 @@ describe("InMemoryOrderRepository.list", () => {
   it("filters by status", async () => {
     const { repository, nextId } = wire();
     const placed = placeOrder(nextId);
-    await repository.save(placed);
+    await repository.save(placed, "tenant-a");
     const paidOrder = placeOrder(nextId);
     paidOrder.markPaid("payment-ref", nextId(), new Date(1));
-    await repository.save(paidOrder);
+    await repository.save(paidOrder, "tenant-a");
 
-    const page = await repository.list({ status: "paid" });
+    const page = await repository.list({ status: "paid" }, "tenant-a");
     expect(page.items.map((o) => o.id.toString())).toEqual([paidOrder.id.toString()]);
   });
 
@@ -100,17 +103,17 @@ describe("InMemoryOrderRepository.list", () => {
       customerRef: "customer-target",
       orderNumber: "ORD-FINDME",
     });
-    await repository.save(target);
+    await repository.save(target, "tenant-a");
     const other = placeOrder(nextId, { customerRef: "customer-other", orderNumber: "ORD-OTHER" });
-    await repository.save(other);
+    await repository.save(other, "tenant-a");
 
-    const byOrderNumber = await repository.list({ search: "findme" });
+    const byOrderNumber = await repository.list({ search: "findme" }, "tenant-a");
     expect(byOrderNumber.items.map((o) => o.id.toString())).toEqual([target.id.toString()]);
 
-    const byCustomerRef = await repository.list({ search: "TARGET" });
+    const byCustomerRef = await repository.list({ search: "TARGET" }, "tenant-a");
     expect(byCustomerRef.items.map((o) => o.id.toString())).toEqual([target.id.toString()]);
 
-    const noMatch = await repository.list({ search: "nonexistent" });
+    const noMatch = await repository.list({ search: "nonexistent" }, "tenant-a");
     expect(noMatch.items).toEqual([]);
   });
 });

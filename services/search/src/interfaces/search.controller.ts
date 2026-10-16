@@ -1,6 +1,5 @@
-import type { CursorPage } from "@platform/types";
 import type { GetIndex } from "../application/get-index.use-case";
-import type { ListIndexes } from "../application/list-indexes.use-case";
+import type { ListIndexes, ListIndexesInput } from "../application/list-indexes.use-case";
 import type {
   AddSuggestion,
   AddSynonym,
@@ -74,7 +73,7 @@ export class SearchController {
     return present(await this.deps.logQuery.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListIndexesInput): Promise<ControllerResponse> {
     return present(await this.deps.listIndexes.execute(input), 200);
   }
 

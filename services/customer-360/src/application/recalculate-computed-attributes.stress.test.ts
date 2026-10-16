@@ -13,6 +13,7 @@ import type {
   EvaluateAttributeGraphOutput,
 } from "./evaluate-attribute-graph.use-case";
 import { RecalculateComputedAttributes } from "./recalculate-computed-attributes.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 /**
  * Phase 6.4.1 hardening — Task 2 (Incremental Evaluation Validation). Proves, at 10/100/1000/5000
@@ -42,18 +43,29 @@ describe("RecalculateComputedAttributes — incremental-vs-full stress (Task 2)"
   for (const size of SIZES) {
     it(`chain of ${size}: changing the root recomputes the whole chain (worst case), changing the leaf recomputes only itself`, async () => {
       const graph = generateChain(size);
-      const registry = new InMemoryAttributeDefinitionRegistry(toDefinitions(graph));
+      const registry = new InMemoryAttributeDefinitionRegistry({
+        tenantId: TENANT_A,
+        definitions: toDefinitions(graph),
+      });
       const useCase = new RecalculateComputedAttributes({
         definitions: registry,
         evaluateGraph: fakeEvaluateGraph(),
       });
 
-      const rootChanged = await useCase.execute({ identifier, changed: [graph.names[0]!] });
+      const rootChanged = await useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        changed: [graph.names[0]!],
+      });
       expect(rootChanged.ok).toBe(true);
       if (!rootChanged.ok) throw new Error("unreachable");
       expect(rootChanged.value.recomputed.length).toBe(size); // every node depends on the root, transitively
 
-      const leafChanged = await useCase.execute({ identifier, changed: [graph.names[size - 1]!] });
+      const leafChanged = await useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        changed: [graph.names[size - 1]!],
+      });
       expect(leafChanged.ok).toBe(true);
       if (!leafChanged.ok) throw new Error("unreachable");
       expect(leafChanged.value.recomputed).toEqual([graph.names[size - 1]!]); // nothing depends on the leaf
@@ -61,7 +73,10 @@ describe("RecalculateComputedAttributes — incremental-vs-full stress (Task 2)"
 
     it(`layered DAG of ${size}: changing one interior attribute recomputes strictly fewer than the full registry`, async () => {
       const graph = generateLayeredDag(size);
-      const registry = new InMemoryAttributeDefinitionRegistry(toDefinitions(graph));
+      const registry = new InMemoryAttributeDefinitionRegistry({
+        tenantId: TENANT_A,
+        definitions: toDefinitions(graph),
+      });
       const useCase = new RecalculateComputedAttributes({
         definitions: registry,
         evaluateGraph: fakeEvaluateGraph(),
@@ -73,7 +88,7 @@ describe("RecalculateComputedAttributes — incremental-vs-full stress (Task 2)"
       const changed = [graph.names[midIndex]!];
 
       const start = performance.now();
-      const result = await useCase.execute({ identifier, changed });
+      const result = await useCase.execute({ tenantId: TENANT_A, identifier, changed });
       const elapsedMs = performance.now() - start;
 
       expect(result.ok).toBe(true);
@@ -96,14 +111,21 @@ describe("RecalculateComputedAttributes — incremental-vs-full stress (Task 2)"
 
   it("regression guard: a single-attribute recompute over a 5000-node registry stays near-linear, not quadratic (found during Phase 6.4.1 hardening: dependentsOf was previously re-run once per element inside the scoping .filter, an O(V+E)*O(V) blowup — fixed in recalculate-computed-attributes.use-case.ts)", async () => {
     const graph = generateLayeredDag(5000);
-    const registry = new InMemoryAttributeDefinitionRegistry(toDefinitions(graph));
+    const registry = new InMemoryAttributeDefinitionRegistry({
+      tenantId: TENANT_A,
+      definitions: toDefinitions(graph),
+    });
     const useCase = new RecalculateComputedAttributes({
       definitions: registry,
       evaluateGraph: fakeEvaluateGraph(),
     });
 
     const start = performance.now();
-    const result = await useCase.execute({ identifier, changed: [graph.names[2500]!] });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      changed: [graph.names[2500]!],
+    });
     const elapsedMs = performance.now() - start;
 
     expect(result.ok).toBe(true);
@@ -117,14 +139,21 @@ describe("RecalculateComputedAttributes — incremental-vs-full stress (Task 2)"
 
   it("evaluated count for a single mid-graph change grows sublinearly relative to a full recompute, at 5000 nodes", async () => {
     const graph = generateLayeredDag(5000);
-    const registry = new InMemoryAttributeDefinitionRegistry(toDefinitions(graph));
+    const registry = new InMemoryAttributeDefinitionRegistry({
+      tenantId: TENANT_A,
+      definitions: toDefinitions(graph),
+    });
     const useCase = new RecalculateComputedAttributes({
       definitions: registry,
       evaluateGraph: fakeEvaluateGraph(),
     });
 
-    const full = await useCase.execute({ identifier });
-    const scoped = await useCase.execute({ identifier, changed: [graph.names[2500]!] });
+    const full = await useCase.execute({ tenantId: TENANT_A, identifier });
+    const scoped = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      changed: [graph.names[2500]!],
+    });
     if (!full.ok || !scoped.ok) throw new Error("unreachable");
 
     expect(full.value.recomputed.length).toBe(5000);

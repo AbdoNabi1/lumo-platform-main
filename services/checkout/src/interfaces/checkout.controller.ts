@@ -2,6 +2,11 @@ import type {
   CompleteCheckout,
   CompleteCheckoutInput,
 } from "../application/complete-checkout.use-case";
+import type {
+  AddDiscountCode,
+  DiscountCodeInput,
+  RemoveDiscountCode,
+} from "../application/discount-code.use-cases";
 import type { FailCheckout, FailCheckoutInput } from "../application/fail-checkout.use-case";
 import type {
   GetCheckoutSession,
@@ -17,6 +22,8 @@ import type {
   SelectShippingInput,
   SetAddressInput,
   SetBillingAddress,
+  SetContactEmail,
+  SetContactEmailInput,
   SetShippingAddress,
 } from "../application/checkout-details.use-cases";
 import type {
@@ -34,6 +41,12 @@ import type {
   GenerateOrderDraft,
   GeneratePaymentIntentRequest,
 } from "../application/checkout-handoff.use-cases";
+import type {
+  InitiatePayment,
+  InitiatePaymentInput,
+  ListPaymentMethods,
+  ListPaymentMethodsInput,
+} from "../application/payment-initiation.use-cases";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface CheckoutControllerDeps {
@@ -44,13 +57,18 @@ export interface CheckoutControllerDeps {
   readonly loadItems: LoadItems;
   readonly setBillingAddress: SetBillingAddress;
   readonly setShippingAddress: SetShippingAddress;
+  readonly setContactEmail: SetContactEmail;
   readonly selectShipping: SelectShipping;
   readonly selectPayment: SelectPayment;
+  readonly listPaymentMethods: ListPaymentMethods;
+  readonly initiatePayment: InitiatePayment;
   readonly validateCheckout: ValidateCheckout;
   readonly requestTaxCalculation: RequestTaxCalculation;
   readonly requestShippingQuote: RequestShippingQuote;
   readonly validatePromotion: ValidatePromotion;
   readonly recalculateTotals: RecalculateTotals;
+  readonly addDiscountCode: AddDiscountCode;
+  readonly removeDiscountCode: RemoveDiscountCode;
   readonly lock: Lock;
   readonly expireCheckout: ExpireCheckout;
   readonly generateOrderDraft: GenerateOrderDraft;
@@ -93,12 +111,25 @@ export class CheckoutController {
     return present(await this.deps.setShippingAddress.execute(input), 200);
   }
 
+  async setContactEmail(input: SetContactEmailInput): Promise<ControllerResponse> {
+    return present(await this.deps.setContactEmail.execute(input), 200);
+  }
+
   async selectShipping(input: SelectShippingInput): Promise<ControllerResponse> {
     return present(await this.deps.selectShipping.execute(input), 200);
   }
 
   async selectPayment(input: SelectPaymentInput): Promise<ControllerResponse> {
     return present(await this.deps.selectPayment.execute(input), 200);
+  }
+
+  async listPaymentMethods(input: ListPaymentMethodsInput): Promise<ControllerResponse> {
+    return present(await this.deps.listPaymentMethods.execute(input), 200);
+  }
+
+  /** Opens the payment for a completed checkout using the shopper's own selected method (WP-13). */
+  async initiatePayment(input: InitiatePaymentInput): Promise<ControllerResponse> {
+    return present(await this.deps.initiatePayment.execute(input), 201);
   }
 
   async validateCheckout(input: CheckoutSessionIdInput): Promise<ControllerResponse> {
@@ -115,6 +146,14 @@ export class CheckoutController {
 
   async validatePromotion(input: ValidatePromotionInput): Promise<ControllerResponse> {
     return present(await this.deps.validatePromotion.execute(input), 200);
+  }
+
+  async addDiscountCode(input: DiscountCodeInput): Promise<ControllerResponse> {
+    return present(await this.deps.addDiscountCode.execute(input), 200);
+  }
+
+  async removeDiscountCode(input: DiscountCodeInput): Promise<ControllerResponse> {
+    return present(await this.deps.removeDiscountCode.execute(input), 200);
   }
 
   async recalculateTotals(input: CheckoutSessionIdInput): Promise<ControllerResponse> {

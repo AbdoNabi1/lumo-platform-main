@@ -35,12 +35,10 @@ export interface ExperimentationWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaExperimentRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/
-   * `wireExperience`); absent ⇒ in-memory, unchanged.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository
+   * built here is a tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Experimentation table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredExperimentation {
@@ -78,12 +76,6 @@ function buildController(
  */
 export function wireExperimentation(deps: ExperimentationWiringDeps): WiredExperimentation {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error(
-        "wireExperimentation: tenantId is required when prisma is provided (ADR-0008).",
-      );
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new ExperimentationEventTranslator(),
@@ -91,10 +83,12 @@ export function wireExperimentation(deps: ExperimentationWiringDeps): WiredExper
       clock: deps.clock,
       producer: "experiment",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see
+    // ExperimentationWiringDeps' doc comment) — the repository built below takes tenantId per
+    // call instead.
+    const context = rootEventContext(deps.idGenerator);
     const experiments = new PrismaExperimentRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });

@@ -34,6 +34,8 @@ function present(p: MachineIdentityProfile): MachineIdentityOutput {
 }
 
 export interface GovernMachineIdentityInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   readonly config: MachineIdentityConfig;
 }
@@ -52,7 +54,10 @@ export class GovernMachineIdentity implements UseCase<
   async execute(
     input: GovernMachineIdentityInput,
   ): Promise<Result<MachineIdentityOutput, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
     if (isHumanKind(principal.kind))
       return err(
@@ -61,7 +66,11 @@ export class GovernMachineIdentity implements UseCase<
     return this.deps.unitOfWork.run<Result<MachineIdentityOutput, DomainError>>(async (tx) => {
       const now = this.deps.clock.now();
       const eventId = this.deps.idGenerator.generate();
-      const existing = await this.deps.machineProfiles.findByPrincipal(principal.id.toString(), tx);
+      const existing = await this.deps.machineProfiles.findByPrincipal(
+        principal.id.toString(),
+        input.tenantId,
+        tx,
+      );
       let profile: MachineIdentityProfile;
       try {
         if (existing === null) {
@@ -80,8 +89,9 @@ export class GovernMachineIdentity implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.machineProfiles.save(profile, tx);
+      await this.deps.machineProfiles.save(profile, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.machine_identity.governed",
         decision: "allow",
@@ -94,6 +104,8 @@ export class GovernMachineIdentity implements UseCase<
 }
 
 export interface SuspendMachineIdentityInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
 }
 
@@ -107,14 +119,22 @@ export class SuspendMachineIdentity implements UseCase<
   async execute(
     input: SuspendMachineIdentityInput,
   ): Promise<Result<MachineIdentityOutput, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
     return this.deps.unitOfWork.run<Result<MachineIdentityOutput, DomainError>>(async (tx) => {
-      const profile = await this.deps.machineProfiles.findByPrincipal(principal.id.toString(), tx);
+      const profile = await this.deps.machineProfiles.findByPrincipal(
+        principal.id.toString(),
+        input.tenantId,
+        tx,
+      );
       if (profile === null) return err(new NotFoundError("Machine identity profile not found"));
       profile.suspend(this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.machineProfiles.save(profile, tx);
+      await this.deps.machineProfiles.save(profile, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.machine_identity.suspended",
         decision: "allow",

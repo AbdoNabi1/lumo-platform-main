@@ -8,13 +8,14 @@ import { Product } from "../domain/product";
 import { BrandRef } from "../domain/value-objects/brand-ref";
 import { CategoryRef } from "../domain/value-objects/category-ref";
 import { MediaRef } from "../domain/value-objects/media-ref";
+import { ProductDetails } from "../domain/value-objects/product-details";
 import { ProductOption } from "../domain/value-objects/product-option";
 import { PublishState, type PublishStateValue } from "../domain/value-objects/publish-state";
 import { Seo } from "../domain/value-objects/seo";
 import { Sku } from "../domain/value-objects/sku";
 import { Slug } from "../domain/value-objects/slug";
 import { VariantSelection } from "../domain/value-objects/variant-selection";
-import { Variant } from "../domain/variant";
+import { type InventoryPolicy, Variant } from "../domain/variant";
 
 export interface ProductRow {
   readonly id: string;
@@ -28,6 +29,9 @@ export interface ProductRow {
   readonly options: readonly { readonly name: string; readonly values: readonly string[] }[];
   readonly seo: { readonly title?: string; readonly description?: string } | null;
   readonly mediaRefs: readonly string[];
+  readonly description: string | null;
+  readonly productType: string | null;
+  readonly tags: readonly string[];
   readonly deletedAt: Date | null;
   readonly version: number;
 }
@@ -37,6 +41,16 @@ export interface VariantRow {
   readonly priceAmountMinor: number;
   readonly currency: string;
   readonly selection: Readonly<Record<string, string>> | null;
+  readonly compareAtAmountMinor: number | null;
+  readonly costAmountMinor: number | null;
+  readonly barcode: string | null;
+  readonly weightGrams: number | null;
+  readonly requiresShipping: boolean;
+  readonly taxable: boolean;
+  readonly tracksInventory: boolean;
+  readonly inventoryPolicy: string;
+  /** Plan 2C-3: a bare id into Media; absent on rows read before it existed. */
+  readonly mediaRef?: string | null;
 }
 export interface CategoryRow {
   readonly id: string;
@@ -96,11 +110,40 @@ export class ProductMapper {
           v.selection === null
             ? null
             : must(VariantSelection.create(v.selection), "variant selection"),
+          {
+            compareAtPrice:
+              v.compareAtAmountMinor == null
+                ? null
+                : must(
+                    Money.create(v.compareAtAmountMinor, v.currency),
+                    "variant compare-at price",
+                  ),
+            cost:
+              v.costAmountMinor == null
+                ? null
+                : must(Money.create(v.costAmountMinor, v.currency), "variant cost"),
+            barcode: v.barcode ?? null,
+            weightGrams: v.weightGrams ?? null,
+            requiresShipping: v.requiresShipping ?? true,
+            taxable: v.taxable ?? true,
+            tracksInventory: v.tracksInventory ?? true,
+            // `assertValidAttributes` (run by `Variant.create`) rejects a corrupt value.
+            inventoryPolicy: (v.inventoryPolicy ?? "deny") as InventoryPolicy,
+          },
+          v.mediaRef ?? null,
         ),
       ),
       row.mediaRefs.map((assetId) => must(MediaRef.create(assetId), "media ref")),
       row.deletedAt !== null,
       row.version,
+      must(
+        ProductDetails.create({
+          description: row.description ?? null,
+          productType: row.productType ?? null,
+          tags: row.tags ?? [],
+        }),
+        "product details",
+      ),
     );
   }
 
@@ -124,6 +167,9 @@ export class ProductMapper {
               description: product.seo.description ?? undefined,
             },
       mediaRefs: product.media.map((m) => m.assetId),
+      description: product.details.description,
+      productType: product.details.productType,
+      tags: [...product.details.tags],
       deletedAt: product.deleted ? new Date() : null,
       version: 1,
     };
@@ -138,6 +184,15 @@ export class ProductMapper {
       priceAmountMinor: v.price.amountMinor,
       currency: v.price.currency,
       selection: v.selection === null ? null : { ...v.selection.values },
+      compareAtAmountMinor: v.attributes.compareAtPrice?.amountMinor ?? null,
+      costAmountMinor: v.attributes.cost?.amountMinor ?? null,
+      barcode: v.attributes.barcode,
+      weightGrams: v.attributes.weightGrams,
+      requiresShipping: v.attributes.requiresShipping,
+      taxable: v.attributes.taxable,
+      tracksInventory: v.attributes.tracksInventory,
+      inventoryPolicy: v.attributes.inventoryPolicy,
+      mediaRef: v.mediaRef,
     }));
   }
 }

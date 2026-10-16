@@ -99,7 +99,8 @@ export function notificationsRoutes(admin: WiredAdmin): readonly RouteDefinition
       idempotent: true,
       summary: "Open a notification for delivery (idempotent by idempotencyKey)",
       schema: { body: createNotificationBody },
-      handle: ({ body, context }) => admin.notifications.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.notifications.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -109,7 +110,8 @@ export function notificationsRoutes(admin: WiredAdmin): readonly RouteDefinition
       idempotent: true,
       summary: "Queue a created notification for delivery",
       schema: { params: notificationIdParams },
-      handle: ({ params, context }) => admin.notifications.queue(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.notifications.queue(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -118,7 +120,8 @@ export function notificationsRoutes(admin: WiredAdmin): readonly RouteDefinition
       permission: "notifications:send",
       summary: "Send via the notification's current channel's provider port",
       schema: { params: notificationIdParams },
-      handle: ({ params, context }) => admin.notifications.send(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.notifications.send(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -128,7 +131,8 @@ export function notificationsRoutes(admin: WiredAdmin): readonly RouteDefinition
       idempotent: true,
       summary: "Retry a failed notification per its delivery policy",
       schema: { params: notificationIdParams },
-      handle: ({ params, context }) => admin.notifications.retry(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.notifications.retry(context.principal, { ...params, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -140,6 +144,7 @@ export function notificationsRoutes(admin: WiredAdmin): readonly RouteDefinition
       schema: { params: notificationIdParams, body: advanceBody },
       handle: ({ params, body, context }) =>
         admin.notifications.advance(context.principal, {
+          tenantId: context.tenantId,
           notificationId: params.notificationId,
           toStatus: body.toStatus as Parameters<typeof admin.notifications.advance>[1]["toStatus"],
         }),
@@ -153,6 +158,7 @@ export function notificationsRoutes(admin: WiredAdmin): readonly RouteDefinition
       schema: { params: notificationIdParams, body: callbackBody },
       handle: ({ params, body, context }) =>
         admin.notifications.callback(context.principal, {
+          tenantId: context.tenantId,
           notificationId: params.notificationId,
           ...body,
         }),
@@ -165,7 +171,13 @@ export function notificationsRoutes(admin: WiredAdmin): readonly RouteDefinition
       summary: "List notifications (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.notifications.list(context.principal, query), toNotificationDto),
+        mapPage(
+          await admin.notifications.list(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toNotificationDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -175,7 +187,10 @@ export function notificationsRoutes(admin: WiredAdmin): readonly RouteDefinition
       summary: "Get one notification by id",
       schema: { params: notificationIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.notifications.get(context.principal, params);
+        const response = await admin.notifications.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toNotificationDto(response.body as Notification) };
       },

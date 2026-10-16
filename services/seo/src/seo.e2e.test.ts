@@ -21,24 +21,34 @@ function wire() {
 describe("seo (end to end)", () => {
   it("sets a profile, creates a redirect/sitemap/robots policy, publishing canonical events", async () => {
     const app = wire();
-    const profile = await app.seo.setSeoProfile({ pageRef: "page-1", title: "Home" });
+    const profile = await app.seo.setSeoProfile({
+      pageRef: "page-1",
+      title: "Home",
+      tenantId: "tenant-local",
+    });
     expect(profile.status).toBe(200);
 
     const redirect = await app.seo.createRedirect({
       fromPath: "/old",
       toPath: "/new",
       statusCode: 301,
+      tenantId: "tenant-local",
     });
     expect(redirect.status).toBe(201);
 
-    const sitemap = await app.seo.createSitemap({ name: "main" });
+    const sitemap = await app.seo.createSitemap({ name: "main", tenantId: "tenant-local" });
     expect(sitemap.status).toBe(201);
     const sitemapId = (sitemap.body as { id: string }).id;
-    await app.seo.regenerateSitemap({ sitemapId, urls: ["/", "/about"] });
+    await app.seo.regenerateSitemap({
+      sitemapId,
+      urls: ["/", "/about"],
+      tenantId: "tenant-local",
+    });
 
     const robots = await app.seo.setRobotsPolicy({
       userAgent: "*",
       rules: [{ type: "disallow", path: "/admin" }],
+      tenantId: "tenant-local",
     });
     expect(robots.status).toBe(200);
 
@@ -49,11 +59,17 @@ describe("seo (end to end)", () => {
 
   it("rejects creating a duplicate redirect fromPath (409)", async () => {
     const app = wire();
-    await app.seo.createRedirect({ fromPath: "/old", toPath: "/new", statusCode: 301 });
+    await app.seo.createRedirect({
+      fromPath: "/old",
+      toPath: "/new",
+      statusCode: 301,
+      tenantId: "tenant-local",
+    });
     const response = await app.seo.createRedirect({
       fromPath: "/old",
       toPath: "/other",
       statusCode: 302,
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(409);
   });

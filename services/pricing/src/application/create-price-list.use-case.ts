@@ -9,6 +9,8 @@ import type { PriceListRepository } from "../domain/price-list-repository";
 import { Currency } from "../domain/value-objects/currency";
 
 export interface CreatePriceListInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly name: string;
   readonly currency: string;
 }
@@ -42,7 +44,7 @@ export class CreatePriceList implements UseCase<
     return this.deps.unitOfWork.run<Result<CreatePriceListOutput, DomainError>>(async (tx) => {
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const priceList = PriceList.create(id, input.name, currency.value);
-      await this.deps.priceLists.save(priceList, tx);
+      await this.deps.priceLists.save(priceList, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

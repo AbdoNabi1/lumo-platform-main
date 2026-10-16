@@ -3,7 +3,14 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { CommandSearch, CommandSearchTrigger, type CommandGroup } from "@platform/ui";
-import { PRIMARY_NAV, SALES_CHANNEL_NAV } from "./navigation";
+import {
+  ONLINE_STORE_NAV,
+  PLATFORM_TOOLS_NAV,
+  PRIMARY_NAV,
+  SETTINGS_NAV,
+  storefrontHref,
+  type NavItem,
+} from "./navigation";
 import type { Dictionary } from "@/messages/en";
 
 /**
@@ -14,9 +21,15 @@ import type { Dictionary } from "@/messages/en";
 export function GlobalSearch({
   t,
   className,
+  storefrontUrl = null,
+  showPlatformTools = false,
 }: {
   readonly t: Dictionary;
   readonly className?: string;
+  /** The runtime `STOREFRONT_URL`; `null` leaves the storefront out of the results. */
+  readonly storefrontUrl?: string | null;
+  /** The runtime `ADMIN_PLATFORM_TOOLS` switch; leaves the engineering screens out when off. */
+  readonly showPlatformTools?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
@@ -32,35 +45,59 @@ export function GlobalSearch({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const groups: readonly CommandGroup[] = React.useMemo(
-    () => [
+  const groups: readonly CommandGroup[] = React.useMemo(() => {
+    // Every page the sidebar can reach, sub-pages included, so "Inventory" is one search away
+    // even while the Products section is closed.
+    const flatten = (items: readonly NavItem[]) =>
+      items.flatMap((item) => [item, ...(item.children ?? [])]);
+    const toCommand = (item: NavItem) => ({
+      id: item.id,
+      label: item.label(t),
+      Icon: item.Icon,
+      onSelect: () => {
+        router.push(item.href);
+      },
+    });
+    const viewStore = storefrontHref(storefrontUrl);
+
+    return [
       {
         id: "primary",
         heading: t.nav.primary,
-        items: PRIMARY_NAV.map((item) => ({
-          id: item.id,
-          label: item.label(t),
-          Icon: item.Icon,
-          onSelect: () => {
-            router.push(item.href);
-          },
-        })),
+        items: flatten([...PRIMARY_NAV, SETTINGS_NAV]).map(toCommand),
       },
       {
         id: "channels",
         heading: t.nav.salesChannels,
-        items: SALES_CHANNEL_NAV.map((item) => ({
-          id: item.id,
-          label: item.label(t),
-          Icon: item.Icon,
-          onSelect: () => {
-            window.open(item.href, "_blank", "noreferrer");
-          },
-        })),
+        items: [
+          ...flatten([ONLINE_STORE_NAV])
+            .filter((item) => item.id !== ONLINE_STORE_NAV.id)
+            .map(toCommand),
+          ...(viewStore === null
+            ? []
+            : [
+                {
+                  id: "view-store",
+                  label: t.nav.viewStore,
+                  Icon: ONLINE_STORE_NAV.Icon,
+                  onSelect: () => {
+                    window.open(viewStore, "_blank", "noreferrer");
+                  },
+                },
+              ]),
+        ],
       },
-    ],
-    [t, router],
-  );
+      ...(showPlatformTools
+        ? [
+            {
+              id: "platform-tools",
+              heading: t.nav.platformTools,
+              items: PLATFORM_TOOLS_NAV.map(toCommand),
+            },
+          ]
+        : []),
+    ];
+  }, [t, router, storefrontUrl, showPlatformTools]);
 
   return (
     <>

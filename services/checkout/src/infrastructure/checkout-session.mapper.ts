@@ -6,6 +6,8 @@ import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { CheckoutState, type CheckoutStateValue } from "../domain/value-objects/checkout-state";
 import { CheckoutTotals } from "../domain/value-objects/checkout-totals";
+import { ContactEmail } from "../domain/value-objects/contact-email";
+import type { DiscountSnapshot } from "../domain/value-objects/discount-snapshot";
 import { PaymentSelection, ShippingSelection } from "../domain/value-objects/selections";
 
 interface CheckoutItemJson {
@@ -13,22 +15,47 @@ interface CheckoutItemJson {
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
+  /** Plan 2A: optional keys inside the existing JSON — no migration; absent on legacy lines. */
+  readonly variantRef?: string;
+  readonly sku?: string;
+  readonly title?: string;
+  readonly variantTitle?: string | null;
 }
 interface CheckoutAddressJson {
+  /** Plan 3A: optional keys inside the existing JSON — no migration; absent on legacy sessions. */
+  readonly name?: string;
+  readonly phone?: string;
   readonly line1: string;
   readonly line2?: string;
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: optional key inside the existing JSON — no migration; absent on older sessions. */
+  readonly province?: string;
 }
 interface ShippingSelectionJson {
   readonly method: string;
   readonly rateAmountMinor: number;
   readonly currency: string;
+  /** Plan 3C: the rate's name and description as the shopper saw them; absent on older sessions. */
+  readonly name?: string;
+  readonly description?: string;
 }
 interface PaymentSelectionJson {
   readonly paymentMethodRef: string;
   readonly provider: string;
+  /** WP-13: the payment intent opened for the order. Lives in this JSON (no new column). */
+  readonly paymentIntentRef?: string;
+}
+/** What `JSON.parse` yields — assignable to Prisma's JSON input, which the typed interfaces are not. */
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type JsonObject = { [key: string]: JsonValue };
+
+interface DiscountsJson {
+  readonly codes?: readonly string[];
+  readonly snapshot?: DiscountSnapshot;
+  readonly rejectedAttempts?: number;
+  readonly attemptsWindowStartedAt?: string;
 }
 interface CheckoutTotalsJson {
   readonly subtotalMinor: number;
@@ -37,6 +64,11 @@ interface CheckoutTotalsJson {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3C: absent on totals saved before it existed, which added the tax to the total. */
+  readonly taxIncluded?: boolean;
+  readonly shippingName?: string;
+  /** Phase 2: absent on totals saved before it existed (no shipping discount). */
+  readonly shippingDiscountMinor?: number;
 }
 
 export interface CheckoutSessionRow {
@@ -44,6 +76,8 @@ export interface CheckoutSessionRow {
   readonly cartRef: string;
   readonly customerRef: string | null;
   readonly sessionRef: string;
+  /** Nullable: every session created before the WP-1 migration has none. */
+  readonly contactEmail: string | null;
   readonly currency: string;
   readonly state: string;
   readonly orderRef: string | null;
@@ -56,6 +90,8 @@ export interface CheckoutSessionRow {
   readonly taxMinor: number | null;
   readonly discountMinor: number | null;
   readonly totals: CheckoutTotalsJson | Record<string, never>;
+  /** Phase 2: `{}` = no codes and no discounts (every session saved before it existed). */
+  readonly discounts: DiscountsJson | Record<string, never>;
   readonly version: number;
 }
 
@@ -82,6 +118,14 @@ export class CheckoutSessionMapper {
           item.quantity,
           item.unitPriceAmountMinor,
           item.currency,
+          item.variantRef === undefined
+            ? undefined
+            : {
+                variantRef: item.variantRef,
+                sku: item.sku ?? "",
+                title: item.title ?? "",
+                variantTitle: item.variantTitle ?? null,
+              },
         ),
         "checkout item",
       ),
@@ -100,6 +144,10 @@ export class CheckoutSessionMapper {
         billingAddress: isSet(row.billingAddress)
           ? must(CheckoutAddress.create(row.billingAddress), "billing address")
           : undefined,
+        contactEmail:
+          row.contactEmail === null
+            ? undefined
+            : must(ContactEmail.create(row.contactEmail), "contact email"),
         shippingAddress: isSet(row.shippingAddress)
           ? must(CheckoutAddress.create(row.shippingAddress), "shipping address")
           : undefined,
@@ -109,6 +157,10 @@ export class CheckoutSessionMapper {
                 row.shippingSelection.method,
                 row.shippingSelection.rateAmountMinor,
                 row.shippingSelection.currency,
+                {
+                  name: row.shippingSelection.name,
+                  description: row.shippingSelection.description,
+                },
               ),
               "shipping selection",
             )
@@ -122,7 +174,11 @@ export class CheckoutSessionMapper {
               "payment selection",
             )
           : undefined,
+        paymentIntentRef: isSet(row.paymentSelection)
+          ? row.paymentSelection.paymentIntentRef
+          : undefined,
         taxMinor: row.taxMinor ?? undefined,
+        taxIncluded: isSet(row.totals) ? (row.totals.taxIncluded ?? false) : undefined,
         discountMinor: row.discountMinor ?? undefined,
         totals: isSet(row.totals)
           ? CheckoutTotals.assemble(
@@ -131,8 +187,20 @@ export class CheckoutSessionMapper {
               row.totals.shippingMinor,
               row.totals.discountMinor,
               row.totals.currency,
+              {
+                taxIncluded: row.totals.taxIncluded ?? false,
+                shippingName: row.totals.shippingName,
+                shippingDiscountMinor: row.totals.shippingDiscountMinor ?? 0,
+              },
             )
           : undefined,
+        discountCodes: isSet(row.discounts) ? (row.discounts.codes ?? []) : [],
+        discountSnapshot: isSet(row.discounts) ? row.discounts.snapshot : undefined,
+        rejectedCodeAttempts: isSet(row.discounts) ? (row.discounts.rejectedAttempts ?? 0) : 0,
+        codeAttemptsWindowStartedAt:
+          isSet(row.discounts) && row.discounts.attemptsWindowStartedAt !== undefined
+            ? new Date(row.discounts.attemptsWindowStartedAt)
+            : undefined,
       },
     );
   }
@@ -144,6 +212,7 @@ export class CheckoutSessionMapper {
       cartRef: session.cartRef,
       customerRef: session.customerRef ?? null,
       sessionRef: session.sessionRef,
+      contactEmail: session.contactEmail?.value ?? null,
       currency: session.currency,
       state: session.state.value,
       orderRef: session.orderRef,
@@ -152,6 +221,14 @@ export class CheckoutSessionMapper {
         quantity: item.quantity,
         unitPriceAmountMinor: item.unitPriceAmountMinor,
         currency: item.currency,
+        ...(item.variantRef === undefined
+          ? {}
+          : {
+              variantRef: item.variantRef,
+              sku: item.sku ?? "",
+              title: item.title ?? "",
+              variantTitle: item.variantTitle ?? null,
+            }),
       })),
       billingAddress:
         session.billingAddress === undefined ? {} : toAddressJson(session.billingAddress),
@@ -164,6 +241,12 @@ export class CheckoutSessionMapper {
               method: session.shippingSelection.method,
               rateAmountMinor: session.shippingSelection.rateAmountMinor,
               currency: session.shippingSelection.currency,
+              ...(session.shippingSelection.name === undefined
+                ? {}
+                : { name: session.shippingSelection.name }),
+              ...(session.shippingSelection.description === undefined
+                ? {}
+                : { description: session.shippingSelection.description }),
             },
       paymentSelection:
         session.paymentSelection === undefined
@@ -171,6 +254,9 @@ export class CheckoutSessionMapper {
           : {
               paymentMethodRef: session.paymentSelection.paymentMethodRef,
               provider: session.paymentSelection.provider,
+              ...(session.paymentIntentRef !== undefined
+                ? { paymentIntentRef: session.paymentIntentRef }
+                : {}),
             },
       taxMinor: session.taxMinor ?? null,
       discountMinor: session.discountMinor ?? null,
@@ -184,7 +270,23 @@ export class CheckoutSessionMapper {
               discountMinor: session.totals.discountMinor,
               totalMinor: session.totals.totalMinor,
               currency: session.totals.currency,
+              taxIncluded: session.totals.taxIncluded,
+              shippingDiscountMinor: session.totals.shippingDiscountMinor,
+              ...(session.totals.shippingName === undefined
+                ? {}
+                : { shippingName: session.totals.shippingName }),
             },
+      discounts:
+        session.hasDiscountState || session.rejectedCodeAttempts > 0
+          ? (JSON.parse(
+              JSON.stringify({
+                codes: session.discountCodes,
+                snapshot: session.discountSnapshot,
+                rejectedAttempts: session.rejectedCodeAttempts,
+                attemptsWindowStartedAt: session.codeAttemptsWindowStartedAt?.toISOString(),
+              }),
+            ) as JsonObject)
+          : {},
       version: 1,
     };
   }
@@ -192,10 +294,13 @@ export class CheckoutSessionMapper {
 
 function toAddressJson(address: CheckoutAddress): CheckoutAddressJson {
   return {
+    name: address.name,
+    phone: address.phone,
     line1: address.line1,
     line2: address.line2,
     city: address.city,
     postalCode: address.postalCode,
     country: address.country,
+    ...(address.province === undefined ? {} : { province: address.province }),
   };
 }

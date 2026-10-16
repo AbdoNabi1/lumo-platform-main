@@ -4,9 +4,17 @@ import { en } from "@/messages/en";
 import type { CartActionResult } from "@/app/cart/actions";
 import { AddToCartButton } from "./add-to-cart-button";
 
-const addToCart = vi.fn<(productId: string, quantity: number) => Promise<CartActionResult>>();
+const addToCart =
+  vi.fn<
+    (
+      productId: string,
+      quantity: number,
+      variantId: string | undefined,
+    ) => Promise<CartActionResult>
+  >();
 vi.mock("@/app/cart/actions", () => ({
-  addToCart: (productId: string, quantity: number) => addToCart(productId, quantity),
+  addToCart: (productId: string, quantity: number, variantId: string | undefined) =>
+    addToCart(productId, quantity, variantId),
 }));
 
 beforeEach(() => {
@@ -20,7 +28,7 @@ describe("AddToCartButton (Task 9 entry point)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: en.product.addToCart }));
 
-    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-1", 1));
+    await waitFor(() => expect(addToCart).toHaveBeenCalledWith("prod-1", 1, undefined));
     expect(await screen.findByText(en.product.addedToCart)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: en.product.viewCart })).toHaveAttribute(
       "href",

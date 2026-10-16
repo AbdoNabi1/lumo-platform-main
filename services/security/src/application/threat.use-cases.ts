@@ -5,6 +5,8 @@ import type { ThreatVerdict } from "../domain/threat-intel";
 import { recordAudit, securityEvent, type SecurityDeps } from "./deps";
 
 export interface CheckThreatIndicatorInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   /** IP / domain / hash / URL. */
   readonly indicator: string;
 }
@@ -50,9 +52,11 @@ export class CheckThreatIndicator implements UseCase<
               `score:${verdict.score}`,
             ),
           ],
+          input.tenantId,
           tx,
         );
         await recordAudit(this.deps, tx, {
+          tenantId: input.tenantId,
           principalRef: "system",
           action: "security.threat.detected",
           decision: "block",

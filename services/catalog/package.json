@@ -25,6 +25,7 @@
     "@platform/messaging": "workspace:*",
     "@platform/repository": "workspace:*",
     "@platform/types": "workspace:*",
+    "@platform/usage": "workspace:*",
     "@platform/utils": "workspace:*"
   },
   "devDependencies": {

@@ -68,3 +68,82 @@ describe("tenancy (end to end)", () => {
     expect(response.status).toBe(404);
   });
 });
+
+describe("tenancy lifecycle protections (T10.6)", () => {
+  const PLATFORM = "platform";
+  function wireWithPlatform() {
+    // `CreateTenant` draws the tenant id first, so `nextId` makes the first tenant the platform one.
+    const seq = sequentialIds();
+    const forcing = { nextId: null as string | null };
+    const wired = wireTenancy({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: {
+        generate: () => {
+          const forced = forcing.nextId;
+          forcing.nextId = null;
+          return forced ?? seq.generate();
+        },
+      },
+      clock,
+      protectedTenantIds: [PLATFORM],
+    });
+    forcing.nextId = PLATFORM;
+    return wired;
+  }
+
+  it("the platform tenant cannot be suspended through the ordinary lifecycle", async () => {
+    const app = wireWithPlatform();
+    const created = await app.tenancy.createTenant({
+      slug: "morbeh",
+      name: "Morbeh",
+      isolationTier: "pooled",
+    });
+    const id = (created.body as { id: string }).id;
+    expect(id).toBe(PLATFORM);
+    const res = await app.tenancy.suspendTenant({ tenantId: id });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(res.body)).toMatch(/platform tenant/i);
+    expect(await app.tenantAvailability(id)).toBe("active");
+  });
+
+  it("the platform tenant cannot be cancelled through the ordinary lifecycle", async () => {
+    const app = wireWithPlatform();
+    const created = await app.tenancy.createTenant({
+      slug: "morbeh",
+      name: "Morbeh",
+      isolationTier: "pooled",
+    });
+    const id = (created.body as { id: string }).id;
+    const res = await app.tenancy.cancelTenant({ tenantId: id });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(await app.tenantAvailability(id)).toBe("active");
+  });
+
+  it("a protected id is refused even before a row exists (no create-then-suspend window)", async () => {
+    const app = wireWithPlatform();
+    const res = await app.tenancy.suspendTenant({ tenantId: PLATFORM });
+    expect(res.status).not.toBe(404);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it("an ordinary tenant can still be suspended, reactivated and cancelled", async () => {
+    const app = wireWithPlatform();
+    await app.tenancy.createTenant({ slug: "morbeh", name: "Morbeh", isolationTier: "pooled" });
+    const merchant = await app.tenancy.createTenant({
+      slug: "acme",
+      name: "Acme",
+      isolationTier: "pooled",
+    });
+    const id = (merchant.body as { id: string }).id;
+    expect(await app.tenantAvailability(id)).toBe("active");
+    expect((await app.tenancy.suspendTenant({ tenantId: id })).status).toBe(200);
+    expect(await app.tenantAvailability(id)).toBe("suspended");
+    expect((await app.tenancy.activateTenant({ tenantId: id })).status).toBe(200);
+    expect((await app.tenancy.cancelTenant({ tenantId: id })).status).toBe(200);
+    expect(await app.tenantAvailability(id)).toBe("cancelled");
+  });
+
+  it("reports an unknown tenant as unknown, not active", async () => {
+    expect(await wire().tenantAvailability("nope")).toBe("unknown");
+  });
+});

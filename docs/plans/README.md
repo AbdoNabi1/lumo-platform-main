@@ -7,14 +7,14 @@
 
 This monorepo has a **complete, wired backend** and an **almost empty frontend**.
 
-| Fact                                                     | Value                                          |
-| -------------------------------------------------------- | ---------------------------------------------- |
-| Backend services in `services/`                           | 40 (all wired into `apps/admin/src/composition.ts`) |
-| Route modules in `apps/admin/src/http/`                    | 41 (all registered in `admin-routes.ts`)        |
-| Total HTTP endpoints                                       | 371 (67 GET, 301 POST, 2 PUT, 1 DELETE)         |
-| Endpoints actually called by a frontend                    | 25                                              |
-| Write endpoints called by `apps/admin-web`                 | **0**                                           |
-| Domains with **zero** read endpoints                       | 19                                              |
+| Fact                                       | Value                                               |
+| ------------------------------------------ | --------------------------------------------------- |
+| Backend services in `services/`            | 40 (all wired into `apps/admin/src/composition.ts`) |
+| Route modules in `apps/admin/src/http/`    | 41 (all registered in `admin-routes.ts`)            |
+| Total HTTP endpoints                       | 371 (67 GET, 301 POST, 2 PUT, 1 DELETE)             |
+| Endpoints actually called by a frontend    | 25                                                  |
+| Write endpoints called by `apps/admin-web` | **0**                                               |
+| Domains with **zero** read endpoints       | 19                                                  |
 
 The backend is not broken. The gap is the wiring layer plus a missing read side.
 
@@ -63,17 +63,17 @@ Frontends are **separate Next.js apps** that call the runtime API over HTTP:
 
 ## Conventions to copy, not invent
 
-| You need to…                    | Copy this exact file                                            |
-| ------------------------------- | --------------------------------------------------------------- |
-| Add a route                     | `apps/admin/src/http/wishlist-routes.ts` (smallest complete one) |
-| Add a public route              | `apps/admin/src/http/public-cart-routes.ts`                      |
-| Add a read use case             | `services/catalog/src/application/get-product.use-case.ts`       |
-| Map an entity to a DTO          | `apps/admin/src/http/public-catalog-routes.ts` (`toProductDto`)  |
-| Fetch from admin-web            | `apps/admin-web/src/lib/api/orders.ts`                           |
-| Mutate from a Next.js app       | `apps/storefront/src/app/cart/actions.ts`                        |
-| Build a list page               | `apps/admin-web/src/app/orders/page.tsx`                         |
-| Build a detail page             | `apps/admin-web/src/app/orders/[orderId]/page.tsx`               |
-| Build an unavailable state      | `apps/admin-web/src/app/marketing/page.tsx`                      |
+| You need to…               | Copy this exact file                                             |
+| -------------------------- | ---------------------------------------------------------------- |
+| Add a route                | `apps/admin/src/http/wishlist-routes.ts` (smallest complete one) |
+| Add a public route         | `apps/admin/src/http/public-cart-routes.ts`                      |
+| Add a read use case        | `services/catalog/src/application/get-product.use-case.ts`       |
+| Map an entity to a DTO     | `apps/admin/src/http/public-catalog-routes.ts` (`toProductDto`)  |
+| Fetch from admin-web       | `apps/admin-web/src/lib/api/orders.ts`                           |
+| Mutate from a Next.js app  | `apps/storefront/src/app/cart/actions.ts`                        |
+| Build a list page          | `apps/admin-web/src/app/orders/page.tsx`                         |
+| Build a detail page        | `apps/admin-web/src/app/orders/[orderId]/page.tsx`               |
+| Build an unavailable state | `apps/admin-web/src/app/marketing/page.tsx`                      |
 
 ## Phases — execute in order
 
@@ -81,14 +81,21 @@ Each phase depends on the one before it. Do not start a later phase early: the s
 Phase 3 have no data source until Phase 1 exists, and the Phase 5 screens have no data
 source until Phase 4 exists.
 
-| File                                                                 | What                                            | Depends on |
-| -------------------------------------------------------------------- | ----------------------------------------------- | ---------- |
-| [`PHASE-0-quick-fixes.md`](PHASE-0-quick-fixes.md)                     | Dead links, catalog by-slug, draft-price leak    | —          |
-| [`PHASE-1-admin-write-layer.md`](PHASE-1-admin-write-layer.md)         | The mutation client + first proven write screen  | Phase 0    |
-| [`PHASE-2-public-checkout.md`](PHASE-2-public-checkout.md)             | Public checkout routes + storefront checkout     | Phase 0    |
-| [`PHASE-3-readonly-screens.md`](PHASE-3-readonly-screens.md)           | Screens over the 47 unused GET endpoints         | Phase 1    |
-| [`PHASE-4-read-side-backend.md`](PHASE-4-read-side-backend.md)         | List/get endpoints for the 19 blocked domains    | Phase 1    |
-| [`PHASE-5-6-backlog.md`](PHASE-5-6-backlog.md)                         | Remaining admin + storefront screens, hardening  | Phase 4    |
+| File                                                           | What                                                                                                                                 | Depends on |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| [`PHASE-0-quick-fixes.md`](PHASE-0-quick-fixes.md)             | Dead links, catalog by-slug, draft-price leak                                                                                        | —          |
+| [`PHASE-1-admin-write-layer.md`](PHASE-1-admin-write-layer.md) | The mutation client + first proven write screen                                                                                      | Phase 0    |
+| [`PHASE-2-public-checkout.md`](PHASE-2-public-checkout.md)     | Public checkout routes + storefront checkout                                                                                         | Phase 0    |
+| [`PHASE-3-readonly-screens.md`](PHASE-3-readonly-screens.md)   | Screens over the 47 unused GET endpoints                                                                                             | Phase 1    |
+| [`PHASE-4-read-side-backend.md`](PHASE-4-read-side-backend.md) | List/get endpoints for the 19 blocked domains                                                                                        | Phase 1    |
+| [`PHASE-5-6-backlog.md`](PHASE-5-6-backlog.md)                 | Remaining admin + storefront screens, hardening                                                                                      | Phase 4    |
+| [`phase-7/README.md`](phase-7/README.md)                       | **Phase 7 — close the product gap vs. the Lumo brief** (data plane, AI layer, growth engines, marketing/integrations, multi-tenancy) | Phases 0–6 |
+
+> **Phases 0–6 are executed.** Every task checkbox in the five phase files above is ticked; only
+> their end-to-end verification checkboxes remain. Phase 7 is the open work — start at
+> [`phase-7/README.md`](phase-7/README.md), which carries a measured (not documented) statement of
+> the repository's real state as of 2026-09-06, including a `turbo`-is-broken note that changes
+> which commands you run.
 
 ## Before you start — one-time setup
 
@@ -118,15 +125,15 @@ pnpm --filter admin-web typecheck && pnpm --filter admin-web lint && pnpm --filt
 
 Package names for `--filter`:
 
-| Path                  | Name               |
-| --------------------- | ------------------ |
-| `apps/admin-web`      | `admin-web`        |
-| `apps/storefront`     | `storefront`       |
-| `apps/admin`          | `@platform/admin`  |
-| `apps/runtime`        | `@platform/runtime`|
-| `apps/e2e`            | `@platform/e2e`    |
-| `services/<name>`     | `@platform/<name>` |
-| `packages/<name>`     | `@platform/<name>` |
+| Path              | Name                |
+| ----------------- | ------------------- |
+| `apps/admin-web`  | `admin-web`         |
+| `apps/storefront` | `storefront`        |
+| `apps/admin`      | `@platform/admin`   |
+| `apps/runtime`    | `@platform/runtime` |
+| `apps/e2e`        | `@platform/e2e`     |
+| `services/<name>` | `@platform/<name>`  |
+| `packages/<name>` | `@platform/<name>`  |
 
 Two exceptions to the `services/<name>` rule, because the package name differs from the folder:
 

@@ -10,6 +10,7 @@ export interface FinanceProjectionDeps {
 }
 
 export interface RebuildProjectionsInput {
+  readonly tenantId: string;
   readonly period: string;
   readonly startDate: Date;
   readonly endDate: Date;
@@ -30,9 +31,13 @@ export class FinanceProjectionService {
   }
 
   async rebuild(input: RebuildProjectionsInput): Promise<void> {
-    const entries = await this.deps.ledgerEntries.findByPeriod(input.startDate, input.endDate);
+    const entries = await this.deps.ledgerEntries.findByPeriod(
+      input.startDate,
+      input.endDate,
+      input.tenantId,
+    );
     const accountRefs = new Set(entries.map((entry) => entry.accountRef));
-    const accounts = (await this.deps.accounts.list()).filter((account) =>
+    const accounts = (await this.deps.accounts.list(input.tenantId)).filter((account) =>
       accountRefs.has(account.code),
     );
 
@@ -58,8 +63,8 @@ export class FinanceProjectionService {
       input.currency,
     );
 
-    await this.deps.readModels.put("profit", input.period, profit);
-    await this.deps.readModels.put("margin", input.period, margin);
-    await this.deps.readModels.put("financial_health", input.period, health);
+    await this.deps.readModels.put("profit", input.period, profit, input.tenantId);
+    await this.deps.readModels.put("margin", input.period, margin, input.tenantId);
+    await this.deps.readModels.put("financial_health", input.period, health, input.tenantId);
   }
 }

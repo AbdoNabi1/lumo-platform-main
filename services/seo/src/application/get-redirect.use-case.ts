@@ -6,6 +6,7 @@ import type { RedirectRepository } from "../domain/repositories";
 
 export interface RedirectIdInput {
   readonly redirectId: string;
+  readonly tenantId: string;
 }
 
 export interface GetRedirectDeps {
@@ -21,7 +22,7 @@ export class GetRedirect implements UseCase<RedirectIdInput, Redirect, DomainErr
   }
 
   async execute(input: RedirectIdInput): Promise<Result<Redirect, DomainError>> {
-    const redirect = await this.deps.redirects.findById(input.redirectId);
+    const redirect = await this.deps.redirects.findById(input.redirectId, input.tenantId);
     return redirect === null ? err(new NotFoundError("Redirect not found")) : ok(redirect);
   }
 }

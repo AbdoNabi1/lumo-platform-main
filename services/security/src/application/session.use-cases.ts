@@ -34,6 +34,8 @@ function present(s: Session): SessionOutput {
 }
 
 export interface EstablishSessionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   readonly refreshFingerprint: string;
   /** Upstream IdP session id (Kratos/OIDC `sid`) this session mirrors — federation (ADR-0031). */
@@ -50,7 +52,10 @@ export class EstablishSession implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: EstablishSessionInput): Promise<Result<SessionOutput, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
     return this.deps.unitOfWork.run<Result<SessionOutput, DomainError>>(async (tx) => {
       const now = this.deps.clock.now();
@@ -73,9 +78,10 @@ export class EstablishSession implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.sessions.save(session, tx);
+      await this.deps.sessions.save(session, input.tenantId, tx);
       this.deps.telemetry.increment("security.session.established");
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.session.established",
         decision: "allow",
@@ -87,6 +93,8 @@ export class EstablishSession implements UseCase<
 }
 
 export interface FederateExternalSessionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   /** The upstream IdP session id the (already transport-verified) request carries. */
   readonly externalRef: string;
@@ -125,10 +133,13 @@ export class FederateExternalSession implements UseCase<
     if (externalRef.length === 0)
       return err(new ValidationError("An external session ref is required"));
 
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
 
-    const existing = await this.deps.sessions.findByExternalRef(externalRef);
+    const existing = await this.deps.sessions.findByExternalRef(externalRef, input.tenantId);
     if (existing !== null) {
       if (existing.principalRef !== principal.id.toString()) {
         this.deps.telemetry.increment("security.session.federation_rejected");
@@ -145,6 +156,7 @@ export class FederateExternalSession implements UseCase<
 
     this.deps.telemetry.increment("security.session.federated");
     return new EstablishSession(this.deps).execute({
+      tenantId: input.tenantId,
       principalExternalId: input.principalExternalId,
       refreshFingerprint: input.refreshFingerprint,
       externalRef,
@@ -155,6 +167,8 @@ export class FederateExternalSession implements UseCase<
 }
 
 export interface RefreshSessionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly sessionId: string;
   readonly newRefreshFingerprint: string;
   readonly ttlSeconds: number;
@@ -165,7 +179,7 @@ export class RefreshSession implements UseCase<RefreshSessionInput, SessionOutpu
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: RefreshSessionInput): Promise<Result<SessionOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<SessionOutput, DomainError>>(async (tx) => {
-      const session = await this.deps.sessions.findById(input.sessionId, tx);
+      const session = await this.deps.sessions.findById(input.sessionId, input.tenantId, tx);
       if (session === null) return err(new NotFoundError("Session not found"));
       const now = this.deps.clock.now();
       try {
@@ -179,8 +193,9 @@ export class RefreshSession implements UseCase<RefreshSessionInput, SessionOutpu
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.sessions.save(session, tx);
+      await this.deps.sessions.save(session, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: session.principalRef,
         action: "security.session.refreshed",
         decision: "allow",
@@ -191,6 +206,8 @@ export class RefreshSession implements UseCase<RefreshSessionInput, SessionOutpu
 }
 
 export interface RevokeSessionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly sessionId: string;
 }
 
@@ -199,12 +216,13 @@ export class RevokeSession implements UseCase<RevokeSessionInput, SessionOutput,
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: RevokeSessionInput): Promise<Result<SessionOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<SessionOutput, DomainError>>(async (tx) => {
-      const session = await this.deps.sessions.findById(input.sessionId, tx);
+      const session = await this.deps.sessions.findById(input.sessionId, input.tenantId, tx);
       if (session === null) return err(new NotFoundError("Session not found"));
       session.revoke(this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.sessions.save(session, tx);
+      await this.deps.sessions.save(session, input.tenantId, tx);
       this.deps.telemetry.increment("security.session.revoked");
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: session.principalRef,
         action: "security.session.revoked",
         decision: "allow",
@@ -215,6 +233,8 @@ export class RevokeSession implements UseCase<RevokeSessionInput, SessionOutput,
 }
 
 export interface RevokeAllSessionsInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
 }
 
@@ -232,19 +252,27 @@ export class RevokeAllSessions implements UseCase<
   async execute(
     input: RevokeAllSessionsInput,
   ): Promise<Result<RevokeAllSessionsOutput, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
     return this.deps.unitOfWork.run<Result<RevokeAllSessionsOutput, DomainError>>(async (tx) => {
-      const sessions = await this.deps.sessions.listByPrincipal(principal.id.toString(), tx);
+      const sessions = await this.deps.sessions.listByPrincipal(
+        principal.id.toString(),
+        input.tenantId,
+        tx,
+      );
       let revoked = 0;
       for (const session of sessions) {
         if (!session.isActive) continue;
         session.revoke(this.deps.idGenerator.generate(), this.deps.clock.now());
-        await this.deps.sessions.save(session, tx);
+        await this.deps.sessions.save(session, input.tenantId, tx);
         this.deps.telemetry.increment("security.session.revoked");
         revoked += 1;
       }
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.session.revoked_all",
         decision: "allow",
@@ -266,6 +294,7 @@ export class RevokeAllSessions implements UseCase<
               "revoked",
             ),
           ],
+          input.tenantId,
           tx,
         );
       }
@@ -275,6 +304,8 @@ export class RevokeAllSessions implements UseCase<
 }
 
 export interface IntrospectSessionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly sessionId: string;
 }
 
@@ -291,13 +322,15 @@ export class IntrospectSession implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: IntrospectSessionInput): Promise<Result<SessionIntrospection, DomainError>> {
-    const session = await this.deps.sessions.findById(input.sessionId);
+    const session = await this.deps.sessions.findById(input.sessionId, input.tenantId);
     if (session === null) return ok({ active: false, session: null });
     return ok({ active: session.isValidAt(this.deps.clock.now()), session: present(session) });
   }
 }
 
 export interface IntrospectSessionSubjectInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly sessionId: string;
 }
 
@@ -333,7 +366,7 @@ const INACTIVE_SUBJECT: SessionSubject = {
  * `IntrospectSession` alone is not enough to authorize a customer-scoped request: `SessionOutput.
  * principalRef` is the Security-**internal** `Principal.id`, not an Identity id, so a caller that
  * introspected a session still could not say *whose* data the session may read. This use case closes
- * that last hop server-side — `sessions.findById` → `principals.findById(session.principalRef)` →
+ * that last hop server-side — `sessions.findById` → `principals.findById(session.principalRef, input.tenantId)` →
  * `principal.subjectRef` — so the storefront never receives, stores, or transmits anything but the
  * opaque session id, and a `customerRef` is only ever *derived* here, never accepted from a caller.
  *
@@ -351,14 +384,16 @@ export class IntrospectSessionSubject implements UseCase<
   DomainError
 > {
   constructor(private readonly deps: SecurityDeps) {}
-  async execute(input: IntrospectSessionSubjectInput): Promise<Result<SessionSubject, DomainError>> {
+  async execute(
+    input: IntrospectSessionSubjectInput,
+  ): Promise<Result<SessionSubject, DomainError>> {
     if (input.sessionId.trim().length === 0) return ok(INACTIVE_SUBJECT);
 
-    const session = await this.deps.sessions.findById(input.sessionId);
+    const session = await this.deps.sessions.findById(input.sessionId, input.tenantId);
     if (session === null) return ok(INACTIVE_SUBJECT);
     if (!session.isValidAt(this.deps.clock.now())) return ok(INACTIVE_SUBJECT);
 
-    const principal = await this.deps.principals.findById(session.principalRef);
+    const principal = await this.deps.principals.findById(session.principalRef, input.tenantId);
     if (principal === null || !principal.isActive) return ok(INACTIVE_SUBJECT);
     // A non-human principal has no Identity subject by construction (`Principal.register` refuses a
     // `subjectRef` on one) — resolving a machine/API-key session to a customer would be a privilege

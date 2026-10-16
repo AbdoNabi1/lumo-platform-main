@@ -1,7 +1,7 @@
 {
-  "uid": "lumo-messaging",
-  "title": "Lumo — Messaging (Consumers)",
-  "tags": ["lumo", "messaging", "h-5"],
+  "uid": "morbeh-messaging",
+  "title": "Morbeh — Messaging (Consumers)",
+  "tags": ["morbeh", "messaging", "h-5"],
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
@@ -50,7 +50,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(messaging_messages_dead_lettered_total{job=\"lumo-runtime\"}[5m]))",
+          "expr": "sum(rate(messaging_messages_dead_lettered_total{job=\"morbeh-runtime\"}[5m]))",
           "refId": "A"
         }
       ]
@@ -64,7 +64,7 @@
       "fieldConfig": { "defaults": { "unit": "cps" } },
       "targets": [
         {
-          "expr": "sum(rate(messaging_messages_duplicate_total{job=\"lumo-runtime\"}[5m]))",
+          "expr": "sum(rate(messaging_messages_duplicate_total{job=\"morbeh-runtime\"}[5m]))",
           "refId": "A"
         }
       ]
@@ -78,17 +78,17 @@
       "fieldConfig": { "defaults": { "unit": "cps" } },
       "targets": [
         {
-          "expr": "sum by (topic) (rate(messaging_messages_processed_total{job=\"lumo-runtime\"}[5m]))",
+          "expr": "sum by (topic) (rate(messaging_messages_processed_total{job=\"morbeh-runtime\"}[5m]))",
           "legendFormat": "processed {{topic}}",
           "refId": "A"
         },
         {
-          "expr": "sum by (topic) (rate(messaging_messages_failed_total{job=\"lumo-runtime\"}[5m]))",
+          "expr": "sum by (topic) (rate(messaging_messages_failed_total{job=\"morbeh-runtime\"}[5m]))",
           "legendFormat": "failed {{topic}}",
           "refId": "B"
         },
         {
-          "expr": "sum by (topic) (rate(messaging_messages_retried_total{job=\"lumo-runtime\"}[5m]))",
+          "expr": "sum by (topic) (rate(messaging_messages_retried_total{job=\"morbeh-runtime\"}[5m]))",
           "legendFormat": "retried {{topic}}",
           "refId": "C"
         }
@@ -103,7 +103,7 @@
       "fieldConfig": { "defaults": { "unit": "ms" } },
       "targets": [
         {
-          "expr": "sum by (topic) (rate(messaging_process_duration_ms_sum{job=\"lumo-runtime\"}[5m])) / clamp_min(sum by (topic) (rate(messaging_messages_processed_total{job=\"lumo-runtime\"}[5m])), 1)",
+          "expr": "sum by (topic) (rate(messaging_process_duration_ms_sum{job=\"morbeh-runtime\"}[5m])) / clamp_min(sum by (topic) (rate(messaging_messages_processed_total{job=\"morbeh-runtime\"}[5m])), 1)",
           "legendFormat": "{{topic}}",
           "refId": "A"
         }

@@ -31,10 +31,13 @@ export class SecuritySecretsAdminController {
     return this.security.scheduleCredentialRotation(input);
   }
 
-  async rotateDueCredentials(principal: Principal): Promise<AdminResponse> {
+  async rotateDueCredentials(
+    principal: Principal,
+    input: Parameters<SecurityController["rotateDueCredentials"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:rotate_due_credentials");
     if (denied) return denied;
-    return this.security.rotateDueCredentials();
+    return this.security.rotateDueCredentials(input);
   }
 
   async emergencyRevokeCredentials(
@@ -56,9 +59,9 @@ export class SecuritySecretsAdminController {
   }
 
   /** Console read model — secret explorer (Part 10). Not `present()`-wrapped upstream; wrapped here. */
-  async secretExplorer(principal: Principal): Promise<AdminResponse> {
+  async secretExplorer(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:secret_explorer");
     if (denied) return denied;
-    return { status: 200, body: await this.security.secretExplorer() };
+    return { status: 200, body: await this.security.secretExplorer(tenantId) };
   }
 }

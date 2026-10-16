@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { FeatureBundle } from "../domain/feature-bundle";
@@ -10,8 +10,6 @@ export interface PrismaFeatureRegistryRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 function requireTx(tx: unknown): TransactionClient {
@@ -26,16 +24,16 @@ function requireTx(tx: unknown): TransactionClient {
 export class PrismaFeatureDefinitionRepository implements FeatureDefinitionRepository {
   constructor(private readonly deps: PrismaFeatureRegistryRepositoryDeps) {}
 
-  async save(feature: FeatureDefinition, tx?: unknown): Promise<void> {
+  async save(feature: FeatureDefinition, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = feature.id.toString();
     if (feature.version === 0)
       await client.featureDefinition.create({
-        data: FeatureDefinitionMapper.toRow(feature, this.deps.tenantId),
+        data: FeatureDefinitionMapper.toRow(feature, tenantId),
       });
     else {
       const updated = await client.featureDefinition.updateMany({
-        where: { id, tenantId: this.deps.tenantId, version: feature.version },
+        where: { id, tenantId, version: feature.version },
         data: { ...FeatureDefinitionMapper.toUpdate(feature), version: { increment: 1 } },
       });
       if (updated.count === 0)
@@ -43,30 +41,41 @@ export class PrismaFeatureDefinitionRepository implements FeatureDefinitionRepos
           `FeatureDefinition ${id} was modified concurrently (expected version ${feature.version})`,
         );
     }
-    await this.deps.outbox.write(feature.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      feature.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findByKey(key: string, tx?: unknown): Promise<FeatureDefinition | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.featureDefinition.findFirst({
-      where: { tenantId: this.deps.tenantId, key },
-    });
+  async findByKey(key: string, tenantId: string, tx?: unknown): Promise<FeatureDefinition | null> {
+    const run = (client: TransactionClient) =>
+      client.featureDefinition.findFirst({ where: { tenantId, key } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : FeatureDefinitionMapper.toDomain(row);
   }
 
   async list(
+    tenantId: string,
     filter?: { readonly lifecycle?: string; readonly category?: string },
     tx?: unknown,
   ): Promise<readonly FeatureDefinition[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.featureDefinition.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(filter?.lifecycle !== undefined ? { lifecycle: filter.lifecycle } : {}),
-        ...(filter?.category !== undefined ? { category: filter.category } : {}),
-      },
-      orderBy: { key: "asc" },
-    });
+    const run = (client: TransactionClient) =>
+      client.featureDefinition.findMany({
+        where: {
+          tenantId,
+          ...(filter?.lifecycle !== undefined ? { lifecycle: filter.lifecycle } : {}),
+          ...(filter?.category !== undefined ? { category: filter.category } : {}),
+        },
+        orderBy: { key: "asc" },
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return rows.map((row) => FeatureDefinitionMapper.toDomain(row));
   }
 }
@@ -75,16 +84,16 @@ export class PrismaFeatureDefinitionRepository implements FeatureDefinitionRepos
 export class PrismaFeatureBundleRepository implements FeatureBundleRepository {
   constructor(private readonly deps: PrismaFeatureRegistryRepositoryDeps) {}
 
-  async save(bundle: FeatureBundle, tx?: unknown): Promise<void> {
+  async save(bundle: FeatureBundle, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
     const id = bundle.id.toString();
     if (bundle.version === 0)
       await client.featureBundle.create({
-        data: FeatureBundleMapper.toRow(bundle, this.deps.tenantId),
+        data: FeatureBundleMapper.toRow(bundle, tenantId),
       });
     else {
       const updated = await client.featureBundle.updateMany({
-        where: { id, tenantId: this.deps.tenantId, version: bundle.version },
+        where: { id, tenantId, version: bundle.version },
         data: { ...FeatureBundleMapper.toUpdate(bundle), version: { increment: 1 } },
       });
       if (updated.count === 0)
@@ -92,23 +101,30 @@ export class PrismaFeatureBundleRepository implements FeatureBundleRepository {
           `FeatureBundle ${id} was modified concurrently (expected version ${bundle.version})`,
         );
     }
-    await this.deps.outbox.write(bundle.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      bundle.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findByKey(key: string, tx?: unknown): Promise<FeatureBundle | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.featureBundle.findFirst({
-      where: { tenantId: this.deps.tenantId, key },
-    });
+  async findByKey(key: string, tenantId: string, tx?: unknown): Promise<FeatureBundle | null> {
+    const run = (client: TransactionClient) =>
+      client.featureBundle.findFirst({ where: { tenantId, key } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : FeatureBundleMapper.toDomain(row);
   }
 
-  async list(tx?: unknown): Promise<readonly FeatureBundle[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.featureBundle.findMany({
-      where: { tenantId: this.deps.tenantId },
-      orderBy: { key: "asc" },
-    });
+  async list(tenantId: string, tx?: unknown): Promise<readonly FeatureBundle[]> {
+    const run = (client: TransactionClient) =>
+      client.featureBundle.findMany({ where: { tenantId }, orderBy: { key: "asc" } });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return rows.map((row) => FeatureBundleMapper.toDomain(row));
   }
 }

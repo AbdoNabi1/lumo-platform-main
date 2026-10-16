@@ -20,6 +20,11 @@ export interface CryptoPort {
 }
 
 export interface AuthenticationRequest {
+  /**
+   * Plan 1B-1: the per-call tenant scope (ADR-0014), forwarded by `Authenticate`. Providers whose
+   * accounts are tenant-scoped (HashedPasswordAuthProvider) refuse a request without it.
+   */
+  readonly tenantId?: string;
   readonly method: AuthMethodKind;
   /** The claimed identifier (email/username/subject/assertion id) — provider-specific. */
   readonly identifier: string;

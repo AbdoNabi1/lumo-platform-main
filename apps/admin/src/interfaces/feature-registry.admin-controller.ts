@@ -90,10 +90,13 @@ export class FeatureRegistryAdminController {
     return this.featureRegistry.setMetadata(input);
   }
 
-  async validate(principal: Principal): Promise<AdminResponse> {
+  async validate(
+    principal: Principal,
+    input: Parameters<FeatureRegistryController["validate"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "feature_registry:validate");
     if (denied) return denied;
-    return this.featureRegistry.validate();
+    return this.featureRegistry.validate(input);
   }
 
   async analyzeGraph(
@@ -123,10 +126,13 @@ export class FeatureRegistryAdminController {
     return this.featureRegistry.updateBundle(input);
   }
 
-  async listBundles(principal: Principal): Promise<AdminResponse> {
+  async listBundles(
+    principal: Principal,
+    input: Parameters<FeatureRegistryController["listBundles"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "feature_registry:list_bundles");
     if (denied) return denied;
-    return this.featureRegistry.listBundles();
+    return this.featureRegistry.listBundles(input);
   }
 
   async advance(

@@ -24,8 +24,8 @@ export default async function NewThemePage() {
               {t.themeDetail.back}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.themeCreate.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.themeCreate.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.themeCreate.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.themeCreate.subtitle}</p>
         </div>
 
         <Card>

@@ -1,5 +1,9 @@
 import { PrismaOutboxStore, PrismaUnitOfWork, type TransactionClient } from "@platform/db";
-import type { IntegrationEvent } from "@platform/domain-events";
+import {
+  readEnvelopeTenant,
+  requireEnvelopeTenant,
+  type IntegrationEvent,
+} from "@platform/domain-events";
 import {
   FinanceEventTranslator,
   OrdersPaidConsumer,
@@ -76,9 +80,11 @@ export interface OrderPaidPayload {
  * Chart-of-accounts references Finance's `LedgerPoster` posts commerce events to. Duplicated
  * verbatim from `apps/admin/src/composition.ts`'s private `DEFAULT_FINANCE_POSTING_ACCOUNTS`
  * (the two apps do not import each other), so the ledger this worker writes uses the same accounts
- * the admin surface's Finance screens read.
+ * the admin surface's Finance screens read. Exported (WP-11) for `finance-settlement.consumers.ts`
+ * to reuse directly — that file lives in this same app, so duplicating it a second time would
+ * repeat the cross-app justification above for no reason.
  */
-const DEFAULT_FINANCE_POSTING_ACCOUNTS: PostingAccounts = {
+export const DEFAULT_FINANCE_POSTING_ACCOUNTS: PostingAccounts = {
   revenue: "4000-REVENUE",
   receivable: "1200-ACCOUNTS-RECEIVABLE",
   cogs: "5000-COGS",
@@ -118,9 +124,11 @@ export function pointsForPaidOrder(totalAmountMinor: number): number {
  * which a redelivered `orders.order.paid` posted a SECOND balanced journal entry for the same
  * order (fresh `idGenerator.generate()` id; `Journal.sourceRef` carries only an index, no unique
  * constraint, so the database would not have stopped it either). See
- * {@link FinanceOrdersPaidConsumer.handleAtomic}.
+ * {@link FinanceOrdersPaidConsumer.handleAtomic}. Exported (WP-11) — `finance-settlement.
+ * consumers.ts` needs the identical wrapper for `PaymentsCapturedConsumer`/`RefundsIssuedConsumer`,
+ * which have the exact same non-atomic-append problem `FinanceOrdersPaidConsumer` was built to fix.
  */
-class TxBoundJournalRepository implements JournalRepository {
+export class TxBoundJournalRepository implements JournalRepository {
   private readonly inner: JournalRepository;
   private readonly tx: TransactionClient;
 
@@ -129,16 +137,20 @@ class TxBoundJournalRepository implements JournalRepository {
     this.tx = tx;
   }
 
-  async append(journal: Journal, tx?: unknown): Promise<void> {
-    await this.inner.append(journal, tx ?? this.tx);
+  async append(journal: Journal, tenantId: string, tx?: unknown): Promise<void> {
+    await this.inner.append(journal, tenantId, tx ?? this.tx);
   }
 
-  async findById(id: string, tx?: unknown): Promise<Journal | null> {
-    return this.inner.findById(id, tx ?? this.tx);
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Journal | null> {
+    return this.inner.findById(id, tenantId, tx ?? this.tx);
   }
 
-  async findBySourceRef(sourceRef: string, tx?: unknown): Promise<readonly Journal[]> {
-    return this.inner.findBySourceRef(sourceRef, tx ?? this.tx);
+  async findBySourceRef(
+    sourceRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Journal[]> {
+    return this.inner.findBySourceRef(sourceRef, tenantId, tx ?? this.tx);
   }
 }
 
@@ -179,7 +191,13 @@ export class FinanceOrdersPaidConsumer implements EventHandler<
   readonly eventVersion = ORDERS_ORDER_PAID_VERSION;
   private readonly deps: FinanceConsumerDeps;
 
-  /** `deps.journals` must accept a per-call `tx` (as `PrismaJournalRepository` does) — see above. */
+  /**
+   * `deps.journals` must accept a per-call `tx` (as `PrismaJournalRepository` does) — see above.
+   *
+   * **Tenant (G-64).** The ledger is posted under the tenant on the message's own envelope, never a
+   * deployment default. An envelope with no tenant THROWS to the retry/DLQ pipeline: a paid order
+   * with no ledger entry is missing money, and acking it quietly would hide that.
+   */
   constructor(deps: FinanceConsumerDeps) {
     this.deps = deps;
   }
@@ -200,12 +218,14 @@ export class FinanceOrdersPaidConsumer implements EventHandler<
     event: IntegrationEvent<OrderPaidPayload>,
     tx: TransactionClient,
   ): Promise<void> {
+    const tenantId = requireEnvelopeTenant(event, "FinanceOrdersPaidConsumer");
     const inner = new OrdersPaidConsumer({
       ...this.deps,
       journals: new TxBoundJournalRepository(this.deps.journals, tx),
     });
     await inner.handle({
       ...event,
+      tenantId,
       payload: {
         orderRef: event.payload.orderNumber,
         amountMinor: event.payload.totalAmountMinor,
@@ -256,7 +276,17 @@ export class LoyaltyOrdersPaidConsumer implements EventHandler<OrderPaidPayload>
 
   async handle(event: IntegrationEvent<OrderPaidPayload>): Promise<void> {
     const { customerRef, orderNumber, totalAmountMinor } = event.payload;
-    const account = await this.deps.accounts.findByCustomerRef(customerRef);
+    // G-64: the tenant is the envelope's. Earning points ADDS standing, so a message with no tenant
+    // is REFUSED (nothing read, nothing written, an error logged) — a skipped earn denies.
+    const tenantId = readEnvelopeTenant(event);
+    if (tenantId === null) {
+      this.deps.logger.error("loyalty: orders.order.paid has no tenant on the envelope — refused", {
+        messageId: event.messageId,
+        orderNumber,
+      });
+      return;
+    }
+    const account = await this.deps.accounts.findByCustomerRef(customerRef, tenantId);
     if (account === null) {
       this.deps.logger.debug("loyalty: no account for customer, skipping earn", {
         orderNumber,
@@ -293,6 +323,7 @@ export class LoyaltyOrdersPaidConsumer implements EventHandler<OrderPaidPayload>
       idempotencyKey: `${ORDERS_ORDER_PAID}:earn:${orderNumber}`,
       points,
       ref: orderNumber,
+      tenantId,
     });
     if (!result.ok) throw result.error;
   }
@@ -300,6 +331,7 @@ export class LoyaltyOrdersPaidConsumer implements EventHandler<OrderPaidPayload>
 
 export interface Customer360OrdersPaidConsumerDeps {
   readonly updateProfileProjection: UpdateProfileProjection;
+  readonly logger: Logger;
 }
 
 /**
@@ -332,7 +364,18 @@ export class Customer360OrdersPaidConsumer implements EventHandler<OrderPaidPayl
   }
 
   async handle(event: IntegrationEvent<OrderPaidPayload>): Promise<void> {
+    // G-64: the profile row is scoped by the envelope's tenant. A projection write with no tenant is
+    // REFUSED (nothing written, error logged) — a skipped write denies.
+    const tenantId = readEnvelopeTenant(event);
+    if (tenantId === null) {
+      this.deps.logger.error(
+        "customer360: orders.order.paid has no tenant on the envelope — refused",
+        { messageId: event.messageId },
+      );
+      return;
+    }
     const result = await this.deps.updateProfileProjection.execute({
+      tenantId,
       identifier: { type: "customer_id", value: event.payload.customerRef },
       field: "lastOrderRef",
       value: event.payload.orderNumber,
@@ -346,6 +389,7 @@ export class Customer360OrdersPaidConsumer implements EventHandler<OrderPaidPayl
 
 export interface NotificationsOrdersPaidConsumerDeps {
   readonly createNotification: CreateNotification;
+  readonly logger: Logger;
 }
 
 /**
@@ -381,7 +425,18 @@ export class NotificationsOrdersPaidConsumer implements EventHandler<OrderPaidPa
 
   async handle(event: IntegrationEvent<OrderPaidPayload>): Promise<void> {
     const { orderNumber, customerRef, currency, totalAmountMinor } = event.payload;
+    // G-64: the notification is created under the envelope's tenant. With none it is REFUSED
+    // (nothing created, error logged): mailing a customer under a guessed tenant is worse than not.
+    const tenantId = readEnvelopeTenant(event);
+    if (tenantId === null) {
+      this.deps.logger.error(
+        "notifications: orders.order.paid has no tenant on the envelope — refused",
+        { messageId: event.messageId, orderNumber },
+      );
+      return;
+    }
     const result = await this.deps.createNotification.execute({
+      tenantId,
       idempotencyKey: `${ORDERS_ORDER_PAID}:confirmation:${orderNumber}`,
       sourceRef: `orders:${orderNumber}`,
       recipientRef: customerRef,
@@ -407,8 +462,8 @@ export class NotificationsOrdersPaidConsumer implements EventHandler<OrderPaidPa
  * anywhere in this repo, so a paid order posted no ledger entry, earned no loyalty points, updated
  * no customer profile, and created no confirmation notification.
  *
- * Each slice is composed directly against `core.prisma` + `core.config.TENANT_DEFAULT_ID`
- * (ADR-0008) with its own context-scoped `OutboxWriter` (ADR-0003), exactly like
+ * Each slice is composed directly against `core.prisma`, taking the tenant from each message's
+ * envelope (ADR-0008, G-64) with its own context-scoped `OutboxWriter` (ADR-0003), exactly like
  * `buildPaymentCapturedRuntime` — deliberately bypassing `apps/admin`'s HTTP-controller
  * composition, because a consumer calls the APPLICATION layer only, never a Controller. Every
  * consumer goes through `buildProcessedConsumer`, so all four get the standard reliability
@@ -422,9 +477,10 @@ export function buildOrdersPaidConsumerRuntimes(
   core: RuntimeCore,
   metrics?: MessagingMetrics,
 ): readonly SupervisedConsumer[] {
-  const tenantId = core.config.TENANT_DEFAULT_ID;
   const unitOfWork = new PrismaUnitOfWork(core.prisma);
-  const context = rootEventContext(core.idGenerator, tenantId);
+  // No tenant here on purpose (G-64): every repository merges the PER-CALL tenant into this context
+  // (`{ ...context, tenantId }`), and each consumer takes that tenant from the message envelope.
+  const context = rootEventContext(core.idGenerator);
   const outboxFor = (
     translator: IntegrationEventTranslator,
     producerName: string,
@@ -439,14 +495,12 @@ export function buildOrdersPaidConsumerRuntimes(
 
   const journals = new PrismaJournalRepository({
     prisma: core.prisma,
-    tenantId,
     outbox: outboxFor(new FinanceEventTranslator(), "finance"),
     context,
   });
 
   const loyaltyAccounts = new PrismaLoyaltyAccountRepository({
     prisma: core.prisma,
-    tenantId,
     outbox: outboxFor(new LoyaltyEventTranslator(), "loyalty"),
     context,
     tiers: DEFAULT_LOYALTY_TIERS,
@@ -497,19 +551,18 @@ export function buildOrdersPaidConsumerRuntimes(
           profiles: new PrismaProfileStore({
             prisma: core.prisma,
             idGenerator: core.idGenerator,
-            tenantId,
           }),
           history: new PrismaProfileHistoryStore({
             prisma: core.prisma,
             outbox: customer360Outbox,
             context,
             idGenerator: core.idGenerator,
-            tenantId,
           }),
           unitOfWork,
           idGenerator: core.idGenerator,
           clock: core.clock,
         }),
+        logger: core.logger,
       }),
       "customer360.orders-paid",
     ),
@@ -518,7 +571,6 @@ export function buildOrdersPaidConsumerRuntimes(
         createNotification: new CreateNotification({
           notifications: new PrismaNotificationRepository({
             prisma: core.prisma,
-            tenantId,
             outbox: outboxFor(new NotificationsEventTranslator(), "notifications"),
             context,
           }),
@@ -526,6 +578,7 @@ export function buildOrdersPaidConsumerRuntimes(
           idGenerator: core.idGenerator,
           clock: core.clock,
         }),
+        logger: core.logger,
       }),
       "notifications.orders-paid",
     ),

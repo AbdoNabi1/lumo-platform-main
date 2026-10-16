@@ -7,7 +7,7 @@ import { focusRing, focusRingInset } from "../../lib/focus";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
 
 /**
- * Lumo Command/Search — the one global search interaction, reusable by any Lumo surface.
+ * Morbeh Command/Search — the one global search interaction, reusable by any Morbeh surface.
  *
  * Implemented as a combobox over a listbox (WAI-ARIA pattern): the input keeps DOM focus
  * while ArrowUp/ArrowDown move an `aria-activedescendant` cursor through the results, so

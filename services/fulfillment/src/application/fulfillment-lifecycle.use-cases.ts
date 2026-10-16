@@ -11,6 +11,8 @@ import type { FulfillmentOrderStatusOutput } from "./create-fulfillment.use-case
 import type { NotificationPort, OrdersPort } from "./ports";
 
 export interface FulfillmentOrderIdInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly fulfillmentOrderId: string;
 }
 
@@ -30,13 +32,19 @@ export interface FulfillmentLifecycleDeps {
 export async function notifyBestEffort(
   deps: FulfillmentLifecycleDeps,
   fulfillmentOrder: FulfillmentOrder,
+  tenantId: string,
 ): Promise<void> {
   try {
     await deps.ordersPort?.reportFulfillmentOutcome(
       fulfillmentOrder.orderRef,
       fulfillmentOrder.status.value,
+      tenantId,
     );
-    await deps.notifications?.notify(fulfillmentOrder.orderRef, fulfillmentOrder.status.value);
+    await deps.notifications?.notify(
+      fulfillmentOrder.orderRef,
+      fulfillmentOrder.status.value,
+      tenantId,
+    );
   } catch {
     // Best-effort: a reference-only notification failure never fails the transition's own result.
   }
@@ -61,6 +69,7 @@ export class AdvanceFulfillment implements UseCase<
       async (tx) => {
         const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(
           input.fulfillmentOrderId,
+          input.tenantId,
           tx,
         );
         if (fulfillmentOrder === null) {
@@ -78,8 +87,8 @@ export class AdvanceFulfillment implements UseCase<
           throw error;
         }
 
-        await this.deps.fulfillmentOrders.save(fulfillmentOrder, tx);
-        await notifyBestEffort(this.deps, fulfillmentOrder);
+        await this.deps.fulfillmentOrders.save(fulfillmentOrder, input.tenantId, tx);
+        await notifyBestEffort(this.deps, fulfillmentOrder, input.tenantId);
         return ok({
           fulfillmentOrderId: fulfillmentOrder.id.toString(),
           status: fulfillmentOrder.status.value,

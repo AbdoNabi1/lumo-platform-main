@@ -63,7 +63,12 @@ model PricingRule {
   id        String   @id @db.Uuid
   tenantId  String   @map("tenant_id")
   type      String // percentage | fixed_amount (domain-enforced)
-  value     Float
+  /// WP-11 (F-07): was Float. `value` is read-only after creation (no repeated-increment risk
+  /// like UsageCounter/Credit), but Float still stores a rounding artifact for values a binary
+  /// fraction can't represent exactly (e.g. a 12.5% rule). Decimal(19,4); see migration
+  /// `20260909000000_wp11_float_to_decimal_money_columns` for the rounding rule applied to
+  /// existing rows.
+  value     Decimal  @db.Decimal(19, 4)
   priority  Int
   active    Boolean  @default(true)
   version   Int      @default(0)

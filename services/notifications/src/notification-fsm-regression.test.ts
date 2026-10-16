@@ -37,6 +37,8 @@ import {
  * suite proves each of Task 8's required scenarios using the SAME `PostgresLikeNotificationRepository`
  * fake `send-notification-transaction-boundary.test.ts` (Phase A.15) established.
  */
+const TENANT = "tenant-a";
+
 class PostgresLikeNotificationRepository implements NotificationRepository {
   private readonly rows = new Map<string, NotificationRow>();
   private readonly tenantId = "tenant-local";
@@ -174,7 +176,7 @@ describe("Task 8 — valid transition: queued -> failed is now legal", () => {
     seedQueuedNotification(repo, "notif-valid");
     const useCase = new SendNotification(buildSendDeps(repo, new RecordingEmailProvider(true)));
 
-    const result = await useCase.execute({ notificationId: "notif-valid" });
+    const result = await useCase.execute({ tenantId: TENANT, notificationId: "notif-valid" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("failed");
@@ -270,7 +272,7 @@ describe("Task 8 — retry event: the retry/dead-letter/expire pipeline is now r
 
     const failedResult = await new SendNotification(
       buildSendDeps(repo, new RecordingEmailProvider(true)),
-    ).execute({ notificationId: "notif-retry-pipeline" });
+    ).execute({ tenantId: TENANT, notificationId: "notif-retry-pipeline" });
     expect(failedResult.ok).toBe(true);
     if (failedResult.ok) expect(failedResult.value.status).toBe("failed");
 
@@ -280,7 +282,10 @@ describe("Task 8 — retry event: the retry/dead-letter/expire pipeline is now r
       idGenerator: sequentialIds("evt"),
       clock,
     });
-    const retried = await retryUseCase.execute({ notificationId: "notif-retry-pipeline" });
+    const retried = await retryUseCase.execute({
+      tenantId: TENANT,
+      notificationId: "notif-retry-pipeline",
+    });
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.status).toBe("retrying");
     const afterRetry = await repo.findById("notif-retry-pipeline");
@@ -288,7 +293,7 @@ describe("Task 8 — retry event: the retry/dead-letter/expire pipeline is now r
 
     const sentResult = await new SendNotification(
       buildSendDeps(repo, new RecordingEmailProvider(false)),
-    ).execute({ notificationId: "notif-retry-pipeline" });
+    ).execute({ tenantId: TENANT, notificationId: "notif-retry-pipeline" });
     expect(sentResult.ok).toBe(true);
     if (sentResult.ok) expect(sentResult.value.status).toBe("sent");
   });
@@ -301,13 +306,13 @@ describe("Task 8 — duplicate event: a second failed SendNotification call agai
     const provider = new RecordingEmailProvider(true);
     const useCase = new SendNotification(buildSendDeps(repo, provider));
 
-    const first = await useCase.execute({ notificationId: "notif-dup" });
+    const first = await useCase.execute({ tenantId: TENANT, notificationId: "notif-dup" });
     expect(first.ok).toBe(true);
     if (first.ok) expect(first.value.status).toBe("failed");
 
     // A duplicate delivery of the same failure event (e.g. a redelivered queue message driving a
     // second execute() call before anything else changed the notification's state).
-    const second = await useCase.execute({ notificationId: "notif-dup" });
+    const second = await useCase.execute({ tenantId: TENANT, notificationId: "notif-dup" });
     expect(second.ok).toBe(true);
     if (second.ok) expect(second.value.status).toBe("failed");
 
@@ -326,7 +331,9 @@ describe("Task 8 — concurrent duplicate event: two racers whose provider calls
       const provider = new RecordingEmailProvider(true);
       const useCases = [0, 1, 2].map(() => new SendNotification(buildSendDeps(repo, provider)));
 
-      const results = await Promise.all(useCases.map((uc) => uc.execute({ notificationId: id })));
+      const results = await Promise.all(
+        useCases.map((uc) => uc.execute({ tenantId: TENANT, notificationId: id })),
+      );
 
       for (const result of results) {
         expect(result === undefined).toBe(false);

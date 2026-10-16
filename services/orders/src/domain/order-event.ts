@@ -35,7 +35,9 @@ const TRANSITIONS: Readonly<Record<OrderEventType, readonly OrderEventType[]>> =
   held: ["resumed", "cancelled"],
   resumed: ["awaiting_payment"],
   awaiting_payment: ["payment_requested", "cancelled"],
-  payment_requested: ["payment_received", "payment_failed"],
+  // `cancelled` while the payment is still only REQUESTED (an unpaid cash-on-delivery order, G-126):
+  // nothing was received, so there is nothing to refund. Never reachable once payment_received.
+  payment_requested: ["payment_received", "payment_failed", "cancelled"],
   payment_failed: ["payment_requested", "cancelled"],
   payment_received: ["ready_for_fulfillment"],
   ready_for_fulfillment: ["fulfillment_requested"],

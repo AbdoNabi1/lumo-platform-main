@@ -83,7 +83,8 @@ export function localizationRoutes(admin: WiredAdmin): readonly RouteDefinition[
       idempotent: true,
       summary: "Register a locale",
       schema: { body: createLocaleBody },
-      handle: ({ body, context }) => admin.localization.createLocale(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.localization.createLocale(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -94,7 +95,10 @@ export function localizationRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Create a translation set",
       schema: { body: createTranslationSetBody },
       handle: ({ body, context }) =>
-        admin.localization.createTranslationSet(context.principal, body),
+        admin.localization.createTranslationSet(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -108,6 +112,7 @@ export function localizationRoutes(admin: WiredAdmin): readonly RouteDefinition[
         admin.localization.setTranslation(context.principal, {
           translationSetId: params.translationSetId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -122,6 +127,7 @@ export function localizationRoutes(admin: WiredAdmin): readonly RouteDefinition[
         admin.localization.publishTranslation(context.principal, {
           translationSetId: params.translationSetId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -132,7 +138,13 @@ export function localizationRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "List locales (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.localization.listLocales(context.principal, query), toLocaleDto),
+        mapPage(
+          await admin.localization.listLocales(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toLocaleDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -142,7 +154,10 @@ export function localizationRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Get one locale by id",
       schema: { params: localeIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.localization.getLocale(context.principal, params);
+        const response = await admin.localization.getLocale(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toLocaleDto(response.body as Locale) };
       },
@@ -156,7 +171,10 @@ export function localizationRoutes(admin: WiredAdmin): readonly RouteDefinition[
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
         mapPage(
-          await admin.localization.listTranslationSets(context.principal, query),
+          await admin.localization.listTranslationSets(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
           toTranslationSetDto,
         ),
     }),
@@ -168,7 +186,10 @@ export function localizationRoutes(admin: WiredAdmin): readonly RouteDefinition[
       summary: "Get one translation set by id",
       schema: { params: translationSetIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.localization.getTranslationSet(context.principal, params);
+        const response = await admin.localization.getTranslationSet(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toTranslationSetDto(response.body as TranslationSet) };
       },

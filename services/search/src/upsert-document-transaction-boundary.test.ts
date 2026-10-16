@@ -128,7 +128,10 @@ async function seedIndex(
   unitOfWork: TransactionalUnitOfWork<unknown>,
 ): Promise<string> {
   const createDeps = buildDeps(repo, new RecordingIndexProvider(), unitOfWork);
-  const created = await new CreateIndex(createDeps).execute({ name: "products" });
+  const created = await new CreateIndex(createDeps).execute({
+    name: "products",
+    tenantId: "tenant-local",
+  });
   if (!created.ok) throw new Error("seed failed");
   return created.value.indexId;
 }
@@ -147,6 +150,7 @@ describe("Task 1 — exploit proof: IndexProviderPort.upsert() call happens whil
       productRef: "product-1",
       title: "Running shoes",
       categoryRefs: ["footwear"],
+      tenantId: "tenant-local",
     });
 
     expect(result.ok).toBe(true);
@@ -175,6 +179,7 @@ describe("Task 2 — provider failure recovery on upsert", () => {
         productRef: "product-1",
         title: "Running shoes",
         categoryRefs: [],
+        tenantId: "tenant-local",
       }),
     ).rejects.toThrow(/simulated index provider upsert failure/);
 
@@ -194,7 +199,13 @@ describe("Task 2 — provider failure recovery on upsert", () => {
     const failingProvider = new RecordingIndexProvider(uow, true);
     const failingLifecycle = new UpsertDocument(buildDeps(repo, failingProvider, uow));
     await expect(
-      failingLifecycle.execute({ indexId, productRef: "product-1", title: "t", categoryRefs: [] }),
+      failingLifecycle.execute({
+        indexId,
+        productRef: "product-1",
+        title: "t",
+        categoryRefs: [],
+        tenantId: "tenant-local",
+      }),
     ).rejects.toThrow();
 
     const workingProvider = new RecordingIndexProvider(uow, false);
@@ -204,6 +215,7 @@ describe("Task 2 — provider failure recovery on upsert", () => {
       productRef: "product-1",
       title: "t",
       categoryRefs: [],
+      tenantId: "tenant-local",
     });
 
     expect(retried.ok).toBe(true);
@@ -227,6 +239,7 @@ describe("Task 3 — concurrent upserts never lose updates or leak ConcurrencyEr
             productRef,
             title: `title-${productRef}`,
             categoryRefs: [],
+            tenantId: "tenant-local",
           }),
         ),
       );

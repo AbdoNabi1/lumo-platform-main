@@ -1,7 +1,14 @@
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
-import type { TenantRepository, WorkspaceRepository } from "../domain/repositories";
+import type {
+  ShopDomainRepository,
+  StoreSettingsRepository,
+  TenantRepository,
+  WorkspaceRepository,
+} from "../domain/repositories";
+import type { ShopDomain } from "../domain/shop-domain";
+import type { StoreSettings } from "../domain/store-settings";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
 
@@ -93,5 +100,43 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
 
   async list(page: CursorPage): Promise<Paginated<Workspace>> {
     return paginate([...this.store.values()], page);
+  }
+}
+
+export class InMemoryShopDomainRepository implements ShopDomainRepository {
+  private readonly store = new Map<string, ShopDomain>();
+
+  async save(domain: ShopDomain): Promise<void> {
+    this.store.set(domain.id.toString(), domain);
+  }
+
+  async findById(id: string): Promise<ShopDomain | null> {
+    return this.store.get(id) ?? null;
+  }
+
+  async findByHostname(hostname: string): Promise<ShopDomain | null> {
+    for (const domain of this.store.values()) {
+      if (domain.hostname.value === hostname) return domain;
+    }
+    return null;
+  }
+
+  async listByShop(shopRef: string): Promise<readonly ShopDomain[]> {
+    return [...this.store.values()]
+      .filter((domain) => domain.shopRef === shopRef)
+      .sort((a, b) => a.hostname.value.localeCompare(b.hostname.value));
+  }
+}
+
+export class InMemoryStoreSettingsRepository implements StoreSettingsRepository {
+  private current: StoreSettings | null = null;
+
+  get(): Promise<StoreSettings | null> {
+    return Promise.resolve(this.current);
+  }
+
+  save(settings: StoreSettings): Promise<void> {
+    this.current = settings;
+    return Promise.resolve();
   }
 }

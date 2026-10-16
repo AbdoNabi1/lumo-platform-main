@@ -6,6 +6,8 @@ import { type DomainError, NotFoundError } from "@platform/utils";
 import type { PriceListRepository } from "../domain/price-list-repository";
 
 export interface ActivatePriceListInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly priceListId: string;
 }
 
@@ -34,7 +36,7 @@ export class ActivatePriceList implements UseCase<
     input: ActivatePriceListInput,
   ): Promise<Result<ActivatePriceListOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ActivatePriceListOutput, DomainError>>(async (tx) => {
-      const priceList = await this.deps.priceLists.findById(input.priceListId, tx);
+      const priceList = await this.deps.priceLists.findById(input.priceListId, input.tenantId, tx);
       if (priceList === null) {
         return err(new NotFoundError("Price list not found"));
       }
@@ -46,7 +48,7 @@ export class ActivatePriceList implements UseCase<
         throw error;
       }
 
-      await this.deps.priceLists.save(priceList, tx);
+      await this.deps.priceLists.save(priceList, input.tenantId, tx);
       return ok({ id: priceList.id.toString() });
     });
   }

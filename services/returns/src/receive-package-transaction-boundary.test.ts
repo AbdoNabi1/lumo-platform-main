@@ -193,6 +193,7 @@ describe("Task 5/8 — GREEN: no separate dedup store means no process-restart-l
     const shipping1 = new RecordingShippingAdapter();
     const deps1 = buildDeps(repo, uow, ids, shipping1);
     const first = await new ReceivePackage(deps1).execute({
+      tenantId: "tenant-a",
       returnId: "ret-restart",
       source: "warehouse-1",
       callbackId: "cb-1",
@@ -207,6 +208,7 @@ describe("Task 5/8 — GREEN: no separate dedup store means no process-restart-l
     const shipping2 = new RecordingShippingAdapter();
     const deps2 = buildDeps(repo, uow, ids, shipping2);
     const second = await new ReceivePackage(deps2).execute({
+      tenantId: "tenant-a",
       returnId: "ret-restart",
       source: "warehouse-1",
       callbackId: "cb-1",
@@ -234,6 +236,7 @@ describe("Task 5 — crash recovery: a rolled-back attempt never permanently sup
 
     await expect(
       new ReceivePackage(deps).execute({
+        tenantId: "tenant-a",
         returnId: "ret-crash",
         source: "warehouse-1",
         callbackId: "cb-2",
@@ -244,6 +247,7 @@ describe("Task 5 — crash recovery: a rolled-back attempt never permanently sup
     expect(afterCrash?.status.value).toBe("rma_generated"); // rolled back, never transitioned
 
     const retry = await new ReceivePackage(deps).execute({
+      tenantId: "tenant-a",
       returnId: "ret-crash",
       source: "warehouse-1",
       callbackId: "cb-2",
@@ -271,6 +275,7 @@ describe("Task 5 — Scenario D/E/F: concurrent identical ReceivePackage calls",
       const outcomes = await Promise.all(
         Array.from({ length: n }, () =>
           useCase.execute({
+            tenantId: "tenant-a",
             returnId: `ret-race-${n}`,
             source: "warehouse-1",
             callbackId: "cb-race",
@@ -302,6 +307,7 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     const deps = buildDeps(repo, uow, ids, shipping);
 
     const result = await new ReceivePackage(deps).execute({
+      tenantId: "tenant-a",
       returnId: "ret-basic",
       source: "warehouse-1",
       callbackId: "cb-basic",
@@ -325,12 +331,14 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     const useCase = new ReceivePackage(deps);
 
     const first = await useCase.execute({
+      tenantId: "tenant-a",
       returnId: "ret-resume",
       source: "warehouse-1",
       callbackId: "cb-resume",
     });
     expect(first.ok).toBe(true);
     const second = await useCase.execute({
+      tenantId: "tenant-a",
       returnId: "ret-resume",
       source: "warehouse-1",
       callbackId: "cb-resume",
@@ -350,6 +358,7 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     const useCase = new ReceivePackage(deps);
 
     const first = await useCase.execute({
+      tenantId: "tenant-a",
       returnId: "ret-diffsrc",
       source: "warehouse-1",
       callbackId: "cb-shared",
@@ -361,6 +370,7 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     // self-loop from package_received, so it must be rejected, not silently accepted OR
     // incorrectly reported as a duplicate of the first.
     const second = await useCase.execute({
+      tenantId: "tenant-a",
       returnId: "ret-diffsrc",
       source: "warehouse-2",
       callbackId: "cb-shared",
@@ -377,6 +387,7 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     const deps = buildDeps(repo, uow, ids, shipping);
 
     const result = await new ReceivePackage(deps).execute({
+      tenantId: "tenant-a",
       returnId: "does-not-exist",
       source: "warehouse-1",
       callbackId: "cb-x",
@@ -394,6 +405,7 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     const deps = buildDeps(repo, uow, ids, { verifyReturnShipment: async () => false });
 
     const result = await new ReceivePackage(deps).execute({
+      tenantId: "tenant-a",
       returnId: "ret-unverified",
       source: "warehouse-1",
       callbackId: "cb-unverified",

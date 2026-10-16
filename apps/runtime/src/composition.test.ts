@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
 import type { Database } from "@platform/db";
 import type { PaymentController } from "@platform/payments";
 import { loadRuntimeConfig } from "./config";
@@ -11,15 +12,21 @@ import {
 } from "./composition";
 import { buildJobs, startJobLoop } from "./scheduler";
 import {
+  assertProductionDunningNotificationsConfigured,
   assertProductionIntegrationPortsConfigured,
   assertProductionLicensingBillingConfigured,
   assertProductionObjectStorageConfigured,
   assertProductionPaymentProviderConfigured,
+  assertProductionSignupEmailConfigured,
   startApi,
 } from "./api";
 import { InMemoryObjectStorage, StorageServiceObjectStorage } from "@platform/media";
 import { TotpMfaProvider } from "@platform/security";
+import { isPaymobRegion, PaymobPaymentProvider } from "@platform/psp-paymob";
 import { StripePaymentProvider } from "@platform/psp-stripe";
+import { InMemoryPaymentsAdapter, PlatformBillingPaymentsAdapter } from "@platform/licensing";
+import type { PaymentProvider } from "@platform/contracts";
+import type { PaymentCredentialVault, ProviderRegistration } from "@platform/payments";
 import type { Logger } from "@platform/utils";
 
 const validEnv = {
@@ -27,11 +34,11 @@ const validEnv = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
   KAFKA_BROKERS: "localhost:19092",
-  AUTH_ISSUER_URL: "https://auth.lumo.local",
-  AUTH_JWKS_URL: "https://auth.lumo.local/.well-known/jwks.json",
-  KETO_WRITE_URL: "https://keto.lumo.local:4467",
-  KRATOS_PUBLIC_URL: "https://kratos.lumo.local:4433",
-  KRATOS_ADMIN_URL: "https://kratos.lumo.local:4434",
+  AUTH_ISSUER_URL: "https://auth.morbeh.local",
+  AUTH_JWKS_URL: "https://auth.morbeh.local/.well-known/jwks.json",
+  KETO_WRITE_URL: "https://keto.morbeh.local:4467",
+  KRATOS_PUBLIC_URL: "https://kratos.morbeh.local:4433",
+  KRATOS_ADMIN_URL: "https://kratos.morbeh.local:4434",
 } as NodeJS.ProcessEnv;
 
 describe("runtime configuration (the ONLY process.env reader)", () => {
@@ -109,10 +116,12 @@ describe("composition root (lazy clients — graph builds without any Docker run
     ).toThrow(/KETO_READ_URL/);
   });
 
-  it("FAILS CLOSED on TENANT_MODE=multi — repositories are pinned to one tenant at construction (C2-6)", () => {
+  it("no longer refuses TENANT_MODE=multi at composition — the API and worker each guard their own path (T10.4)", () => {
+    // The blanket refusal moved: createAdminHttpApi asserts per-request resolution, startWorker
+    // refuses until G-64. See tenant-mode-guard.test.ts for both. Composition itself just builds.
     expect(() =>
       buildRuntimeCore(loadRuntimeConfig({ ...validEnv, TENANT_MODE: "multi" })),
-    ).toThrow(/TENANT_MODE=multi/);
+    ).not.toThrow();
   });
 
   it("composes the production payment-captured consumer graph (worker slice)", () => {
@@ -191,61 +200,294 @@ describe("api entrypoint", () => {
     const prodConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
-      KETO_READ_URL: "https://keto.lumo.local",
+      KETO_READ_URL: "https://keto.morbeh.local",
     });
-    // The remaining 4 guards (no Stripe/Licensing/S3/tax-shipping adapters wired) still reject —
-    // this proves specifically that MFA is no longer among the reasons, not that boot succeeds.
+    // The remaining 5 guards (no Stripe/Licensing/S3/tax-shipping/SignupEmail adapters wired)
+    // still reject — this proves specifically that MFA is no longer among the reasons, not that
+    // boot succeeds.
     await expect(startApi(prodConfig, core)).rejects.not.toThrow(/MfaProviderResolver/);
   });
 
   it("G0-4 (launch-readiness review): a fresh non-local boot names EVERY failed guard in one error, not just the first", async () => {
     // The default local composition core has no production PSP/Licensing/ObjectStorage/
-    // integration-port adapters wired at all — every one of the 4 still-open guards should fail
-    // together. MFA (C2-4) is deliberately absent from this list — closed above.
+    // integration-port/SignupEmail adapters wired at all, and dunning notifications have no real
+    // delivery path anywhere (T14.5, unconditional) — every one of the 6 still-open guards should
+    // fail together. MFA (C2-4) is deliberately absent from this list — closed above.
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     const prodConfig = loadRuntimeConfig({
       ...validEnv,
       APP_ENV: "production",
-      KETO_READ_URL: "https://keto.lumo.local",
+      KETO_READ_URL: "https://keto.morbeh.local",
     });
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/4 production guards failed/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/6 production guards failed/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/PaymentProvider/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/Licensing/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/object-storage/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/still offline in-memory/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/SignupEmailPort/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/dunning is enabled/);
   });
 
+  const noPayments = {
+    paymentProvider: undefined,
+    providerRegistrations: [] as readonly ProviderRegistration[],
+    paymentCredentialVault: undefined,
+  };
+  const realStripe = { createIntent: vi.fn() } as unknown as PaymentProvider;
+  const realVault = { backing: "real" } as unknown as PaymentCredentialVault;
+  const stubVault = { backing: "stub" } as unknown as PaymentCredentialVault;
+  /** Any registered provider that needs per-merchant credentials — the guard reasons about the declared capability, not a name. */
+  const credentialed = (
+    key: string,
+    backing: ProviderRegistration["backing"] = "real",
+  ): ProviderRegistration => ({
+    key,
+    capabilities: {
+      settlesAtPayTime: false,
+      deliversWebhooks: true,
+      requiresMerchantCredentials: true,
+      chargesOffSession: false,
+    },
+    backing,
+    credentialFields: ["apiKey"],
+    create: () => realStripe,
+  });
+  const paymobRegistrations = [credentialed("paymob")];
+
   it("FAILS CLOSED outside local without a production PaymentProvider (V-1) — same shape as the MFA guard, checked independently of it", () => {
-    expect(() => assertProductionPaymentProviderConfigured("production", undefined)).toThrow(
+    expect(() => assertProductionPaymentProviderConfigured("production", noPayments)).toThrow(
       /PaymentProvider/,
     );
-    expect(() => assertProductionPaymentProviderConfigured("production", undefined)).toThrow(
+    expect(() => assertProductionPaymentProviderConfigured("production", noPayments)).toThrow(
       /payments\/webhook/,
     );
   });
 
   it("stays permissive in local (matches the MFA guard's dev-mode behavior)", () => {
-    expect(() => assertProductionPaymentProviderConfigured("local", undefined)).not.toThrow();
+    expect(() => assertProductionPaymentProviderConfigured("local", noPayments)).not.toThrow();
   });
 
   it("stays permissive outside local once a real PaymentProvider is resolved (C2-2)", () => {
-    const fakeProvider = { createIntent: vi.fn() } as unknown as Parameters<
-      typeof assertProductionPaymentProviderConfigured
-    >[1];
     expect(() =>
-      assertProductionPaymentProviderConfigured("production", fakeProvider),
+      assertProductionPaymentProviderConfigured("production", {
+        ...noPayments,
+        paymentProvider: realStripe,
+      }),
     ).not.toThrow();
   });
 
-  it("FAILS CLOSED outside local without a production Licensing billing adapter (M2-3) — same shape as the PaymentProvider guard, checked independently of it", () => {
-    expect(() => assertProductionLicensingBillingConfigured("production")).toThrow(/Licensing/);
-    expect(() => assertProductionLicensingBillingConfigured("production")).toThrow(
-      /payments\/financeLedger/,
+  it("WP-13: FAILS CLOSED outside local when a provider that needs merchant credentials is composed without a REAL credential vault — absent or stub", () => {
+    for (const vault of [undefined, stubVault]) {
+      expect(() =>
+        assertProductionPaymentProviderConfigured("production", {
+          paymentProvider: realStripe,
+          providerRegistrations: paymobRegistrations,
+          paymentCredentialVault: vault,
+        }),
+      ).toThrow(/credential vault/);
+    }
+  });
+
+  it("the guard scales with the registry: EVERY registered provider is checked, and each failure names its provider", () => {
+    const failure = () =>
+      assertProductionPaymentProviderConfigured("production", {
+        paymentProvider: realStripe,
+        providerRegistrations: [
+          credentialed("alpha"),
+          credentialed("bravo", "stub"),
+          credentialed("charlie"),
+        ],
+        paymentCredentialVault: stubVault,
+      });
+
+    // A stub-backed registration is refused by name…
+    expect(failure).toThrow(/"bravo"/);
+    // …and so is every credentialed one lacking a real vault, not just the first.
+    expect(failure).toThrow(/"alpha"/);
+    expect(failure).toThrow(/"charlie"/);
+  });
+
+  it("a registration backed by a stub is refused outside local, whatever it is called", () => {
+    expect(() =>
+      assertProductionPaymentProviderConfigured("production", {
+        paymentProvider: realStripe,
+        providerRegistrations: [credentialed("some-new-psp", "stub")],
+        paymentCredentialVault: realVault,
+      }),
+    ).toThrow(/"some-new-psp"/);
+  });
+
+  it("WP-13: names BOTH failures at once when Stripe and the Paymob vault are each missing (same aggregated report)", () => {
+    const failure = () =>
+      assertProductionPaymentProviderConfigured("production", {
+        ...noPayments,
+        providerRegistrations: paymobRegistrations,
+      });
+    expect(failure).toThrow(/PaymentProvider/);
+    expect(failure).toThrow(/credential vault/);
+  });
+
+  it("WP-13: permits Paymob outside local only with a real vault; Paymob absent needs nothing extra", () => {
+    expect(() =>
+      assertProductionPaymentProviderConfigured("production", {
+        paymentProvider: realStripe,
+        providerRegistrations: paymobRegistrations,
+        paymentCredentialVault: realVault,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertProductionPaymentProviderConfigured("production", {
+        ...noPayments,
+        paymentProvider: realStripe,
+        paymentCredentialVault: stubVault, // irrelevant while Paymob is not composed
+      }),
+    ).not.toThrow();
+  });
+
+  it("WP-13: a merchant cannot enable a method nothing real backs — the settings use case refuses, so no stub is ever reachable", () => {
+    // Proven end to end in apps/admin/src/http/merchant-payments.e2e.test.ts and
+    // services/payments (UpdateMerchantPaymentSettings); here we pin the composition side: without
+    // PAYMENT_CREDENTIALS_KEK_REF there is no factory at all, so nothing can back Paymob.
+    const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(core.providerRegistrations).toEqual([]);
+    expect(core.paymentCredentialVault).toBeUndefined();
+  });
+
+  it("WP-13: with PAYMENT_CREDENTIALS_KEK_REF the factory and a REAL vault are composed together, and the factory builds a per-merchant PaymobPaymentProvider", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: "k".repeat(40) }),
+    );
+    expect(core.paymentCredentialVault?.backing).toBe("real");
+    const merchant = {
+      region: "egy",
+      integrationId: 1,
+      secretKey: "sk",
+      hmacSecret: "hs",
+      publicKey: "pk",
+    };
+    const registration = core.providerRegistrations.find((r) => r.key === "paymob");
+    expect(registration?.backing).toBe("real");
+    const context = {
+      config: { region: merchant.region, integrationId: merchant.integrationId },
+      credentials: {
+        secretKey: merchant.secretKey,
+        hmacSecret: merchant.hmacSecret,
+        publicKey: merchant.publicKey,
+      },
+    };
+    const a = registration?.create(context);
+    const b = registration?.create(context);
+    expect(a).toBeInstanceOf(PaymobPaymentProvider);
+    expect(a).not.toBe(b); // one provider per resolution — never a shared instance
+    expect(() =>
+      registration?.create({ ...context, config: { ...context.config, region: "atlantis" } }),
+    ).toThrow(/region/);
+  });
+
+  it("WP-13: the Paymob registration accepts exactly the regions the adapter supports (the payments domain no longer carries a list)", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: "k".repeat(40) }),
+    );
+    const registration = core.providerRegistrations.find((r) => r.key === "paymob");
+    expect(registration?.parseConfig).toBeDefined();
+    for (const region of ["egy", "ksa", "uae", "oman", "atlantis", "", "__proto__"]) {
+      expect(registration?.parseConfig?.({ region, integrationId: 1 }).ok).toBe(
+        isPaymobRegion(region),
+      );
+    }
+    // Declared capabilities: Paymob settles when the customer pays, calls back, needs the
+    // merchant's own credentials, and can charge a saved token off-session (the MOTO integration id
+    // that needs is per-merchant config, optional; without it a charge is refused before any request).
+    expect(registration?.capabilities).toEqual({
+      settlesAtPayTime: true,
+      deliversWebhooks: true,
+      requiresMerchantCredentials: true,
+      chargesOffSession: true,
+    });
+    expect(registration?.credentialFields).toEqual(["secretKey", "hmacSecret", "publicKey"]);
+  });
+
+  // WP-14: the guard used to assert "always missing" (no real adapter existed). A real
+  // `PlatformBillingPaymentsAdapter` now can exist, so — exactly like
+  // `assertProductionPaymentProviderConfigured` — "configured" must be told apart from "not".
+  const noBilling = { platformBillingPayments: undefined };
+  const realBilling = {
+    platformBillingPayments: new PlatformBillingPaymentsAdapter({ provider: realStripe }),
+  };
+  const stubBilling = { platformBillingPayments: new InMemoryPaymentsAdapter() };
+
+  it("FAILS CLOSED outside local without a platform billing PSP (M2-3 / WP-14)", () => {
+    expect(() => assertProductionLicensingBillingConfigured("production", noBilling)).toThrow(
+      /Licensing/,
+    );
+    expect(() => assertProductionLicensingBillingConfigured("production", noBilling)).toThrow(
+      /PLATFORM_BILLING_STRIPE_SECRET_KEY/,
     );
   });
 
+  it("FAILS CLOSED outside local when the payments adapter is the always-collects stub — a stub that 'collects' must be impossible", () => {
+    expect(() => assertProductionLicensingBillingConfigured("production", stubBilling)).toThrow(
+      /not a real/,
+    );
+    expect(() => assertProductionLicensingBillingConfigured("staging", stubBilling)).toThrow(
+      /Licensing/,
+    );
+  });
+
+  it("passes outside local once the real platform billing adapter is composed", () => {
+    expect(() =>
+      assertProductionLicensingBillingConfigured("production", realBilling),
+    ).not.toThrow();
+  });
+
   it("stays permissive in local (matches the PaymentProvider guard's dev-mode behavior)", () => {
-    expect(() => assertProductionLicensingBillingConfigured("local")).not.toThrow();
+    expect(() => assertProductionLicensingBillingConfigured("local", noBilling)).not.toThrow();
+    expect(() => assertProductionLicensingBillingConfigured("local", stubBilling)).not.toThrow();
+  });
+
+  it("composes NO platform billing adapter without dedicated billing credentials — the store's Stripe key never doubles as Morbeh's", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        STRIPE_SECRET_KEY: "sk_test_store",
+        STRIPE_WEBHOOK_SECRET: "whsec_store",
+      }),
+    );
+    expect(core.paymentProvider).toBeInstanceOf(StripePaymentProvider);
+    expect(core.platformBillingPayments).toBeUndefined();
+  });
+
+  it("composes the real platform billing adapter once dedicated billing credentials are configured", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        PLATFORM_BILLING_STRIPE_SECRET_KEY: "sk_test_billing",
+        PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET: "whsec_billing",
+      }),
+    );
+    expect(core.platformBillingPayments).toBeInstanceOf(PlatformBillingPaymentsAdapter);
+    expect(core.platformBillingPayments?.backing).toBe("real");
+  });
+
+  it("refuses to compose billing on the store's webhook endpoint secret — billing events must not reach the store handler", () => {
+    expect(() =>
+      buildRuntimeCore(
+        loadRuntimeConfig({
+          ...validEnv,
+          STRIPE_SECRET_KEY: "sk_test_store",
+          STRIPE_WEBHOOK_SECRET: "whsec_same",
+          PLATFORM_BILLING_STRIPE_SECRET_KEY: "sk_test_billing",
+          PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET: "whsec_same",
+        }),
+      ),
+    ).toThrow(/PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET/);
+  });
+
+  it("a half-configured billing PSP composes nothing (the guard then names what is missing)", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PLATFORM_BILLING_STRIPE_SECRET_KEY: "sk_test_billing" }),
+    );
+    expect(core.platformBillingPayments).toBeUndefined();
   });
 
   it("FAILS CLOSED outside local while the resolved object-storage adapter is still the in-memory stub (M2-2)", () => {
@@ -277,22 +519,54 @@ describe("api entrypoint", () => {
     ).not.toThrow();
   });
 
-  it("FAILS CLOSED outside local while any integration port is still an offline stub (Phase 3, C-03) — names every stubbed port in one error, matching the real production literal (api.ts's `integrationPorts`) which lists exactly these 4 after Tasks 9-13 wired real adapters over 8 of the original 12 and Task 17a wired the 9th, orderCreation (C-2)", () => {
+  it("G-72: FAILS CLOSED outside local while the resolved SignupEmailPort is still the logging adapter", () => {
+    expect(() =>
+      assertProductionSignupEmailConfigured("production", new LoggingSignupEmailAdapter()),
+    ).toThrow(/SignupEmailPort/);
+  });
+
+  it("G-72: stays permissive in local while still the logging adapter", () => {
+    expect(() =>
+      assertProductionSignupEmailConfigured("local", new LoggingSignupEmailAdapter()),
+    ).not.toThrow();
+  });
+
+  it("G-72: does NOT throw outside local once a non-logging adapter is resolved", () => {
+    const realish: SignupEmailPort = {
+      sendCompleteAccountEmail: async () => undefined,
+      sendAlreadyRegisteredEmail: async () => undefined,
+    };
+    expect(() => assertProductionSignupEmailConfigured("production", realish)).not.toThrow();
+  });
+
+  it("G-72: buildRuntimeCore always resolves the logging adapter (no real provider is wired anywhere — D4, out of scope)", () => {
+    const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(core.signupEmail).toBeInstanceOf(LoggingSignupEmailAdapter);
+  });
+
+  it("T14.5: dunning is enabled + no real notification delivery path ⇒ FAILS CLOSED outside local", () => {
+    expect(() => assertProductionDunningNotificationsConfigured("production")).toThrow(
+      /dunning is enabled/,
+    );
+  });
+
+  it("T14.5: stays permissive in local (matches the other guards' dev-mode behavior)", () => {
+    expect(() => assertProductionDunningNotificationsConfigured("local")).not.toThrow();
+  });
+
+  it("FAILS CLOSED outside local while any integration port is still an offline stub (Phase 3, C-03) — names every stubbed port in one error, matching the real production literal (api.ts's `integrationPorts`) which lists exactly these 2 after Tasks 9-13 wired real adapters over 8 of the original 12, Task 17a wired the 9th, orderCreation (C-2), and Plan 3C wired the last two checkout ports, taxCalculation and shippingCalculation", () => {
     const allStubbed = {
       shippingPort: undefined,
-      taxCalculation: undefined,
-      shippingCalculation: undefined,
       financePort: undefined,
     };
     expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /shippingPort, taxCalculation, shippingCalculation, financePort/,
+      /shippingPort, financePort/,
     );
-    // taxCalculation / shippingCalculation: genuinely-missing capabilities.
-    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /taxCalculation needs a tax provider integration/,
-    );
-    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /shippingCalculation needs a shipping rate source/,
+    // Plan 3C: taxCalculation / shippingCalculation are real adapters wireAdmin wires by default
+    // (the shop's own tax settings and shipping zones), so — like orderCreation below — they are in
+    // neither the literal nor the error text: re-listing them would re-stub ports that have a real adapter.
+    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).not.toThrow(
+      /taxCalculation|shippingCalculation/,
     );
     // shippingPort: the third genuinely-missing capability, found during Phase 3 implementation
     // (not one of the two the original plan named) — nothing computes package weight anywhere.
@@ -304,20 +578,22 @@ describe("api entrypoint", () => {
     expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
       /financePort is different in kind/,
     );
-    // This sentence has now been wrong in BOTH directions, so it is pinned in both:
+    // This sentence has been wrong in multiple directions over time, so its CURRENT (correct)
+    // state is pinned directly rather than by another round of "must not say X":
     //  - Before 1b9c639 it claimed Finance "already receives" these postings via
     //    PaymentsCapturedConsumer/RefundsIssuedConsumer — false, neither was registered.
-    //  - Between Task 17b and this fix it claimed worker.ts "registers exactly one consumer" and
+    //  - Between Task 17b and that fix it claimed worker.ts "registers exactly one consumer" and
     //    "nothing for Finance" — false in the other direction, since Task 17b registered Finance's
     //    OrdersPaidConsumer over orders.order.paid (buildOrdersPaidConsumerRuntimes).
-    // The message must state the registered half and the still-unregistered half distinctly.
+    //  - WP-11 (F-11) registered the remaining two (buildFinanceSettlementConsumerRuntimes), so
+    //    the message now states all three are registered — the gap it used to describe is closed.
     expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /Finance's OrdersPaidConsumer IS registered with the Kafka consumer fleet/,
+      /OrdersPaidConsumer, PaymentsCapturedConsumer, and RefundsIssuedConsumer are ALL registered/,
     );
-    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).toThrow(
-      /PaymentsCapturedConsumer and RefundsIssuedConsumer[\s\S]*nothing instantiates them/,
+    // ...and must NOT still claim either consumer is unregistered.
+    expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).not.toThrow(
+      /nothing instantiates them/,
     );
-    // ...and must NOT still claim the worker registers only one consumer.
     expect(() => assertProductionIntegrationPortsConfigured("production", allStubbed)).not.toThrow(
       /registers exactly one consumer/,
     );
@@ -367,7 +643,8 @@ describe("PrismaPaymentVerificationAdapter (M2-7 — now also wired into the con
   }
 
   function fakePrisma(rows: readonly FakeRow[]): Database {
-    return {
+    const client = {
+      $executeRaw: async () => 0,
       paymentIntent: {
         findFirst: async ({ where }: { where: FakeRow }) => {
           const row = rows.find(
@@ -380,8 +657,13 @@ describe("PrismaPaymentVerificationAdapter (M2-7 — now also wired into the con
           return row ?? null;
         },
       },
-      // Deliberately partial fixture (only `paymentIntent.findFirst`) — needs the `unknown` hop
-      // since it has no structural overlap with the full `Database` (PrismaClient) type.
+      // Deliberately partial fixture (`paymentIntent.findFirst` + the transaction hooks
+      // `runReadScoped` needs) — needs the `unknown` hop since it has no structural overlap with
+      // the full `Database` (PrismaClient) type.
+    };
+    return {
+      ...client,
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(client),
     } as unknown as Database;
   }
 
@@ -389,42 +671,52 @@ describe("PrismaPaymentVerificationAdapter (M2-7 — now also wired into the con
     const prisma = fakePrisma([
       { id: "pay-1", orderRef: "order-1", tenantId: "tenant-local", status: "captured" },
     ]);
-    const adapter = new PrismaPaymentVerificationAdapter(prisma, "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(true);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(true);
+  });
+
+  it("one adapter instance serves two tenants: tenant B cannot verify tenant A's captured payment (ADR-0014)", async () => {
+    const prisma = fakePrisma([
+      { id: "pay-1", orderRef: "order-1", tenantId: "tenant-a", status: "captured" },
+    ]);
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
+
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-a")).toBe(true);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-b")).toBe(false);
   });
 
   it("rejects when no matching captured payment exists — the invalid case", async () => {
-    const adapter = new PrismaPaymentVerificationAdapter(fakePrisma([]), "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(fakePrisma([]));
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(false);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(false);
   });
 
   it("rejects a payment id captured for a different order (replayed/mismatched event guard)", async () => {
     const prisma = fakePrisma([
       { id: "pay-1", orderRef: "order-2", tenantId: "tenant-local", status: "captured" },
     ]);
-    const adapter = new PrismaPaymentVerificationAdapter(prisma, "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(false);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(false);
   });
 
   it("rejects a payment scoped to a different tenant (tenant-isolation guard)", async () => {
     const prisma = fakePrisma([
       { id: "pay-1", orderRef: "order-1", tenantId: "other-tenant", status: "captured" },
     ]);
-    const adapter = new PrismaPaymentVerificationAdapter(prisma, "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(false);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(false);
   });
 
   it("rejects a matching row that is not yet captured (e.g. still requires_payment)", async () => {
     const prisma = fakePrisma([
       { id: "pay-1", orderRef: "order-1", tenantId: "tenant-local", status: "requires_payment" },
     ]);
-    const adapter = new PrismaPaymentVerificationAdapter(prisma, "tenant-local");
+    const adapter = new PrismaPaymentVerificationAdapter(prisma);
 
-    expect(await adapter.hasCapturedPayment("order-1", "pay-1")).toBe(false);
+    expect(await adapter.hasCapturedPayment("order-1", "pay-1", "tenant-local")).toBe(false);
   });
 });
 
@@ -445,7 +737,8 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
   }
 
   function fakePrisma(rows: readonly FakeIntentRow[]): Database {
-    return {
+    const client = {
+      $executeRaw: async () => 0,
       paymentIntent: {
         findMany: async ({
           where,
@@ -461,6 +754,10 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
       },
       // Deliberately partial fixture (only `paymentIntent.findMany`) — same convention as
       // `PrismaPaymentVerificationAdapter`'s fixture above.
+    };
+    return {
+      ...client,
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(client),
     } as unknown as Database;
   }
 
@@ -472,41 +769,38 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
     refunds: [{ amountMinor: 200 }],
   };
 
-  it("valid: a refund well within the remaining ceiling (300 of 800 remaining) is allowed", async () => {
+  it("one adapter instance serves two tenants: tenant B cannot borrow tenant A's refundable ceiling (ADR-0014)", async () => {
     const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
+      fakePrisma([{ ...CAPTURED_1000_REFUNDED_200, tenantId: "tenant-a" }]),
     );
-    expect(await adapter.isRefundable("order-1", 300, "USD")).toBe(true);
+
+    expect(await adapter.isRefundable("order-1", 300, "USD", "tenant-a")).toBe(true);
+    expect(await adapter.isRefundable("order-1", 300, "USD", "tenant-b")).toBe(false);
+  });
+
+  it("valid: a refund well within the remaining ceiling (300 of 800 remaining) is allowed", async () => {
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 300, "USD", "tenant-local")).toBe(true);
   });
 
   it("boundary: a refund of exactly the remaining ceiling (800) is allowed", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
-    );
-    expect(await adapter.isRefundable("order-1", 800, "USD")).toBe(true);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 800, "USD", "tenant-local")).toBe(true);
   });
 
   it("invalid: a refund one cent over the remaining ceiling (801) is rejected", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
-    );
-    expect(await adapter.isRefundable("order-1", 801, "USD")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 801, "USD", "tenant-local")).toBe(false);
   });
 
   it("extreme (Task 4 exploit scenario): captured=1000, alreadyRefunded=200, requested=5000 is rejected — never reaches PaymentsPort", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
-    );
-    expect(await adapter.isRefundable("order-1", 5000, "USD")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 5000, "USD", "tenant-local")).toBe(false);
   });
 
   it("extreme: an absurd request (1,000,000) against a 0-captured order is rejected", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([]), "tenant-local");
-    expect(await adapter.isRefundable("order-1", 1_000_000, "USD")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([]));
+    expect(await adapter.isRefundable("order-1", 1_000_000, "USD", "tenant-local")).toBe(false);
   });
 
   it("sums charges/refunds across multiple payment intents for the same order", async () => {
@@ -526,18 +820,17 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
         refunds: [{ amountMinor: 200 }],
       },
     ];
-    const adapter = new PrismaRefundVerificationAdapter(fakePrisma(rows), "tenant-local");
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma(rows));
     // totalCaptured = 1000, totalRefunded = 200, remaining = 800
-    expect(await adapter.isRefundable("order-1", 800, "USD")).toBe(true);
-    expect(await adapter.isRefundable("order-1", 801, "USD")).toBe(false);
+    expect(await adapter.isRefundable("order-1", 800, "USD", "tenant-local")).toBe(true);
+    expect(await adapter.isRefundable("order-1", 801, "USD", "tenant-local")).toBe(false);
   });
 
   it("rejects a refund scoped to a different tenant (tenant-isolation guard)", async () => {
     const adapter = new PrismaRefundVerificationAdapter(
       fakePrisma([{ ...CAPTURED_1000_REFUNDED_200, tenantId: "other-tenant" }]),
-      "tenant-local",
     );
-    expect(await adapter.isRefundable("order-1", 300, "USD")).toBe(false);
+    expect(await adapter.isRefundable("order-1", 300, "USD", "tenant-local")).toBe(false);
   });
 
   it("Phase A.10 (Task 3): a FAILED refund's released reservation does not shrink the refundable ceiling", async () => {
@@ -551,22 +844,19 @@ describe("PrismaRefundVerificationAdapter (Phase A.2 — F-04 closure: refundabl
       // check must match, not double-count it as still-refunded.
       refunds: [{ amountMinor: 600, status: "failed" }],
     };
-    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([row]), "tenant-local");
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([row]));
     // remaining = 1000 - 0 (failed excluded) = 1000, not 1000 - 600 = 400.
-    expect(await adapter.isRefundable("order-1", 1000, "USD")).toBe(true);
+    expect(await adapter.isRefundable("order-1", 1000, "USD", "tenant-local")).toBe(true);
   });
 
   it("rejects a currency mismatch (order captured in USD, refund requested in EUR)", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(
-      fakePrisma([CAPTURED_1000_REFUNDED_200]),
-      "tenant-local",
-    );
-    expect(await adapter.isRefundable("order-1", 300, "EUR")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([CAPTURED_1000_REFUNDED_200]));
+    expect(await adapter.isRefundable("order-1", 300, "EUR", "tenant-local")).toBe(false);
   });
 
   it("rejects any amount when no captured payment exists for the order", async () => {
-    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([]), "tenant-local");
-    expect(await adapter.isRefundable("order-1", 1, "USD")).toBe(false);
+    const adapter = new PrismaRefundVerificationAdapter(fakePrisma([]));
+    expect(await adapter.isRefundable("order-1", 1, "USD", "tenant-local")).toBe(false);
   });
 });
 
@@ -588,7 +878,8 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
   }
 
   function fakePrisma(rows: readonly FakeIntentRow[]): Database {
-    return {
+    const client = {
+      $executeRaw: async () => 0,
       paymentIntent: {
         findMany: async ({
           where,
@@ -605,6 +896,10 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
       // Deliberately partial fixture (only `paymentIntent.findMany`) — same convention as
       // `PrismaRefundVerificationAdapter`'s fixture above; the WRITE goes through the fake
       // `PaymentController` below, never through this fake client.
+    };
+    return {
+      ...client,
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(client),
     } as unknown as Database;
   }
 
@@ -636,14 +931,14 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await adapter.requestRefund("order-1", 300, "USD", "return-1:refund");
+    await adapter.requestRefund("order-1", 300, "USD", "return-1:refund", "tenant-local");
 
     expect(calls).toEqual([
       {
+        tenantId: "tenant-local",
         paymentIntentId: "intent-1",
         amountMinor: 300,
         currency: "USD",
@@ -656,12 +951,11 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await adapter.requestRefund("order-1", 300, "USD", "return-42:refund");
-    await adapter.requestRefund("order-1", 300, "USD", "return-42:refund");
+    await adapter.requestRefund("order-1", 300, "USD", "return-42:refund", "tenant-local");
+    await adapter.requestRefund("order-1", 300, "USD", "return-42:refund", "tenant-local");
 
     expect(calls).toHaveLength(2);
     expect((calls[0] as { idempotencyKey: string }).idempotencyKey).toBe("return-42:refund");
@@ -672,11 +966,10 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await adapter.requestRefund("order-1", 800, "USD", "return-1:refund");
+    await adapter.requestRefund("order-1", 800, "USD", "return-1:refund", "tenant-local");
 
     expect(calls).toHaveLength(1);
   });
@@ -685,21 +978,22 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await expect(adapter.requestRefund("order-1", 801, "USD", "return-1:refund")).rejects.toThrow(
-      /sufficient remaining amount/,
-    );
+    await expect(
+      adapter.requestRefund("order-1", 801, "USD", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow(/sufficient remaining amount/);
     expect(calls).toHaveLength(0);
   });
 
   it("fails closed when no payment intent exists for the order at all", async () => {
     const { controller, calls } = fakePaymentController();
-    const adapter = new PrismaPaymentsPortAdapter(fakePrisma([]), "tenant-local", controller);
+    const adapter = new PrismaPaymentsPortAdapter(fakePrisma([]), controller);
 
-    await expect(adapter.requestRefund("order-1", 1, "USD", "return-1:refund")).rejects.toThrow();
+    await expect(
+      adapter.requestRefund("order-1", 1, "USD", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow();
     expect(calls).toHaveLength(0);
   });
 
@@ -707,11 +1001,12 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([{ ...SINGLE_INTENT_800_REMAINING, tenantId: "other-tenant" }]),
-      "tenant-local",
       controller,
     );
 
-    await expect(adapter.requestRefund("order-1", 300, "USD", "return-1:refund")).rejects.toThrow();
+    await expect(
+      adapter.requestRefund("order-1", 300, "USD", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow();
     expect(calls).toHaveLength(0);
   });
 
@@ -719,11 +1014,12 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     const { controller, calls } = fakePaymentController();
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await expect(adapter.requestRefund("order-1", 300, "EUR", "return-1:refund")).rejects.toThrow();
+    await expect(
+      adapter.requestRefund("order-1", 300, "EUR", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow();
     expect(calls).toHaveLength(0);
   });
 
@@ -747,12 +1043,13 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
       },
     ];
     const { controller, calls } = fakePaymentController();
-    const adapter = new PrismaPaymentsPortAdapter(fakePrisma(rows), "tenant-local", controller);
+    const adapter = new PrismaPaymentsPortAdapter(fakePrisma(rows), controller);
 
-    await adapter.requestRefund("order-1", 900, "USD", "return-1:refund");
+    await adapter.requestRefund("order-1", 900, "USD", "return-1:refund", "tenant-local");
 
     expect(calls).toEqual([
       {
+        tenantId: "tenant-local",
         paymentIntentId: "intent-2",
         amountMinor: 900,
         currency: "USD",
@@ -771,15 +1068,22 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
       refunds: [{ amountMinor: 700, status: "failed" }],
     };
     const { controller, calls } = fakePaymentController();
-    const adapter = new PrismaPaymentsPortAdapter(fakePrisma([row]), "tenant-local", controller);
+    const adapter = new PrismaPaymentsPortAdapter(fakePrisma([row]), controller);
 
     // Pre-fix this adapter computed remaining = 1000 - 700 = 300 and would have rejected this call
     // ("no payment intent has sufficient remaining amount") even though the failed refund's
     // reservation was actually released — the domain's own `remaining()` would allow the full 1000.
-    await adapter.requestRefund("order-1", 1000, "USD", "return-failed-retry:refund");
+    await adapter.requestRefund(
+      "order-1",
+      1000,
+      "USD",
+      "return-failed-retry:refund",
+      "tenant-local",
+    );
 
     expect(calls).toEqual([
       {
+        tenantId: "tenant-local",
         paymentIntentId: "intent-1",
         amountMinor: 1000,
         currency: "USD",
@@ -795,13 +1099,12 @@ describe("PrismaPaymentsPortAdapter (Phase A.3 — refund execution closure: bri
     });
     const adapter = new PrismaPaymentsPortAdapter(
       fakePrisma([SINGLE_INTENT_800_REMAINING]),
-      "tenant-local",
       controller,
     );
 
-    await expect(adapter.requestRefund("order-1", 300, "USD", "return-1:refund")).rejects.toThrow(
-      /refund execution failed \(status 409\)/,
-    );
+    await expect(
+      adapter.requestRefund("order-1", 300, "USD", "return-1:refund", "tenant-local"),
+    ).rejects.toThrow(/refund execution failed \(status 409\)/);
     expect(calls).toHaveLength(1); // it DID call through — the failure is Payments', not a silent no-op
   });
 });
@@ -810,7 +1113,12 @@ describe("scheduler jobs", () => {
   it("defines the outbox-prune job and the loop respects the distributed lock", async () => {
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     const jobs = buildJobs(core);
-    expect(jobs.map((j) => j.name)).toEqual(["outbox-prune", "cdc-watchdog"]);
+    expect(jobs.map((j) => j.name)).toEqual([
+      "outbox-prune",
+      "cdc-watchdog",
+      "billing-renewals",
+      "billing-dunning-retries",
+    ]);
 
     let ran = 0;
     const silent: Logger = {

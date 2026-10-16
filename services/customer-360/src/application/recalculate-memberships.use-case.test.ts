@@ -15,6 +15,7 @@ import type {
   EvaluateAllSegmentsOutput,
 } from "./evaluate-all-segments.use-case";
 import { RecalculateMemberships } from "./recalculate-memberships.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -44,7 +45,7 @@ function registry(definitions: readonly SegmentDefinition[]) {
   });
   return new InMemorySegmentDefinitionRegistry(
     { outbox, context: rootEventContext(ids) },
-    definitions,
+    { tenantId: TENANT_A, definitions: definitions },
   );
 }
 
@@ -68,7 +69,7 @@ describe("RecalculateMemberships", () => {
     const { evaluateAll, calls } = fakeEvaluateAll();
     const useCase = new RecalculateMemberships({ definitions: defs, evaluateAll });
 
-    const result = await useCase.execute({ identifier });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect([...result.value.recomputed].sort()).toEqual(["a", "b", "c"]);
@@ -84,7 +85,11 @@ describe("RecalculateMemberships", () => {
     const { evaluateAll, calls } = fakeEvaluateAll();
     const useCase = new RecalculateMemberships({ definitions: defs, evaluateAll });
 
-    const result = await useCase.execute({ identifier, changed: ["profile.ltv"] });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      changed: ["profile.ltv"],
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.recomputed).toEqual(["high_value"]);
@@ -104,6 +109,7 @@ describe("RecalculateMemberships", () => {
     const useCase = new RecalculateMemberships({ definitions: defs, evaluateAll });
 
     const result = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       changed: ["profile.ltv", "attributes.vip_tier", "journey.sessionCount"],
     });
@@ -141,7 +147,11 @@ describe("RecalculateMemberships", () => {
     const { evaluateAll } = fakeEvaluateAll();
     const useCase = new RecalculateMemberships({ definitions: defs, evaluateAll });
 
-    const result = await useCase.execute({ identifier, changed: ["attributes.tier"] });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier,
+      changed: ["attributes.tier"],
+    });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.recomputed).toEqual(["multi"]);
   });

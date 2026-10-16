@@ -34,8 +34,8 @@ export default async function CategoriesPage({ searchParams }: CategoriesPagePro
     <AppShell t={t} locale={locale} activeNavId="categories" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.categoriesPage.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.categoriesPage.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.categoriesPage.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.categoriesPage.subtitle}</p>
         </header>
 
         <Suspense key={params.after ?? ""} fallback={<CategoriesTableSkeleton />}>

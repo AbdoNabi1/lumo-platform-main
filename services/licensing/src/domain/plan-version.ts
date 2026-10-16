@@ -1,4 +1,9 @@
-import { Entity, BusinessRuleError, type UniqueEntityId } from "@platform/domain";
+import {
+  Entity,
+  BusinessRuleError,
+  isValidCurrencyCode,
+  type UniqueEntityId,
+} from "@platform/domain";
 import { PlanSections } from "./plan-sections";
 import type { PlanSpec } from "./value-objects/plan-spec";
 
@@ -25,8 +30,26 @@ interface PlanVersionProps {
  * `*Version` entities, G4), not a separate aggregate root.
  */
 export class PlanVersion extends Entity<PlanVersionProps> {
+  /**
+   * WP-14: validates the price at the door (an integer count of minor units and an ISO-4217 code) and
+   * FREEZES a private copy of the spec — "immutable once published" was previously only a status
+   * flag; the spec object itself was a mutable reference a caller could still reach into.
+   */
   static createDraft(id: UniqueEntityId, spec: PlanSpec): PlanVersion {
-    return new PlanVersion({ spec, status: "draft" }, id);
+    PlanVersion.assertPricing(spec);
+    return new PlanVersion({ spec: deepFreeze(structuredClone(spec)), status: "draft" }, id);
+  }
+
+  private static assertPricing(spec: PlanSpec): void {
+    const { basePriceMinor, currency } = spec.pricing;
+    if (!Number.isSafeInteger(basePriceMinor) || basePriceMinor < 0) {
+      throw new BusinessRuleError(
+        `Plan pricing basePriceMinor must be a non-negative integer of minor units, got ${basePriceMinor}`,
+      );
+    }
+    if (!isValidCurrencyCode(currency)) {
+      throw new BusinessRuleError(`Plan pricing currency "${currency}" is not an ISO-4217 code`);
+    }
   }
 
   static reconstitute(
@@ -35,7 +58,7 @@ export class PlanVersion extends Entity<PlanVersionProps> {
     status: PlanVersionStatus,
     scheduledPublishAt?: Date,
   ): PlanVersion {
-    return new PlanVersion({ spec, status, scheduledPublishAt }, id);
+    return new PlanVersion({ spec: deepFreeze(spec), status, scheduledPublishAt }, id);
   }
 
   schedule(publishAt: Date): void {
@@ -83,4 +106,12 @@ export class PlanVersion extends Entity<PlanVersionProps> {
   get scheduledPublishAt(): Date | undefined {
     return this.props.scheduledPublishAt;
   }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
 }

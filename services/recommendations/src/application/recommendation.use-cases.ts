@@ -14,6 +14,7 @@ import type { ProcessedInteractionStore, SearchQueryPort } from "./ports";
 export interface CreateModelInput {
   readonly name: string;
   readonly strategy: string;
+  readonly tenantId: string;
 }
 
 export interface ModelStatusOutput {
@@ -24,6 +25,7 @@ export interface ModelStatusOutput {
 
 export interface ModelIdInput {
   readonly modelId: string;
+  readonly tenantId: string;
 }
 
 export interface ModelDeps {
@@ -52,13 +54,13 @@ export class CreateModel implements UseCase<CreateModelInput, ModelStatusOutput,
     if (!strategy.ok) return err(strategy.error);
 
     return this.deps.unitOfWork.run<Result<ModelStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.models.findByName(input.name, tx);
+      const existing = await this.deps.models.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Recommendation model "${input.name}" already exists`));
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const model = RecommendationModel.create(id, input.name, strategy.value);
-      await this.deps.models.save(model, tx);
+      await this.deps.models.save(model, input.tenantId, tx);
       return ok(toOutput(model));
     });
   }
@@ -78,7 +80,7 @@ export class AdvanceModel implements UseCase<AdvanceModelInput, ModelStatusOutpu
 
   async execute(input: AdvanceModelInput): Promise<Result<ModelStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ModelStatusOutput, DomainError>>(async (tx) => {
-      const model = await this.deps.models.findById(input.modelId, tx);
+      const model = await this.deps.models.findById(input.modelId, input.tenantId, tx);
       if (model === null) return err(new NotFoundError("Recommendation model not found"));
 
       try {
@@ -88,7 +90,7 @@ export class AdvanceModel implements UseCase<AdvanceModelInput, ModelStatusOutpu
         throw error;
       }
 
-      await this.deps.models.save(model, tx);
+      await this.deps.models.save(model, input.tenantId, tx);
       return ok(toOutput(model));
     });
   }
@@ -118,7 +120,7 @@ export class GenerateRecommendationSet implements UseCase<
 
   async execute(input: GenerateSetInput): Promise<Result<ModelStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ModelStatusOutput, DomainError>>(async (tx) => {
-      const model = await this.deps.models.findById(input.modelId, tx);
+      const model = await this.deps.models.findById(input.modelId, input.tenantId, tx);
       if (model === null) return err(new NotFoundError("Recommendation model not found"));
 
       const alreadyProcessed = await this.deps.processedInteractions.hasProcessed(
@@ -144,7 +146,7 @@ export class GenerateRecommendationSet implements UseCase<
         throw error;
       }
 
-      await this.deps.models.save(model, tx);
+      await this.deps.models.save(model, input.tenantId, tx);
       await this.deps.processedInteractions.markProcessed(input.interactionId);
       return ok(toOutput(model));
     });
@@ -173,7 +175,7 @@ export class RegenerateRecommendationSet implements UseCase<
 
   async execute(input: RegenerateSetInput): Promise<Result<ModelStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ModelStatusOutput, DomainError>>(async (tx) => {
-      const model = await this.deps.models.findById(input.modelId, tx);
+      const model = await this.deps.models.findById(input.modelId, input.tenantId, tx);
       if (model === null) return err(new NotFoundError("Recommendation model not found"));
 
       const relatedRefs = await this.deps.search.getRelatedProducts(input.anchorRef);
@@ -194,7 +196,7 @@ export class RegenerateRecommendationSet implements UseCase<
         throw error;
       }
 
-      await this.deps.models.save(model, tx);
+      await this.deps.models.save(model, input.tenantId, tx);
       return ok(toOutput(model));
     });
   }

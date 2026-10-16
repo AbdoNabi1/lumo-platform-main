@@ -19,8 +19,8 @@
 | Audit logs      | Every flag change → `audit.entry.recorded` ([arch 20](../architecture/20-events-catalog.md), WORM) with actor + before/after      |
 | Permissions     | Toggle / target / publish separated ([arch 07](../architecture/07-auth-and-authorization.md))                                     |
 | Feature flags   | This _is_ the flag system; every platform feature is itself flaggable                                                             |
-| Dark mode       | Operator surface uses frozen tokens ([`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md))                                |
-| Responsive      | Operator surface per [`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md) §11                                             |
+| Dark mode       | Operator surface uses frozen tokens ([`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md))                            |
+| Responsive      | Operator surface per [`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md) §11                                         |
 | Localization    | Flag names/descriptions i18n-keyed; schedules timezone-aware                                                                      |
 | Accessibility   | WCAG 2.2 AA                                                                                                                       |
 | Version history | Every flag/rule change versioned with rollback                                                                                    |

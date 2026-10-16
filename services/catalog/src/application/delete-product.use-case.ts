@@ -7,6 +7,8 @@ import type { ProductRepository } from "../domain/product-repository";
 
 export interface DeleteProductInput {
   readonly productId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface DeleteProductOutput {
@@ -34,7 +36,7 @@ export class DeleteProduct implements UseCase<
 
   async execute(input: DeleteProductInput): Promise<Result<DeleteProductOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DeleteProductOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }
@@ -44,7 +46,7 @@ export class DeleteProduct implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.products.delete(product, tx);
+      await this.deps.products.delete(product, input.tenantId, tx);
       return ok({ productId: product.id.toString() });
     });
   }

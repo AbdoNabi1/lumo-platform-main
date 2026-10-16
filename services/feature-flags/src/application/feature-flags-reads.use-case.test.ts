@@ -37,10 +37,10 @@ describe("Feature Flags read use-cases (Phase 4 T4.16)", () => {
     const h = harness();
     const create = new CreateFeatureFlag(h);
     for (let i = 0; i < 3; i += 1) {
-      await create.execute({ key: `flag-${i}`, name: `Flag ${i}` });
+      await create.execute({ key: `flag-${i}`, name: `Flag ${i}`, tenantId: "tenant-1" });
     }
 
-    const page = await new ListFeatureFlags(h).execute({ first: 2 });
+    const page = await new ListFeatureFlags(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -49,6 +49,7 @@ describe("Feature Flags read use-cases (Phase 4 T4.16)", () => {
     const rest = await new ListFeatureFlags(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -61,16 +62,20 @@ describe("Feature Flags read use-cases (Phase 4 T4.16)", () => {
     const created = await new CreateFeatureFlag(h).execute({
       key: "new-checkout",
       name: "New Checkout",
+      tenantId: "tenant-1",
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetFeatureFlag(h).execute({ flagId: created.value.flagId });
+    const found = await new GetFeatureFlag(h).execute({
+      flagId: created.value.flagId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.key).toBe("new-checkout");
 
-    const missing = await new GetFeatureFlag(h).execute({ flagId: "nope" });
+    const missing = await new GetFeatureFlag(h).execute({ flagId: "nope", tenantId: "tenant-1" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

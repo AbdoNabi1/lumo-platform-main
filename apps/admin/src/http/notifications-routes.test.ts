@@ -12,7 +12,12 @@ import { notificationsRoutes } from "./notifications-routes";
  */
 
 const clock: Clock = { now: () => new Date("2026-08-30T00:00:00.000Z") };
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: Principal = {
+  id: "staff-1",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
 
 function buildAdmin(): WiredAdmin {
   let n = 0;

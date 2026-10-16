@@ -21,6 +21,7 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     });
 
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "svc-1",
       kind: "service_account",
       displayName: "Service One",
@@ -30,12 +31,14 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
 
     // ── Secret Rotation Engine (§7) ──
     const issued = await app.security.issueCredential({
+      tenantId: "tenant-a",
       principalExternalId: "svc-1",
       kind: "api_key",
       material: "seed-A",
     });
     const credA = body<{ id: string }>(issued).id;
     const scheduled = await app.security.scheduleCredentialRotation({
+      tenantId: "tenant-a",
       credentialId: credA,
       intervalDays: 30,
       graceSeconds: 3600,
@@ -43,25 +46,33 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     expect(body<{ autoRotate: boolean }>(scheduled).autoRotate).toBe(true);
 
     // not due yet → nothing rotates
-    expect(body<{ rotated: number }>(await app.security.rotateDueCredentials()).rotated).toBe(0);
+    expect(
+      body<{ rotated: number }>(await app.security.rotateDueCredentials({ tenantId: "tenant-a" }))
+        .rotated,
+    ).toBe(0);
     // advance past the interval → automatic rotation fires
     currentTime = new Date(currentTime.getTime() + 31 * 86_400_000);
-    expect(body<{ rotated: number }>(await app.security.rotateDueCredentials()).rotated).toBe(1);
+    expect(
+      body<{ rotated: number }>(await app.security.rotateDueCredentials({ tenantId: "tenant-a" }))
+        .rotated,
+    ).toBe(1);
 
     // lineage on a manual rotation chain
     const bIssued = await app.security.issueCredential({
+      tenantId: "tenant-a",
       principalExternalId: "svc-1",
       kind: "api_key",
       material: "seed-B",
     });
     const credB = body<{ id: string }>(bIssued).id;
     const rotatedB = await app.security.rotateCredential({
+      tenantId: "tenant-a",
       credentialId: credB,
       newMaterial: "seed-B2",
     });
     const credC = body<{ id: string; supersedesRef: string }>(rotatedB).id;
     const lineage = body<{ chain: { id: string; supersedesRef: string | null }[] }>(
-      await app.security.getCredentialLineage({ credentialId: credC }),
+      await app.security.getCredentialLineage({ tenantId: "tenant-a", credentialId: credC }),
     );
     expect(lineage.chain).toHaveLength(2);
     expect(lineage.chain[0]?.supersedesRef).toBeNull();
@@ -70,6 +81,7 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     expect(
       body<{ revoked: number }>(
         await app.security.emergencyRevokeCredentials({
+          tenantId: "tenant-a",
           principalExternalId: "svc-1",
           reason: "key leak",
         }),
@@ -78,6 +90,7 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
 
     // ── Machine Identity Governance (§14) ──
     const governed = await app.security.governMachineIdentity({
+      tenantId: "tenant-a",
       principalExternalId: "svc-1",
       config: {
         owner: "team-billing",
@@ -89,6 +102,7 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     expect(body<{ status: string; owner: string }>(governed).owner).toBe("team-billing");
     // humans are not machine identities
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "admin-1",
       kind: "human",
       displayName: "Admin",
@@ -96,17 +110,24 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
       tenantRef: "t1",
     });
     expect(
-      (await app.security.governMachineIdentity({ principalExternalId: "admin-1", config: {} }))
-        .status,
+      (
+        await app.security.governMachineIdentity({
+          tenantId: "tenant-a",
+          principalExternalId: "admin-1",
+          config: {},
+        })
+      ).status,
     ).toBe(409);
 
     // ── Authorization evolution: RBAC / ReBAC / ABAC (§16) ──
     await app.security.defineRole({
+      tenantId: "tenant-a",
       key: "refunder",
       name: "Refunder",
       permissions: ["orders:refund"],
     });
     await app.security.assignRole({
+      tenantId: "tenant-a",
       principalExternalId: "svc-1",
       roleKey: "refunder",
       grantedBy: "system",
@@ -114,13 +135,18 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
 
     // RBAC grant
     const rbac = body<{ allowed: boolean; grantedBy: string[] }>(
-      await app.security.checkAccess({ principalExternalId: "svc-1", permission: "orders:refund" }),
+      await app.security.checkAccess({
+        tenantId: "tenant-a",
+        principalExternalId: "svc-1",
+        permission: "orders:refund",
+      }),
     );
     expect(rbac.allowed).toBe(true);
     expect(rbac.grantedBy).toEqual(["rbac"]);
 
     // ReBAC grant (permission not held via RBAC, granted via relationship)
     await app.security.writeRelationTuple({
+      tenantId: "tenant-a",
       namespace: "app",
       object: "doc:readme",
       relation: "viewer",
@@ -128,6 +154,7 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     });
     const rebac = body<{ allowed: boolean; grantedBy: string[] }>(
       await app.security.checkAccess({
+        tenantId: "tenant-a",
         principalExternalId: "svc-1",
         permission: "docs:view",
         namespace: "app",
@@ -141,6 +168,7 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     // ABAC constraint gates an otherwise-granted permission
     const abacOk = body<{ allowed: boolean }>(
       await app.security.checkAccess({
+        tenantId: "tenant-a",
         principalExternalId: "svc-1",
         permission: "orders:refund",
         abac: { principal: { clearance: "high" } },
@@ -149,6 +177,7 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     expect(abacOk.allowed).toBe(true);
     const abacDenied = body<{ allowed: boolean; abacSatisfied: boolean }>(
       await app.security.checkAccess({
+        tenantId: "tenant-a",
         principalExternalId: "svc-1",
         permission: "orders:refund",
         abac: { principal: { clearance: "top-secret" } },
@@ -161,6 +190,7 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     expect(
       body<{ removed: boolean }>(
         await app.security.deleteRelationTuple({
+          tenantId: "tenant-a",
           namespace: "app",
           object: "doc:readme",
           relation: "viewer",
@@ -171,6 +201,7 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     expect(
       body<{ allowed: boolean }>(
         await app.security.checkAccess({
+          tenantId: "tenant-a",
           principalExternalId: "svc-1",
           permission: "docs:view",
           namespace: "app",
@@ -181,8 +212,11 @@ describe("secret rotation / machine identity / ABAC-ReBAC (end to end)", () => {
     ).toBe(false);
 
     // suspend the machine identity + explorer
-    await app.security.suspendMachineIdentity({ principalExternalId: "svc-1" });
-    const explorer = await app.security.machineIdentityExplorer();
+    await app.security.suspendMachineIdentity({
+      tenantId: "tenant-a",
+      principalExternalId: "svc-1",
+    });
+    const explorer = await app.security.machineIdentityExplorer("tenant-a");
     expect(explorer.total).toBe(1);
     expect(explorer.suspended).toBe(1);
 

@@ -11,9 +11,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: admin-web
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: admin-web
     app.kubernetes.io/component: admin-web
 spec:
@@ -30,11 +30,11 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/part-of: morbeh
         app.kubernetes.io/name: admin-web
         app.kubernetes.io/component: admin-web
     spec:
-      serviceAccountName: lumo-runtime
+      serviceAccountName: morbeh-runtime
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -68,16 +68,16 @@ spec:
                     app.kubernetes.io/name: admin-web
       containers:
         - name: admin-web
-          image: lumo-admin-web:local # production: a registry-pushed, immutable tag or digest
+          image: morbeh-admin-web:local # production: a registry-pushed, immutable tag or digest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 3100
           envFrom:
             - configMapRef:
-                name: lumo-admin-web-config
+                name: morbeh-admin-web-config
             - secretRef:
-                name: lumo-admin-web-secrets
+                name: morbeh-admin-web-secrets
           startupProbe:
             httpGet:
               path: /api/healthz

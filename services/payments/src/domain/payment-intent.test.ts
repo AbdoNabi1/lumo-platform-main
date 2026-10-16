@@ -17,7 +17,7 @@ function token(): PspToken {
 }
 
 function intent(): PaymentIntent {
-  return PaymentIntent.create(UniqueEntityId.from("pi-1"), "order-1", usd(3500));
+  return PaymentIntent.create(UniqueEntityId.from("pi-1"), "order-1", usd(3500), "stripe");
 }
 
 describe("PaymentIntent", () => {
@@ -68,7 +68,12 @@ describe("PaymentIntent", () => {
   });
 
   it("runs the full Sprint 4.8 lifecycle: created -> processing -> authorized -> capture_requested -> captured -> refund requested+completed -> closed", () => {
-    const pi = PaymentIntent.createIntent(UniqueEntityId.from("pi-full"), "order-2", usd(5000));
+    const pi = PaymentIntent.createIntent(
+      UniqueEntityId.from("pi-full"),
+      "order-2",
+      usd(5000),
+      "stripe",
+    );
     expect(pi.status.value).toBe("created");
 
     pi.markProcessing("evt-1", new Date(0));
@@ -98,12 +103,22 @@ describe("PaymentIntent", () => {
   });
 
   it("rejects an illegal transition (e.g. created -> captured directly, 409)", () => {
-    const pi = PaymentIntent.createIntent(UniqueEntityId.from("pi-illegal"), "order-3", usd(1000));
+    const pi = PaymentIntent.createIntent(
+      UniqueEntityId.from("pi-illegal"),
+      "order-3",
+      usd(1000),
+      "stripe",
+    );
     expect(() => pi.transition("captured", "evt-1", new Date(0))).toThrow(BusinessRuleError);
   });
 
   it("records a webhook receipt, emitting payment.webhook_received", () => {
-    const pi = PaymentIntent.createIntent(UniqueEntityId.from("pi-webhook"), "order-4", usd(1000));
+    const pi = PaymentIntent.createIntent(
+      UniqueEntityId.from("pi-webhook"),
+      "order-4",
+      usd(1000),
+      "stripe",
+    );
     pi.recordWebhook("stripe", "authorized", "evt-1", new Date(0));
     expect(pi.pullDomainEvents().some((e) => e.eventName === "payment.webhook_received")).toBe(
       true,
@@ -124,7 +139,12 @@ describe("PaymentIntent", () => {
 describe("PaymentIntent.requestRefund — totalRefunded <= totalCaptured invariant", () => {
   /** captured=1000, one already-completed refund of 200 ⇒ remaining()=800. */
   function capturedAndPartiallyRefunded(): PaymentIntent {
-    const pi = PaymentIntent.create(UniqueEntityId.from("pi-invariant"), "order-1", usd(1000));
+    const pi = PaymentIntent.create(
+      UniqueEntityId.from("pi-invariant"),
+      "order-1",
+      usd(1000),
+      "stripe",
+    );
     pi.capture(token(), "evt-capture", new Date(0));
     pi.requestRefund(usd(200), "evt-refund-1", new Date(0));
     pi.completeRefund("evt-refund-1", "evt-refund-1-complete", new Date(0));
@@ -161,6 +181,7 @@ describe("PaymentIntent.requestRefund — totalRefunded <= totalCaptured invaria
       UniqueEntityId.from("pi-legacy-invariant"),
       "order-1",
       usd(1000),
+      "stripe",
     );
     pi.capture(token(), "evt-capture", new Date(0));
     pi.refund(usd(200), "evt-refund-1", new Date(0));

@@ -75,7 +75,8 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a page",
       schema: { body: createPageBody },
-      handle: ({ body, context }) => admin.pages.createPage(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pages.createPage(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -86,7 +87,11 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Advance a page's status",
       schema: { params: pageIdParams, body: advancePageBody },
       handle: ({ params, body, context }) =>
-        admin.pages.advancePage(context.principal, { pageId: params.pageId, ...body }),
+        admin.pages.advancePage(context.principal, {
+          pageId: params.pageId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -96,7 +101,8 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a reusable template",
       schema: { body: createTemplateBody },
-      handle: ({ body, context }) => admin.pages.createTemplate(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.pages.createTemplate(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -106,7 +112,11 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Archive a template",
       schema: { params: templateIdParams },
-      handle: ({ params, context }) => admin.pages.archiveTemplate(context.principal, params),
+      handle: ({ params, context }) =>
+        admin.pages.archiveTemplate(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -116,7 +126,13 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List pages (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.pages.listPages(context.principal, query), toPageDto),
+        mapPage(
+          await admin.pages.listPages(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toPageDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -126,7 +142,10 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one page by id",
       schema: { params: pageIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.pages.getPage(context.principal, params);
+        const response = await admin.pages.getPage(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toPageDto(response.body as Page) };
       },
@@ -139,7 +158,13 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List templates (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.pages.listTemplates(context.principal, query), toTemplateDto),
+        mapPage(
+          await admin.pages.listTemplates(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toTemplateDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -149,7 +174,10 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one template by id",
       schema: { params: templateIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.pages.getTemplate(context.principal, params);
+        const response = await admin.pages.getTemplate(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toTemplateDto(response.body as Template) };
       },

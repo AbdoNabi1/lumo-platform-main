@@ -20,6 +20,11 @@ export interface CartItemRow {
   readonly unitPriceAmountMinor: number;
   readonly inventorySnapshot: Record<string, unknown> | null;
   readonly metadata: Record<string, unknown> | null;
+  /** Plan 2A: optional so a row cached before the columns existed still maps (no variant). */
+  readonly variantRef?: string | null;
+  readonly sku?: string | null;
+  readonly title?: string | null;
+  readonly variantTitle?: string | null;
 }
 
 function must<T>(result: Result<T, { message: string }>, what: string): T {
@@ -50,6 +55,16 @@ export class CartMapper {
                 ? item.inventorySnapshot.available
                 : undefined,
             metadata: item.metadata ?? undefined,
+            ...(item.variantRef === undefined || item.variantRef === null
+              ? {}
+              : {
+                  merchandise: {
+                    variantRef: item.variantRef,
+                    sku: item.sku ?? "",
+                    title: item.title ?? "",
+                    variantTitle: item.variantTitle ?? null,
+                  },
+                }),
           },
         ),
       ),
@@ -80,6 +95,10 @@ export class CartMapper {
       inventorySnapshot:
         item.inventoryAvailable === undefined ? null : { available: item.inventoryAvailable },
       metadata: item.metadata ?? null,
+      variantRef: item.variantRef ?? null,
+      sku: item.sku ?? null,
+      title: item.title ?? null,
+      variantTitle: item.variantTitle ?? null,
     }));
   }
 }

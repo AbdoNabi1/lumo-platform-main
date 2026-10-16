@@ -18,7 +18,7 @@ export class GetMediaAsset implements UseCase<MediaAssetIdInput, MediaAsset, Dom
   }
 
   async execute(input: MediaAssetIdInput): Promise<Result<MediaAsset, DomainError>> {
-    const asset = await this.deps.mediaAssets.findById(input.mediaAssetId);
+    const asset = await this.deps.mediaAssets.findById(input.mediaAssetId, input.tenantId);
     return asset === null ? err(new NotFoundError("Media asset not found")) : ok(asset);
   }
 }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CheckoutAddress, CheckoutItem, CheckoutTotals } from "@platform/checkout";
+import type { CustomerController } from "@platform/identity";
 import type { OrderController } from "@platform/orders";
+import { ValidationError } from "@platform/utils";
 import { OrderCreationAdapter } from "./order-creation.adapter";
 
 function must<T>(result: { ok: boolean; value?: T; error?: unknown }): T {
@@ -45,15 +47,24 @@ interface CreateFromCheckoutCall {
     readonly name: string;
     readonly unitPriceAmountMinor: number;
     readonly quantity: number;
+    readonly variantRef?: string;
+    readonly sku?: string;
+    readonly variantTitle?: string | null;
   }[];
   readonly billingAddress: {
+    readonly name?: string;
+    readonly phone?: string;
     readonly line1: string;
+    readonly line2?: string;
     readonly city: string;
     readonly postalCode: string;
     readonly country: string;
   };
   readonly shippingAddress: {
+    readonly name?: string;
+    readonly phone?: string;
     readonly line1: string;
+    readonly line2?: string;
     readonly city: string;
     readonly postalCode: string;
     readonly country: string;
@@ -64,6 +75,7 @@ interface CreateFromCheckoutCall {
     readonly shippingMinor: number;
     readonly discountMinor: number;
     readonly totalMinor: number;
+    readonly shippingMethod?: string;
   };
 }
 
@@ -91,33 +103,126 @@ function fakeOrderController(
   };
 }
 
-describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
-  it("throws, without fabricating a customerRef, when the checkout session is a guest session", async () => {
-    const calls: CreateFromCheckoutCall[] = [];
-    const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders);
+interface ResolveCall {
+  readonly email: string;
+  readonly name: string;
+  readonly tenantId: string;
+}
 
-    await expect(
-      adapter.create({
-        checkoutSessionId: "checkout-guest-1",
-        customerRef: undefined,
-        currency: "USD",
-        items: [checkoutItem("product-1", 1, 1000, "USD")],
-        billingAddress: checkoutAddress(),
-        shippingAddress: checkoutAddress(),
-        totals: checkoutTotals(),
-        idempotencyKey: "idem-1",
-      }),
-    ).rejects.toThrow(/checkout-guest-1/);
-    expect(calls).toEqual([]);
+/**
+ * A fake Identity controller narrowed to `resolveGuestCustomer`. Returns a distinct customer id per
+ * (tenant, email) pair — like the real thing — so a tenant-blind adapter would be caught.
+ */
+function fakeCustomers(options: { status?: number; body?: unknown } = {}) {
+  const calls: ResolveCall[] = [];
+  const customers: Pick<CustomerController, "resolveGuestCustomer"> = {
+    async resolveGuestCustomer(input) {
+      calls.push(input);
+      if (options.status !== undefined && options.status !== 200) {
+        return { status: options.status, body: options.body ?? { code: "CONFLICT" } };
+      }
+      return {
+        status: 200,
+        body: { customerId: `customer:${input.tenantId}:${input.email}`, created: true },
+      };
+    },
+  };
+  return { customers, calls };
+}
+
+function guestInput(overrides: Partial<Parameters<OrderCreationAdapter["create"]>[0]> = {}) {
+  return {
+    tenantId: "tenant-local",
+    checkoutSessionId: "checkout-guest-1",
+    customerRef: undefined,
+    contactEmail: "guest@example.com",
+    currency: "USD",
+    items: [checkoutItem("product-1", 1, 1000, "USD")],
+    billingAddress: checkoutAddress(),
+    shippingAddress: checkoutAddress(),
+    totals: checkoutTotals(),
+    idempotencyKey: "idem-1",
+    ...overrides,
+  };
+}
+
+describe("OrderCreationAdapter (Checkout -> Orders, C-2) — guest checkout (WP-1, G-52)", () => {
+  it("resolves a guest customer from the contact email and places the order against that id", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const { customers, calls: resolves } = fakeCustomers();
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), customers);
+
+    const result = await adapter.create(guestInput());
+
+    expect(result).toEqual({ orderRef: "order-1" });
+    expect(resolves).toHaveLength(1);
+    expect(resolves[0]?.email).toBe("guest@example.com");
+    expect(calls[0]?.customerRef).toBe("customer:tenant-local:guest@example.com");
   });
 
+  it("scopes the resolution to the session's tenant, never a default (ADR-0014)", async () => {
+    const { customers, calls: resolves } = fakeCustomers();
+    const orderCalls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(orderCalls), customers);
+
+    await adapter.create(guestInput({ tenantId: "tenant-a" }));
+    await adapter.create(guestInput({ tenantId: "tenant-b" }));
+
+    expect(resolves.map((c) => c.tenantId)).toEqual(["tenant-a", "tenant-b"]);
+    expect(orderCalls[0]?.customerRef).not.toBe(orderCalls[1]?.customerRef);
+  });
+
+  it("does not resolve a guest customer when the session already has a customerRef", async () => {
+    const { customers, calls: resolves } = fakeCustomers();
+    const orderCalls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(orderCalls), customers);
+
+    await adapter.create(guestInput({ customerRef: "customer-1", contactEmail: "other@x.com" }));
+
+    expect(resolves).toEqual([]);
+    expect(orderCalls[0]?.customerRef).toBe("customer-1");
+  });
+
+  it("throws a ValidationError (a 4xx, not a 500) when a guest session has no contact email", async () => {
+    const { customers, calls: resolves } = fakeCustomers();
+    const orderCalls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(orderCalls), customers);
+
+    const attempt = adapter.create(guestInput({ contactEmail: undefined }));
+
+    await expect(attempt).rejects.toBeInstanceOf(ValidationError);
+    await expect(attempt).rejects.toThrow(/checkout-guest-1/);
+    expect(resolves).toEqual([]);
+    expect(orderCalls).toEqual([]);
+  });
+
+  it("creates no order when the guest customer cannot be resolved", async () => {
+    const { customers } = fakeCustomers({ status: 409 });
+    const orderCalls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(orderCalls), customers);
+
+    await expect(adapter.create(guestInput())).rejects.toThrow(/checkout-guest-1/);
+    expect(orderCalls).toEqual([]);
+  });
+
+  it("derives a display name from the email's local part", async () => {
+    const { customers, calls: resolves } = fakeCustomers();
+    const adapter = new OrderCreationAdapter(fakeOrderController([]), customers);
+
+    await adapter.create(guestInput({ contactEmail: "jane.doe@example.com" }));
+
+    expect(resolves[0]?.name).toBe("jane.doe");
+  });
+});
+
+describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
   it("maps checkoutSessionId/customerRef/currency and returns orderId as orderRef on success", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders);
+    const adapter = new OrderCreationAdapter(orders, fakeCustomers().customers);
 
     const result = await adapter.create({
+      tenantId: "tenant-local",
       checkoutSessionId: "checkout-1",
       customerRef: "customer-1",
       currency: "USD",
@@ -137,9 +242,10 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
   it("maps CheckoutItem.productRef to BOTH productId and name (no display name available)", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders);
+    const adapter = new OrderCreationAdapter(orders, fakeCustomers().customers);
 
     await adapter.create({
+      tenantId: "tenant-local",
       checkoutSessionId: "checkout-1",
       customerRef: "customer-1",
       currency: "USD",
@@ -155,31 +261,40 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
     ]);
   });
 
-  it("drops CheckoutAddress.line2 (Orders' address input has no field for it)", async () => {
+  it("passes the recipient name, phone and line2 through on both addresses (Plan 3A)", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders);
+    const adapter = new OrderCreationAdapter(orders, fakeCustomers().customers);
 
     await adapter.create({
+      tenantId: "tenant-local",
       checkoutSessionId: "checkout-1",
       customerRef: "customer-1",
       currency: "USD",
       items: [checkoutItem("product-1", 1, 1000, "USD")],
       billingAddress: checkoutAddress({ line1: "Billing St", line2: "Apt 4" }),
-      shippingAddress: checkoutAddress({ line1: "Shipping St", line2: "Unit 9" }),
+      shippingAddress: checkoutAddress({
+        line1: "Shipping St",
+        line2: "Unit 9",
+        name: "Mona Ali",
+        phone: "+201012345678",
+      }),
       totals: checkoutTotals(),
       idempotencyKey: "idem-1",
     });
 
     expect(calls[0]?.billingAddress).toEqual({
       line1: "Billing St",
+      line2: "Apt 4",
       city: "Springfield",
       postalCode: "00000",
       country: "US",
     });
-    expect((calls[0]?.billingAddress as { line2?: string }).line2).toBeUndefined();
     expect(calls[0]?.shippingAddress).toEqual({
+      name: "Mona Ali",
+      phone: "+201012345678",
       line1: "Shipping St",
+      line2: "Unit 9",
       city: "Springfield",
       postalCode: "00000",
       country: "US",
@@ -189,9 +304,10 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
   it("maps the full totals breakdown through unchanged", async () => {
     const calls: CreateFromCheckoutCall[] = [];
     const orders = fakeOrderController(calls);
-    const adapter = new OrderCreationAdapter(orders);
+    const adapter = new OrderCreationAdapter(orders, fakeCustomers().customers);
 
     await adapter.create({
+      tenantId: "tenant-local",
       checkoutSessionId: "checkout-1",
       customerRef: "customer-1",
       currency: "USD",
@@ -209,7 +325,21 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
       shippingMinor: 200,
       discountMinor: 50,
       totalMinor: 2250,
+      // Plan 3C: totals now say whether the tax is inside the prices (here it is added, as before).
+      taxIncluded: false,
     });
+  });
+
+  it("snapshots the session's selected shipping method into the order's totals (Plan 3B)", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(guestInput({ customerRef: "customer-1", shippingMethod: "standard" }));
+    await adapter.create(guestInput({ customerRef: "customer-1" }));
+
+    expect(calls[0]?.totals).toMatchObject({ shippingMinor: 200, shippingMethod: "standard" });
+    // A session with no shipping selection sends no key at all — never an empty or default method.
+    expect(Object.keys(calls[1]?.totals ?? {})).not.toContain("shippingMethod");
   });
 
   it("throws, naming the checkout session and response body, on an unexpected non-201 status", async () => {
@@ -218,10 +348,11 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
       status: 422,
       body: { code: "VALIDATION", message: "invalid totals" },
     });
-    const adapter = new OrderCreationAdapter(orders);
+    const adapter = new OrderCreationAdapter(orders, fakeCustomers().customers);
 
     await expect(
       adapter.create({
+        tenantId: "tenant-local",
         checkoutSessionId: "checkout-bad-1",
         customerRef: "customer-1",
         currency: "USD",
@@ -232,5 +363,109 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
         idempotencyKey: "idem-1",
       }),
     ).rejects.toThrow(/checkout-bad-1/);
+  });
+});
+
+describe("OrderCreationAdapter — order line names and variants (Plan 2A)", () => {
+  it("names a line by its product title and passes the variant, SKU and variant title", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+    const variantLine = must(
+      CheckoutItem.create("product-shirt", 1, 12000, "USD", {
+        variantRef: "variant-l",
+        sku: "SHIRT-L",
+        title: "Shirt",
+        variantTitle: "L",
+      }),
+    );
+
+    await adapter.create(guestInput({ customerRef: "customer-1", items: [variantLine] }));
+
+    expect(calls[0]?.items[0]).toEqual({
+      productId: "product-shirt",
+      name: "Shirt",
+      unitPriceAmountMinor: 12000,
+      quantity: 1,
+      variantRef: "variant-l",
+      sku: "SHIRT-L",
+      variantTitle: "L",
+    });
+  });
+
+  it("a legacy line (no title, no variant) keeps the product ref as its name and sends no variant", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(
+      guestInput({ customerRef: "customer-1", items: [checkoutItem("product-1", 2, 1000, "USD")] }),
+    );
+
+    expect(calls[0]?.items[0]).toEqual({
+      productId: "product-1",
+      name: "product-1",
+      unitPriceAmountMinor: 1000,
+      quantity: 2,
+    });
+  });
+});
+
+describe("OrderCreationAdapter — province, shipping rate name and tax included (Plan 3C)", () => {
+  it("carries the province of both addresses to Orders", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(
+      guestInput({
+        customerRef: "customer-1",
+        shippingAddress: checkoutAddress({ country: "EG", province: "EG-C" }),
+        billingAddress: checkoutAddress({ country: "EG", province: "EG-GZ" }),
+      }),
+    );
+
+    expect(calls[0]?.shippingAddress).toMatchObject({ province: "EG-C" });
+    expect(calls[0]?.billingAddress).toMatchObject({ province: "EG-GZ" });
+  });
+
+  it("sends no province key for an address without one", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(guestInput({ customerRef: "customer-1" }));
+
+    expect(Object.keys(calls[0]?.shippingAddress ?? {})).not.toContain("province");
+  });
+
+  it("snapshots whether the tax is inside the prices and the rate's name into the order's totals", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+    const totals = CheckoutTotals.assemble(
+      [checkoutItem("product-1", 2, 5700, "USD")],
+      1400,
+      5000,
+      0,
+      "USD",
+      { taxIncluded: true, shippingName: "Standard" },
+    );
+
+    await adapter.create(
+      guestInput({ customerRef: "customer-1", totals, shippingMethod: "rate-1" }),
+    );
+
+    expect(calls[0]?.totals).toMatchObject({
+      taxMinor: 1400,
+      totalMinor: 11_400 + 5000,
+      taxIncluded: true,
+      shippingName: "Standard",
+      shippingMethod: "rate-1",
+    });
+  });
+
+  it("sends no shipping name when the session selected none", async () => {
+    const calls: CreateFromCheckoutCall[] = [];
+    const adapter = new OrderCreationAdapter(fakeOrderController(calls), fakeCustomers().customers);
+
+    await adapter.create(guestInput({ customerRef: "customer-1" }));
+
+    expect(Object.keys(calls[0]?.totals ?? {})).not.toContain("shippingName");
   });
 });

@@ -2,13 +2,11 @@ import type { Database, TransactionClient } from "@platform/db";
 import type { CustomerSession } from "../domain/customer-session";
 import type { SessionCloseReason } from "../domain/session-boundary";
 import type { SessionStore } from "../ports/session-store";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaSessionStoreDeps {
   readonly prisma: Database;
   readonly idGenerator: { generate(): string };
-  /** Tenant scope for every query (ADR-0008 §2) — same convention as the Identity/Profile Engine's
-   * Prisma adapters. */
-  readonly tenantId: string;
 }
 
 interface CacheRow {
@@ -53,18 +51,23 @@ export class PrismaSessionStore implements SessionStore {
     this.deps = deps;
   }
 
-  async getCurrent(sessionId: string, tx?: unknown): Promise<CustomerSession | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.customerSessionCache.findUnique({
-      where: { tenantId_sessionId: { tenantId: this.deps.tenantId, sessionId } },
+  async getCurrent(
+    sessionId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<CustomerSession | null> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.customerSessionCache.findUnique({
+        where: { tenantId_sessionId: { tenantId, sessionId } },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 
-  async saveCurrent(session: CustomerSession, tx?: unknown): Promise<void> {
+  async saveCurrent(session: CustomerSession, tenantId: string, tx?: unknown): Promise<void> {
     const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
     const where = {
-      tenantId_sessionId: { tenantId: this.deps.tenantId, sessionId: session.sessionId },
+      tenantId_sessionId: { tenantId, sessionId: session.sessionId },
     };
     const data = {
       visitorId: session.visitorId,
@@ -83,7 +86,7 @@ export class PrismaSessionStore implements SessionStore {
       where,
       create: {
         id: this.deps.idGenerator.generate(),
-        tenantId: this.deps.tenantId,
+        tenantId,
         sessionId: session.sessionId,
         ...data,
       },
@@ -91,28 +94,39 @@ export class PrismaSessionStore implements SessionStore {
     });
   }
 
-  async listOpenForVisitor(visitorId: string, tx?: unknown): Promise<readonly CustomerSession[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.customerSessionCache.findMany({
-      where: { tenantId: this.deps.tenantId, visitorId, status: "open" },
+  async listOpenForVisitor(
+    visitorId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly CustomerSession[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.customerSessionCache.findMany({
+        where: { tenantId, visitorId, status: "open" },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
-  async listForVisitor(visitorId: string, tx?: unknown): Promise<readonly CustomerSession[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.customerSessionCache.findMany({
-      where: { tenantId: this.deps.tenantId, visitorId },
+  async listForVisitor(
+    visitorId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly CustomerSession[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.customerSessionCache.findMany({
+        where: { tenantId, visitorId },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
-  async listSessionIds(tx?: unknown): Promise<readonly string[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.customerSessionCache.findMany({
-      where: { tenantId: this.deps.tenantId },
-      select: { sessionId: true },
+  async listSessionIds(tenantId: string, tx?: unknown): Promise<readonly string[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.customerSessionCache.findMany({
+        where: { tenantId },
+        select: { sessionId: true },
+      });
+      return rows.map((row) => row.sessionId);
     });
-    return rows.map((row) => row.sessionId);
   }
 }

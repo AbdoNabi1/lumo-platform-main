@@ -45,8 +45,15 @@ export interface KetoOptions {
  * subject is a direct id or a subject-set membership depending on `subjectConvention` (see that
  * option's doc). Roles and hierarchy are Keto **subject-sets** (role tuples pointing at
  * permission objects) — expansion happens inside Keto, which is exactly the ReBAC-ready shape;
- * ABAC/tenant-scoped objects extend the tuple object (`tenant/<id>/<permission>`) when
- * per-tenant grants arrive with the Tenancy context (G-23/G-38) — no port change either way.
+ * tenant-scoped objects extend the tuple object (`tenant/<id>/<permission>`) — no port change.
+ *
+ * **Tenant scoping (G-70).** The principal carries its tenant (`Principal.tenantId`, ADR-0015) and the
+ * check is made against the tenant-qualified object `tenant/<tenantId>/<permission>`, so a grant made
+ * for one tenant does not allow the same principal in another. `objectFor` is the single place the
+ * object is built. The tuples must exist in that shape: every writer dual-writes them and the operator
+ * migration (scripts/ops/ory-keto-*.mjs, docs/operations/KETO_TENANT_MIGRATION.md) backfills the
+ * existing bare ones — a principal whose grant has no qualified twin is DENIED, which is the point.
+ * The decision CACHE below is tenant-scoped too.
  *
  * Fail-closed: any non-200 or transport failure denies (never throws into the guard) — an
  * authorization outage must not become an authorization bypass.
@@ -56,6 +63,16 @@ export class KetoAccessControl implements AccessControl {
 
   constructor(options: KetoOptions) {
     this.options = options;
+  }
+
+  /**
+   * The Keto `object` a permission is checked against for this principal's tenant:
+   * `tenant/<tenantId>/<permission>`. Must stay identical to `qualify` in
+   * scripts/ops/keto-tenant-tuples.mjs and to the consumer's `tenantQualifiedTuple` (a test pins the
+   * first). The subject stays the bare principal id — Kratos ids are globally unique.
+   */
+  private objectFor(principal: Principal, permission: Permission): string {
+    return `tenant/${principal.tenantId}/${permission}`;
   }
 
   async authorize(principal: Principal, permission: Permission): Promise<boolean> {
@@ -70,7 +87,7 @@ export class KetoAccessControl implements AccessControl {
         : { subject_id: principal.id };
     const query = new URLSearchParams({
       namespace,
-      object: permission,
+      object: this.objectFor(principal, permission),
       relation: "granted",
       ...subjectParams,
     });
@@ -86,6 +103,7 @@ export class KetoAccessControl implements AccessControl {
         this.options.logger.warn("keto authorization check returned non-200 — denying", {
           permission,
           principalId: principal.id,
+          tenantId: principal.tenantId,
           status: response.status,
         });
         return false;
@@ -96,6 +114,7 @@ export class KetoAccessControl implements AccessControl {
       this.options.logger.error("keto authorization check failed — denying", {
         permission,
         principalId: principal.id,
+        tenantId: principal.tenantId,
         error: error instanceof Error ? error.message : String(error),
       });
       return false; // fail closed
@@ -106,9 +125,15 @@ export class KetoAccessControl implements AccessControl {
 /**
  * Decision cache decorator over ANY `AccessControl` (reuses the Sprint-2.3 `Cache` port).
  * Both allow and deny are cached for a short TTL — the TTL IS the revocation-latency window
- * (default 30s, D-048); pick it per surface. Keys are principal+permission scoped; when
- * tenant-scoped grants arrive, the tenant is part of the permission object, so keys stay
- * correct without change.
+ * (default 30s, D-048); pick it per surface.
+ *
+ * Keys are tenant + principal + permission scoped. The original plan here was that "when
+ * tenant-scoped grants arrive, the tenant is part of the permission object, so keys stay correct
+ * without change". That plan never landed: `Permission` is a bare string and the principal had no
+ * tenant, so the key was `authz:<principal>:<permission>` in ONE global Redis keyspace and a
+ * decision made while serving tenant A was served to tenant B (G-67). The tenant now comes from
+ * `Principal.tenantId` (ADR-0015) and is part of the key explicitly. The TTL is still the
+ * revocation-latency window; the same principal in N tenants now holds N independent entries.
  */
 export class CachedAccessControl implements AccessControl {
   private readonly inner: AccessControl;
@@ -122,7 +147,9 @@ export class CachedAccessControl implements AccessControl {
   }
 
   async authorize(principal: Principal, permission: Permission): Promise<boolean> {
-    const key = `authz:${principal.id}:${permission}`;
+    // Tenant and principal are encoded so ids containing `:` cannot forge another entry; the
+    // permission (`<module>:<action>`) is last and unambiguous.
+    const key = `authz:${encodeURIComponent(principal.tenantId)}:${encodeURIComponent(principal.id)}:${permission}`;
     try {
       const cached = await this.cache.get<boolean>(key);
       if (cached !== null) return cached;

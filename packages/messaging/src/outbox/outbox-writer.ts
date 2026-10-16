@@ -1,7 +1,7 @@
 import type { Clock } from "@platform/contracts";
 import type { DomainEvent } from "@platform/domain";
 import type { EventSerializer, IntegrationEvent } from "@platform/domain-events";
-import { topicFor } from "@platform/domain-events";
+import { readEnvelopeTenant, topicFor } from "@platform/domain-events";
 import type { EventContext } from "./event-context";
 import type { OutboxEntry } from "./outbox-entry";
 import type { OutboxStore } from "./outbox-store";
@@ -49,6 +49,16 @@ export class OutboxWriter<TTx = unknown> {
       return undefined;
     }
 
+    // G-64: the envelope's tenant is required, so an event that cannot name one is never enqueued —
+    // an untenanted message would be un-attributable to every consumer downstream.
+    const tenantId = readEnvelopeTenant(context);
+    if (tenantId === null) {
+      throw new Error(
+        `OutboxWriter: refusing to enqueue "${descriptor.type}" (event ${event.eventId}) — the ` +
+          "event context carries no tenantId, and the integration-event envelope requires one (G-64)",
+      );
+    }
+
     const envelope: IntegrationEvent<unknown> = {
       messageId: event.eventId,
       type: descriptor.type,
@@ -58,7 +68,7 @@ export class OutboxWriter<TTx = unknown> {
       occurredAt: event.occurredAt.toISOString(),
       correlationId: context.correlationId,
       causationId: context.causationId,
-      ...(context.tenantId !== undefined ? { tenantId: context.tenantId } : {}),
+      tenantId,
       ...(this.deps.producer !== undefined ? { producer: this.deps.producer } : {}),
       payload: descriptor.payload,
       metadata: descriptor.metadata ?? {},
@@ -78,7 +88,7 @@ export class OutboxWriter<TTx = unknown> {
         contentType: serialized.contentType,
         correlationId: envelope.correlationId,
         causationId: envelope.causationId,
-        ...(envelope.tenantId !== undefined ? { tenantId: envelope.tenantId } : {}),
+        tenantId: envelope.tenantId,
         ...(envelope.producer !== undefined ? { producer: envelope.producer } : {}),
       },
       status: "pending",

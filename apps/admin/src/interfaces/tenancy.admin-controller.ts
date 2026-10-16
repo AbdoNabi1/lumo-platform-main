@@ -121,6 +121,90 @@ export class TenancyAdminController {
     return this.tenancy.getWorkspace(input);
   }
 
+  async listShopDomains(
+    principal: Principal,
+    input: Parameters<TenancyController["listShopDomains"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "tenancy:read");
+    if (denied) return denied;
+    return this.tenancy.listShopDomains(input);
+  }
+
+  async addCustomDomain(
+    principal: Principal,
+    input: Parameters<TenancyController["addCustomDomain"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "tenancy:update");
+    if (denied) return denied;
+    return this.tenancy.addCustomDomain(input);
+  }
+
+  async verifyDomain(
+    principal: Principal,
+    input: Parameters<TenancyController["verifyDomain"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "tenancy:update");
+    if (denied) return denied;
+    return this.tenancy.verifyDomain(input);
+  }
+
+  async setPrimaryDomain(
+    principal: Principal,
+    input: Parameters<TenancyController["setPrimaryDomain"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "tenancy:update");
+    if (denied) return denied;
+    return this.tenancy.setPrimaryDomain(input);
+  }
+
+  /**
+   * Plan 1A: UNGUARDED on purpose — the storefront edge resolves a hostname before anyone is signed
+   * in (same reasoning as `admin.publicReads`). Returns only shop id, hostnames and shop status.
+   */
+  async resolveHost(
+    input: Parameters<TenancyController["resolveHost"]>[0],
+  ): Promise<AdminResponse> {
+    return this.tenancy.resolveHost(input);
+  }
+
+  async getStoreSettings(principal: Principal): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:read");
+    if (denied) return denied;
+    return this.tenancy.getStoreSettings();
+  }
+
+  /**
+   * Plan 3D: the shop's time zone and currency — all the sales report needs of the settings, so it is
+   * authorized as `orders:read` (the people who see the Home dashboard), not `settings:read`. Nothing
+   * else of the settings (name, contact email, weight unit) is returned. A failed read is answered as
+   * it is: a guessed zone would put orders on the wrong days.
+   */
+  async getStoreRegion(principal: Principal): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    const settings = await this.tenancy.getStoreSettings();
+    if (settings.status !== 200) return settings;
+    const { currency, timezone } = settings.body as { currency: string; timezone: string };
+    return { status: 200, body: { currency, timezone } };
+  }
+
+  async updateStoreSettings(
+    principal: Principal,
+    input: Parameters<TenancyController["updateStoreSettings"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:update");
+    if (denied) return denied;
+    return this.tenancy.updateStoreSettings(input);
+  }
+
+  /**
+   * Plan 3C: UNGUARDED on purpose — the storefront needs the shop's name and currency before anyone
+   * is signed in. The Tenancy use case returns only those two fields.
+   */
+  async getPublicStore(): Promise<AdminResponse> {
+    return this.tenancy.getPublicStore();
+  }
+
   async getCurrentWorkspace(principal: Principal): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "tenancy:read");
     if (denied) return denied;

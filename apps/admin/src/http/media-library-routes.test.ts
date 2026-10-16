@@ -13,7 +13,12 @@ import { mediaLibraryRoutes } from "./media-library-routes";
  */
 
 const clock: Clock = { now: () => new Date("2026-08-30T00:00:00.000Z") };
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: Principal = {
+  id: "staff-1",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
 
 function buildAdmin(): WiredAdmin {
   let n = 0;
@@ -97,7 +102,7 @@ describe("media library routes — read side (Phase 4 T4.14)", () => {
         byPathAndMethod(routes, "POST", "/media/assets"),
         {},
         {},
-        { name: "hero.png", storageKey: "media/hero.png" },
+        { name: "hero.png", storageKey: "tenants/tenant-local/product-images/2026/09/hero.png" },
       ),
       "register media asset",
     );
@@ -113,7 +118,7 @@ describe("media library routes — read side (Phase 4 T4.14)", () => {
     expect(get.body).toMatchObject({
       id: created.mediaAssetId,
       name: "hero.png",
-      storageKey: "media/hero.png",
+      storageKey: "tenants/tenant-local/product-images/2026/09/hero.png",
       status: "active",
     });
 

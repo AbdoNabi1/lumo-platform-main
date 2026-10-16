@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { AutomationController } from "@platform/automation";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -55,7 +54,10 @@ export class AutomationAdminController {
     return this.automation.retryExecution(input);
   }
 
-  async list(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async list(
+    principal: Principal,
+    input: Parameters<AutomationController["list"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "automation:read");
     if (denied) return denied;
     return this.automation.list(input);

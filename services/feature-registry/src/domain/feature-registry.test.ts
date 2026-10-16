@@ -16,6 +16,7 @@ function register(overrides: Partial<{ key: string; category: string }> = {}): F
       category: overrides.category ?? "ai",
       visibility: "public",
       description: "Generates copy",
+      tenantId: "tenant-1",
     },
     "evt-1",
     now,
@@ -35,7 +36,12 @@ describe("FeatureDefinition (Feature Registry domain, ADR-0027)", () => {
 
   it("rejects an invalid feature key", () => {
     try {
-      FeatureDefinition.register(id(), { key: "Not A Key", name: "x", category: "ai" }, "e", now);
+      FeatureDefinition.register(
+        id(),
+        { key: "Not A Key", name: "x", category: "ai", tenantId: "tenant-1" },
+        "e",
+        now,
+      );
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(isDomainError(error)).toBe(true);

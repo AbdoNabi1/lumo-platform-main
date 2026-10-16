@@ -5,7 +5,13 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, ConflictError, NotFoundError, isDomainError } from "@platform/utils";
 import { Tenant, type TenantIsolationTier } from "../domain/tenant";
-import type { TenantRepository, WorkspaceRepository } from "../domain/repositories";
+import type {
+  ShopDomainRepository,
+  TenantRepository,
+  WorkspaceRepository,
+} from "../domain/repositories";
+import { ShopDomain } from "../domain/shop-domain";
+import { Hostname } from "../domain/value-objects/hostname";
 import { Workspace, type WorkspaceEnv } from "../domain/workspace";
 import { TenantSlug } from "../domain/value-objects/tenant-slug";
 import type { WorkspaceConfig } from "../domain/value-objects/workspace-config";
@@ -16,6 +22,16 @@ export interface TenancyDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
+  /**
+   * T10.6: tenant ids the ordinary lifecycle may not suspend or cancel — the platform tenant (WP-14),
+   * which owns Morbeh's plans, subscriptions and invoices. Suspending it would stop Morbeh billing
+   * anyone, including the ability to recover, so this is refused here, before any row is read.
+   */
+  readonly protectedTenantIds?: readonly string[];
+  /** Plan 1A: present together with `platformStoreDomain` ⇒ CreateTenant adds the shop's subdomain. */
+  readonly domains?: ShopDomainRepository;
+  /** Plan 1A: e.g. `morbeh.store`. */
+  readonly platformStoreDomain?: string;
 }
 
 export interface TenantIdOutput {
@@ -55,6 +71,21 @@ export class CreateTenant implements UseCase<CreateTenantInput, TenantIdOutput, 
         this.deps.clock.now(),
       );
       await this.deps.tenants.save(tenant, tx);
+      const zone = this.deps.platformStoreDomain;
+      if (this.deps.domains !== undefined && zone !== undefined && zone !== "") {
+        const hostname = Hostname.create(`${input.slug}.${zone}`);
+        if (!hostname.ok) return err(hostname.error);
+        if ((await this.deps.domains.findByHostname(hostname.value.value, tx)) !== null) {
+          return err(new ConflictError(`Hostname "${hostname.value.value}" is already in use`));
+        }
+        const domain = ShopDomain.platform(
+          UniqueEntityId.from(this.deps.idGenerator.generate()),
+          id.toString(),
+          hostname.value,
+          this.deps.clock.now(),
+        );
+        await this.deps.domains.save(domain, tx);
+      }
       return ok({ id: id.toString() });
     });
   }
@@ -78,7 +109,17 @@ abstract class TenantTransitionUseCase implements UseCase<
 
   protected abstract apply(tenant: Tenant, eventId: string, occurredAt: Date): void;
 
+  /** Whether this transition ends or interrupts service (and so must spare protected tenants). */
+  protected readonly interrupts: boolean = false;
+
   async execute(input: TenantIdInput): Promise<Result<TenantIdOutput, DomainError>> {
+    if (this.interrupts && (this.deps.protectedTenantIds ?? []).includes(input.tenantId)) {
+      return err(
+        new ConflictError(
+          "The platform tenant cannot be suspended or cancelled through the ordinary lifecycle",
+        ),
+      );
+    }
     return this.deps.unitOfWork.run<Result<TenantIdOutput, DomainError>>(async (tx) => {
       const tenant = await this.deps.tenants.findById(input.tenantId, tx);
       if (tenant === null) return err(new NotFoundError("Tenant not found"));
@@ -101,12 +142,14 @@ export class ActivateTenant extends TenantTransitionUseCase {
 }
 
 export class SuspendTenant extends TenantTransitionUseCase {
+  protected override readonly interrupts = true;
   protected apply(tenant: Tenant, eventId: string, occurredAt: Date): void {
     tenant.suspend(eventId, occurredAt);
   }
 }
 
 export class CancelTenant extends TenantTransitionUseCase {
+  protected override readonly interrupts = true;
   protected apply(tenant: Tenant, eventId: string, occurredAt: Date): void {
     tenant.cancel(eventId, occurredAt);
   }

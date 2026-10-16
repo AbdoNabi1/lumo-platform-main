@@ -3,10 +3,13 @@ export {
   claimTenantResolver,
   domainTenantResolver,
   headerTenantResolver,
+  PUBLIC_PRINCIPAL_ID,
+  publicHeaderTenantResolver,
   resolveTenant,
   type TenantResolutionInput,
   type TenantResolver,
 } from "./tenant-resolution";
+export { suspendedTenantMayCall, type TenantAvailability, type TenantGate } from "./tenant-gate";
 export {
   defineRoute,
   type RequestContext,

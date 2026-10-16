@@ -1,18 +1,36 @@
 import type { UseCase } from "@platform/application";
 import type { Clock, IdGenerator } from "@platform/contracts";
-import { Guard, isDomainError } from "@platform/domain";
+import { BusinessRuleError, Guard, isDomainError } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { PaymentIntentRepository } from "../domain/payment-intent-repository";
 import type { PaymentStatusValue } from "../domain/value-objects/payment-status";
-import type { ProcessedWebhookStore } from "./ports";
+import {
+  capabilitiesOrRefusal,
+  type ProcessedWebhookStore,
+  type ProviderCapabilityLookup,
+} from "./ports";
 
 export interface RecordWebhookInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly paymentIntentId: string;
   readonly provider: string;
   readonly eventId: string;
   readonly kind: string;
+  /**
+   * WP-13: the provider's own id for the charge (Paymob's transaction id, from the SIGNED callback).
+   * Recorded on a direct-capture settlement so a later refund can address it.
+   */
+  readonly providerTransactionRef?: string;
+  /**
+   * WP-13: the amount/currency the provider's SIGNED callback reports. When supplied, a mismatch
+   * with the intent rejects the webhook — a valid signature proves the callback is Paymob's, not
+   * that it describes THIS intent's money.
+   */
+  readonly amountMinor?: number;
+  readonly currency?: string;
 }
 
 export interface RecordWebhookOutput {
@@ -30,6 +48,7 @@ export interface RecordWebhookOutput {
 export interface CaptureSettlementPort {
   settle(
     paymentIntentId: string,
+    tenantId: string,
   ): Promise<Result<{ readonly paymentIntentId: string; readonly status: string }, DomainError>>;
 }
 
@@ -39,6 +58,8 @@ export interface RecordWebhookDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   readonly processedWebhooks: ProcessedWebhookStore;
+  /** Declared capabilities decide whether a provider can deliver webhooks at all, and whether its callback IS the capture. */
+  readonly providers: ProviderCapabilityLookup;
   /**
    * Phase A.9. When present, a webhook `kind` mapping to `captured` settles THROUGH the exact same
    * code path a normal client retry uses (`CapturePaymentLifecycle.settle` — Charge creation,
@@ -100,8 +121,8 @@ export class RecordWebhook implements UseCase<
       // RESOLVED domain id (`intent.id`, never the caller-supplied `input.paymentIntentId` verbatim)
       // is what every downstream step — `captureSettlement.settle()`, the response body — must use.
       const intent =
-        (await this.deps.intents.findById(input.paymentIntentId, tx)) ??
-        (await this.deps.intents.findByPspReference(input.paymentIntentId, tx));
+        (await this.deps.intents.findById(input.paymentIntentId, input.tenantId, tx)) ??
+        (await this.deps.intents.findByPspReference(input.paymentIntentId, input.tenantId, tx));
       if (intent === null) {
         return err(new NotFoundError("Payment intent not found"));
       }
@@ -110,9 +131,36 @@ export class RecordWebhook implements UseCase<
       const alreadyProcessed = await this.deps.processedWebhooks.hasProcessed(
         input.provider,
         input.eventId,
+        input.tenantId,
       );
       if (alreadyProcessed) {
         return ok({ paymentIntentId, duplicate: true, status: intent.status.value });
+      }
+
+      // A webhook may only speak for the provider the shopper chose for THIS intent. Without this a
+      // verified callback from one provider could drive an intent that was opened for another.
+      // A provider that does not declare `deliversWebhooks` (cash on delivery has no PSP to call
+      // us) cannot be the sender of one: a webhook claiming to settle it is forged by definition —
+      // only `ConfirmCodCollection` (an operator's explicit action) marks it paid.
+      const capabilities = capabilitiesOrRefusal(this.deps.providers, intent.provider);
+      if (!capabilities.ok) return err(capabilities.error);
+      if (!capabilities.value.deliversWebhooks) {
+        return err(
+          new BusinessRuleError(
+            "This payment method has no provider webhooks; it is settled by an operator confirming the collection",
+          ),
+        );
+      }
+      if (input.provider !== intent.provider) {
+        return err(
+          new BusinessRuleError("Webhook provider does not match the payment intent's provider"),
+        );
+      }
+      if (
+        (input.amountMinor !== undefined && input.amountMinor !== intent.amount.amountMinor) ||
+        (input.currency !== undefined && input.currency.toUpperCase() !== intent.amount.currency)
+      ) {
+        return err(new BusinessRuleError("Webhook amount does not match the payment intent"));
       }
 
       try {
@@ -122,7 +170,7 @@ export class RecordWebhook implements UseCase<
           this.deps.idGenerator.generate(),
           this.deps.clock.now(),
         );
-        // Phase A.11 (Task 11 — webhook ordering): `ProcessedWebhookStore` dedups on `(provider,
+        // Phase A.11 (Task 11 — webhook ordering): `ProcessedWebhookStore` dedups on `(tenant, provider,
         // eventId)` only, so a genuinely DISTINCT Stripe event (different eventId — e.g. a second
         // `payment_intent.payment_failed` for a second failed attempt) that maps to the SAME status
         // the intent has already reached must not be forced through `transition()` — the
@@ -134,6 +182,15 @@ export class RecordWebhook implements UseCase<
         // production (`deferToCaptureSettlement` is always wired), but `authorized`/`failed`/
         // `cancelled`/`expired` do. A genuinely illegal cross-status webhook (current status differs
         // from `toStatus` and the transition table forbids it) is unaffected and still rejected below.
+        if (deferToCaptureSettlement && capabilities.value.settlesAtPayTime) {
+          // Paymob (WP-13): the signed callback IS the capture — there was no capture request. Bring
+          // the intent to the one status `settle()` may follow, in this same transaction.
+          intent.prepareDirectCapture(
+            () => this.deps.idGenerator.generate(),
+            this.deps.clock.now(),
+            input.providerTransactionRef,
+          );
+        }
         if (
           toStatus !== undefined &&
           !deferToCaptureSettlement &&
@@ -146,12 +203,16 @@ export class RecordWebhook implements UseCase<
         throw error;
       }
 
-      await this.deps.intents.save(intent, tx);
+      await this.deps.intents.save(intent, input.tenantId, tx);
       if (!deferToCaptureSettlement) {
         // Marked processed here, in the same step that fully handled the event. When deferring,
         // marking happens only after `captureSettlement.settle()` below actually succeeds — a
         // webhook whose settlement step fails (or never runs, crash) must remain replayable.
-        await this.deps.processedWebhooks.markProcessed(input.provider, input.eventId);
+        await this.deps.processedWebhooks.markProcessed(
+          input.provider,
+          input.eventId,
+          input.tenantId,
+        );
       }
       return ok({ paymentIntentId, duplicate: false, status: intent.status.value });
     });
@@ -179,10 +240,10 @@ export class RecordWebhook implements UseCase<
     // Uses the RESOLVED domain id (Phase A.10), not `input.paymentIntentId` — `settle()` looks up by
     // `findById` only, so passing Stripe's own reference here would fail the same way `RecordWebhook`
     // itself used to before this phase's fix.
-    const settled = await captureSettlement.settle(recorded.value.paymentIntentId);
+    const settled = await captureSettlement.settle(recorded.value.paymentIntentId, input.tenantId);
     if (!settled.ok) return err(settled.error);
 
-    await this.deps.processedWebhooks.markProcessed(input.provider, input.eventId);
+    await this.deps.processedWebhooks.markProcessed(input.provider, input.eventId, input.tenantId);
     return ok({
       paymentIntentId: recorded.value.paymentIntentId,
       status: settled.value.status,

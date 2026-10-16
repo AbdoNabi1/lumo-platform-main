@@ -8,6 +8,8 @@ import type { NotificationRepository } from "../domain/notification-repository";
 import type { ProcessedProviderCallbackStore } from "./ports";
 
 export interface RecordProviderCallbackInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly notificationId: string;
   readonly provider: string;
   readonly callbackId: string;
@@ -50,7 +52,11 @@ export class RecordProviderCallback implements UseCase<
 
     return this.deps.unitOfWork.run<Result<RecordProviderCallbackOutput, DomainError>>(
       async (tx) => {
-        const notification = await this.deps.notifications.findById(input.notificationId, tx);
+        const notification = await this.deps.notifications.findById(
+          input.notificationId,
+          input.tenantId,
+          tx,
+        );
         if (notification === null) {
           return err(new NotFoundError("Notification not found"));
         }
@@ -58,6 +64,7 @@ export class RecordProviderCallback implements UseCase<
         const alreadyProcessed = await this.deps.processedProviderCallbacks.hasProcessed(
           input.provider,
           input.callbackId,
+          input.tenantId,
         );
         if (alreadyProcessed) {
           return ok({
@@ -74,10 +81,14 @@ export class RecordProviderCallback implements UseCase<
             if (isDomainError(error)) return err(error);
             throw error;
           }
-          await this.deps.notifications.save(notification, tx);
+          await this.deps.notifications.save(notification, input.tenantId, tx);
         }
 
-        await this.deps.processedProviderCallbacks.markProcessed(input.provider, input.callbackId);
+        await this.deps.processedProviderCallbacks.markProcessed(
+          input.provider,
+          input.callbackId,
+          input.tenantId,
+        );
         return ok({
           notificationId: notification.id.toString(),
           status: notification.status.value,

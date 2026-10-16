@@ -3,13 +3,13 @@ import type { DomainEvent } from "@platform/domain";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { SessionTransition, SessionTransitionKind } from "../domain/session-transition";
 import type { JourneyStore } from "../ports/journey-store";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaJourneyStoreDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
   readonly idGenerator: { generate(): string };
-  readonly tenantId: string;
 }
 
 interface TransitionRow {
@@ -46,12 +46,17 @@ export class PrismaJourneyStore implements JourneyStore {
     this.deps = deps;
   }
 
-  async record(transition: SessionTransition, event?: DomainEvent, tx?: unknown): Promise<void> {
+  async record(
+    transition: SessionTransition,
+    tenantId: string,
+    event?: DomainEvent,
+    tx?: unknown,
+  ): Promise<void> {
     const client = this.requireTx(tx);
     await client.sessionTransition.create({
       data: {
         id: transition.id,
-        tenantId: this.deps.tenantId,
+        tenantId,
         kind: transition.kind,
         visitorId: transition.visitorId,
         fromSessionId: transition.fromSessionId ?? null,
@@ -62,17 +67,22 @@ export class PrismaJourneyStore implements JourneyStore {
       },
     });
     if (event !== undefined) {
-      await this.deps.outbox.write([event], this.deps.context, client);
+      await this.deps.outbox.write([event], { ...this.deps.context, tenantId }, client);
     }
   }
 
-  async listForVisitor(visitorId: string, tx?: unknown): Promise<readonly SessionTransition[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.sessionTransition.findMany({
-      where: { tenantId: this.deps.tenantId, visitorId },
-      orderBy: { occurredAt: "asc" },
+  async listForVisitor(
+    visitorId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly SessionTransition[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.sessionTransition.findMany({
+        where: { tenantId, visitorId },
+        orderBy: { occurredAt: "asc" },
+      });
+      return rows.map(toDomain);
     });
-    return rows.map(toDomain);
   }
 
   private requireTx(tx: unknown): TransactionClient {

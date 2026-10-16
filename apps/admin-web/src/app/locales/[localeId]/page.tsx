@@ -74,7 +74,7 @@ export default async function LocaleDetailPage({ params }: LocaleDetailPageProps
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="flex items-center gap-2 text-4xl font-semibold tracking-tight">
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
               <GlobeIcon aria-hidden="true" className="size-7" />
               {item.name}
             </h1>

@@ -7,6 +7,15 @@ export { SecurityController } from "./interfaces/security.controller";
 export type { SecurityControllerDeps } from "./interfaces/security.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { SecurityConsoleReadModels } from "./interfaces/read-models";
+export {
+  BASELINE_POLICY_KEY,
+  OWNER_GRANT,
+  PLATFORM_ADMIN_ROLE,
+  PLATFORM_SERVICE_ROLE,
+  SYSTEM_GRANTOR,
+  bootstrapSecurity,
+} from "./interfaces/tenant-baseline";
+export type { SecurityBootstrapSummary } from "./interfaces/tenant-baseline";
 export type {
   AuditExplorer,
   DeviceExplorer,
@@ -14,6 +23,7 @@ export type {
   MachineIdentityExplorer,
   PermissionExplorer,
   SecurityDashboard,
+  TenantBaselineState,
 } from "./interfaces/read-models";
 export { SecuritySdk } from "./interfaces/security-sdk";
 export type {
@@ -28,6 +38,11 @@ export type {
   IntrospectSessionSubjectInput,
   SessionSubject,
 } from "./application/session.use-cases";
+// Plan 1B-2 — a principal's active role keys, for minting a native staff token.
+export {
+  ListPrincipalRoleKeys,
+  type ListPrincipalRoleKeysInput,
+} from "./application/principal-roles.use-cases";
 // Zero-trust access decision types — reused by the H-4 edge guard (decision stays in EvaluateAccess).
 export type { EvaluateAccessInput, AccessDecisionOutput } from "./application/access.use-cases";
 
@@ -273,3 +288,25 @@ export type { PrincipalKind, PrincipalStatus } from "./domain/value-objects/prin
 /** Canonical integration events Security publishes (runtime-verified by `securityModule`). */
 export { SECURITY_PUBLISHED_EVENTS } from "./infrastructure/security-event-translator";
 export type { SecurityEventName } from "./domain/events/security-changed.event";
+
+// Plan 1B-1: durable, tenant-scoped password credentials.
+export { ScryptPasswordHasher } from "./infrastructure/scrypt-password-hasher";
+export { HashedPasswordAuthProvider } from "./infrastructure/hashed-password-auth-provider";
+export { InMemoryPasswordCredentialStore } from "./infrastructure/in-memory-password-credential-store";
+export {
+  normalizeIdentifier,
+  type PasswordCredentialRecord,
+  type PasswordCredentialStore,
+  type PasswordHasher,
+  type PasswordRegistrar,
+} from "./application/password-credentials";
+export { PrismaPasswordCredentialStore } from "./infrastructure/prisma-password-credential-store";
+// Plan 1C: single-use, expiring password reset tokens.
+export {
+  PasswordResetService,
+  hashResetToken,
+  type PasswordResetTokenRecord,
+  type PasswordResetTokenStore,
+} from "./application/password-reset";
+export { InMemoryPasswordResetTokenStore } from "./infrastructure/in-memory-password-reset-token-store";
+export { PrismaPasswordResetTokenStore } from "./infrastructure/prisma-password-reset-token-store";

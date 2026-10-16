@@ -32,8 +32,8 @@ export default async function RobotsPoliciesPage({ searchParams }: RobotsPolicie
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.robotsPoliciesPage.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.robotsPoliciesPage.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.robotsPoliciesPage.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.robotsPoliciesPage.subtitle}</p>
         </div>
         <Button asChild>
           <Link href="/seo/robots-policies/new">
@@ -92,7 +92,11 @@ async function RobotsPoliciesResults({
         <RobotsPoliciesTable policies={result.items} t={t} />
       </CardContent>
       <div className="border-border flex items-center justify-end gap-2 border-t px-4 py-3 sm:px-5">
-        <SeoPagination hasNextPage={result.pageInfo.hasNextPage} endCursor={result.pageInfo.endCursor} t={t} />
+        <SeoPagination
+          hasNextPage={result.pageInfo.hasNextPage}
+          endCursor={result.pageInfo.endCursor}
+          t={t}
+        />
       </div>
     </Card>
   );

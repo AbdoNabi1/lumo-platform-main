@@ -8,13 +8,16 @@ import type { ProductRepository } from "../domain/product-repository";
 import { Sku } from "../domain/value-objects/sku";
 import { VariantSelection } from "../domain/value-objects/variant-selection";
 import { Variant } from "../domain/variant";
+import { toVariantAttributes, type VariantAttributesInput } from "./variant-attributes-input";
 
-export interface AddVariantInput {
+export interface AddVariantInput extends VariantAttributesInput {
   readonly productId: string;
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
   readonly selection?: Readonly<Record<string, string>>;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface AddVariantOutput {
@@ -42,6 +45,8 @@ export class AddVariant implements UseCase<AddVariantInput, AddVariantOutput, Do
     if (!sku.ok) return err(sku.error);
     const price = Money.create(input.priceAmountMinor, input.currency);
     if (!price.ok) return err(price.error);
+    const attributes = toVariantAttributes(input, input.currency);
+    if (!attributes.ok) return err(attributes.error);
     let selection: VariantSelection | null = null;
     if (input.selection !== undefined) {
       const created = VariantSelection.create(input.selection);
@@ -50,20 +55,26 @@ export class AddVariant implements UseCase<AddVariantInput, AddVariantOutput, Do
     }
 
     return this.deps.unitOfWork.run<Result<AddVariantOutput, DomainError>>(async (tx) => {
-      const product = await this.deps.products.findById(input.productId, tx);
+      const product = await this.deps.products.findById(input.productId, input.tenantId, tx);
       if (product === null) {
         return err(new NotFoundError("Product not found"));
       }
 
       const variantId = UniqueEntityId.from(this.deps.idGenerator.generate());
-      const variant = Variant.create(variantId, sku.value, price.value, selection);
       try {
+        const variant = Variant.create(
+          variantId,
+          sku.value,
+          price.value,
+          selection,
+          attributes.value,
+        );
         product.addVariant(variant, this.deps.idGenerator.generate(), this.deps.clock.now());
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.products.save(product, tx);
+      await this.deps.products.save(product, input.tenantId, tx);
       return ok({ productId: product.id.toString(), variantId: variantId.toString() });
     });
   }

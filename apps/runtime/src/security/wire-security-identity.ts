@@ -55,7 +55,6 @@ export function wireSecurityIdentity(
   core: RuntimeCore,
   metrics?: MessagingMetrics,
 ): WiredSecurityIdentity | null {
-  const { config } = core;
   const ory = buildOryClients(core);
   if (ory === null) {
     core.logger.warn("security live identity binding disabled: Ory URLs unset (APP_ENV=local)");
@@ -65,13 +64,11 @@ export function wireSecurityIdentity(
 
   const consentStore = new PrismaConsentProjectionStore({
     prisma: core.prisma,
-    tenantId: config.TENANT_DEFAULT_ID,
     idGenerator: core.idGenerator,
   });
   const consent = new ProjectionConsentPort(consentStore);
   const identityProjection = new PrismaIdentityProjectionStore({
     prisma: core.prisma,
-    tenantId: config.TENANT_DEFAULT_ID,
     idGenerator: core.idGenerator,
   });
   const relationshipSync = new KetoRelationshipSync(keto);
@@ -83,6 +80,8 @@ export function wireSecurityIdentity(
   const build = <T>(handler: EventHandler<T>, consumerGroup: string): SupervisedConsumer =>
     buildProcessedConsumer<T>(core, handler, consumerGroup, producer, metrics);
 
+  // ADR-0014 / G-64: the projection stores take `tenantId` per call and the consumers read it from
+  // each message's envelope — nothing here names a tenant.
   const idp = { store: identityProjection, logger: core.logger };
   const runtimes: readonly SupervisedConsumer[] = [
     build(

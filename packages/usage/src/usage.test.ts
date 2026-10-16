@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
+import { rootEventContext, type OutboxWriter } from "@platform/messaging";
+import { assertWriteTimeTenant, CapturingOutboxWriter } from "@platform/messaging/testing";
 import { isValidUsageRecord, normalizeUsageRecord, type UsageRecord } from "./usage-record";
 import { UsageRecorded } from "./usage-recorded.event";
 import { UsageEventTranslator } from "./usage-event-translator";
-import { InMemoryUsageRecorder } from "./usage-recorder.port";
+import { InMemoryUsageRecorder, OutboxUsageRecorder } from "./usage-recorder.port";
 import { isRegisteredResource } from "./usage-resource";
 
 const record: UsageRecord = {
@@ -55,5 +57,67 @@ describe("InMemoryUsageRecorder", () => {
     await recorder.record(record);
     expect(recorder.records).toHaveLength(1);
     expect(recorder.records[0]?.resource).toBe("ai_credits");
+  });
+});
+
+describe("OutboxUsageRecorder write-time tenant (ADR-0014 Amendment 7)", () => {
+  it("carries each record's tenant into the outbox envelope, not the singleton context's", async () => {
+    let n = 0;
+    const idGenerator = {
+      generate: () => `00000000-0000-7000-8000-${(n++).toString().padStart(12, "0")}`,
+    };
+    await assertWriteTimeTenant("usage", async (outbox, tenantId) => {
+      const recorder = new OutboxUsageRecorder({
+        outbox,
+        context: rootEventContext(idGenerator),
+        idGenerator,
+        clock: { now: () => new Date(0) },
+      });
+      await recorder.record({ ...record, tenant: tenantId });
+    });
+  });
+
+  it("puts the same normalized tenant on the envelope, the payload and the aggregate id", async () => {
+    const idGenerator = { generate: () => "00000000-0000-7000-8000-000000000000" };
+    const outbox = new CapturingOutboxWriter();
+    const recorder = new OutboxUsageRecorder({
+      outbox,
+      context: rootEventContext(idGenerator),
+      idGenerator,
+      clock: { now: () => new Date(0) },
+    });
+
+    // `isValidUsageRecord` accepts a padded tenant, so an untrimmed one is reachable input.
+    await recorder.record({ ...record, tenant: "  t-pad  " });
+
+    const write = outbox.writes[0];
+    const event = write?.events[0] as UsageRecorded | undefined;
+    expect(write?.context.tenantId).toBe("t-pad");
+    expect(event?.data.tenant).toBe("t-pad");
+    expect(event?.aggregateId.toString()).toBe("t-pad");
+  });
+
+  it("writes into the caller's transaction, never outside it (ADR-0003)", async () => {
+    // `PrismaOutboxStore.append` throws without a transaction client, so a recorder that hard-codes
+    // `undefined` here cannot run inside any Prisma unit of work at all.
+    const idGenerator = { generate: () => "00000000-0000-7000-8000-000000000000" };
+    const seen: unknown[] = [];
+    const outbox = {
+      write: async (_events: unknown, _context: unknown, tx: unknown) => {
+        seen.push(tx);
+      },
+    } as unknown as OutboxWriter;
+    const recorder = new OutboxUsageRecorder({
+      outbox,
+      context: rootEventContext(idGenerator),
+      idGenerator,
+      clock: { now: () => new Date(0) },
+    });
+    const tx = { marker: "the-callers-transaction" };
+
+    await recorder.record(record, tx);
+
+    expect(seen).toEqual([tx]);
+    expect(seen[0]).toBe(tx);
   });
 });

@@ -26,6 +26,7 @@ export function securitySecretsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       schema: { params: credentialIdParams, body: scheduleCredentialRotationBody },
       handle: ({ params, body, context }) =>
         admin.securitySecrets.scheduleCredentialRotation(context.principal, {
+          tenantId: context.tenantId,
           credentialId: params.credentialId,
           ...body,
         }),
@@ -38,7 +39,10 @@ export function securitySecretsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       summary:
         "Rotate every credential whose scheduled rotation is due (scheduler-driven, idempotent)",
       schema: {},
-      handle: ({ context }) => admin.securitySecrets.rotateDueCredentials(context.principal),
+      handle: ({ context }) =>
+        admin.securitySecrets.rotateDueCredentials(context.principal, {
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -48,7 +52,10 @@ export function securitySecretsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       summary: "Revoke every non-terminal credential for a principal at once (breach response)",
       schema: { body: emergencyRevokeCredentialsBody },
       handle: ({ body, context }) =>
-        admin.securitySecrets.emergencyRevokeCredentials(context.principal, body),
+        admin.securitySecrets.emergencyRevokeCredentials(context.principal, {
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -59,6 +66,7 @@ export function securitySecretsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       schema: { params: credentialIdParams },
       handle: ({ params, context }) =>
         admin.securitySecrets.getCredentialLineage(context.principal, {
+          tenantId: context.tenantId,
           credentialId: params.credentialId,
         }),
     }),
@@ -69,7 +77,8 @@ export function securitySecretsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       permission: "security:secret_explorer",
       summary: "Console read model — secret explorer",
       schema: {},
-      handle: ({ context }) => admin.securitySecrets.secretExplorer(context.principal),
+      handle: ({ context }) =>
+        admin.securitySecrets.secretExplorer(context.principal, context.tenantId),
     }),
   ] as readonly RouteDefinition[];
 }

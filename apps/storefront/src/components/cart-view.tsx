@@ -7,6 +7,7 @@ import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@platform/ui";
 import { changeQuantity, clearCart, removeItem, type CartActionResult } from "@/app/cart/actions";
 import { startCheckout } from "@/app/checkout/actions";
+import { LineThumb } from "./line-thumb";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import type { ResolvedCartLine } from "@/lib/cart";
 import type { Locale } from "@/lib/i18n";
@@ -20,9 +21,17 @@ function cartStatusLabel(status: string, t: Dictionary): string {
 }
 
 /** Maps a failed mutation's reason to the dictionary body copy for the "API error" / "ownership error" states (Task 8). */
-function errorBody(reason: "unavailable" | "ownership" | "network", t: Dictionary): string {
+function errorBody(
+  reason: "unavailable" | "choose-variant" | "ownership" | "network",
+  t: Dictionary,
+): string {
   if (reason === "ownership") return t.cart.ownershipErrorBody;
   return t.cart.networkErrorBody;
+}
+
+/** What identifies a line in the UI: its variant when it has one, else its product (a legacy line). */
+function lineKey(line: ResolvedCartLine): string {
+  return line.variantId ?? line.productId;
 }
 
 /**
@@ -44,14 +53,16 @@ export function CartView({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [pendingProductId, setPendingProductId] = useState<string | null>(null);
+  const [pendingLineKey, setPendingLineKey] = useState<string | null>(null);
   const [pendingClear, setPendingClear] = useState(false);
   const [pendingCheckout, setPendingCheckout] = useState(false);
-  const [error, setError] = useState<"unavailable" | "ownership" | "network" | null>(null);
+  const [error, setError] = useState<
+    "unavailable" | "choose-variant" | "ownership" | "network" | null
+  >(null);
   const [checkoutError, setCheckoutError] = useState(false);
 
   function afterMutation(result: CartActionResult): void {
-    setPendingProductId(null);
+    setPendingLineKey(null);
     setPendingClear(false);
     if (!result.ok) {
       setError(result.reason === "unavailable" ? "network" : result.reason);
@@ -60,18 +71,20 @@ export function CartView({
     setError(null);
   }
 
-  function onQuantityChange(productId: string, nextQuantity: number): void {
+  function onQuantityChange(line: ResolvedCartLine, nextQuantity: number): void {
     if (nextQuantity < 1) return;
-    setPendingProductId(productId);
+    setPendingLineKey(lineKey(line));
     startTransition(async () => {
-      afterMutation(await changeQuantity(cart.id, productId, nextQuantity));
+      afterMutation(
+        await changeQuantity(cart.id, line.productId, nextQuantity, line.variantId ?? undefined),
+      );
     });
   }
 
-  function onRemove(productId: string): void {
-    setPendingProductId(productId);
+  function onRemove(line: ResolvedCartLine): void {
+    setPendingLineKey(lineKey(line));
     startTransition(async () => {
-      afterMutation(await removeItem(cart.id, productId));
+      afterMutation(await removeItem(cart.id, line.productId, line.variantId ?? undefined));
     });
   }
 
@@ -123,19 +136,28 @@ export function CartView({
         )}
         <ul className="flex flex-col gap-2">
           {lines.map((line) => {
-            const linePending = isPending && pendingProductId === line.productId;
+            const linePending = isPending && pendingLineKey === lineKey(line);
             return (
               <li
-                key={line.productId}
+                key={lineKey(line)}
                 className="border-border flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
               >
-                <div className="flex flex-col gap-0.5">
+                <LineThumb
+                  url={line.imageUrl}
+                  alt={line.name ?? t.cart.productUnavailable}
+                  size={64}
+                  noImageLabel={t.product.gallery.noImage}
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   {line.slug !== null ? (
                     <Link href={`/products/${line.slug}`} className="font-medium hover:underline">
                       {line.name}
                     </Link>
                   ) : (
                     <span className="font-medium">{line.name ?? t.cart.productUnavailable}</span>
+                  )}
+                  {line.variantTitle !== null && (
+                    <span className="text-muted-foreground text-xs">{line.variantTitle}</span>
                   )}
                   <span className="text-muted-foreground text-xs">
                     {t.cart.unitPrice.replace(
@@ -152,7 +174,7 @@ export function CartView({
                       size="icon"
                       aria-label={t.cart.decreaseQuantity}
                       disabled={linePending || line.quantity <= 1}
-                      onClick={() => onQuantityChange(line.productId, line.quantity - 1)}
+                      onClick={() => onQuantityChange(line, line.quantity - 1)}
                     >
                       <MinusIcon aria-hidden="true" />
                     </Button>
@@ -165,7 +187,7 @@ export function CartView({
                       size="icon"
                       aria-label={t.cart.increaseQuantity}
                       disabled={linePending}
-                      onClick={() => onQuantityChange(line.productId, line.quantity + 1)}
+                      onClick={() => onQuantityChange(line, line.quantity + 1)}
                     >
                       <PlusIcon aria-hidden="true" />
                     </Button>
@@ -179,7 +201,7 @@ export function CartView({
                     size="icon"
                     aria-label={t.cart.remove}
                     disabled={linePending}
-                    onClick={() => onRemove(line.productId)}
+                    onClick={() => onRemove(line)}
                   >
                     <XIcon aria-hidden="true" />
                   </Button>

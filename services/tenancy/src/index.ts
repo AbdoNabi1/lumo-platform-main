@@ -1,5 +1,5 @@
 export { wireTenancy } from "./composition";
-export type { TenancyWiringDeps, WiredTenancy } from "./composition";
+export type { TenancyWiringDeps, TenantAvailability, WiredTenancy } from "./composition";
 export { TenancyController } from "./interfaces/tenancy.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { Tenant } from "./domain/tenant";
@@ -8,7 +8,21 @@ export { Workspace } from "./domain/workspace";
 export type { WorkspaceEnv, WorkspaceStatus } from "./domain/workspace";
 export { TenantSlug } from "./domain/value-objects/tenant-slug";
 export { WorkspaceConfig } from "./domain/value-objects/workspace-config";
-export type { TenantRepository, WorkspaceRepository } from "./domain/repositories";
+export type {
+  ShopDomainRepository,
+  StoreSettingsRepository,
+  TenantRepository,
+  WorkspaceRepository,
+} from "./domain/repositories";
+export { Hostname } from "./domain/value-objects/hostname";
+export { ShopDomain } from "./domain/shop-domain";
+export type { ShopDomainKind, ShopDomainStatus } from "./domain/shop-domain";
+export type { DnsVerifier } from "./domain/dns-verifier";
+export { NodeDnsVerifier } from "./infrastructure/node-dns-verifier";
+export type { ResolvedHost, ShopDomainView } from "./application/shop-domains.use-cases";
+export { StoreSettings, WEIGHT_UNITS } from "./domain/store-settings";
+export type { StoreSettingsInput, WeightUnit } from "./domain/store-settings";
+export type { PublicStoreView, StoreSettingsView } from "./application/store-settings.use-cases";
 export {
   PrismaTenantRepository,
   PrismaWorkspaceRepository,

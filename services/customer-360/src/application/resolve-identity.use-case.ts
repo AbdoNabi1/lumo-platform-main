@@ -10,6 +10,9 @@ import type { IdentityGraphStore } from "../ports/identity-graph-store";
 import { excludeRetractedEdges } from "../ports/identity-resolution";
 
 export interface ResolveIdentityInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly type: IdentifierType;
   readonly value: string;
 }
@@ -45,8 +48,8 @@ export class ResolveIdentity implements UseCase<
 
   async execute(input: ResolveIdentityInput): Promise<Result<ResolveIdentityOutput, DomainError>> {
     const [graph, retracted] = await Promise.all([
-      this.deps.graph.loadGraph(),
-      this.deps.decisions.retractedEdges(),
+      this.deps.graph.loadGraph(input.tenantId),
+      this.deps.decisions.retractedEdges(input.tenantId),
     ]);
     const view = excludeRetractedEdges(graph, retracted);
     const resolved = resolveIdentity(view, input.type, input.value);

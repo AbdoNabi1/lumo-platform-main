@@ -74,7 +74,11 @@ describe("AssignCartCustomer", () => {
     const cart = guestCartWithOneItem();
     const { useCase, saved } = useCaseFor(cart);
 
-    const result = await useCase.execute({ cartId: "cart-1", customerRef: "customer-9" });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      cartId: "cart-1",
+      customerRef: "customer-9",
+    });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -97,7 +101,11 @@ describe("AssignCartCustomer", () => {
     cart.assignCustomer("customer-9");
     const { useCase, saved } = useCaseFor(cart);
 
-    const result = await useCase.execute({ cartId: "cart-1", customerRef: "customer-9" });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      cartId: "cart-1",
+      customerRef: "customer-9",
+    });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -110,7 +118,11 @@ describe("AssignCartCustomer", () => {
     cart.assignCustomer("customer-9");
     const { useCase, saved } = useCaseFor(cart);
 
-    const result = await useCase.execute({ cartId: "cart-1", customerRef: "customer-INTRUDER" });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      cartId: "cart-1",
+      customerRef: "customer-INTRUDER",
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -122,7 +134,11 @@ describe("AssignCartCustomer", () => {
   it("404s for an unknown cart id", async () => {
     const { useCase } = useCaseFor(null);
 
-    const result = await useCase.execute({ cartId: "nope", customerRef: "customer-9" });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      cartId: "nope",
+      customerRef: "customer-9",
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -133,7 +149,11 @@ describe("AssignCartCustomer", () => {
     const cart = guestCartWithOneItem();
     const { useCase, saved } = useCaseFor(cart);
 
-    const result = await useCase.execute({ cartId: "cart-1", customerRef: "  " });
+    const result = await useCase.execute({
+      tenantId: "tenant-a",
+      cartId: "cart-1",
+      customerRef: "  ",
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

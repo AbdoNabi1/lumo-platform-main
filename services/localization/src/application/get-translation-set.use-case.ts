@@ -5,16 +5,18 @@ import type { TranslationSetRepository } from "../domain/repositories";
 import type { TranslationSet } from "../domain/translation-set";
 import type { TranslationKeyInput } from "./localization.use-cases";
 
-export type TranslationSetIdInput = Pick<TranslationKeyInput, "translationSetId">;
+export type TranslationSetIdInput = Pick<TranslationKeyInput, "translationSetId" | "tenantId">;
 
 export interface GetTranslationSetDeps {
   readonly translationSets: TranslationSetRepository;
 }
 
 /** Fetches a single translation set by id. */
-export class GetTranslationSet
-  implements UseCase<TranslationSetIdInput, TranslationSet, DomainError>
-{
+export class GetTranslationSet implements UseCase<
+  TranslationSetIdInput,
+  TranslationSet,
+  DomainError
+> {
   private readonly deps: GetTranslationSetDeps;
 
   constructor(deps: GetTranslationSetDeps) {
@@ -22,7 +24,7 @@ export class GetTranslationSet
   }
 
   async execute(input: TranslationSetIdInput): Promise<Result<TranslationSet, DomainError>> {
-    const set = await this.deps.translationSets.findById(input.translationSetId);
+    const set = await this.deps.translationSets.findById(input.translationSetId, input.tenantId);
     return set === null ? err(new NotFoundError("Translation set not found")) : ok(set);
   }
 }

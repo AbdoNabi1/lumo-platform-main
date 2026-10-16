@@ -39,7 +39,7 @@ and the global engineering rules.
 
 ## Design & UI
 
-- The UI follows the **Lumo Design System** (`docs/ui/LUMO_DESIGN_SYSTEM.md`) — the platform's one canonical design system. Build from `@platform/ui` primitives and consume semantic tokens from `@platform/design`; never hard-code a colour, radius, shadow, duration, or spacing value, and never start a second design system.
+- The UI follows the **Morbeh Design System** (`docs/ui/MORBEH_DESIGN_SYSTEM.md`) — the platform's one canonical design system. Build from `@platform/ui` primitives and consume semantic tokens from `@platform/design`; never hard-code a colour, radius, shadow, duration, or spacing value, and never start a second design system.
 - Never use raw hex — reference design tokens / Tailwind semantic utilities (`bg-background`, etc.).
 - Sentence case, two font weights (400/500), flat surfaces (no shadows) — per the frozen design system.
 - Accessibility: WCAG 2.2 AA for user-facing UI.

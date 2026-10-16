@@ -8,6 +8,11 @@ import { adminRoutes } from "./admin-routes";
 import { cartRoutes } from "./cart-routes";
 import { checkoutRoutes } from "./checkout-routes";
 import { paymentsRoutes } from "./payments-routes";
+import {
+  controllerDriver,
+  seedSingleVariantProduct,
+  type SeededProduct,
+} from "./testing/seed-catalog";
 
 /**
  * Phase A.1 — Financial Security Audit exploit-proof + regression suite.
@@ -31,8 +36,18 @@ function buildAdmin(extra?: Partial<AdminWiringDeps>): WiredAdmin {
   return wireAdmin({ serializer: new InMemoryEventSerializer(), idGenerator, clock, ...extra });
 }
 
-const customer: Principal = { id: "customer-1", kind: "customer", roles: [] };
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const customer: Principal = {
+  id: "customer-1",
+  kind: "customer",
+  roles: [],
+  tenantId: "tenant-local",
+};
+const staff: Principal = {
+  id: "staff-1",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: "tenant-local",
+};
 
 interface Response {
   readonly status: number;
@@ -70,31 +85,13 @@ function unwrap<T>(response: Response, action: string): T {
   return response.body as T;
 }
 
-async function seedPublishedPrice(
-  admin: WiredAdmin,
-  productId: string,
-  amountMinor: number,
-  currency = "USD",
-): Promise<void> {
-  const created = await admin.pricing.createPrice(staff, {
-    priceListId: "price-list-1",
-    productId,
+/** One published single-variant Catalog product at `amountMinor` — what the cart prices a line from (Plan 2A). */
+function seedProduct(admin: WiredAdmin, amountMinor: number): Promise<SeededProduct> {
+  return seedSingleVariantProduct(
+    controllerDriver(admin.publicReads.products, "tenant-local"),
+    "P-1",
     amountMinor,
-    currency,
-  });
-  if (created.status < 200 || created.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: create failed (${created.status}): ${JSON.stringify(created.body)}`,
-    );
-  }
-  const published = await admin.pricing.publishPrice(staff, {
-    priceId: (created.body as { id: string }).id,
-  });
-  if (published.status < 200 || published.status >= 300) {
-    throw new Error(
-      `seedPublishedPrice: publish failed (${published.status}): ${JSON.stringify(published.body)}`,
-    );
-  }
+  );
 }
 
 const ADDRESS = { line1: "1 Main St", city: "Town", postalCode: "12345", country: "US" };
@@ -106,7 +103,7 @@ async function buildRecalculatedCheckout(
   quantity: number,
 ): Promise<{ checkoutSessionId: string }> {
   // Cart's own price-forgery boundary was already closed by Phase 17.2 — `addItem` there resolves
-  // price server-side (`resolvePrice()`) only at the HTTP-route layer, not on the admin-controller
+  // price server-side (`resolveMerchandise()`) only at the HTTP-route layer, not on the admin-controller
   // method directly, so this setup goes through the real `cart-routes.ts` route handlers.
   const cart = cartRoutes(admin);
   const createCart = byPathAndMethod(cart, "POST", "/carts");
@@ -145,11 +142,19 @@ async function buildRecalculatedCheckout(
     "load items",
   );
   unwrap(
-    await admin.checkout.setBillingAddress(customer, { checkoutSessionId, ...ADDRESS }),
+    await admin.checkout.setBillingAddress(customer, {
+      tenantId: "tenant-local",
+      checkoutSessionId,
+      ...ADDRESS,
+    }),
     "set billing address",
   );
   unwrap(
-    await admin.checkout.setShippingAddress(customer, { checkoutSessionId, ...ADDRESS }),
+    await admin.checkout.setShippingAddress(customer, {
+      tenantId: "tenant-local",
+      checkoutSessionId,
+      ...ADDRESS,
+    }),
     "set shipping address",
   );
   return { checkoutSessionId };
@@ -158,18 +163,31 @@ async function buildRecalculatedCheckout(
 describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a real quote", () => {
   it("legitimate flow: the standard-method rate (500) is the one applied to totals", async () => {
     const admin = buildAdmin();
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 1);
 
     const selected = unwrap<{ checkoutSessionId: string }>(
-      await admin.checkout.selectShipping(customer, { checkoutSessionId, method: "standard" }),
+      await admin.checkout.selectShipping(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+        method: "standard",
+      }),
       "select shipping",
     );
     expect(selected.checkoutSessionId).toBe(checkoutSessionId);
 
-    unwrap(await admin.checkout.recalculateTotals(customer, { checkoutSessionId }), "recalculate");
+    unwrap(
+      await admin.checkout.recalculateTotals(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+      }),
+      "recalculate",
+    );
     const draft = unwrap<{ totals: { shippingMinor: number; totalMinor: number } }>(
-      await admin.checkout.generateOrderDraft(customer, { checkoutSessionId }),
+      await admin.checkout.generateOrderDraft(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+      }),
       "generate order draft",
     );
     expect(draft.totals.shippingMinor).toBe(500);
@@ -178,8 +196,8 @@ describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a
 
   it("Attack (F-01): a forged rateAmountMinor smuggled past Zod is ignored — the real quoted rate is used instead", async () => {
     const admin = buildAdmin();
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 1);
     const routes = checkoutRoutes(admin);
     const selectShipping = byPathAndMethod(
       routes,
@@ -217,10 +235,11 @@ describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a
 
   it("an unknown/unavailable shipping method is rejected (422), never silently priced at 0", async () => {
     const admin = buildAdmin();
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 1);
 
     const selected = await admin.checkout.selectShipping(customer, {
+      tenantId: "tenant-local",
       checkoutSessionId,
       method: "teleportation",
     });
@@ -243,13 +262,23 @@ describe("Phase A.1 — F-01: Checkout shipping rate is always re-derived from a
 
 describe("Phase A.1 — F-02: order total is always re-derived from Checkout's order draft", () => {
   async function buildOrderDraftReadyCheckout(admin: WiredAdmin) {
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 2);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 2);
     unwrap(
-      await admin.checkout.selectShipping(customer, { checkoutSessionId, method: "standard" }),
+      await admin.checkout.selectShipping(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+        method: "standard",
+      }),
       "select shipping",
     );
-    unwrap(await admin.checkout.recalculateTotals(customer, { checkoutSessionId }), "recalculate");
+    unwrap(
+      await admin.checkout.recalculateTotals(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+      }),
+      "recalculate",
+    );
     return checkoutSessionId;
   }
 
@@ -278,7 +307,7 @@ describe("Phase A.1 — F-02: order total is always re-derived from Checkout's o
     );
 
     const fetched = unwrap<{ totalAmount(): { amountMinor: number; currency: string } }>(
-      await admin.orders.getOrder(customer, { orderId: created.orderId }),
+      await admin.orders.getOrder(customer, { tenantId: "tenant-local", orderId: created.orderId }),
       "get order",
     );
     expect(fetched.totalAmount().amountMinor).toBe(REAL_TOTAL);
@@ -316,7 +345,7 @@ describe("Phase A.1 — F-02: order total is always re-derived from Checkout's o
     const orderId = (created.body as { orderId: string }).orderId;
 
     const fetched = unwrap<{ totalAmount(): { amountMinor: number; currency: string } }>(
-      await admin.orders.getOrder(customer, { orderId }),
+      await admin.orders.getOrder(customer, { tenantId: "tenant-local", orderId }),
       "get order",
     );
 
@@ -352,13 +381,23 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
   async function buildRealOrder(
     admin: WiredAdmin,
   ): Promise<{ orderId: string; realAmountMinor: number }> {
-    await seedPublishedPrice(admin, "product-1", 1999, "USD");
-    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, "product-1", 1);
+    const product = await seedProduct(admin, 1999);
+    const { checkoutSessionId } = await buildRecalculatedCheckout(admin, product.productId, 1);
     unwrap(
-      await admin.checkout.selectShipping(customer, { checkoutSessionId, method: "standard" }),
+      await admin.checkout.selectShipping(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+        method: "standard",
+      }),
       "select shipping",
     );
-    unwrap(await admin.checkout.recalculateTotals(customer, { checkoutSessionId }), "recalculate");
+    unwrap(
+      await admin.checkout.recalculateTotals(customer, {
+        tenantId: "tenant-local",
+        checkoutSessionId,
+      }),
+      "recalculate",
+    );
 
     const createFromCheckout = byPathAndMethod(adminRoutes(admin), "POST", "/orders/from-checkout");
     const created = unwrap<{ orderId: string }>(
@@ -386,11 +425,14 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
     const createIntent = byPathAndMethod(paymentsRoutes(admin), "POST", "/payment-intents");
 
     const opened = unwrap<{ paymentIntentId: string }>(
-      await call(createIntent, customer, {}, { orderRef: orderId }),
+      await call(createIntent, customer, {}, { orderRef: orderId, provider: "stripe" }),
       "create intent",
     );
     const fetched = unwrap<{ amount: { amountMinor: number; currency: string } }>(
-      await admin.payments.getPaymentIntent(customer, { paymentIntentId: opened.paymentIntentId }),
+      await admin.payments.getPaymentIntent(customer, {
+        tenantId: "tenant-local",
+        paymentIntentId: opened.paymentIntentId,
+      }),
       "get intent",
     );
     expect(fetched.amount.amountMinor).toBe(realAmountMinor);
@@ -411,6 +453,7 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
       {},
       {
         orderRef: orderId,
+        provider: "stripe",
         amountMinor: 1,
         currency: "EUR",
       },
@@ -419,7 +462,10 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
     const paymentIntentId = (opened.body as { paymentIntentId: string }).paymentIntentId;
 
     const fetched = unwrap<{ amount: { amountMinor: number; currency: string } }>(
-      await admin.payments.getPaymentIntent(customer, { paymentIntentId }),
+      await admin.payments.getPaymentIntent(customer, {
+        tenantId: "tenant-local",
+        paymentIntentId,
+      }),
       "get intent",
     );
 
@@ -432,9 +478,19 @@ describe("Phase A.1 — F-03: payment-intent amount is always re-derived from th
     const routes = paymentsRoutes(buildAdmin());
     const schema = byPathAndMethod(routes, "POST", "/payment-intents").schema?.body;
     expect(
-      schema?.safeParse({ orderRef: "order-1", amountMinor: 1, currency: "USD" }).success,
+      schema?.safeParse({
+        orderRef: "order-1",
+        provider: "stripe",
+        amountMinor: 1,
+        currency: "USD",
+      }).success,
     ).toBe(false);
-    expect(schema?.safeParse({ orderRef: "order-1" }).success).toBe(true);
+    expect(schema?.safeParse({ orderRef: "order-1", provider: "stripe" }).success).toBe(true);
+    // WP-13 decision 3: the method is REQUIRED — a body without one is not defaulted, it is rejected.
+    expect(schema?.safeParse({ orderRef: "order-1" }).success).toBe(false);
+    // The route checks the key's SHAPE only: which providers exist is the registry's call, made in
+    // Payments (a well-formed key nothing registered is refused there — provider-registry tests).
+    expect(schema?.safeParse({ orderRef: "order-1", provider: "Bit Coin!" }).success).toBe(false);
   });
 });
 
@@ -442,6 +498,7 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
   async function buildAcceptedReturn(admin: WiredAdmin): Promise<string> {
     const created = unwrap<{ returnId: string }>(
       await admin.returns.create(staff, {
+        tenantId: "tenant-local",
         orderRef: "order-1",
         items: [
           {
@@ -455,22 +512,43 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
       "create return",
     );
     const returnId = created.returnId;
-    unwrap(await admin.returns.decision(staff, { returnId, approved: true }), "decision");
-    unwrap(await admin.returns.rma(staff, { returnId, rmaNumber: "RMA-1" }), "rma");
     unwrap(
-      await admin.returns.receive(staff, { returnId, source: "warehouse-1", callbackId: "cb-1" }),
+      await admin.returns.decision(staff, { tenantId: "tenant-local", returnId, approved: true }),
+      "decision",
+    );
+    unwrap(
+      await admin.returns.rma(staff, { tenantId: "tenant-local", returnId, rmaNumber: "RMA-1" }),
+      "rma",
+    );
+    unwrap(
+      await admin.returns.receive(staff, {
+        tenantId: "tenant-local",
+        returnId,
+        source: "warehouse-1",
+        callbackId: "cb-1",
+      }),
       "receive",
     );
     unwrap(
-      await admin.returns.inspection(staff, { returnId, itemRef: "order-item-1", passed: true }),
+      await admin.returns.inspection(staff, {
+        tenantId: "tenant-local",
+        returnId,
+        itemRef: "order-item-1",
+        passed: true,
+      }),
       "inspection",
     );
     unwrap(
-      await admin.returns.advance(staff, { returnId, toStatus: "inspection_completed" }),
+      await admin.returns.advance(staff, {
+        tenantId: "tenant-local",
+        returnId,
+        toStatus: "inspection_completed",
+      }),
       "advance to inspection_completed",
     );
     unwrap(
       await admin.returns.accept(staff, {
+        tenantId: "tenant-local",
         returnId,
         items: [{ orderItemRef: "order-item-1", disposition: "restock" }],
       }),
@@ -492,6 +570,7 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
     const returnId = await buildAcceptedReturn(admin);
 
     const resolved = await admin.returns.resolution(staff, {
+      tenantId: "tenant-local",
       returnId,
       outcome: "refund",
       amountMinor: 999_999_999,
@@ -510,6 +589,7 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
     const returnId = await buildAcceptedReturn(admin);
 
     const resolved = await admin.returns.resolution(staff, {
+      tenantId: "tenant-local",
       returnId,
       outcome: "refund",
       amountMinor: REFUNDABLE_CEILING_MINOR + 1,
@@ -524,6 +604,7 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
     const returnId = await buildAcceptedReturn(admin);
 
     const resolved = await admin.returns.resolution(staff, {
+      tenantId: "tenant-local",
       returnId,
       outcome: "refund",
       amountMinor: REFUNDABLE_CEILING_MINOR,
@@ -538,7 +619,11 @@ describe("Phase A.1 — F-04: Returns refund amount is bounded when a refundable
     const admin = buildAdmin({ refundVerification: strictRefundVerification });
     const returnId = await buildAcceptedReturn(admin);
 
-    const resolved = await admin.returns.resolution(staff, { returnId, outcome: "replacement" });
+    const resolved = await admin.returns.resolution(staff, {
+      tenantId: "tenant-local",
+      returnId,
+      outcome: "replacement",
+    });
     expect(resolved.status).toBe(200);
   });
 });

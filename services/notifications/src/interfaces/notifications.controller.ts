@@ -1,10 +1,12 @@
-import type { CursorPage } from "@platform/types";
 import type {
   CreateNotification,
   CreateNotificationInput,
 } from "../application/create-notification.use-case";
 import type { GetNotification } from "../application/get-notification.use-case";
-import type { ListNotifications } from "../application/list-notifications.use-case";
+import type {
+  ListNotifications,
+  ListNotificationsInput,
+} from "../application/list-notifications.use-case";
 import type {
   AdvanceNotification,
   AdvanceNotificationInput,
@@ -62,7 +64,7 @@ export class NotificationsController {
     return present(await this.deps.recordProviderCallback.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListNotificationsInput): Promise<ControllerResponse> {
     return present(await this.deps.listNotifications.execute(input), 200);
   }
 

@@ -1,7 +1,7 @@
 {
-  "uid": "lumo-platform-overview",
-  "title": "Lumo — Platform Overview (SLO)",
-  "tags": ["lumo", "slo", "h-5"],
+  "uid": "morbeh-platform-overview",
+  "title": "Morbeh — Platform Overview (SLO)",
+  "tags": ["morbeh", "slo", "h-5"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -125,7 +125,7 @@
       "fieldConfig": { "defaults": { "unit": "reqps" } },
       "targets": [
         {
-          "expr": "sum by (status) (rate(http_requests_total{job=\"lumo-runtime\"}[5m]))",
+          "expr": "sum by (status) (rate(http_requests_total{job=\"morbeh-runtime\"}[5m]))",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -151,7 +151,7 @@
       "fieldConfig": { "defaults": { "unit": "bytes" } },
       "targets": [
         {
-          "expr": "process_resident_memory_bytes{job=\"lumo-runtime\"}",
+          "expr": "process_resident_memory_bytes{job=\"morbeh-runtime\"}",
           "legendFormat": "{{component}}",
           "refId": "A"
         }
@@ -166,7 +166,7 @@
       "fieldConfig": { "defaults": { "unit": "bytes" } },
       "targets": [
         {
-          "expr": "nodejs_heap_used_bytes{job=\"lumo-runtime\"}",
+          "expr": "nodejs_heap_used_bytes{job=\"morbeh-runtime\"}",
           "legendFormat": "{{component}}",
           "refId": "A"
         }

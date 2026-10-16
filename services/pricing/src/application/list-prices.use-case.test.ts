@@ -13,7 +13,7 @@ describe("ListPrices", () => {
       findPublishedByProduct: async () => [],
     };
     const useCase = new ListPrices({ prices });
-    const result = await useCase.execute({ first: 2 });
+    const result = await useCase.execute({ first: 2, tenantId: "tenant-a" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -33,11 +33,14 @@ describe("ListPrices", () => {
       findPublishedByProduct: async () => [],
     };
     const useCase = new ListPrices({ prices });
-    const result = await useCase.execute({ first: 2 });
+    const result = await useCase.execute({ first: 2, tenantId: "tenant-a" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toEqual({ items: [], pageInfo: { hasNextPage: false, endCursor: null } });
+      expect(result.value).toEqual({
+        items: [],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      });
     }
   });
 });

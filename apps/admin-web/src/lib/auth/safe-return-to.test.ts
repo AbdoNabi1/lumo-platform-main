@@ -8,7 +8,7 @@ import { safeReturnTo } from "./safe-return-to";
  * shapes that must collapse to the safe "/" default.
  */
 describe("safeReturnTo", () => {
-  const origin = "https://admin.lumo.example.com";
+  const origin = "https://admin.morbeh.example.com";
 
   it("passes through a same-origin root-relative path unchanged", () => {
     expect(safeReturnTo("/orders/123", origin)).toBe("/orders/123");

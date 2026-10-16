@@ -4,8 +4,8 @@ import type { Dictionary } from "@/messages/en";
 /**
  * Order status → badge variant, covering the full 21-value lifecycle
  * (`services/orders/src/domain/order-event.ts`) — the Orders list/detail screens show the real
- * status, unlike the Dashboard widget's deliberately simplified 3-bucket mapping
- * (`src/data/recent-orders.ts`). Semantics: `success` = money/goods moved as expected, `warning`
+ * status, and since Plan 3D so does Home's recent orders (the payment and fulfillment badges below,
+ * not a simplified bucket). Semantics: `success` = money/goods moved as expected, `warning`
  * = needs attention or mid-flight, `destructive` = failed/reversed, `info` = in progress,
  * `outline` = terminal and neutral (cancelled/closed), `neutral` = not yet started.
  */
@@ -168,4 +168,62 @@ export function ReturnStatusBadge({
   const variant = RETURN_STATUS_VARIANT[status] ?? "neutral";
   const label = (t.returnStatus as Record<string, string>)[status] ?? status;
   return <Badge variant={variant}>{label}</Badge>;
+}
+
+/**
+ * Plan 3B — Shopify's two statuses, derived on the server (`paymentStatus`, `fulfillmentStatus`), shown
+ * the same way on the orders list and the order page. Payment is a warning until it is settled; a
+ * fulfillment is a warning until work starts, then informational, and only a delivery is a success.
+ */
+type BadgeVariant =
+  "neutral" | "accent" | "success" | "warning" | "destructive" | "info" | "outline";
+
+const ORDER_PAYMENT_STATUS_VARIANT: Readonly<Record<string, BadgeVariant>> = {
+  pending: "warning",
+  paid: "neutral",
+  refunded: "outline",
+  voided: "outline",
+};
+
+const ORDER_FULFILLMENT_STATUS_VARIANT: Readonly<Record<string, BadgeVariant>> = {
+  unfulfilled: "warning",
+  in_progress: "info",
+  fulfilled: "neutral",
+  delivered: "success",
+};
+
+export function OrderPaymentStatusBadge({
+  status,
+  t,
+}: {
+  readonly status: string;
+  readonly t: Dictionary;
+}) {
+  const variant = ORDER_PAYMENT_STATUS_VARIANT[status] ?? "neutral";
+  const label = (t.orderPaymentStatus as Record<string, string>)[status] ?? status;
+  return <Badge variant={variant}>{label}</Badge>;
+}
+
+/**
+ * The fulfillment status badge. With `count`, it is the title of the order page's fulfillment card —
+ * "Unfulfilled (3)" — so the status and the number of items travel together.
+ */
+export function OrderFulfillmentStatusBadge({
+  status,
+  t,
+  count,
+}: {
+  readonly status: string;
+  readonly t: Dictionary;
+  readonly count?: number;
+}) {
+  const variant = ORDER_FULFILLMENT_STATUS_VARIANT[status] ?? "neutral";
+  const label = (t.orderFulfillmentStatus as Record<string, string>)[status] ?? status;
+  return (
+    <Badge variant={variant}>
+      {count === undefined
+        ? label
+        : t.orderPage.fulfillmentTitle.replace("{status}", label).replace("{count}", String(count))}
+    </Badge>
+  );
 }

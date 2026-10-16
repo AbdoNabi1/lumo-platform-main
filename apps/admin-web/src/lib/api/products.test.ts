@@ -12,6 +12,8 @@ vi.mock("jose", () => ({
 
 const {
   createProduct,
+  fetchProduct,
+  unlistProduct,
   updateProduct,
   publishProduct,
   schedulePublishProduct,
@@ -28,6 +30,7 @@ const {
   attachProductMedia,
   detachProductMedia,
   reorderProductMedia,
+  setProductVariantImage,
 } = await import("./products");
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -242,11 +245,7 @@ describe("T5.1 write functions", () => {
 
   it("setProductOptions replaces the whole option set", async () => {
     const fetchMock = stubOk();
-    await setProductOptions(
-      "product-1",
-      [{ name: "Color", values: ["Red", "Blue"] }],
-      "key-9",
-    );
+    await setProductOptions("product-1", [{ name: "Color", values: ["Red", "Blue"] }], "key-9");
     const [url, init] = requestOf(fetchMock);
     expect(url).toBe("http://runtime.test/api/v1/products/product-1/options");
     expect(JSON.parse(init.body as string)).toEqual({
@@ -301,6 +300,19 @@ describe("T5.1 write functions", () => {
     expect(init.body).toBeUndefined();
   });
 
+  it("setProductVariantImage sends a PUT with the media id, or null to clear", async () => {
+    const fetchMock = stubOk();
+    await setProductVariantImage("product-1", "variant-1", "asset-1", "key-17");
+    const [url, init] = requestOf(fetchMock);
+    expect(url).toBe("http://runtime.test/api/v1/products/product-1/variants/variant-1/image");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toEqual({ mediaId: "asset-1" });
+
+    const cleared = stubOk();
+    await setProductVariantImage("product-1", "variant-1", null, "key-18");
+    expect(JSON.parse(requestOf(cleared)[1].body as string)).toEqual({ mediaId: null });
+  });
+
   it("reorderProductMedia sends a PUT with the full assetIds order", async () => {
     const fetchMock = stubOk();
     await reorderProductMedia("product-1", ["asset-2", "asset-1"], "key-16");
@@ -329,6 +341,124 @@ describe("T5.1 write functions", () => {
       outcome: "invalid",
       message: "Cannot set options on a published product",
       fields: [{ field: "", message: "Cannot set options on a published product" }],
+    });
+  });
+});
+
+describe("Plan 2C-2 client fields", () => {
+  function stubOk(body: unknown = {}): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, body));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+    return fetchMock;
+  }
+
+  function requestOf(fetchMock: ReturnType<typeof vi.fn>): [string, RequestInit] {
+    return fetchMock.mock.calls[0] as [string, RequestInit];
+  }
+
+  it("updateProduct sends the product details", async () => {
+    const fetchMock = stubOk();
+    const input = { name: "N", slug: "n", description: "d", tags: ["a"] };
+    await updateProduct("p1", input, "key-d");
+    const [url, init] = requestOf(fetchMock);
+    expect(url).toBe("http://runtime.test/api/v1/products/p1");
+    expect(JSON.parse(init.body as string)).toEqual(input);
+  });
+
+  it("updateProductVariant keeps an explicit null compare-at price and the selection", async () => {
+    const fetchMock = stubOk();
+    await updateProductVariant(
+      "p1",
+      "v1",
+      {
+        sku: "S",
+        priceAmountMinor: 100,
+        currency: "USD",
+        compareAtAmountMinor: null,
+        selection: { Size: "S" },
+      },
+      "key-v",
+    );
+    const [, init] = requestOf(fetchMock);
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toHaveProperty("compareAtAmountMinor", null);
+    expect(body.selection).toEqual({ Size: "S" });
+  });
+
+  it("unlistProduct POSTs to /unlist with the idempotency key", async () => {
+    const fetchMock = stubOk();
+    await unlistProduct("p1", "key-u");
+    const [url, init] = requestOf(fetchMock);
+    expect(url).toBe("http://runtime.test/api/v1/products/p1/unlist");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-u");
+  });
+
+  it("fetchProduct returns the new DTO fields untouched", async () => {
+    const dto = {
+      id: "p1",
+      sku: "P-1",
+      name: "N",
+      slug: "n",
+      status: "published",
+      scheduledAt: null,
+      brandId: null,
+      categoryIds: [],
+      options: [],
+      seoTitle: null,
+      seoDescription: null,
+      description: "long text",
+      productType: "Toys",
+      tags: ["a", "b"],
+      mediaAssetIds: [],
+      variants: [
+        {
+          id: "v1",
+          sku: "S",
+          priceAmountMinor: 100,
+          currency: "USD",
+          selection: null,
+          compareAtAmountMinor: 200,
+          costAmountMinor: 50,
+          barcode: "123",
+          weightGrams: 250,
+          requiresShipping: true,
+          taxable: false,
+          tracksInventory: true,
+          inventoryPolicy: "deny",
+        },
+      ],
+    };
+    stubOk(dto);
+    const result = await fetchProduct("p1");
+    expect(result).toEqual({ outcome: "ok", product: dto });
+  });
+});
+
+describe("Plan 2B-1 inventory switches", () => {
+  it("updateProductVariant sends tracksInventory: false and inventoryPolicy", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+
+    await updateProductVariant(
+      "p1",
+      "v1",
+      {
+        sku: "S",
+        priceAmountMinor: 100,
+        currency: "USD",
+        tracksInventory: false,
+        inventoryPolicy: "continue",
+      },
+      "key-sw",
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      tracksInventory: false,
+      inventoryPolicy: "continue",
     });
   });
 });

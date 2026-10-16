@@ -9,6 +9,8 @@ export interface MoveProductBetweenCollectionsInput {
   readonly fromCollectionId: string;
   readonly toCollectionId: string;
   readonly productId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface MoveProductBetweenCollectionsOutput {
@@ -40,11 +42,15 @@ export class MoveProductBetweenCollections implements UseCase<
   ): Promise<Result<MoveProductBetweenCollectionsOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<MoveProductBetweenCollectionsOutput, DomainError>>(
       async (tx) => {
-        const from = await this.deps.collections.findById(input.fromCollectionId, tx);
+        const from = await this.deps.collections.findById(
+          input.fromCollectionId,
+          input.tenantId,
+          tx,
+        );
         if (from === null) {
           return err(new NotFoundError("Source collection not found"));
         }
-        const to = await this.deps.collections.findById(input.toCollectionId, tx);
+        const to = await this.deps.collections.findById(input.toCollectionId, input.tenantId, tx);
         if (to === null) {
           return err(new NotFoundError("Destination collection not found"));
         }
@@ -58,8 +64,8 @@ export class MoveProductBetweenCollections implements UseCase<
           throw error;
         }
 
-        await this.deps.collections.save(from, tx);
-        await this.deps.collections.save(to, tx);
+        await this.deps.collections.save(from, input.tenantId, tx);
+        await this.deps.collections.save(to, input.tenantId, tx);
         return ok({
           fromCollectionId: from.id.toString(),
           toCollectionId: to.id.toString(),

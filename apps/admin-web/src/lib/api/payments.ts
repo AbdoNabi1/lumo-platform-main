@@ -1,8 +1,10 @@
-import { getAdminApi } from "./client";
+import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
 export interface PaymentIntentDto {
   readonly id: string;
   readonly orderRef: string;
+  /** The method the shopper selected, by its registered key ("cod", "stripe", "paymob"…). */
+  readonly provider: string;
   readonly status: string;
   readonly currency: string;
   readonly amountMinor: number;
@@ -44,4 +46,77 @@ export async function fetchPaymentIntent(
     return { outcome: "error", message: result.message };
   }
   return result;
+}
+
+/** One registered payment method, as `GET /payments/settings` reports it (never any credential). */
+export interface PaymentMethodInfo {
+  readonly available: boolean;
+  /** Present only for a method that needs merchant credentials. */
+  readonly configured?: boolean;
+}
+
+/** `GET /payments/settings`: the methods the shopper is offered, and every method this platform registers. */
+export interface PaymentSettingsDto {
+  readonly enabledMethods: readonly string[];
+  readonly methods: Readonly<Record<string, PaymentMethodInfo>>;
+}
+
+function isPaymentSettingsDto(value: unknown): value is PaymentSettingsDto {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { enabledMethods?: unknown; methods?: unknown };
+  return (
+    Array.isArray(candidate.enabledMethods) &&
+    candidate.enabledMethods.every((method) => typeof method === "string") &&
+    typeof candidate.methods === "object" &&
+    candidate.methods !== null
+  );
+}
+
+export type FetchPaymentSettingsResult =
+  | { readonly outcome: "ok"; readonly settings: PaymentSettingsDto }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "not_found" }
+  | { readonly outcome: "error"; readonly message: string };
+
+/** Fetches which payment methods the merchant offers and which the platform registers. */
+export async function fetchPaymentSettings(): Promise<FetchPaymentSettingsResult> {
+  const result = await getAdminApi("/api/v1/payments/settings", isPaymentSettingsDto);
+  if (result.outcome === "ok") {
+    return { outcome: "ok", settings: result.data };
+  }
+  return result;
+}
+
+function isUnknown(_value: unknown): _value is unknown {
+  return true;
+}
+
+/** Replaces the set of methods the shopper is offered (at least one). Nothing else in the settings changes. */
+export function updateEnabledPaymentMethods(
+  methods: readonly string[],
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(
+    "/api/v1/payments/settings",
+    { method: "PUT", body: { enabledMethods: methods }, idempotencyKey },
+    isUnknown,
+  );
+}
+
+/**
+ * Confirms that the cash for a cash-on-delivery payment was collected — the only action that marks
+ * such a payment paid. The caller passes the amount and currency read from the payment intent itself
+ * (never from a form); the API accepts only a full collection.
+ */
+export function confirmCodCollection(
+  paymentIntentId: string,
+  collectedAmountMinor: number,
+  currency: string,
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(
+    `/api/v1/payment-intents/${encodeURIComponent(paymentIntentId)}/cod-collection`,
+    { method: "POST", body: { collectedAmountMinor, currency }, idempotencyKey },
+    isUnknown,
+  );
 }

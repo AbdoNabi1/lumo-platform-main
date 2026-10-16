@@ -7,6 +7,7 @@ import type {
   ClaimsAuthenticator,
   IdempotencyClaim,
   IdempotencyKeyStore,
+  AuthenticatedIdentity,
   Principal,
   RateLimiter,
 } from "@platform/contracts";
@@ -22,7 +23,7 @@ import {
 import { defineRoute } from "./route";
 import { headerTenantResolver } from "./tenant-resolution";
 
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: AuthenticatedIdentity = { id: "staff-1", kind: "staff", roles: ["admin"] };
 
 function silentLogger(): Logger {
   const log: Logger = {
@@ -73,13 +74,19 @@ interface TestOverrides {
   readonly rateLimit?: { readonly limit: number; readonly windowMs: number };
   readonly exposeDocs?: boolean;
   readonly readinessDetail?: "full" | "status-only";
+  readonly metricsAccess?: "open" | "closed" | { readonly bearerToken: string };
   readonly authenticator?: Authenticator | ClaimsAuthenticator;
   readonly denyPermissions?: boolean;
   /** Observes the request context the transport hands the guard (session/device/IP). */
   readonly onGuard?: (context?: GuardRequestContext) => void;
+  /** Observes the principal the transport hands the guard (G-67: it must carry the tenant). */
+  readonly onGuardPrincipal?: (principal: Principal) => void;
   /** Observes every rate-limiter key the transport consumes. */
   readonly onRateLimitKey?: (key: string) => void;
   readonly metrics?: HttpMetricsSink;
+  readonly logger?: Logger;
+  /** Registers a route whose handler throws, to exercise the 5xx error log. */
+  readonly explode?: boolean;
 }
 
 let handled: unknown[] = [];
@@ -87,14 +94,15 @@ let guardCalls = 0;
 
 async function buildServer(overrides: TestOverrides = {}): Promise<FastifyInstance> {
   const deps: HttpServerDeps = {
-    logger: silentLogger(),
+    logger: overrides.logger ?? silentLogger(),
     idGenerator: { generate: () => crypto.randomUUID() },
     authenticator:
       overrides.authenticator ??
       ({ verify: async (token) => (token === "good" ? staff : null) } satisfies Authenticator),
     guard: {
-      ensure: async (_principal, permission, context) => {
+      ensure: async (principal, permission, context) => {
         guardCalls += 1;
+        overrides.onGuardPrincipal?.(principal);
         overrides.onGuard?.(context);
         return overrides.denyPermissions === true
           ? {
@@ -122,12 +130,13 @@ async function buildServer(overrides: TestOverrides = {}): Promise<FastifyInstan
     idempotencyKeys: fakeIdempotencyStore(),
     responseCache: fakeCache(),
     health: new HealthRegistry(),
-    api: { title: "Lumo Admin API", description: "test" },
+    api: { title: "Morbeh Admin API", description: "test" },
     ...(overrides.metrics === undefined ? {} : { metrics: overrides.metrics }),
     ...(overrides.exposeDocs === undefined ? {} : { exposeDocs: overrides.exposeDocs }),
     ...(overrides.readinessDetail === undefined
       ? {}
       : { readinessDetail: overrides.readinessDetail }),
+    ...(overrides.metricsAccess === undefined ? {} : { metricsAccess: overrides.metricsAccess }),
   };
 
   const app = createHttpServer(deps);
@@ -162,6 +171,21 @@ async function buildServer(overrides: TestOverrides = {}): Promise<FastifyInstan
         return { status: 200, body: { items: [] } };
       },
     }),
+    ...(overrides.explode === true
+      ? [
+          defineRoute({
+            method: "GET",
+            path: "/boom",
+            version: 1,
+            permission: "widgets:read",
+            summary: "Always fails",
+            schema: {},
+            handle: async () => {
+              throw new Error("boom");
+            },
+          }),
+        ]
+      : []),
   ]);
   await app.ready();
   return app;
@@ -444,6 +468,39 @@ describe("HTTP transport", () => {
     });
   });
 
+  describe("principal tenant binding (G-67)", () => {
+    it("hands the guard a principal bound to the resolved tenant, not the identity's own", async () => {
+      const seen: Principal[] = [];
+      const bound = await buildServer({ onGuardPrincipal: (p) => seen.push(p) });
+      await bound.inject({
+        method: "POST",
+        url: "/api/v1/widgets",
+        headers: { ...good.headers, "x-tenant-id": "t-9" },
+        payload: { name: "a", quantity: 1 },
+      });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ id: "staff-1", tenantId: "t-9" });
+      await bound.close();
+    });
+
+    it("hands the guard's request context the RESOLVED tenant too (a guard that reads context, not principal)", async () => {
+      // A zero-trust guard (SecurityPermissionGuard) evaluates on `context.tenantId`, not on the
+      // principal; a context that carried a default here would authorise tenant B as tenant A.
+      const contexts: Array<GuardRequestContext | undefined> = [];
+      const bound = await buildServer({ onGuard: (c) => contexts.push(c) });
+      for (const tenant of ["t-9", "t-10"]) {
+        await bound.inject({
+          method: "POST",
+          url: "/api/v1/widgets",
+          headers: { ...good.headers, "x-tenant-id": tenant },
+          payload: { name: "a", quantity: 1 },
+        });
+      }
+      expect(contexts.map((c) => c?.tenantId)).toEqual(["t-9", "t-10"]);
+      await bound.close();
+    });
+  });
+
   describe("public routes (Phase 9 hardening — storefront reads)", () => {
     it("accepts anonymous requests with no Authorization header and still resolves a tenant", async () => {
       const res = await app.inject({
@@ -456,6 +513,22 @@ describe("HTTP transport", () => {
         tenantId: "t-1",
         principal: { id: "public", kind: "customer", roles: [] },
       });
+    });
+
+    it("binds the anonymous principal to the tenant the request resolved to (G-67)", async () => {
+      // The public principal has no tenant of its own; it must carry the storefront request's tenant,
+      // per request, so a decision or audit made "as public" can never be attributed to another tenant.
+      for (const tenant of ["t-a", "t-b"]) {
+        await app.inject({
+          method: "GET",
+          url: "/api/v1/public-widgets",
+          headers: { "x-tenant-id": tenant },
+        });
+        expect(handled.at(-1)).toMatchObject({
+          tenantId: tenant,
+          principal: { id: "public", tenantId: tenant },
+        });
+      }
     });
 
     it("never calls the permission guard for a public route", async () => {
@@ -506,8 +579,49 @@ describe("HTTP transport", () => {
     expect(operation.requestBody.content["application/json"].schema.required).toEqual(
       expect.arrayContaining(["name", "quantity"]),
     );
-    expect(spec.info.title).toBe("Lumo Admin API");
+    expect(spec.info.title).toBe("Morbeh Admin API");
     await withDocs.close();
+  });
+
+  describe("G-82: /metrics access is decided by the composition root", () => {
+    it('metricsAccess: "closed" does not register /metrics at all (404)', async () => {
+      const closed = await buildServer({ metricsAccess: "closed" });
+      expect((await closed.inject({ url: "/metrics" })).statusCode).toBe(404);
+      await closed.close();
+    });
+
+    it("a bearer-token /metrics refuses a missing, wrong, or wrong-length token and accepts the right one", async () => {
+      const guarded = await buildServer({ metricsAccess: { bearerToken: "s3cret-metrics-token" } });
+      const anon = await guarded.inject({ url: "/metrics" });
+      expect(anon.statusCode).toBe(401);
+      expect(anon.body).not.toContain("process_uptime_seconds");
+      const wrong = await guarded.inject({
+        url: "/metrics",
+        headers: { authorization: "Bearer s3cret-metrics-tokeX" },
+      });
+      expect(wrong.statusCode).toBe(401);
+      const short = await guarded.inject({
+        url: "/metrics",
+        headers: { authorization: "Bearer s3cret" },
+      });
+      expect(short.statusCode).toBe(401);
+      const wrongScheme = await guarded.inject({
+        url: "/metrics",
+        headers: { authorization: "Beaxer s3cret-metrics-token" },
+      });
+      expect(wrongScheme.statusCode).toBe(401);
+      const ok = await guarded.inject({
+        url: "/metrics",
+        headers: { authorization: "Bearer s3cret-metrics-token" },
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.body).toContain("process_uptime_seconds");
+      await guarded.close();
+    });
+
+    it("an absent metricsAccess keeps /metrics open (existing scrapers unchanged)", async () => {
+      expect((await app.inject({ url: "/metrics" })).statusCode).toBe(200);
+    });
   });
 
   describe("H-04 (audit): /docs, /openapi.json, and /readyz detail default to off", () => {
@@ -557,5 +671,44 @@ describe("HTTP transport", () => {
       expect(res.json()).toEqual({ status: "unhealthy" });
       await statusOnly.close();
     });
+  });
+});
+
+describe("HTTP transport — log lines name the tenant (T10.7)", () => {
+  function recordingLogger(): {
+    readonly logger: Logger;
+    readonly lines: { message: string; fields: Record<string, unknown> }[];
+  } {
+    const lines: { message: string; fields: Record<string, unknown> }[] = [];
+    const record = (message: string, fields?: Record<string, unknown>): void => {
+      lines.push({ message, fields: fields ?? {} });
+    };
+    const logger: Logger = {
+      debug: record,
+      info: record,
+      warn: record,
+      error: record,
+      child: () => logger,
+    };
+    return { logger, lines };
+  }
+
+  it("a 5xx failure line carries the tenant the request resolved to, and never another's", async () => {
+    const { logger, lines } = recordingLogger();
+    const app = await buildServer({ logger, explode: true });
+    try {
+      for (const tenant of ["t-1", "t-2"]) {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/boom",
+          headers: { ...good.headers, "x-tenant-id": tenant },
+        });
+        expect(res.statusCode).toBe(500);
+      }
+    } finally {
+      await app.close();
+    }
+    const failed = lines.filter((line) => line.message === "http request failed");
+    expect(failed.map((line) => line.fields["tenantId"])).toEqual(["t-1", "t-2"]);
   });
 });

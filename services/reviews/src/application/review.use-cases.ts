@@ -18,6 +18,8 @@ export interface CreateReviewInput {
   readonly rating: number;
   readonly bodyText: string;
   readonly assetRefs?: readonly string[];
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface ReviewStatusOutput {
@@ -27,6 +29,8 @@ export interface ReviewStatusOutput {
 
 export interface ReviewIdInput {
   readonly reviewId: string;
+  /** ADR-0014: the caller's verified tenant. Shared by every input extending this one. */
+  readonly tenantId: string;
 }
 
 export interface ReviewDeps {
@@ -58,6 +62,7 @@ export class CreateReview implements UseCase<CreateReviewInput, ReviewStatusOutp
       const existing = await this.deps.reviews.findByCustomerAndProduct(
         input.customerRef,
         input.productRef,
+        input.tenantId,
         tx,
       );
       if (existing !== null) {
@@ -77,7 +82,7 @@ export class CreateReview implements UseCase<CreateReviewInput, ReviewStatusOutp
         ReviewMedia.create(input.assetRefs ?? []),
         verifiedPurchase,
       );
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: id.toString(), status: review.status.value });
     });
   }
@@ -97,7 +102,7 @@ export class AdvanceReview implements UseCase<AdvanceReviewInput, ReviewStatusOu
 
   async execute(input: AdvanceReviewInput): Promise<Result<ReviewStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ReviewStatusOutput, DomainError>>(async (tx) => {
-      const review = await this.deps.reviews.findById(input.reviewId, tx);
+      const review = await this.deps.reviews.findById(input.reviewId, input.tenantId, tx);
       if (review === null) return err(new NotFoundError("Review not found"));
 
       try {
@@ -107,7 +112,7 @@ export class AdvanceReview implements UseCase<AdvanceReviewInput, ReviewStatusOu
         throw error;
       }
 
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: review.id.toString(), status: review.status.value });
     });
   }
@@ -128,7 +133,7 @@ export class VoteReview implements UseCase<VoteReviewInput, ReviewStatusOutput, 
 
   async execute(input: VoteReviewInput): Promise<Result<ReviewStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ReviewStatusOutput, DomainError>>(async (tx) => {
-      const review = await this.deps.reviews.findById(input.reviewId, tx);
+      const review = await this.deps.reviews.findById(input.reviewId, input.tenantId, tx);
       if (review === null) return err(new NotFoundError("Review not found"));
 
       review.vote(
@@ -137,7 +142,7 @@ export class VoteReview implements UseCase<VoteReviewInput, ReviewStatusOutput, 
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: review.id.toString(), status: review.status.value });
     });
   }
@@ -157,11 +162,11 @@ export class ReportReview implements UseCase<ReportReviewInput, ReviewStatusOutp
 
   async execute(input: ReportReviewInput): Promise<Result<ReviewStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ReviewStatusOutput, DomainError>>(async (tx) => {
-      const review = await this.deps.reviews.findById(input.reviewId, tx);
+      const review = await this.deps.reviews.findById(input.reviewId, input.tenantId, tx);
       if (review === null) return err(new NotFoundError("Review not found"));
 
       review.report(input.reporterRef, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: review.id.toString(), status: review.status.value });
     });
   }
@@ -188,11 +193,11 @@ export class RespondToReview implements UseCase<
     if (!responseText.ok) return err(responseText.error);
 
     return this.deps.unitOfWork.run<Result<ReviewStatusOutput, DomainError>>(async (tx) => {
-      const review = await this.deps.reviews.findById(input.reviewId, tx);
+      const review = await this.deps.reviews.findById(input.reviewId, input.tenantId, tx);
       if (review === null) return err(new NotFoundError("Review not found"));
 
       review.respond(input.responseText, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       return ok({ reviewId: review.id.toString(), status: review.status.value });
     });
   }
@@ -227,7 +232,7 @@ export class ModerateReview implements UseCase<
 
   async execute(input: ModerateReviewInput): Promise<Result<ModerateReviewOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ModerateReviewOutput, DomainError>>(async (tx) => {
-      const review = await this.deps.reviews.findById(input.reviewId, tx);
+      const review = await this.deps.reviews.findById(input.reviewId, input.tenantId, tx);
       if (review === null) return err(new NotFoundError("Review not found"));
 
       const alreadyProcessed = await this.deps.processedModerations.hasProcessed(input.actionId);
@@ -249,7 +254,7 @@ export class ModerateReview implements UseCase<
         throw error;
       }
 
-      await this.deps.reviews.save(review, tx);
+      await this.deps.reviews.save(review, input.tenantId, tx);
       await this.deps.processedModerations.markProcessed(input.actionId);
       return ok({ reviewId: review.id.toString(), status: review.status.value, duplicate: false });
     });

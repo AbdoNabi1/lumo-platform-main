@@ -5,7 +5,7 @@ import * as AvatarPrimitive from "@radix-ui/react-avatar";
 import { cn } from "../../lib/cn";
 
 /**
- * Lumo Avatar. The image is decorative when a name is rendered beside it — pass
+ * Morbeh Avatar. The image is decorative when a name is rendered beside it — pass
  * `alt=""` there and let the visible text carry the identity.
  */
 const Avatar = React.forwardRef<

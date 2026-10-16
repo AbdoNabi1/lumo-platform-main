@@ -55,4 +55,67 @@ describe("Customer", () => {
     c.changeConsent(UniqueEntityId.from("con-2"), scope("marketing"), false, "evt-2", new Date(0));
     expect(c.consentFor(scope("marketing"))).toBe(false);
   });
+
+  describe("guest origin (WP-1, G-52)", () => {
+    it("a registered customer is not a guest", () => {
+      expect(customer().isGuest).toBe(false);
+    });
+
+    it("registerGuest marks the customer as a guest with no consent and raises customer.registered", () => {
+      const c = Customer.registerGuest(
+        UniqueEntityId.from("cust-g"),
+        email("guest@example.com"),
+        "guest",
+        "evt-guest",
+        new Date(0),
+      );
+      expect(c.isGuest).toBe(true);
+      expect(c.consents).toHaveLength(0);
+      expect(c.consentFor(scope("marketing"))).toBe(false);
+      const events = c.pullDomainEvents();
+      expect(events.map((e) => e.eventName)).toEqual(["customer.registered"]);
+    });
+
+    it("reconstitute carries the guest marker, defaulting to false for older callers", () => {
+      const guest = Customer.reconstitute(UniqueEntityId.from("g"), email(), "A", [], [], 1, true);
+      const real = Customer.reconstitute(UniqueEntityId.from("r"), email(), "A", [], [], 1);
+      expect(guest.isGuest).toBe(true);
+      expect(real.isGuest).toBe(false);
+    });
+
+    it("a fresh guest has no verified email", () => {
+      const c = Customer.registerGuest(
+        UniqueEntityId.from("cust-g2"),
+        email("guest2@example.com"),
+        "guest",
+        "evt-guest2",
+        new Date(0),
+      );
+      expect(c.emailVerifiedAt).toBeNull();
+    });
+  });
+
+  describe("upgradeFromGuest (G-72)", () => {
+    it("upgrades a guest to a real, verified account", () => {
+      const c = Customer.registerGuest(
+        UniqueEntityId.from("cust-g3"),
+        email("guest3@example.com"),
+        "Guest Name",
+        "evt-guest3",
+        new Date(0),
+      );
+      const now = new Date("2026-09-22T00:00:00.000Z");
+      c.upgradeFromGuest("Real Name", now);
+      expect(c.isGuest).toBe(false);
+      expect(c.emailVerifiedAt).toEqual(now);
+      expect(c.name).toBe("Real Name");
+    });
+
+    it("refuses to upgrade a customer that is not a guest", () => {
+      const c = customer();
+      expect(() => c.upgradeFromGuest("Someone Else", new Date(0))).toThrow(
+        "Only a guest customer can be upgraded",
+      );
+    });
+  });
 });

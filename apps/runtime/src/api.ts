@@ -1,8 +1,23 @@
-import { createAdminHttpApi } from "@platform/admin";
+import {
+  createAdminHttpApi,
+  LoggingSignupEmailAdapter,
+  type SignupEmailPort,
+} from "@platform/admin";
 import { PrismaAuditTrail } from "@platform/db";
+import { composePaymentProviderRegistrations } from "@platform/payments";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
-import { InMemoryTotpMfaProvider, type MfaProviderResolver } from "@platform/security";
+import {
+  HashedPasswordAuthProvider,
+  InMemoryTotpMfaProvider,
+  PrismaPasswordCredentialStore,
+  PrismaPasswordResetTokenStore,
+  ScryptPasswordHasher,
+  type MfaProviderResolver,
+} from "@platform/security";
+import { NodeDnsVerifier } from "@platform/tenancy";
 import { logger } from "@platform/utils";
+import { resolveApiExposure } from "./api-exposure";
+import { resolveEmailWiring } from "./email-wiring";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
   buildReturnsPaymentsPortAdapter,
@@ -53,21 +68,55 @@ export function assertProductionMfaConfigured(
  */
 export function assertProductionPaymentProviderConfigured(
   appEnv: RuntimeConfig["APP_ENV"],
-  paymentProvider: RuntimeCore["paymentProvider"],
+  payments: Pick<
+    RuntimeCore,
+    "paymentProvider" | "providerRegistrations" | "paymentCredentialVault"
+  >,
 ): void {
-  if (paymentProvider !== undefined) return;
+  const problems: string[] = [];
+  // WP-13 / open registry: ONE loop over exactly the registrations `wirePayments` will compose (the
+  // same `composePaymentProviderRegistrations`), so N providers are N checks and a provider added
+  // tomorrow is checked without touching this function. Each rule reasons about a registration's
+  // declared backing and capabilities, never its name.
+  for (const registration of composePaymentProviderRegistrations(payments)) {
+    // A stub answers without a real PSP behind it (its `verifyWebhook` accepts anything), so it
+    // must never serve a request outside `local`. (V-1: the Stripe binding is the one that falls
+    // back to a stub when unconfigured.)
+    if (registration.backing !== "real") {
+      problems.push(
+        `no production PaymentProvider is configured for "${registration.key}". The in-memory stub ` +
+          "provider (verifyWebhook always returns true) must never accept POST /payments/webhook " +
+          "outside APP_ENV=local (V-1)." +
+          (registration.configurationHint === undefined
+            ? ""
+            : ` ${registration.configurationHint}`),
+      );
+    }
+    // A provider that needs each merchant's own credentials must not seal them with a stand-in that
+    // is not encryption (`InMemoryPaymentCredentialVault` — base64 in a column). `buildRuntimeCore`
+    // only ever composes such a provider together with a real vault, so this is a tripwire on that
+    // invariant. (Absent is fine: `UpdateMerchantPaymentSettings` refuses to let a merchant enable a
+    // method nothing real backs, and the resolver has no stub to fall back to — unavailable is a
+    // refusal, never a silent downgrade.)
+    if (
+      registration.capabilities.requiresMerchantCredentials &&
+      (payments.paymentCredentialVault === undefined ||
+        payments.paymentCredentialVault.backing !== "real")
+    ) {
+      problems.push(
+        `payment provider "${registration.key}" needs merchant credentials but is composed without a ` +
+          "real payment credential vault: merchants' PSP secrets would not be encrypted at rest " +
+          "(WP-13). Set PAYMENT_CREDENTIALS_KEK_REF.",
+      );
+    }
+  }
+  if (problems.length === 0) return;
   if (appEnv === "local") {
-    logger.warn(
-      "Payments webhook verification is permissive: no production PaymentProvider configured, " +
-        "APP_ENV=local",
-    );
+    for (const problem of problems) {
+      logger.warn(`Payments provider guard (APP_ENV=local, not enforced): ${problem}`);
+    }
   } else {
-    throw new Error(
-      "api: no production PaymentProvider is configured. The in-memory stub provider " +
-        "(verifyWebhook always returns true) must never accept POST /payments/webhook outside " +
-        "APP_ENV=local (V-1). Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET to configure the " +
-        "real StripePaymentProvider (C2-2).",
-    );
+    throw new Error(`api: ${problems.join(" Also: ")}`);
   }
 }
 
@@ -85,31 +134,59 @@ function collectGuardFailure(guard: () => void): string | undefined {
 }
 
 /**
- * M2-3: services/licensing wires PaymentsPort/FinanceLedgerPort unconditionally to
- * InMemoryPaymentsAdapter/InMemoryFinanceLedgerAdapter (services/licensing/src/infrastructure/
- * deferred-billing-adapters.ts) in every environment — collect() always "succeeds" and
- * postSettlement() is a no-op, so a merchant can hold an active paid subscription and consume
- * licensed capability while zero money has ever actually been collected or posted to the Finance
- * ledger. No real PSP-backed adapter is wired anywhere in this codebase yet (building one is out
- * of scope here — same class of work as the still-open C2-2 real-PSP-adapter long pole, see
- * MEDIUM_REMEDIATION_PLAN.md). Fail closed outside `local`, mirroring the MFA (C2-4) and
- * PaymentProvider (V-1) guards above; `local` gets a warning so the gap stays visible during
- * development. Extracted the same way as `assertProductionPaymentProviderConfigured` so it can be
- * exercised directly in tests.
+ * M2-3 (reshaped by WP-14): services/licensing wired PaymentsPort/FinanceLedgerPort unconditionally to
+ * InMemoryPaymentsAdapter/InMemoryFinanceLedgerAdapter in every environment — collect() always
+ * "succeeded" and no money moved, so a merchant could hold an active paid subscription while zero
+ * money was collected. This guard used to assert "always missing", because no real adapter existed.
+ * One now can (`PlatformBillingPaymentsAdapter`, Morbeh's OWN PSP account, composed by
+ * `buildRuntimeCore` from `PLATFORM_BILLING_STRIPE_*`), so — exactly like
+ * `assertProductionPaymentProviderConfigured` — "configured" must be told apart from "not". It takes the
+ * already-resolved adapter and fails closed outside `local` when it is absent, OR present but not
+ * `backing: "real"`: a stub that "collects" successfully must be impossible outside `local`.
+ * `local` gets a warning so the gap stays visible.
+ *
+ * Deliberately NOT asserted here: the Finance-ledger settlement post (`FinanceLedgerPort`). It is a
+ * best-effort mirror of an invoice that is already durably `paid`, no real adapter exists yet, and
+ * demanding one would keep this guard failing forever — tracked as an open gap, not hidden.
  */
-export function assertProductionLicensingBillingConfigured(appEnv: RuntimeConfig["APP_ENV"]): void {
+export function assertProductionLicensingBillingConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+  billing: Pick<RuntimeCore, "platformBillingPayments"> &
+    Partial<Pick<RuntimeCore, "platformBillingStoredMethod">>,
+): void {
+  const payments = billing.platformBillingPayments;
+  const stored = billing.platformBillingStoredMethod;
+  const problems: string[] = [];
+  if (stored !== undefined) {
+    // Saved-card billing (G-74 (1)) is real billing on its own: the card token is sealed with the
+    // credential vault, so what must be real is that vault — a stub would "seal" it in the clear.
+    if (stored.sealer.backing !== "real") {
+      problems.push(
+        "the stored-method billing token sealer is a stub: the merchant's card token would not be " +
+          "encrypted at rest. It must never back billing outside APP_ENV=local.",
+      );
+    }
+  } else if (payments === undefined) {
+    problems.push(
+      "no production Licensing billing payments adapter is configured. Morbeh's own PSP account is " +
+        "not set: the in-memory stub (collect() always succeeds, no money moves) must never back " +
+        "billing outside APP_ENV=local (M2-3). Set PLATFORM_BILLING_STRIPE_SECRET_KEY and " +
+        "PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET (a dedicated billing endpoint, not the store's).",
+    );
+  } else if (payments.backing !== "real") {
+    problems.push(
+      "the Licensing billing payments adapter is not a real PSP-backed adapter (its backing is " +
+        `"${payments.backing ?? "unknown"}"): a stub that "collects" without moving money must never ` +
+        "back billing outside APP_ENV=local (M2-3).",
+    );
+  }
+  if (problems.length === 0) return;
   if (appEnv === "local") {
-    logger.warn(
-      "Licensing billing is permissive: no production payments/financeLedger adapter configured, " +
-        "APP_ENV=local",
-    );
+    for (const problem of problems) {
+      logger.warn(`Licensing billing guard (APP_ENV=local, not enforced): ${problem}`);
+    }
   } else {
-    throw new Error(
-      "api: no production Licensing payments/financeLedger adapter is configured. The in-memory " +
-        "stubs (collect() always succeeds, postSettlement() is a no-op) must never back billing " +
-        "outside APP_ENV=local (M2-3). Pass payments/financeLedger in createAdminHttpApi's deps " +
-        "once real adapters exist.",
-    );
+    throw new Error(`api: ${problems.join(" Also: ")}`);
   }
 }
 
@@ -143,6 +220,76 @@ export function assertProductionObjectStorageConfigured(
 }
 
 /**
+ * G-72: no real `SignupEmailPort` provider is wired anywhere in this codebase (D4 — "the user's
+ * choice", deliberately out of scope) — `buildRuntimeCore` always resolves `LoggingSignupEmailAdapter`
+ * (logs the signup-completion link instead of emailing it). This guard fails closed outside `local`
+ * while that is still the resolved adapter, same `instanceof`-based shape as
+ * `assertProductionMfaConfigured`/`assertProductionObjectStorageConfigured` above. Once a real
+ * provider (Resend/SendGrid/SES/...) is chosen and wired through `AdminWiringDeps.signupEmail`, this
+ * guard passes without any change to it.
+ */
+export function assertProductionSignupEmailConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+  signupEmail: SignupEmailPort,
+): void {
+  if (!(signupEmail instanceof LoggingSignupEmailAdapter)) return;
+  if (appEnv === "local") {
+    logger.warn(
+      "Signup verification email is permissive: no production SignupEmailPort configured, APP_ENV=local",
+    );
+  } else {
+    throw new Error(
+      "api: no production SignupEmailPort is configured (G-72). The logging dev adapter (writes " +
+        "the signup-completion link to the log instead of emailing it) must never back account " +
+        "verification outside APP_ENV=local. Pass signupEmail in createAdminHttpApi's deps once a " +
+        "real provider (Resend/SendGrid/SES/...) is chosen and wired.",
+    );
+  }
+}
+
+/**
+ * T14.5 (dunning) — a merchant about to lose service to non-payment must be notified before it
+ * happens. `buildDunningNotificationsConsumerRuntimes` (`consumers/dunning-notifications.consumers.ts`)
+ * reacts to `licensing.subscription.{entered_grace,recovered_from_grace,dunning_exhausted}` by
+ * opening a `Notification` row through `CreateNotification` — it deliberately never calls a provider
+ * directly, the same "create and stop" scope `NotificationsOrdersPaidConsumer` already has, because
+ * every provider in `services/notifications` is still an offline, environment-unaware in-memory stub
+ * with no delivery path (that class's own doc comment; a pre-existing, separately tracked gap — see
+ * the gap register). For an order confirmation that gap is a missed nicety; for dunning it is the one
+ * message a merchant must receive before a grace period starts, or before losing service to
+ * non-payment — a business-critical failure waiting to happen, not an acceptable placeholder.
+ *
+ * Unlike the `instanceof`-on-a-resolved-value guards above, this one is unconditional: nothing in
+ * this codebase composes a real delivery path for a created Notification anywhere — no env var, no
+ * adapter, no config branch (D4: "the user's choice", deliberately out of scope everywhere it has
+ * come up before). It refuses to boot outside `local` until an operator (1) builds a real
+ * `EmailProviderPort` (or other channel) adapter, (2) plumbs it through
+ * `NotificationsWiringDeps`/`AdminWiringDeps`, and (3) has this file's call to `createAdminHttpApi`
+ * pass it (deliberately omitted today — see the comment at that call site: "notifications is
+ * deliberately absent here").
+ */
+export function assertProductionDunningNotificationsConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+): void {
+  if (appEnv === "local") {
+    logger.warn(
+      "Dunning notifications are not deliverable: no real notification provider is composed " +
+        "anywhere (APP_ENV=local, not enforced)",
+    );
+    return;
+  }
+  throw new Error(
+    "api: dunning is enabled (T14.5) but no real notification delivery path exists. A merchant " +
+      "entering the grace period, recovering mid-grace, or losing service to non-payment must be " +
+      "notified before it happens; services/notifications' provider ports are permanent offline " +
+      "stubs with no delivery path. This must never back dunning outside APP_ENV=local. Operator " +
+      "steps: build a real EmailProviderPort (or other channel) adapter, wire it through " +
+      "NotificationsWiringDeps/AdminWiringDeps, and pass it from this file's call to " +
+      "createAdminHttpApi (deliberately omitted today).",
+  );
+}
+
+/**
  * Stage 5 / Phase 3 (audit remediation plan, C-03): this guard originally covered 12 outbound
  * ports Orders/Checkout/Payments call to reach across context boundaries, all still offline
  * in-memory stubs. Tasks 9-13 wired real adapters over 8 of them (pricingValidation,
@@ -150,11 +297,13 @@ export function assertProductionObjectStorageConfigured(
  * ordersPort, paymentsNotifications), and Task 17a (C-2) wired a 9th, `orderCreation`, over
  * Orders' own `CreateOrderFromCheckout` — `wireAdmin` now wires each of those unconditionally by
  * default, so they no longer appear in `integrationPorts` below at all (re-listing one `undefined`
- * here would just re-stub a port that already has a real adapter and defeat this guard). Four
- * ports remain, for three different reasons:
- *   - `taxCalculation` / `shippingCalculation` are genuinely missing capabilities: nothing in
- *     this codebase computes tax or quotes a shipping rate yet (checkout's figures are a flat 10%
- *     stub and hardcoded numbers, respectively).
+ * here would just re-stub a port that already has a real adapter and defeat this guard).
+ * Plan 3C did the same for the last two checkout ports: `taxCalculation` (the shop's own tax
+ * settings, with each line's `taxable` read from Catalog) and `shippingCalculation` (the shop's own
+ * shipping zones and rates, with weights read from Catalog) are real adapters `wireAdmin` wires
+ * whenever there is a database — and `startApi` below passes `realShippingAndTax: true` outright — so
+ * the flat-10% tax and fixed 5/15 shipping stubs can no longer back a production checkout. Two ports
+ * remain, for two different reasons:
  *   - `shippingPort` is also a genuinely missing capability, found during Phase 3 implementation:
  *     `services/shipping`'s shipment-creation flow requires `weightGrams` per package, and nothing
  *     in Catalog, Orders, or Fulfillment computes or stores a product/order weight anywhere —
@@ -181,17 +330,17 @@ export function assertProductionObjectStorageConfigured(
  *     `paymentRef` to force the transition would put wrong-but-plausible entries in Finance's
  *     ledger. Pinned by an integration test over the real composition:
  *     `apps/admin/src/http/cart-checkout-pricing-security.e2e.test.ts`.
- *     Separately, the pair this port actually shadows is still unregistered —
- *     `PaymentsCapturedConsumer`/`RefundsIssuedConsumer`
- *     (`services/finance/src/interfaces/finance-consumers.ts`), which cover
- *     `payments.payment_intent.captured`/`.refunded`: nothing instantiates those two, so a
- *     captured payment's fee entry or an issued refund's contra entry still posts nowhere, neither
- *     synchronously (Payments' own `FinancePort` is a permanent no-op stub,
- *     `InMemoryFinanceAdapter`) nor asynchronously. That remains an open gap this guard does not
- *     close — wiring those two into `worker.ts` alongside the paid-order four is a separate,
- *     scoped follow-up. `financePort` stays unwired here regardless, and the paid-order wiring
- *     strengthens rather than weakens that: a synchronous adapter here would be a second,
- *     uncoordinated write path over the same ledger the consumer fleet now writes.
+ *     The pair this port actually shadows (`PaymentsCapturedConsumer`/`RefundsIssuedConsumer`,
+ *     `services/finance/src/interfaces/finance-consumers.ts`, covering
+ *     `payments.payment_intent.captured`/`.refunded`) is now registered too (WP-11, F-11 closed):
+ *     `worker.ts` builds them through `buildFinanceSettlementConsumerRuntimes`
+ *     (`apps/runtime/src/consumers/finance-settlement.consumers.ts`), wrapped for the atomic path
+ *     exactly like `OrdersPaidConsumer` above (a ledger append is not idempotent by itself). A
+ *     captured payment now posts its fee entry and an issued refund now posts its contra entry,
+ *     asynchronously, the same way the paid-order revenue entry does. `financePort` stays unwired
+ *     here regardless — Payments' own `FinancePort` remains a permanent no-op stub
+ *     (`InMemoryFinanceAdapter`), by design: a synchronous adapter here would be a second,
+ *     uncoordinated write path over the same ledger the consumer fleet writes to asynchronously.
  * This remains a single combined guard (not per-port ones) so a caller sees every still-stubbed
  * port in one error rather than discovering them one boot-failure at a time — same reasoning as
  * when this guard covered 12 ports, just narrower now.
@@ -213,31 +362,23 @@ export function assertProductionIntegrationPortsConfigured(
   } else {
     throw new Error(
       `api: ${stubbed.join(", ")} ${stubbed.length === 1 ? "is" : "are"} still offline in-memory ` +
-        "stub(s) (C-03). taxCalculation needs a tax provider integration (e.g. Avalara/TaxJar) or " +
-        "a local tax-authority table — nothing in this codebase computes tax today (checkout's " +
-        "tax figure is a flat 10% stub). shippingCalculation needs a shipping rate source (a " +
-        "carrier rating API or an in-house rate table) — nothing in this codebase quotes a " +
-        "shipping rate today (checkout's shipping figures are hardcoded). shippingPort needs a " +
+        "stub(s) (C-03). shippingPort needs a " +
         "source of package weight/dimensions per product — services/shipping's shipment-creation " +
         "flow requires weightGrams per package and nothing in Catalog, Orders, or Fulfillment " +
-        "computes or stores one. financePort is different in kind from the other three: it is not " +
-        "a missing capability but a deliberate guard against a redundant write path, part of " +
-        "which is now real. Finance's OrdersPaidConsumer IS registered with the Kafka consumer " +
-        "fleet as of Task 17b (worker.ts, via buildOrdersPaidConsumerRuntimes in " +
-        "apps/runtime/src/consumers/orders-paid.consumers.ts), so a paid order posts its ledger " +
-        "entry asynchronously. The two consumers this port actually shadows are still " +
-        "unregistered: PaymentsCapturedConsumer and RefundsIssuedConsumer " +
-        "(services/finance/src/interfaces/finance-consumers.ts), covering " +
-        "payments.payment_intent.captured/.refunded — nothing instantiates them, so a captured " +
-        "payment's fee entry or an issued refund's contra entry posts nowhere, sync or async. " +
-        "That is an open gap this guard does not cover, not something financePort fixes — wiring " +
-        "those two consumers into worker.ts is a separate, scoped follow-up. financePort stays " +
-        "unwired here regardless, since a synchronous adapter would be a second, uncoordinated " +
-        "write path over the same ledger the consumer fleet now writes. " +
+        "computes or stores one. financePort is different in kind from shippingPort: it is not " +
+        "a missing capability but a deliberate guard against a redundant write path, and that path " +
+        "is now fully async and real (WP-11, F-11 closed). Finance's OrdersPaidConsumer, " +
+        "PaymentsCapturedConsumer, and RefundsIssuedConsumer are ALL registered with the Kafka " +
+        "consumer fleet (worker.ts, via buildOrdersPaidConsumerRuntimes and " +
+        "buildFinanceSettlementConsumerRuntimes in apps/runtime/src/consumers/), so a paid order " +
+        "posts its ledger revenue entry, a captured payment posts its fee entry, and an issued " +
+        "refund posts its contra entry, all asynchronously. financePort stays unwired here " +
+        "regardless, since a synchronous adapter would be a second, uncoordinated write path over " +
+        "the same ledger the consumer fleet now writes. " +
         "Whichever of these remain listed above " +
         "must never back real money, shipping cost, or tax calculation outside " +
         "APP_ENV=local. Wire the real adapter once the underlying capability exists " +
-        "(taxCalculation / shippingCalculation / shippingPort), or pass it " +
+        "(shippingPort), or pass it " +
         "explicitly in createAdminHttpApi's deps; leave financePort unwired unless deliberately " +
         "replacing the async consumer path.",
     );
@@ -270,6 +411,10 @@ export function assertProductionIntegrationPortsConfigured(
  */
 export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promise<void> {
   const runtime = core ?? buildRuntimeCore(config);
+  // Plan 1C: Resend when RESEND_API_KEY is set, else a logging sender. A real signupEmail is passed
+  // ONLY with a key, so the G-72 guard below keeps refusing a non-local boot that has no real sender.
+  const email = resolveEmailWiring(runtime.config);
+  const signupEmail = email.signupEmail ?? runtime.signupEmail;
 
   // Stage 5 (C-03 partial): none of these 12 ports have a real adapter yet (Stage 6) — this object
   // is the single source of truth for both the guard below and the deps spread into
@@ -302,8 +447,10 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // always wires a real PromotionValidationAdapter over Promotions' own EvaluatePromotions use
     // case by default — there is no offline stub left in production to guard against, so listing
     // it `undefined` here would just re-stub it and defeat the guard below.
-    taxCalculation: undefined,
-    shippingCalculation: undefined,
+    // taxCalculation / shippingCalculation are deliberately absent here (Plan 3C): `wireAdmin` wires
+    // the shop's real tax-settings and shipping-zone adapters (`realShippingAndTax`), so the
+    // flat-10% / fixed-5-and-15 stubs are unreachable in production — listing them `undefined` here
+    // would just re-stub them and defeat the guard below.
     // ordersPort/paymentsNotifications are deliberately absent here (Phase 3 Task 13, C-3):
     // `wireAdmin` now always wires real `PaymentsOrdersAdapter`/`PaymentsNotificationAdapter`
     // adapters over Orders' `getOrder` / Notifications' create -> queue -> send lifecycle by
@@ -331,16 +478,16 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   // single boot attempt on a fresh environment reveals everything still missing at once.
   const guardFailures = [
     collectGuardFailure(() => assertProductionMfaConfigured(config.APP_ENV, runtime.mfaProviders)),
-    collectGuardFailure(() =>
-      assertProductionPaymentProviderConfigured(config.APP_ENV, runtime.paymentProvider),
-    ),
-    collectGuardFailure(() => assertProductionLicensingBillingConfigured(config.APP_ENV)),
+    collectGuardFailure(() => assertProductionPaymentProviderConfigured(config.APP_ENV, runtime)),
+    collectGuardFailure(() => assertProductionLicensingBillingConfigured(config.APP_ENV, runtime)),
     collectGuardFailure(() =>
       assertProductionObjectStorageConfigured(config.APP_ENV, runtime.objectStorage),
     ),
     collectGuardFailure(() =>
       assertProductionIntegrationPortsConfigured(config.APP_ENV, integrationPorts),
     ),
+    collectGuardFailure(() => assertProductionSignupEmailConfigured(config.APP_ENV, signupEmail)),
+    collectGuardFailure(() => assertProductionDunningNotificationsConfigured(config.APP_ENV)),
   ].filter((message): message is string => message !== undefined);
 
   if (guardFailures.length > 0) {
@@ -359,6 +506,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
 
   const app = await createAdminHttpApi({
     ...integrationPorts,
+    // Plan 3C: the shop's own shipping zones/rates and tax settings back the checkout, never the
+    // offline stubs (also the default whenever `prisma` is present — stated here so it cannot drift).
+    realShippingAndTax: true,
     mfaProviders: runtime.mfaProviders,
     serializer: runtime.serializer,
     idGenerator: runtime.idGenerator,
@@ -371,36 +521,93 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     health: runtime.health,
     metrics: runtime.metrics,
     prisma: runtime.prisma,
+    // Plan 1B-1: passwords in Postgres (scrypt, tenant-scoped, lockout) instead of process memory.
+    passwordAuthProvider: new HashedPasswordAuthProvider({
+      store: new PrismaPasswordCredentialStore(runtime.prisma),
+      hasher: new ScryptPasswordHasher(),
+      clock: runtime.clock,
+    }),
+    // T10.4: `multi` swaps the pinned resolver for the claim → header chain and runs the boot
+    // assertion inside createAdminHttpApi. `tenantId` below is still passed because the tenancy
+    // context (ADR-0014 8f) alone stays pinned to it; its routes reject every other tenant.
+    // Plan 1B-2: native staff sign-in (present only when AUTH_MODE=native) and the one-time first owner.
+    ...(runtime.staffTokenIssuer === undefined
+      ? {}
+      : { staffTokenIssuer: runtime.staffTokenIssuer }),
+    staffTokenTtlSeconds: runtime.config.STAFF_TOKEN_TTL_SECONDS,
+    ...(runtime.config.BOOTSTRAP_OWNER_EMAIL === undefined ||
+    runtime.config.BOOTSTRAP_OWNER_PASSWORD === undefined
+      ? {}
+      : {
+          bootstrapOwner: {
+            email: runtime.config.BOOTSTRAP_OWNER_EMAIL,
+            password: runtime.config.BOOTSTRAP_OWNER_PASSWORD,
+          },
+        }),
+    tenantMode: runtime.config.TENANT_MODE,
     tenantId: runtime.config.TENANT_DEFAULT_ID,
-    paymentVerification: new PrismaPaymentVerificationAdapter(
-      runtime.prisma,
-      runtime.config.TENANT_DEFAULT_ID,
-    ),
+    ...(runtime.config.PLATFORM_STORE_DOMAIN === undefined
+      ? {}
+      : { platformStoreDomain: runtime.config.PLATFORM_STORE_DOMAIN }),
+    ...(runtime.config.STOREFRONT_CNAME_TARGET === undefined
+      ? {}
+      : {
+          dnsVerifier: new NodeDnsVerifier({
+            cnameTarget: runtime.config.STOREFRONT_CNAME_TARGET,
+            ipv4Targets: runtime.config.STOREFRONT_IPV4,
+          }),
+        }),
+    paymentVerification: new PrismaPaymentVerificationAdapter(runtime.prisma),
     // Phase A.2 (F-04 closure): gates Returns' DecideResolution refund amount against the
     // refundable ceiling derived from Payments' own charges/refunds ledger — same wiring
     // convention as paymentVerification above (mirrors PrismaPaymentVerificationAdapter).
-    refundVerification: new PrismaRefundVerificationAdapter(
-      runtime.prisma,
-      runtime.config.TENANT_DEFAULT_ID,
-    ),
+    refundVerification: new PrismaRefundVerificationAdapter(runtime.prisma),
     // Phase A.3 (refund execution closure): the actual write side effect of an approved Returns
     // refund — bridges to Payments' own real `RefundPaymentLifecycle`, same wiring convention as
     // refundVerification above (present ⇒ real adapter; absent ⇒ Returns' own no-op stub, unchanged
     // for tests/local composition that don't pass it).
     paymentsPort: buildReturnsPaymentsPortAdapter(runtime),
     objectStorage: runtime.objectStorage,
+    ...(runtime.config.MEDIA_PUBLIC_BASE_URL === undefined
+      ? {}
+      : { publicMediaBaseUrl: runtime.config.MEDIA_PUBLIC_BASE_URL }),
     paymentProvider: runtime.paymentProvider,
+    // WP-13: registered providers (Paymob today; each built per request from the tenant's own
+    // sealed credentials) and the vault that seals them. Neither is a process-wide provider.
+    providerRegistrations: runtime.providerRegistrations,
+    paymentCredentialVault: runtime.paymentCredentialVault,
+    // WP-14 T14.4: Licensing's REAL collection, through Morbeh's own PSP account. Absent ⇒ Licensing
+    // keeps its in-memory stub, which assertProductionLicensingBillingConfigured refuses outside local.
+    ...(runtime.platformBillingPayments === undefined
+      ? {}
+      : { payments: runtime.platformBillingPayments }),
+    // G-74 (1): charging a merchant's SAVED card off-session on Morbeh's own Paymob account. When
+    // present it takes precedence over `payments` above inside Licensing (only it can complete).
+    ...(runtime.platformBillingStoredMethod === undefined
+      ? {}
+      : { storedMethodBilling: runtime.platformBillingStoredMethod }),
     // H-02: every authorization decision on every admin action was recorded to a process-local,
     // never-pruned in-memory array (destroyed on restart, unbounded growth against the container
     // memory limit). The durable adapter, the `platform.audit_events` table, and the 7-year-retention
     // `platform.audit.entry_recorded.v1` topic all already existed — only this wiring was missing.
     auditTrail: new PrismaAuditTrail(runtime.prisma, runtime.idGenerator),
+    // G-72: guarded above by assertProductionSignupEmailConfigured; real once RESEND_API_KEY is set.
+    signupEmail,
+    // Plan 1C: staff forgot-password. The reset link is built from ADMIN_PUBLIC_URL; without it the
+    // request endpoint still answers 202 and sends nothing.
+    emailSender: email.emailSender,
+    ...(runtime.config.ADMIN_PUBLIC_URL === undefined
+      ? {}
+      : { adminPublicUrl: runtime.config.ADMIN_PUBLIC_URL }),
+    passwordResetTokens: new PrismaPasswordResetTokenStore(runtime.prisma),
+    storefrontPublicUrl: config.STOREFRONT_PUBLIC_URL,
     // H-04 (audit): /docs, /openapi.json, and /readyz's full dependency-error detail are verified
     // publicly reachable, unauthenticated, on a hosted deployment — the composition root (here,
     // not the transport) is what actually knows whether this process is `local` dev or a
     // deployed/staging/production one, so it — not a transport-level default — makes the call.
-    exposeDocs: config.APP_ENV === "local",
-    readinessDetail: config.APP_ENV === "local" ? "full" : "status-only",
+    // G-82: `APP_ENV === "local"` was also the only value a deployment could boot with, so a public
+    // domain exposed all of this. See resolveApiExposure.
+    ...resolveApiExposure(config, process.env["NODE_ENV"]),
   });
   await app.listen({ port: config.PORT, host: "0.0.0.0" });
   logger.info("api listening", { port: config.PORT, env: config.APP_ENV });

@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -12,8 +12,6 @@ export interface PrismaLoyaltyAccountRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
   /** The tier ladder — composition-root config, not persisted per-row. */
   readonly tiers: readonly RewardTier[];
 }
@@ -26,9 +24,8 @@ export class PrismaLoyaltyAccountRepository implements LoyaltyAccountRepository 
     this.deps = deps;
   }
 
-  async save(account: LoyaltyAccount, tx?: unknown): Promise<void> {
+  async save(account: LoyaltyAccount, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const accountId = account.id.toString();
     const row = LoyaltyAccountMapper.toRow(account, tenantId);
 
@@ -54,39 +51,55 @@ export class PrismaLoyaltyAccountRepository implements LoyaltyAccountRepository 
       }
     }
 
-    await this.deps.outbox.write(account.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      account.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<LoyaltyAccount | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.loyaltyAccount.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return LoyaltyAccountMapper.toDomain(this.toMapperRow(row), this.deps.tiers);
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<LoyaltyAccount | null> {
+    const run = (client: TransactionClient) =>
+      client.loyaltyAccount.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null
+      ? null
+      : LoyaltyAccountMapper.toDomain(this.toMapperRow(row), this.deps.tiers);
   }
 
-  async findByCustomerRef(customerRef: string, tx?: unknown): Promise<LoyaltyAccount | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.loyaltyAccount.findFirst({
-      where: { customerRef, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return LoyaltyAccountMapper.toDomain(this.toMapperRow(row), this.deps.tiers);
+  async findByCustomerRef(
+    customerRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<LoyaltyAccount | null> {
+    const run = (client: TransactionClient) =>
+      client.loyaltyAccount.findFirst({ where: { customerRef, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null
+      ? null
+      : LoyaltyAccountMapper.toDomain(this.toMapperRow(row), this.deps.tiers);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<LoyaltyAccount>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<LoyaltyAccount>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.loyaltyAccount.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.loyaltyAccount.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       rows.map((row) => LoyaltyAccountMapper.toDomain(this.toMapperRow(row), this.deps.tiers)),
       limit,

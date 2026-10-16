@@ -13,6 +13,7 @@ import { RegisterAsset } from "./application/register-asset.use-case";
 import { InMemoryAssetRepository } from "./infrastructure/in-memory-asset-repository";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import { MediaEventTranslator } from "./infrastructure/media-event-translator";
+import { TenantPrefixedKeyPolicy } from "./infrastructure/tenant-prefixed-key-policy";
 import { AssetController } from "./interfaces/asset.controller";
 
 export interface MediaWiringDeps {
@@ -42,7 +43,13 @@ export function wireMedia(deps: MediaWiringDeps): WiredMedia {
   const assets = new InMemoryAssetRepository({ outbox: outboxWriter, context });
   const unitOfWork = new InMemoryUnitOfWork();
   const controller = new AssetController(
-    new RegisterAsset({ assets, unitOfWork, idGenerator: deps.idGenerator, clock: deps.clock }),
+    new RegisterAsset({
+      assets,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      keyPolicy: new TenantPrefixedKeyPolicy(),
+    }),
   );
 
   const bus = new InMemoryEventBus();

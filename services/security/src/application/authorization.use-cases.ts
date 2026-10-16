@@ -32,6 +32,8 @@ function presentRole(r: Role): RoleOutput {
 }
 
 export interface DefineRoleInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly key: string;
   readonly name: string;
   readonly scope?: SecurityScopeProps;
@@ -45,7 +47,7 @@ export class DefineRole implements UseCase<DefineRoleInput, RoleOutput, DomainEr
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: DefineRoleInput): Promise<Result<RoleOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<RoleOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.roles.findByKey(input.key, tx);
+      const existing = await this.deps.roles.findByKey(input.key, input.tenantId, tx);
       if (existing !== null) return ok(presentRole(existing));
       let role: Role;
       try {
@@ -59,8 +61,9 @@ export class DefineRole implements UseCase<DefineRoleInput, RoleOutput, DomainEr
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.roles.save(role, tx);
+      await this.deps.roles.save(role, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: "system",
         action: "security.role.defined",
         decision: "allow",
@@ -72,6 +75,8 @@ export class DefineRole implements UseCase<DefineRoleInput, RoleOutput, DomainEr
 }
 
 export interface GrantRolePermissionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly roleKey: string;
   readonly permission: string;
 }
@@ -85,7 +90,7 @@ export class GrantRolePermission implements UseCase<
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: GrantRolePermissionInput): Promise<Result<RoleOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<RoleOutput, DomainError>>(async (tx) => {
-      const role = await this.deps.roles.findByKey(input.roleKey, tx);
+      const role = await this.deps.roles.findByKey(input.roleKey, input.tenantId, tx);
       if (role === null) return err(new NotFoundError("Role not found"));
       try {
         role.grantPermission(
@@ -97,9 +102,10 @@ export class GrantRolePermission implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.roles.save(role, tx);
+      await this.deps.roles.save(role, input.tenantId, tx);
       this.deps.telemetry.increment("security.permission.granted");
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: "system",
         action: "security.permission.granted",
         decision: "allow",
@@ -133,6 +139,8 @@ function presentAssignment(a: RoleAssignment): AssignmentOutput {
 }
 
 export interface AssignRoleInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   readonly roleKey: string;
   readonly grantedBy: string;
@@ -149,9 +157,12 @@ export interface AssignRoleInput {
 export class AssignRole implements UseCase<AssignRoleInput, AssignmentOutput, DomainError> {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: AssignRoleInput): Promise<Result<AssignmentOutput, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
-    const role = await this.deps.roles.findByKey(input.roleKey);
+    const role = await this.deps.roles.findByKey(input.roleKey, input.tenantId);
     if (role === null) return err(new NotFoundError("Role not found"));
     if (role.status !== "active") return err(new ConflictError("Cannot assign an archived role"));
     return this.deps.unitOfWork.run<Result<AssignmentOutput, DomainError>>(async (tx) => {
@@ -177,9 +188,10 @@ export class AssignRole implements UseCase<AssignRoleInput, AssignmentOutput, Do
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.assignments.save(assignment, tx);
+      await this.deps.assignments.save(assignment, input.tenantId, tx);
       this.deps.telemetry.increment("security.permission.granted");
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.role.assigned",
         decision: "allow",
@@ -196,6 +208,8 @@ export class AssignRole implements UseCase<AssignRoleInput, AssignmentOutput, Do
 }
 
 export interface RevokeRoleAssignmentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly assignmentId: string;
 }
 
@@ -208,12 +222,17 @@ export class RevokeRoleAssignment implements UseCase<
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: RevokeRoleAssignmentInput): Promise<Result<AssignmentOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<AssignmentOutput, DomainError>>(async (tx) => {
-      const assignment = await this.deps.assignments.findById(input.assignmentId, tx);
+      const assignment = await this.deps.assignments.findById(
+        input.assignmentId,
+        input.tenantId,
+        tx,
+      );
       if (assignment === null) return err(new NotFoundError("Assignment not found"));
       assignment.revoke(this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.assignments.save(assignment, tx);
+      await this.deps.assignments.save(assignment, input.tenantId, tx);
       this.deps.telemetry.increment("security.permission.revoked");
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: assignment.principalRef,
         action: "security.role.revoked",
         decision: "allow",

@@ -18,9 +18,7 @@ function fakeProduct(id: string, status = "published"): Product {
   return { id, status: { value: status } } as unknown as Product;
 }
 
-function stubCollections(
-  overrides: Partial<CollectionRepository> = {},
-): CollectionRepository {
+function stubCollections(overrides: Partial<CollectionRepository> = {}): CollectionRepository {
   return {
     save: async () => {},
     findById: async () => null,
@@ -51,7 +49,7 @@ describe("ListCollectionProducts", () => {
       products: stubProducts(new Map()),
     });
 
-    const result = await useCase.execute({ slug: "no-such-slug" });
+    const result = await useCase.execute({ slug: "no-such-slug", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("NOT_FOUND");
@@ -60,11 +58,13 @@ describe("ListCollectionProducts", () => {
   it("returns a NotFoundError for an unpublished (draft) collection", async () => {
     const collection = fakeCollection({ status: "draft", productIds: ["p1"] });
     const useCase = new ListCollectionProducts({
-      collections: stubCollections({ findBySlug: async (slug) => (slug === "featured" ? collection : null) }),
+      collections: stubCollections({
+        findBySlug: async (slug) => (slug === "featured" ? collection : null),
+      }),
       products: stubProducts(new Map([["p1", fakeProduct("p1")]])),
     });
 
-    const result = await useCase.execute({ slug: "featured" });
+    const result = await useCase.execute({ slug: "featured", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("NOT_FOUND");
@@ -82,7 +82,7 @@ describe("ListCollectionProducts", () => {
       products: stubProducts(products),
     });
 
-    const result = await useCase.execute({ slug: "featured" });
+    const result = await useCase.execute({ slug: "featured", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -101,7 +101,7 @@ describe("ListCollectionProducts", () => {
       products: stubProducts(products),
     });
 
-    const result = await useCase.execute({ slug: "featured" });
+    const result = await useCase.execute({ slug: "featured", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -121,7 +121,7 @@ describe("ListCollectionProducts", () => {
       products: stubProducts(products),
     });
 
-    const result = await useCase.execute({ slug: "featured" });
+    const result = await useCase.execute({ slug: "featured", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -140,7 +140,7 @@ describe("ListCollectionProducts", () => {
       products: stubProducts(products),
     });
 
-    const firstPage = await useCase.execute({ slug: "featured", first: 2 });
+    const firstPage = await useCase.execute({ slug: "featured", first: 2, tenantId: "tenant-1" });
     expect(firstPage.ok).toBe(true);
     if (!firstPage.ok) return;
     expect(firstPage.value.items.map((p) => p.id)).toEqual(["p1", "p2"]);
@@ -150,6 +150,7 @@ describe("ListCollectionProducts", () => {
       slug: "featured",
       first: 2,
       after: firstPage.value.pageInfo.endCursor as string,
+      tenantId: "tenant-1",
     });
     expect(secondPage.ok).toBe(true);
     if (!secondPage.ok) return;
@@ -164,7 +165,7 @@ describe("ListCollectionProducts", () => {
       products: stubProducts(new Map()),
     });
 
-    const result = await useCase.execute({ slug: "featured" });
+    const result = await useCase.execute({ slug: "featured", tenantId: "tenant-1" });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;

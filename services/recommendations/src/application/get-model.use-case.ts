@@ -18,7 +18,7 @@ export class GetModel implements UseCase<ModelIdInput, RecommendationModel, Doma
   }
 
   async execute(input: ModelIdInput): Promise<Result<RecommendationModel, DomainError>> {
-    const model = await this.deps.models.findById(input.modelId);
+    const model = await this.deps.models.findById(input.modelId, input.tenantId);
     return model === null ? err(new NotFoundError("Recommendation model not found")) : ok(model);
   }
 }

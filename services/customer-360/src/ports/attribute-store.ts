@@ -9,7 +9,11 @@ import type { ComputedAttribute } from "../domain/computed-attribute";
  * event.
  */
 export interface AttributeStore {
-  getCurrent(identifier: IdentifierRef, tx?: unknown): Promise<ComputedAttribute | null>;
+  getCurrent(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<ComputedAttribute | null>;
   /**
    * Upsert — replaces whatever was cached for this identifier. Never call this expecting
    * append-only semantics (use `AttributeHistoryStore.append` for the durable record).
@@ -28,9 +32,14 @@ export interface AttributeStore {
    * has no trustworthy version of its own to compare against) and for tests seeding store state
    * directly. Never used by the normal evaluate-and-persist write path.
    */
-  saveCurrent(attribute: ComputedAttribute, expectedVersion?: number, tx?: unknown): Promise<void>;
+  saveCurrent(
+    attribute: ComputedAttribute,
+    tenantId: string,
+    expectedVersion?: number,
+    tx?: unknown,
+  ): Promise<void>;
   /** Every identifier with at least one cached computed-attribute set — how
    * `ComputedAttributeProjectionWorker` finds what to rebuild without a separate registry (mirrors
    * `ProfileStore.listIdentifiers`/`SessionStore.listSessionIds`). */
-  listIdentifiers(tx?: unknown): Promise<readonly IdentifierRef[]>;
+  listIdentifiers(tenantId: string, tx?: unknown): Promise<readonly IdentifierRef[]>;
 }

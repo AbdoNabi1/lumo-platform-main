@@ -24,10 +24,25 @@ const schema = z
     DATABASE_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(30_000),
     REDIS_URL: z.string().min(1),
-    REDIS_KEY_PREFIX: z.string().default("lumo:"),
+    REDIS_KEY_PREFIX: z.string().default("morbeh:"),
 
     KAFKA_BROKERS: z.string().min(1).default("localhost:19092"),
-    KAFKA_CLIENT_ID: z.string().default("lumo-runtime"),
+    KAFKA_CLIENT_ID: z.string().default("morbeh-runtime"),
+
+    /**
+     * How integration events get from `platform.outbox` to the worker's consumers.
+     *
+     * - `kafka` (default, unchanged): the relay publishes rows to the broker and each consumer reads
+     *   its topic from there. Needs a reachable broker with every topic provisioned.
+     * - `postgres`: no broker. The worker delivers each outbox row straight to the consumers
+     *   registered for its topic, in-process, and the row carries its own retry state
+     *   (`outbox-delivery-runtime.ts`). Same consumers, same inbox idempotency, same dead-letter rows;
+     *   what is given up is stated in that file. For a deployment that cannot run a broker.
+     *
+     * Read by the worker and by `provision-topics.ts` (which becomes a no-op under `postgres`). The
+     * API never publishes to the broker itself, so the value does not change how it behaves.
+     */
+    EVENT_TRANSPORT: z.enum(["kafka", "postgres"]).default("kafka"),
 
     // ── Phase A.23: CDC (Debezium/Kafka Connect) watchdog ──
     /**
@@ -54,7 +69,30 @@ const schema = z
 
     AUTH_ISSUER_URL: z.string().url().optional(),
     AUTH_JWKS_URL: z.string().url().optional(),
-    AUTH_AUDIENCE: z.string().default("lumo-admin"),
+    AUTH_AUDIENCE: z.string().default("morbeh-admin"),
+    /**
+     * Plan 1B-2: who signs staff in. `ory` (default) = Hydra/Kratos/Keto as today. `native` = this
+     * runtime verifies passwords (Plan 1B-1), signs ES256 tokens with AUTH_SIGNING_KEY, and authorises
+     * with the fixed staff role table — no Ory service is needed.
+     */
+    AUTH_MODE: z.enum(["ory", "native"]).default("ory"),
+    /** Plan 1B-2: EC P-256 PKCS#8 private key (PEM, or base64 of the PEM). Secret. Required when native. */
+    AUTH_SIGNING_KEY: z.string().min(1).optional(),
+    STAFF_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(7200),
+    /**
+     * Plan 1C: Resend API key (`re_...`). SECRET — set it only in Railway Variables; never log or commit it.
+     * Absent ⇒ emails are written to the log (recipient + subject only) instead of being sent.
+     */
+    RESEND_API_KEY: z.string().min(10).optional(),
+    /** Plan 1C: the From header. The default is Resend's sandbox sender, which only delivers to the Resend account's own address. */
+    EMAIL_FROM: z.string().min(3).default("Morbeh <onboarding@resend.dev>"),
+    /** Plan 1C: public origin of admin-web; the password-reset email links to `${ADMIN_PUBLIC_URL}/reset-password`. */
+    ADMIN_PUBLIC_URL: z.string().url().optional(),
+    /** Plan 1B-2: first owner, created once at boot. Remove the password after first sign-in. */
+    BOOTSTRAP_OWNER_EMAIL: z.string().email().optional(),
+    BOOTSTRAP_OWNER_PASSWORD: z.string().min(12).optional(),
+    /** G-87: key the TOTP secrets are encrypted under. Secret, ≥32 chars. Absent ⇒ legacy constant (local only). */
+    MFA_TOTP_KEY: z.string().min(32).optional(),
     KETO_READ_URL: z.string().url().optional(),
     /** Ory Keto write-API base (relation-tuple sync); required outside `local` (H-2, superRefine). */
     KETO_WRITE_URL: z.string().url().optional(),
@@ -62,6 +100,13 @@ const schema = z
     KRATOS_PUBLIC_URL: z.string().url().optional(),
     /** Ory Kratos admin-API base (identity lookup + session revocation); required outside `local` (H-2). */
     KRATOS_ADMIN_URL: z.string().url().optional(),
+    /**
+     * The storefront's public origin (G-72) — used to build the signup-completion link
+     * (`${STOREFRONT_PUBLIC_URL}/account/signup/complete?token=...`). Absent ⇒
+     * `http://localhost:3000`, matching the storefront's own `RUNTIME_API_URL` local-default
+     * convention (`apps/storefront/src/lib/runtime-api.ts`).
+     */
+    STOREFRONT_PUBLIC_URL: z.string().url().optional(),
     /**
      * Ory Network project API key (`ory_pat_...`), attached to Ory's permission/identity APIs by
      * `createOryFetch` (`./ory-fetch.ts`). Absent ⇒ the self-hosted Hydra/Kratos/Keto topology in
@@ -71,8 +116,36 @@ const schema = z
      */
     ORY_API_KEY: z.string().optional(),
 
+    /**
+     * G-82: whether this process serves `/openapi.json`, `/docs`, the full `/readyz` body and an
+     * anonymous `/metrics`. Unset ⇒ decided by `resolveApiExposure` (open only on a developer machine,
+     * closed in the container image). `true` is refused outside `APP_ENV=local`.
+     */
+    EXPOSE_API_DIAGNOSTICS: z
+      .enum(["true", "false"])
+      .optional()
+      .transform((v) => (v === undefined ? undefined : v === "true")),
+    /** G-82: bearer token that lets a scraper read `/metrics` while the diagnostics are closed. */
+    METRICS_TOKEN: z.string().min(16).optional(),
+
     TENANT_MODE: z.enum(["single", "multi"]).default("single"),
     TENANT_DEFAULT_ID: z.string().default("tenant-local"),
+
+    /** Plan 1A: the zone shops get subdomains under (`<slug>.<this>`). Unset ⇒ no automatic subdomain. */
+    PLATFORM_STORE_DOMAIN: z.string().min(3).optional(),
+    /** Plan 1A: the name merchants CNAME custom domains to. Unset ⇒ custom domains cannot be verified. */
+    STOREFRONT_CNAME_TARGET: z.string().min(3).optional(),
+    /** Plan 1A: the storefront's public IPv4s, for apex custom domains (comma-separated). */
+    STOREFRONT_IPV4: z
+      .string()
+      .optional()
+      .transform((v) =>
+        (v ?? "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s !== ""),
+      )
+      .pipe(z.array(z.string().ip({ version: "v4" }))),
 
     RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
     OUTBOX_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
@@ -100,6 +173,14 @@ const schema = z
       .default("true")
       .transform((v) => v.toLowerCase() === "true"),
     S3_BUCKET_MEDIA: z.string().default("media"),
+    /**
+     * Plan 2C-3: where the PUBLIC media bucket is served from; an image is shown at
+     * `${MEDIA_PUBLIC_BASE_URL}/${storageKey}`. Absent (or empty) ⇒ product-image uploads answer 503.
+     */
+    MEDIA_PUBLIC_BASE_URL: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().url().optional(),
+    ),
 
     // ── Stripe PSP adapter (C2-2) — same present/absent-optionality convention as S3 above. Absent
     // ⇒ Payments' InMemoryPaymentProvider; present (both keys) ⇒ the real StripePaymentProvider.
@@ -109,6 +190,47 @@ const schema = z
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
     /** Override for sandbox/testing; defaults to Stripe's production API. */
     STRIPE_API_BASE: z.string().url().default("https://api.stripe.com"),
+
+    // ── MORBEH'S OWN billing PSP account (WP-14, T14.4) — the account a MERCHANT PAYS INTO for their
+    // subscription. Deliberately separate from the STRIPE_* pair above (the account shoppers pay into
+    // for a merchant's store) and from every merchant's own credentials: money moves from the merchant
+    // to Morbeh, so Morbeh's credentials are the ones on the wire. Both required to enable billing;
+    // either absent ⇒ no platform billing adapter (never a stub). The webhook secret must be a
+    // DIFFERENT Stripe endpoint from STRIPE_WEBHOOK_SECRET so billing events cannot reach the store's
+    // webhook handler (enforced when the runtime composes billing).
+    /** Morbeh's billing Stripe secret key (`sk_test_...` / `sk_live_...`). */
+    PLATFORM_BILLING_STRIPE_SECRET_KEY: z.string().optional(),
+    /** Signing secret (`whsec_...`) of the Stripe endpoint dedicated to Morbeh's billing events. */
+    PLATFORM_BILLING_STRIPE_WEBHOOK_SECRET: z.string().optional(),
+
+    // ── MORBEH'S OWN billing account on PAYMOB (G-74 (1)) — charging a merchant's SAVED card with no
+    // payer present (tokenization + MIT). Same rule as the Stripe pair above: these are Morbeh's
+    // credentials, never a merchant's and never the store's. Secret, HMAC secret, public key and the
+    // card integration id are all required to enable it (a partial group refuses to boot); it also
+    // needs PAYMENT_CREDENTIALS_KEK_REF, because the card token is sealed with the credential vault.
+    /** Morbeh's Paymob secret key (`egy_sk_…`). */
+    PLATFORM_BILLING_PAYMOB_SECRET_KEY: z.string().optional(),
+    /** Morbeh's Paymob HMAC secret — verifies the card-token callback. */
+    PLATFORM_BILLING_PAYMOB_HMAC_SECRET: z.string().optional(),
+    /** Morbeh's Paymob public key (`egy_pk_…`) — half of the Unified Checkout URL. */
+    PLATFORM_BILLING_PAYMOB_PUBLIC_KEY: z.string().optional(),
+    /** The card integration id the interactive first payment (which saves the card) is created against. */
+    PLATFORM_BILLING_PAYMOB_INTEGRATION_ID: z.coerce.number().int().positive().optional(),
+    /**
+     * The MOTO integration id merchant-initiated renewals are charged against. NOT on by default:
+     * Paymob must enable a MOTO-type integration on the account. Absent ⇒ no renewal is ever charged
+     * (each fails visibly, nothing is sent) — never a fallback to the card integration.
+     */
+    PLATFORM_BILLING_PAYMOB_MOTO_INTEGRATION_ID: z.coerce.number().int().positive().optional(),
+    PLATFORM_BILLING_PAYMOB_REGION: z.enum(["egy", "ksa", "uae"]).default("egy"),
+
+    // ── Merchant payment credentials (WP-13). Merchants' Paymob secrets are sealed with
+    // `@platform/secrets`' envelope encryption before they reach Postgres; this is the key-encryption
+    // key reference they are sealed under. Absent ⇒ Paymob is UNAVAILABLE (no vault, no adapter is
+    // composed, and a merchant cannot enable it) — never a stub. With the local `NodeCrypto` backend
+    // the ref IS the key material (an AES key is derived from it), so treat it like STRIPE_SECRET_KEY;
+    // with a KMS backend it is that KMS's key reference.
+    PAYMENT_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
 
     // ── Tracking ingest (P1.3 / C-07) ──
     /**
@@ -217,7 +339,7 @@ const schema = z
 
     // ── OpenTelemetry (P2.0.1 runtime activation of the existing @platform/observability SDK) ──
     /** Base OTel service name; each entrypoint suffixes its role (`-api`/`-worker`/`-scheduler`). */
-    OTEL_SERVICE_NAME: z.string().default("lumo-runtime"),
+    OTEL_SERVICE_NAME: z.string().default("morbeh-runtime"),
     /** OTLP collector endpoint; when set, traces/metrics export there (else the SDK's own default). */
     OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
     /** Enable trace export. Off by default so local/tests never attempt to reach a collector. */
@@ -234,14 +356,44 @@ const schema = z
   .superRefine((cfg, ctx) => {
     // H-2 (G-SEC-4): live identity binding (Keto relation-tuple sync + Kratos identity/session) is
     // mandatory outside `local` — the security enforcement sync must not silently no-op in production.
-    for (const key of ["KETO_WRITE_URL", "KRATOS_PUBLIC_URL", "KRATOS_ADMIN_URL"] as const) {
-      if (cfg.APP_ENV !== "local" && cfg[key] === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [key],
-          message: `${key} is required unless APP_ENV=local (Ory identity binding, H-2).`,
-        });
+    if (cfg.AUTH_MODE === "ory") {
+      for (const key of ["KETO_WRITE_URL", "KRATOS_PUBLIC_URL", "KRATOS_ADMIN_URL"] as const) {
+        if (cfg.APP_ENV !== "local" && cfg[key] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required unless APP_ENV=local (Ory identity binding, H-2).`,
+          });
+        }
       }
+    } else {
+      for (const key of ["AUTH_SIGNING_KEY", "AUTH_ISSUER_URL"] as const) {
+        if (cfg[key] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when AUTH_MODE=native (Plan 1B-2).`,
+          });
+        }
+      }
+    }
+    if (
+      (cfg.BOOTSTRAP_OWNER_EMAIL === undefined) !==
+      (cfg.BOOTSTRAP_OWNER_PASSWORD === undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["BOOTSTRAP_OWNER_PASSWORD"],
+        message: "BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD must be set together.",
+      });
+    }
+    if (cfg.EXPOSE_API_DIAGNOSTICS === true && cfg.APP_ENV !== "local") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["EXPOSE_API_DIAGNOSTICS"],
+        message:
+          "EXPOSE_API_DIAGNOSTICS=true is only allowed with APP_ENV=local (G-82): outside it the spec, docs, readiness detail and metrics must stay closed.",
+      });
     }
     // P2.0.2 (C): zero-trust HTTP enforcement fails closed against an unpopulated Security store, so it
     // must not be enabled without the provisioning fleet that seeds principals/roles/policies (A,B,D,E).
@@ -251,6 +403,27 @@ const schema = z
         path: ["SECURITY_ZERO_TRUST_ENFORCEMENT"],
         message:
           "SECURITY_ZERO_TRUST_ENFORCEMENT requires SECURITY_PRINCIPAL_PROVISIONING=on (enforcement fails closed against an unprovisioned store).",
+      });
+    }
+    // The Postgres transport IS the outbox relay: with the relay off nothing would be delivered at all,
+    // and the scheduler's prune job would take its CDC branch for a table no CDC is reading.
+    if (cfg.EVENT_TRANSPORT === "postgres" && !cfg.OUTBOX_RELAY_ENABLED) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["OUTBOX_RELAY_ENABLED"],
+        message:
+          "EVENT_TRANSPORT=postgres requires OUTBOX_RELAY_ENABLED=true: under this transport the outbox relay is the only thing that delivers events.",
+      });
+    }
+    // The collector publishes beacons straight to the broker (`tracking.event.captured.v1`), never
+    // through the outbox, so without a broker the ingest consumer would be registered and receive
+    // nothing, forever. Refuse the combination rather than report a healthy consumer that is deaf.
+    if (cfg.EVENT_TRANSPORT === "postgres" && cfg.TRACKING_INGEST_ENABLED) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["TRACKING_INGEST_ENABLED"],
+        message:
+          "TRACKING_INGEST_ENABLED=true requires EVENT_TRANSPORT=kafka: the collector publishes tracking events to the broker directly, not through the outbox, so the Postgres transport can never deliver them.",
       });
     }
     // H-01: `buildSecurityHttpGuard` (apps/runtime/src/security/wire-security-runtime.ts) is not called

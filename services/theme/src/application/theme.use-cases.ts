@@ -19,6 +19,7 @@ export interface ThemeDeps {
 export interface CreateThemeInput {
   readonly name: string;
   readonly presetKey: string;
+  readonly tenantId: string;
 }
 
 export interface ThemeStatusOutput {
@@ -30,7 +31,7 @@ export interface CreateThemeDeps extends ThemeDeps {
   readonly presets: DesignPresetProvider;
 }
 
-/** Creates a theme in `draft` status, seeded from a Lumo Design System token preset. */
+/** Creates a theme in `draft` status, seeded from a Morbeh Design System token preset. */
 export class CreateTheme implements UseCase<CreateThemeInput, ThemeStatusOutput, DomainError> {
   private readonly deps: CreateThemeDeps;
 
@@ -43,14 +44,14 @@ export class CreateTheme implements UseCase<CreateThemeInput, ThemeStatusOutput,
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<ThemeStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.themes.findByName(input.name, tx);
+      const existing = await this.deps.themes.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Theme "${input.name}" already exists`));
       }
       const variables = await this.deps.presets.getPreset(input.presetKey);
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const theme = Theme.create(id, input.name, variables);
-      await this.deps.themes.save(theme, tx);
+      await this.deps.themes.save(theme, input.tenantId, tx);
       return ok({ themeId: id.toString(), status: theme.status });
     });
   }
@@ -58,6 +59,7 @@ export class CreateTheme implements UseCase<CreateThemeInput, ThemeStatusOutput,
 
 export interface ThemeIdInput {
   readonly themeId: string;
+  readonly tenantId: string;
 }
 
 export interface AdvanceThemeInput extends ThemeIdInput {
@@ -74,7 +76,7 @@ export class AdvanceTheme implements UseCase<AdvanceThemeInput, ThemeStatusOutpu
 
   async execute(input: AdvanceThemeInput): Promise<Result<ThemeStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ThemeStatusOutput, DomainError>>(async (tx) => {
-      const theme = await this.deps.themes.findById(input.themeId, tx);
+      const theme = await this.deps.themes.findById(input.themeId, input.tenantId, tx);
       if (theme === null) return err(new NotFoundError("Theme not found"));
 
       try {
@@ -84,7 +86,7 @@ export class AdvanceTheme implements UseCase<AdvanceThemeInput, ThemeStatusOutpu
         throw error;
       }
 
-      await this.deps.themes.save(theme, tx);
+      await this.deps.themes.save(theme, input.tenantId, tx);
       return ok({ themeId: theme.id.toString(), status: theme.status });
     });
   }
@@ -110,7 +112,7 @@ export class UpdateThemeVariables implements UseCase<
 
   async execute(input: UpdateThemeVariablesInput): Promise<Result<ThemeStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<ThemeStatusOutput, DomainError>>(async (tx) => {
-      const theme = await this.deps.themes.findById(input.themeId, tx);
+      const theme = await this.deps.themes.findById(input.themeId, input.tenantId, tx);
       if (theme === null) return err(new NotFoundError("Theme not found"));
 
       try {
@@ -120,7 +122,7 @@ export class UpdateThemeVariables implements UseCase<
         throw error;
       }
 
-      await this.deps.themes.save(theme, tx);
+      await this.deps.themes.save(theme, input.tenantId, tx);
       return ok({ themeId: theme.id.toString(), status: theme.status });
     });
   }

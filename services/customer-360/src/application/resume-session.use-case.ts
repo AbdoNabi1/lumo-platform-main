@@ -12,6 +12,9 @@ import type { SessionHistoryStore } from "../ports/session-history-store";
 import type { SessionStore } from "../ports/session-store";
 
 export interface ResumeSessionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   /** The prior, already-closed session this activity continues. */
   readonly closedSessionId: string;
   /** The new session id to open — minted by the caller (typically the tracking SDK's own rotated
@@ -80,7 +83,7 @@ export class ResumeSession implements UseCase<
       );
     }
 
-    const closed = await this.deps.sessions.getCurrent(input.closedSessionId);
+    const closed = await this.deps.sessions.getCurrent(input.closedSessionId, input.tenantId);
     if (closed === null || closed.status !== "closed") {
       return err(
         new ValidationError("Can only resume a session that has been closed", [
@@ -115,8 +118,8 @@ export class ResumeSession implements UseCase<
           source: session.source,
         },
       );
-      await this.deps.history.append(snapshot, event, tx);
-      await this.deps.sessions.saveCurrent(session, tx);
+      await this.deps.history.append(snapshot, input.tenantId, event, tx);
+      await this.deps.sessions.saveCurrent(session, input.tenantId, tx);
 
       const transitionId = this.deps.idGenerator.generate();
       await this.deps.journey.record(
@@ -128,6 +131,7 @@ export class ResumeSession implements UseCase<
           toSessionId: input.sessionId,
           occurredAt: input.occurredAt,
         },
+        input.tenantId,
         undefined,
         tx,
       );

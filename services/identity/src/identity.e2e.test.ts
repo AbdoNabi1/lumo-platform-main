@@ -22,7 +22,7 @@ async function newCustomerId(
   app: ReturnType<typeof wire>,
   email = "alice@example.com",
 ): Promise<string> {
-  const registered = await app.customers.register({ email, name: "Alice" });
+  const registered = await app.customers.register({ email, name: "Alice", tenantId: "tenant-1" });
   expect(registered.status).toBe(201);
   return (registered.body as { customerId: string }).customerId;
 }
@@ -38,6 +38,7 @@ describe("identity (end to end)", () => {
       city: "Town",
       postalCode: "12345",
       country: "US",
+      tenantId: "tenant-1",
     });
     expect(address.status).toBe(201);
 
@@ -45,6 +46,7 @@ describe("identity (end to end)", () => {
       customerId,
       scope: "marketing",
       granted: true,
+      tenantId: "tenant-1",
     });
     expect(consent.status).toBe(200);
     expect((consent.body as { granted: boolean }).granted).toBe(true);
@@ -59,13 +61,21 @@ describe("identity (end to end)", () => {
   it("rejects a duplicate email (409)", async () => {
     const app = wire();
     await newCustomerId(app, "dupe@example.com");
-    const response = await app.customers.register({ email: "dupe@example.com", name: "Bob" });
+    const response = await app.customers.register({
+      email: "dupe@example.com",
+      name: "Bob",
+      tenantId: "tenant-1",
+    });
     expect(response.status).toBe(409);
   });
 
   it("rejects an invalid email (422)", async () => {
     const app = wire();
-    const response = await app.customers.register({ email: "not-an-email", name: "Alice" });
+    const response = await app.customers.register({
+      email: "not-an-email",
+      name: "Alice",
+      tenantId: "tenant-1",
+    });
     expect(response.status).toBe(422);
   });
 
@@ -77,6 +87,7 @@ describe("identity (end to end)", () => {
       city: "Town",
       postalCode: "12345",
       country: "US",
+      tenantId: "tenant-1",
     });
     expect(response.status).toBe(404);
   });
@@ -88,6 +99,7 @@ describe("identity (end to end)", () => {
       customerId,
       scope: "telepathy",
       granted: true,
+      tenantId: "tenant-1",
     });
     expect(response.status).toBe(422);
   });

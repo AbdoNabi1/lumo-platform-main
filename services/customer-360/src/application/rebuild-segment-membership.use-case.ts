@@ -12,6 +12,9 @@ import type { SegmentHistoryStore } from "../ports/segment-history-store";
 import type { SegmentStore } from "../ports/segment-store";
 
 export interface RebuildSegmentMembershipInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   readonly segmentId: string;
 }
@@ -50,7 +53,11 @@ export class RebuildSegmentMembership implements UseCase<
   async execute(
     input: RebuildSegmentMembershipInput,
   ): Promise<Result<RebuildSegmentMembershipOutput, DomainError>> {
-    const latest = await this.deps.history.latestFor(input.identifier, input.segmentId);
+    const latest = await this.deps.history.latestFor(
+      input.identifier,
+      input.segmentId,
+      input.tenantId,
+    );
     if (latest === null) {
       return ok({ membership: null });
     }
@@ -65,6 +72,7 @@ export class RebuildSegmentMembership implements UseCase<
         const currentCache = await this.deps.segments.getCurrent(
           input.identifier,
           input.segmentId,
+          input.tenantId,
           tx,
         );
         if (currentCache !== null && currentCache.version > rebuilt.version) {
@@ -89,11 +97,11 @@ export class RebuildSegmentMembership implements UseCase<
           },
         );
 
-        await this.deps.history.append(snapshot, event, tx);
+        await this.deps.history.append(snapshot, input.tenantId, event, tx);
         // ADR-0060: deliberately no `expectedVersion` — same recovery-must-not-be-CAS-blocked reasoning
         // `RebuildComputedAttributes` documents. The staleness check above is what keeps this
         // unconditional overwrite from regressing a cache that has already moved on.
-        await this.deps.segments.saveCurrent(rebuilt, undefined, tx);
+        await this.deps.segments.saveCurrent(rebuilt, input.tenantId, undefined, tx);
 
         return ok({ membership: rebuilt });
       },

@@ -6,6 +6,7 @@ const logoutCustomer = vi.fn();
 const logoutCustomerEverywhere = vi.fn();
 const getCurrentCart = vi.fn();
 const claimGuestCart = vi.fn();
+const completeSignup = vi.fn();
 
 vi.mock("@/lib/runtime-api", () => ({
   registerCustomer: (...args: unknown[]) => registerCustomer(...args),
@@ -14,6 +15,7 @@ vi.mock("@/lib/runtime-api", () => ({
   logoutCustomerEverywhere: (...args: unknown[]) => logoutCustomerEverywhere(...args),
   getCurrentCart: (...args: unknown[]) => getCurrentCart(...args),
   claimGuestCart: (...args: unknown[]) => claimGuestCart(...args),
+  completeSignup: (...args: unknown[]) => completeSignup(...args),
 }));
 
 const revalidatePath = vi.fn();
@@ -55,6 +57,7 @@ beforeEach(() => {
     logoutCustomerEverywhere,
     getCurrentCart,
     claimGuestCart,
+    completeSignup,
     revalidatePath,
   ]) {
     spy.mockReset();
@@ -191,6 +194,65 @@ describe("registerAccount", () => {
       "correct-horse",
       expect.any(String),
     );
+  });
+
+  it("G-72: a check-email response does not sign anyone in and reports checkEmail, not ok", async () => {
+    registerCustomer.mockResolvedValue({ status: 202, body: { outcome: "link-sent" } });
+
+    const result = await actions.registerAccount("guest@example.com", "Sam", "correct-horse");
+
+    expect(result).toEqual({ ok: true, checkEmail: true });
+    expect(loginCustomer).not.toHaveBeenCalled();
+    expect(cookieStore.has(CUSTOMER_SESSION_COOKIE)).toBe(false);
+  });
+});
+
+describe("completeAccountSignup", () => {
+  it("completes then signs in with a REAL authentication round trip", async () => {
+    completeSignup.mockResolvedValue({
+      status: 201,
+      body: { customerRef: "customer-1", email: "guest@example.com" },
+    });
+    loginCustomer.mockResolvedValue(SESSION);
+
+    const result = await actions.completeAccountSignup("tok-123", "Real Name", "new-password");
+
+    expect(result).toEqual({ ok: true });
+    expect(loginCustomer).toHaveBeenCalledWith("guest@example.com", "new-password");
+    expect(cookieStore.get(CUSTOMER_SESSION_COOKIE)?.value).toBe("session-abc");
+  });
+
+  it("maps a 404 (invalid/expired/reused token) to its own distinct reason", async () => {
+    completeSignup.mockResolvedValue({ status: 404, body: null });
+
+    const result = await actions.completeAccountSignup("bogus", "Real Name", "new-password");
+
+    expect(result).toEqual({ ok: false, reason: "invalid-token" });
+    expect(loginCustomer).not.toHaveBeenCalled();
+  });
+
+  it("sends an Idempotency-Key on the completion write", async () => {
+    completeSignup.mockResolvedValue({
+      status: 201,
+      body: { customerRef: "customer-1", email: "guest@example.com" },
+    });
+    loginCustomer.mockResolvedValue(SESSION);
+
+    await actions.completeAccountSignup("tok-123", "Real Name", "new-password");
+
+    expect(completeSignup).toHaveBeenCalledWith(
+      "tok-123",
+      "Real Name",
+      "new-password",
+      expect.any(String),
+    );
+  });
+
+  it("never returns the submitted token or password in any branch", async () => {
+    completeSignup.mockResolvedValue({ status: 404, body: null });
+    const failed = await actions.completeAccountSignup("secret-token", "Real Name", "hunter2");
+    expect(JSON.stringify(failed)).not.toContain("secret-token");
+    expect(JSON.stringify(failed)).not.toContain("hunter2");
   });
 });
 

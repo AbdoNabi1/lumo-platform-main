@@ -8,6 +8,8 @@ import type { PaymentIntentRepository } from "../domain/payment-intent-repositor
 import { PspToken } from "../domain/value-objects/psp-token";
 
 export interface CapturePaymentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly paymentIntentId: string;
   readonly pspToken: string;
 }
@@ -41,7 +43,7 @@ export class CapturePayment implements UseCase<
     if (!token.ok) return err(token.error);
 
     return this.deps.unitOfWork.run<Result<CapturePaymentOutput, DomainError>>(async (tx) => {
-      const intent = await this.deps.intents.findById(input.paymentIntentId, tx);
+      const intent = await this.deps.intents.findById(input.paymentIntentId, input.tenantId, tx);
       if (intent === null) {
         return err(new NotFoundError("Payment intent not found"));
       }
@@ -53,7 +55,7 @@ export class CapturePayment implements UseCase<
         throw error;
       }
 
-      await this.deps.intents.save(intent, tx);
+      await this.deps.intents.save(intent, input.tenantId, tx);
       return ok({ paymentIntentId: intent.id.toString(), status: intent.status.value });
     });
   }

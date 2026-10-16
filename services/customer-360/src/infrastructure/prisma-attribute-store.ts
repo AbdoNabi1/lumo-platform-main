@@ -6,13 +6,11 @@ import type { ComputedAttribute } from "../domain/computed-attribute";
 import type { AttributeStore } from "../ports/attribute-store";
 import type { IdentifierRef } from "../ports/identity-decision";
 import { attributesToJson, jsonToAttributes } from "./attribute-fields-json";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaAttributeStoreDeps {
   readonly prisma: Database;
   readonly idGenerator: { generate(): string };
-  /** Tenant scope for every query (ADR-0008 §2) — same convention as the Identity/Profile/Session
-   * Engines' own Prisma adapters. */
-  readonly tenantId: string;
 }
 
 interface CacheRow {
@@ -42,18 +40,23 @@ export class PrismaAttributeStore implements AttributeStore {
     this.deps = deps;
   }
 
-  async getCurrent(identifier: IdentifierRef, tx?: unknown): Promise<ComputedAttribute | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.computedAttributeCache.findUnique({
-      where: {
-        tenantId_identifierType_identifierValue: {
-          tenantId: this.deps.tenantId,
-          identifierType: identifier.type,
-          identifierValue: identifier.value,
+  async getCurrent(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<ComputedAttribute | null> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.computedAttributeCache.findUnique({
+        where: {
+          tenantId_identifierType_identifierValue: {
+            tenantId,
+            identifierType: identifier.type,
+            identifierValue: identifier.value,
+          },
         },
-      },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 
   /** ADR-0060: `expectedVersion` (when given) makes this a compare-and-swap write, the same
@@ -66,13 +69,14 @@ export class PrismaAttributeStore implements AttributeStore {
    * Prisma adapter on this platform catches `P2002` — see ADR-0060 §Decision 5 / §Alternatives). */
   async saveCurrent(
     attribute: ComputedAttribute,
+    tenantId: string,
     expectedVersion?: number,
     tx?: unknown,
   ): Promise<void> {
     const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
     const where = {
       tenantId_identifierType_identifierValue: {
-        tenantId: this.deps.tenantId,
+        tenantId,
         identifierType: attribute.identifierType,
         identifierValue: attribute.identifierValue,
       },
@@ -88,7 +92,7 @@ export class PrismaAttributeStore implements AttributeStore {
         where,
         create: {
           id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
+          tenantId,
           identifierType: attribute.identifierType,
           identifierValue: attribute.identifierValue,
           ...data,
@@ -102,7 +106,7 @@ export class PrismaAttributeStore implements AttributeStore {
       await client.computedAttributeCache.create({
         data: {
           id: this.deps.idGenerator.generate(),
-          tenantId: this.deps.tenantId,
+          tenantId,
           identifierType: attribute.identifierType,
           identifierValue: attribute.identifierValue,
           ...data,
@@ -113,7 +117,7 @@ export class PrismaAttributeStore implements AttributeStore {
 
     const updated = await client.computedAttributeCache.updateMany({
       where: {
-        tenantId: this.deps.tenantId,
+        tenantId,
         identifierType: attribute.identifierType,
         identifierValue: attribute.identifierValue,
         version: expectedVersion,
@@ -127,15 +131,16 @@ export class PrismaAttributeStore implements AttributeStore {
     }
   }
 
-  async listIdentifiers(tx?: unknown): Promise<readonly IdentifierRef[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.computedAttributeCache.findMany({
-      where: { tenantId: this.deps.tenantId },
-      select: { identifierType: true, identifierValue: true },
+  async listIdentifiers(tenantId: string, tx?: unknown): Promise<readonly IdentifierRef[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.computedAttributeCache.findMany({
+        where: { tenantId },
+        select: { identifierType: true, identifierValue: true },
+      });
+      return rows.map((row) => ({
+        type: row.identifierType as IdentifierType,
+        value: row.identifierValue,
+      }));
     });
-    return rows.map((row) => ({
-      type: row.identifierType as IdentifierType,
-      value: row.identifierValue,
-    }));
   }
 }

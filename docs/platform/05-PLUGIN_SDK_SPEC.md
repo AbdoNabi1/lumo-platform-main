@@ -2,7 +2,7 @@
 
 > **Status: CONTRACT (Phase 1 — Platform) — 2026-06-28.** The extensibility platform. Extends the
 > plugin model in [arch 11 — integration and plugins](../architecture/11-integration-and-plugins.md).
-> No application code. UI: Lumo Design System ([`../ui/`](../ui/README.md)): plugins may use only **declared**
+> No application code. UI: Morbeh Design System ([`../ui/`](../ui/README.md)): plugins may use only **declared**
 > extension slots; any new admin surface (incl. a marketplace UI) **requires approval**.
 
 ## 1. Business goals
@@ -49,13 +49,13 @@ run → monitor → update / rollback → disable/uninstall. Disable is instant 
 
 ## 3. Extension points (across the platform)
 
-Plugins attach only where a slot is declared. Admin UI slots are constrained by the Lumo Design System
+Plugins attach only where a slot is declared. Admin UI slots are constrained by the Morbeh Design System
 contract ([`../ui/`](../ui/README.md)) — only existing declared slots; net-new admin surfaces require approval.
 
 | Area                                     | Extension points                                                                                                                                     |
 | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Storefront                               | Page-builder blocks ([growth 02](../growth/02-PRODUCT_LAYOUT_BUILDER_SPEC.md)), theme components ([growth 08](../growth/08-THEME_DEVELOPER_SPEC.md)) |
-| Admin dashboard                          | **Declared slots only**; slot content must use Lumo Design System primitives                                                                         |
+| Admin dashboard                          | **Declared slots only**; slot content must use Morbeh Design System primitives                                                                       |
 | Checkout                                 | Checkout steps/validators (rules via [02](02-RULE_ENGINE_SPEC.md))                                                                                   |
 | Tracking                                 | Custom event types, destinations/CAPI sinks ([arch 09](../architecture/09-tracking-and-server-side-tracking.md))                                     |
 | Analytics                                | Custom metrics, report sources ([../analytics/01](../analytics/01-ANALYTICS_HUB_SPEC.md))                                                            |

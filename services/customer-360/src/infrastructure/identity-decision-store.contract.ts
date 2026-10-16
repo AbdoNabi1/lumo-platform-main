@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import type { IdentityEdge } from "@platform/tracking";
 import { IdentityMerged } from "../events/identity-merged.event";
@@ -29,6 +29,12 @@ export function runIdentityDecisionStoreContractTests(
   makeHarness: () => IdentityDecisionStoreHarness,
 ): void {
   describe(`IdentityDecisionStore contract — ${adapterName}`, () => {
+    // A fresh tenant per test keeps the Prisma run isolated from rows earlier tests left behind.
+    let tenantId: string;
+    beforeEach(() => {
+      tenantId = `tenant-contract-${crypto.randomUUID()}`;
+    });
+
     const occurredAt = "2026-07-22T00:00:00.000Z";
 
     // `id` becomes the row's primary key, typed `uuid` in the `customer_360` schema for the Prisma
@@ -103,7 +109,10 @@ export function runIdentityDecisionStoreContractTests(
 
     it("listFor returns empty for an identifier with no recorded decisions", async () => {
       const { store } = makeHarness();
-      const found = await store.listFor({ type: "visitor_id", value: `v-${adapterName}-none` });
+      const found = await store.listFor(
+        { type: "visitor_id", value: `v-${adapterName}-none` },
+        tenantId,
+      );
       expect(found).toHaveLength(0);
     });
 
@@ -111,8 +120,8 @@ export function runIdentityDecisionStoreContractTests(
       const { store, withTx } = makeHarness();
       const decision = mergeDecision(`merge-${adapterName}-1`);
 
-      await withTx((tx) => store.record(decision, mergeEvent(decision), tx));
-      const found = await store.listFor(decision.subject);
+      await withTx((tx) => store.record(decision, mergeEvent(decision), tenantId, tx));
+      const found = await store.listFor(decision.subject, tenantId);
 
       expect(found.some((d) => d.id === decision.id)).toBe(true);
     });
@@ -121,8 +130,8 @@ export function runIdentityDecisionStoreContractTests(
       const { store, withTx } = makeHarness();
       const decision = mergeDecision(`merge-${adapterName}-2`);
 
-      await withTx((tx) => store.record(decision, mergeEvent(decision), tx));
-      const found = await store.listFor(decision.related);
+      await withTx((tx) => store.record(decision, mergeEvent(decision), tenantId, tx));
+      const found = await store.listFor(decision.related, tenantId);
 
       expect(found.some((d) => d.id === decision.id)).toBe(true);
     });
@@ -130,9 +139,9 @@ export function runIdentityDecisionStoreContractTests(
     it("retractedEdges returns empty when no split decisions have been recorded", async () => {
       const { store, withTx } = makeHarness();
       const decision = mergeDecision(`merge-${adapterName}-3`);
-      await withTx((tx) => store.record(decision, mergeEvent(decision), tx));
+      await withTx((tx) => store.record(decision, mergeEvent(decision), tenantId, tx));
 
-      const retracted = await store.retractedEdges();
+      const retracted = await store.retractedEdges(tenantId);
       expect(retracted).toHaveLength(0);
     });
 
@@ -149,14 +158,26 @@ export function runIdentityDecisionStoreContractTests(
       };
       const decision = splitDecision(retractedEdge);
 
-      await withTx((tx) => store.record(decision, splitEvent(decision), tx));
-      const retracted = await store.retractedEdges();
+      await withTx((tx) => store.record(decision, splitEvent(decision), tenantId, tx));
+      const retracted = await store.retractedEdges(tenantId);
 
       expect(
         retracted.some(
           (e) => e.fromValue === retractedEdge.fromValue && e.toValue === retractedEdge.toValue,
         ),
       ).toBe(true);
+    });
+
+    it("isolates tenants — a decision recorded under one tenant is invisible to another (ADR-0014)", async () => {
+      const { store, withTx } = makeHarness();
+      const otherTenant = `${tenantId}-other`;
+      const decision = mergeDecision("iso");
+
+      await withTx((tx) => store.record(decision, mergeEvent(decision), tenantId, tx));
+
+      expect(await store.listFor(decision.subject, otherTenant)).toEqual([]);
+      expect(await store.retractedEdges(otherTenant)).toEqual([]);
+      expect(await store.listFor(decision.subject, tenantId)).toHaveLength(1);
     });
   });
 }

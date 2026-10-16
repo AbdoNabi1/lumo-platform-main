@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ConcurrencyError } from "@platform/utils";
 import { INITIAL_SEGMENT_VERSION } from "../domain/segment-version";
 import { applyMembershipUpdate } from "../domain/segment-membership";
@@ -25,6 +25,12 @@ export function runSegmentStoreContractTests(
   makeStore: () => SegmentStore,
 ): void {
   describe(`SegmentStore contract — ${adapterName}`, () => {
+    // A fresh tenant per test keeps the Prisma run isolated from rows earlier tests left behind.
+    let tenantId: string;
+    beforeEach(() => {
+      tenantId = `tenant-contract-${crypto.randomUUID()}`;
+    });
+
     const identifier = { type: "customer_id" as const, value: `contract-${adapterName}` };
     const segmentId = "high_value";
 
@@ -41,15 +47,15 @@ export function runSegmentStoreContractTests(
 
     it("getCurrent returns null for a pair that was never saved", async () => {
       const store = makeStore();
-      expect(await store.getCurrent(identifier, segmentId)).toBeNull();
+      expect(await store.getCurrent(identifier, segmentId, tenantId)).toBeNull();
     });
 
     it("saveCurrent then getCurrent round-trips the same membership", async () => {
       const store = makeStore();
       const membership = entered();
 
-      await store.saveCurrent(membership);
-      const loaded = await store.getCurrent(identifier, segmentId);
+      await store.saveCurrent(membership, tenantId);
+      const loaded = await store.getCurrent(identifier, segmentId, tenantId);
 
       expect(loaded).not.toBeNull();
       expect(loaded?.status).toBe("entered");
@@ -69,9 +75,9 @@ export function runSegmentStoreContractTests(
         evaluatedAt: "2026-07-22T00:00:00.000Z",
       }).membership!;
 
-      await store.saveCurrent(first);
-      await store.saveCurrent(second);
-      const loaded = await store.getCurrent(identifier, segmentId);
+      await store.saveCurrent(first, tenantId);
+      await store.saveCurrent(second, tenantId);
+      const loaded = await store.getCurrent(identifier, segmentId, tenantId);
 
       expect(loaded?.status).toBe("exited");
       expect(loaded?.version).toBe(2);
@@ -83,8 +89,10 @@ export function runSegmentStoreContractTests(
       const store = makeStore();
       const created = entered();
 
-      await store.saveCurrent(created, INITIAL_SEGMENT_VERSION);
-      expect((await store.getCurrent(identifier, segmentId))?.version).toBe(created.version);
+      await store.saveCurrent(created, tenantId, INITIAL_SEGMENT_VERSION);
+      expect((await store.getCurrent(identifier, segmentId, tenantId))?.version).toBe(
+        created.version,
+      );
 
       const exited = applyMembershipUpdate(created, identifier.type, identifier.value, segmentId, {
         isMember: false,
@@ -95,8 +103,8 @@ export function runSegmentStoreContractTests(
         evaluatedAt: "2026-07-22T00:00:00.000Z",
       }).membership!;
 
-      await store.saveCurrent(exited, created.version);
-      const loaded = await store.getCurrent(identifier, segmentId);
+      await store.saveCurrent(exited, tenantId, created.version);
+      const loaded = await store.getCurrent(identifier, segmentId, tenantId);
       expect(loaded?.status).toBe("exited");
       expect(loaded?.version).toBe(exited.version);
     });
@@ -104,7 +112,7 @@ export function runSegmentStoreContractTests(
     it("saveCurrent with a stale expectedVersion rejects with ConcurrencyError and never applies the write", async () => {
       const store = makeStore();
       const created = entered();
-      await store.saveCurrent(created, INITIAL_SEGMENT_VERSION);
+      await store.saveCurrent(created, tenantId, INITIAL_SEGMENT_VERSION);
 
       const staleAttempt = applyMembershipUpdate(
         created,
@@ -121,11 +129,11 @@ export function runSegmentStoreContractTests(
         },
       ).membership!;
 
-      await expect(store.saveCurrent(staleAttempt, created.version + 1)).rejects.toBeInstanceOf(
-        ConcurrencyError,
-      );
+      await expect(
+        store.saveCurrent(staleAttempt, tenantId, created.version + 1),
+      ).rejects.toBeInstanceOf(ConcurrencyError);
 
-      const loaded = await store.getCurrent(identifier, segmentId);
+      const loaded = await store.getCurrent(identifier, segmentId, tenantId);
       expect(loaded?.status).toBe("entered");
       expect(loaded?.version).toBe(created.version);
     });
@@ -133,7 +141,7 @@ export function runSegmentStoreContractTests(
     it("saveCurrent with expectedVersion omitted still blindly overwrites — RebuildSegmentMembership's recovery semantics, preserved", async () => {
       const store = makeStore();
       const created = entered();
-      await store.saveCurrent(created, INITIAL_SEGMENT_VERSION);
+      await store.saveCurrent(created, tenantId, INITIAL_SEGMENT_VERSION);
 
       const rebuilt = applyMembershipUpdate(created, identifier.type, identifier.value, segmentId, {
         isMember: false,
@@ -144,15 +152,15 @@ export function runSegmentStoreContractTests(
         evaluatedAt: "2026-07-23T00:00:00.000Z",
       }).membership!;
 
-      await store.saveCurrent(rebuilt); // no expectedVersion -- unconditional
-      const loaded = await store.getCurrent(identifier, segmentId);
+      await store.saveCurrent(rebuilt, tenantId); // no expectedVersion -- unconditional
+      const loaded = await store.getCurrent(identifier, segmentId, tenantId);
       expect(loaded?.status).toBe("exited");
     });
 
     it("listForIdentifier returns every segment's membership for one identifier", async () => {
       const store = makeStore();
       const other = { type: "customer_id" as const, value: `contract-${adapterName}-other` };
-      await store.saveCurrent(entered());
+      await store.saveCurrent(entered(), tenantId);
       await store.saveCurrent(
         applyMembershipUpdate(null, identifier.type, identifier.value, "churn_risk", {
           isMember: true,
@@ -162,6 +170,7 @@ export function runSegmentStoreContractTests(
           inputs: new Map(),
           evaluatedAt: "2026-07-21T00:00:01.000Z",
         }).membership!,
+        tenantId,
       );
       await store.saveCurrent(
         applyMembershipUpdate(null, other.type, other.value, segmentId, {
@@ -172,9 +181,10 @@ export function runSegmentStoreContractTests(
           inputs: new Map(),
           evaluatedAt: "2026-07-21T00:00:01.000Z",
         }).membership!,
+        tenantId,
       );
 
-      const mine = await store.listForIdentifier(identifier);
+      const mine = await store.listForIdentifier(identifier, tenantId);
       expect(mine.map((m) => m.segmentId).sort()).toEqual(["churn_risk", "high_value"]);
     });
 
@@ -192,6 +202,7 @@ export function runSegmentStoreContractTests(
           inputs: new Map(),
           evaluatedAt: T1,
         }).membership!,
+        tenantId,
       );
       const bEntered = applyMembershipUpdate(null, memberB.type, memberB.value, segmentId, {
         isMember: true,
@@ -209,18 +220,18 @@ export function runSegmentStoreContractTests(
         inputs: new Map(),
         evaluatedAt: T2,
       }).membership!;
-      await store.saveCurrent(bExited);
+      await store.saveCurrent(bExited, tenantId);
 
-      const members = await store.listMembers(segmentId, "entered");
+      const members = await store.listMembers(segmentId, tenantId, "entered");
       expect(members.map((m) => m.identifierValue)).toEqual([memberA.value]);
 
-      const exitedMembers = await store.listMembers(segmentId, "exited");
+      const exitedMembers = await store.listMembers(segmentId, tenantId, "exited");
       expect(exitedMembers.map((m) => m.identifierValue)).toEqual([memberB.value]);
     });
 
     it("listIdentifiers reports every saved (identifier, segmentId) pair exactly once", async () => {
       const store = makeStore();
-      await store.saveCurrent(entered());
+      await store.saveCurrent(entered(), tenantId);
       await store.saveCurrent(
         applyMembershipUpdate(null, identifier.type, identifier.value, "churn_risk", {
           isMember: true,
@@ -230,13 +241,27 @@ export function runSegmentStoreContractTests(
           inputs: new Map(),
           evaluatedAt: T1,
         }).membership!,
+        tenantId,
       );
       // Re-saving the first pair must not duplicate it in the listing.
-      await store.saveCurrent(entered());
+      await store.saveCurrent(entered(), tenantId);
 
-      const pairs = await store.listIdentifiers();
+      const pairs = await store.listIdentifiers(tenantId);
       expect(pairs.length).toBe(2);
       expect(pairs.map((p) => p.segmentId).sort()).toEqual(["churn_risk", "high_value"]);
+    });
+
+    it("isolates tenants — a membership saved under one tenant is invisible to another (ADR-0014)", async () => {
+      const store = makeStore();
+      const otherTenant = `${tenantId}-other`;
+
+      await store.saveCurrent(entered(), tenantId);
+
+      expect(await store.getCurrent(identifier, segmentId, otherTenant)).toBeNull();
+      expect(await store.listForIdentifier(identifier, otherTenant)).toEqual([]);
+      expect(await store.listMembers(segmentId, otherTenant)).toEqual([]);
+      expect(await store.listIdentifiers(otherTenant)).toEqual([]);
+      expect(await store.listMembers(segmentId, tenantId)).toHaveLength(1);
     });
   });
 }

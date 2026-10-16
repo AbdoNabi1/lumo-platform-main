@@ -1,5 +1,5 @@
 /**
- * The one focus treatment in Lumo: a 2px `--ring` outline, offset so it reads clearly on
+ * The one focus treatment in Morbeh: a 2px `--ring` outline, offset so it reads clearly on
  * every surface. Every interactive primitive composes this — a focus style is never
  * re-invented per component, and it is never removed.
  */

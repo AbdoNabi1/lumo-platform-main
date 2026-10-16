@@ -1,3 +1,4 @@
+import { staticCapabilities } from "./test-support/static-provider-resolver";
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { Money, UniqueEntityId } from "@platform/domain";
@@ -39,7 +40,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, 1);
   }
 
-  async save(intent: PaymentIntent): Promise<void> {
+  async save(intent: PaymentIntent, _tenantId: string): Promise<void> {
     const id = intent.id.toString();
     const existing = this.rows.get(id);
     if (existing === undefined) {
@@ -54,7 +55,7 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     this.write(intent, existing.intentRow.version + 1);
   }
 
-  async findById(id: string): Promise<PaymentIntent | null> {
+  async findById(id: string, _tenantId: string): Promise<PaymentIntent | null> {
     const row = this.rows.get(id);
     if (row === undefined) return null;
     return PaymentIntentMapper.toDomain(
@@ -65,11 +66,11 @@ class PostgresLikePaymentIntentRepository implements PaymentIntentRepository {
     );
   }
 
-  async findByIdempotencyKey(): Promise<PaymentIntent | null> {
+  async findByIdempotencyKey(_key: string, _tenantId: string): Promise<PaymentIntent | null> {
     return null;
   }
 
-  async findByPspReference(pspReference: string): Promise<PaymentIntent | null> {
+  async findByPspReference(pspReference: string, _tenantId: string): Promise<PaymentIntent | null> {
     for (const row of this.rows.values()) {
       if (row.intentRow.pspReference === pspReference) {
         return PaymentIntentMapper.toDomain(
@@ -121,7 +122,12 @@ function seedAuthorizedIntent(
   id: string,
   amountMinor: number,
 ): void {
-  const pi = PaymentIntent.createIntent(UniqueEntityId.from(id), `order-${id}`, usd(amountMinor));
+  const pi = PaymentIntent.createIntent(
+    UniqueEntityId.from(id),
+    `order-${id}`,
+    usd(amountMinor),
+    "stripe",
+  );
   pi.markProcessing("seed-1", new Date(0));
   const pspRef = PspReference.create(`psp-ref-${id}`);
   const method = PaymentMethod.create("tok_seed", "visa");
@@ -137,7 +143,12 @@ function seedProcessingIntent(
   id: string,
   amountMinor: number,
 ): void {
-  const pi = PaymentIntent.createIntent(UniqueEntityId.from(id), `order-${id}`, usd(amountMinor));
+  const pi = PaymentIntent.createIntent(
+    UniqueEntityId.from(id),
+    `order-${id}`,
+    usd(amountMinor),
+    "stripe",
+  );
   pi.markProcessing("seed-1", new Date(0));
   pi.pullDomainEvents();
   repo.seed(pi);
@@ -153,6 +164,7 @@ function buildWebhookDeps(
     idGenerator: sequentialIds("wh"),
     clock,
     processedWebhooks: new InMemoryProcessedWebhookStore(),
+    providers: staticCapabilities(),
     ...extra,
   };
 }
@@ -164,6 +176,7 @@ describe("Task 11 — webhook-after-success: a second, distinctly-id'd webhook m
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo));
 
     const first = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-dup-failed",
       provider: "stripe",
       eventId: "evt_failed_1",
@@ -177,6 +190,7 @@ describe("Task 11 — webhook-after-success: a second, distinctly-id'd webhook m
     // catch this — it is a different event. Pre-fix this threw BUSINESS_RULE ("failed" -> "failed"
     // is not in the transition table); the safe/expected behavior is an idempotent no-op.
     const second = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-dup-failed",
       provider: "stripe",
       eventId: "evt_failed_2",
@@ -188,7 +202,7 @@ describe("Task 11 — webhook-after-success: a second, distinctly-id'd webhook m
       expect(second.value.duplicate).toBe(false); // genuinely a new event — recorded, just not re-transitioned
     }
 
-    const final = await repo.findById("pi-dup-failed");
+    const final = await repo.findById("pi-dup-failed", "tenant-a");
     expect(final?.status.value).toBe("failed");
     // Both webhook deliveries are recorded in the append-only attempt log (audit trail preserved).
     expect(final?.attempts.filter((a) => a.kind === "webhook")).toHaveLength(2);
@@ -200,6 +214,7 @@ describe("Task 11 — webhook-after-success: a second, distinctly-id'd webhook m
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo));
 
     const first = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-dup-cancel",
       provider: "stripe",
       eventId: "evt_cancel_1",
@@ -208,6 +223,7 @@ describe("Task 11 — webhook-after-success: a second, distinctly-id'd webhook m
     expect(first.ok).toBe(true);
 
     const second = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-dup-cancel",
       provider: "stripe",
       eventId: "evt_cancel_2",
@@ -223,6 +239,7 @@ describe("Task 11 — webhook-after-success: a second, distinctly-id'd webhook m
     const recordWebhook = new RecordWebhook(buildWebhookDeps(repo));
 
     const cancelled = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-illegal",
       provider: "stripe",
       eventId: "evt_illegal_1",
@@ -233,6 +250,7 @@ describe("Task 11 — webhook-after-success: a second, distinctly-id'd webhook m
     // "authorized" -> "failed" is not reachable from "cancelled": cancelled only transitions to
     // "closed". This must still fail — the fix must not turn illegal transitions into silent no-ops.
     const illegal = await recordWebhook.execute({
+      tenantId: "tenant-a",
       paymentIntentId: "pi-illegal",
       provider: "stripe",
       eventId: "evt_illegal_2",

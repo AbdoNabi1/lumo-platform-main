@@ -14,6 +14,7 @@ export interface SegmentStore {
   getCurrent(
     identifier: IdentifierRef,
     segmentId: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<SegmentMembership | null>;
   /**
@@ -30,22 +31,33 @@ export interface SegmentStore {
    * `RebuildSegmentMembership`'s recovery semantics and for tests seeding store state directly. Never
    * used by the normal evaluate-and-persist write path.
    */
-  saveCurrent(membership: SegmentMembership, expectedVersion?: number, tx?: unknown): Promise<void>;
+  saveCurrent(
+    membership: SegmentMembership,
+    tenantId: string,
+    expectedVersion?: number,
+    tx?: unknown,
+  ): Promise<void>;
   /** Every membership row for this identifier, across all segments — how `GetCustomerSegments`
    * assembles a `CustomerSegment` view without a caller enumerating every segment id by hand. */
-  listForIdentifier(identifier: IdentifierRef, tx?: unknown): Promise<readonly SegmentMembership[]>;
+  listForIdentifier(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly SegmentMembership[]>;
   /** Every membership row for this segment, optionally filtered to one `status` (defaults to
    * `"entered"`, matching `GetSegmentMembers`' "who is in this segment right now" default) — the read
    * shape none of the other three engines in this context need, and the reason this store is keyed
    * per-membership rather than per-identifier. */
   listMembers(
     segmentId: string,
+    tenantId: string,
     status?: SegmentMembershipStatus,
     tx?: unknown,
   ): Promise<readonly SegmentMembership[]>;
   /** Every distinct `(identifier, segmentId)` pair with a cached row — how `SegmentProjectionWorker`
    * finds what to rebuild without a separate registry (mirrors `AttributeStore.listIdentifiers`). */
   listIdentifiers(
+    tenantId: string,
     tx?: unknown,
   ): Promise<readonly { identifier: IdentifierRef; segmentId: string }[]>;
 }

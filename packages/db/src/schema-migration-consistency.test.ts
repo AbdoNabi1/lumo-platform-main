@@ -94,3 +94,231 @@ describe("payments schema — migration history matches the Prisma model's requi
     });
   }
 });
+
+/**
+ * The same static replay for `platform.outbox`. The Postgres event transport added `attempts`
+ * (required) and `available_at` to the model; the generated client names them whenever it reads the
+ * table, so a schema change with no migration behind it would break every outbox read in a
+ * deployment while every test stayed green.
+ */
+describe("platform.outbox — migration history matches the Prisma model's columns", () => {
+  const allMigrationSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  /** Every scalar field on `OutboxEntry` (packages/db/prisma/schema/platform.prisma), by column name. */
+  function modelColumns(): string[] {
+    const schema = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "platform.prisma"),
+      "utf-8",
+    );
+    const body = /model OutboxEntry \{([\s\S]*?)\n\}/.exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+\w+[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns()).toEqual(
+      expect.arrayContaining(["id", "topic", "payload", "status", "attempts", "available_at"]),
+    );
+  });
+
+  it("every column the model declares was created by some migration", () => {
+    const actual = columnsEverAddedTo("platform", "outbox", allMigrationSql);
+    for (const column of modelColumns()) {
+      expect(actual.has(column), `expected "platform"."outbox"."${column}" to exist`).toBe(true);
+    }
+  });
+});
+
+describe("tenancy.shop_domains — migration history matches the Prisma model (Plan 1A)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("every required column was created by some migration", () => {
+    const actual = columnsEverAddedTo("tenancy", "shop_domains", allSql);
+    for (const column of [
+      "id",
+      "tenant_id",
+      "shop_ref",
+      "hostname",
+      "kind",
+      "status",
+      "is_primary",
+      "version",
+      "created_at",
+      "updated_at",
+    ]) {
+      expect(actual.has(column), `expected "tenancy"."shop_domains"."${column}"`).toBe(true);
+    }
+  });
+
+  it("is RLS-forced with the tenant_isolation policy and one primary per shop", () => {
+    expect(allSql).toContain('ALTER TABLE "tenancy"."shop_domains" FORCE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('CREATE POLICY tenant_isolation ON "tenancy"."shop_domains"');
+    expect(allSql).toContain('CREATE UNIQUE INDEX "shop_domains_one_primary_per_shop"');
+    expect(allSql).toContain('CREATE UNIQUE INDEX "shop_domains_hostname_key"');
+  });
+});
+
+describe("security.password_credentials — migration history matches the Prisma model (Plan 1B-1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("every required column was created by some migration", () => {
+    const actual = columnsEverAddedTo("security", "password_credentials", allSql);
+    for (const column of [
+      "id",
+      "tenant_id",
+      "identifier",
+      "principal_external_id",
+      "password_hash",
+      "failed_attempts",
+      "version",
+      "created_at",
+      "updated_at",
+    ]) {
+      expect(actual.has(column), `expected "security"."password_credentials"."${column}"`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("is RLS-forced and unique per (tenant, identifier)", () => {
+    expect(allSql).toContain(
+      'ALTER TABLE "security"."password_credentials" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(allSql).toContain('CREATE POLICY tenant_isolation ON "security"."password_credentials"');
+    expect(allSql).toContain('CREATE UNIQUE INDEX "password_credentials_tenant_id_identifier_key"');
+  });
+});
+
+describe("security.password_reset_tokens — migration history matches the Prisma model (Plan 1C)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("every required column was created by some migration", () => {
+    const actual = columnsEverAddedTo("security", "password_reset_tokens", allSql);
+    for (const column of [
+      "id",
+      "tenant_id",
+      "token_hash",
+      "identifier",
+      "expires_at",
+      "used_at",
+      "created_at",
+    ]) {
+      expect(actual.has(column), `expected "security"."password_reset_tokens"."${column}"`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("is RLS-forced and unique per (tenant, token hash)", () => {
+    expect(allSql).toContain(
+      'ALTER TABLE "security"."password_reset_tokens" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(allSql).toContain(
+      'CREATE POLICY tenant_isolation ON "security"."password_reset_tokens"',
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "password_reset_tokens_tenant_id_token_hash_key"',
+    );
+  });
+});
+
+describe("cart.cart_items and orders.order_items — variant lines (Plan 2A)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("cart_items gained the nullable variant snapshot columns", () => {
+    const actual = columnsEverAddedTo("cart", "cart_items", allSql);
+    for (const column of ["variant_ref", "sku", "title", "variant_title"]) {
+      expect(actual.has(column), `expected "cart"."cart_items"."${column}"`).toBe(true);
+    }
+  });
+
+  it("order_items gained the nullable variant snapshot columns", () => {
+    const actual = columnsEverAddedTo("orders", "order_items", allSql);
+    for (const column of ["variant_ref", "sku", "variant_title"]) {
+      expect(actual.has(column), `expected "orders"."order_items"."${column}"`).toBe(true);
+    }
+  });
+
+  it("widens cart line uniqueness to (cart, product, variant) keeping legacy lines unique", () => {
+    expect(allSql).toContain('DROP INDEX IF EXISTS "cart"."cart_items_cart_id_product_ref_key";');
+    expect(allSql).toContain("NULLS NOT DISTINCT");
+  });
+});
+
+describe("catalog.products and catalog.product_variants — product details (Plan 2C-1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("products gained description, product_type and tags", () => {
+    const actual = columnsEverAddedTo("catalog", "products", allSql);
+    for (const column of ["description", "product_type", "tags"]) {
+      expect(actual.has(column), `expected "catalog"."products"."${column}"`).toBe(true);
+    }
+  });
+
+  it("product_variants gained the Shopify variant attributes", () => {
+    const actual = columnsEverAddedTo("catalog", "product_variants", allSql);
+    for (const column of [
+      "compare_at_amount_minor",
+      "cost_amount_minor",
+      "barcode",
+      "weight_grams",
+      "requires_shipping",
+      "taxable",
+    ]) {
+      expect(actual.has(column), `expected "catalog"."product_variants"."${column}"`).toBe(true);
+    }
+  });
+});
+
+describe("inventory.inventory_items and catalog.product_variants — stock per variant (Plan 2B-1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("inventory_items gained variant_ref", () => {
+    expect(columnsEverAddedTo("inventory", "inventory_items", allSql).has("variant_ref")).toBe(
+      true,
+    );
+  });
+
+  it("widens the stock key to (tenant, product, variant, warehouse), legacy rows still unique", () => {
+    expect(allSql).toContain(
+      'DROP INDEX IF EXISTS "inventory"."inventory_items_tenant_id_product_ref_warehouse_id_key";',
+    );
+    expect(allSql).toMatch(
+      /inventory_items_tenant_id_product_ref_variant_ref_warehouse_id_key[\s\S]*NULLS NOT DISTINCT/,
+    );
+  });
+
+  it("product_variants gained the two inventory switches", () => {
+    const actual = columnsEverAddedTo("catalog", "product_variants", allSql);
+    expect(actual.has("tracks_inventory")).toBe(true);
+    expect(actual.has("inventory_policy")).toBe(true);
+  });
+});

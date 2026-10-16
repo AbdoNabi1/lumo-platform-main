@@ -36,8 +36,8 @@ export class PaymentsOrdersAdapter implements OrdersPort {
     this.orders = orders;
   }
 
-  async reportPaymentOutcome(orderRef: string, status: string): Promise<void> {
-    const response = await this.orders.getOrder({ orderId: orderRef });
+  async reportPaymentOutcome(orderRef: string, status: string, tenantId: string): Promise<void> {
+    const response = await this.orders.getOrder({ tenantId, orderId: orderRef });
     if (response.status >= 400) {
       logger.warn("PaymentsOrdersAdapter: order lookup failed for payment outcome", {
         orderRef,

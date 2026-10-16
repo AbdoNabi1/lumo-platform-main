@@ -43,8 +43,8 @@ describe.runIf(Boolean(databaseUrl))("PrismaReturnRequestRepository (integration
       clock,
       producer: "returns",
     });
-    const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaReturnRequestRepository({ prisma, outbox, context, tenantId });
+    const context = rootEventContext(ids);
+    const repository = new PrismaReturnRequestRepository({ prisma, outbox, context });
     return { prisma, repository, unitOfWork: new PrismaUnitOfWork(prisma), outboxStore };
   }
 
@@ -73,8 +73,8 @@ describe.runIf(Boolean(databaseUrl))("PrismaReturnRequestRepository (integration
     const { prisma, repository, unitOfWork } = wire();
     const rr = newReturnRequest();
 
-    await unitOfWork.run((tx) => repository.save(rr, tx));
-    const loaded = await repository.findById(rr.id.toString());
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
+    const loaded = await repository.findById(rr.id.toString(), tenantId);
 
     expect(loaded).not.toBeNull();
     expect(loaded?.status.value).toBe("requested");
@@ -87,14 +87,14 @@ describe.runIf(Boolean(databaseUrl))("PrismaReturnRequestRepository (integration
   it("persists status transitions across saves (update)", async () => {
     const { prisma, repository, unitOfWork } = wire();
     const rr = newReturnRequest();
-    await unitOfWork.run((tx) => repository.save(rr, tx));
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
 
-    const loaded = await repository.findById(rr.id.toString());
+    const loaded = await repository.findById(rr.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     loaded.approve(ids.generate(), clock.now());
-    await unitOfWork.run((tx) => repository.save(loaded, tx));
+    await unitOfWork.run((tx) => repository.save(loaded, tenantId, tx));
 
-    const reloaded = await repository.findById(rr.id.toString());
+    const reloaded = await repository.findById(rr.id.toString(), tenantId);
     expect(reloaded?.status.value).toBe("approved");
     expect(reloaded?.version).toBe(2);
     await prisma.$disconnect();
@@ -108,26 +108,26 @@ describe.runIf(Boolean(databaseUrl))("PrismaReturnRequestRepository (integration
     let rr = ReturnRequest.create(UniqueEntityId.from(ids.generate()), `order-${ids.generate()}`, [
       returnItem(orderItemRef),
     ]);
-    await unitOfWork.run((tx) => repository.save(rr, tx));
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
 
-    rr = (await repository.findById(rr.id.toString()))!;
+    rr = (await repository.findById(rr.id.toString(), tenantId))!;
     rr.approve(ids.generate(), clock.now());
     rr.generateRma(`RMA-${ids.generate()}`, ids.generate(), clock.now());
-    await unitOfWork.run((tx) => repository.save(rr, tx));
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
 
-    rr = (await repository.findById(rr.id.toString()))!;
+    rr = (await repository.findById(rr.id.toString(), tenantId))!;
     rr.receivePackage(ids.generate(), clock.now());
     rr.inspectItem(orderItemRef, true, clock.now());
     rr.completeInspection(ids.generate(), clock.now());
-    await unitOfWork.run((tx) => repository.save(rr, tx));
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
 
-    rr = (await repository.findById(rr.id.toString()))!;
+    rr = (await repository.findById(rr.id.toString(), tenantId))!;
     rr.acceptItems([], ids.generate(), clock.now());
     const decision = unwrap(RefundDecision.create("refund", 2500, "USD"));
     rr.decideResolution(decision, ids.generate(), clock.now());
-    await unitOfWork.run((tx) => repository.save(rr, tx));
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
 
-    const final = await repository.findById(rr.id.toString());
+    const final = await repository.findById(rr.id.toString(), tenantId);
     expect(final?.status.value).toBe("refund_requested");
     expect(final?.refundDecision?.outcome).toBe("refund");
     expect(final?.refundDecision?.amountMinor).toBe(2500);
@@ -149,9 +149,9 @@ describe.runIf(Boolean(databaseUrl))("PrismaReturnRequestRepository (integration
   it("rejects an invalid transition rather than silently accepting it (constraints)", async () => {
     const { prisma, repository, unitOfWork } = wire();
     const rr = newReturnRequest();
-    await unitOfWork.run((tx) => repository.save(rr, tx));
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
 
-    const loaded = await repository.findById(rr.id.toString());
+    const loaded = await repository.findById(rr.id.toString(), tenantId);
     if (loaded === null) throw new Error("setup failed");
     // `requested` cannot jump straight to `rma_generated` — must go through `approved` first.
     expect(() => loaded.generateRma("RMA-X", ids.generate(), clock.now())).toThrow();
@@ -164,12 +164,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaReturnRequestRepository (integration
 
     await expect(
       unitOfWork.run(async (tx) => {
-        await repository.save(rr, tx);
+        await repository.save(rr, tenantId, tx);
         throw new Error("simulated downstream failure after the return-request write");
       }),
     ).rejects.toThrow("simulated downstream failure");
 
-    const loaded = await repository.findById(rr.id.toString());
+    const loaded = await repository.findById(rr.id.toString(), tenantId);
     expect(loaded).toBeNull();
     await prisma.$disconnect();
   });
@@ -179,20 +179,20 @@ describe.runIf(Boolean(databaseUrl))("PrismaReturnRequestRepository (integration
   it("detects a concurrent update via ConcurrencyError rather than silently overwriting (concurrent operations)", async () => {
     const { prisma, repository, unitOfWork } = wire();
     const rr = newReturnRequest();
-    await unitOfWork.run((tx) => repository.save(rr, tx));
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
 
-    const copyA = await repository.findById(rr.id.toString());
-    const copyB = await repository.findById(rr.id.toString());
+    const copyA = await repository.findById(rr.id.toString(), tenantId);
+    const copyB = await repository.findById(rr.id.toString(), tenantId);
     if (copyA === null || copyB === null) throw new Error("setup failed");
     copyA.approve(ids.generate(), clock.now());
     copyB.reject(ids.generate(), clock.now());
 
-    await unitOfWork.run((tx) => repository.save(copyA, tx));
-    await expect(unitOfWork.run((tx) => repository.save(copyB, tx))).rejects.toBeInstanceOf(
-      ConcurrencyError,
-    );
+    await unitOfWork.run((tx) => repository.save(copyA, tenantId, tx));
+    await expect(
+      unitOfWork.run((tx) => repository.save(copyB, tenantId, tx)),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
 
-    const final = await repository.findById(rr.id.toString());
+    const final = await repository.findById(rr.id.toString(), tenantId);
     expect(final?.status.value).toBe("approved"); // B's stale rejection never applied
     await prisma.$disconnect();
   });
@@ -200,17 +200,17 @@ describe.runIf(Boolean(databaseUrl))("PrismaReturnRequestRepository (integration
   it("rejects true concurrent writes to the same ReturnRequest under real simultaneous transactions", async () => {
     const { prisma, repository, unitOfWork } = wire();
     const rr = newReturnRequest();
-    await unitOfWork.run((tx) => repository.save(rr, tx));
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
 
-    const copyA = await repository.findById(rr.id.toString());
-    const copyB = await repository.findById(rr.id.toString());
+    const copyA = await repository.findById(rr.id.toString(), tenantId);
+    const copyB = await repository.findById(rr.id.toString(), tenantId);
     if (copyA === null || copyB === null) throw new Error("setup failed");
     copyA.approve(ids.generate(), clock.now());
     copyB.reject(ids.generate(), clock.now());
 
     const results = await Promise.allSettled([
-      unitOfWork.run((tx) => repository.save(copyA, tx)),
-      unitOfWork.run((tx) => repository.save(copyB, tx)),
+      unitOfWork.run((tx) => repository.save(copyA, tenantId, tx)),
+      unitOfWork.run((tx) => repository.save(copyB, tenantId, tx)),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
@@ -222,18 +222,20 @@ describe.runIf(Boolean(databaseUrl))("PrismaReturnRequestRepository (integration
   it("is idempotent recording the same warehouse callback twice at the domain layer (idempotency)", async () => {
     const { prisma, repository, unitOfWork } = wire();
     const rr = newReturnRequest();
-    await unitOfWork.run((tx) => repository.save(rr, tx));
+    await unitOfWork.run((tx) => repository.save(rr, tenantId, tx));
 
-    let loaded = (await repository.findById(rr.id.toString()))!;
+    let loaded = (await repository.findById(rr.id.toString(), tenantId))!;
     loaded.inspectItem("dup-item-ref", true, clock.now());
-    await unitOfWork.run((tx) => repository.save(loaded, tx));
-    const attemptsAfterFirst = (await repository.findById(rr.id.toString()))!.attempts.length;
+    await unitOfWork.run((tx) => repository.save(loaded, tenantId, tx));
+    const attemptsAfterFirst = (await repository.findById(rr.id.toString(), tenantId))!.attempts
+      .length;
 
     // Re-inspecting the same itemRef is documented as a no-op (no new inspection, no new attempt).
-    loaded = (await repository.findById(rr.id.toString()))!;
+    loaded = (await repository.findById(rr.id.toString(), tenantId))!;
     loaded.inspectItem("dup-item-ref", true, clock.now());
-    await unitOfWork.run((tx) => repository.save(loaded, tx));
-    const attemptsAfterSecond = (await repository.findById(rr.id.toString()))!.attempts.length;
+    await unitOfWork.run((tx) => repository.save(loaded, tenantId, tx));
+    const attemptsAfterSecond = (await repository.findById(rr.id.toString(), tenantId))!.attempts
+      .length;
 
     expect(attemptsAfterSecond).toBe(attemptsAfterFirst);
     await prisma.$disconnect();

@@ -9,6 +9,7 @@ model InventoryItem {
   tenantId    String   @map("tenant_id")
   productRef  String   @map("product_ref") // bare id into Catalog — never an FK
   warehouseId String   @map("warehouse_id")
+  variantRef  String?  @map("variant_ref") // Plan 2B-1 — bare id into Catalog; NULL = legacy product-level row
   onHand      Int      @map("on_hand")
   reserved    Int
   version     Int      @default(0)
@@ -17,7 +18,9 @@ model InventoryItem {
 
   reservations Reservation[]
 
-  @@unique([tenantId, productRef, warehouseId])
+  // Plan 2B-1: the migration declares this index NULLS NOT DISTINCT (as Plan 2A did for cart lines), so
+  // one legacy (variant-less) row per product and warehouse stays unique. Prisma cannot express that.
+  @@unique([tenantId, productRef, variantRef, warehouseId])
   @@map("inventory_items")
   @@schema("inventory")
 }

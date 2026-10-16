@@ -175,3 +175,46 @@ describe("outbox relay runtime (C-8)", () => {
     }
   });
 });
+
+/**
+ * T10.7 — the relay is platform-global (one shared table, one lock, one producer), but every row
+ * carries its own tenant. A mixed batch must reach the producer with each row's OWN tenant header and
+ * in insertion order; nothing the relay does may re-stamp, merge or reorder across tenants.
+ */
+describe("outbox relay across tenants (T10.7)", () => {
+  it("publishes a mixed-tenant batch with each row's own tenant, in order, under one global lock", async () => {
+    vi.useFakeTimers();
+    try {
+      const rows = [
+        { ...pendingEntryRow(), id: "o-1", headers: { tenantId: "tenant-a" }, key: "order-1" },
+        { ...pendingEntryRow(), id: "o-2", headers: { tenantId: "tenant-b" }, key: "order-1" },
+        { ...pendingEntryRow(), id: "o-3", headers: { tenantId: "tenant-a" }, key: "order-2" },
+      ];
+      const publishBatch = vi.fn().mockResolvedValue(undefined);
+      const lockAcquire = vi.fn().mockResolvedValue({ release: vi.fn().mockResolvedValue(true) });
+      const core = fakeCore({
+        enabled: true,
+        intervalMs: 1000,
+        lockAcquire,
+        findMany: vi.fn().mockResolvedValue(rows),
+      });
+
+      const handle = startOutboxRelay(core, fakeProducer(publishBatch));
+      await vi.advanceTimersByTimeAsync(1000);
+      handle?.stop();
+
+      const records = publishBatch.mock.calls[0]?.[0] as {
+        key: string;
+        headers: Record<string, string>;
+      }[];
+      expect(records.map((r) => [r.headers["tenantId"], r.key])).toEqual([
+        ["tenant-a", "order-1"],
+        ["tenant-b", "order-1"],
+        ["tenant-a", "order-2"],
+      ]);
+      expect(lockAcquire).toHaveBeenCalledWith("outbox-relay", 2000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

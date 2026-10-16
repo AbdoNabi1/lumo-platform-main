@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -15,8 +15,6 @@ export interface PrismaRecommendationModelRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `RecommendationModelRepository` on the `recommendations` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -27,9 +25,8 @@ export class PrismaRecommendationModelRepository implements RecommendationModelR
     this.deps = deps;
   }
 
-  async save(model: RecommendationModel, tx?: unknown): Promise<void> {
+  async save(model: RecommendationModel, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const modelId = model.id.toString();
     const row = RecommendationModelMapper.toRow(model, tenantId);
 
@@ -55,36 +52,55 @@ export class PrismaRecommendationModelRepository implements RecommendationModelR
       }
     }
 
-    await this.deps.outbox.write(model.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      model.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<RecommendationModel | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.recommendationModel.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return RecommendationModelMapper.toDomain(this.toMapperRow(row));
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<RecommendationModel | null> {
+    const run = (client: TransactionClient) =>
+      client.recommendationModel.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : RecommendationModelMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findByName(name: string, tx?: unknown): Promise<RecommendationModel | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.recommendationModel.findFirst({
-      where: { name, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return RecommendationModelMapper.toDomain(this.toMapperRow(row));
+  async findByName(
+    name: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<RecommendationModel | null> {
+    const run = (client: TransactionClient) =>
+      client.recommendationModel.findFirst({ where: { name, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : RecommendationModelMapper.toDomain(this.toMapperRow(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<RecommendationModel>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(
+    page: CursorPage,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<RecommendationModel>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.recommendationModel.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.recommendationModel.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       rows.map((row) => RecommendationModelMapper.toDomain(this.toMapperRow(row))),
       limit,

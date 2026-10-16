@@ -35,3 +35,40 @@ model Workspace {
   @@map("workspaces")
   @@schema("tenancy")
 }
+
+// Plan 1A — a hostname a shop is served on (Shopify's `Domain`). Platform-tenant scoped like
+// `Tenant`; `shop_ref` is the merchant tenant's id. `hostname` is unique across the platform.
+model ShopDomain {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id")
+  shopRef    String    @map("shop_ref")
+  hostname   String
+  kind       String // platform | custom (domain-enforced, see ShopDomainKind)
+  status     String // pending | verified (domain-enforced, see ShopDomainStatus)
+  isPrimary  Boolean   @default(false) @map("is_primary")
+  verifiedAt DateTime? @map("verified_at")
+  version    Int       @default(0)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@unique([hostname])
+  @@index([tenantId, shopRef])
+  @@map("shop_domains")
+  @@schema("tenancy")
+}
+
+// Plan 3C — Shopify's Settings → General for one shop. One row per tenant (the tenant is the key),
+// so there is no id/version; a save replaces the row. `currency` is the store currency: every price
+// is in it. See migration 20261013000000_store_shipping_taxes.
+model StoreSettings {
+  tenantId     String   @id @map("tenant_id")
+  storeName    String   @default("") @map("store_name")
+  contactEmail String?  @map("contact_email")
+  currency     String   @default("EGP") @db.Char(3)
+  timezone     String   @default("Africa/Cairo")
+  weightUnit   String   @default("kg") @map("weight_unit") // kg | g | lb | oz (CHECK + domain-enforced)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("store_settings")
+  @@schema("tenancy")
+}

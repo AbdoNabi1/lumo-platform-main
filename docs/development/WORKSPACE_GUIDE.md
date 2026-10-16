@@ -9,14 +9,14 @@ A Turborepo + pnpm monorepo. Workspaces are globbed in `pnpm-workspace.yaml`: `a
 | ------------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `storefront` | Next.js 15 + React 19 + Tailwind v4       | Foundation shell (no business pages yet)                                                                                                                                    |
 | `admin`      | Framework-agnostic TS (`@platform/admin`) | Sprint 1.6 admin **wiring**: facade controllers binding the admin screens to Catalog/Inventory/Orders/Identity/Pricing (pure delegation, no HTTP). Backend only — no React. |
-| `admin-web`  | Next.js + React                           | The admin's visual surface: the **Lumo Dashboard**, built entirely from `@platform/ui` on Lumo Design System tokens.                                                        |
+| `admin-web`  | Next.js + React                           | The admin's visual surface: the **Morbeh Dashboard**, built entirely from `@platform/ui` on Morbeh Design System tokens.                                                    |
 
 > `apps/` is the **composition seam**: unlike `services/` (a context may not import another context —
 > `no-cross-service-internals`), an app may import several contexts' public `@platform/*` APIs. That is
 > why the admin cross-context wiring lives in `apps/admin`, not in a service.
 >
 > The admin React + Vite front-end (per `docs/architecture/01`) that consumes this wiring over a
-> transport adapter is a later-phase concern; the UI follows the Lumo Design System (`docs/ui/`).
+> transport adapter is a later-phase concern; the UI follows the Morbeh Design System (`docs/ui/`).
 
 ## Services
 
@@ -86,11 +86,11 @@ Grouped by Clean Architecture layer (lower layers never depend on higher ones).
 
 ### UI + build config
 
-| Package                                                                        | Responsibility                                                                                                 |
-| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `@platform/ui`                                                                 | shadcn/ui base primitives, theme provider, `cn`. No business components.                                       |
-| `@platform/design`                                                             | **Lumo Design System** tokens — primitives, semantic layer, Tailwind bridge (`docs/ui/LUMO_DESIGN_SYSTEM.md`). |
-| `@platform/eslint-config` · `@platform/tsconfig` · `@platform/prettier-config` | Shared ESLint / TypeScript / Prettier configs.                                                                 |
+| Package                                                                        | Responsibility                                                                                                     |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `@platform/ui`                                                                 | shadcn/ui base primitives, theme provider, `cn`. No business components.                                           |
+| `@platform/design`                                                             | **Morbeh Design System** tokens — primitives, semantic layer, Tailwind bridge (`docs/ui/MORBEH_DESIGN_SYSTEM.md`). |
+| `@platform/eslint-config` · `@platform/tsconfig` · `@platform/prettier-config` | Shared ESLint / TypeScript / Prettier configs.                                                                     |
 
 ## Dependency rules (enforced in CI via `pnpm arch` — dependency-cruiser)
 
@@ -158,7 +158,7 @@ and parallelized; `dev` is persistent and uncached. Architecture fitness runs vi
 ## Transport workflow (Sprint 2.6)
 
 - New endpoint: add a `defineRoute` in the app's `http/` module (zod schema + `"<module>:<action>"` permission + version) delegating to an existing controller; test with `app.inject` (no Docker needed).
-- New gRPC surface: add a versioned proto under `packages/grpc/protos/lumo/<ctx>/v<n>/`.
+- New gRPC surface: add a versioned proto under `packages/grpc/protos/morbeh/<ctx>/v<n>/`.
 
 ## Auth workflow (Sprint 2.7)
 

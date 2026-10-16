@@ -32,6 +32,7 @@ export interface SetSeoProfileInput {
   readonly description?: string;
   readonly canonicalUrl?: string;
   readonly ogImageRef?: string;
+  readonly tenantId: string;
 }
 
 export interface SeoIdOutput {
@@ -57,10 +58,10 @@ export class SetSeoProfile implements UseCase<SetSeoProfileInput, SeoIdOutput, D
         canonicalUrl: input.canonicalUrl,
         ogImageRef: input.ogImageRef,
       });
-      const existing = await this.deps.profiles.findByPageRef(input.pageRef, tx);
+      const existing = await this.deps.profiles.findByPageRef(input.pageRef, input.tenantId, tx);
       if (existing !== null) {
         existing.update(metadata, this.deps.idGenerator.generate(), this.deps.clock.now());
-        await this.deps.profiles.save(existing, tx);
+        await this.deps.profiles.save(existing, input.tenantId, tx);
         return ok({ id: existing.id.toString() });
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
@@ -71,7 +72,7 @@ export class SetSeoProfile implements UseCase<SetSeoProfileInput, SeoIdOutput, D
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.profiles.save(profile, tx);
+      await this.deps.profiles.save(profile, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -81,6 +82,7 @@ export interface CreateRedirectInput {
   readonly fromPath: string;
   readonly toPath: string;
   readonly statusCode: RedirectStatusCode;
+  readonly tenantId: string;
 }
 
 /** Creates a redirect rule — one per `fromPath`. */
@@ -93,7 +95,7 @@ export class CreateRedirect implements UseCase<CreateRedirectInput, SeoIdOutput,
 
   async execute(input: CreateRedirectInput): Promise<Result<SeoIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<SeoIdOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.redirects.findByFromPath(input.fromPath, tx);
+      const existing = await this.deps.redirects.findByFromPath(input.fromPath, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Redirect from "${input.fromPath}" already exists`));
       }
@@ -106,7 +108,7 @@ export class CreateRedirect implements UseCase<CreateRedirectInput, SeoIdOutput,
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.redirects.save(redirect, tx);
+      await this.deps.redirects.save(redirect, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -114,6 +116,7 @@ export class CreateRedirect implements UseCase<CreateRedirectInput, SeoIdOutput,
 
 export interface CreateSitemapInput {
   readonly name: string;
+  readonly tenantId: string;
 }
 
 /** Creates a sitemap document — one per `name`. */
@@ -126,7 +129,7 @@ export class CreateSitemap implements UseCase<CreateSitemapInput, SeoIdOutput, D
 
   async execute(input: CreateSitemapInput): Promise<Result<SeoIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<SeoIdOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.sitemaps.findByName(input.name, tx);
+      const existing = await this.deps.sitemaps.findByName(input.name, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Sitemap "${input.name}" already exists`));
       }
@@ -137,7 +140,7 @@ export class CreateSitemap implements UseCase<CreateSitemapInput, SeoIdOutput, D
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.sitemaps.save(sitemap, tx);
+      await this.deps.sitemaps.save(sitemap, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }
@@ -146,6 +149,7 @@ export class CreateSitemap implements UseCase<CreateSitemapInput, SeoIdOutput, D
 export interface RegenerateSitemapInput {
   readonly sitemapId: string;
   readonly urls: readonly string[];
+  readonly tenantId: string;
 }
 
 /** Regenerates a sitemap's URL list. */
@@ -162,10 +166,10 @@ export class RegenerateSitemap implements UseCase<
 
   async execute(input: RegenerateSitemapInput): Promise<Result<SeoIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<SeoIdOutput, DomainError>>(async (tx) => {
-      const sitemap = await this.deps.sitemaps.findById(input.sitemapId, tx);
+      const sitemap = await this.deps.sitemaps.findById(input.sitemapId, input.tenantId, tx);
       if (sitemap === null) return err(new NotFoundError("Sitemap not found"));
       sitemap.regenerate(input.urls, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.sitemaps.save(sitemap, tx);
+      await this.deps.sitemaps.save(sitemap, input.tenantId, tx);
       return ok({ id: sitemap.id.toString() });
     });
   }
@@ -174,6 +178,7 @@ export class RegenerateSitemap implements UseCase<
 export interface SetRobotsPolicyInput {
   readonly userAgent: string;
   readonly rules: readonly RobotsRule[];
+  readonly tenantId: string;
 }
 
 /** Creates or updates a robots policy for a user agent. */
@@ -186,10 +191,14 @@ export class SetRobotsPolicy implements UseCase<SetRobotsPolicyInput, SeoIdOutpu
 
   async execute(input: SetRobotsPolicyInput): Promise<Result<SeoIdOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<SeoIdOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.robotsPolicies.findByUserAgent(input.userAgent, tx);
+      const existing = await this.deps.robotsPolicies.findByUserAgent(
+        input.userAgent,
+        input.tenantId,
+        tx,
+      );
       if (existing !== null) {
         existing.setRules(input.rules, this.deps.idGenerator.generate(), this.deps.clock.now());
-        await this.deps.robotsPolicies.save(existing, tx);
+        await this.deps.robotsPolicies.save(existing, input.tenantId, tx);
         return ok({ id: existing.id.toString() });
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
@@ -200,7 +209,7 @@ export class SetRobotsPolicy implements UseCase<SetRobotsPolicyInput, SeoIdOutpu
         this.deps.clock.now(),
       );
       policy.setRules(input.rules, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.robotsPolicies.save(policy, tx);
+      await this.deps.robotsPolicies.save(policy, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

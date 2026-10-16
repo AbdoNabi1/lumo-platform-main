@@ -9,6 +9,7 @@ import type { CustomerProfile } from "../domain/customer-profile";
 import type { ProfileHistoryStore } from "../ports/profile-history-store";
 import type { ProfileStore } from "../ports/profile-store";
 import { RebuildProfileProjection } from "./rebuild-profile-projection.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const identifier = { type: "customer_id" as const, value: "cust-1" };
 
@@ -50,7 +51,7 @@ describe("RebuildProfileProjection", () => {
   it("returns profile: null for an identifier with no history, without erroring", async () => {
     const deps = fakeDeps();
     const useCase = new RebuildProfileProjection(deps);
-    const result = await useCase.execute({ identifier });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
@@ -78,7 +79,7 @@ describe("RebuildProfileProjection", () => {
 
     const deps = fakeDeps([seed]);
     const useCase = new RebuildProfileProjection(deps);
-    const result = await useCase.execute({ identifier });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
@@ -102,7 +103,7 @@ describe("RebuildProfileProjection", () => {
 
     const deps = fakeDeps([seed]);
     const useCase = new RebuildProfileProjection(deps);
-    const result = await useCase.execute({ identifier });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier });
 
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.profile?.version).toBe(profile.version);
@@ -123,7 +124,7 @@ describe("RebuildProfileProjection", () => {
 
     const deps = fakeDeps([seed]);
     const useCase = new RebuildProfileProjection(deps);
-    await useCase.execute({ identifier });
+    await useCase.execute({ tenantId: TENANT_A, identifier });
 
     expect(deps.snapshots).toHaveLength(2);
     expect(deps.snapshots[1]?.reason).toBe("rebuilt");

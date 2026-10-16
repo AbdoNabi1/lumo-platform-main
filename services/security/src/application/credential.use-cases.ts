@@ -33,6 +33,8 @@ function present(c: Credential): CredentialOutput {
 }
 
 export interface IssueCredentialInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   readonly kind: CredentialKind;
   /** A handle to the secret material (never persisted) — a KMS key ref + fingerprint are derived. */
@@ -52,7 +54,10 @@ export class IssueCredential implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: IssueCredentialInput): Promise<Result<CredentialOutput, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
     const kmsKeyRef = await this.deps.kms.generateKeyRef(`credential:${input.kind}`);
     const fingerprint = await this.deps.kms.fingerprint(input.material);
@@ -76,8 +81,9 @@ export class IssueCredential implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.credentials.save(credential, tx);
+      await this.deps.credentials.save(credential, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.credential.issued",
         decision: "allow",
@@ -90,6 +96,8 @@ export class IssueCredential implements UseCase<
 }
 
 export interface RotateCredentialInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly credentialId: string;
   readonly newMaterial: string;
 }
@@ -106,7 +114,7 @@ export class RotateCredential implements UseCase<
 > {
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: RotateCredentialInput): Promise<Result<CredentialOutput, DomainError>> {
-    const current = await this.deps.credentials.findById(input.credentialId);
+    const current = await this.deps.credentials.findById(input.credentialId, input.tenantId);
     if (current === null) return err(new NotFoundError("Credential not found"));
     if (!current.isActive)
       return err(new BusinessRuleError("Only an active credential can be rotated"));
@@ -137,10 +145,11 @@ export class RotateCredential implements UseCase<
         this.deps.idGenerator.generate(),
         now,
       );
-      await this.deps.credentials.save(current, tx);
-      await this.deps.credentials.save(replacement, tx);
+      await this.deps.credentials.save(current, input.tenantId, tx);
+      await this.deps.credentials.save(replacement, input.tenantId, tx);
       this.deps.telemetry.increment("security.credential.rotated");
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: current.principalRef,
         action: "security.credential.rotated",
         decision: "allow",
@@ -152,6 +161,8 @@ export class RotateCredential implements UseCase<
 }
 
 export interface RevokeCredentialInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly credentialId: string;
 }
 
@@ -164,7 +175,11 @@ export class RevokeCredential implements UseCase<
   constructor(private readonly deps: SecurityDeps) {}
   async execute(input: RevokeCredentialInput): Promise<Result<CredentialOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<CredentialOutput, DomainError>>(async (tx) => {
-      const credential = await this.deps.credentials.findById(input.credentialId, tx);
+      const credential = await this.deps.credentials.findById(
+        input.credentialId,
+        input.tenantId,
+        tx,
+      );
       if (credential === null) return err(new NotFoundError("Credential not found"));
       try {
         credential.revoke(this.deps.idGenerator.generate(), this.deps.clock.now());
@@ -172,8 +187,9 @@ export class RevokeCredential implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.credentials.save(credential, tx);
+      await this.deps.credentials.save(credential, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: credential.principalRef,
         action: "security.credential.revoked",
         decision: "allow",
@@ -184,6 +200,8 @@ export class RevokeCredential implements UseCase<
 }
 
 export interface ScheduleCredentialRotationInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly credentialId: string;
   readonly intervalDays: number;
   readonly graceSeconds: number;
@@ -207,7 +225,11 @@ export class ScheduleCredentialRotation implements UseCase<
     });
     if (!policy.ok) return err(policy.error);
     return this.deps.unitOfWork.run<Result<CredentialOutput, DomainError>>(async (tx) => {
-      const credential = await this.deps.credentials.findById(input.credentialId, tx);
+      const credential = await this.deps.credentials.findById(
+        input.credentialId,
+        input.tenantId,
+        tx,
+      );
       if (credential === null) return err(new NotFoundError("Credential not found"));
       try {
         credential.scheduleRotation(
@@ -219,8 +241,9 @@ export class ScheduleCredentialRotation implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.credentials.save(credential, tx);
+      await this.deps.credentials.save(credential, input.tenantId, tx);
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: credential.principalRef,
         action: "security.credential.rotation_scheduled",
         decision: "allow",
@@ -229,6 +252,11 @@ export class ScheduleCredentialRotation implements UseCase<
       return ok(present(credential));
     });
   }
+}
+
+export interface RotateDueCredentialsInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
 }
 
 export interface RotateDueCredentialsOutput {
@@ -241,14 +269,18 @@ export interface RotateDueCredentialsOutput {
  * a fresh credential issued via {@link KmsPort}. Idempotent by due-time; safe to run repeatedly.
  */
 export class RotateDueCredentials implements UseCase<
-  Record<string, never>,
+  RotateDueCredentialsInput,
   RotateDueCredentialsOutput,
   DomainError
 > {
   constructor(private readonly deps: SecurityDeps) {}
-  async execute(): Promise<Result<RotateDueCredentialsOutput, DomainError>> {
+  async execute(
+    input: RotateDueCredentialsInput,
+  ): Promise<Result<RotateDueCredentialsOutput, DomainError>> {
     const now = this.deps.clock.now();
-    const due = (await this.deps.credentials.listDueForRotation(now)).filter((c) => c.autoRotate);
+    const due = (await this.deps.credentials.listDueForRotation(now, input.tenantId)).filter(
+      (c) => c.autoRotate,
+    );
     let rotated = 0;
     for (const current of due) {
       const nextKeyRef =
@@ -272,10 +304,11 @@ export class RotateDueCredentials implements UseCase<
           this.deps.idGenerator.generate(),
           now,
         );
-        await this.deps.credentials.save(current, tx);
-        await this.deps.credentials.save(replacement, tx);
+        await this.deps.credentials.save(current, input.tenantId, tx);
+        await this.deps.credentials.save(replacement, input.tenantId, tx);
         this.deps.telemetry.increment("security.credential.rotated");
         await recordAudit(this.deps, tx, {
+          tenantId: input.tenantId,
           principalRef: current.principalRef,
           action: "security.credential.rotated",
           decision: "allow",
@@ -289,6 +322,8 @@ export class RotateDueCredentials implements UseCase<
 }
 
 export interface EmergencyRevokeCredentialsInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly principalExternalId: string;
   readonly reason: string;
 }
@@ -307,18 +342,26 @@ export class EmergencyRevokeCredentials implements UseCase<
   async execute(
     input: EmergencyRevokeCredentialsInput,
   ): Promise<Result<EmergencyRevokeOutput, DomainError>> {
-    const principal = await this.deps.principals.findByExternalId(input.principalExternalId);
+    const principal = await this.deps.principals.findByExternalId(
+      input.principalExternalId,
+      input.tenantId,
+    );
     if (principal === null) return err(new NotFoundError("Principal not found"));
     return this.deps.unitOfWork.run<Result<EmergencyRevokeOutput, DomainError>>(async (tx) => {
-      const credentials = await this.deps.credentials.listByPrincipal(principal.id.toString(), tx);
+      const credentials = await this.deps.credentials.listByPrincipal(
+        principal.id.toString(),
+        input.tenantId,
+        tx,
+      );
       let revoked = 0;
       for (const credential of credentials) {
         if (credential.status === "revoked" || credential.status === "expired") continue;
         credential.revoke(this.deps.idGenerator.generate(), this.deps.clock.now());
-        await this.deps.credentials.save(credential, tx);
+        await this.deps.credentials.save(credential, input.tenantId, tx);
         revoked += 1;
       }
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: principal.externalId,
         action: "security.credential.emergency_revoked",
         decision: "allow",
@@ -331,6 +374,8 @@ export class EmergencyRevokeCredentials implements UseCase<
 }
 
 export interface CredentialLineageInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly credentialId: string;
 }
 
@@ -349,14 +394,17 @@ export class GetCredentialLineage implements UseCase<
   async execute(
     input: CredentialLineageInput,
   ): Promise<Result<CredentialLineageOutput, DomainError>> {
-    const start = await this.deps.credentials.findById(input.credentialId);
+    const start = await this.deps.credentials.findById(input.credentialId, input.tenantId);
     if (start === null) return err(new NotFoundError("Credential not found"));
     const chain: Credential[] = [start];
     const seen = new Set<string>([start.id.toString()]);
     let cursor: Credential | null = start;
     while (cursor !== null && cursor.supersedesRef !== null && !seen.has(cursor.supersedesRef)) {
       seen.add(cursor.supersedesRef);
-      const prev: Credential | null = await this.deps.credentials.findById(cursor.supersedesRef);
+      const prev: Credential | null = await this.deps.credentials.findById(
+        cursor.supersedesRef,
+        input.tenantId,
+      );
       if (prev === null) break;
       chain.unshift(prev);
       cursor = prev;

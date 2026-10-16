@@ -14,8 +14,6 @@ export interface CachedCartRepositoryDeps {
   /** The durable source of truth (Prisma in production, in-memory in tests) — D-042/doc 26. */
   readonly inner: CartRepository;
   readonly cache: Cache;
-  /** Tenant scope — cache keys are tenant-prefixed (ADR-0008 §2). */
-  readonly tenantId: string;
   /** Hot-cart TTL; short by design (live carts churn). Default 900s. */
   readonly ttlSeconds?: number;
 }
@@ -45,20 +43,20 @@ export class CachedCartRepository implements CartRepository {
     this.deps = { ttlSeconds: 900, ...deps };
   }
 
-  async save(cart: Cart, tx?: unknown): Promise<void> {
-    await this.deps.inner.save(cart, tx);
+  async save(cart: Cart, tenantId: string, tx?: unknown): Promise<void> {
+    await this.deps.inner.save(cart, tenantId, tx);
     // Inside the caller's tx: delete (safe under rollback), never write.
-    await this.deps.cache.delete(this.key(cart.id.toString()));
+    await this.deps.cache.delete(this.key(tenantId, cart.id.toString()));
   }
 
-  async findById(id: string, tx?: unknown): Promise<Cart | null> {
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Cart | null> {
     if (tx !== undefined && tx !== null) {
-      return this.deps.inner.findById(id, tx); // read-your-writes inside a transaction
+      return this.deps.inner.findById(id, tenantId, tx); // read-your-writes inside a transaction
     }
 
     let cached: CachedCart | null = null;
     try {
-      cached = await this.deps.cache.get<CachedCart>(this.key(id));
+      cached = await this.deps.cache.get<CachedCart>(this.key(tenantId, id));
     } catch {
       cached = null; // cache outage degrades to the source of truth
     }
@@ -66,11 +64,11 @@ export class CachedCartRepository implements CartRepository {
       return CartMapper.toDomain(cached.cart, cached.items);
     }
 
-    const cart = await this.deps.inner.findById(id);
+    const cart = await this.deps.inner.findById(id, tenantId);
     if (cart !== null) {
       const snapshot: CachedCart = {
-        cart: CartMapper.toCartRow(cart, this.deps.tenantId),
-        items: CartMapper.toItemRows(cart, this.deps.tenantId),
+        cart: CartMapper.toCartRow(cart, tenantId),
+        items: CartMapper.toItemRows(cart, tenantId),
       };
       // Preserve the true persisted version — toCartRow stamps the first-write version.
       const withVersion: CachedCart = {
@@ -78,7 +76,7 @@ export class CachedCartRepository implements CartRepository {
         items: snapshot.items,
       };
       try {
-        await this.deps.cache.set(this.key(id), withVersion, this.deps.ttlSeconds);
+        await this.deps.cache.set(this.key(tenantId, id), withVersion, this.deps.ttlSeconds);
       } catch {
         // population failure is harmless — next read tries again
       }
@@ -94,8 +92,8 @@ export class CachedCartRepository implements CartRepository {
    * (e.g. on every mutation, not just `save`'s single-key delete), which is out of this phase's
    * scope.
    */
-  async findBySessionRef(sessionRef: string, tx?: unknown): Promise<Cart | null> {
-    return this.deps.inner.findBySessionRef(sessionRef, tx);
+  async findBySessionRef(sessionRef: string, tenantId: string, tx?: unknown): Promise<Cart | null> {
+    return this.deps.inner.findBySessionRef(sessionRef, tenantId, tx);
   }
 
   /**
@@ -103,11 +101,16 @@ export class CachedCartRepository implements CartRepository {
    * is not the hot single-cart lookup `findById` optimizes for, and would need its own
    * invalidation story (every status transition, not just `save`'s single-key delete).
    */
-  async list(page: CursorPage, filter?: CartListFilter, tx?: unknown): Promise<Paginated<Cart>> {
-    return this.deps.inner.list(page, filter, tx);
+  async list(
+    page: CursorPage,
+    tenantId: string,
+    filter?: CartListFilter,
+    tx?: unknown,
+  ): Promise<Paginated<Cart>> {
+    return this.deps.inner.list(page, tenantId, filter, tx);
   }
 
-  private key(cartId: string): string {
-    return `tenant:${this.deps.tenantId}:cart:${cartId}`;
+  private key(tenantId: string, cartId: string): string {
+    return `tenant:${tenantId}:cart:${cartId}`;
   }
 }

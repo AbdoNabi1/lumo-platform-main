@@ -11,6 +11,14 @@ import {
   PromotionStatus,
   type PromotionStatusValue,
 } from "./value-objects/promotion-status";
+import {
+  COMBINES_WITH_EVERYTHING,
+  COMBINES_WITH_NOTHING,
+  discountClassOf,
+  type CombinesWith,
+  type DiscountClass,
+  type DiscountMethod,
+} from "./value-objects/discount-settings";
 
 export interface PromotionDetermination {
   readonly promotionId: string;
@@ -19,15 +27,36 @@ export interface PromotionDetermination {
   readonly priority: number;
 }
 
-interface PromotionProps {
+/** Phase 2 settings. Absent `method` = created before Phase 2: reachable only through its coupon. */
+export interface PromotionSettings {
+  readonly method?: DiscountMethod;
+  readonly combinesWith?: CombinesWith;
+}
+
+/** Every field the merchant may edit on an existing discount (type and method excluded). */
+export interface PromotionChanges {
   readonly name: string;
   readonly rule: PromotionRule;
   readonly schedule: PromotionSchedule;
   readonly eligibility: CustomerEligibility;
-  readonly campaign: PromotionCampaign;
   readonly usageLimit?: number;
+  readonly combinesWith: CombinesWith;
+}
+
+/** How Shopify shows a discount at a moment. Drafts are not running, so they read as expired. */
+export type PromotionView = "active" | "scheduled" | "expired" | "archived";
+
+interface PromotionProps {
+  name: string;
+  rule: PromotionRule;
+  schedule: PromotionSchedule;
+  eligibility: CustomerEligibility;
+  readonly campaign: PromotionCampaign;
+  usageLimit?: number;
   usageCount: number;
   status: PromotionStatus;
+  readonly method?: DiscountMethod;
+  combinesWith: CombinesWith;
 }
 
 /**
@@ -45,6 +74,7 @@ export class Promotion extends AggregateRoot<PromotionProps> {
     eligibility: CustomerEligibility,
     campaign: PromotionCampaign,
     usageLimit?: number,
+    settings: PromotionSettings = {},
   ): Promotion {
     return new Promotion(
       {
@@ -56,6 +86,10 @@ export class Promotion extends AggregateRoot<PromotionProps> {
         usageLimit,
         usageCount: 0,
         status: PromotionStatus.draft(),
+        method: settings.method,
+        combinesWith:
+          settings.combinesWith ??
+          (rule.stackable ? COMBINES_WITH_EVERYTHING : COMBINES_WITH_NOTHING),
       },
       id,
     );
@@ -73,9 +107,23 @@ export class Promotion extends AggregateRoot<PromotionProps> {
     usageCount: number,
     status: PromotionStatus,
     version: number,
+    settings: PromotionSettings = {},
   ): Promotion {
     return new Promotion(
-      { name, rule, schedule, eligibility, campaign, usageLimit, usageCount, status },
+      {
+        name,
+        rule,
+        schedule,
+        eligibility,
+        campaign,
+        usageLimit,
+        usageCount,
+        status,
+        method: settings.method,
+        combinesWith:
+          settings.combinesWith ??
+          (rule.stackable ? COMBINES_WITH_EVERYTHING : COMBINES_WITH_NOTHING),
+      },
       id,
       version,
     );
@@ -138,6 +186,35 @@ export class Promotion extends AggregateRoot<PromotionProps> {
     }
   }
 
+  /** Applies the merchant's edits. The type (class and rule type) can never change, as in Shopify. */
+  update(changes: PromotionChanges): void {
+    if (this.props.status.value === "archived") {
+      throw new BusinessRuleError("An archived discount cannot be edited");
+    }
+    if (
+      changes.rule.type !== this.props.rule.type ||
+      discountClassOf(changes.rule) !== this.discountClass
+    ) {
+      throw new BusinessRuleError("A discount's type cannot be changed");
+    }
+    this.props.name = changes.name;
+    this.props.rule = changes.rule;
+    this.props.schedule = changes.schedule;
+    this.props.eligibility = changes.eligibility;
+    this.props.usageLimit = changes.usageLimit;
+    this.props.combinesWith = changes.combinesWith;
+  }
+
+  /** Shopify's status column at `now`: Active, Scheduled or Expired (deactivated reads as expired). */
+  viewAt(now: Date): PromotionView {
+    const status = this.props.status.value;
+    if (status === "archived") return "archived";
+    if (status !== "active" && status !== "scheduled") return "expired";
+    if (this.props.schedule.isExpiredAt(now)) return "expired";
+    if (now.getTime() < this.props.schedule.startsAt.getTime()) return "scheduled";
+    return status === "active" ? "active" : "scheduled";
+  }
+
   /**
    * Determines whether — and by how much — this promotion discounts the given cart right now.
    * Pure: no mutation, no domain event. Returns `null` if the promotion does not apply.
@@ -158,7 +235,9 @@ export class Promotion extends AggregateRoot<PromotionProps> {
 
     return {
       promotionId: this.id.toString(),
-      discountAmountMinor: this.props.rule.reward.discountAmountMinor(cart.subtotalAmountMinor),
+      discountAmountMinor: this.props.rule.reward.discountAmountMinor(
+        this.props.rule.condition.matchedSubtotalAmountMinor(cart),
+      ),
       stackable: this.props.rule.stackable,
       priority: this.props.rule.priority,
     };
@@ -194,5 +273,17 @@ export class Promotion extends AggregateRoot<PromotionProps> {
 
   get status(): PromotionStatus {
     return this.props.status;
+  }
+
+  get method(): DiscountMethod | undefined {
+    return this.props.method;
+  }
+
+  get combinesWith(): CombinesWith {
+    return this.props.combinesWith;
+  }
+
+  get discountClass(): DiscountClass {
+    return discountClassOf(this.props.rule);
   }
 }

@@ -9,6 +9,8 @@ import type { CollectionRepository } from "../domain/collection-repository";
 export interface RenameCollectionInput {
   readonly collectionId: string;
   readonly name: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface RenameCollectionOutput {
@@ -42,12 +44,16 @@ export class RenameCollection implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<RenameCollectionOutput, DomainError>>(async (tx) => {
-      const collection = await this.deps.collections.findById(input.collectionId, tx);
+      const collection = await this.deps.collections.findById(
+        input.collectionId,
+        input.tenantId,
+        tx,
+      );
       if (collection === null) {
         return err(new NotFoundError("Collection not found"));
       }
       collection.rename(input.name, this.deps.idGenerator.generate(), this.deps.clock.now());
-      await this.deps.collections.save(collection, tx);
+      await this.deps.collections.save(collection, input.tenantId, tx);
       return ok({ collectionId: collection.id.toString(), name: collection.name });
     });
   }

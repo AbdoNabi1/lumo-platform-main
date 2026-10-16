@@ -14,6 +14,9 @@ import {
 import type { SegmentDefinitionRegistry } from "../ports/segment-definition-registry";
 
 export interface CreateSegmentInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly id: string;
   readonly name: string;
   readonly description?: string;
@@ -62,7 +65,7 @@ export class CreateSegment implements UseCase<
   }
 
   async execute(input: CreateSegmentInput): Promise<Result<CreateSegmentOutput, DomainError>> {
-    const existing = await this.deps.definitions.getById(input.id);
+    const existing = await this.deps.definitions.getById(input.id, input.tenantId);
     if (existing !== null) {
       return err(
         new BusinessRuleError(`Segment "${input.id}" already exists`, {
@@ -100,7 +103,13 @@ export class CreateSegment implements UseCase<
         },
         { segmentId: input.id, name: input.name, version: 1 },
       );
-      await this.deps.definitions.save(definition, INITIAL_SEGMENT_DEFINITION_VERSION, event, tx);
+      await this.deps.definitions.save(
+        definition,
+        input.tenantId,
+        INITIAL_SEGMENT_DEFINITION_VERSION,
+        event,
+        tx,
+      );
       return ok({ definition });
     });
   }

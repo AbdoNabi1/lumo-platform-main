@@ -1,8 +1,14 @@
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, normalizePageSize } from "@platform/repository";
 import type { Paginated } from "@platform/types";
+import { ConflictError } from "@platform/utils";
 import type { Customer } from "../domain/customer";
-import type { CustomerListQuery, CustomerRepository } from "../domain/customer-repository";
+import type {
+  CustomerContact,
+  CustomerContactReader,
+  CustomerListQuery,
+  CustomerRepository,
+} from "../domain/customer-repository";
 
 export interface InMemoryCustomerRepositoryDeps {
   readonly outbox: OutboxWriter;
@@ -12,9 +18,16 @@ export interface InMemoryCustomerRepositoryDeps {
 /**
  * In-memory `CustomerRepository`. Persists the aggregate and writes its events to the outbox on
  * save. The email lookup scans the store (acceptable for the in-memory adapter).
+ *
+ * ADR-0014 (WP-10, T10.3): keyed by `(tenantId, customerId)`, not just `customerId` — `Customer`
+ * carries no `tenantId` of its own, so the store must key on it explicitly or a cross-tenant leak
+ * here would be invisible to every isolation test.
  */
-export class InMemoryCustomerRepository implements CustomerRepository {
-  private readonly store = new Map<string, Customer>();
+export class InMemoryCustomerRepository implements CustomerRepository, CustomerContactReader {
+  private readonly store = new Map<
+    string,
+    { readonly tenantId: string; readonly customer: Customer }
+  >();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -23,28 +36,57 @@ export class InMemoryCustomerRepository implements CustomerRepository {
     this.context = deps.context;
   }
 
-  async save(customer: Customer, tx?: unknown): Promise<void> {
-    this.store.set(customer.id.toString(), customer);
-    await this.outbox.write(customer.pullDomainEvents(), this.context, tx);
+  async save(customer: Customer, tenantId: string, tx?: unknown): Promise<void> {
+    // Mirrors the Postgres `@@unique([tenantId, email])` — see PrismaCustomerRepository.save.
+    for (const [id, entry] of this.store) {
+      if (
+        id !== customer.id.toString() &&
+        entry.tenantId === tenantId &&
+        entry.customer.email.value === customer.email.value
+      ) {
+        throw new ConflictError("A customer with this email already exists");
+      }
+    }
+    this.store.set(customer.id.toString(), { tenantId, customer });
+    await this.outbox.write(customer.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<Customer | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Customer | null> {
+    const entry = this.store.get(id);
+    return entry !== undefined && entry.tenantId === tenantId ? entry.customer : null;
   }
 
-  async findByEmail(email: string): Promise<Customer | null> {
-    for (const customer of this.store.values()) {
-      if (customer.email.value === email) {
-        return customer;
+  async findByEmail(email: string, tenantId: string): Promise<Customer | null> {
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.customer.email.value === email) {
+        return entry.customer;
       }
     }
     return null;
   }
 
-  async list(query: CustomerListQuery): Promise<Paginated<Customer>> {
+  findContactsByIds(ids: readonly string[], tenantId: string): Promise<readonly CustomerContact[]> {
+    const contacts: CustomerContact[] = [];
+    for (const id of new Set(ids)) {
+      const entry = this.store.get(id);
+      if (entry !== undefined && entry.tenantId === tenantId) {
+        contacts.push({
+          id,
+          name: entry.customer.name,
+          email: entry.customer.email.value,
+          isGuest: entry.customer.isGuest,
+        });
+      }
+    }
+    return Promise.resolve(contacts);
+  }
+
+  async list(query: CustomerListQuery, tenantId: string): Promise<Paginated<Customer>> {
     const limit = normalizePageSize(query.first);
     const search = query.search?.trim().toLowerCase();
     const matches = [...this.store.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map((entry) => entry.customer)
       .filter(
         (customer) =>
           search === undefined ||

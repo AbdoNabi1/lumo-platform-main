@@ -1,5 +1,11 @@
 import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
+/** Plan 3B: Shopify's payment status, derived on the server from the order's history (never stored). */
+export type OrderPaymentStatus = "pending" | "paid" | "refunded" | "voided";
+
+/** Plan 3B: Shopify's fulfillment status, derived on the server from the Fulfillment context. */
+export type OrderFulfillmentStatus = "unfulfilled" | "in_progress" | "fulfilled" | "delivered";
+
 export interface OrderListItemDto {
   readonly id: string;
   readonly orderNumber: string;
@@ -8,6 +14,14 @@ export interface OrderListItemDto {
   readonly currency: string;
   readonly totalMinor: number;
   readonly createdAt: string;
+  /** Plan 3B: the shipping recipient's name; null when the shopper typed none. */
+  readonly customerName: string | null;
+  /** Plan 3B: the sum of the line quantities. */
+  readonly itemCount: number;
+  /** Plan 3B: the shipping method the shopper selected ("standard", …); null on older orders. */
+  readonly shippingMethod: string | null;
+  readonly paymentStatus: OrderPaymentStatus;
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
 }
 
 export interface OrdersPageInfo {
@@ -53,6 +67,8 @@ export interface OrdersListQuery {
   readonly after?: string;
   readonly status?: string;
   readonly search?: string;
+  /** Plan 3D: only the open orders still waiting to be fulfilled (what Home's card counts). */
+  readonly fulfillment?: "unfulfilled";
 }
 
 export type FetchOrdersPageResult =
@@ -71,6 +87,7 @@ export async function fetchOrdersPage(query: OrdersListQuery): Promise<FetchOrde
   if (query.after !== undefined) params.set("after", query.after);
   if (query.status !== undefined) params.set("status", query.status);
   if (query.search !== undefined) params.set("search", query.search);
+  if (query.fulfillment !== undefined) params.set("fulfillment", query.fulfillment);
 
   const result = await getAdminApi(`/api/v1/orders?${params.toString()}`, isOrdersPageDto);
   if (result.outcome === "ok") {
@@ -89,9 +106,15 @@ export interface OrderDetailItemDto {
   readonly id: string;
   readonly productId: string;
   readonly name: string;
+  /** Plan 2A: the variant sold; all null on an order placed before variants were tracked. */
+  readonly variantRef: string | null;
+  readonly sku: string | null;
+  readonly variantTitle: string | null;
   readonly unitPriceMinor: number;
   readonly quantity: number;
   readonly lineTotalMinor: number;
+  /** Plan 2C-3: the line's picture; null/absent shows the placeholder. */
+  readonly imageUrl?: string | null;
 }
 
 export interface OrderAddressDto {
@@ -101,6 +124,18 @@ export interface OrderAddressDto {
   readonly country: string;
 }
 
+/** Plan 3A: an order's address as staff read it — who receives it and how to reach them; null when absent. */
+export interface OrderRecipientAddressDto extends OrderAddressDto {
+  readonly recipientName: string | null;
+  readonly phone: string | null;
+  readonly line2: string | null;
+  /**
+   * Plan 3C: the governorate / region / emirate (ISO 3166-2). Optional because admin-web and the API
+   * deploy separately, so an older API answers without it; null/absent means none recorded.
+   */
+  readonly province?: string | null;
+}
+
 export interface OrderTotalsDto {
   readonly subtotalMinor: number;
   readonly taxMinor: number;
@@ -108,6 +143,10 @@ export interface OrderTotalsDto {
   readonly discountMinor: number;
   readonly totalMinor: number;
   readonly currency: string;
+  /** Plan 3C: true when `taxMinor` is already inside the prices. Absent from an older API: the tax was added. */
+  readonly taxIncluded?: boolean;
+  /** Plan 3C: the shipping rate's name as the shopper saw it; null/absent on older orders. */
+  readonly shippingName?: string | null;
 }
 
 export interface OrderHistoryEntryDto {
@@ -124,13 +163,21 @@ export interface OrderDetailDto {
   readonly totalMinor: number;
   readonly createdAt: string;
   readonly items: readonly OrderDetailItemDto[];
-  readonly shippingAddress: OrderAddressDto;
-  readonly billingAddress: OrderAddressDto | null;
+  readonly shippingAddress: OrderRecipientAddressDto;
+  readonly billingAddress: OrderRecipientAddressDto | null;
   readonly totals: OrderTotalsDto | null;
   readonly checkoutRef: string | null;
   readonly paymentRef: string | null;
   readonly fulfillmentRef: string | null;
   readonly history: readonly OrderHistoryEntryDto[];
+  /** Plan 3B */
+  readonly paymentStatus: OrderPaymentStatus;
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
+  /** How the customer pays ("cod", "stripe", …), from the linked payment; null until one is linked. */
+  readonly paymentProvider: string | null;
+  readonly shippingMethod: string | null;
+  /** G-127: whether Refund can succeed right now — decided by the backend, never guessed from the status. */
+  readonly refundable: boolean;
 }
 
 function isOrderDetailDto(value: unknown): value is OrderDetailDto {
@@ -268,7 +315,11 @@ export function refundOrder(
   orderId: string,
   idempotencyKey: string,
 ): Promise<MutationResult<unknown>> {
-  return mutateAdminApi(orderPath(orderId, "/refund"), { method: "POST", idempotencyKey }, isUnknown);
+  return mutateAdminApi(
+    orderPath(orderId, "/refund"),
+    { method: "POST", idempotencyKey },
+    isUnknown,
+  );
 }
 
 /**

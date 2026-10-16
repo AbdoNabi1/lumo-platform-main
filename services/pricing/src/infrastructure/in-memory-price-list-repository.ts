@@ -9,10 +9,11 @@ export interface InMemoryPriceListRepositoryDeps {
 
 /**
  * In-memory `PriceListRepository`. Uses the same outbox-on-save pattern for uniformity; price lists
- * currently raise no events, so the outbox write is a no-op until they do.
+ * currently raise no events, so the outbox write is a no-op until they do. ADR-0014 (WP-10,
+ * T10.3): keyed by `(tenantId, priceListId)`.
  */
 export class InMemoryPriceListRepository implements PriceListRepository {
-  private readonly store = new Map<string, PriceList>();
+  private readonly store = new Map<string, Map<string, PriceList>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -21,12 +22,17 @@ export class InMemoryPriceListRepository implements PriceListRepository {
     this.context = deps.context;
   }
 
-  async save(priceList: PriceList, tx?: unknown): Promise<void> {
-    this.store.set(priceList.id.toString(), priceList);
-    await this.outbox.write(priceList.pullDomainEvents(), this.context, tx);
+  async save(priceList: PriceList, tenantId: string, tx?: unknown): Promise<void> {
+    let bucket = this.store.get(tenantId);
+    if (bucket === undefined) {
+      bucket = new Map();
+      this.store.set(tenantId, bucket);
+    }
+    bucket.set(priceList.id.toString(), priceList);
+    await this.outbox.write(priceList.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<PriceList | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<PriceList | null> {
+    return this.store.get(tenantId)?.get(id) ?? null;
   }
 }

@@ -9,20 +9,26 @@
 //   HYDRA_ADMIN_URL   (default http://localhost:4445)
 //   KRATOS_ADMIN_URL  (default http://localhost:4434)
 //   KETO_WRITE_URL    (default http://localhost:4467)
-//   AUTH_CLIENT_ID    (default lumo-admin-web, matches .env AUTH_CLIENT_ID)
-//   AUTH_CLIENT_SECRET (default lumo-admin-web-secret-change-me — dev-only placeholder)
-//   ADMIN_DEV_EMAIL   (default admin@lumo.local)
+//   AUTH_CLIENT_ID    (default morbeh-admin-web, matches .env AUTH_CLIENT_ID)
+//   AUTH_CLIENT_SECRET (default morbeh-admin-web-secret-change-me — dev-only placeholder)
+//   TENANT_DEFAULT_ID (default tenant-local — the tenant every grant is qualified with, G-70; must
+//                      match the runtime's TENANT_DEFAULT_ID)
+//   ADMIN_DEV_EMAIL   (default admin@morbeh.local)
 //   ADMIN_DEV_PASSWORD (REQUIRED — no default; refuses to run without it, never invents/prints one)
 
 const HYDRA_ADMIN_URL = process.env.HYDRA_ADMIN_URL ?? "http://localhost:4445";
 const KRATOS_ADMIN_URL = process.env.KRATOS_ADMIN_URL ?? "http://localhost:4434";
 const KETO_WRITE_URL = process.env.KETO_WRITE_URL ?? "http://localhost:4467";
-const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "lumo-admin-web";
-const CLIENT_SECRET = process.env.AUTH_CLIENT_SECRET ?? "lumo-admin-web-secret-change-me";
+const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "morbeh-admin-web";
+const CLIENT_SECRET = process.env.AUTH_CLIENT_SECRET ?? "morbeh-admin-web-secret-change-me";
 const REDIRECT_URI = process.env.ADMIN_WEB_CALLBACK_URL ?? "http://localhost:3100/auth/callback";
-const AUDIENCE = process.env.AUTH_AUDIENCE ?? "lumo-admin";
-const ADMIN_EMAIL = process.env.ADMIN_DEV_EMAIL ?? "admin@lumo.local";
+const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
+const ADMIN_EMAIL = process.env.ADMIN_DEV_EMAIL ?? "admin@morbeh.local";
 const ADMIN_PASSWORD = process.env.ADMIN_DEV_PASSWORD;
+// G-70: every grant is written tenant-qualified, `tenant/<tenantId>/<permission>` — the only object
+// reads check (the bare twin was dropped once the live migration ran, 2026-09-21). The tenant is named
+// here, once, and passed to the writer; the writer never reads a default of its own.
+const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 // Every :read permission the Admin Web screens built in Phase A.30/A.31 call through AdminGuard
 // (apps/admin/src/interfaces/*.admin-controller.ts) — grep'd, not guessed.
@@ -55,12 +61,12 @@ async function ensureHydraClient() {
     body: JSON.stringify({
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
-      client_name: "Lumo Admin Web",
+      client_name: "Morbeh Admin Web",
       grant_types: ["authorization_code"],
       response_types: ["code"],
       redirect_uris: [REDIRECT_URI],
       token_endpoint_auth_method: "client_secret_post",
-      scope: "openid lumo.admin",
+      scope: "openid morbeh.admin",
       audience: [AUDIENCE],
       subject_type: "public",
     }),
@@ -107,32 +113,34 @@ async function ensureAdminIdentity() {
   return identity.id;
 }
 
-async function ensurePermissionTuples(identityId) {
+async function putGrant(object, identityId) {
+  const response = await fetch(`${KETO_WRITE_URL}/admin/relation-tuples`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      namespace: "permissions",
+      object,
+      relation: "granted",
+      subject_id: identityId,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`failed to grant "${object}": ${response.status} ${await response.text()}`);
+  }
+}
+
+async function ensurePermissionTuples(identityId, tenantId) {
   for (const permission of READ_PERMISSIONS) {
-    const response = await fetch(`${KETO_WRITE_URL}/admin/relation-tuples`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        namespace: "permissions",
-        object: permission,
-        relation: "granted",
-        subject_id: identityId,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `failed to grant "${permission}": ${response.status} ${await response.text()}`,
-      );
-    }
+    await putGrant(`tenant/${tenantId}/${permission}`, identityId);
   }
 }
 
 try {
   await ensureHydraClient();
   const identityId = await ensureAdminIdentity();
-  await ensurePermissionTuples(identityId);
+  await ensurePermissionTuples(identityId, TENANT_ID);
   console.error(
-    `Auth stack seeded: Hydra client "${CLIENT_ID}", Kratos identity ${identityId} (${ADMIN_EMAIL}), ${READ_PERMISSIONS.length} Keto grants.`,
+    `Auth stack seeded: Hydra client "${CLIENT_ID}", Kratos identity ${identityId} (${ADMIN_EMAIL}), ${READ_PERMISSIONS.length} Keto grants (tenant/${TENANT_ID}/).`,
   );
 } catch (error) {
   console.error(

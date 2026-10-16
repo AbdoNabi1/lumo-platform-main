@@ -99,13 +99,13 @@ async function main(): Promise<void> {
 
     // ---- Catalog: brand + category ----
     const brand = unwrap<{ id: string }>(
-      await catalog.brands.create({ name: "Acme Toys", slug: "acme-toys" }),
+      await catalog.brands.create({ name: "Acme Toys", slug: "acme-toys", tenantId: TENANT_ID }),
       "create brand",
     );
     logger.info("seed: created brand", { brandId: brand.id, name: "Acme Toys" });
 
     const category = unwrap<{ id: string }>(
-      await catalog.categories.create({ name: "Toys", slug: "toys" }),
+      await catalog.categories.create({ name: "Toys", slug: "toys", tenantId: TENANT_ID }),
       "create category",
     );
     logger.info("seed: created category", { categoryId: category.id, name: "Toys" });
@@ -121,23 +121,29 @@ async function main(): Promise<void> {
           variants: [
             { sku: seed.variantSku, priceAmountMinor: seed.priceAmountMinor, currency: CURRENCY },
           ],
+          tenantId: TENANT_ID,
         }),
         `create product "${seed.sku}"`,
       );
 
       unwrap(
-        await catalog.products.setBrand({ productId: created.id, brandId: brand.id }),
+        await catalog.products.setBrand({
+          productId: created.id,
+          brandId: brand.id,
+          tenantId: TENANT_ID,
+        }),
         `set brand on product "${seed.sku}"`,
       );
       unwrap(
         await catalog.products.assignCategories({
           productId: created.id,
           categoryIds: [category.id],
+          tenantId: TENANT_ID,
         }),
         `assign categories on product "${seed.sku}"`,
       );
       unwrap(
-        await catalog.products.publish({ productId: created.id }),
+        await catalog.products.publish({ productId: created.id, tenantId: TENANT_ID }),
         `publish product "${seed.sku}"`,
       );
 
@@ -151,7 +157,11 @@ async function main(): Promise<void> {
 
     // ---- Catalog: one collection containing every seeded product ----
     const collection = unwrap<{ id: string }>(
-      await catalog.collections.create({ name: "Featured Toys", slug: "featured-toys" }),
+      await catalog.collections.create({
+        name: "Featured Toys",
+        slug: "featured-toys",
+        tenantId: TENANT_ID,
+      }),
       "create collection",
     );
     for (const product of products) {
@@ -159,12 +169,13 @@ async function main(): Promise<void> {
         await catalog.collections.addProduct({
           collectionId: collection.id,
           productId: product.id,
+          tenantId: TENANT_ID,
         }),
         `add product "${product.id}" to collection`,
       );
     }
     unwrap(
-      await catalog.collections.publish({ collectionId: collection.id }),
+      await catalog.collections.publish({ collectionId: collection.id, tenantId: TENANT_ID }),
       "publish collection",
     );
     logger.info("seed: created + published collection", {
@@ -175,20 +186,31 @@ async function main(): Promise<void> {
 
     // ---- Identity: one demo customer ----
     const customer = unwrap<{ customerId: string }>(
-      await identity.customers.register({ email: "demo@lumo.local", name: "Demo Customer" }),
+      await identity.customers.register({
+        email: "demo@morbeh.local",
+        name: "Demo Customer",
+        tenantId: TENANT_ID,
+      }),
       "register customer",
     );
     logger.info("seed: registered customer", {
       customerId: customer.customerId,
-      email: "demo@lumo.local",
+      email: "demo@morbeh.local",
     });
 
     // ---- Pricing: one active price list, one published price per product ----
     const priceList = unwrap<{ id: string }>(
-      await pricing.priceLists.create({ name: "Default Retail", currency: CURRENCY }),
+      await pricing.priceLists.create({
+        tenantId: TENANT_ID,
+        name: "Default Retail",
+        currency: CURRENCY,
+      }),
       "create price list",
     );
-    unwrap(await pricing.priceLists.activate({ priceListId: priceList.id }), "activate price list");
+    unwrap(
+      await pricing.priceLists.activate({ tenantId: TENANT_ID, priceListId: priceList.id }),
+      "activate price list",
+    );
     logger.info("seed: created + activated price list", {
       priceListId: priceList.id,
       name: "Default Retail",
@@ -197,6 +219,7 @@ async function main(): Promise<void> {
     for (const product of products) {
       const price = unwrap<{ id: string }>(
         await pricing.prices.create({
+          tenantId: TENANT_ID,
           priceListId: priceList.id,
           productId: product.id,
           amountMinor: product.priceAmountMinor,
@@ -205,7 +228,7 @@ async function main(): Promise<void> {
         `create price for product "${product.id}"`,
       );
       unwrap(
-        await pricing.prices.publish({ priceId: price.id }),
+        await pricing.prices.publish({ tenantId: TENANT_ID, priceId: price.id }),
         `publish price for product "${product.id}"`,
       );
       logger.info("seed: created + published price", {
@@ -218,7 +241,11 @@ async function main(): Promise<void> {
 
     // ---- Inventory: one warehouse, stocked with every product ----
     const warehouse = unwrap<{ warehouseId: string }>(
-      await inventory.warehouse.register({ code: "MAIN", name: "Main Warehouse" }),
+      await inventory.warehouse.register({
+        tenantId: TENANT_ID,
+        code: "MAIN",
+        name: "Main Warehouse",
+      }),
       "register warehouse",
     );
     logger.info("seed: registered warehouse", {
@@ -230,6 +257,7 @@ async function main(): Promise<void> {
     for (const product of products) {
       const received = unwrap<{ available: number }>(
         await inventory.inventory.receive({
+          tenantId: TENANT_ID,
           productId: product.id,
           warehouseId: warehouse.warehouseId,
           quantity: 100,

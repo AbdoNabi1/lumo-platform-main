@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -13,8 +13,6 @@ export interface PrismaPricingRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 function requireTx(tx: unknown, repo: string): TransactionClient {
@@ -22,6 +20,18 @@ function requireTx(tx: unknown, repo: string): TransactionClient {
     throw new Error(`${repo}.save requires the unit of work's transaction client (ADR-0003).`);
   }
   return tx as TransactionClient;
+}
+
+/** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
 }
 
 /** Production `PriceRepository` on the `pricing` schema (ADR-0003 locking + same-tx outbox). */
@@ -32,9 +42,8 @@ export class PrismaPriceRepository implements PriceRepository {
     this.deps = deps;
   }
 
-  async save(price: Price, tx?: unknown): Promise<void> {
+  async save(price: Price, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaPriceRepository");
-    const tenantId = this.deps.tenantId;
     const row = PriceMapper.toRow(price, tenantId);
 
     if (price.version === 0) {
@@ -62,52 +71,48 @@ export class PrismaPriceRepository implements PriceRepository {
       }
     }
 
-    await this.deps.outbox.write(price.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      price.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Price | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.price.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Price | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.price.findFirst({ where: { id, tenantId, deletedAt: null } }),
+    );
     return row === null ? null : PriceMapper.toDomain(row);
   }
 
-  async delete(price: Price, tx?: unknown): Promise<void> {
-    await this.save(price, tx);
+  async delete(price: Price, tenantId: string, tx?: unknown): Promise<void> {
+    await this.save(price, tenantId, tx);
   }
 
   async findPublishedByProduct(
     productRef: string,
     currency: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<readonly Price[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.price.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        productRef,
-        currency,
-        status: "published",
-        deletedAt: null,
-      },
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.price.findMany({
+        where: { tenantId, productRef, currency, status: "published", deletedAt: null },
+      }),
+    );
     return rows.map((row) => PriceMapper.toDomain(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Price>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Price>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.price.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        deletedAt: null,
-        ...(after ? { id: { gt: after } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.price.findMany({
+        where: { tenantId, deletedAt: null, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => PriceMapper.toDomain(row)),
       limit,
@@ -124,9 +129,8 @@ export class PrismaPriceListRepository implements PriceListRepository {
     this.deps = deps;
   }
 
-  async save(list: PriceList, tx?: unknown): Promise<void> {
+  async save(list: PriceList, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaPriceListRepository");
-    const tenantId = this.deps.tenantId;
 
     if (list.version === 0) {
       await client.priceList.create({ data: PriceListMapper.toRow(list, tenantId) });
@@ -142,14 +146,17 @@ export class PrismaPriceListRepository implements PriceListRepository {
       }
     }
 
-    await this.deps.outbox.write(list.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      list.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<PriceList | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.priceList.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<PriceList | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.priceList.findFirst({ where: { id, tenantId, deletedAt: null } }),
+    );
     return row === null ? null : PriceListMapper.toDomain(row);
   }
 }

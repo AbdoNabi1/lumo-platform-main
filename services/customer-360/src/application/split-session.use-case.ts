@@ -14,6 +14,9 @@ import type { SessionHistoryStore } from "../ports/session-history-store";
 import type { SessionStore } from "../ports/session-store";
 
 export interface SplitSessionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   /** The session incorrectly containing more than one visit/person (the textbook case: a shared
    * kiosk or family device recorded as one continuous session_id). */
   readonly sessionId: string;
@@ -74,7 +77,7 @@ export class SplitSession implements UseCase<SplitSessionInput, SplitSessionOutp
       );
     }
 
-    const existing = await this.deps.sessions.getCurrent(input.sessionId);
+    const existing = await this.deps.sessions.getCurrent(input.sessionId, input.tenantId);
     if (existing === null) {
       return err(
         new ValidationError("Cannot split a session that was never observed", [
@@ -89,6 +92,7 @@ export class SplitSession implements UseCase<SplitSessionInput, SplitSessionOutp
         const occurredAt = this.deps.clock.now();
         await this.deps.history.append(
           toSnapshot(closed, "split", occurredAt.toISOString()),
+          input.tenantId,
           new SessionClosed(
             {
               eventId: this.deps.idGenerator.generate(),
@@ -103,7 +107,7 @@ export class SplitSession implements UseCase<SplitSessionInput, SplitSessionOutp
           ),
           tx,
         );
-        await this.deps.sessions.saveCurrent(closed, tx);
+        await this.deps.sessions.saveCurrent(closed, input.tenantId, tx);
       }
 
       const newSession = openSession({
@@ -117,6 +121,7 @@ export class SplitSession implements UseCase<SplitSessionInput, SplitSessionOutp
       const startOccurredAt = this.deps.clock.now();
       await this.deps.history.append(
         toSnapshot(newSession, "split", startOccurredAt.toISOString()),
+        input.tenantId,
         new SessionStarted(
           {
             eventId: this.deps.idGenerator.generate(),
@@ -133,7 +138,7 @@ export class SplitSession implements UseCase<SplitSessionInput, SplitSessionOutp
         ),
         tx,
       );
-      await this.deps.sessions.saveCurrent(newSession, tx);
+      await this.deps.sessions.saveCurrent(newSession, input.tenantId, tx);
 
       const transitionId = this.deps.idGenerator.generate();
       const event = new SessionSplit(
@@ -162,6 +167,7 @@ export class SplitSession implements UseCase<SplitSessionInput, SplitSessionOutp
           actor: input.actor,
           occurredAt: input.splitAt,
         },
+        input.tenantId,
         event,
         tx,
       );

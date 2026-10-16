@@ -232,7 +232,7 @@ pnpm --filter admin exec tsc --noEmit -p .
 
 ## 15. Environment Limitations
 
-Live verification (real Postgres-backed Cart/Pricing/Checkout, a real Fastify Zod pipeline end-to-end) was **not attempted**, consistent with every prior session in this project (`[[lumo-integration-verification-sprint]]`, `[[lumo-dashboard-orders-phase1-1-verification]]`, H-01's own §16) — Docker Desktop and WSL2 have been confirmed broken in this sandbox across multiple prior sessions.
+Live verification (real Postgres-backed Cart/Pricing/Checkout, a real Fastify Zod pipeline end-to-end) was **not attempted**, consistent with every prior session in this project (`[[morbeh-integration-verification-sprint]]`, `[[morbeh-dashboard-orders-phase1-1-verification]]`, H-01's own §16) — Docker Desktop and WSL2 have been confirmed broken in this sandbox across multiple prior sessions.
 
 - **PROVEN BY TESTS / PROVEN IN-MEMORY:** the entire exploit-then-fix chain (§7, §11) — real `wireAdmin()` composition, real `AddItem`/`ReplaceVariant`/`LoadItems`/`RecalculateTotals`/`GeneratePaymentIntentRequest` use cases, real in-memory `Cart`/`CheckoutSession`/`Price` repositories and domain invariants, driven through the actual `RouteDefinition.handle()` boundary.
 - **PROVEN LIVE:** nothing — no live-stack run was possible.

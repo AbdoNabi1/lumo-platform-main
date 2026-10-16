@@ -8,6 +8,8 @@ import { TaxClass } from "../domain/tax-class";
 import type { TaxClassRepository } from "../domain/tax-class-repository";
 
 export interface CreateTaxClassInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly code: string;
   readonly name: string;
 }
@@ -42,7 +44,7 @@ export class CreateTaxClass implements UseCase<
     if (!name.ok) return err(name.error);
 
     return this.deps.unitOfWork.run<Result<CreateTaxClassOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.taxClasses.findByCode(input.code, tx);
+      const existing = await this.deps.taxClasses.findByCode(input.code, input.tenantId, tx);
       if (existing !== null) {
         return err(new ConflictError(`Tax class code '${input.code}' is already in use`));
       }
@@ -54,7 +56,7 @@ export class CreateTaxClass implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.taxClasses.save(taxClass, tx);
+      await this.deps.taxClasses.save(taxClass, input.tenantId, tx);
       return ok({ id: taxClass.id.toString() });
     });
   }

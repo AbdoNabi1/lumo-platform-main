@@ -82,12 +82,12 @@ describe("readSession", () => {
   it("resolves email from the token's claims when present (Phase A.34)", async () => {
     cookiesMock.mockResolvedValue(cookieJar("good.token.here"));
     jwtVerifyMock.mockResolvedValue({
-      payload: { sub: "identity-1", kind: "staff", roles: ["admin"], email: "admin@lumo.local" },
+      payload: { sub: "identity-1", kind: "staff", roles: ["admin"], email: "admin@morbeh.local" },
     });
     const { readSession } = await import("./session");
 
     const session = await readSession();
-    expect(session?.email).toBe("admin@lumo.local");
+    expect(session?.email).toBe("admin@morbeh.local");
   });
 
   it("leaves email undefined when the token has no email claim — never invents one", async () => {

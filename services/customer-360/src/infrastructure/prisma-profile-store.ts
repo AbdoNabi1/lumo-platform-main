@@ -4,13 +4,11 @@ import type { CustomerProfile } from "../domain/customer-profile";
 import type { IdentifierRef } from "../ports/identity-decision";
 import type { ProfileStore } from "../ports/profile-store";
 import { fieldsToJson, jsonToFields } from "./profile-fields-json";
+import { readScoped } from "./scoped-read";
 
 export interface PrismaProfileStoreDeps {
   readonly prisma: Database;
   readonly idGenerator: { generate(): string };
-  /** Tenant scope for every query (ADR-0008 §2) — same convention as the Identity Engine's Prisma
-   * adapters. */
-  readonly tenantId: string;
 }
 
 interface CacheRow {
@@ -40,25 +38,30 @@ export class PrismaProfileStore implements ProfileStore {
     this.deps = deps;
   }
 
-  async getCurrent(identifier: IdentifierRef, tx?: unknown): Promise<CustomerProfile | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.customerProfileCache.findUnique({
-      where: {
-        tenantId_identifierType_identifierValue: {
-          tenantId: this.deps.tenantId,
-          identifierType: identifier.type,
-          identifierValue: identifier.value,
+  async getCurrent(
+    identifier: IdentifierRef,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<CustomerProfile | null> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const row = await client.customerProfileCache.findUnique({
+        where: {
+          tenantId_identifierType_identifierValue: {
+            tenantId,
+            identifierType: identifier.type,
+            identifierValue: identifier.value,
+          },
         },
-      },
+      });
+      return row === null ? null : toDomain(row);
     });
-    return row === null ? null : toDomain(row);
   }
 
-  async saveCurrent(profile: CustomerProfile, tx?: unknown): Promise<void> {
+  async saveCurrent(profile: CustomerProfile, tenantId: string, tx?: unknown): Promise<void> {
     const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
     const where = {
       tenantId_identifierType_identifierValue: {
-        tenantId: this.deps.tenantId,
+        tenantId,
         identifierType: profile.identifierType,
         identifierValue: profile.identifierValue,
       },
@@ -72,7 +75,7 @@ export class PrismaProfileStore implements ProfileStore {
       where,
       create: {
         id: this.deps.idGenerator.generate(),
-        tenantId: this.deps.tenantId,
+        tenantId,
         identifierType: profile.identifierType,
         identifierValue: profile.identifierValue,
         ...data,
@@ -81,15 +84,16 @@ export class PrismaProfileStore implements ProfileStore {
     });
   }
 
-  async listIdentifiers(tx?: unknown): Promise<readonly IdentifierRef[]> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const rows = await client.customerProfileCache.findMany({
-      where: { tenantId: this.deps.tenantId },
-      select: { identifierType: true, identifierValue: true },
+  async listIdentifiers(tenantId: string, tx?: unknown): Promise<readonly IdentifierRef[]> {
+    return readScoped(this.deps.prisma, tenantId, tx, async (client) => {
+      const rows = await client.customerProfileCache.findMany({
+        where: { tenantId },
+        select: { identifierType: true, identifierValue: true },
+      });
+      return rows.map((row) => ({
+        type: row.identifierType as IdentifierType,
+        value: row.identifierValue,
+      }));
     });
-    return rows.map((row) => ({
-      type: row.identifierType as IdentifierType,
-      value: row.identifierValue,
-    }));
   }
 }

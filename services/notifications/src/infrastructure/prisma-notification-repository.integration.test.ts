@@ -34,13 +34,13 @@ describe.runIf(Boolean(databaseUrl))("PrismaNotificationRepository (integration)
       clock,
       producer: "notifications",
     });
-    const context = rootEventContext(ids, tenantId);
-    const repository = new PrismaNotificationRepository({ prisma, tenantId, outbox, context });
+    const context = rootEventContext(ids);
+    const repository = new PrismaNotificationRepository({ prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(prisma);
     return {
       prisma,
       repository,
-      save: (n: Notification) => unitOfWork.run((tx) => repository.save(n, tx)),
+      save: (n: Notification) => unitOfWork.run((tx) => repository.save(n, tenantId, tx)),
     };
   }
 
@@ -74,15 +74,18 @@ describe.runIf(Boolean(databaseUrl))("PrismaNotificationRepository (integration)
     }
     await saveOther(newNotification("idem-x"));
 
-    const page = await repository.list({ first: 2 });
+    const page = await repository.list({ first: 2 }, tenantId);
     expect(page.items).toHaveLength(2);
     expect(page.pageInfo.hasNextPage).toBe(true);
 
-    const rest = await repository.list({ first: 10, after: page.pageInfo.endCursor ?? undefined });
+    const rest = await repository.list(
+      { first: 10, after: page.pageInfo.endCursor ?? undefined },
+      tenantId,
+    );
     expect(rest.items).toHaveLength(1);
     expect(rest.pageInfo.hasNextPage).toBe(false);
 
-    const otherPage = await otherRepository.list({ first: 10 });
+    const otherPage = await otherRepository.list({ first: 10 }, other);
     expect(otherPage.items).toHaveLength(1);
     await prisma.$disconnect();
   });

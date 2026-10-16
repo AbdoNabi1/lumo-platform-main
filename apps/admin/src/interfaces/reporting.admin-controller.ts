@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { ReportingController } from "@platform/reporting";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -64,7 +63,10 @@ export class ReportingAdminController {
     return this.reporting.advanceDashboard(input);
   }
 
-  async listReportDefinitions(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listReportDefinitions(
+    principal: Principal,
+    input: Parameters<ReportingController["listReportDefinitions"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "reporting:read");
     if (denied) return denied;
     return this.reporting.listReportDefinitions(input);
@@ -79,7 +81,10 @@ export class ReportingAdminController {
     return this.reporting.getReportDefinition(input);
   }
 
-  async listDashboards(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async listDashboards(
+    principal: Principal,
+    input: Parameters<ReportingController["listDashboards"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "reporting:read");
     if (denied) return denied;
     return this.reporting.listDashboards(input);

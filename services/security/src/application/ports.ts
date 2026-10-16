@@ -73,7 +73,7 @@ export interface IdentityDirectoryPort {
  * `identity.customer.consent_changed` events (G-SEC-4 / H-2); it never re-derives or re-stores consent.
  */
 export interface ConsentPort {
-  hasConsent(subjectRef: string, purpose: string): Promise<boolean>;
+  hasConsent(subjectRef: string, purpose: string, tenantId: string): Promise<boolean>;
 }
 
 /** A projected consent fact — Identity remains the owner; this is a read-optimised copy (H-2). */
@@ -92,8 +92,13 @@ export interface ConsentProjectionRecord {
  * events converge without ever regressing a newer decision. The {@link ConsentPort} reads it.
  */
 export interface ConsentProjectionStore {
-  upsert(record: ConsentProjectionRecord, tx?: unknown): Promise<void>;
-  get(subjectRef: string, purpose: string, tx?: unknown): Promise<ConsentProjectionRecord | null>;
+  upsert(record: ConsentProjectionRecord, tenantId: string, tx?: unknown): Promise<void>;
+  get(
+    subjectRef: string,
+    purpose: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<ConsentProjectionRecord | null>;
 }
 
 /**
@@ -130,28 +135,42 @@ export interface IdentityMembershipRecord {
 /**
  * Persists Security's read projection of Identity's users/organizations/memberships (H-2). All writes are
  * last-writer-wins by `occurredAt`; status/role mutations update in place (create precedes mutate per
- * Kafka aggregate ordering). Every row is tenant-scoped by the store's injected deployment tenant
- * (ADR-0008); the Identity entity's own tenant is a business column.
+ * Kafka aggregate ordering). Every row is scoped by the per-call `tenantId` (ADR-0014); the Identity
+ * entity's own tenant (`userTenant`/`orgTenant`) is a business column, not the row scope.
  */
 export interface IdentityProjectionStore {
-  upsertUser(record: IdentityUserRecord, tx?: unknown): Promise<void>;
+  upsertUser(record: IdentityUserRecord, tenantId: string, tx?: unknown): Promise<void>;
   setUserStatus(
     userId: string,
     status: IdentityUserRecord["status"],
     occurredAt: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<void>;
-  getUser(userId: string, tx?: unknown): Promise<IdentityUserRecord | null>;
-  upsertOrganization(record: IdentityOrganizationRecord, tx?: unknown): Promise<void>;
-  getOrganization(organizationId: string, tx?: unknown): Promise<IdentityOrganizationRecord | null>;
-  upsertMembership(record: IdentityMembershipRecord, tx?: unknown): Promise<void>;
+  getUser(userId: string, tenantId: string, tx?: unknown): Promise<IdentityUserRecord | null>;
+  upsertOrganization(
+    record: IdentityOrganizationRecord,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<void>;
+  getOrganization(
+    organizationId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<IdentityOrganizationRecord | null>;
+  upsertMembership(record: IdentityMembershipRecord, tenantId: string, tx?: unknown): Promise<void>;
   setMembershipRole(
     membershipId: string,
     role: string,
     occurredAt: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<void>;
-  listMembershipsByUser(userId: string, tx?: unknown): Promise<readonly IdentityMembershipRecord[]>;
+  listMembershipsByUser(
+    userId: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly IdentityMembershipRecord[]>;
 }
 
 /**

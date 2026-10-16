@@ -14,23 +14,29 @@ export interface RegistryEntryOutput {
 
 async function announce(
   deps: SecurityDeps,
+  tenantId: string,
   registry: string,
   key: string,
   version: number,
 ): Promise<void> {
-  await deps.outbox.publish([
-    securityEvent(
-      deps,
-      "registry",
-      deps.idGenerator.generate(),
-      `${registry}:${key}`,
-      "security.registry.updated",
-      `v${version}`,
-    ),
-  ]);
+  await deps.outbox.publish(
+    [
+      securityEvent(
+        deps,
+        "registry",
+        deps.idGenerator.generate(),
+        `${registry}:${key}`,
+        "security.registry.updated",
+        `v${version}`,
+      ),
+    ],
+    tenantId,
+  );
 }
 
 export interface RegisterPolicyFragmentInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly key: string;
   readonly description?: string;
   readonly expression: PolicyExpression;
@@ -53,12 +59,14 @@ export class RegisterPolicyFragment implements UseCase<
     };
     const entry = this.deps.policyFragments.register({ key: input.key, value });
     if (!entry.ok) return err(entry.error);
-    await announce(this.deps, "policy-fragment", input.key, entry.value.version);
+    await announce(this.deps, input.tenantId, "policy-fragment", input.key, entry.value.version);
     return ok({ key: input.key, version: entry.value.version });
   }
 }
 
 export interface RegisterMfaMethodInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly kind: MfaMethodKind;
   readonly displayName: string;
   readonly enabled?: boolean;
@@ -77,12 +85,14 @@ export class RegisterMfaMethod implements UseCase<
       value: { kind: input.kind, displayName: input.displayName, enabled: input.enabled ?? true },
     });
     if (!entry.ok) return err(entry.error);
-    await announce(this.deps, "mfa-method", input.kind, entry.value.version);
+    await announce(this.deps, input.tenantId, "mfa-method", input.kind, entry.value.version);
     return ok({ key: input.kind, version: entry.value.version });
   }
 }
 
 export interface RegisterPermissionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly permission: string;
   readonly description: string;
 }
@@ -100,12 +110,14 @@ export class RegisterPermission implements UseCase<
       value: { permission: input.permission, description: input.description },
     });
     if (!entry.ok) return err(entry.error);
-    await announce(this.deps, "permission", input.permission, entry.value.version);
+    await announce(this.deps, input.tenantId, "permission", input.permission, entry.value.version);
     return ok({ key: input.permission, version: entry.value.version });
   }
 }
 
 export interface RegisterComplianceRuleInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly id: string;
   readonly framework: ComplianceFramework;
   readonly description: string;
@@ -134,7 +146,7 @@ export class RegisterComplianceRule implements UseCase<
       tags: [input.framework],
     });
     if (!entry.ok) return err(entry.error);
-    await announce(this.deps, "compliance-rule", input.id, entry.value.version);
+    await announce(this.deps, input.tenantId, "compliance-rule", input.id, entry.value.version);
     return ok({ key: input.id, version: entry.value.version });
   }
 }

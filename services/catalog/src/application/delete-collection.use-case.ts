@@ -7,6 +7,8 @@ import type { CollectionRepository } from "../domain/collection-repository";
 
 export interface DeleteCollectionInput {
   readonly collectionId: string;
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
 }
 
 export interface DeleteCollectionOutput {
@@ -36,7 +38,11 @@ export class DeleteCollection implements UseCase<
     input: DeleteCollectionInput,
   ): Promise<Result<DeleteCollectionOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<DeleteCollectionOutput, DomainError>>(async (tx) => {
-      const collection = await this.deps.collections.findById(input.collectionId, tx);
+      const collection = await this.deps.collections.findById(
+        input.collectionId,
+        input.tenantId,
+        tx,
+      );
       if (collection === null) {
         return err(new NotFoundError("Collection not found"));
       }
@@ -46,7 +52,7 @@ export class DeleteCollection implements UseCase<
         if (isDomainError(error)) return err(error);
         throw error;
       }
-      await this.deps.collections.delete(collection, tx);
+      await this.deps.collections.delete(collection, input.tenantId, tx);
       return ok({ collectionId: collection.id.toString() });
     });
   }

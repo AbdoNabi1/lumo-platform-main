@@ -9,6 +9,9 @@ import type { SessionHistoryStore } from "../ports/session-history-store";
 import type { SessionStore } from "../ports/session-store";
 
 export interface RebuildSessionsInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly sessionId: string;
 }
 
@@ -45,7 +48,7 @@ export class RebuildSessions implements UseCase<
   }
 
   async execute(input: RebuildSessionsInput): Promise<Result<RebuildSessionsOutput, DomainError>> {
-    const latest = await this.deps.history.latestFor(input.sessionId);
+    const latest = await this.deps.history.latestFor(input.sessionId, input.tenantId);
     if (latest === null) {
       return ok({ session: null });
     }
@@ -56,8 +59,8 @@ export class RebuildSessions implements UseCase<
       const occurredAt = this.deps.clock.now();
       const snapshot = toSnapshot(rebuilt, "rebuilt", occurredAt.toISOString());
 
-      await this.deps.history.append(snapshot, undefined, tx);
-      await this.deps.sessions.saveCurrent(rebuilt, tx);
+      await this.deps.history.append(snapshot, input.tenantId, undefined, tx);
+      await this.deps.sessions.saveCurrent(rebuilt, input.tenantId, tx);
 
       return ok({ session: rebuilt });
     });

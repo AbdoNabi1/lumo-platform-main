@@ -1,14 +1,54 @@
+/**
+ * Hands out a shop's next order number (1001, 1002, …), as the digit string the order stores — the
+ * admin UI shows it as `#1001`. Call it INSIDE the unit of work that saves the order and pass that
+ * transaction as `tx`: the counter then commits or rolls back with the order, so a failed order
+ * creation never burns a number.
+ */
+export interface OrderNumberAllocator {
+  next(tenantId: string, tx?: unknown): Promise<string>;
+}
+
 export interface PaymentCaptureResult {
   readonly paymentRef: string;
 }
 
-/** Requests a payment capture from Payments — Orders never captures payment itself, only records the returned ref. */
+/** Requests a payment capture from Payments — Orders never captures payment itself, only records the returned ref. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface PaymentPort {
   requestCapture(
     orderId: string,
     amountMinor: number,
     currency: string,
+    tenantId: string,
   ): Promise<PaymentCaptureResult>;
+}
+
+/**
+ * Voids the payment that belongs to an order that was just cancelled before it was paid (G-126).
+ * Best-effort by contract: implementers MUST NOT throw for "nothing to void" (already captured,
+ * already cancelled, not found) — the order is cancelled whatever Payments answers. ADR-0014:
+ * `tenantId` is an explicit per-call parameter.
+ */
+export interface PaymentVoidPort {
+  voidPayment(paymentRef: string, tenantId: string): Promise<void>;
+}
+
+/**
+ * Cancels the open fulfillment order of an order that was just cancelled (G-130). Best-effort by
+ * contract: implementers MUST NOT throw for "nothing to cancel" (no fulfillment order, or one already
+ * past the point where Fulfillment allows cancelling it). ADR-0014: `tenantId` is an explicit per-call
+ * parameter.
+ */
+export interface FulfillmentCancelPort {
+  cancelOpenFulfillment(orderId: string, tenantId: string): Promise<void>;
+}
+
+/**
+ * Releases the stock Inventory is holding for an order that was just cancelled (G-130) — every
+ * reservation whose reference is the order's id. Best-effort by contract: implementers MUST NOT throw
+ * for "nothing is reserved". ADR-0014: `tenantId` is an explicit per-call parameter.
+ */
+export interface StockReleasePort {
+  releaseOrderStock(orderId: string, tenantId: string): Promise<void>;
 }
 
 export interface InventoryReservationResult {
@@ -31,9 +71,11 @@ export interface InventoryReservationResult {
  * this phase's scope per the brief), is what closes the orphan-reservation window. See
  * `in-memory-port-adapters.ts` for the reference implementation and `order-lifecycle.use-cases.ts`'s
  * `RequestFulfillment` class doc for the full analysis.
+ * ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. The
+ * idempotency key is `(tenantId, orderId)`.
  */
 export interface InventoryPort {
-  requestReservation(orderId: string): Promise<InventoryReservationResult>;
+  requestReservation(orderId: string, tenantId: string): Promise<InventoryReservationResult>;
 }
 
 export interface ShipmentResult {
@@ -44,23 +86,23 @@ export interface ShipmentResult {
  * Requests shipment creation from Shipping — Orders never ships anything itself.
  *
  * IDEMPOTENCY CONTRACT (Phase A.16, Task 4/5): same `orderId`-keyed idempotency requirement as
- * `InventoryPort.requestReservation` — see that interface's doc for the full reasoning.
+ * `InventoryPort.requestReservation` — see that interface's doc for the full reasoning. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter.
  */
 export interface ShippingPort {
-  requestShipment(orderId: string): Promise<ShipmentResult>;
+  requestShipment(orderId: string, tenantId: string): Promise<ShipmentResult>;
 }
 
-/** Sends a best-effort lifecycle notification — reference-only, never blocks a transition's own result. */
+/** Sends a best-effort lifecycle notification — reference-only, never blocks a transition's own result. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface NotificationPort {
-  notify(customerRef: string, orderNumber: string, status: string): Promise<void>;
+  notify(customerRef: string, orderNumber: string, status: string, tenantId: string): Promise<void>;
 }
 
 /**
  * Verifies a captured payment exists for this order/reference with Payments — reference-only,
  * Orders never queries Payments' own store directly. Gates the admin backoffice `markOrderPaid`
  * action (the ONE caller-asserted path — the event-driven `PaymentCapturedConsumer` path is
- * already trustworthy by construction, since the event itself is the captured-payment evidence).
+ * already trustworthy by construction, since the event itself is the captured-payment evidence). ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter.
  */
 export interface PaymentVerificationPort {
-  hasCapturedPayment(orderId: string, paymentRef: string): Promise<boolean>;
+  hasCapturedPayment(orderId: string, paymentRef: string, tenantId: string): Promise<boolean>;
 }

@@ -7,7 +7,7 @@ apps/services).
 platform/
 ├── apps/
 │   ├── storefront/             Next.js 15 app shell (foundation; no business pages)
-│   └── admin-web/              Next.js admin surface — the Lumo Dashboard (docs/ui/)
+│   └── admin-web/              Next.js admin surface — the Morbeh Dashboard (docs/ui/)
 ├── packages/
 │   ├── ui/                     @platform/ui — shadcn primitives, theme provider, cn
 │   ├── design/                 @platform/design — frozen design tokens + Tailwind v4 theme

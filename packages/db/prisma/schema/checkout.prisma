@@ -9,6 +9,7 @@ model CheckoutSession {
   cartRef           String   @map("cart_ref") // bare id into Cart — never an FK
   customerRef       String?  @map("customer_ref") // bare id into Identity — never an FK; null for a guest checkout
   sessionRef        String   @map("session_ref") // bare session reference — present for guest and customer sessions alike
+  contactEmail      String?  @map("contact_email") // where a guest's receipt goes; Identity resolves a guest customer from it (WP-1, G-52). Null on sessions created before it existed.
   currency          String
   state             String // started | locked | completed | failed | expired (domain-enforced)
   orderRef          String?  @map("order_ref") // bare id into Orders — never an FK
@@ -20,6 +21,7 @@ model CheckoutSession {
   taxMinor          Int?     @map("tax_minor")
   discountMinor     Int?     @map("discount_minor")
   totals            Json     @default("{}")
+  discounts         Json     @default("{}") // Phase 2: { codes, snapshot, rejectedAttempts, attemptsWindowStartedAt }; {} = none
   version           Int      @default(0)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")

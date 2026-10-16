@@ -24,8 +24,8 @@ export default async function NewComponentPage() {
               {t.componentDetail.back}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.componentCreate.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.componentCreate.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.componentCreate.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.componentCreate.subtitle}</p>
         </div>
 
         <Card>

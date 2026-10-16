@@ -35,7 +35,7 @@ describe("H-3 provider overrides (composition seam)", () => {
     });
 
     const result = body<{ malicious: boolean; score: number; providers: string[] }>(
-      await app.security.checkThreatIndicator({ indicator: "1.2.3.4" }),
+      await app.security.checkThreatIndicator({ tenantId: "tenant-a", indicator: "1.2.3.4" }),
     );
     expect(result.malicious).toBe(true);
     expect(result.score).toBe(97);

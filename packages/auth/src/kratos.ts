@@ -4,7 +4,7 @@ import type {
   Cache,
   ClaimsAuthenticator,
   Clock,
-  Principal,
+  AuthenticatedIdentity,
   PrincipalKind,
 } from "@platform/contracts";
 import type { Logger } from "@platform/utils";
@@ -65,7 +65,7 @@ export class KratosSessionAuthenticator implements ClaimsAuthenticator {
     this.options = options;
   }
 
-  async verify(token: string): Promise<Principal | null> {
+  async verify(token: string): Promise<AuthenticatedIdentity | null> {
     const context = await this.verifyWithClaims(token);
     return context?.principal ?? null;
   }
@@ -99,10 +99,13 @@ export class KratosSessionAuthenticator implements ClaimsAuthenticator {
         kind,
         roles: [...(meta.roles ?? [])],
       },
+      // Traits are USER-editable (self-service settings), so they come FIRST and the operator-written
+      // fields last: a trait named `tenant_id` or `session_id` must never override the verified claim
+      // the tenant resolver reads (a customer could otherwise choose their own tenant).
       claims: {
+        ...session.identity.traits,
         session_id: session.id,
         tenant_id: meta.tenant_id,
-        ...session.identity.traits,
       },
     };
     try {
@@ -130,7 +133,7 @@ export class KratosIdentityService {
   }
 
   /** Revokes ALL of an identity's sessions (logout-everywhere / compromise response). */
-  async revokeSessions(identityId: string, revokedBy: Principal): Promise<boolean> {
+  async revokeSessions(identityId: string, revokedBy: AuthenticatedIdentity): Promise<boolean> {
     const response = await this.options.fetch(
       `${this.options.adminUrl}/admin/identities/${encodeURIComponent(identityId)}/sessions`,
       { method: "DELETE" },

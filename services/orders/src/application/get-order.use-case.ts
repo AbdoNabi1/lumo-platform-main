@@ -5,6 +5,8 @@ import type { Order } from "../domain/order";
 import type { OrderRepository } from "../domain/order-repository";
 
 export interface GetOrderInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderId: string;
 }
 
@@ -21,7 +23,7 @@ export class GetOrder implements UseCase<GetOrderInput, Order, DomainError> {
   }
 
   async execute(input: GetOrderInput): Promise<Result<Order, DomainError>> {
-    const order = await this.deps.orders.findById(input.orderId);
+    const order = await this.deps.orders.findById(input.orderId, input.tenantId);
     if (order === null) {
       return err(new NotFoundError("Order not found"));
     }

@@ -1,11 +1,13 @@
-import type { CursorPage } from "@platform/types";
 import type { GetLocale, LocaleIdInput } from "../application/get-locale.use-case";
 import type {
   GetTranslationSet,
   TranslationSetIdInput,
 } from "../application/get-translation-set.use-case";
-import type { ListLocales } from "../application/list-locales.use-case";
-import type { ListTranslationSets } from "../application/list-translation-sets.use-case";
+import type { ListLocales, ListLocalesInput } from "../application/list-locales.use-case";
+import type {
+  ListTranslationSets,
+  ListTranslationSetsInput,
+} from "../application/list-translation-sets.use-case";
 import type {
   CreateLocale,
   CreateLocaleInput,
@@ -53,7 +55,7 @@ export class LocalizationController {
     return present(await this.deps.publishTranslation.execute(input), 200);
   }
 
-  async listLocales(input: CursorPage): Promise<ControllerResponse> {
+  async listLocales(input: ListLocalesInput): Promise<ControllerResponse> {
     return present(await this.deps.listLocales.execute(input), 200);
   }
 
@@ -61,7 +63,7 @@ export class LocalizationController {
     return present(await this.deps.getLocale.execute(input), 200);
   }
 
-  async listTranslationSets(input: CursorPage): Promise<ControllerResponse> {
+  async listTranslationSets(input: ListTranslationSetsInput): Promise<ControllerResponse> {
     return present(await this.deps.listTranslationSets.execute(input), 200);
   }
 

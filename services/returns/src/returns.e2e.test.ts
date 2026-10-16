@@ -20,6 +20,7 @@ function wire() {
 
 async function newReturnId(app: ReturnType<typeof wire>): Promise<string> {
   const created = await app.returns.create({
+    tenantId: "tenant-a",
     orderRef: "order-1",
     items: [
       {
@@ -39,15 +40,20 @@ describe("returns (end to end)", () => {
     const app = wire();
     const id = await newReturnId(app);
 
-    const decided = await app.returns.decision({ returnId: id, approved: true });
+    const decided = await app.returns.decision({
+      tenantId: "tenant-a",
+      returnId: id,
+      approved: true,
+    });
     expect(decided.status).toBe(200);
     expect((decided.body as { status: string }).status).toBe("approved");
 
-    const rma = await app.returns.rma({ returnId: id, rmaNumber: "RMA-1" });
+    const rma = await app.returns.rma({ tenantId: "tenant-a", returnId: id, rmaNumber: "RMA-1" });
     expect(rma.status).toBe(200);
     expect((rma.body as { status: string }).status).toBe("rma_generated");
 
     const received = await app.returns.receive({
+      tenantId: "tenant-a",
       returnId: id,
       source: "warehouse-1",
       callbackId: "cb-1",
@@ -57,6 +63,7 @@ describe("returns (end to end)", () => {
     expect((received.body as { status: string }).status).toBe("package_received");
 
     const inspected = await app.returns.inspection({
+      tenantId: "tenant-a",
       returnId: id,
       itemRef: "order-item-1",
       passed: true,
@@ -64,12 +71,14 @@ describe("returns (end to end)", () => {
     expect(inspected.status).toBe(200);
 
     const inspectionDone = await app.returns.advance({
+      tenantId: "tenant-a",
       returnId: id,
       toStatus: "inspection_completed",
     });
     expect(inspectionDone.status).toBe(200);
 
     const accepted = await app.returns.accept({
+      tenantId: "tenant-a",
       returnId: id,
       items: [{ orderItemRef: "order-item-1", disposition: "restock" }],
     });
@@ -77,6 +86,7 @@ describe("returns (end to end)", () => {
     expect((accepted.body as { status: string }).status).toBe("items_accepted");
 
     const resolved = await app.returns.resolution({
+      tenantId: "tenant-a",
       returnId: id,
       outcome: "refund",
       amountMinor: 1999,
@@ -85,7 +95,11 @@ describe("returns (end to end)", () => {
     expect(resolved.status).toBe(200);
     expect((resolved.body as { status: string }).status).toBe("refund_requested");
 
-    const closed = await app.returns.advance({ returnId: id, toStatus: "closed" });
+    const closed = await app.returns.advance({
+      tenantId: "tenant-a",
+      returnId: id,
+      toStatus: "closed",
+    });
     expect(closed.status).toBe(200);
 
     expect(await app.drainOutbox()).toBeGreaterThan(0);
@@ -100,28 +114,38 @@ describe("returns (end to end)", () => {
     const app = wire();
     const id = await newReturnId(app);
 
-    const found = await app.returns.getByOrder({ orderRef: "order-1" });
+    const found = await app.returns.getByOrder({ tenantId: "tenant-a", orderRef: "order-1" });
     expect(found.status).toBe(200);
     expect((found.body as { id: { toString(): string } }).id.toString()).toBe(id);
 
-    const missing = await app.returns.getByOrder({ orderRef: "order-does-not-exist" });
+    const missing = await app.returns.getByOrder({
+      tenantId: "tenant-a",
+      orderRef: "order-does-not-exist",
+    });
     expect(missing.status).toBe(404);
   });
 
   it("inspection is idempotent by itemRef — a repeat call doesn't change the recorded result", async () => {
     const app = wire();
     const id = await newReturnId(app);
-    await app.returns.decision({ returnId: id, approved: true });
-    await app.returns.rma({ returnId: id, rmaNumber: "RMA-2" });
-    await app.returns.receive({ returnId: id, source: "warehouse-1", callbackId: "cb-2" });
+    await app.returns.decision({ tenantId: "tenant-a", returnId: id, approved: true });
+    await app.returns.rma({ tenantId: "tenant-a", returnId: id, rmaNumber: "RMA-2" });
+    await app.returns.receive({
+      tenantId: "tenant-a",
+      returnId: id,
+      source: "warehouse-1",
+      callbackId: "cb-2",
+    });
 
     const first = await app.returns.inspection({
+      tenantId: "tenant-a",
       returnId: id,
       itemRef: "order-item-1",
       passed: true,
     });
     expect(first.status).toBe(200);
     const replay = await app.returns.inspection({
+      tenantId: "tenant-a",
       returnId: id,
       itemRef: "order-item-1",
       passed: false,
@@ -133,10 +157,11 @@ describe("returns (end to end)", () => {
   it("warehouse-callback idempotency: first processed, replay deduped", async () => {
     const app = wire();
     const id = await newReturnId(app);
-    await app.returns.decision({ returnId: id, approved: true });
-    await app.returns.rma({ returnId: id, rmaNumber: "RMA-3" });
+    await app.returns.decision({ tenantId: "tenant-a", returnId: id, approved: true });
+    await app.returns.rma({ tenantId: "tenant-a", returnId: id, rmaNumber: "RMA-3" });
 
     const first = await app.returns.receive({
+      tenantId: "tenant-a",
       returnId: id,
       source: "warehouse-1",
       callbackId: "cb-3",
@@ -144,6 +169,7 @@ describe("returns (end to end)", () => {
     expect((first.body as { duplicate: boolean }).duplicate).toBe(false);
 
     const replay = await app.returns.receive({
+      tenantId: "tenant-a",
       returnId: id,
       source: "warehouse-1",
       callbackId: "cb-3",
@@ -155,19 +181,31 @@ describe("returns (end to end)", () => {
   it("rejects an illegal transition (409)", async () => {
     const app = wire();
     const id = await newReturnId(app);
-    const response = await app.returns.advance({ returnId: id, toStatus: "rma_generated" });
+    const response = await app.returns.advance({
+      tenantId: "tenant-a",
+      returnId: id,
+      toStatus: "rma_generated",
+    });
     expect(response.status).toBe(409);
   });
 
   it("returns 404 for an unknown return request", async () => {
     const app = wire();
-    const response = await app.returns.advance({ returnId: "missing", toStatus: "approved" });
+    const response = await app.returns.advance({
+      tenantId: "tenant-a",
+      returnId: "missing",
+      toStatus: "approved",
+    });
     expect(response.status).toBe(404);
   });
 
   it("rejects an empty item list at creation (422)", async () => {
     const app = wire();
-    const response = await app.returns.create({ orderRef: "order-1", items: [] });
+    const response = await app.returns.create({
+      tenantId: "tenant-a",
+      orderRef: "order-1",
+      items: [],
+    });
     expect(response.status).toBe(422);
   });
 });

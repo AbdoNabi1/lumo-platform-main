@@ -25,6 +25,8 @@ export class InMemoryExampleRepository implements ExampleRepository {
 
   async save(example: ExampleAggregate, tx?: unknown): Promise<void> {
     this.store.set(example.id.toString(), example);
+    // Template only: this context has no tenant. A real context must merge the per-call tenantId
+    // into the event context — `{ ...this.context, tenantId }` — per ADR-0014 Amendment 7.
     await this.outbox.write(example.pullDomainEvents(), this.context, tx);
   }
 

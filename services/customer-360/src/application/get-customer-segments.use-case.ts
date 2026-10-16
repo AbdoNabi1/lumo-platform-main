@@ -9,6 +9,9 @@ import type { SegmentStore } from "../ports/segment-store";
 import type { ResolveIdentity } from "./resolve-identity.use-case";
 
 export interface GetCustomerSegmentsInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
 }
 
@@ -48,6 +51,7 @@ export class GetCustomerSegments implements UseCase<
     input: GetCustomerSegmentsInput,
   ): Promise<Result<GetCustomerSegmentsOutput, DomainError>> {
     const resolved = await this.deps.resolveIdentity.execute({
+      tenantId: input.tenantId,
       type: input.identifier.type,
       value: input.identifier.value,
     });
@@ -64,8 +68,10 @@ export class GetCustomerSegments implements UseCase<
     const memberSegments: CustomerSegment[] = [];
     const contributedBy: IdentifierRef[] = [];
     for (const member of members) {
-      const memberships: readonly SegmentMembership[] =
-        await this.deps.segments.listForIdentifier(member);
+      const memberships: readonly SegmentMembership[] = await this.deps.segments.listForIdentifier(
+        member,
+        input.tenantId,
+      );
       if (memberships.length > 0) {
         memberSegments.push(toCustomerSegment(member.type, member.value, memberships));
         contributedBy.push(member);

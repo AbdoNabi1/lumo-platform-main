@@ -6,12 +6,20 @@ import { S3StorageService, type StorageService } from "./storage";
 import { createStorageHealthCheck } from "./health";
 
 export { createS3Client } from "./client";
-export { S3StorageService, type StorageService, type SignedUrlOptions } from "./storage";
+export {
+  S3StorageService,
+  type PutObjectOptions,
+  type StorageService,
+  type SignedUrlOptions,
+} from "./storage";
 export { createStorageHealthCheck } from "./health";
 export { S3ObjectStorage } from "./s3-object-storage";
 export {
   StorageKeyFactory,
+  parseStorageKey,
   resolveBucket,
+  storageKeyBelongsToTenant,
+  type ParsedStorageKey,
   type BucketPurpose,
   type BuildKeyInput,
   type StorageKeyFactoryDeps,

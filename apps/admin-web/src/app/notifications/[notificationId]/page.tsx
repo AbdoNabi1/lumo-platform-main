@@ -92,7 +92,7 @@ export default async function NotificationDetailPage({ params }: NotificationDet
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="flex items-center gap-2 text-4xl font-semibold tracking-tight">
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
               <BellIcon aria-hidden="true" className="size-7" />
               {notification.recipientRef}
             </h1>
@@ -110,10 +110,7 @@ export default async function NotificationDetailPage({ params }: NotificationDet
               label={t.notificationDetail.currentChannel}
               value={notification.currentChannel}
             />
-            <Field
-              label={t.notificationDetail.channels}
-              value={notification.channels.join(", ")}
-            />
+            <Field label={t.notificationDetail.channels} value={notification.channels.join(", ")} />
             <Field
               label={t.notificationDetail.idempotencyKey}
               value={notification.idempotencyKey}

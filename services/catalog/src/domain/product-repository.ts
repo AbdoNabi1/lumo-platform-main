@@ -1,15 +1,48 @@
 import type { CursorPage, Paginated } from "@platform/types";
 import type { Product } from "./product";
 
-/** Persistence port for {@link Product}. Implemented in infrastructure. The optional `tx` scopes the call to the caller's transaction (ADR-0003). */
+/**
+ * Persistence port for {@link Product}. Implemented in infrastructure. The optional `tx` scopes
+ * the call to the caller's transaction (ADR-0003).
+ *
+ * ADR-0014 (WP-10, T10.3): every method takes `tenantId` as an explicit per-call parameter — the
+ * caller (a use case, given it by its own caller) supplies the verified tenant, rather than the
+ * repository capturing one tenant at construction. `Product` does not carry `tenantId` on the
+ * aggregate, so `save`/`delete` take it as an explicit parameter (Option B) rather than reading it
+ * off the aggregate.
+ */
 export interface ProductRepository {
-  save(product: Product, tx?: unknown): Promise<void>;
-  findById(id: string, tx?: unknown): Promise<Product | null>;
-  findBySlug(slug: string, tx?: unknown): Promise<Product | null>;
-  findBySku(sku: string, tx?: unknown): Promise<Product | null>;
+  save(product: Product, tenantId: string, tx?: unknown): Promise<void>;
+  findById(id: string, tenantId: string, tx?: unknown): Promise<Product | null>;
+  findBySlug(slug: string, tenantId: string, tx?: unknown): Promise<Product | null>;
+  findBySku(sku: string, tenantId: string, tx?: unknown): Promise<Product | null>;
   /** Persists a product already marked `deleted` (via `Product.delete`) — same shape as `save`. */
-  delete(product: Product, tx?: unknown): Promise<void>;
-  list(page: CursorPage, tx?: unknown): Promise<Paginated<Product>>;
+  delete(product: Product, tenantId: string, tx?: unknown): Promise<void>;
+  list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Product>>;
   /** Case-insensitive substring match on name/sku/slug (a stopgap, not ranked search — Search context owns that, ADR-0020). */
-  search(query: string, page: CursorPage, tx?: unknown): Promise<Paginated<Product>>;
+  search(
+    query: string,
+    page: CursorPage,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<Product>>;
+}
+
+/**
+ * Plan 3C: the store currency changed. Sets every variant of the tenant to `currency`, keeping the
+ * amounts. Idempotent. Returns the number of variants changed. A separate port so the many
+ * `ProductRepository` fakes need no new method.
+ */
+export interface VariantCurrencyRelabeler {
+  relabelCurrency(currency: string, tenantId: string, tx?: unknown): Promise<number>;
+}
+
+/**
+ * Plan 2C-3: one batched, tenant-scoped read of many products — what lets an order, a cart or a list
+ * show its pictures without reading products one by one. A separate port (like
+ * {@link VariantCurrencyRelabeler}) so the many `ProductRepository` fakes need no new method. An id
+ * that is unknown, deleted, malformed or another tenant's is simply absent.
+ */
+export interface ProductBatchReader {
+  findByIds(ids: readonly string[], tenantId: string, tx?: unknown): Promise<readonly Product[]>;
 }

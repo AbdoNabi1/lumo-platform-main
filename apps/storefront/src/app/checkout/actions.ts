@@ -10,6 +10,7 @@ import {
 import {
   completeCheckout as completeCheckoutApi,
   getCurrentCart,
+  initiateCheckoutPayment,
   loadCheckoutItems,
   recalculateCheckout as recalculateCheckoutApi,
   requestCheckoutShippingQuote,
@@ -17,6 +18,7 @@ import {
   selectCheckoutPayment,
   selectCheckoutShipping,
   setCheckoutBillingAddress,
+  setCheckoutContact,
   setCheckoutShippingAddress,
   startCheckout as startCheckoutApi,
   type CheckoutAddressInput,
@@ -26,7 +28,7 @@ import {
 /**
  * Guest Checkout Server Actions (Phase 2 — Public checkout). Every action is a Next.js Server
  * Action, exactly like `app/cart/actions.ts`: it runs on the server, so it is the only place the
- * guest session cookie is ever read, and the only place `lumo_checkout_session` is ever written.
+ * guest session cookie is ever read, and the only place `morbeh_checkout_session` is ever written.
  * A Client Component calls these directly; it never sees or supplies a `sessionRef`.
  *
  * **Never mints a guest session here** (unlike `addToCart` in `app/cart/actions.ts`): a checkout
@@ -40,8 +42,9 @@ export type CheckoutActionResult =
       readonly ok: false;
       /** `"ownership"`: no session cookie, or the Runtime API 404'd (stale/cross-session cookie).
        * `"validation"`: the Runtime API 422'd. `"unavailable"`: the Runtime API 409'd (the session
-       * can no longer be modified). `"network"`: unreachable or an unexpected status. */
-      readonly reason: "ownership" | "validation" | "unavailable" | "network";
+       * can no longer be modified). `"out-of-stock"` (Plan 2B-3): completion refused because a line
+       * is not in stock in the chosen quantity. `"network"`: unreachable or an unexpected status. */
+      readonly reason: "ownership" | "validation" | "unavailable" | "out-of-stock" | "network";
     };
 
 /**
@@ -57,11 +60,49 @@ export type ShippingQuoteActionResult =
     }
   | { readonly ok: false; readonly reason: "ownership" | "validation" | "unavailable" | "network" };
 
+/**
+ * What happens after `initiatePayment`. The outcomes are explicit so the caller can never mistake
+ * "nothing to redirect to" for "nothing to do": `"confirmation"` (an offline method — the order
+ * stands and is paid out of band) or `"redirect"` (a hosted checkout the shopper MUST be sent to).
+ * `"handoff"` is the failure where a redirect was required and could not be produced.
+ */
+export type PaymentInitiationResult =
+  | { readonly ok: true; readonly next: "confirmation" }
+  | { readonly ok: true; readonly next: "redirect"; readonly url: string }
+  | {
+      readonly ok: false;
+      readonly reason: "ownership" | "validation" | "unavailable" | "network" | "handoff";
+    };
+
+/**
+ * Providers with no hosted page and no client handle: the shopper pays offline. Everything NOT in
+ * this set — including a provider this file has never heard of — must return a usable https handle
+ * or the result is `"handoff"`, so a new hosted method can never silently fall through to
+ * "confirmation" as if it were paid.
+ */
+const OFFLINE_PROVIDERS: ReadonlySet<string> = new Set(["cod"]);
+
+function hostedCheckoutUrl(clientHandle: string | undefined): string | null {
+  if (clientHandle === undefined) return null;
+  try {
+    const url = new URL(clientHandle);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function mapFailureStatus(status: number): "ownership" | "validation" | "unavailable" | "network" {
   if (status === 404) return "ownership";
   if (status === 422) return "validation";
   if (status === 409) return "unavailable";
   return "network";
+}
+
+function isOutOfStock(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false;
+  const { message } = body as { readonly message?: unknown };
+  return typeof message === "string" && message.startsWith("OUT_OF_STOCK:");
 }
 
 /** The existing guest session, if any — mirrors `existingSessionRef()` in `app/cart/actions.ts`. */
@@ -127,6 +168,21 @@ export async function startCheckout(cartId: string): Promise<CheckoutActionResul
   jar.set(CHECKOUT_SESSION_COOKIE, checkoutSessionId, CHECKOUT_SESSION_COOKIE_OPTIONS);
   revalidatePath("/checkout");
   return { ok: true, checkoutSessionId };
+}
+
+/**
+ * Records where a guest's receipt goes (WP-1, G-52). At completion the Runtime API resolves — finds
+ * or creates — a guest customer from it, so the order has a customer to attach to. Like every
+ * action here, the `sessionRef` is the server-held guest cookie, never a caller-supplied value; the
+ * email itself proves nothing about identity and never signs anyone in.
+ */
+export async function setContactEmail(
+  checkoutSessionId: string,
+  email: string,
+): Promise<CheckoutActionResult> {
+  return withSession(checkoutSessionId, (sessionRef) =>
+    setCheckoutContact(checkoutSessionId, sessionRef, email),
+  );
 }
 
 export async function setShippingAddress(
@@ -208,10 +264,36 @@ export async function completeCheckout(checkoutSessionId: string): Promise<Check
   const idempotencyKey = crypto.randomUUID();
   const response = await completeCheckoutApi(checkoutSessionId, sessionRef, idempotencyKey);
   if (response.status < 200 || response.status >= 300) {
+    // Plan 2B-3: the API refuses a completion whose stock is not there with a 409 whose message
+    // starts `OUT_OF_STOCK:` — a different outcome from "the session can no longer be modified".
+    if (response.status === 409 && isOutOfStock(response.body)) {
+      return { ok: false, reason: "out-of-stock" };
+    }
     return { ok: false, reason: mapFailureStatus(response.status) };
   }
   revalidatePath("/checkout");
   return { ok: true, checkoutSessionId };
+}
+
+/**
+ * Opens the payment for the checkout `completeCheckout` just completed — it MUST run after it (the
+ * API refuses an uncompleted session: `InitiatePayment` requires `orderRef`). Sends no provider:
+ * the API reads the selection the shopper made off the session. Never re-completes the order, so a
+ * failed initiation is retried by calling only this.
+ */
+export async function initiatePayment(checkoutSessionId: string): Promise<PaymentInitiationResult> {
+  const sessionRef = await existingSessionRef();
+  if (sessionRef === undefined) return { ok: false, reason: "ownership" };
+
+  const response = await initiateCheckoutPayment(checkoutSessionId, sessionRef);
+  if (response.status < 200 || response.status >= 300 || response.body === null) {
+    return { ok: false, reason: mapFailureStatus(response.status) };
+  }
+
+  if (OFFLINE_PROVIDERS.has(response.body.provider)) return { ok: true, next: "confirmation" };
+  const url = hostedCheckoutUrl(response.body.clientHandle);
+  if (url === null) return { ok: false, reason: "handoff" };
+  return { ok: true, next: "redirect", url };
 }
 
 /** Clears the checkout-session cookie — called once by `/checkout/confirmation` after it renders. */

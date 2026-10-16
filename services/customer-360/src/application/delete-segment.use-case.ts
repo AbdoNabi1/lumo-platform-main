@@ -8,6 +8,9 @@ import { SegmentDeleted } from "../events/segment-deleted.event";
 import type { SegmentDefinitionRegistry } from "../ports/segment-definition-registry";
 
 export interface DeleteSegmentInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly id: string;
   readonly expectedVersion: number;
 }
@@ -42,7 +45,7 @@ export class DeleteSegment implements UseCase<
   }
 
   async execute(input: DeleteSegmentInput): Promise<Result<DeleteSegmentOutput, DomainError>> {
-    const existing = await this.deps.definitions.getById(input.id);
+    const existing = await this.deps.definitions.getById(input.id, input.tenantId);
     if (existing === null) {
       return err(
         new BusinessRuleError(`Segment "${input.id}" does not exist`, {
@@ -60,7 +63,13 @@ export class DeleteSegment implements UseCase<
         },
         { segmentId: input.id, version: existing.version },
       );
-      await this.deps.definitions.delete(input.id, input.expectedVersion, event, tx);
+      await this.deps.definitions.delete(
+        input.id,
+        input.expectedVersion,
+        input.tenantId,
+        event,
+        tx,
+      );
       return ok({ deleted: true });
     });
   }

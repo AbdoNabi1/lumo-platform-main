@@ -7,6 +7,7 @@ import { CouponCreateForm } from "@/components/discounts/coupon-create-form";
 import { CouponRedeemForm } from "@/components/discounts/coupon-redeem-form";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { showPlatformTools } from "@/lib/platform-tools";
 
 /**
  * The Coupons create + redeem screen (T5.8 Part A) — gated to `operator`+ by `middleware.ts`.
@@ -30,8 +31,8 @@ export default async function NewCouponPage() {
               {t.couponCreate.back}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.couponCreate.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.couponCreate.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.couponCreate.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.couponCreate.subtitle}</p>
         </div>
 
         <Card>
@@ -40,14 +41,17 @@ export default async function NewCouponPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{t.couponRedeem.title}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <CouponRedeemForm t={t} />
-          </CardContent>
-        </Card>
+        {/* Customers redeem codes at checkout; redeeming by hand is a platform-team tool. */}
+        {showPlatformTools() && (
+          <Card>
+            <CardHeader>
+              <CardTitle>{t.couponRedeem.title}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CouponRedeemForm t={t} />
+            </CardContent>
+          </Card>
+        )}
       </div>
     </AppShell>
   );

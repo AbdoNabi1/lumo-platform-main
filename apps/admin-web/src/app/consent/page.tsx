@@ -1,16 +1,20 @@
 import { redirect } from "next/navigation";
 import { authConfig } from "@/lib/auth/config";
 import { oryAdminHeaders } from "@/lib/auth/ory-admin";
+import { resolveConsentClaims } from "@/lib/auth/consent-claims";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 
 /**
  * The Hydra consent provider (Phase A.32) — `infrastructure/docker/hydra/hydra.yml`'s
- * `urls.consent`. Auto-accepts: `lumo-admin-web` is a first-party, wholly-owned client (the only
+ * `urls.consent`. Auto-accepts: `morbeh-admin-web` is a first-party, wholly-owned client (the only
  * OAuth2 client registered — `scripts/dev/seed-auth-local.mjs`), not a third-party app a human
  * needs to review a scope grant for, so there is no consent SCREEN, only a consent DECISION. The
  * `kind`/`roles` claims `/login` attached to the login request's `context` ride through into the
  * token here via `session.access_token` — this is how `JwtVerifier.toPrincipal`
  * (`packages/auth/src/jwt-verifier.ts`) gets a real, non-default `kind`/`roles` on the issued JWT.
+ *
+ * With Ory Network's hosted login there is no such context (our `/login` never runs), so
+ * `resolveConsentClaims` reads `kind`/`roles` from the identity's `metadata_public` by `subject`.
  */
 interface ConsentPageProps {
   readonly searchParams: Promise<{ readonly consent_challenge?: string }>;
@@ -30,10 +34,13 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
     throw new Error(`Hydra rejected the consent request: ${requestInfo.status}`);
   }
   const info = (await requestInfo.json()) as {
+    subject?: string;
     requested_scope?: readonly string[];
     requested_access_token_audience?: readonly string[];
     context?: { kind?: string; roles?: readonly string[]; email?: string };
   };
+
+  const claims = await resolveConsentClaims(info);
 
   const accept = await fetchWithTimeout(
     `${authConfig.hydraAdminUrl}/admin/oauth2/auth/requests/consent/accept?consent_challenge=${encodeURIComponent(consentChallenge)}`,
@@ -45,9 +52,9 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
         grant_access_token_audience: info.requested_access_token_audience ?? [],
         session: {
           access_token: {
-            kind: info.context?.kind ?? "staff",
-            roles: info.context?.roles ?? [],
-            email: info.context?.email,
+            kind: claims.kind,
+            roles: claims.roles,
+            email: claims.email,
           },
         },
         remember: true,

@@ -1,18 +1,31 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { Paginated } from "@platform/types";
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, ConflictError } from "@platform/utils";
 import type { Customer } from "../domain/customer";
-import type { CustomerListQuery, CustomerRepository } from "../domain/customer-repository";
+import type {
+  CustomerContact,
+  CustomerContactReader,
+  CustomerListQuery,
+  CustomerRepository,
+} from "../domain/customer-repository";
 import { CustomerMapper } from "./customer.mapper";
+
+/** `identity.customers.id` is a Postgres uuid, so anything else must never reach the database. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Duck-typed on Prisma's error code — this context does not depend on `@prisma/client`. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002"
+  );
+}
 
 export interface PrismaCustomerRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -21,24 +34,38 @@ export interface PrismaCustomerRepositoryDeps {
  * Addresses and the consent log are append-only inserts (`skipDuplicates`); the consent log is
  * never updated or deleted. Optimistic locking + same-transaction outbox per ADR-0003.
  */
-export class PrismaCustomerRepository implements CustomerRepository {
+export class PrismaCustomerRepository implements CustomerRepository, CustomerContactReader {
   private readonly deps: PrismaCustomerRepositoryDeps;
 
   constructor(deps: PrismaCustomerRepositoryDeps) {
     this.deps = deps;
   }
 
-  async save(customer: Customer, tx?: unknown): Promise<void> {
+  async save(customer: Customer, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const customerId = customer.id.toString();
 
     if (customer.version === 0) {
-      await client.customer.create({ data: CustomerMapper.toCustomerRow(customer, tenantId) });
+      try {
+        await client.customer.create({ data: CustomerMapper.toCustomerRow(customer, tenantId) });
+      } catch (error) {
+        // P2002 = unique violation. Here that is `@@unique([tenantId, email])`: another request
+        // created this email first. Translated so callers (ResolveGuestCustomer's race recovery)
+        // can react without knowing about Prisma. The surrounding transaction is already aborted.
+        if (isUniqueViolation(error)) {
+          throw new ConflictError("A customer with this email already exists", { cause: error });
+        }
+        throw error;
+      }
     } else {
       const updated = await client.customer.updateMany({
         where: { id: customerId, tenantId, version: customer.version },
-        data: { name: customer.name, version: { increment: 1 } },
+        data: {
+          name: customer.name,
+          isGuest: customer.isGuest,
+          emailVerifiedAt: customer.emailVerifiedAt,
+          version: { increment: 1 },
+        },
       });
       if (updated.count === 0) {
         throw new ConcurrencyError(
@@ -55,31 +82,69 @@ export class PrismaCustomerRepository implements CustomerRepository {
       await client.consentRecord.createMany({ data: consents, skipDuplicates: true });
     }
 
-    await this.deps.outbox.write(customer.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      customer.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Customer | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.customer.findFirst({
-      where: { id, tenantId: this.deps.tenantId, deletedAt: null },
-      include: {
-        addresses: { orderBy: { createdAt: "asc" } },
-        consents: { orderBy: { occurredAt: "asc" } },
-      },
-    });
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Customer | null> {
+    const run = (client: TransactionClient) =>
+      client.customer.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        include: {
+          addresses: { orderBy: { createdAt: "asc" } },
+          consents: { orderBy: { occurredAt: "asc" } },
+        },
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : CustomerMapper.toDomain(row, row.addresses, row.consents);
   }
 
-  async findByEmail(email: string, tx?: unknown): Promise<Customer | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.customer.findFirst({
-      where: { tenantId: this.deps.tenantId, email, deletedAt: null },
-      include: {
-        addresses: { orderBy: { createdAt: "asc" } },
-        consents: { orderBy: { occurredAt: "asc" } },
-      },
-    });
+  async findByEmail(email: string, tenantId: string, tx?: unknown): Promise<Customer | null> {
+    const run = (client: TransactionClient) =>
+      client.customer.findFirst({
+        where: { tenantId, email, deletedAt: null },
+        include: {
+          addresses: { orderBy: { createdAt: "asc" } },
+          consents: { orderBy: { occurredAt: "asc" } },
+        },
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : CustomerMapper.toDomain(row, row.addresses, row.consents);
+  }
+
+  async findContactsByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly CustomerContact[]> {
+    // An order's customer_ref is free text, so a legacy or back-office ref can be any string; a
+    // non-uuid in `id IN (…)` would fail the whole query. It cannot match a customer anyway.
+    const uuids = [...new Set(ids)].filter((id) => UUID.test(id));
+    if (uuids.length === 0) return [];
+    const run = (client: TransactionClient) =>
+      client.customer.findMany({
+        where: { tenantId, deletedAt: null, id: { in: uuids } },
+        select: { id: true, name: true, email: true, isGuest: true },
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      isGuest: row.isGuest,
+    }));
   }
 
   /**
@@ -87,9 +152,11 @@ export class PrismaCustomerRepository implements CustomerRepository {
    * same technique as `PrismaOrderRepository.list`. `search` matches name or email
    * (case-insensitive substring).
    */
-  async list(query: CustomerListQuery, tx?: unknown): Promise<Paginated<Customer>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const tenantId = this.deps.tenantId;
+  async list(
+    query: CustomerListQuery,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<Customer>> {
     const limit = normalizePageSize(query.first);
     const after = query.after !== undefined ? decodeCursor(query.after) : undefined;
     const search = query.search?.trim();
@@ -103,20 +170,25 @@ export class PrismaCustomerRepository implements CustomerRepository {
           }
         : {};
 
-    const rows = await client.customer.findMany({
-      where: {
-        tenantId,
-        deletedAt: null,
-        ...(after !== undefined ? { id: { lt: after } } : {}),
-        ...searchFilter,
-      },
-      include: {
-        addresses: { orderBy: { createdAt: "asc" } },
-        consents: { orderBy: { occurredAt: "asc" } },
-      },
-      orderBy: { id: "desc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.customer.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          ...(after !== undefined ? { id: { lt: after } } : {}),
+          ...searchFilter,
+        },
+        include: {
+          addresses: { orderBy: { createdAt: "asc" } },
+          consents: { orderBy: { occurredAt: "asc" } },
+        },
+        orderBy: { id: "desc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
 
     const customers = rows.map((row) => CustomerMapper.toDomain(row, row.addresses, row.consents));
     return buildPaginatedPage(customers, limit, (customer) => customer.id.toString());

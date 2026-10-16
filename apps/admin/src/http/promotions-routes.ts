@@ -121,7 +121,8 @@ export function promotionsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Create a promotion",
       schema: { body: createPromotionBody },
-      handle: ({ body, context }) => admin.promotions.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.promotions.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -133,6 +134,7 @@ export function promotionsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       schema: { params: promotionIdParams, body: advancePromotionBody },
       handle: ({ params, body, context }) =>
         admin.promotions.advance(context.principal, {
+          tenantId: context.tenantId,
           promotionId: params.promotionId,
           ...body,
         }),
@@ -144,7 +146,8 @@ export function promotionsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       permission: "promotions:evaluate",
       summary: "Evaluate every active promotion against a cart snapshot (pure read)",
       schema: { body: evaluatePromotionsBody },
-      handle: ({ body, context }) => admin.promotions.evaluate(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.promotions.evaluate(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -154,7 +157,10 @@ export function promotionsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "Record one usage of a promotion",
       schema: { params: promotionIdParams },
       handle: ({ params, context }) =>
-        admin.promotions.recordUsage(context.principal, { promotionId: params.promotionId }),
+        admin.promotions.recordUsage(context.principal, {
+          tenantId: context.tenantId,
+          promotionId: params.promotionId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -164,7 +170,10 @@ export function promotionsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "List promotions (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.promotions.list(context.principal, query), toPromotionDto),
+        mapPage(
+          await admin.promotions.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toPromotionDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -174,7 +183,10 @@ export function promotionsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "Get one promotion by id",
       schema: { params: promotionIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.promotions.get(context.principal, params);
+        const response = await admin.promotions.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toPromotionDto(response.body as Promotion) };
       },

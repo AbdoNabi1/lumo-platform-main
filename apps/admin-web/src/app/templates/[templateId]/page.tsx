@@ -76,7 +76,7 @@ export default async function TemplateDetailPage({ params }: TemplateDetailPageP
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-4xl font-semibold tracking-tight">{template.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{template.name}</h1>
             <TemplateStatusBadge status={template.status} t={t} />
           </div>
           <p className="text-muted-foreground mt-1 text-sm">

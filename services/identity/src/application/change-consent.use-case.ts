@@ -11,6 +11,7 @@ export interface ChangeConsentInput {
   readonly customerId: string;
   readonly scope: string;
   readonly granted: boolean;
+  readonly tenantId: string;
 }
 
 export interface ChangeConsentOutput {
@@ -43,7 +44,7 @@ export class ChangeConsent implements UseCase<
     if (!scope.ok) return err(scope.error);
 
     return this.deps.unitOfWork.run<Result<ChangeConsentOutput, DomainError>>(async (tx) => {
-      const customer = await this.deps.customers.findById(input.customerId, tx);
+      const customer = await this.deps.customers.findById(input.customerId, input.tenantId, tx);
       if (customer === null) {
         return err(new NotFoundError("Customer not found"));
       }
@@ -55,7 +56,7 @@ export class ChangeConsent implements UseCase<
         this.deps.idGenerator.generate(),
         this.deps.clock.now(),
       );
-      await this.deps.customers.save(customer, tx);
+      await this.deps.customers.save(customer, input.tenantId, tx);
       return ok({
         customerId: customer.id.toString(),
         scope: scope.value.value,

@@ -6,8 +6,12 @@ import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
 
 export interface RemoveItemInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
   readonly productId: string;
+  /** Plan 2A: the variant line to remove; absent addresses a legacy line by `productId`. */
+  readonly variantId?: string;
 }
 
 export interface RemoveItemOutput {
@@ -33,19 +37,19 @@ export class RemoveItem implements UseCase<RemoveItemInput, RemoveItemOutput, Do
     if (!productRef.ok) return err(productRef.error);
 
     return this.deps.unitOfWork.run<Result<RemoveItemOutput, DomainError>>(async (tx) => {
-      const cart = await this.deps.carts.findById(input.cartId, tx);
+      const cart = await this.deps.carts.findById(input.cartId, input.tenantId, tx);
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
 
       try {
-        cart.removeItem(productRef.value.value);
+        cart.removeItem(input.variantId ?? productRef.value.value);
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;
       }
 
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString(), totalAmountMinor: cart.totalAmount().amountMinor });
     });
   }

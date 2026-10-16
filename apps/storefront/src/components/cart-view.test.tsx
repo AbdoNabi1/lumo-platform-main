@@ -9,14 +9,23 @@ import type { CheckoutActionResult } from "@/app/checkout/actions";
 import { CartView } from "./cart-view";
 
 const changeQuantity =
-  vi.fn<(cartId: string, productId: string, quantity: number) => Promise<CartActionResult>>();
-const removeItem = vi.fn<(cartId: string, productId: string) => Promise<CartActionResult>>();
+  vi.fn<
+    (
+      cartId: string,
+      productId: string,
+      quantity: number,
+      variantId?: string,
+    ) => Promise<CartActionResult>
+  >();
+const removeItem =
+  vi.fn<(cartId: string, productId: string, variantId?: string) => Promise<CartActionResult>>();
 const clearCart = vi.fn<(cartId: string) => Promise<CartActionResult>>();
 
 vi.mock("@/app/cart/actions", () => ({
-  changeQuantity: (cartId: string, productId: string, quantity: number) =>
-    changeQuantity(cartId, productId, quantity),
-  removeItem: (cartId: string, productId: string) => removeItem(cartId, productId),
+  changeQuantity: (cartId: string, productId: string, quantity: number, variantId?: string) =>
+    changeQuantity(cartId, productId, quantity, variantId),
+  removeItem: (cartId: string, productId: string, variantId?: string) =>
+    removeItem(cartId, productId, variantId),
   clearCart: (cartId: string) => clearCart(cartId),
 }));
 
@@ -47,12 +56,15 @@ function cart(overrides: Partial<CartSummary> = {}): CartSummary {
 function line(overrides: Partial<ResolvedCartLine> = {}): ResolvedCartLine {
   return {
     productId: "prod-1",
+    variantId: null,
+    variantTitle: null,
     name: "Wooden Blocks",
     slug: "wooden-blocks",
     quantity: 2,
     unitPriceAmountMinor: 1500,
     currency: "USD",
     lineTotalAmountMinor: 3000,
+    imageUrl: null,
     ...overrides,
   };
 }
@@ -84,6 +96,25 @@ describe("CartView — rendering", () => {
 
     expect(screen.getByText(en.cart.subtotal)).toBeInTheDocument();
     expect(screen.getByText("$75.99")).toBeInTheDocument();
+  });
+
+  it("Plan 2A: shows the variant label beside the product name, and two sizes are two lines", () => {
+    render(
+      <CartView
+        cart={cart()}
+        lines={[
+          line({ variantId: "v-s", variantTitle: "S", unitPriceAmountMinor: 10000 }),
+          line({ variantId: "v-l", variantTitle: "L", unitPriceAmountMinor: 12000 }),
+        ]}
+        t={en}
+        locale="en"
+      />,
+    );
+
+    expect(screen.getAllByRole("link", { name: "Wooden Blocks" })).toHaveLength(2);
+    expect(screen.getByText("S")).toBeInTheDocument();
+    expect(screen.getByText("L")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
   });
 
   it("shows a plain-text fallback, not a link, when a line's product can't be resolved", () => {
@@ -133,7 +164,30 @@ describe("CartView — mutations (Task 8)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: en.cart.increaseQuantity }));
 
-    await waitFor(() => expect(changeQuantity).toHaveBeenCalledWith("cart-9", "p1", 3));
+    // A legacy line (no variant) addresses the line by product alone.
+    await waitFor(() => expect(changeQuantity).toHaveBeenCalledWith("cart-9", "p1", 3, undefined));
+  });
+
+  it("Plan 2A: quantity and remove address a variant line by its variantId", async () => {
+    changeQuantity.mockResolvedValue({ ok: true });
+    removeItem.mockResolvedValue({ ok: true });
+    render(
+      <CartView
+        cart={cart({ id: "cart-9" })}
+        lines={[
+          line({ productId: "p1", variantId: "v-s", variantTitle: "S", quantity: 1 }),
+          line({ productId: "p1", variantId: "v-l", variantTitle: "L", quantity: 2 }),
+        ]}
+        t={en}
+        locale="en"
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: en.cart.increaseQuantity })[1]!);
+    await waitFor(() => expect(changeQuantity).toHaveBeenCalledWith("cart-9", "p1", 3, "v-l"));
+
+    fireEvent.click(screen.getAllByRole("button", { name: en.cart.remove })[0]!);
+    await waitFor(() => expect(removeItem).toHaveBeenCalledWith("cart-9", "p1", "v-s"));
   });
 
   it("removing a line calls removeItem with cartId/productId", async () => {
@@ -149,7 +203,7 @@ describe("CartView — mutations (Task 8)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: en.cart.remove }));
 
-    await waitFor(() => expect(removeItem).toHaveBeenCalledWith("cart-9", "p1"));
+    await waitFor(() => expect(removeItem).toHaveBeenCalledWith("cart-9", "p1", undefined));
   });
 
   it("clearing the cart calls clearCart with cartId", async () => {
@@ -230,5 +284,30 @@ describe("CartView — proceed to checkout (Phase 2)", () => {
 
     expect(await screen.findByText(en.cart.checkoutErrorBody)).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe("CartView — line pictures (Plan 2C-3)", () => {
+  it("shows each line's picture beside its name, described by the product name", () => {
+    render(
+      <CartView
+        cart={cart({ subtotalAmountMinor: 3000 })}
+        lines={[line({ imageUrl: "https://cdn.example.test/blocks.webp" })]}
+        t={en}
+        locale="en"
+      />,
+    );
+    const img = screen.getByRole("img", { name: "Wooden Blocks" });
+    expect(img).toHaveAttribute("src", "https://cdn.example.test/blocks.webp");
+    expect(img).toHaveAttribute("width", "64");
+    expect(img).toHaveAttribute("loading", "lazy");
+  });
+
+  it("draws a placeholder, and no img, for a line without a picture", () => {
+    const { container } = render(
+      <CartView cart={cart({ subtotalAmountMinor: 3000 })} lines={[line()]} t={en} locale="en" />,
+    );
+    expect(container.querySelectorAll("img")).toHaveLength(0);
+    expect(screen.getByLabelText(en.product.gallery.noImage)).toBeInTheDocument();
   });
 });

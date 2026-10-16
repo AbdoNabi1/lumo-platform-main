@@ -32,7 +32,7 @@ export default async function PricingPage() {
     <AppShell t={t} locale={locale} activeNavId="pricing" user={user}>
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
         <div>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.pricingPage.title}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.pricingPage.title}</h1>
           <p className="text-muted-foreground mt-1 text-sm">{t.pricingPage.subtitle}</p>
         </div>
 

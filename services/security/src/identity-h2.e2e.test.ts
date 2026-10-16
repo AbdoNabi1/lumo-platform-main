@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import type { IntegrationEvent } from "@platform/domain-events";
+import type { EventSerializer, IntegrationEvent } from "@platform/domain-events";
 import type { Logger } from "@platform/utils";
 import { wireSecurity } from "./composition";
 import { InMemoryConsentProjectionStore } from "./infrastructure/consent-projection";
@@ -51,7 +51,10 @@ describe("H-2 live identity binding (end to end)", () => {
       clock,
       consentStore,
     });
-    const consumer = new ConsentChangedConsumer({ store: consentStore, logger: silent });
+    const consumer = new ConsentChangedConsumer({
+      store: consentStore,
+      logger: silent,
+    });
 
     const grant: IntegrationEvent<ConsentChangedPayload> = {
       messageId: "e1",
@@ -62,17 +65,26 @@ describe("H-2 live identity binding (end to end)", () => {
       occurredAt: "2026-07-18T00:00:00.000Z",
       correlationId: "c",
       causationId: "c",
+      tenantId: "tenant-a",
       payload: { scope: "marketing", granted: true },
       metadata: {},
     };
     await consumer.handle(grant);
 
     const decision = body<{ granted: boolean }>(
-      await app.security.checkConsent({ subjectRef: "cust-7", purpose: "marketing" }),
+      await app.security.checkConsent({
+        tenantId: "tenant-a",
+        subjectRef: "cust-7",
+        purpose: "marketing",
+      }),
     );
     expect(decision.granted).toBe(true);
     const none = body<{ granted: boolean }>(
-      await app.security.checkConsent({ subjectRef: "cust-7", purpose: "analytics" }),
+      await app.security.checkConsent({
+        tenantId: "tenant-a",
+        subjectRef: "cust-7",
+        purpose: "analytics",
+      }),
     );
     expect(none.granted).toBe(false);
   });
@@ -88,6 +100,7 @@ describe("H-2 live identity binding (end to end)", () => {
     });
 
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "admin-1",
       kind: "human",
       displayName: "Admin",
@@ -95,18 +108,23 @@ describe("H-2 live identity binding (end to end)", () => {
       tenantRef: "t1",
     });
     await app.security.establishSession({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       refreshFingerprint: "rt-a",
       ttlSeconds: 3600,
     });
     await app.security.establishSession({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       refreshFingerprint: "rt-b",
       ttlSeconds: 3600,
     });
 
     const revoked = body<{ revoked: number }>(
-      await app.security.revokeAllSessions({ principalExternalId: "admin-1" }),
+      await app.security.revokeAllSessions({
+        tenantId: "tenant-a",
+        principalExternalId: "admin-1",
+      }),
     );
     expect(revoked.revoked).toBe(2);
 
@@ -124,6 +142,7 @@ describe("H-2 live identity binding (end to end)", () => {
       occurredAt: "2026-07-18T00:00:00.000Z",
       correlationId: "c",
       causationId: "c",
+      tenantId: "tenant-test",
       payload: { key: "kratos-7", status: "revoked" },
       metadata: {},
     };
@@ -131,13 +150,22 @@ describe("H-2 live identity binding (end to end)", () => {
     expect(sessionRevocation.revokedIdentities()).toContain("kratos-7");
   });
 
-  it("emits security.relation.written and syncs the tuple to the enforcement point", async () => {
-    const app = wireSecurity({
-      serializer: new InMemoryEventSerializer(),
-      idGenerator: sequentialIds(),
-      clock,
-    });
+  it("emits security.relation.written WITH the tenant and syncs the tenant-qualified tuple to the enforcement point", async () => {
+    // Record every envelope the outbox serializes, so the consumer below is fed the REAL emitted event
+    // (not a hand-built one) — that is what proves `event.tenantId` reaches the consumer (G-70).
+    const inner = new InMemoryEventSerializer();
+    const emitted: IntegrationEvent<unknown>[] = [];
+    const serializer: EventSerializer = {
+      contentType: inner.contentType,
+      serialize: (event) => {
+        emitted.push(event);
+        return inner.serialize(event);
+      },
+      deserialize: (serialized) => inner.deserialize(serialized),
+    };
+    const app = wireSecurity({ serializer, idGenerator: sequentialIds(), clock });
     await app.security.writeRelationTuple({
+      tenantId: "tenant-a",
       namespace: "permissions",
       object: "doc:1",
       relation: "viewer",
@@ -146,26 +174,23 @@ describe("H-2 live identity binding (end to end)", () => {
     await app.drainOutbox();
     expect(app.deliveredEventTypes).toContain("security.relation.written");
 
+    const evt = emitted.find((e) => e.type === "security.relation.written") as
+      IntegrationEvent<SecurityRelationPayload> | undefined;
+    expect(evt?.tenantId).toBe("tenant-a");
+
     const writes: RelationTupleProps[] = [];
     const sync: RelationshipSyncPort = {
       write: async (t) => void writes.push(t),
       delete: async () => undefined,
     };
-    const evt: IntegrationEvent<SecurityRelationPayload> = {
-      messageId: "r1",
-      type: "security.relation.written",
-      eventVersion: 1,
-      aggregateId: "id-1",
-      aggregateType: "relation",
-      occurredAt: "2026-07-18T00:00:00.000Z",
-      correlationId: "c",
-      causationId: "c",
-      payload: { key: "permissions:doc:1#viewer@principal:a" },
-      metadata: {},
-    };
-    await new RelationWrittenConsumer({ sync, logger: silent }).handle(evt);
+    await new RelationWrittenConsumer({ sync, logger: silent }).handle(evt!);
     expect(writes).toEqual([
-      { namespace: "permissions", object: "doc:1", relation: "viewer", subject: "principal:a" },
+      {
+        namespace: "permissions",
+        object: "tenant/tenant-a/doc:1",
+        relation: "viewer",
+        subject: "principal:a",
+      },
     ]);
   });
 });

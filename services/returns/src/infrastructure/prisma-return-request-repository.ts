@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { ReturnRequest } from "../domain/return-request";
@@ -9,8 +9,6 @@ export interface PrismaReturnRequestRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -25,9 +23,8 @@ export class PrismaReturnRequestRepository implements ReturnRequestRepository {
     this.deps = deps;
   }
 
-  async save(returnRequest: ReturnRequest, tx?: unknown): Promise<void> {
+  async save(returnRequest: ReturnRequest, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const returnId = returnRequest.id.toString();
     const row = ReturnRequestMapper.toRow(returnRequest, tenantId);
 
@@ -65,40 +62,46 @@ export class PrismaReturnRequestRepository implements ReturnRequestRepository {
       await client.returnAttempt.createMany({ data: attempts, skipDuplicates: true });
     }
 
-    await this.deps.outbox.write(returnRequest.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      returnRequest.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<ReturnRequest | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.returnRequest.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-      include: { attempts: { orderBy: { occurredAt: "asc" } } },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<ReturnRequest | null> {
+    return this.findOne({ id, tenantId }, tenantId, tx);
+  }
+
+  async findByOrderRef(
+    orderRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<ReturnRequest | null> {
+    return this.findOne({ orderRef, tenantId }, tenantId, tx);
+  }
+
+  private async findOne(
+    where: { readonly tenantId: string } & Record<string, string>,
+    tenantId: string,
+    tx: unknown,
+  ): Promise<ReturnRequest | null> {
+    const run = (client: TransactionClient) =>
+      client.returnRequest.findFirst({
+        where,
+        include: { attempts: { orderBy: { occurredAt: "asc" } } },
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     if (row === null) return null;
     return ReturnRequestMapper.toDomain(
       {
         ...row,
         // `items`/`inspections` are arrays of closed object shapes without index signatures, so they
         // don't structurally overlap with the Prisma `JsonValue` union (comparability fails).
-        items: row.items as unknown as ReturnRequestRow["items"],
-        approval: row.approval as ReturnRequestRow["approval"],
-        inspections: row.inspections as unknown as ReturnRequestRow["inspections"],
-        refundDecision: row.refundDecision as ReturnRequestRow["refundDecision"],
-      },
-      row.attempts,
-    );
-  }
-
-  async findByOrderRef(orderRef: string, tx?: unknown): Promise<ReturnRequest | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.returnRequest.findFirst({
-      where: { orderRef, tenantId: this.deps.tenantId },
-      include: { attempts: { orderBy: { occurredAt: "asc" } } },
-    });
-    if (row === null) return null;
-    return ReturnRequestMapper.toDomain(
-      {
-        ...row,
         items: row.items as unknown as ReturnRequestRow["items"],
         approval: row.approval as ReturnRequestRow["approval"],
         inspections: row.inspections as unknown as ReturnRequestRow["inspections"],

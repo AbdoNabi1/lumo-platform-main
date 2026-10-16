@@ -6,7 +6,7 @@ import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { PageResponse } from "./public-catalog-routes";
 import { resolveCustomerSessionId } from "./public-auth-routes";
-import { priceUnresolvedResponse, resolvePrice } from "./pricing-resolution";
+import { merchandiseUnresolvedResponse, resolveMerchandise } from "./merchandise-resolution";
 
 /**
  * The **customer's own wishlist** surface (T5.17 Part B) — the first feature built on the customer
@@ -93,20 +93,22 @@ function wishlistNotFound(): PageResponse {
 async function requireOwnWishlist(
   admin: WiredAdmin,
   customerRef: string,
+  tenantId: string,
   createIfMissing: boolean,
 ): Promise<
-  { readonly ok: true; readonly wishlist: Wishlist } | { readonly ok: false; readonly response: PageResponse }
+  | { readonly ok: true; readonly wishlist: Wishlist }
+  | { readonly ok: false; readonly response: PageResponse }
 > {
-  const existing = await admin.publicReads.wishlist.getByCustomer({ customerRef });
+  const existing = await admin.publicReads.wishlist.getByCustomer({ customerRef, tenantId });
   if (existing.status >= 200 && existing.status < 300) {
     return { ok: true, wishlist: existing.body as Wishlist };
   }
   if (!createIfMissing) return { ok: false, response: wishlistNotFound() };
 
-  await admin.publicReads.wishlist.create({ customerRef });
-  const created = await admin.publicReads.wishlist.getByCustomer({ customerRef });
+  await admin.publicReads.wishlist.create({ customerRef, tenantId });
+  const created = await admin.publicReads.wishlist.getByCustomer({ customerRef, tenantId });
   if (created.status < 200 || created.status >= 300) {
-    return { ok: false, response: created as PageResponse };
+    return { ok: false, response: created };
   }
   return { ok: true, wishlist: created.body as Wishlist };
 }
@@ -123,17 +125,25 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
     | { readonly ok: true; readonly wishlist: Wishlist; readonly customerRef: string }
     | { readonly ok: false; readonly response: PageResponse }
   > => {
-    const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
-    if (!guarded.ok) return { ok: false, response: guarded.response as PageResponse };
-    const wishlist = await requireOwnWishlist(admin, guarded.session.customerRef, createIfMissing);
+    const guarded = await admin.customerAuth.requireSession(
+      resolveCustomerSessionId(context),
+      context.tenantId,
+    );
+    if (!guarded.ok) return { ok: false, response: guarded.response };
+    const wishlist = await requireOwnWishlist(
+      admin,
+      guarded.session.customerRef,
+      context.tenantId,
+      createIfMissing,
+    );
     if (!wishlist.ok) return wishlist;
     return { ok: true, wishlist: wishlist.wishlist, customerRef: guarded.session.customerRef };
   };
 
   /** Re-reads and projects the wishlist after a mutation, so a caller never has to re-fetch. */
-  const reread = async (customerRef: string): Promise<PageResponse> => {
-    const response = await admin.publicReads.wishlist.getByCustomer({ customerRef });
-    if (response.status < 200 || response.status >= 300) return response as PageResponse;
+  const reread = async (customerRef: string, tenantId: string): Promise<PageResponse> => {
+    const response = await admin.publicReads.wishlist.getByCustomer({ customerRef, tenantId });
+    if (response.status < 200 || response.status >= 300) return response;
     return { status: 200, body: toPublicWishlistDto(response.body as Wishlist) };
   };
 
@@ -168,9 +178,10 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
         const added = await admin.publicReads.wishlist.addItem({
           wishlistId: resolved.wishlist.id.toString(),
           productRef: body.productRef,
+          tenantId: context.tenantId,
         });
         if (added.status < 200 || added.status >= 300) return added;
-        return reread(resolved.customerRef);
+        return reread(resolved.customerRef, context.tenantId);
       },
     }),
     defineRoute({
@@ -191,9 +202,10 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
         const removed = await admin.publicReads.wishlist.removeItem({
           wishlistId: resolved.wishlist.id.toString(),
           productRef: body.productRef,
+          tenantId: context.tenantId,
         });
         if (removed.status < 200 || removed.status >= 300) return removed;
-        return reread(resolved.customerRef);
+        return reread(resolved.customerRef, context.tenantId);
       },
     }),
     defineRoute({
@@ -225,11 +237,12 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
         const shared = await admin.publicReads.wishlist.shareItem({
           wishlistId: resolved.wishlist.id.toString(),
           productRef: body.productRef,
+          tenantId: context.tenantId,
         });
         if (shared.status < 200 || shared.status >= 300) return shared;
 
         const { shareToken } = shared.body as { shareToken: string };
-        const projected = await reread(resolved.customerRef);
+        const projected = await reread(resolved.customerRef, context.tenantId);
         if (projected.status !== 200) return projected;
         return { status: 200, body: { ...(projected.body as PublicWishlistDto), shareToken } };
       },
@@ -255,9 +268,9 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
        *
        * So the route composes the two REAL operations instead, in the safe order — add to the cart
        * first, and only remove from the wishlist once the add has actually succeeded, so a failure
-       * leaves the item where it was rather than losing it. `resolvePrice` re-derives the price
-       * server-side (H-01: no caller ever chooses a cart line's price), reusing the same helper
-       * `public-cart-routes.ts` uses.
+       * leaves the item where it was rather than losing it. `resolveMerchandise` re-derives the
+       * variant's price server-side (H-01: no caller ever chooses a cart line's price), reusing the
+       * same helper `public-cart-routes.ts` uses.
        *
        * Cart ownership is proven by `sessionRef` exactly as every other public cart route proves it,
        * because a customer's cart is still keyed by `sessionRef`: `CartRepository` has no
@@ -268,31 +281,47 @@ export function publicWishlistRoutes(admin: WiredAdmin): readonly RouteDefinitio
         const resolved = await own(context, false);
         if (!resolved.ok) return resolved.response;
 
-        const current = await admin.publicReads.cart.getCurrent({ sessionRef: body.sessionRef });
+        const current = await admin.publicReads.cart.getCurrent({
+          tenantId: context.tenantId,
+          sessionRef: body.sessionRef,
+        });
         if (current.status < 200 || current.status >= 300) return current;
         const cart = current.body as Cart | null;
         if (cart === null) {
           return { status: 404, body: toErrorEnvelope(new NotFoundError("Cart not found")) };
         }
 
-        const price = await resolvePrice(admin, body.productRef);
-        if (price.status !== "ok") return priceUnresolvedResponse();
+        // Plan 2A: a product with several variants answers VARIANT_REQUIRED — the shopper must pick a size.
+        const merchandise = await resolveMerchandise(
+          admin,
+          { productId: body.productRef },
+          context.tenantId,
+        );
+        if (merchandise.status !== "ok") return merchandiseUnresolvedResponse(merchandise);
 
         const added = await admin.publicReads.cart.add({
+          tenantId: context.tenantId,
           cartId: cart.id.toString(),
           productId: body.productRef,
           quantity: 1,
-          unitPriceAmountMinor: price.amountMinor,
-          currency: price.currency,
+          unitPriceAmountMinor: merchandise.amountMinor,
+          currency: merchandise.currency,
+          merchandise: {
+            variantRef: merchandise.variantId,
+            sku: merchandise.sku,
+            title: merchandise.title,
+            variantTitle: merchandise.variantTitle,
+          },
         });
         if (added.status < 200 || added.status >= 300) return added;
 
         const removed = await admin.publicReads.wishlist.removeItem({
           wishlistId: resolved.wishlist.id.toString(),
           productRef: body.productRef,
+          tenantId: context.tenantId,
         });
         if (removed.status < 200 || removed.status >= 300) return removed;
-        return reread(resolved.customerRef);
+        return reread(resolved.customerRef, context.tenantId);
       },
     }),
   ] as readonly RouteDefinition[];

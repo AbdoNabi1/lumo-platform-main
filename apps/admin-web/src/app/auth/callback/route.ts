@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth/config";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { safeReturnTo } from "@/lib/auth/safe-return-to";
+import { publicOrigin } from "@/lib/public-origin";
 
 // Module-level cache (mirrors middleware.ts's own `jwks` singleton) — createRemoteJWKSet keeps
 // its own internal key cache keyed by this instance, so reusing it across requests is what
@@ -22,12 +23,15 @@ function getJwks(): ReturnType<typeof createRemoteJWKSet> {
 
 /**
  * OAuth2 authorization_code callback (Phase A.32) — the `redirect_uri` registered on the
- * `lumo-admin-web` Hydra client. Exchanges the code for a real RS256 JWT at Hydra's token
+ * `morbeh-admin-web` Hydra client. Exchanges the code for a real RS256 JWT at Hydra's token
  * endpoint and stores it as an httpOnly session cookie; nothing else in the app ever sees a
  * client secret or talks to Hydra's token endpoint directly.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const { searchParams, origin } = request.nextUrl;
+  const { searchParams } = request.nextUrl;
+  // Not Next's own request origin: behind a proxy that is the container's bind address, and this value
+  // is the `redirect_uri` that must equal the one the authorize request sent (lib/public-origin.ts).
+  const origin = publicOrigin(request);
   const error = searchParams.get("error");
   if (error !== null) {
     return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(error)}`, origin));

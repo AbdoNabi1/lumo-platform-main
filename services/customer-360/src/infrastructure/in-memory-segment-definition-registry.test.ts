@@ -8,6 +8,7 @@ import {
   OutboxWriter,
   rootEventContext,
 } from "@platform/messaging";
+import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { UniqueEntityId } from "@platform/domain";
 import { Expr } from "@platform/expression";
@@ -16,6 +17,7 @@ import { SegmentCreated } from "../events/segment-created.event";
 import { InMemorySegmentDefinitionRegistry } from "./in-memory-segment-definition-registry";
 import { IdentityEventTranslator } from "./identity-event-translator";
 import { runSegmentDefinitionRegistryContractTests } from "./segment-definition-registry.contract";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -64,6 +66,7 @@ describe("InMemorySegmentDefinitionRegistry — event publishing", () => {
         createdAt: "t0",
         updatedAt: "t0",
       },
+      TENANT_A,
       0,
       undefined,
     );
@@ -89,6 +92,7 @@ describe("InMemorySegmentDefinitionRegistry — event publishing", () => {
         createdAt: "t0",
         updatedAt: "t0",
       },
+      TENANT_A,
       0,
       event,
     );
@@ -105,16 +109,54 @@ describe("InMemorySegmentDefinitionRegistry — event publishing", () => {
       producer: "customer360",
     });
     const context = rootEventContext(ids);
-    const registry = new InMemorySegmentDefinitionRegistry({ outbox, context }, [
+    const registry = new InMemorySegmentDefinitionRegistry(
+      { outbox, context },
       {
-        id: "seeded",
-        name: "Seeded",
-        version: 1,
-        ruleSet: ruleSet(),
-        createdAt: "t0",
-        updatedAt: "t0",
+        tenantId: TENANT_A,
+        definitions: [
+          {
+            id: "seeded",
+            name: "Seeded",
+            version: 1,
+            ruleSet: ruleSet(),
+            createdAt: "t0",
+            updatedAt: "t0",
+          },
+        ],
       },
-    ]);
-    expect(await registry.getById("seeded")).not.toBeNull();
+    );
+    expect(await registry.getById("seeded", TENANT_A)).not.toBeNull();
+  });
+});
+
+describe("InMemorySegmentDefinitionRegistry write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
+  it("carries each call's tenantId into the outbox envelope, for save and delete", async () => {
+    await assertWriteTimeTenant("customer-360", async (outbox, tenantId) => {
+      const registry = new InMemorySegmentDefinitionRegistry({
+        outbox,
+        context: rootEventContext(ids),
+      });
+      const event = new SegmentCreated(
+        {
+          eventId: ids.generate(),
+          aggregateId: UniqueEntityId.from("high_value"),
+          occurredAt: clock.now(),
+        },
+        { segmentId: "high_value", name: "High value", version: 1 },
+      );
+      await registry.save(
+        {
+          id: "high_value",
+          name: "High value",
+          version: 1,
+          ruleSet: ruleSet(),
+          createdAt: "t0",
+          updatedAt: "t0",
+        },
+        tenantId,
+        0,
+        event,
+      );
+    });
   });
 });

@@ -1,16 +1,41 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
+import type { Prisma } from "@prisma/client";
 import type { FulfillmentOrder } from "../domain/fulfillment-order";
 import type { FulfillmentOrderRepository } from "../domain/fulfillment-order-repository";
 import { FulfillmentOrderMapper } from "./fulfillment-order.mapper";
+
+type FulfillmentOrderWithAttempts = Prisma.FulfillmentOrderGetPayload<{
+  include: { attempts: true };
+}>;
+
+/** Rebuilds the aggregate from a row + its attempts (JSON columns need explicit shapes). */
+function hydrate(row: FulfillmentOrderWithAttempts): FulfillmentOrder {
+  return FulfillmentOrderMapper.toDomain(
+    {
+      ...row,
+      items: row.items as { productRef: string; quantity: number }[],
+      carrierReference: row.carrierReference as {
+        carrier: string;
+        carrierShipmentId: string;
+      },
+      // Array-of-objects JSON columns need the `unknown` hop: Prisma's `JsonValue` union has no
+      // structural overlap with a concrete element shape (comparability fails, not just assignability).
+      packages: row.packages as unknown as {
+        reference: string;
+        itemRefs: readonly string[];
+        weightGrams: number;
+      }[],
+    },
+    row.attempts,
+  );
+}
 
 export interface PrismaFulfillmentOrderRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /**
@@ -26,9 +51,8 @@ export class PrismaFulfillmentOrderRepository implements FulfillmentOrderReposit
     this.deps = deps;
   }
 
-  async save(fulfillmentOrder: FulfillmentOrder, tx?: unknown): Promise<void> {
+  async save(fulfillmentOrder: FulfillmentOrder, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const fulfillmentOrderId = fulfillmentOrder.id.toString();
     const row = FulfillmentOrderMapper.toRow(fulfillmentOrder, tenantId);
 
@@ -65,59 +89,70 @@ export class PrismaFulfillmentOrderRepository implements FulfillmentOrderReposit
       await client.fulfillmentAttempt.createMany({ data: attempts, skipDuplicates: true });
     }
 
-    await this.deps.outbox.write(fulfillmentOrder.pullDomainEvents(), this.deps.context, client);
-  }
-
-  async findById(id: string, tx?: unknown): Promise<FulfillmentOrder | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.fulfillmentOrder.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-      include: { attempts: { orderBy: { occurredAt: "asc" } } },
-    });
-    if (row === null) return null;
-    return FulfillmentOrderMapper.toDomain(
-      {
-        ...row,
-        items: row.items as { productRef: string; quantity: number }[],
-        carrierReference: row.carrierReference as {
-          carrier: string;
-          carrierShipmentId: string;
-        },
-        // Array-of-objects JSON columns need the `unknown` hop: Prisma's `JsonValue` union has no
-        // structural overlap with a concrete element shape (comparability fails, not just assignability).
-        packages: row.packages as unknown as {
-          reference: string;
-          itemRefs: readonly string[];
-          weightGrams: number;
-        }[],
-      },
-      row.attempts,
+    await this.deps.outbox.write(
+      fulfillmentOrder.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
     );
   }
 
-  async findByOrderRef(orderRef: string, tx?: unknown): Promise<FulfillmentOrder | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.fulfillmentOrder.findFirst({
-      where: { orderRef, tenantId: this.deps.tenantId },
-      include: { attempts: { orderBy: { occurredAt: "asc" } } },
-    });
-    if (row === null) return null;
-    return FulfillmentOrderMapper.toDomain(
-      {
-        ...row,
-        items: row.items as { productRef: string; quantity: number }[],
-        carrierReference: row.carrierReference as {
-          carrier: string;
-          carrierShipmentId: string;
-        },
-        packages: row.packages as unknown as {
-          reference: string;
-          itemRefs: readonly string[];
-          weightGrams: number;
-        }[],
-      },
-      row.attempts,
-    );
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<FulfillmentOrder | null> {
+    return this.findOne({ id, tenantId }, tenantId, tx);
+  }
+
+  async findByOrderRef(
+    orderRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<FulfillmentOrder | null> {
+    // The most recently opened one, so this agrees with `findByOrderRefs` (an order can have a
+    // cancelled fulfillment order and a newer one).
+    return this.findOne({ orderRef, tenantId }, tenantId, tx, { createdAt: "desc" });
+  }
+
+  /** One tenant-scoped query for the whole page; newest first, so the first row seen per order ref is its current fulfillment order. */
+  async findByOrderRefs(
+    orderRefs: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, FulfillmentOrder>> {
+    const found = new Map<string, FulfillmentOrder>();
+    if (orderRefs.length === 0) return found;
+    const run = (client: TransactionClient) =>
+      client.fulfillmentOrder.findMany({
+        where: { tenantId, orderRef: { in: [...orderRefs] } },
+        include: { attempts: { orderBy: { occurredAt: "asc" } } },
+        orderBy: { createdAt: "desc" },
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    for (const row of rows) {
+      if (found.has(row.orderRef)) continue;
+      found.set(row.orderRef, hydrate(row));
+    }
+    return found;
+  }
+
+  private async findOne(
+    where: { readonly tenantId: string } & Record<string, string>,
+    tenantId: string,
+    tx: unknown,
+    orderBy?: { readonly createdAt: "desc" },
+  ): Promise<FulfillmentOrder | null> {
+    const run = (client: TransactionClient) =>
+      client.fulfillmentOrder.findFirst({
+        where,
+        include: { attempts: { orderBy: { occurredAt: "asc" } } },
+        ...(orderBy === undefined ? {} : { orderBy }),
+      });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : hydrate(row);
   }
 
   private requireTx(tx: unknown): TransactionClient {

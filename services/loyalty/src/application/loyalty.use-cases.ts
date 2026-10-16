@@ -12,6 +12,7 @@ import { Reward } from "../domain/value-objects/reward";
 
 export interface OpenAccountInput {
   readonly customerRef: string;
+  readonly tenantId: string;
 }
 
 export interface AccountStatusOutput {
@@ -23,6 +24,7 @@ export interface AccountStatusOutput {
 
 export interface AccountIdInput {
   readonly accountId: string;
+  readonly tenantId: string;
 }
 
 export interface AdvanceAccountInput extends AccountIdInput {
@@ -59,7 +61,11 @@ export class OpenAccount implements UseCase<OpenAccountInput, AccountStatusOutpu
     if (!customerRef.ok) return err(customerRef.error);
 
     return this.deps.unitOfWork.run<Result<AccountStatusOutput, DomainError>>(async (tx) => {
-      const existing = await this.deps.accounts.findByCustomerRef(input.customerRef, tx);
+      const existing = await this.deps.accounts.findByCustomerRef(
+        input.customerRef,
+        input.tenantId,
+        tx,
+      );
       if (existing !== null) {
         return err(
           new ConflictError(`Customer "${input.customerRef}" already has a loyalty account`),
@@ -67,7 +73,7 @@ export class OpenAccount implements UseCase<OpenAccountInput, AccountStatusOutpu
       }
       const id = UniqueEntityId.from(this.deps.idGenerator.generate());
       const account = LoyaltyAccount.create(id, input.customerRef, this.deps.tiers);
-      await this.deps.accounts.save(account, tx);
+      await this.deps.accounts.save(account, input.tenantId, tx);
       return ok(toOutput(account));
     });
   }
@@ -87,7 +93,7 @@ export class AdvanceAccount implements UseCase<
 
   async execute(input: AdvanceAccountInput): Promise<Result<AccountStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<AccountStatusOutput, DomainError>>(async (tx) => {
-      const account = await this.deps.accounts.findById(input.accountId, tx);
+      const account = await this.deps.accounts.findById(input.accountId, input.tenantId, tx);
       if (account === null) return err(new NotFoundError("Loyalty account not found"));
 
       try {
@@ -97,7 +103,7 @@ export class AdvanceAccount implements UseCase<
         throw error;
       }
 
-      await this.deps.accounts.save(account, tx);
+      await this.deps.accounts.save(account, input.tenantId, tx);
       return ok(toOutput(account));
     });
   }
@@ -174,7 +180,7 @@ export class RedeemReward implements UseCase<RedeemRewardInput, AccountStatusOut
     if (!reward.ok) return err(reward.error);
 
     return this.deps.unitOfWork.run<Result<AccountStatusOutput, DomainError>>(async (tx) => {
-      const account = await this.deps.accounts.findById(input.accountId, tx);
+      const account = await this.deps.accounts.findById(input.accountId, input.tenantId, tx);
       if (account === null) return err(new NotFoundError("Loyalty account not found"));
 
       try {
@@ -189,7 +195,7 @@ export class RedeemReward implements UseCase<RedeemRewardInput, AccountStatusOut
         throw error;
       }
 
-      await this.deps.accounts.save(account, tx);
+      await this.deps.accounts.save(account, input.tenantId, tx);
       return ok(toOutput(account));
     });
   }
@@ -215,7 +221,7 @@ export class CompleteReferral implements UseCase<
 
   async execute(input: CompleteReferralInput): Promise<Result<AccountStatusOutput, DomainError>> {
     return this.deps.unitOfWork.run<Result<AccountStatusOutput, DomainError>>(async (tx) => {
-      const account = await this.deps.accounts.findById(input.accountId, tx);
+      const account = await this.deps.accounts.findById(input.accountId, input.tenantId, tx);
       if (account === null) return err(new NotFoundError("Loyalty account not found"));
 
       try {
@@ -231,7 +237,7 @@ export class CompleteReferral implements UseCase<
         throw error;
       }
 
-      await this.deps.accounts.save(account, tx);
+      await this.deps.accounts.save(account, input.tenantId, tx);
       return ok(toOutput(account));
     });
   }
@@ -243,7 +249,7 @@ async function runLedgerAction(
   action: (account: LoyaltyAccount, occurredAt: Date, eventId: string) => void,
 ): Promise<Result<AccountStatusOutput, DomainError>> {
   return deps.unitOfWork.run<Result<AccountStatusOutput, DomainError>>(async (tx) => {
-    const account = await deps.accounts.findById(input.accountId, tx);
+    const account = await deps.accounts.findById(input.accountId, input.tenantId, tx);
     if (account === null) return err(new NotFoundError("Loyalty account not found"));
 
     try {
@@ -253,7 +259,7 @@ async function runLedgerAction(
       throw error;
     }
 
-    await deps.accounts.save(account, tx);
+    await deps.accounts.save(account, input.tenantId, tx);
     return ok(toOutput(account));
   });
 }

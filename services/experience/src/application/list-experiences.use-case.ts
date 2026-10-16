@@ -5,19 +5,27 @@ import type { DomainError } from "@platform/utils";
 import type { Experience } from "../domain/experience";
 import type { ExperienceRepository } from "../domain/repositories";
 
+export interface ListExperiencesInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListExperiencesDeps {
   readonly experiences: ExperienceRepository;
 }
 
 /** Cursor-paginated experience listing. */
-export class ListExperiences implements UseCase<CursorPage, Paginated<Experience>, DomainError> {
+export class ListExperiences implements UseCase<
+  ListExperiencesInput,
+  Paginated<Experience>,
+  DomainError
+> {
   private readonly deps: ListExperiencesDeps;
 
   constructor(deps: ListExperiencesDeps) {
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<Experience>, DomainError>> {
-    return ok(await this.deps.experiences.list(input));
+  async execute(input: ListExperiencesInput): Promise<Result<Paginated<Experience>, DomainError>> {
+    return ok(await this.deps.experiences.list(input, input.tenantId));
   }
 }

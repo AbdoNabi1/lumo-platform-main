@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
+import { AuthorizationError } from "@platform/utils";
 import type { Tenant, Workspace } from "@platform/tenancy";
 import type { WiredAdmin } from "../composition";
 import { mapPage } from "./public-catalog-routes";
+import { storeSettingsRoutes } from "./store-settings-routes";
 
 const pageQuery = z.object({
   first: z.coerce.number().int().positive().optional(),
@@ -79,8 +81,14 @@ const createTenantBody = z.object({
   slug: z.string().min(1),
   name: z.string().min(1),
   isolationTier: z.enum(["pooled", "dedicated_schema", "dedicated_db"]),
+  /** T10.6: the tenant's first administrator (an Identity user id). Omitted => baseline only. */
+  ownerExternalId: z.string().min(1).optional(),
 });
+const provisioningQuery = z.object({ owner: z.string().min(1).optional() });
 const tenantIdParams = z.object({ tenantId: z.string().min(1) });
+const domainIdParams = z.object({ domainId: z.string().min(1) });
+const addDomainBody = z.object({ hostname: z.string().min(1).max(253) });
+const resolveHostQuery = z.object({ host: z.string().min(1).max(260) });
 const rebrandTenantBody = z.object({ branding: z.record(z.string(), z.string()) });
 const createWorkspaceBody = z.object({
   tenantId: z.string().min(1),
@@ -103,8 +111,28 @@ const configureWorkspaceBody = z.object({
   }),
 });
 
-/** The Tenancy admin HTTP surface (Sprint 5.5/5.6). Pure delegation. */
-export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
+export interface TenancyRouteOptions {
+  /**
+   * Called after a status change (activate/suspend/cancel) so the request boundary's cached status for
+   * that tenant is dropped and the change is effective immediately on this instance (T10.6).
+   */
+  readonly onLifecycleChange?: (tenantId: string) => void;
+}
+
+/** The Tenancy admin HTTP surface (Sprint 5.5/5.6). Delegation, plus T10.6 provisioning. */
+export function tenancyRoutes(
+  admin: WiredAdmin,
+  options: TenancyRouteOptions = {},
+): readonly RouteDefinition[] {
+  const changed = async <T extends { readonly status: number }>(
+    tenantId: string,
+    response: Promise<T>,
+  ): Promise<T> => {
+    const result = await response;
+    // Dropped on every outcome, success or not: a failed transition must not leave a stale entry either.
+    options.onLifecycleChange?.(tenantId);
+    return result;
+  };
   return [
     defineRoute({
       method: "POST",
@@ -114,7 +142,19 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a tenant",
       schema: { body: createTenantBody },
-      handle: ({ body, context }) => admin.tenancy.createTenant(context.principal, body),
+      handle: async ({ body, context }) => {
+        const { ownerExternalId, ...input } = body;
+        const created = await admin.tenancy.createTenant(context.principal, input);
+        if (created.status >= 300) return created;
+        // T10.6: a tenant row is not a working store. Provision its security baseline now and put the
+        // truth in the response: provisioning.complete is false when something did not land, and the
+        // operator resumes with POST /tenants/:tenantId/provision. The row stays; it is not rolled back.
+        const id = (created.body as { id: string }).id;
+        const provisioning = await admin.tenantProvisioner.provision(id, {
+          ...(ownerExternalId === undefined ? {} : { ownerExternalId }),
+        });
+        return { ...created, body: { ...(created.body as object), provisioning } };
+      },
     }),
     defineRoute({
       method: "POST",
@@ -124,7 +164,8 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Activate a tenant",
       schema: { params: tenantIdParams },
-      handle: ({ params, context }) => admin.tenancy.activateTenant(context.principal, params),
+      handle: ({ params, context }) =>
+        changed(params.tenantId, admin.tenancy.activateTenant(context.principal, params)),
     }),
     defineRoute({
       method: "POST",
@@ -134,7 +175,8 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Suspend a tenant",
       schema: { params: tenantIdParams },
-      handle: ({ params, context }) => admin.tenancy.suspendTenant(context.principal, params),
+      handle: ({ params, context }) =>
+        changed(params.tenantId, admin.tenancy.suspendTenant(context.principal, params)),
     }),
     defineRoute({
       method: "POST",
@@ -144,7 +186,45 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Cancel a tenant",
       schema: { params: tenantIdParams },
-      handle: ({ params, context }) => admin.tenancy.cancelTenant(context.principal, params),
+      handle: ({ params, context }) =>
+        changed(params.tenantId, admin.tenancy.cancelTenant(context.principal, params)),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/tenants/:tenantId/provision",
+      version: 1,
+      permission: "tenancy:create",
+      idempotent: true,
+      summary: "Run or resume a tenant's security provisioning (idempotent)",
+      schema: {
+        params: tenantIdParams,
+        body: z.object({ ownerExternalId: z.string().min(1).optional() }),
+      },
+      handle: async ({ params, body, context }) => {
+        const found = await admin.tenancy.getTenant(context.principal, params);
+        if (found.status >= 300) return found;
+        const report = await admin.tenantProvisioner.provision(params.tenantId, {
+          ...(body.ownerExternalId === undefined ? {} : { ownerExternalId: body.ownerExternalId }),
+        });
+        return { status: report.complete ? 200 : 202, body: report };
+      },
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/tenants/:tenantId/provisioning",
+      version: 1,
+      permission: "tenancy:read",
+      summary:
+        "What is actually stored for a tenant's security baseline (complete, or the missing steps)",
+      schema: { params: tenantIdParams, querystring: provisioningQuery },
+      handle: async ({ params, query, context }) => {
+        const found = await admin.tenancy.getTenant(context.principal, params);
+        if (found.status >= 300) return found;
+        const report = await admin.tenantProvisioner.inspect(params.tenantId, {
+          ...(query.owner === undefined ? {} : { ownerExternalId: query.owner }),
+        });
+        return { status: 200, body: report };
+      },
     }),
     defineRoute({
       method: "POST",
@@ -247,5 +327,88 @@ export function tenancyRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         return { status: 200, body: toWorkspaceDto(response.body as Workspace) };
       },
     }),
+    defineRoute({
+      method: "GET",
+      path: "/tenants/:tenantId/domains",
+      version: 1,
+      permission: "tenancy:read",
+      summary: "List a shop's domains",
+      schema: { params: tenantIdParams },
+      handle: ({ params, context }) =>
+        admin.tenancy.listShopDomains(context.principal, { shopId: params.tenantId }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/tenants/:tenantId/domains",
+      version: 1,
+      permission: "tenancy:update",
+      idempotent: true,
+      summary: "Add a custom domain to a shop (pending until verified)",
+      schema: { params: tenantIdParams, body: addDomainBody },
+      handle: ({ params, body, context }) =>
+        admin.tenancy.addCustomDomain(context.principal, {
+          shopId: params.tenantId,
+          hostname: body.hostname,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/domains/:domainId/verify",
+      version: 1,
+      permission: "tenancy:update",
+      idempotent: true,
+      summary: "Verify a custom domain's DNS points at the platform",
+      schema: { params: domainIdParams },
+      handle: ({ params, context }) => admin.tenancy.verifyDomain(context.principal, params),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/domains/:domainId/primary",
+      version: 1,
+      permission: "tenancy:update",
+      idempotent: true,
+      summary: "Make a verified domain the shop's primary",
+      schema: { params: domainIdParams },
+      handle: ({ params, context }) => admin.tenancy.setPrimaryDomain(context.principal, params),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/public/domains/resolve",
+      version: 1,
+      permission: "tenancy:read",
+      public: true,
+      summary: "Public: resolve a hostname to the shop it serves (verified domains only)",
+      schema: { querystring: resolveHostQuery },
+      handle: ({ query }) => admin.tenancy.resolveHost({ hostname: query.host }),
+    }),
+    // Plan 3C: the store settings live in the tenancy context, so under TENANT_MODE=multi they are
+    // pinned with the rest of these routes (fail closed) — see pinRoutesToTenant below.
+    ...storeSettingsRoutes(admin),
   ] as readonly RouteDefinition[];
+}
+
+/**
+ * TENANT_MODE=multi only (ADR-0014 point 8f). The tenancy context is the one recorded exemption from
+ * per-request scoping: every `Tenant` row is scoped to the deployment tenant it was constructed with,
+ * because a `Tenant` is platform-operator data and the operator identity that should own that scope
+ * does not exist yet. Left unguarded, a request resolved to tenant B would read and write tenant
+ * A's (the deployment tenant's) rows through these routes. So each handler refuses any request
+ * whose resolved tenant is not the pinned one — fail closed, until 8a-8d let this list go away.
+ */
+export function pinRoutesToTenant(
+  routes: readonly RouteDefinition[],
+  pinnedTenantId: string,
+): readonly RouteDefinition[] {
+  return routes.map((route) => ({
+    ...route,
+    handle: (args) => {
+      if (args.context.tenantId !== pinnedTenantId) {
+        throw new AuthorizationError(
+          "Tenant administration is restricted to the platform-operator scope " +
+            "(ADR-0014 point 8f); this tenant may not use it.",
+        );
+      }
+      return route.handle(args);
+    },
+  }));
 }

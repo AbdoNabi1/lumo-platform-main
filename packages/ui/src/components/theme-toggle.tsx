@@ -19,7 +19,7 @@ const OPTIONS: readonly ThemeOption[] = [
 ];
 
 /**
- * Lumo theme control — a three-way segmented control over light / system / dark.
+ * Morbeh theme control — a three-way segmented control over light / system / dark.
  *
  * Exposed as a radio group rather than three buttons: only one theme can be active, and
  * arrow-key navigation between the segments is what a radio group already gives us.

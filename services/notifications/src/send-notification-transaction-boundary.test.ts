@@ -34,6 +34,8 @@ import {
  * no longer matches the stored row throws `ConcurrencyError`, mirroring
  * `PrismaNotificationRepository.save` (`infrastructure/prisma-notification-repository.ts`).
  */
+const TENANT = "tenant-a";
+
 class PostgresLikeNotificationRepository implements NotificationRepository {
   private readonly rows = new Map<string, NotificationRow>();
   private readonly tenantId = "tenant-local";
@@ -193,7 +195,7 @@ describe("Phase A.15 (Task 3) — exploit proof: provider .send() call happens w
     const provider = new RecordingEmailProvider(uow);
     const useCase = new SendNotification(buildDeps(repo, provider, uow));
 
-    const result = await useCase.execute({ notificationId: "notif-1" });
+    const result = await useCase.execute({ tenantId: TENANT, notificationId: "notif-1" });
 
     expect(result.ok).toBe(true);
     expect(provider.calls).toHaveLength(1);
@@ -214,7 +216,7 @@ describe("Phase A.15 (Task 3) — exploit proof: provider .send() call happens w
     };
     const useCase = new SendNotification(buildDeps(repo, provider, uow));
 
-    await useCase.execute({ notificationId: "notif-2" });
+    await useCase.execute({ tenantId: TENANT, notificationId: "notif-2" });
 
     // Still "queued" mid-call — the precheck transaction committed without mutating status; the
     // transition to "sent" only happens in `settle`, AFTER the provider call resolves.
@@ -230,7 +232,7 @@ describe("Phase A.15 (Task 3) — success and failure each settle via their own 
     const provider = new RecordingEmailProvider(uow);
     const useCase = new SendNotification(buildDeps(repo, provider, uow));
 
-    const result = await useCase.execute({ notificationId: "notif-3" });
+    const result = await useCase.execute({ tenantId: TENANT, notificationId: "notif-3" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("sent");
@@ -247,7 +249,7 @@ describe("Phase A.15 (Task 3) — success and failure each settle via their own 
     const provider = new RecordingEmailProvider(uow, () => true);
     const useCase = new SendNotification(buildDeps(repo, provider, uow));
 
-    const result = await useCase.execute({ notificationId: "notif-4" });
+    const result = await useCase.execute({ tenantId: TENANT, notificationId: "notif-4" });
 
     // Phase A.16: `queued -> failed` is now a legal transition (`notification-status.ts`), so
     // `markFailed()` inside `settleFailure` succeeds instead of throwing `BusinessRuleError`.
@@ -286,7 +288,7 @@ describe("Phase A.15 (Task 3) — success and failure each settle via their own 
     const provider = new RecordingEmailProvider(uow, () => true);
     const useCase = new SendNotification(buildDeps(repo, provider, uow));
 
-    const result = await useCase.execute({ notificationId: "notif-4b" });
+    const result = await useCase.execute({ tenantId: TENANT, notificationId: "notif-4b" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("failed");
@@ -323,7 +325,7 @@ describe("Phase A.15 (Task 3) — idempotency-key stability across a crash-befor
     const useCase = new SendNotification(buildDeps(crashingRepo, provider, uow));
 
     // First attempt: provider call succeeds, but settle's save() "crashes" — execute() rejects.
-    await expect(useCase.execute({ notificationId: "notif-5" })).rejects.toThrow(
+    await expect(useCase.execute({ tenantId: TENANT, notificationId: "notif-5" })).rejects.toThrow(
       /simulated crash during settle commit/,
     );
     expect(provider.calls).toHaveLength(1);
@@ -333,7 +335,7 @@ describe("Phase A.15 (Task 3) — idempotency-key stability across a crash-befor
 
     // Retry (a fresh execute() call, e.g. from a queue redelivery after the crash): precheck
     // re-reads the SAME committed state, so it re-derives the identical key.
-    const retried = await useCase.execute({ notificationId: "notif-5" });
+    const retried = await useCase.execute({ tenantId: TENANT, notificationId: "notif-5" });
     expect(retried.ok).toBe(true);
     expect(provider.calls).toHaveLength(2);
     expect(provider.calls[1]?.request.idempotencyKey).toBe("notif-5:attempt:0");
@@ -350,7 +352,7 @@ describe("Phase A.15 (Task 3) — idempotency-key stability across a crash-befor
     const provider = new RecordingEmailProvider(uow);
     const useCase = new SendNotification(buildDeps(repo, provider, uow));
 
-    const first = await useCase.execute({ notificationId: "notif-6" });
+    const first = await useCase.execute({ tenantId: TENANT, notificationId: "notif-6" });
     expect(first.ok).toBe(true);
     expect(provider.calls[0]?.request.idempotencyKey).toBe("notif-6:attempt:0");
 
@@ -360,7 +362,7 @@ describe("Phase A.15 (Task 3) — idempotency-key stability across a crash-befor
     // `attempts.length` on every call, with no "already sent" short-circuit either) — not a
     // regression this refactor introduces, but a narrow pre-existing gap worth being explicit
     // about: callers must not blindly retry `SendNotification` after a successful send.
-    const second = await useCase.execute({ notificationId: "notif-6" });
+    const second = await useCase.execute({ tenantId: TENANT, notificationId: "notif-6" });
     expect(provider.calls).toHaveLength(2);
     expect(provider.calls[1]?.request.idempotencyKey).toBe("notif-6:attempt:1");
     expect(provider.calls[0]?.request.idempotencyKey).not.toBe(
@@ -386,7 +388,9 @@ describe("Phase A.15 (Task 3) — concurrent SendNotification calls never lose u
       const provider = new RecordingEmailProvider(uow);
       const useCases = [0, 1, 2].map(() => new SendNotification(buildDeps(repo, provider, uow)));
 
-      const results = await Promise.all(useCases.map((uc) => uc.execute({ notificationId: id })));
+      const results = await Promise.all(
+        useCases.map((uc) => uc.execute({ tenantId: TENANT, notificationId: id })),
+      );
 
       // Every call resolves to a clean Result — none rejects with a raw, uncaught ConcurrencyError.
       for (const result of results) {
@@ -419,7 +423,7 @@ describe("Phase A.15 (Task 3) — in_app channel makes no external call (no tran
     const provider = new RecordingEmailProvider(uow);
     const useCase = new SendNotification(buildDeps(repo, provider, uow));
 
-    const result = await useCase.execute({ notificationId: "notif-inapp" });
+    const result = await useCase.execute({ tenantId: TENANT, notificationId: "notif-inapp" });
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.status).toBe("sent");

@@ -12,12 +12,12 @@ import {
  * Cart identity is now session-derived, not a `?cartId=` link or a `cartId`-holding cookie: the
  * guest session cookie (`GUEST_SESSION_COOKIE`, written by `app/cart/actions.ts`) is the only
  * client-held reference, and the Runtime API resolves "the current cart" from it via
- * `GET /public/carts/current`. This supersedes the old `CART_COOKIE` (`lumo-storefront-cart-id`)
+ * `GET /public/carts/current`. This supersedes the old `CART_COOKIE` (`morbeh-storefront-cart-id`)
  * design from Productization Phase 3, which stored a bare cart id with no ownership check at all
  * — anyone holding that cookie's value (or guessing a `?cartId=`) could read any cart. See the
  * Phase 17.1 report for the removed surface.
  */
-export const GUEST_SESSION_COOKIE = "lumo-storefront-guest-session";
+export const GUEST_SESSION_COOKIE = "morbeh-storefront-guest-session";
 
 /**
  * Shared cookie properties for the guest session (Task 1). `httpOnly` so client JS can never read
@@ -43,7 +43,7 @@ export const GUEST_SESSION_COOKIE_OPTIONS = {
  * reasoning as `GUEST_SESSION_COOKIE_OPTIONS` — no `maxAge`: a checkout is a short, single-sitting
  * flow, not something that should still be resumable a browser restart later.
  */
-export const CHECKOUT_SESSION_COOKIE = "lumo_checkout_session";
+export const CHECKOUT_SESSION_COOKIE = "morbeh_checkout_session";
 
 export const CHECKOUT_SESSION_COOKIE_OPTIONS = {
   path: "/",
@@ -54,6 +54,10 @@ export const CHECKOUT_SESSION_COOKIE_OPTIONS = {
 
 export interface ResolvedCartLine {
   readonly productId: string;
+  /** Plan 2A: the variant this line sells; null on a legacy line (addressed by product). */
+  readonly variantId: string | null;
+  /** Plan 2A: the variant's label (`"L"`, `"Red / L"`); null when the line has none. */
+  readonly variantTitle: string | null;
   /** `null` when no Catalog product/variant with this id could be resolved — never fabricated. */
   readonly name: string | null;
   readonly slug: string | null;
@@ -61,6 +65,8 @@ export interface ResolvedCartLine {
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
   readonly lineTotalAmountMinor: number;
+  /** Plan 2C-3: the line's picture; null when it has none (or the API predates pictures). */
+  readonly imageUrl: string | null;
 }
 
 export type CurrentCartResult =
@@ -88,12 +94,16 @@ function resolveLine(item: CartItemSummary, products: readonly ProductSummary[])
   const product = resolveProduct(item.productId, products);
   return {
     productId: item.productId,
-    name: product?.name ?? null,
+    variantId: item.variantId,
+    variantTitle: item.variantTitle,
+    // The name snapshotted when the line was added wins; Catalog only fills in for a legacy line.
+    name: item.title ?? product?.name ?? null,
     slug: product?.slug ?? null,
     quantity: item.quantity,
     unitPriceAmountMinor: item.unitPriceAmountMinor,
     currency: item.currency,
     lineTotalAmountMinor: item.lineTotalAmountMinor,
+    imageUrl: item.imageUrl ?? null,
   };
 }
 

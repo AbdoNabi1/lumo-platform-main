@@ -256,9 +256,17 @@ export function totalAttempts(record: EventRecord): number {
   return record.destinationHistory.reduce((sum, entry) => sum + entry.attempts.length, 0);
 }
 
-/** Read port for stored records. Tracking defines the contract; persistence is wired outside. */
+/**
+ * Read port for stored records. Tracking defines the contract; persistence is wired outside.
+ *
+ * `get` takes the tenant explicitly (G-75): the table's key is `(tenantId, eventId)` and the
+ * collector accepts a client-supplied `eventId`, so two tenants can legitimately hold the same
+ * one. An adapter that resolved the tenant from whichever row `eventId` alone matched would leak
+ * one tenant's record to another; a required `tenantId` parameter closes that instead of relying
+ * on adapters to remember to filter.
+ */
 export interface EventRecordStorePort {
-  get(eventId: string): Promise<EventRecord | null>;
+  get(eventId: string, tenantId: string): Promise<EventRecord | null>;
   query(filter: EventRecordFilter): Promise<readonly EventRecord[]>;
 }
 
@@ -272,9 +280,14 @@ export interface EventRecordWriterPort {
   /**
    * Appends new history to an existing record. Implementations write a new immutable revision;
    * they must never edit the stored bytes of a prior revision.
+   *
+   * `tenantId` is required (G-75) so the base-row lookup is scoped to `(tenantId, eventId)` —
+   * the table's actual key — instead of deriving the tenant from whichever row a
+   * client-suppliable `eventId` happens to match.
    */
   appendHistory(input: {
     readonly eventId: string;
+    readonly tenantId: string;
     readonly stages?: readonly StageHistoryEntry[];
     readonly destinations?: readonly DestinationHistoryEntry[];
     readonly state: EventState;

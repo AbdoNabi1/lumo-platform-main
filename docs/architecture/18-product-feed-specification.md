@@ -112,7 +112,7 @@ Tracked per feed × channel × country: last successful sync, item counts (activ
 pending/excluded), error/warning counts by code, coverage % (synced vs. eligible), price/stock
 freshness lag, sync duration, and channel approval status. Alerts on: sync failure, disapproval
 spike, coverage drop, or staleness beyond SLA. (Operational surfacing of this dashboard in the
-admin UI is governed by the Lumo Design System contract — `../ui/`.)
+admin UI is governed by the Morbeh Design System contract — `../ui/`.)
 
 ## Requires ADR to change
 

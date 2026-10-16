@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -28,7 +28,6 @@ export interface PrismaSeoRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 export class PrismaSeoProfileRepository implements SeoProfileRepository {
@@ -38,9 +37,8 @@ export class PrismaSeoProfileRepository implements SeoProfileRepository {
     this.deps = deps;
   }
 
-  async save(profile: SeoProfile, tx?: unknown): Promise<void> {
+  async save(profile: SeoProfile, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = profile.id.toString();
     const row = SeoProfileMapper.toRow(profile, tenantId);
     if (profile.version === 0) {
@@ -60,34 +58,51 @@ export class PrismaSeoProfileRepository implements SeoProfileRepository {
         throw new ConcurrencyError(`SeoProfile ${id} was modified concurrently`);
       }
     }
-    await this.deps.outbox.write(profile.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      profile.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<SeoProfile | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.seoProfile.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<SeoProfile | null> {
+    const run = (client: TransactionClient) =>
+      client.seoProfile.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : SeoProfileMapper.toDomain(row);
   }
 
-  async findByPageRef(pageRef: string, tx?: unknown): Promise<SeoProfile | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.seoProfile.findFirst({
-      where: { pageRef, tenantId: this.deps.tenantId },
-    });
+  async findByPageRef(pageRef: string, tenantId: string, tx?: unknown): Promise<SeoProfile | null> {
+    const run = (client: TransactionClient) =>
+      client.seoProfile.findFirst({ where: { pageRef, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : SeoProfileMapper.toDomain(row);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<SeoProfile>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<SeoProfile>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.seoProfile.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
-    return buildPaginatedPage(rows.map((row) => SeoProfileMapper.toDomain(row)), limit, (p) =>
-      p.id.toString(),
+    const run = (client: TransactionClient) =>
+      client.seoProfile.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return buildPaginatedPage(
+      rows.map((row) => SeoProfileMapper.toDomain(row)),
+      limit,
+      (p) => p.id.toString(),
     );
   }
 
@@ -104,9 +119,8 @@ export class PrismaRedirectRepository implements RedirectRepository {
     this.deps = deps;
   }
 
-  async save(redirect: Redirect, tx?: unknown): Promise<void> {
+  async save(redirect: Redirect, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = redirect.id.toString();
     const row = RedirectMapper.toRow(redirect, tenantId);
     if (redirect.version === 0) {
@@ -124,32 +138,47 @@ export class PrismaRedirectRepository implements RedirectRepository {
       if (updated.count === 0)
         throw new ConcurrencyError(`Redirect ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(redirect.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      redirect.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Redirect | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.redirect.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Redirect | null> {
+    const run = (client: TransactionClient) =>
+      client.redirect.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : RedirectMapper.toDomain(row as RedirectRow);
   }
 
-  async findByFromPath(fromPath: string, tx?: unknown): Promise<Redirect | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.redirect.findFirst({
-      where: { fromPath, tenantId: this.deps.tenantId },
-    });
+  async findByFromPath(fromPath: string, tenantId: string, tx?: unknown): Promise<Redirect | null> {
+    const run = (client: TransactionClient) =>
+      client.redirect.findFirst({ where: { fromPath, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : RedirectMapper.toDomain(row as RedirectRow);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Redirect>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Redirect>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.redirect.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.redirect.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       rows.map((row) => RedirectMapper.toDomain(row as RedirectRow)),
       limit,
@@ -170,9 +199,8 @@ export class PrismaSitemapRepository implements SitemapRepository {
     this.deps = deps;
   }
 
-  async save(sitemap: Sitemap, tx?: unknown): Promise<void> {
+  async save(sitemap: Sitemap, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = sitemap.id.toString();
     const row = SitemapMapper.toRow(sitemap, tenantId);
     if (sitemap.version === 0) {
@@ -191,32 +219,47 @@ export class PrismaSitemapRepository implements SitemapRepository {
       if (updated.count === 0)
         throw new ConcurrencyError(`Sitemap ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(sitemap.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      sitemap.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Sitemap | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.sitemap.findFirst({ where: { id, tenantId: this.deps.tenantId } });
-    if (row === null) return null;
-    return SitemapMapper.toDomain(row as SitemapRow);
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Sitemap | null> {
+    const run = (client: TransactionClient) =>
+      client.sitemap.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : SitemapMapper.toDomain(row as SitemapRow);
   }
 
-  async findByName(name: string, tx?: unknown): Promise<Sitemap | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.sitemap.findFirst({ where: { name, tenantId: this.deps.tenantId } });
-    if (row === null) return null;
-    return SitemapMapper.toDomain(row as SitemapRow);
+  async findByName(name: string, tenantId: string, tx?: unknown): Promise<Sitemap | null> {
+    const run = (client: TransactionClient) =>
+      client.sitemap.findFirst({ where: { name, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : SitemapMapper.toDomain(row as SitemapRow);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Sitemap>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Sitemap>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.sitemap.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.sitemap.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       rows.map((row) => SitemapMapper.toDomain(row as SitemapRow)),
       limit,
@@ -237,9 +280,8 @@ export class PrismaRobotsPolicyRepository implements RobotsPolicyRepository {
     this.deps = deps;
   }
 
-  async save(policy: RobotsPolicy, tx?: unknown): Promise<void> {
+  async save(policy: RobotsPolicy, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = policy.id.toString();
     const row = RobotsPolicyMapper.toRow(policy, tenantId);
     if (policy.version === 0) {
@@ -256,40 +298,57 @@ export class PrismaRobotsPolicyRepository implements RobotsPolicyRepository {
       if (updated.count === 0)
         throw new ConcurrencyError(`RobotsPolicy ${id} was modified concurrently`);
     }
-    await this.deps.outbox.write(policy.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      policy.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<RobotsPolicy | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.robotsPolicy.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<RobotsPolicy | null> {
+    const run = (client: TransactionClient) =>
+      client.robotsPolicy.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     if (row === null) return null;
     // `rules: JsonValue` on the Prisma row has no structural overlap with `RobotsPolicyRow`'s
     // `readonly RobotsRule[]` (comparability fails, not just assignability).
     return RobotsPolicyMapper.toDomain(row as unknown as RobotsPolicyRow);
   }
 
-  async findByUserAgent(userAgent: string, tx?: unknown): Promise<RobotsPolicy | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.robotsPolicy.findFirst({
-      where: { userAgent, tenantId: this.deps.tenantId },
-    });
+  async findByUserAgent(
+    userAgent: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<RobotsPolicy | null> {
+    const run = (client: TransactionClient) =>
+      client.robotsPolicy.findFirst({ where: { userAgent, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     if (row === null) return null;
     // `rules: JsonValue` on the Prisma row has no structural overlap with `RobotsPolicyRow`'s
     // `readonly RobotsRule[]` (comparability fails, not just assignability).
     return RobotsPolicyMapper.toDomain(row as unknown as RobotsPolicyRow);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<RobotsPolicy>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<RobotsPolicy>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.robotsPolicy.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.robotsPolicy.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       // `rules: JsonValue` has no structural overlap with `RobotsPolicyRow`'s `readonly RobotsRule[]`.
       rows.map((row) => RobotsPolicyMapper.toDomain(row as unknown as RobotsPolicyRow)),

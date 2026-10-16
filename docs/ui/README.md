@@ -1,14 +1,14 @@
 # UI contract
 
-**What design system does Lumo use?** The **Lumo Design System**. It is the only one.
+**What design system does Morbeh use?** The **Morbeh Design System**. It is the only one.
 
-|                             |                                                                                     |
-| --------------------------- | ----------------------------------------------------------------------------------- |
-| **The specification**       | [LUMO_DESIGN_SYSTEM.md](LUMO_DESIGN_SYSTEM.md) — the single written source of truth |
-| **The tokens (runtime)**    | `packages/design/src/styles.css`                                                    |
-| **The tokens (TypeScript)** | `packages/design/src/primitives.ts`, `packages/design/src/semantic.ts`              |
-| **The components**          | `packages/ui/src/components/ui/*`                                                   |
-| **The reference surface**   | `apps/admin-web` — the Lumo Dashboard                                               |
+|                             |                                                                                         |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| **The specification**       | [MORBEH_DESIGN_SYSTEM.md](MORBEH_DESIGN_SYSTEM.md) — the single written source of truth |
+| **The tokens (runtime)**    | `packages/design/src/styles.css`                                                        |
+| **The tokens (TypeScript)** | `packages/design/src/primitives.ts`, `packages/design/src/semantic.ts`                  |
+| **The components**          | `packages/ui/src/components/ui/*`                                                       |
+| **The reference surface**   | `apps/admin-web` — the Morbeh Dashboard                                                 |
 
 ## Rules
 

@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { Cart } from "@platform/cart";
-import { CheckoutSession, type CheckoutAddress } from "@platform/checkout";
-import { NotFoundError, toErrorEnvelope } from "@platform/utils";
+import { CheckoutSession, type CheckoutAddress, type DiscountCodeOutput } from "@platform/checkout";
+import { NotFoundError, ValidationError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
+import { withLineImages } from "./product-images";
 import { resolveSessionRef } from "./public-cart-routes";
 
 const checkoutSessionIdParams = z.object({ checkoutSessionId: z.string().min(1) });
@@ -27,12 +28,23 @@ const startCheckoutBody = z
 const itemsBody = z.object({ sessionRef: z.string().min(1), cartId: z.string().min(1) }).strict();
 const addressBody = z.object({
   sessionRef: z.string().min(1),
+  /** Plan 3A: who receives the order; the domain trims, bounds and normalizes them. */
+  name: z.string().max(120).optional(),
+  phone: z.string().max(32).optional(),
   line1: z.string().min(1),
   line2: z.string().optional(),
   city: z.string().min(1),
-  postalCode: z.string().min(1),
+  postalCode: z.string().max(32).optional(),
   country: z.string().min(1),
+  /** Plan 3C: the governorate / region / emirate (ISO 3166-2, for example `EG-C`); the domain checks it against the country. */
+  province: z.string().max(10).optional(),
 });
+/**
+ * WP-1 (G-52): the guest's contact email. `.strict()` for the same reason `startCheckoutBody` is —
+ * a body carrying `customerRef` (or anything else) is a spoof attempt, not a typo. The email only
+ * ever feeds Identity's find-or-create at completion; it never confers access to a customer.
+ */
+const contactBody = z.object({ sessionRef: z.string().min(1), email: z.string().min(1) }).strict();
 /** Mirrors `checkout-routes.ts`'s Phase A.1 F-01 fix: the caller supplies only `method`, never a rate — `SelectShipping` re-derives the authoritative rate itself. */
 const shippingSelectionBody = z
   .object({ sessionRef: z.string().min(1), method: z.string().min(1) })
@@ -43,6 +55,21 @@ const paymentSelectionBody = z.object({
   provider: z.string().min(1),
 });
 const sessionRefOnlyBody = z.object({ sessionRef: z.string().min(1) });
+/**
+ * WP-13: `.strict()` on purpose. Initiating payment takes NO payment method — it reads the one the
+ * shopper already selected on the session (`payment-selection`, validated against what the merchant
+ * offers). A body carrying `provider` (or an amount) is rejected outright, so there is no second
+ * place a method — or a price — could be supplied at the moment money is about to move.
+ */
+const initiatePaymentBody = z.object({ sessionRef: z.string().min(1) }).strict();
+/** Phase 2: a code the shopper typed — never an amount. Normalised by Checkout. */
+const discountCodeBody = z
+  .object({ sessionRef: z.string().min(1), code: z.string().trim().min(1).max(64) })
+  .strict();
+const discountCodeParams = z.object({
+  checkoutSessionId: z.string().min(1),
+  code: z.string().min(1).max(64),
+});
 /** See the C-2 note on `completeBody` in `checkout-routes.ts` — the same field, same caveat. */
 const completeBody = z.object({
   sessionRef: z.string().min(1),
@@ -63,7 +90,7 @@ const completeBody = z.object({
  * `sessionRef` resolves to the SAME 404 an unknown id would — this surface never reveals whether a
  * session exists to a caller who cannot prove they own it.
  *
- * **Exposed surface** — exactly the 12 guest-completable routes below. Deliberately NOT exposed here,
+ * **Exposed surface** — the guest-completable routes below (`/contact` is WP-1 / G-52; `/payment` and `GET /public/payment-methods` are WP-13). Deliberately NOT exposed here,
  * left admin-only (`checkout-routes.ts`):
  * - `validate` / `promotion` — reachable through `recalculate` for the guest flow; a guest never
  *   needs to call them directly.
@@ -85,11 +112,15 @@ const completeBody = z.object({
  */
 
 export interface PublicAddressDto {
+  readonly name: string | null;
+  readonly phone: string | null;
   readonly line1: string;
   readonly line2?: string;
   readonly city: string;
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: ISO 3166-2, or null for a country without province data. */
+  readonly province: string | null;
 }
 
 export interface PublicCheckoutSessionDto {
@@ -98,28 +129,62 @@ export interface PublicCheckoutSessionDto {
   readonly currency: string;
   readonly items: readonly {
     readonly productId: string;
+    /** Plan 2A: the variant sold, with its snapshot; all null on a line added before variants. */
+    readonly variantId: string | null;
+    readonly sku: string | null;
+    readonly title: string | null;
+    readonly variantTitle: string | null;
     readonly quantity: number;
     readonly unitPriceAmountMinor: number;
+    /** Plan 2C-3: the line's picture, or null for the placeholder. Filled in by `withLineImages`. */
+    readonly imageUrl: string | null;
   }[];
   readonly totals: {
     readonly subtotalMinor: number;
     readonly shippingMinor: number;
     readonly taxMinor: number;
     readonly grandTotalMinor: number;
+    /** Plan 3C: true when `taxMinor` is already inside the prices ("Including … in taxes"), not added to the total. */
+    readonly taxIncluded: boolean;
+    /** Plan 3C: the chosen shipping rate's name as the shopper saw it, or null. */
+    readonly shippingName: string | null;
+    readonly discountMinor: number;
+    readonly shippingDiscountMinor: number;
   } | null;
   readonly shippingAddress: PublicAddressDto | null;
   readonly billingAddress: PublicAddressDto | null;
   readonly selectedShippingMethod: string | null;
+  /** The payment method the shopper selected ("stripe" | "paymob" | "cod"), or null before they choose. */
+  readonly selectedPaymentMethod: string | null;
+  /** The caller's own receipt address (WP-1) — visible only to the session's owner, same as the addresses. */
+  readonly contactEmail: string | null;
   readonly orderRef: string | null;
+  /** Phase 2: the codes the shopper entered and what was taken off — titles and amounts only. */
+  readonly discount: {
+    readonly codes: readonly {
+      readonly code: string;
+      readonly applicable: boolean;
+      readonly reason: string | null;
+    }[];
+    readonly applied: readonly {
+      readonly title: string;
+      readonly code: string | null;
+      readonly discountClass: string;
+      readonly amountMinor: number;
+    }[];
+  };
 }
 
 function toAddressDto(address: CheckoutAddress): PublicAddressDto {
   return {
+    name: address.name ?? null,
+    phone: address.phone ?? null,
     line1: address.line1,
     line2: address.line2,
     city: address.city,
     postalCode: address.postalCode,
     country: address.country,
+    province: address.province ?? null,
   };
 }
 
@@ -131,8 +196,13 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
     currency: session.currency,
     items: session.items.map((item) => ({
       productId: item.productRef,
+      variantId: item.variantRef ?? null,
+      sku: item.sku ?? null,
+      title: item.title ?? null,
+      variantTitle: item.variantTitle ?? null,
       quantity: item.quantity,
       unitPriceAmountMinor: item.unitPriceAmountMinor,
+      imageUrl: null,
     })),
     totals:
       session.totals === undefined
@@ -142,13 +212,33 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
             shippingMinor: session.totals.shippingMinor,
             taxMinor: session.totals.taxMinor,
             grandTotalMinor: session.totals.totalMinor,
+            taxIncluded: session.totals.taxIncluded,
+            shippingName: session.totals.shippingName ?? null,
+            discountMinor: session.totals.discountMinor,
+            shippingDiscountMinor: session.totals.shippingDiscountMinor,
           },
     shippingAddress:
       session.shippingAddress === undefined ? null : toAddressDto(session.shippingAddress),
     billingAddress:
       session.billingAddress === undefined ? null : toAddressDto(session.billingAddress),
     selectedShippingMethod: session.shippingSelection?.method ?? null,
+    selectedPaymentMethod: session.paymentSelection?.provider ?? null,
+    contactEmail: session.contactEmail?.value ?? null,
     orderRef: session.orderRef,
+    // Phase 2: the codes the shopper entered with whether each applies, and what was taken off —
+    // titles and amounts only, never promotion internals.
+    discount: {
+      codes: session.discountCodes.map((code) => {
+        const status = session.discountSnapshot?.codeStatuses.find((s) => s.code === code);
+        return { code, applicable: status?.applicable === true, reason: status?.reason ?? null };
+      }),
+      applied: (session.discountSnapshot?.applied ?? []).map((a) => ({
+        title: a.title,
+        code: a.code ?? null,
+        discountClass: a.discountClass,
+        amountMinor: a.amountMinor,
+      })),
+    },
   };
 }
 
@@ -176,8 +266,9 @@ async function requireOwnedSession(
   admin: WiredAdmin,
   checkoutSessionId: string,
   sessionRef: string,
+  tenantId: string,
 ): Promise<CheckoutSession | AdminResponse> {
-  const response = await admin.publicReads.checkout.get({ checkoutSessionId });
+  const response = await admin.publicReads.checkout.get({ tenantId, checkoutSessionId });
   if (response.status < 200 || response.status >= 300) {
     return response;
   }
@@ -189,7 +280,7 @@ async function requireOwnedSession(
 }
 
 export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
-  return [
+  return withLineImages(admin, [
     defineRoute({
       method: "POST",
       path: "/public/checkouts",
@@ -197,10 +288,12 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       permission: "checkout:start",
       public: true,
       idempotent: true,
-      summary: "Public: start a checkout session for the caller's own cart (guest — no customerRef)",
+      summary:
+        "Public: start a checkout session for the caller's own cart (guest — no customerRef)",
       schema: { body: startCheckoutBody },
-      handle: async ({ body }) => {
+      handle: async ({ body, context }) => {
         const started = await admin.publicReads.checkout.start({
+          tenantId: context.tenantId,
           cartRef: body.cartRef,
           sessionRef: body.sessionRef,
           currency: body.currency,
@@ -208,11 +301,22 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         if (started.status < 200 || started.status >= 300) return started;
         const { checkoutSessionId } = started.body as { checkoutSessionId: string };
         const projected = mapSession(
-          await admin.publicReads.checkout.get({ checkoutSessionId }),
+          await admin.publicReads.checkout.get({ tenantId: context.tenantId, checkoutSessionId }),
           toPublicCheckoutSessionDto,
         );
         return projected.status === 200 ? { status: 201, body: projected.body } : projected;
       },
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/public/payment-methods",
+      version: 1,
+      permission: "checkout:read",
+      public: true,
+      summary: "Public: the payment methods this merchant currently offers (no priority order)",
+      schema: {},
+      handle: ({ context }) =>
+        admin.publicReads.checkout.listPaymentMethods({ tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "GET",
@@ -224,7 +328,12 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       schema: { params: checkoutSessionIdParams, querystring: sessionRefQuery },
       handle: async ({ params, query, context }) => {
         const sessionRef = resolveSessionRef(context, query.sessionRef);
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, sessionRef);
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         return { status: 200, body: toPublicCheckoutSessionDto(owned) };
       },
@@ -239,10 +348,18 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       summary:
         "Public: load an item snapshot into the caller's own checkout session, re-derived server-side from the given cart",
       schema: { params: checkoutSessionIdParams, body: itemsBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
-        const cartResponse = await admin.publicReads.cart.get({ cartId: body.cartId });
+        const cartResponse = await admin.publicReads.cart.get({
+          tenantId: context.tenantId,
+          cartId: body.cartId,
+        });
         if (cartResponse.status < 200 || cartResponse.status >= 300) return cartResponse;
         const cart = cartResponse.body as Cart;
         // The cart must also belong to the caller — otherwise a guest could load a stranger's cart
@@ -253,13 +370,26 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           quantity: item.quantity.value,
           unitPriceAmountMinor: item.unitPrice.amountMinor,
           currency: item.unitPrice.currency,
+          // Plan 2A: carry the variant snapshot; every key is absent on a legacy line.
+          ...(item.variantRef === undefined
+            ? {}
+            : {
+                variantId: item.variantRef,
+                sku: item.sku,
+                title: item.title,
+                variantTitle: item.variantTitle,
+              }),
         }));
         const result = await admin.publicReads.checkout.loadItems({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           items,
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapSession(await admin.publicReads.checkout.get(params), toPublicCheckoutSessionDto);
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
       },
     }),
     defineRoute({
@@ -271,19 +401,31 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       idempotent: true,
       summary: "Public: set the caller's own checkout session's billing address snapshot",
       schema: { params: checkoutSessionIdParams, body: addressBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         const result = await admin.publicReads.checkout.setBillingAddress({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
+          name: body.name,
+          phone: body.phone,
           line1: body.line1,
           line2: body.line2,
           city: body.city,
-          postalCode: body.postalCode,
+          postalCode: body.postalCode ?? "",
           country: body.country,
+          ...(body.province === undefined ? {} : { province: body.province }),
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapSession(await admin.publicReads.checkout.get(params), toPublicCheckoutSessionDto);
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
       },
     }),
     defineRoute({
@@ -295,19 +437,61 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       idempotent: true,
       summary: "Public: set the caller's own checkout session's shipping address snapshot",
       schema: { params: checkoutSessionIdParams, body: addressBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         const result = await admin.publicReads.checkout.setShippingAddress({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
+          name: body.name,
+          phone: body.phone,
           line1: body.line1,
           line2: body.line2,
           city: body.city,
-          postalCode: body.postalCode,
+          postalCode: body.postalCode ?? "",
           country: body.country,
+          ...(body.province === undefined ? {} : { province: body.province }),
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapSession(await admin.publicReads.checkout.get(params), toPublicCheckoutSessionDto);
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/checkouts/:checkoutSessionId/contact",
+      version: 1,
+      permission: "checkout:set_contact_email",
+      public: true,
+      idempotent: true,
+      summary:
+        "Public: set the caller's own checkout session's contact email (guest receipt address)",
+      schema: { params: checkoutSessionIdParams, body: contactBody },
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
+        if (!(owned instanceof CheckoutSession)) return owned;
+        const result = await admin.publicReads.checkout.setContactEmail({
+          tenantId: context.tenantId,
+          checkoutSessionId: params.checkoutSessionId,
+          email: body.email,
+        });
+        if (result.status < 200 || result.status >= 300) return result;
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
       },
     }),
     defineRoute({
@@ -319,10 +503,16 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       idempotent: true,
       summary: "Public: request shipping rate quotes for the caller's own checkout session",
       schema: { params: checkoutSessionIdParams, body: sessionRefOnlyBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         return admin.publicReads.checkout.requestShippingQuote({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
         });
       },
@@ -336,15 +526,24 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       idempotent: true,
       summary: "Public: record the shipping method chosen for the caller's own checkout session",
       schema: { params: checkoutSessionIdParams, body: shippingSelectionBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         const result = await admin.publicReads.checkout.selectShipping({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           method: body.method,
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapSession(await admin.publicReads.checkout.get(params), toPublicCheckoutSessionDto);
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
       },
     }),
     defineRoute({
@@ -356,10 +555,16 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       idempotent: true,
       summary: "Public: request a tax snapshot for the caller's own checkout session",
       schema: { params: checkoutSessionIdParams, body: sessionRefOnlyBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         return admin.publicReads.checkout.requestTaxCalculation({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
         });
       },
@@ -373,16 +578,25 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       idempotent: true,
       summary: "Public: record the payment method chosen for the caller's own checkout session",
       schema: { params: checkoutSessionIdParams, body: paymentSelectionBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         const result = await admin.publicReads.checkout.selectPayment({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           paymentMethodRef: body.paymentMethodRef,
           provider: body.provider,
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapSession(await admin.publicReads.checkout.get(params), toPublicCheckoutSessionDto);
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
       },
     }),
     defineRoute({
@@ -394,14 +608,97 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       idempotent: true,
       summary: "Public: recalculate totals for the caller's own checkout session",
       schema: { params: checkoutSessionIdParams, body: sessionRefOnlyBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         const result = await admin.publicReads.checkout.recalculateTotals({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapSession(await admin.publicReads.checkout.get(params), toPublicCheckoutSessionDto);
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/checkouts/:checkoutSessionId/discount-codes",
+      version: 1,
+      permission: "checkout:recalculate",
+      public: true,
+      idempotent: true,
+      summary: "Public: apply a discount code to the caller's own checkout session",
+      schema: { params: checkoutSessionIdParams, body: discountCodeBody },
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
+        if (!(owned instanceof CheckoutSession)) return owned;
+        const result = await admin.publicReads.checkout.addDiscountCode({
+          tenantId: context.tenantId,
+          checkoutSessionId: params.checkoutSessionId,
+          code: body.code,
+        });
+        if (result.status < 200 || result.status >= 300) return result;
+        const outcome = result.body as DiscountCodeOutput;
+        if (!outcome.applicable) {
+          // The reason is a stable token (`not_found`, `minimum_not_met`, …) the storefront words.
+          return {
+            status: 422,
+            body: toErrorEnvelope(
+              new ValidationError("Discount code not applied", [
+                { field: "code", message: outcome.reason ?? "not_found" },
+              ]),
+            ),
+          };
+        }
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
+      },
+    }),
+    defineRoute({
+      method: "DELETE",
+      path: "/public/checkouts/:checkoutSessionId/discount-codes/:code",
+      version: 1,
+      permission: "checkout:recalculate",
+      public: true,
+      idempotent: true,
+      summary: "Public: remove a discount code from the caller's own checkout session",
+      schema: { params: discountCodeParams, querystring: sessionRefQuery },
+      handle: async ({ params, query, context }) => {
+        const sessionRef = resolveSessionRef(context, query.sessionRef);
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          sessionRef,
+          context.tenantId,
+        );
+        if (!(owned instanceof CheckoutSession)) return owned;
+        const result = await admin.publicReads.checkout.removeDiscountCode({
+          tenantId: context.tenantId,
+          checkoutSessionId: params.checkoutSessionId,
+          code: params.code,
+        });
+        if (result.status < 200 || result.status >= 300) return result;
+        return mapSession(
+          await admin.publicReads.checkout.get({
+            tenantId: context.tenantId,
+            checkoutSessionId: params.checkoutSessionId,
+          }),
+          toPublicCheckoutSessionDto,
+        );
       },
     }),
     defineRoute({
@@ -413,15 +710,48 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       idempotent: true,
       summary: "Public: complete the caller's own checkout session, materializing the order",
       schema: { params: checkoutSessionIdParams, body: completeBody },
-      handle: async ({ params, body }) => {
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, body.sessionRef);
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         const result = await admin.publicReads.checkout.complete({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           idempotencyKey: body.idempotencyKey,
         });
         if (result.status < 200 || result.status >= 300) return result;
-        return mapSession(await admin.publicReads.checkout.get(params), toPublicCheckoutSessionDto);
+        return mapSession(
+          await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
+          toPublicCheckoutSessionDto,
+        );
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/checkouts/:checkoutSessionId/payment",
+      version: 1,
+      permission: "checkout:initiate_payment",
+      public: true,
+      idempotent: true,
+      summary:
+        "Public: open the payment for the caller's completed checkout, using the method they selected",
+      schema: { params: checkoutSessionIdParams, body: initiatePaymentBody },
+      handle: async ({ params, body, context }) => {
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          body.sessionRef,
+          context.tenantId,
+        );
+        if (!(owned instanceof CheckoutSession)) return owned;
+        return admin.publicReads.checkout.initiatePayment({
+          tenantId: context.tenantId,
+          checkoutSessionId: params.checkoutSessionId,
+        });
       },
     }),
     defineRoute({
@@ -434,12 +764,18 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       schema: { params: checkoutSessionIdParams, querystring: sessionRefQuery },
       handle: async ({ params, query, context }) => {
         const sessionRef = resolveSessionRef(context, query.sessionRef);
-        const owned = await requireOwnedSession(admin, params.checkoutSessionId, sessionRef);
+        const owned = await requireOwnedSession(
+          admin,
+          params.checkoutSessionId,
+          sessionRef,
+          context.tenantId,
+        );
         if (!(owned instanceof CheckoutSession)) return owned;
         return admin.publicReads.checkout.generatePaymentIntentRequest({
+          tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
         });
       },
     }),
-  ] as readonly RouteDefinition[];
+  ] as readonly RouteDefinition[]);
 }

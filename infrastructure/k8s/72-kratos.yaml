@@ -12,34 +12,34 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: lumo-kratos-config
-  namespace: lumo-runtime
+  name: morbeh-kratos-config
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: kratos
 data:
-  SERVE_PUBLIC_BASE_URL: "https://identity.lumo.example.com/"
-  SERVE_ADMIN_BASE_URL: "http://kratos.lumo-runtime.svc.cluster.local:4434/"
+  SERVE_PUBLIC_BASE_URL: "https://identity.morbeh.example.com/"
+  SERVE_ADMIN_BASE_URL: "http://kratos.morbeh-runtime.svc.cluster.local:4434/"
   SERVE_PUBLIC_CORS_ENABLED: "true"
-  SERVE_PUBLIC_CORS_ALLOWED_ORIGINS: "https://admin.lumo.example.com"
-  SELFSERVICE_DEFAULT_BROWSER_RETURN_URL: "https://admin.lumo.example.com/"
-  SELFSERVICE_ALLOWED_RETURN_URLS: "https://admin.lumo.example.com"
-  SELFSERVICE_FLOWS_ERROR_UI_URL: "https://admin.lumo.example.com/error"
-  SELFSERVICE_FLOWS_LOGIN_UI_URL: "https://admin.lumo.example.com/login"
-  SELFSERVICE_FLOWS_REGISTRATION_UI_URL: "https://admin.lumo.example.com/registration"
+  SERVE_PUBLIC_CORS_ALLOWED_ORIGINS: "https://admin.morbeh.example.com"
+  SELFSERVICE_DEFAULT_BROWSER_RETURN_URL: "https://admin.morbeh.example.com/"
+  SELFSERVICE_ALLOWED_RETURN_URLS: "https://admin.morbeh.example.com"
+  SELFSERVICE_FLOWS_ERROR_UI_URL: "https://admin.morbeh.example.com/error"
+  SELFSERVICE_FLOWS_LOGIN_UI_URL: "https://admin.morbeh.example.com/login"
+  SELFSERVICE_FLOWS_REGISTRATION_UI_URL: "https://admin.morbeh.example.com/registration"
   # Shared registrable parent domain with admin-web (COOKIE_DOMAIN in 76-admin-web-config.yaml) —
   # this is what lets Kratos's session cookie reach admin-web across the auth/admin domain split
   # (A.33 P0 #6; see kratos.yml's own doc comment for why this must match on both sides).
-  SESSION_COOKIE_DOMAIN: ".lumo.example.com"
+  SESSION_COOKIE_DOMAIN: ".morbeh.example.com"
   LOG_LEVEL: "info"
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: kratos-migrate
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: kratos
 spec:
   backoffLimit: 6
@@ -47,7 +47,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/part-of: morbeh
         app.kubernetes.io/name: kratos
     spec:
       restartPolicy: OnFailure
@@ -62,7 +62,7 @@ spec:
             ["kratos", "migrate", "sql", "-e", "--yes", "-c", "/etc/config/kratos/kratos.yml"]
           envFrom:
             - secretRef:
-                name: lumo-kratos-secrets # DSN
+                name: morbeh-kratos-secrets # DSN
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -80,9 +80,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kratos
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: kratos
     app.kubernetes.io/component: identity
 spec:
@@ -99,7 +99,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/part-of: morbeh
         app.kubernetes.io/name: kratos
         app.kubernetes.io/component: identity
       annotations:
@@ -107,7 +107,7 @@ spec:
         prometheus.io/port: "4434"
         prometheus.io/path: "/admin/metrics/prometheus"
     spec:
-      serviceAccountName: lumo-runtime
+      serviceAccountName: morbeh-runtime
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -133,9 +133,9 @@ spec:
               containerPort: 4434
           envFrom:
             - configMapRef:
-                name: lumo-kratos-config
+                name: morbeh-kratos-config
             - secretRef:
-                name: lumo-kratos-secrets
+                name: morbeh-kratos-secrets
           startupProbe:
             httpGet:
               path: /admin/health/ready
@@ -184,9 +184,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kratos
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: kratos
 spec:
   type: ClusterIP

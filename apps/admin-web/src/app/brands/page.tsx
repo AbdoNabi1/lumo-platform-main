@@ -34,8 +34,8 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
     <AppShell t={t} locale={locale} activeNavId="brands" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.brandsPage.title}</h1>
-          <p className="text-md text-muted-foreground mt-1">{t.brandsPage.subtitle}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.brandsPage.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.brandsPage.subtitle}</p>
         </header>
 
         <BrandCreateForm t={t} />

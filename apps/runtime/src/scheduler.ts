@@ -149,6 +149,23 @@ export async function runCdcWatchdog(deps: CdcWatchdogDeps): Promise<void> {
   }
 }
 
+interface ListDueResponse {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+function dueSubscriptionIds(
+  response: ListDueResponse,
+  logger: Logger,
+  jobName: string,
+): readonly string[] {
+  if (response.status !== 200) {
+    logger.error(`${jobName}: failed to list due subscriptions`, { response: response.body });
+    return [];
+  }
+  return (response.body as { subscriptionIds: readonly string[] }).subscriptionIds;
+}
+
 export function buildJobs(core: RuntimeCore): readonly ScheduledJob[] {
   const cdcWatchdogState = createCdcWatchdogState();
 
@@ -247,6 +264,106 @@ export function buildJobs(core: RuntimeCore): readonly ScheduledJob[] {
           metrics: core.metrics,
           fetchImpl: fetch,
         });
+      },
+    },
+    /**
+     * T14.5/G-74 (7): the renewal that never had anything calling it. Bills every subscription
+     * whose `renewalSchedule.nextRenewalAt` is due (`BillSubscriptionRenewal`, unchanged — it reads
+     * the price from the subscription's PINNED plan version, never a caller). A declined charge is
+     * an expected outcome (`status: "failed"`, never a thrown error — see that use case's own doc
+     * comment) and immediately opens dunning (`EnterDunning`: `active -> grace`, first retry
+     * scheduled) rather than leaving the invoice to rot. Every call goes through
+     * `core.licensing.licensing` — the `LicensingController`, never the repositories/use-cases
+     * directly — so the platform-only guard applies to this job exactly like an HTTP caller (a
+     * scheduled job is not an excuse to bypass it, ADR-0014/D-062). `tenantId` is `core.platformTenantId`
+     * (see `composition.ts`) — there is exactly one tenant this job ever acts as, the same value
+     * under `single` and `multi`, never captured a second time at job construction.
+     */
+    {
+      name: "billing-renewals",
+      intervalMs: 60 * 60 * 1000,
+      run: async () => {
+        const tenantId = core.platformTenantId;
+        const due = dueSubscriptionIds(
+          await core.licensing.licensing.listSubscriptionsDueForRenewal({ tenantId }),
+          core.logger,
+          "billing-renewals",
+        );
+        for (const subscriptionId of due) {
+          const renewal = await core.licensing.licensing.billSubscriptionRenewal({
+            subscriptionId,
+            tenantId,
+          });
+          if (renewal.status !== 200) {
+            core.logger.error("billing-renewals: renewal call failed", {
+              subscriptionId,
+              response: renewal.body,
+            });
+            continue;
+          }
+          const { invoiceId, status } = renewal.body as { invoiceId: string; status: string };
+          if (status !== "failed") {
+            core.logger.info("billing-renewals: renewal collected", { subscriptionId, invoiceId });
+            continue;
+          }
+          const entered = await core.licensing.licensing.enterDunning({
+            subscriptionId,
+            invoiceId,
+            tenantId,
+          });
+          if (entered.status !== 200) {
+            core.logger.error("billing-renewals: renewal failed and dunning could not be entered", {
+              subscriptionId,
+              invoiceId,
+              response: entered.body,
+            });
+          } else {
+            core.logger.warn("billing-renewals: renewal failed, dunning started", {
+              subscriptionId,
+              invoiceId,
+            });
+          }
+        }
+      },
+    },
+    /**
+     * T14.5: the retry schedule side of dunning. Every subscription in `grace` whose
+     * `retryPolicy.nextRetryAt` is due gets one retry attempt (`RetryDunningInvoice`: re-issue the
+     * failed invoice, collect again — double-charge protection is entirely `CollectInvoice`'s
+     * existing deterministic idempotency key, see that use case's doc comment). Three outcomes, each
+     * a real state transition on the existing machine, logged at a severity that reflects what it
+     * means for the merchant: `recovered` (grace -> active, info), `retry_scheduled` (stays in
+     * grace, info), `exhausted` (grace -> expired, warn — the point service is lost to non-payment).
+     */
+    {
+      name: "billing-dunning-retries",
+      intervalMs: 60 * 60 * 1000,
+      run: async () => {
+        const tenantId = core.platformTenantId;
+        const due = dueSubscriptionIds(
+          await core.licensing.licensing.listSubscriptionsDueForDunningRetry({ tenantId }),
+          core.logger,
+          "billing-dunning-retries",
+        );
+        for (const subscriptionId of due) {
+          const retried = await core.licensing.licensing.retryDunningInvoice({
+            subscriptionId,
+            tenantId,
+          });
+          if (retried.status !== 200) {
+            core.logger.error("billing-dunning-retries: retry call failed", {
+              subscriptionId,
+              response: retried.body,
+            });
+            continue;
+          }
+          const { outcome, invoiceId } = retried.body as { outcome: string; invoiceId: string };
+          if (outcome === "exhausted") {
+            core.logger.warn(`billing-dunning-retries: ${outcome}`, { subscriptionId, invoiceId });
+          } else {
+            core.logger.info(`billing-dunning-retries: ${outcome}`, { subscriptionId, invoiceId });
+          }
+        }
       },
     },
   ];

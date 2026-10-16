@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────────────────
-# Lumo platform — local/production-parity infrastructure stack (Sprint 2.2.5).
+# Morbeh platform — local/production-parity infrastructure stack (Sprint 2.2.5).
 # Run from the repo root:
 #   docker compose -f infrastructure/docker/docker-compose.yml up -d
 # Operations guide: infrastructure/docker/README.md
@@ -13,7 +13,7 @@
 # it needs; operator UIs never join the messaging plane unless they operate it.
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
-name: lumo
+name: morbeh
 
 networks:
   data:
@@ -194,13 +194,15 @@ services:
       - start
       - --mode=dev-container
       - --smp=1
-      # Effective memory limit (Compose ignores deploy.resources outside Swarm, so this is the
-      # REAL constraint). Sized for the platform's DELIBERATE partition count — 54 business topics
-      # + .retry/.dlq companions + audit ≈ 240 partitions (ADR-0004), plus Kafka Connect's own
-      # internal topics (_connect.offsets = 25 partitions). At topic_memory_per_partition = 4 MiB,
-      # ~270 partitions need ~1.1 GiB just for partition buffers; 2 GiB gives headroom without
-      # shrinking the event architecture. Raise further only if the topic set grows.
-      - --memory=2G
+      # Redpanda's own memory allocation. The container's cgroup limit (`deploy.resources.limits.memory`
+      # below, which Compose v2 applies) must stay above it — `topic-inventory.test.ts` pins both.
+      # At topic_memory_per_partition = 4 MiB, every partition costs memory before
+      # a single message. G-80 (2026-09-29): the topic set is now GENERATED from
+      # apps/runtime/src/kafka-topics/topic-inventory.ts — 430 topics, of which the 11 consumed
+      # topics and their 11 .retry get 6 partitions and the rest 1 = 540 partitions ≈ 2.1 GiB, plus
+      # Kafka Connect's internal topics (_connect.offsets = 25 partitions). 3 GiB keeps that under
+      # 80%; `topic-inventory.test.ts` fails if the inventory outgrows this value.
+      - --memory=3G
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
       - --pandaproxy-addr=0.0.0.0:8082
@@ -234,7 +236,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2560m # advisory only under Compose; kept ≥ --memory=2G for Swarm/k8s parity
+          memory: 3584m # kept ≥ --memory=3G (+512m headroom); Compose v2 applies it as the cgroup limit
     networks:
       - messaging
       - observability
@@ -251,6 +253,8 @@ services:
       REDPANDA_BROKERS: redpanda:9092
     volumes:
       - ./redpanda/bootstrap-topics.sh:/bootstrap/bootstrap-topics.sh:ro
+      # G-80: topic names/retention are generated from apps/runtime/src/kafka-topics/topic-inventory.ts
+      - ./redpanda/topics.manifest:/bootstrap/topics.manifest:ro
     networks:
       - messaging
 
@@ -263,7 +267,7 @@ services:
     environment:
       KAFKA_BROKERS: redpanda:9092
       CONNECT_ENABLED: "true"
-      CONNECT_CLUSTERS_NAME: lumo-connect
+      CONNECT_CLUSTERS_NAME: morbeh-connect
       CONNECT_CLUSTERS_URL: http://debezium:8083
     ports:
       - "8085:8080"
@@ -288,7 +292,7 @@ services:
         condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: redpanda:9092
-      GROUP_ID: lumo-connect
+      GROUP_ID: morbeh-connect
       CONFIG_STORAGE_TOPIC: _connect.configs
       OFFSET_STORAGE_TOPIC: _connect.offsets
       STATUS_STORAGE_TOPIC: _connect.status

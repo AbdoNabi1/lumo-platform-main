@@ -34,7 +34,6 @@ describe.runIf(Boolean(databaseUrl))("PrismaLoyaltyAccountRepository (integratio
     const context = rootEventContext(ids, tenantId);
     const repository = new PrismaLoyaltyAccountRepository({
       prisma,
-      tenantId,
       outbox,
       context,
       tiers: DEFAULT_TIERS,
@@ -43,7 +42,8 @@ describe.runIf(Boolean(databaseUrl))("PrismaLoyaltyAccountRepository (integratio
     return {
       prisma,
       repository,
-      save: (account: LoyaltyAccount) => unitOfWork.run((tx) => repository.save(account, tx)),
+      save: (account: LoyaltyAccount) =>
+        unitOfWork.run((tx) => repository.save(account, tenantId, tx)),
     };
   }
 
@@ -62,16 +62,25 @@ describe.runIf(Boolean(databaseUrl))("PrismaLoyaltyAccountRepository (integratio
       LoyaltyAccount.create(UniqueEntityId.from(ids.generate()), "customer-x", DEFAULT_TIERS),
     );
 
-    const page = await repository.list({ first: 2 });
+    const page = await repository.list({ first: 2 }, tenantId);
     expect(page.items).toHaveLength(2);
     expect(page.pageInfo.hasNextPage).toBe(true);
 
-    const rest = await repository.list({ first: 10, after: page.pageInfo.endCursor ?? undefined });
+    const rest = await repository.list(
+      { first: 10, after: page.pageInfo.endCursor ?? undefined },
+      tenantId,
+    );
     expect(rest.items).toHaveLength(1);
     expect(rest.pageInfo.hasNextPage).toBe(false);
 
-    const otherPage = await otherRepository.list({ first: 10 });
+    const otherPage = await otherRepository.list({ first: 10 }, other);
     expect(otherPage.items).toHaveLength(1);
+
+    // T10.5: a SINGLE repository instance, asked for a different tenant, must not blend the two —
+    // `repository` was wired against `tenantId` but is otherwise a stateless singleton (ADR-0014).
+    const crossTenantPage = await repository.list({ first: 10 }, other);
+    expect(crossTenantPage.items).toHaveLength(1);
+
     await prisma.$disconnect();
   });
 });

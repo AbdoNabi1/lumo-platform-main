@@ -18,7 +18,11 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/admin-web/package.json ./apps/admin-web/package.json
 COPY packages ./packages
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+# No `--mount=type=cache` here. Railway's builder rejects a cache mount whose id lacks its own
+# per-service prefix ("flag '--mount=type=cache,id=pnpm,target=/pnpm/store' is missing the cacheKey
+# prefix from its id"), and that prefix is the service's id — which would tie this file to one
+# Railway service. A plain install costs some build time and works on every builder.
+RUN pnpm install --frozen-lockfile
 
 # ── Dev (hot reload; used by docker-compose) ───────────────────────────────────
 FROM deps AS dev
@@ -30,6 +34,12 @@ CMD ["pnpm", "--filter", "admin-web", "dev"]
 # ── Builder ───────────────────────────────────────────────────────────────────
 FROM deps AS builder
 ENV NODE_ENV=production
+# Plan 2C-3: next.config.ts builds the image Content-Security-Policy from this origin, and Next
+# evaluates headers() at build time. Railway hands a service variable to a Docker build only when
+# the Dockerfile declares it as an ARG; without this line the CSP would block every product image.
+# Public value (the bucket's public URL), not a secret.
+ARG MEDIA_PUBLIC_BASE_URL=""
+ENV MEDIA_PUBLIC_BASE_URL=$MEDIA_PUBLIC_BASE_URL
 COPY . .
 RUN pnpm --filter admin-web build
 

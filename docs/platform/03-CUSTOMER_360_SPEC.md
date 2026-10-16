@@ -1,7 +1,7 @@
 # 03 — Customer 360 specification
 
 > **Status: CONTRACT (Phase 1 — Platform) — 2026-06-28.** A unified customer intelligence profile. No
-> application code. UI: Lumo Design System ([`../ui/`](../ui/README.md)); the **Customers** screen is the
+> application code. UI: Morbeh Design System ([`../ui/`](../ui/README.md)); the **Customers** screen is the
 > entry point, but the full 360 timeline detail view is a **net-new surface and requires approval**.
 
 ## 1. Business goals

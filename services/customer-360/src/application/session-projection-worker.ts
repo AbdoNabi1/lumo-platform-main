@@ -4,7 +4,10 @@ import type { DomainError } from "@platform/utils";
 import type { SessionStore } from "../ports/session-store";
 import type { RebuildSessions } from "./rebuild-sessions.use-case";
 
-export type SessionProjectionWorkerInput = Record<string, never>;
+export interface SessionProjectionWorkerInput {
+  /** The tenant this sweep is scoped to (ADR-0014). */
+  readonly tenantId: string;
+}
 
 export interface SessionProjectionWorkerOutput {
   readonly rebuilt: number;
@@ -35,15 +38,15 @@ export class SessionProjectionWorker implements UseCase<
   }
 
   async execute(
-    _input: SessionProjectionWorkerInput,
+    input: SessionProjectionWorkerInput,
   ): Promise<Result<SessionProjectionWorkerOutput, DomainError>> {
-    const sessionIds = await this.deps.sessions.listSessionIds();
+    const sessionIds = await this.deps.sessions.listSessionIds(input.tenantId);
     let rebuilt = 0;
     let failed = 0;
 
     for (const sessionId of sessionIds) {
       try {
-        const result = await this.deps.rebuild.execute({ sessionId });
+        const result = await this.deps.rebuild.execute({ tenantId: input.tenantId, sessionId });
         if (result.ok) rebuilt += 1;
         else failed += 1;
       } catch {

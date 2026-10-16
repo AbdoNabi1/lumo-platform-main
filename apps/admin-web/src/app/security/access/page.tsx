@@ -70,12 +70,14 @@ export default async function SecurityAccessPage() {
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="text-4xl font-semibold tracking-tight">{t.securityAccessPage.title}</h1>
-        <p className="text-md text-muted-foreground mt-1">{t.securityAccessPage.subtitle}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t.securityAccessPage.title}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t.securityAccessPage.subtitle}</p>
       </header>
 
       <section className="flex flex-col gap-6">
-        <h2 className="text-2xl font-semibold tracking-tight">{t.securityAccessPage.sections.roles}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {t.securityAccessPage.sections.roles}
+        </h2>
 
         <Suspense fallback={<TableCardSkeleton />}>
           <PermissionExplorerSection t={t} />
@@ -112,7 +114,9 @@ export default async function SecurityAccessPage() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <h2 className="text-2xl font-semibold tracking-tight">{t.securityAccessPage.sections.policies}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {t.securityAccessPage.sections.policies}
+        </h2>
 
         <Suspense fallback={<TableCardSkeleton />}>
           <PolicyExplorerSection t={t} />
@@ -140,7 +144,9 @@ export default async function SecurityAccessPage() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <h2 className="text-2xl font-semibold tracking-tight">{t.securityAccessPage.sections.relations}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {t.securityAccessPage.sections.relations}
+        </h2>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
@@ -164,7 +170,9 @@ export default async function SecurityAccessPage() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <h2 className="text-2xl font-semibold tracking-tight">{t.securityAccessPage.sections.accessChecks}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {t.securityAccessPage.sections.accessChecks}
+        </h2>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
@@ -188,7 +196,9 @@ export default async function SecurityAccessPage() {
       </section>
 
       <section className="flex flex-col gap-6">
-        <h2 className="text-2xl font-semibold tracking-tight">{t.securityAccessPage.sections.registries}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {t.securityAccessPage.sections.registries}
+        </h2>
 
         <Suspense fallback={<TableCardSkeleton />}>
           <RegistryExplorerSection t={t} />
@@ -271,10 +281,20 @@ export default async function SecurityAccessPage() {
 async function PermissionExplorerSection({ t }: { readonly t: Dictionary }) {
   const result = await fetchPermissionExplorer();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityAccessPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAccessPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityAccessPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAccessPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -361,10 +381,20 @@ async function PermissionExplorerSection({ t }: { readonly t: Dictionary }) {
 async function PolicyExplorerSection({ t }: { readonly t: Dictionary }) {
   const result = await fetchPolicyExplorer();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityAccessPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAccessPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityAccessPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAccessPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -447,10 +477,20 @@ async function PolicyExplorerSection({ t }: { readonly t: Dictionary }) {
 async function RegistryExplorerSection({ t }: { readonly t: Dictionary }) {
   const result = await fetchRegistryExplorer();
   if (result.outcome === "unauthorized") {
-    return <StatePanel icon={<LockIcon aria-hidden="true" className="size-5" />} message={t.securityAccessPage.unauthorized} />;
+    return (
+      <StatePanel
+        icon={<LockIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAccessPage.unauthorized}
+      />
+    );
   }
   if (result.outcome === "error") {
-    return <StatePanel icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />} message={t.securityAccessPage.error} />;
+    return (
+      <StatePanel
+        icon={<AlertTriangleIcon aria-hidden="true" className="size-5" />}
+        message={t.securityAccessPage.error}
+      />
+    );
   }
   const { data } = result;
   return (
@@ -458,12 +498,15 @@ async function RegistryExplorerSection({ t }: { readonly t: Dictionary }) {
       <CardHeader>
         <CardTitle>{t.securityAccessPage.registryExplorerTitle}</CardTitle>
         <span className="text-muted-foreground text-sm">
-          {t.securityAccessPage.totalEntries}: <span className="text-foreground font-medium">{data.totalEntries}</span>
+          {t.securityAccessPage.totalEntries}:{" "}
+          <span className="text-foreground font-medium">{data.totalEntries}</span>
         </span>
       </CardHeader>
       <CardContent className="p-0 sm:p-0">
         {data.registries.length === 0 ? (
-          <p className="text-muted-foreground p-5 text-center text-base">{t.securityAccessPage.empty}</p>
+          <p className="text-muted-foreground p-5 text-center text-base">
+            {t.securityAccessPage.empty}
+          </p>
         ) : (
           <Table aria-label={t.securityAccessPage.registryExplorerTitle}>
             <TableHeader>

@@ -1,4 +1,5 @@
-import { Prisma, type PrismaClient } from "@prisma/client";
+import { runInTenantTransaction, runReadScoped, type Database } from "@platform/db";
+import { Prisma } from "@prisma/client";
 import type { ProcessedWebhookStore } from "../application/ports";
 
 /**
@@ -9,29 +10,34 @@ import type { ProcessedWebhookStore } from "../application/ports";
  * transaction handle — `RecordWebhook` calls it un-transacted, same as `InMemoryProcessedWebhookStore`
  * — so this insert commits outside the intent-save transaction, exactly like the stub it replaces;
  * changing that would be a port signature change, out of scope here (see C2_2_REPORT.md).
+ *
+ * ADR-0014 (WP-10, T10.3): a singleton — `tenantId` is a per-call parameter, and both the read and
+ * the insert run inside a tenant-scoped transaction.
  */
 export class PrismaProcessedWebhookStore implements ProcessedWebhookStore {
-  private readonly prisma: PrismaClient;
-  private readonly tenantId: string;
+  private readonly prisma: Database;
 
-  constructor(prisma: PrismaClient, tenantId: string) {
+  constructor(prisma: Database) {
     this.prisma = prisma;
-    this.tenantId = tenantId;
   }
 
-  async hasProcessed(provider: string, eventId: string): Promise<boolean> {
-    const row = await this.prisma.processedWebhook.findUnique({
-      where: { tenantId_provider_eventId: { tenantId: this.tenantId, provider, eventId } },
-      select: { id: true },
-    });
+  async hasProcessed(provider: string, eventId: string, tenantId: string): Promise<boolean> {
+    const row = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.processedWebhook.findUnique({
+        where: { tenantId_provider_eventId: { tenantId, provider, eventId } },
+        select: { id: true },
+      }),
+    );
     return row !== null;
   }
 
-  async markProcessed(provider: string, eventId: string): Promise<void> {
+  async markProcessed(provider: string, eventId: string, tenantId: string): Promise<void> {
     try {
-      await this.prisma.processedWebhook.create({
-        data: { id: crypto.randomUUID(), tenantId: this.tenantId, provider, eventId },
-      });
+      await runInTenantTransaction(this.prisma, tenantId, (client) =>
+        client.processedWebhook.create({
+          data: { id: crypto.randomUUID(), tenantId, provider, eventId },
+        }),
+      );
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
         return; // a concurrent or earlier delivery won the insert race — already marked, not an error

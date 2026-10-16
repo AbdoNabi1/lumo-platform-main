@@ -29,18 +29,19 @@ describe("incidents / threat intel / trust center / analytics (end to end)", () 
 
     // ── §10 threat intelligence ──
     const clean = body<{ malicious: boolean; providers: string[] }>(
-      await app.security.checkThreatIndicator({ indicator: "1.1.1.1" }),
+      await app.security.checkThreatIndicator({ tenantId: "tenant-a", indicator: "1.1.1.1" }),
     );
     expect(clean.malicious).toBe(false);
     expect(clean.providers).toContain("reference-feed");
     const malicious = body<{ malicious: boolean; score: number; categories: string[] }>(
-      await app.security.checkThreatIndicator({ indicator: "9.9.9.9" }),
+      await app.security.checkThreatIndicator({ tenantId: "tenant-a", indicator: "9.9.9.9" }),
     );
     expect(malicious.malicious).toBe(true);
     expect(malicious.score).toBe(90);
 
     // ── §11 incident lifecycle ──
     const opened = await app.security.openIncident({
+      tenantId: "tenant-a",
       title: "C2 beacon from 9.9.9.9",
       severity: "critical",
       category: "malware",
@@ -49,32 +50,43 @@ describe("incidents / threat intel / trust center / analytics (end to end)", () 
     });
     expect(opened.status).toBe(201);
     await app.security.addIncidentEvidence({
+      tenantId: "tenant-a",
       reference: "INC-100",
       kind: "threat_verdict",
       ref: "9.9.9.9:90",
     });
     await app.security.triageIncident({
+      tenantId: "tenant-a",
       reference: "INC-100",
       assignee: "soc-1",
       note: "confirmed",
     });
     await app.security.mitigateIncident({
+      tenantId: "tenant-a",
       reference: "INC-100",
       note: "blocked IP, revoked sessions",
     });
     const resolved = await app.security.resolveIncident({
+      tenantId: "tenant-a",
       reference: "INC-100",
       resolution: "contained",
     });
     expect(body<{ status: string }>(resolved).status).toBe("resolved");
     // invalid transition surfaces as 409
     expect(
-      (await app.security.triageIncident({ reference: "INC-100", assignee: "x", note: "y" }))
-        .status,
+      (
+        await app.security.triageIncident({
+          tenantId: "tenant-a",
+          reference: "INC-100",
+          assignee: "x",
+          note: "y",
+        })
+      ).status,
     ).toBe(409);
 
     // a second, still-open incident for the explorer/trust-center counts
     await app.security.openIncident({
+      tenantId: "tenant-a",
       title: "Brute force",
       severity: "high",
       category: "brute_force",
@@ -83,7 +95,7 @@ describe("incidents / threat intel / trust center / analytics (end to end)", () 
     });
 
     // ── §11 incident explorer ──
-    const explorer = await app.security.incidentExplorer();
+    const explorer = await app.security.incidentExplorer("tenant-a");
     expect(explorer.total).toBe(2);
     expect(explorer.open).toBe(1); // INC-100 resolved (not open), INC-101 open
     expect(explorer.bySeverity["critical"]).toBe(1);
@@ -94,12 +106,13 @@ describe("incidents / threat intel / trust center / analytics (end to end)", () 
 
     // ── §12 trust center (real-data posture aggregate) ──
     await app.security.registerComplianceRule({
+      tenantId: "tenant-a",
       id: "CC7.2",
       framework: "soc2",
       description: "Audit trail",
       severity: "critical",
     });
-    const trust = await app.security.trustCenter("t1");
+    const trust = await app.security.trustCenter("tenant-a", "t1");
     expect(trust.auditChainValid).toBe(true);
     expect(trust.openIncidents).toBe(1);
     expect(trust.complianceControls).toBeGreaterThanOrEqual(1);

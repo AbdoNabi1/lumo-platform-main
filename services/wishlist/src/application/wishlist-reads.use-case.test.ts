@@ -38,10 +38,10 @@ describe("Wishlist read use-cases (Phase 4 T4.2)", () => {
     const h = harness();
     const create = new CreateWishlist(h);
     for (let i = 0; i < 3; i += 1) {
-      await create.execute({ customerRef: `customer-${i}` });
+      await create.execute({ customerRef: `customer-${i}`, tenantId: "tenant-1" });
     }
 
-    const page = await new ListWishlists(h).execute({ first: 2 });
+    const page = await new ListWishlists(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -50,6 +50,7 @@ describe("Wishlist read use-cases (Phase 4 T4.2)", () => {
     const rest = await new ListWishlists(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -59,16 +60,22 @@ describe("Wishlist read use-cases (Phase 4 T4.2)", () => {
 
   it("GetWishlist returns the wishlist, or NotFoundError when absent", async () => {
     const h = harness();
-    const created = await new CreateWishlist(h).execute({ customerRef: "customer-1" });
+    const created = await new CreateWishlist(h).execute({
+      customerRef: "customer-1",
+      tenantId: "tenant-1",
+    });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetWishlist(h).execute({ wishlistId: created.value.wishlistId });
+    const found = await new GetWishlist(h).execute({
+      wishlistId: created.value.wishlistId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.id.toString()).toBe(created.value.wishlistId);
 
-    const missing = await new GetWishlist(h).execute({ wishlistId: "nope" });
+    const missing = await new GetWishlist(h).execute({ wishlistId: "nope", tenantId: "tenant-1" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");
@@ -76,14 +83,20 @@ describe("Wishlist read use-cases (Phase 4 T4.2)", () => {
 
   it("GetWishlistByCustomer returns the customer's one wishlist, or NotFoundError when absent", async () => {
     const h = harness();
-    await new CreateWishlist(h).execute({ customerRef: "customer-1" });
+    await new CreateWishlist(h).execute({ customerRef: "customer-1", tenantId: "tenant-1" });
 
-    const found = await new GetWishlistByCustomer(h).execute({ customerRef: "customer-1" });
+    const found = await new GetWishlistByCustomer(h).execute({
+      customerRef: "customer-1",
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.customerRef).toBe("customer-1");
 
-    const missing = await new GetWishlistByCustomer(h).execute({ customerRef: "nobody" });
+    const missing = await new GetWishlistByCustomer(h).execute({
+      customerRef: "nobody",
+      tenantId: "tenant-1",
+    });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

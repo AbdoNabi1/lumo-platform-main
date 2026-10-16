@@ -15,6 +15,7 @@ import type {
   EvaluateAllSegmentsOutput,
 } from "./evaluate-all-segments.use-case";
 import { SegmentMembershipWorker } from "./segment-membership-worker";
+import { TENANT_A } from "../test-support/tenants";
 
 const clock: Clock = { now: () => new Date("2026-07-21T00:00:00.000Z") };
 const ids: IdGenerator = { generate: () => crypto.randomUUID() };
@@ -43,21 +44,27 @@ function registry() {
     clock,
     producer: "customer360",
   });
-  return new InMemorySegmentDefinitionRegistry({ outbox, context: rootEventContext(ids) }, [
+  return new InMemorySegmentDefinitionRegistry(
+    { outbox, context: rootEventContext(ids) },
     {
-      id: "high_value",
-      name: "High value",
-      version: 1,
-      ruleSet: {
-        id: "high_value",
-        version: 1,
-        mode: "first_match",
-        rules: [{ id: "r", priority: 1, when: Expr.literal(true), then: true }],
-      },
-      createdAt: "t0",
-      updatedAt: "t0",
+      tenantId: TENANT_A,
+      definitions: [
+        {
+          id: "high_value",
+          name: "High value",
+          version: 1,
+          ruleSet: {
+            id: "high_value",
+            version: 1,
+            mode: "first_match",
+            rules: [{ id: "r", priority: 1, when: Expr.literal(true), then: true }],
+          },
+          createdAt: "t0",
+          updatedAt: "t0",
+        },
+      ],
     },
-  ]);
+  );
 }
 
 function fakeEvaluateAll(): {
@@ -84,7 +91,7 @@ describe("SegmentMembershipWorker", () => {
     const { evaluateAll, calls } = fakeEvaluateAll();
     const worker = new SegmentMembershipWorker({ segments, definitions: registry(), evaluateAll });
 
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ evaluated: 2, failed: 0 });
@@ -109,7 +116,7 @@ describe("SegmentMembershipWorker", () => {
     } as unknown as EvaluateAllSegments;
     const worker = new SegmentMembershipWorker({ segments, definitions: registry(), evaluateAll });
 
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ evaluated: 1, failed: 1 });
@@ -123,7 +130,7 @@ describe("SegmentMembershipWorker", () => {
       evaluateAll,
     });
 
-    const result = await worker.execute({});
+    const result = await worker.execute({ tenantId: TENANT_A });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value).toEqual({ evaluated: 0, failed: 0 });
   });

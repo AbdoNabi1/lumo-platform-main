@@ -5,13 +5,13 @@
 #
 #   Required env:  DATABASE_URL   (postgresql://user:pass@host:5432/db)
 #   Optional env:  BACKUP_S3_URI  (s3://bucket/pg)   — upload target; skipped if unset
-#                  BACKUP_DIR     (default: /var/backups/lumo)
+#                  BACKUP_DIR     (default: /var/backups/morbeh)
 #                  RETENTION_DAYS (default: 14)       — local pruning
 #                  PGDUMP_JOBS    (default: 2)         — parallel dump workers
 set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL is required}"
-BACKUP_DIR="${BACKUP_DIR:-/var/backups/lumo}"
+BACKUP_DIR="${BACKUP_DIR:-/var/backups/morbeh}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 PGDUMP_JOBS="${PGDUMP_JOBS:-2}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"

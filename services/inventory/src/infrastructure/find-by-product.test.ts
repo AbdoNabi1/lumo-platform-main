@@ -54,16 +54,16 @@ describe("InventoryItemRepository.findByProduct", () => {
       productB,
       must(WarehouseId.create("wh-1")),
     );
-    await repo.save(itemA1);
-    await repo.save(itemA2);
-    await repo.save(itemB1);
+    await repo.save(itemA1, "tenant-a");
+    await repo.save(itemA2, "tenant-a");
+    await repo.save(itemB1, "tenant-a");
 
-    const found = await repo.findByProduct("product-a");
+    const found = await repo.findByProduct("product-a", "tenant-a");
     expect(found.map((item) => item.id.toString()).sort()).toEqual(["item-a1", "item-a2"]);
   });
 
   it("returns an empty array when the product has no stock rows anywhere", async () => {
     const repo = buildRepo();
-    expect(await repo.findByProduct("no-such-product")).toEqual([]);
+    expect(await repo.findByProduct("no-such-product", "tenant-a")).toEqual([]);
   });
 });

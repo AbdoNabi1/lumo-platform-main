@@ -142,12 +142,13 @@ export function publicReviewsRoutes(admin: WiredAdmin): readonly RouteDefinition
       public: true,
       summary: "Public: list PUBLISHED reviews for one product (cursor pagination)",
       schema: { params: productRefParams, querystring: pageQuery },
-      handle: async ({ params, query }) =>
+      handle: async ({ params, query, context }) =>
         mapPage(
           publishedReviewsOnly(
             await admin.publicReads.reviews.listByProduct({
               productRef: params.productRef,
               ...query,
+              tenantId: context.tenantId,
             }),
           ),
           toPublicReviewDto,
@@ -164,8 +165,11 @@ export function publicReviewsRoutes(admin: WiredAdmin): readonly RouteDefinition
         "Public: the signed-in customer creates a review (one per customer/product; verified-purchase decided server-side)",
       schema: { body: createReviewBody },
       handle: async ({ body, context }): Promise<PageResponse> => {
-        const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
-        if (!guarded.ok) return guarded.response as PageResponse;
+        const guarded = await admin.customerAuth.requireSession(
+          resolveCustomerSessionId(context),
+          context.tenantId,
+        );
+        if (!guarded.ok) return guarded.response;
 
         const created = await admin.publicReads.reviews.create({
           productRef: body.productRef,
@@ -173,8 +177,9 @@ export function publicReviewsRoutes(admin: WiredAdmin): readonly RouteDefinition
           rating: body.rating,
           bodyText: body.bodyText,
           ...(body.assetRefs !== undefined ? { assetRefs: body.assetRefs } : {}),
+          tenantId: context.tenantId,
         });
-        return toWriteResult(created as PageResponse);
+        return toWriteResult(created);
       },
     }),
     defineRoute({
@@ -184,18 +189,23 @@ export function publicReviewsRoutes(admin: WiredAdmin): readonly RouteDefinition
       permission: "reviews:vote",
       public: true,
       idempotent: true,
-      summary: "Public: the signed-in customer records (or replaces) a helpful/unhelpful vote on a review",
+      summary:
+        "Public: the signed-in customer records (or replaces) a helpful/unhelpful vote on a review",
       schema: { params: reviewIdParams, body: voteReviewBody },
       handle: async ({ params, body, context }): Promise<PageResponse> => {
-        const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
-        if (!guarded.ok) return guarded.response as PageResponse;
+        const guarded = await admin.customerAuth.requireSession(
+          resolveCustomerSessionId(context),
+          context.tenantId,
+        );
+        if (!guarded.ok) return guarded.response;
 
         const voted = await admin.publicReads.reviews.vote({
           reviewId: params.reviewId,
           customerRef: guarded.session.customerRef,
           helpful: body.helpful,
+          tenantId: context.tenantId,
         });
-        return toWriteResult(voted as PageResponse);
+        return toWriteResult(voted);
       },
     }),
     defineRoute({
@@ -205,17 +215,22 @@ export function publicReviewsRoutes(admin: WiredAdmin): readonly RouteDefinition
       permission: "reviews:report",
       public: true,
       idempotent: true,
-      summary: "Public: the signed-in customer records an abuse report (auto-flags once the threshold is reached)",
+      summary:
+        "Public: the signed-in customer records an abuse report (auto-flags once the threshold is reached)",
       schema: { params: reviewIdParams, body: reportReviewBody },
       handle: async ({ params, context }): Promise<PageResponse> => {
-        const guarded = await admin.customerAuth.requireSession(resolveCustomerSessionId(context));
-        if (!guarded.ok) return guarded.response as PageResponse;
+        const guarded = await admin.customerAuth.requireSession(
+          resolveCustomerSessionId(context),
+          context.tenantId,
+        );
+        if (!guarded.ok) return guarded.response;
 
         const reported = await admin.publicReads.reviews.report({
           reviewId: params.reviewId,
           reporterRef: guarded.session.customerRef,
+          tenantId: context.tenantId,
         });
-        return toWriteResult(reported as PageResponse);
+        return toWriteResult(reported);
       },
     }),
   ] as readonly RouteDefinition[];

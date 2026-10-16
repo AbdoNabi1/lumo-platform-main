@@ -2,7 +2,7 @@
 
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { AvailabilityBook, PriceBook } from "@/lib/catalog";
+import { AvailabilityBook } from "@/lib/catalog";
 import { GUEST_SESSION_COOKIE, GUEST_SESSION_COOKIE_OPTIONS } from "@/lib/cart";
 import {
   addCartItem,
@@ -10,6 +10,7 @@ import {
   clearCart as clearCartApi,
   createCart,
   getCurrentCart,
+  getPublicStore,
   removeCartItem,
 } from "@/lib/runtime-api";
 
@@ -25,10 +26,12 @@ export type CartActionResult =
   | { readonly ok: true }
   | {
       readonly ok: false;
-      /** `"unavailable"`: no authoritative Pricing snapshot for this product. `"ownership"`: the
+      /** `"unavailable"`: the product is not for sale (the server could not resolve a price). `"choose-variant"`
+       * (Plan 2A): the product has several variants and none was named (API `VARIANT_REQUIRED`).
+       * `"ownership"`: the
        * Runtime API 404'd — a stale/cleared session cookie no longer matches any cart it can
        * resolve. `"network"`: the Runtime API is unreachable or returned an unexpected status. */
-      readonly reason: "unavailable" | "ownership" | "network";
+      readonly reason: "unavailable" | "choose-variant" | "ownership" | "network";
     };
 
 /** Reads the guest session cookie, minting and persisting a new opaque id if none exists yet. Never called from a read path — only from a mutation that is about to need one. */
@@ -42,34 +45,58 @@ async function currentOrNewSessionRef(): Promise<string> {
   return sessionRef;
 }
 
+/** Starts a new guest session: a fresh opaque id in the cookie. The old session's cart is left behind. */
+async function replaceSessionRef(): Promise<string> {
+  const jar = await cookies();
+  const sessionRef = crypto.randomUUID();
+  jar.set(GUEST_SESSION_COOKIE, sessionRef, GUEST_SESSION_COOKIE_OPTIONS);
+  return sessionRef;
+}
+
 /** The existing guest session, if any — mutations on an already-rendered cart must never mint a new session out from under it. */
 async function existingSessionRef(): Promise<string | undefined> {
   const jar = await cookies();
   return jar.get(GUEST_SESSION_COOKIE)?.value;
 }
 
+/** The Runtime API answers a multi-variant add with no variant as 422 with code VARIANT_REQUIRED. */
+function isVariantRequired(body: unknown): boolean {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    (body as { code?: unknown }).code === "VARIANT_REQUIRED"
+  );
+}
+
 /**
  * Adds one product to the caller's guest cart, creating the session/cart if this is their first
  * add (Task 9's flow: session → cart-if-necessary → item added → cookie persists → `/cart` shows
- * it). `PriceBook` is still consulted here first — purely as an availability pre-check, so an
- * unpriced/ambiguous product fails fast with a clean UX message instead of a round trip — but
- * (H-01 remediation, Phase 17.1 security follow-up) its resolved amount/currency is no longer
- * sent to the Cart API: the public HTTP route now re-resolves the price itself, server-side, from
- * Pricing's published-price data, and rejects any request that tries to supply one.
+ * it).
+ *
+ * Plan 3C: a new cart is opened in the STORE currency (`GET /public/store`), never one the browser
+ * names or one inferred from the product. A cart left over in another currency (the merchant changed
+ * the store currency) is replaced by a fresh cart on a new session. The currency is never a price.
+ * Plan 2C-1: the Pricing screen is not consulted here. The H-01 rule stands:
+ * no price is sent to the Cart API, which resolves it server-side from the Catalog variant and
+ * rejects any request that tries to supply one. A product the server will not sell answers 422,
+ * which surfaces here as `"unavailable"`.
  */
-export async function addToCart(productId: string, quantity: number): Promise<CartActionResult> {
-  const [priceBook, availabilityBook] = await Promise.all([
-    PriceBook.load(),
-    AvailabilityBook.load(),
-  ]);
-  const price = priceBook?.resolve(productId);
-  if (price === undefined || price.status !== "ok") {
-    return { ok: false, reason: "unavailable" };
-  }
-  const availability = availabilityBook?.resolve(productId);
+export async function addToCart(
+  productId: string,
+  quantity: number,
+  variantId: string | undefined,
+  sellableWhenOutOfStock = false,
+): Promise<CartActionResult> {
+  const store = await getPublicStore();
+  if (store === null) return { ok: false, reason: "network" };
+
+  // Plan 2B-1: the stock snapshot is the VARIANT's, and is left out for a variant that sells past
+  // zero (it has no meaningful "available"). Still a display hint only — the server never trusts it.
+  const availabilityBook = sellableWhenOutOfStock ? null : await AvailabilityBook.load();
+  const availability = availabilityBook?.resolve(productId, variantId);
   const inventoryAvailable = availability?.status === "ok" ? availability.available : undefined;
 
-  const sessionRef = await currentOrNewSessionRef();
+  let sessionRef = await currentOrNewSessionRef();
 
   const current = await getCurrentCart(sessionRef);
   if (current.status < 200 || current.status >= 300 || current.body === null) {
@@ -77,8 +104,12 @@ export async function addToCart(productId: string, quantity: number): Promise<Ca
   }
 
   let cartId = current.body.cart?.id;
+  if (cartId !== undefined && current.body.cart?.currency !== store.currency) {
+    sessionRef = await replaceSessionRef();
+    cartId = undefined;
+  }
   if (cartId === undefined) {
-    const created = await createCart(sessionRef, price.currency);
+    const created = await createCart(sessionRef, store.currency);
     if (created.status < 200 || created.status >= 300 || created.body === null) {
       return { ok: false, reason: "network" };
     }
@@ -88,10 +119,16 @@ export async function addToCart(productId: string, quantity: number): Promise<Ca
   const added = await addCartItem(cartId, {
     sessionRef,
     productId,
+    ...(variantId === undefined ? {} : { variantId }),
     quantity,
     inventoryAvailable,
   });
   if (added.status === 404) return { ok: false, reason: "ownership" };
+  if (added.status === 422 && isVariantRequired(added.body)) {
+    return { ok: false, reason: "choose-variant" };
+  }
+  // Any other 422 is the server refusing to sell this product (draft, archived, unknown variant).
+  if (added.status === 422) return { ok: false, reason: "unavailable" };
   if (added.status < 200 || added.status >= 300) return { ok: false, reason: "network" };
 
   revalidatePath("/cart");
@@ -102,11 +139,12 @@ export async function changeQuantity(
   cartId: string,
   productId: string,
   quantity: number,
+  variantId?: string,
 ): Promise<CartActionResult> {
   const sessionRef = await existingSessionRef();
   if (sessionRef === undefined) return { ok: false, reason: "ownership" };
 
-  const result = await changeCartItemQuantity(cartId, sessionRef, productId, quantity);
+  const result = await changeCartItemQuantity(cartId, sessionRef, productId, quantity, variantId);
   if (result.status === 404) return { ok: false, reason: "ownership" };
   if (result.status < 200 || result.status >= 300) return { ok: false, reason: "network" };
 
@@ -114,11 +152,15 @@ export async function changeQuantity(
   return { ok: true };
 }
 
-export async function removeItem(cartId: string, productId: string): Promise<CartActionResult> {
+export async function removeItem(
+  cartId: string,
+  productId: string,
+  variantId?: string,
+): Promise<CartActionResult> {
   const sessionRef = await existingSessionRef();
   if (sessionRef === undefined) return { ok: false, reason: "ownership" };
 
-  const result = await removeCartItem(cartId, sessionRef, productId);
+  const result = await removeCartItem(cartId, sessionRef, productId, variantId);
   if (result.status === 404) return { ok: false, reason: "ownership" };
   if (result.status < 200 || result.status >= 300) return { ok: false, reason: "network" };
 

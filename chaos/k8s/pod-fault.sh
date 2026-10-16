@@ -4,10 +4,10 @@
 # + rolling replacement + readiness gating should keep /readyz answering throughout. Plain kubectl,
 # safe to run against a non-prod cluster.
 #
-#   NS=lumo-runtime APP=runtime-api chaos/k8s/pod-fault.sh
+#   NS=morbeh-runtime APP=runtime-api chaos/k8s/pod-fault.sh
 set -euo pipefail
 
-NS="${NS:-lumo-runtime}"
+NS="${NS:-morbeh-runtime}"
 APP="${APP:-runtime-api}"
 SELECTOR="app.kubernetes.io/name=${APP}"
 

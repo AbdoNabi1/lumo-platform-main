@@ -4,6 +4,7 @@ import { INITIAL_ATTRIBUTE_VERSION } from "../domain/attribute-version";
 import { applyAttributeUpdate, createEmptyComputedAttribute } from "../domain/computed-attribute";
 import { InMemoryAttributeStore } from "./in-memory-attribute-store";
 import { runAttributeStoreContractTests } from "./attribute-store.contract";
+import { TENANT_A } from "../test-support/tenants";
 
 runAttributeStoreContractTests("in-memory", () => new InMemoryAttributeStore());
 
@@ -32,7 +33,7 @@ describe("InMemoryAttributeStore — create-branch CAS conflict (adapter-specifi
         evaluatedAt: "t0",
       },
     ).attribute;
-    await store.saveCurrent(first, INITIAL_ATTRIBUTE_VERSION);
+    await store.saveCurrent(first, TENANT_A, INITIAL_ATTRIBUTE_VERSION);
 
     const second = applyAttributeUpdate(
       createEmptyComputedAttribute(identifier.type, identifier.value, "t0"),
@@ -47,12 +48,12 @@ describe("InMemoryAttributeStore — create-branch CAS conflict (adapter-specifi
       },
     ).attribute;
 
-    await expect(store.saveCurrent(second, INITIAL_ATTRIBUTE_VERSION)).rejects.toBeInstanceOf(
-      ConcurrencyError,
-    );
+    await expect(
+      store.saveCurrent(second, TENANT_A, INITIAL_ATTRIBUTE_VERSION),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
 
     // The loser's write never applied -- only the first attribute is present.
-    const loaded = await store.getCurrent(identifier);
+    const loaded = await store.getCurrent(identifier, TENANT_A);
     expect(loaded?.attributes.has("is_vip")).toBe(true);
     expect(loaded?.attributes.has("is_churn_risk")).toBe(false);
   });

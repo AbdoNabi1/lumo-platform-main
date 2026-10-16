@@ -9,7 +9,9 @@ import {
   Skeleton,
 } from "@platform/ui";
 import { fetchCustomer } from "@/lib/api/customers";
+import type { OrderDetailDto } from "@/lib/api/orders";
 import type { Dictionary } from "@/messages/en";
+import { CopyButton } from "./copy-button";
 
 function initialsOf(name: string): string {
   return name
@@ -21,49 +23,98 @@ function initialsOf(name: string): string {
 }
 
 /**
- * Resolves `customerRef` against Identity's `GetCustomer` (Phase 2 productization — see
- * `services/identity/src/application/get-customer.use-case.ts`). An async Server Component in
- * its own `<Suspense>` boundary on the Order Detail page, so a slow or failed Identity lookup
- * never blocks the rest of the order from rendering. A resolution failure is shown honestly
- * (the raw reference), never invented as a name.
+ * The customer card, like Shopify's sidebar: who the order is for, and "Contact information" — the
+ * email and the phone, each with a Copy button. The name is the shipping recipient's (who the shopper
+ * typed at checkout), else the customer profile's own; it links to the customer page when Identity
+ * resolves `customerRef` (`GetCustomer`). The email is the profile's, the phone the recipient's. A
+ * lookup that fails is shown honestly (the raw reference), never invented as a name. An async Server
+ * Component in its own `<Suspense>` boundary, so a slow Identity lookup never blocks the order.
+ *
+ * Name, phone and email are staff-only: this page is behind the admin API, and none of it is ever put
+ * in a URL or a log line.
  */
 export async function OrderCustomerCard({
-  customerRef,
+  order,
   t,
 }: {
-  readonly customerRef: string;
+  readonly order: OrderDetailDto;
   readonly t: Dictionary;
 }) {
-  const result = await fetchCustomer(customerRef);
+  const result = await fetchCustomer(order.customerRef);
+  const customer = result.outcome === "ok" ? result.customer : null;
+  const name = order.shippingAddress.recipientName ?? customer?.name ?? null;
+  const email = customer?.email ?? null;
+  const phone = order.shippingAddress.phone;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>{t.orderDetail.customer}</CardTitle>
       </CardHeader>
-      <CardContent>
-        {result.outcome === "ok" ? (
-          <Link
-            href={`/customers/${result.customer.id}`}
-            className="hover:text-primary flex items-center gap-3"
-          >
-            <Avatar>
-              <AvatarFallback>{initialsOf(result.customer.name)}</AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <p className="truncate font-medium">{result.customer.name}</p>
-              <p className="text-muted-foreground truncate text-sm">{result.customer.email}</p>
-            </div>
-          </Link>
-        ) : (
+      <CardContent className="flex flex-col gap-4">
+        {name === null ? (
           <div>
             <p className="text-muted-foreground text-sm">{t.orderDetail.noCustomerLinked}</p>
             <p className="mt-1 text-sm">
               <span className="text-muted-foreground">{t.orderDetail.customerRefLabel}: </span>
-              <span className="font-mono">{customerRef}</span>
+              <span className="font-mono">{order.customerRef}</span>
             </p>
           </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <Avatar>
+              <AvatarFallback>{initialsOf(name)}</AvatarFallback>
+            </Avatar>
+            {customer === null ? (
+              <p className="min-w-0 truncate font-medium">{name}</p>
+            ) : (
+              <Link
+                href={`/customers/${customer.id}`}
+                className="hover:text-primary min-w-0 truncate font-medium"
+              >
+                {name}
+              </Link>
+            )}
+          </div>
         )}
+
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold">{t.orderPage.contactInformation}</h3>
+          <div className="flex items-center justify-between gap-2 text-sm">
+            {email === null ? (
+              <span className="text-muted-foreground">{t.orderPage.noEmail}</span>
+            ) : (
+              <>
+                <a href={`mailto:${email}`} className="min-w-0 truncate underline">
+                  {email}
+                </a>
+                <CopyButton
+                  text={email}
+                  label={t.orderPage.copy}
+                  copiedLabel={t.orderPage.copied}
+                  ariaLabel={t.orderPage.copyEmail}
+                />
+              </>
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-2 text-sm">
+            {phone === null ? (
+              <span className="text-muted-foreground">{t.orderPage.noPhone}</span>
+            ) : (
+              <>
+                <a href={`tel:${phone}`} dir="ltr" className="underline">
+                  {phone}
+                </a>
+                <CopyButton
+                  text={phone}
+                  label={t.orderPage.copy}
+                  copiedLabel={t.orderPage.copied}
+                  ariaLabel={t.orderPage.copyPhone}
+                />
+              </>
+            )}
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

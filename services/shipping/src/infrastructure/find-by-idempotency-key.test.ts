@@ -38,8 +38,8 @@ describe("ShipmentRepository.findByIdempotencyKey (Sprint A0 precondition)", () 
       context: rootEventContext(sequentialIds()),
     });
     const shipment = Shipment.create(UniqueEntityId.from("ship-1"), "fulfillment-1", [pkg()]);
-    await repo.save(shipment);
+    await repo.save(shipment, "tenant-a");
 
-    expect(await repo.findByIdempotencyKey("any-key")).toBeNull();
+    expect(await repo.findByIdempotencyKey("any-key", "tenant-a")).toBeNull();
   });
 });

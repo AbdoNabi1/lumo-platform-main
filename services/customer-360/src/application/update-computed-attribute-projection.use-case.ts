@@ -15,6 +15,9 @@ import type { AttributeStore } from "../ports/attribute-store";
 import type { IdentifierRef } from "../ports/identity-decision";
 
 export interface UpdateComputedAttributeProjectionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
   /** The output of `EvaluateComputedAttribute`/`EvaluateAttributeGraph` — this use case never
    * evaluates a rule set itself, only persists an already-evaluated result. */
@@ -73,7 +76,7 @@ export class UpdateComputedAttributeProjection implements UseCase<
   async execute(
     input: UpdateComputedAttributeProjectionInput,
   ): Promise<Result<UpdateComputedAttributeProjectionOutput, DomainError>> {
-    const current = await this.deps.attributes.getCurrent(input.identifier);
+    const current = await this.deps.attributes.getCurrent(input.identifier, input.tenantId);
 
     if (input.result.value === undefined) {
       return ok({ applied: false, version: current?.version ?? INITIAL_ATTRIBUTE_VERSION });
@@ -138,8 +141,13 @@ export class UpdateComputedAttributeProjection implements UseCase<
 
         // CAS write first (ADR-0060): on a lost race this throws `ConcurrencyError` here, before
         // the history append below ever runs — no orphaned snapshot, no partial effect.
-        await this.deps.attributes.saveCurrent(applyResult.attribute, base.version, tx);
-        await this.deps.history.append(snapshot, event, tx);
+        await this.deps.attributes.saveCurrent(
+          applyResult.attribute,
+          input.tenantId,
+          base.version,
+          tx,
+        );
+        await this.deps.history.append(snapshot, input.tenantId, event, tx);
 
         return ok({ applied: true, version: applyResult.attribute.version });
       },

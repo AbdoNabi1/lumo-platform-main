@@ -27,26 +27,40 @@ function field(value: unknown, name: string): string | undefined {
   return String(primitive);
 }
 
-/** In-memory `ReadModelStore` — one map per model name, upserted in place (`put` is idempotent). */
+/**
+ * In-memory `ReadModelStore` — one map per `(tenantId, model)`, upserted in place (`put` is
+ * idempotent). `tenantId` is an explicit per-call parameter (ADR-0014, WP-10 T10.3) and is part of
+ * the map key, not just accepted and ignored — an isolation test against this store must actually
+ * be able to fail.
+ */
 export class InMemoryReadModelStore implements ReadModelStore {
   private readonly models = new Map<string, Map<string, unknown>>();
 
-  async put(model: string, key: string, value: unknown): Promise<void> {
-    const table = this.models.get(model) ?? new Map<string, unknown>();
+  private tableKey(tenantId: string, model: string): string {
+    return `${tenantId}:${model}`;
+  }
+
+  async put(model: string, key: string, value: unknown, tenantId: string): Promise<void> {
+    const tableKey = this.tableKey(tenantId, model);
+    const table = this.models.get(tableKey) ?? new Map<string, unknown>();
     table.set(key, value);
-    this.models.set(model, table);
+    this.models.set(tableKey, table);
   }
 
-  async get(model: string, key: string): Promise<unknown> {
-    return this.models.get(model)?.get(key) ?? null;
+  async get(model: string, key: string, tenantId: string): Promise<unknown> {
+    return this.models.get(this.tableKey(tenantId, model))?.get(key) ?? null;
   }
 
-  async list(model: string): Promise<readonly unknown[]> {
-    return [...(this.models.get(model)?.values() ?? [])];
+  async list(model: string, tenantId: string): Promise<readonly unknown[]> {
+    return [...(this.models.get(this.tableKey(tenantId, model))?.values() ?? [])];
   }
 
-  async query(model: string, params: ReadModelQueryParams): Promise<ReadModelPage> {
-    const table = this.models.get(model) ?? new Map<string, unknown>();
+  async query(
+    model: string,
+    params: ReadModelQueryParams,
+    tenantId: string,
+  ): Promise<ReadModelPage> {
+    const table = this.models.get(this.tableKey(tenantId, model)) ?? new Map<string, unknown>();
     const rows: Row[] = [...table.entries()].map(([key, value]) => ({ key, value }));
 
     const page = paginateRows<Row>(

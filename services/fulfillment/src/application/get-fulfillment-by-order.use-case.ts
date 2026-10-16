@@ -5,6 +5,8 @@ import type { FulfillmentOrder } from "../domain/fulfillment-order";
 import type { FulfillmentOrderRepository } from "../domain/fulfillment-order-repository";
 
 export interface GetFulfillmentByOrderInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly orderRef: string;
 }
 
@@ -25,7 +27,10 @@ export class GetFulfillmentByOrder implements UseCase<
   }
 
   async execute(input: GetFulfillmentByOrderInput): Promise<Result<FulfillmentOrder, DomainError>> {
-    const fulfillmentOrder = await this.deps.fulfillmentOrders.findByOrderRef(input.orderRef);
+    const fulfillmentOrder = await this.deps.fulfillmentOrders.findByOrderRef(
+      input.orderRef,
+      input.tenantId,
+    );
     if (fulfillmentOrder === null) {
       return err(new NotFoundError("No fulfillment order found for this order"));
     }

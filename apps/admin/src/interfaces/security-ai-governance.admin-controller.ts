@@ -50,9 +50,9 @@ export class SecurityAiGovernanceAdminController {
   }
 
   /** Console read model — AI governance explorer (Part 10). Not `present()`-wrapped upstream; wrapped here. */
-  async aiGovernanceExplorer(principal: Principal): Promise<AdminResponse> {
+  async aiGovernanceExplorer(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:ai_governance_explorer");
     if (denied) return denied;
-    return { status: 200, body: await this.security.aiGovernanceExplorer() };
+    return { status: 200, body: await this.security.aiGovernanceExplorer(tenantId) };
   }
 }

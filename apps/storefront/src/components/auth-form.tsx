@@ -33,10 +33,14 @@ export function AuthForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** G-72: set when `registerAccount` returns the D2 "check your email" outcome — the shopper is not signed in yet, so the form gives way to a notice instead of redirecting. */
+  const [checkEmailSent, setCheckEmailSent] = useState(false);
 
   const copy = mode === "sign-in" ? t.account.signIn : t.account.register;
 
-  function messageFor(reason: "credentials" | "conflict" | "validation" | "mfa" | "network"): string {
+  function messageFor(
+    reason: "credentials" | "conflict" | "validation" | "mfa" | "network",
+  ): string {
     return t.account.errors[reason];
   }
 
@@ -55,9 +59,22 @@ export function AuthForm({
       }
       // Clear the credential from client memory the moment it is no longer needed.
       setPassword("");
+      if ("checkEmail" in result && result.checkEmail) {
+        setCheckEmailSent(true);
+        return;
+      }
       router.push("/account");
       router.refresh();
     });
+  }
+
+  if (checkEmailSent) {
+    return (
+      <div className="flex flex-col gap-2" role="status">
+        <h2 className="text-lg font-medium">{t.account.signup.checkEmailTitle}</h2>
+        <p className="text-muted-foreground text-sm">{t.account.signup.checkEmailBody}</p>
+      </div>
+    );
   }
 
   return (

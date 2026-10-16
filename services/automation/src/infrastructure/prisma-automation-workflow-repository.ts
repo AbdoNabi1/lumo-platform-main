@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -12,8 +12,6 @@ export interface PrismaAutomationWorkflowRepositoryDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  /** Tenant scope for every query (ADR-0008 §2) — injected by the composition root. */
-  readonly tenantId: string;
 }
 
 /** Production `AutomationWorkflowRepository` on the `automation` schema. Optimistic locking + same-transaction outbox per ADR-0003. */
@@ -24,9 +22,8 @@ export class PrismaAutomationWorkflowRepository implements AutomationWorkflowRep
     this.deps = deps;
   }
 
-  async save(workflow: AutomationWorkflow, tx?: unknown): Promise<void> {
+  async save(workflow: AutomationWorkflow, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = workflow.id.toString();
     const row = AutomationWorkflowMapper.toRow(workflow, tenantId);
 
@@ -54,39 +51,55 @@ export class PrismaAutomationWorkflowRepository implements AutomationWorkflowRep
       }
     }
 
-    await this.deps.outbox.write(workflow.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      workflow.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<AutomationWorkflow | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.automationWorkflow.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return AutomationWorkflowMapper.toDomain(this.toMapperRow(row));
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<AutomationWorkflow | null> {
+    const run = (client: TransactionClient) =>
+      client.automationWorkflow.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : AutomationWorkflowMapper.toDomain(this.toMapperRow(row));
   }
 
-  async findByName(name: string, tx?: unknown): Promise<AutomationWorkflow | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.automationWorkflow.findFirst({
-      where: { name, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return AutomationWorkflowMapper.toDomain(this.toMapperRow(row));
+  async findByName(
+    name: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<AutomationWorkflow | null> {
+    const run = (client: TransactionClient) =>
+      client.automationWorkflow.findFirst({ where: { name, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : AutomationWorkflowMapper.toDomain(this.toMapperRow(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<AutomationWorkflow>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(
+    page: CursorPage,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<AutomationWorkflow>> {
     const limit = normalizePageSize(page.first);
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
-    const rows = await client.automationWorkflow.findMany({
-      where: {
-        tenantId: this.deps.tenantId,
-        ...(after !== undefined ? { id: { lt: after } } : {}),
-      },
-      orderBy: { id: "desc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.automationWorkflow.findMany({
+        where: { tenantId, ...(after !== undefined ? { id: { lt: after } } : {}) },
+        orderBy: { id: "desc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     const workflows = rows.map((row) => AutomationWorkflowMapper.toDomain(this.toMapperRow(row)));
     return buildPaginatedPage(workflows, limit, (workflow) => workflow.id.toString());
   }

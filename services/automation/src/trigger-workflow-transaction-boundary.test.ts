@@ -165,6 +165,7 @@ describe("Task 5/8 — GREEN: no separate dedup store means no process-restart-l
     const first = await new TriggerWorkflow(deps1).execute({
       workflowId: "wf-restart",
       triggerId: "trg-1",
+      tenantId: "tenant-local",
     });
     expect(first.ok).toBe(true);
     if (first.ok) expect(first.value.duplicate).toBe(false);
@@ -181,6 +182,7 @@ describe("Task 5/8 — GREEN: no separate dedup store means no process-restart-l
     const second = await new TriggerWorkflow(deps2).execute({
       workflowId: "wf-restart",
       triggerId: "trg-1",
+      tenantId: "tenant-local",
     });
 
     expect(second.ok).toBe(true);
@@ -210,7 +212,11 @@ describe("Task 5 — crash recovery: a rolled-back first attempt never permanent
     };
 
     await expect(
-      new TriggerWorkflow(deps).execute({ workflowId: "wf-crash-1", triggerId: "trg-2" }),
+      new TriggerWorkflow(deps).execute({
+        workflowId: "wf-crash-1",
+        triggerId: "trg-2",
+        tenantId: "tenant-local",
+      }),
     ).rejects.toThrow(/simulated crash/);
 
     // Rolled back — no execution and no dispatch. Since dedup is derived purely from this
@@ -222,6 +228,7 @@ describe("Task 5 — crash recovery: a rolled-back first attempt never permanent
     const retry = await new TriggerWorkflow(deps).execute({
       workflowId: "wf-crash-1",
       triggerId: "trg-2",
+      tenantId: "tenant-local",
     });
 
     expect(retry.ok).toBe(true);
@@ -254,6 +261,7 @@ describe("Task 5 — crash recovery: a rolled-back first attempt never permanent
     const started = await new TriggerWorkflow(deps).execute({
       workflowId: "wf-crash-2",
       triggerId: "trg-3",
+      tenantId: "tenant-local",
     });
     expect(started.ok).toBe(true);
     expect(dispatcher.calls).toHaveLength(1);
@@ -268,6 +276,7 @@ describe("Task 5 — crash recovery: a rolled-back first attempt never permanent
     const second = await new TriggerWorkflow(deps).execute({
       workflowId: "wf-crash-2",
       triggerId: "trg-3",
+      tenantId: "tenant-local",
     });
     expect(second.ok).toBe(true);
     if (second.ok) expect(second.value.duplicate).toBe(true);
@@ -294,7 +303,11 @@ describe("Task 5 — Scenario D/E/F: concurrent identical TriggerWorkflow calls"
 
       const outcomes = await Promise.all(
         Array.from({ length: n }, () =>
-          useCase.execute({ workflowId: `wf-race-${n}`, triggerId: "trg-race" }),
+          useCase.execute({
+            workflowId: `wf-race-${n}`,
+            triggerId: "trg-race",
+            tenantId: "tenant-local",
+          }),
         ),
       );
 
@@ -326,8 +339,16 @@ describe("Task 8 — bonus correctness fix: dedup is scoped per workflow, not gl
     };
     const useCase = new TriggerWorkflow(deps);
 
-    const x = await useCase.execute({ workflowId: "wf-x", triggerId: "shared-trigger" });
-    const y = await useCase.execute({ workflowId: "wf-y", triggerId: "shared-trigger" });
+    const x = await useCase.execute({
+      workflowId: "wf-x",
+      triggerId: "shared-trigger",
+      tenantId: "tenant-local",
+    });
+    const y = await useCase.execute({
+      workflowId: "wf-y",
+      triggerId: "shared-trigger",
+      tenantId: "tenant-local",
+    });
 
     expect(x.ok).toBe(true);
     expect(y.ok).toBe(true);
@@ -360,6 +381,7 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     const result = await new TriggerWorkflow(deps).execute({
       workflowId: "wf-basic",
       triggerId: "trg-basic",
+      tenantId: "tenant-local",
     });
 
     expect(result.ok).toBe(true);
@@ -387,9 +409,17 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     };
     const useCase = new TriggerWorkflow(deps);
 
-    const first = await useCase.execute({ workflowId: "wf-resume", triggerId: "trg-resume" });
+    const first = await useCase.execute({
+      workflowId: "wf-resume",
+      triggerId: "trg-resume",
+      tenantId: "tenant-local",
+    });
     expect(first.ok).toBe(true);
-    const second = await useCase.execute({ workflowId: "wf-resume", triggerId: "trg-resume" });
+    const second = await useCase.execute({
+      workflowId: "wf-resume",
+      triggerId: "trg-resume",
+      tenantId: "tenant-local",
+    });
     expect(second.ok).toBe(true);
     if (second.ok) expect(second.value.duplicate).toBe(true);
     expect(dispatcher.calls).toHaveLength(1);
@@ -416,6 +446,7 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     const result = await new TriggerWorkflow(deps).execute({
       workflowId: "wf-fail",
       triggerId: "trg-fail",
+      tenantId: "tenant-local",
     });
 
     expect(result.ok).toBe(true);
@@ -448,6 +479,7 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     const result = await new TriggerWorkflow(deps).execute({
       workflowId: "wf-draft",
       triggerId: "trg-draft",
+      tenantId: "tenant-local",
     });
 
     expect(result.ok).toBe(false);
@@ -470,6 +502,7 @@ describe("Task 5/6 — regression: existing single-attempt behavior is unchanged
     const result = await new TriggerWorkflow(deps).execute({
       workflowId: "does-not-exist",
       triggerId: "trg-x",
+      tenantId: "tenant-local",
     });
 
     expect(result.ok).toBe(false);

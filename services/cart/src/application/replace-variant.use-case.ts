@@ -5,12 +5,19 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
+import type { CartLineMerchandise } from "../domain/cart-item";
 import { Quantity } from "../domain/value-objects/quantity";
 
 export interface ReplaceVariantInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly cartId: string;
   readonly oldProductId: string;
+  /** Plan 2A: the variant line being replaced; absent addresses a legacy line by `oldProductId`. */
+  readonly oldVariantId?: string;
   readonly newProductId: string;
+  /** Plan 2A: the replacement variant, resolved server-side. */
+  readonly newMerchandise?: CartLineMerchandise;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
@@ -50,7 +57,7 @@ export class ReplaceVariant implements UseCase<
     if (!unitPrice.ok) return err(unitPrice.error);
 
     return this.deps.unitOfWork.run<Result<ReplaceVariantOutput, DomainError>>(async (tx) => {
-      const cart = await this.deps.carts.findById(input.cartId, tx);
+      const cart = await this.deps.carts.findById(input.cartId, input.tenantId, tx);
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
@@ -58,18 +65,22 @@ export class ReplaceVariant implements UseCase<
       try {
         cart.replaceItemVariant(
           UniqueEntityId.from(this.deps.idGenerator.generate()),
-          input.oldProductId,
+          input.oldVariantId ?? input.oldProductId,
           newProductRef.value,
           quantity.value,
           unitPrice.value,
-          { inventoryAvailable: input.inventoryAvailable, metadata: input.metadata },
+          {
+            inventoryAvailable: input.inventoryAvailable,
+            metadata: input.metadata,
+            merchandise: input.newMerchandise,
+          },
         );
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;
       }
 
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString(), totalAmountMinor: cart.totalAmount().amountMinor });
     });
   }

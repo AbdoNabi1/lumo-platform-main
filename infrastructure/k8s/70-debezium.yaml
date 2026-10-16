@@ -7,21 +7,21 @@
 # lives in the `_connect.*` Kafka topics — so it runs as a normal Deployment here.
 #
 # Secrets: the CDC database role (replication-capable `debezium` user) is provisioned out-of-band as the
-# `lumo-cdc-secrets` Secret (same convention as `lumo-runtime-secrets`; see secret.example.yaml). No
+# `morbeh-cdc-secrets` Secret (same convention as `morbeh-runtime-secrets`; see secret.example.yaml). No
 # placeholder secret is applied by kustomize.
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: debezium-connect-config
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: debezium-connect
 data:
   # Kafka Connect worker settings. Brokers match the runtime's KAFKA_BROKERS (10-config.yaml).
   BOOTSTRAP_SERVERS: "redpanda.data.svc.cluster.local:9092"
-  GROUP_ID: "lumo-connect"
+  GROUP_ID: "morbeh-connect"
   CONFIG_STORAGE_TOPIC: "_connect.configs"
   OFFSET_STORAGE_TOPIC: "_connect.offsets"
   STATUS_STORAGE_TOPIC: "_connect.status"
@@ -36,9 +36,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: debezium-connect
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: debezium-connect
     app.kubernetes.io/component: cdc
 spec:
@@ -50,7 +50,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/part-of: morbeh
         app.kubernetes.io/name: debezium-connect
         app.kubernetes.io/component: cdc
     spec:
@@ -100,9 +100,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: debezium-connect
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: debezium-connect
 spec:
   selector:
@@ -120,9 +120,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: debezium-register-outbox
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: debezium-connect
 spec:
   backoffLimit: 10
@@ -130,7 +130,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/part-of: lumo
+        app.kubernetes.io/part-of: morbeh
         app.kubernetes.io/name: debezium-connect
     spec:
       restartPolicy: OnFailure
@@ -145,17 +145,17 @@ spec:
           env:
             - name: CONNECT_URL
               value: "http://debezium-connect:8083"
-            # Replication-capable CDC database role, provisioned out-of-band as lumo-cdc-secrets.
+            # Replication-capable CDC database role, provisioned out-of-band as morbeh-cdc-secrets.
             - name: DB_HOSTNAME
-              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_HOSTNAME } }
+              valueFrom: { secretKeyRef: { name: morbeh-cdc-secrets, key: DEBEZIUM_DB_HOSTNAME } }
             - name: DB_PORT
-              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_PORT } }
+              valueFrom: { secretKeyRef: { name: morbeh-cdc-secrets, key: DEBEZIUM_DB_PORT } }
             - name: DB_USER
-              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_USER } }
+              valueFrom: { secretKeyRef: { name: morbeh-cdc-secrets, key: DEBEZIUM_DB_USER } }
             - name: DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_PASSWORD } }
+              valueFrom: { secretKeyRef: { name: morbeh-cdc-secrets, key: DEBEZIUM_DB_PASSWORD } }
             - name: DB_NAME
-              valueFrom: { secretKeyRef: { name: lumo-cdc-secrets, key: DEBEZIUM_DB_NAME } }
+              valueFrom: { secretKeyRef: { name: morbeh-cdc-secrets, key: DEBEZIUM_DB_NAME } }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

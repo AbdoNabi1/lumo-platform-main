@@ -22,11 +22,15 @@ model Promotion {
   usageLimit                  Int?      @map("usage_limit")
   usageCount                  Int       @default(0) @map("usage_count")
   status                      String // 8-value lifecycle union (domain-enforced, see PromotionStatusValue)
+  method                      String? // Phase 2: code | automatic. NULL = created before Phase 2, reachable only through its coupon.
+  discountClass               String?   @map("discount_class") // product | order | shipping (derived from the rule when NULL)
+  combinesWith                Json?     @map("combines_with") // { product, order, shipping } (derived from stackable when NULL)
   version                     Int       @default(0)
   createdAt                   DateTime  @default(now()) @map("created_at")
   updatedAt                   DateTime  @updatedAt @map("updated_at")
 
   @@index([tenantId, status])
+  @@index([tenantId, method, status])
   @@index([tenantId, campaignRef])
   @@map("promotions")
   @@schema("promotions")

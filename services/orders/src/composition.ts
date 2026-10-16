@@ -13,6 +13,7 @@ import {
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { CreateOrderFromCheckout } from "./application/create-order-from-checkout.use-case";
 import { GetOrder } from "./application/get-order.use-case";
+import { GetSalesSummary } from "./application/get-sales-summary.use-case";
 import { ListOrders } from "./application/list-orders.use-case";
 import { MarkOrderPaid } from "./application/mark-order-paid.use-case";
 import {
@@ -21,16 +22,24 @@ import {
   RequestPaymentCapture,
 } from "./application/order-lifecycle.use-cases";
 import { PlaceOrder } from "./application/place-order.use-case";
+import { RecordCheckoutPayment } from "./application/record-checkout-payment.use-case";
 import { RefundOrder } from "./application/refund-order.use-case";
+import type { SalesSummaryQuery } from "./application/sales-summary";
 import type { OrderRepository } from "./domain/order-repository";
 import type {
   InventoryPort,
   NotificationPort,
+  OrderNumberAllocator,
   PaymentPort,
+  PaymentVoidPort,
+  FulfillmentCancelPort,
+  StockReleasePort,
   PaymentVerificationPort,
   ShippingPort,
 } from "./application/ports";
+import { InMemoryOrderNumberAllocator } from "./infrastructure/in-memory-order-number-allocator";
 import { InMemoryOrderRepository } from "./infrastructure/in-memory-order-repository";
+import { InMemorySalesSummaryQuery } from "./infrastructure/in-memory-sales-summary-query";
 import {
   InMemoryInventoryAdapter,
   InMemoryNotificationAdapter,
@@ -43,7 +52,9 @@ import {
   ORDERS_PUBLISHED_EVENTS,
   OrderEventTranslator,
 } from "./infrastructure/order-event-translator";
+import { PrismaOrderNumberAllocator } from "./infrastructure/prisma-order-number-allocator";
 import { PrismaOrderRepository } from "./infrastructure/prisma-order-repository";
+import { PrismaSalesSummaryQuery } from "./infrastructure/prisma-sales-summary-query";
 import { OrderController } from "./interfaces/order.controller";
 
 export interface OrdersWiringDeps {
@@ -70,13 +81,20 @@ export interface OrdersWiringDeps {
   readonly shippingPort?: ShippingPort;
   readonly notifications?: NotificationPort;
   /**
-   * Production persistence (G-39/C-01). Present ⇒ `PrismaOrderRepository` + `PrismaUnitOfWork`
-   * (same `prisma?`/`tenantId?`-presence convention as `wireFinance`/`wireSecurity`); absent ⇒
-   * in-memory, unchanged.
+   * G-126: voids the payment of an order that is cancelled before it was paid. Optional — absent ⇒
+   * cancelling an order touches no payment (the offline in-memory pipelines, unchanged).
+   */
+  readonly paymentVoid?: PaymentVoidPort;
+  /** G-130: cancels the open fulfillment order of a cancelled order. Optional, like `paymentVoid`. */
+  readonly fulfillmentCancel?: FulfillmentCancelPort;
+  /** G-130: releases the stock held for a cancelled order. Optional, like `paymentVoid`. */
+  readonly stockRelease?: StockReleasePort;
+  /**
+   * Production persistence (G-39/C-01). Present ⇒ `PrismaOrderRepository` + `PrismaUnitOfWork`;
+   * absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository built here is a
+   * tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Orders table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredOrders {
@@ -89,6 +107,8 @@ export interface WiredOrders {
 function buildController(
   orders: OrderRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
+  orderNumbers: OrderNumberAllocator,
+  sales: SalesSummaryQuery,
   deps: OrdersWiringDeps,
 ): OrderController {
   const paymentPort = deps.paymentPort ?? new InMemoryPaymentAdapter();
@@ -103,6 +123,7 @@ function buildController(
       unitOfWork,
       idGenerator: deps.idGenerator,
       clock: deps.clock,
+      orderNumbers,
     }),
     markOrderPaid: new MarkOrderPaid({
       orders,
@@ -122,6 +143,7 @@ function buildController(
       unitOfWork,
       idGenerator: deps.idGenerator,
       clock: deps.clock,
+      orderNumbers,
     }),
     advanceOrder: new AdvanceOrder({
       orders,
@@ -129,6 +151,11 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       notifications,
+      ...(deps.paymentVoid !== undefined ? { paymentVoid: deps.paymentVoid } : {}),
+      ...(deps.fulfillmentCancel !== undefined
+        ? { fulfillmentCancel: deps.fulfillmentCancel }
+        : {}),
+      ...(deps.stockRelease !== undefined ? { stockRelease: deps.stockRelease } : {}),
     }),
     requestPaymentCapture: new RequestPaymentCapture({
       orders,
@@ -147,8 +174,15 @@ function buildController(
       shippingPort,
       notifications,
     }),
+    recordCheckoutPayment: new RecordCheckoutPayment({
+      orders,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    }),
     getOrder: new GetOrder({ orders }),
     listOrders: new ListOrders({ orders }),
+    getSalesSummary: new GetSalesSummary({ sales }),
   });
 }
 
@@ -160,10 +194,6 @@ function buildController(
  */
 export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireOrders: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new OrderEventTranslator(),
@@ -171,12 +201,20 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
       clock: deps.clock,
       producer: "orders",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const orders = new PrismaOrderRepository({ prisma: deps.prisma, tenantId, outbox, context });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — every repository takes it per
+    // call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const orders = new PrismaOrderRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {
-      orders: buildController(orders, unitOfWork, deps),
+      orders: buildController(
+        orders,
+        unitOfWork,
+        new PrismaOrderNumberAllocator(),
+        new PrismaSalesSummaryQuery({ prisma: deps.prisma }),
+        deps,
+      ),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -194,7 +232,13 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
 
   const orders = new InMemoryOrderRepository({ outbox: outboxWriter, context });
   const unitOfWork = new InMemoryUnitOfWork();
-  const controller = buildController(orders, unitOfWork, deps);
+  const controller = buildController(
+    orders,
+    unitOfWork,
+    new InMemoryOrderNumberAllocator(),
+    new InMemorySalesSummaryQuery({ ordersOf: (tenantId) => orders.ordersOf(tenantId) }),
+    deps,
+  );
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];

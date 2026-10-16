@@ -4,6 +4,7 @@ interface CouponRedemptionProps {
   readonly idempotencyKey: string;
   readonly customerRef: string;
   readonly orderRef?: string;
+  readonly email?: string;
   readonly occurredAt: Date;
 }
 
@@ -15,8 +16,18 @@ export class CouponRedemption extends Entity<CouponRedemptionProps> {
     customerRef: string,
     occurredAt: Date,
     orderRef?: string,
+    email?: string,
   ): CouponRedemption {
-    return new CouponRedemption({ idempotencyKey, customerRef, orderRef, occurredAt }, id);
+    return new CouponRedemption(
+      {
+        idempotencyKey,
+        customerRef,
+        orderRef,
+        occurredAt,
+        ...(email === undefined ? {} : { email }),
+      },
+      id,
+    );
   }
 
   get idempotencyKey(): string {
@@ -29,6 +40,10 @@ export class CouponRedemption extends Entity<CouponRedemptionProps> {
 
   get orderRef(): string | undefined {
     return this.props.orderRef;
+  }
+
+  get email(): string | undefined {
+    return this.props.email;
   }
 
   get occurredAt(): Date {

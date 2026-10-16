@@ -38,6 +38,9 @@ export interface BuildKeyInput {
 
 const EXTENSION_PATTERN = /^[a-z0-9]{1,10}$/;
 const TENANT_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const LEAF_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const YEAR_PATTERN = /^\d{4}$/;
+const MONTH_PATTERN = /^(0[1-9]|1[0-2])$/;
 
 export interface StorageKeyFactoryDeps {
   readonly idGenerator: IdGenerator;
@@ -82,4 +85,50 @@ function extractExtension(filename: string | undefined): string {
   if (dot <= 0 || dot === filename.length - 1) return "";
   const candidate = filename.slice(dot + 1).toLowerCase();
   return EXTENSION_PATTERN.test(candidate) ? `.${candidate}` : "";
+}
+
+/** The parts of a key {@link StorageKeyFactory} produced. */
+export interface ParsedStorageKey {
+  readonly tenantId: string;
+  readonly namespace: StorageNamespace;
+}
+
+/**
+ * The exact inverse of {@link StorageKeyFactory.build} — the one place the key grammar is read, kept
+ * next to the one place it is written so the two cannot drift. Returns `null` for anything the factory
+ * would not have produced: a different shape, an unknown namespace, an out-of-range month, a `..` or
+ * empty or percent-encoded or backslash segment, a leading/trailing slash. It is deliberately a strict
+ * parse of the factory's own grammar, not a `startsWith("tenants/<id>/")` — a prefix test would accept
+ * `tenants/a/../b/x`, which a CDN or signing layer that normalises paths resolves into tenant b.
+ */
+export function parseStorageKey(key: string): ParsedStorageKey | null {
+  const parts = key.split("/");
+  if (parts.length !== 6 || parts[0] !== "tenants") return null;
+  const [, tenantId, namespace, yyyy, mm, leaf] = parts as [
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  if (!TENANT_PATTERN.test(tenantId)) return null;
+  if (!Object.prototype.hasOwnProperty.call(NAMESPACE_BUCKETS, namespace)) return null;
+  if (!YEAR_PATTERN.test(yyyy) || !MONTH_PATTERN.test(mm)) return null;
+  const dot = leaf.indexOf(".");
+  const id = dot === -1 ? leaf : leaf.slice(0, dot);
+  const ext = dot === -1 ? undefined : leaf.slice(dot + 1);
+  if (!LEAF_ID_PATTERN.test(id)) return null;
+  if (ext !== undefined && !EXTENSION_PATTERN.test(ext)) return null;
+  return { tenantId, namespace: namespace as StorageNamespace };
+}
+
+/**
+ * True only when `key` is a well-formed factory key whose tenant segment IS `tenantId`. Anything
+ * malformed, or under another tenant, is false. This is the storage-side ownership test (G-68/F-22):
+ * an application accepting or signing a key on behalf of a tenant must pass it first.
+ */
+export function storageKeyBelongsToTenant(key: string, tenantId: string): boolean {
+  if (!TENANT_PATTERN.test(tenantId)) return false;
+  return parseStorageKey(key)?.tenantId === tenantId;
 }

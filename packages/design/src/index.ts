@@ -1,7 +1,7 @@
 /**
- * `@platform/design` — the Lumo Design System token layer.
+ * `@platform/design` — the Morbeh Design System token layer.
  *
- * Lumo is the platform's single canonical design system. There is no second system and no
+ * Morbeh is the platform's single canonical design system. There is no second system and no
  * "legacy" system; anything visual in this repository resolves here.
  *
  * The CSS in `./styles.css` is what the apps actually render from. This module mirrors the
@@ -14,7 +14,7 @@
  *     layer. Do not reach past a semantic token into a scale from product code.
  *   - No component may hard-code a hex value.
  *
- * Docs: docs/ui/LUMO_DESIGN_SYSTEM.md
+ * Docs: docs/ui/MORBEH_DESIGN_SYSTEM.md
  */
 
 export {

@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { CheckCircle2Icon, PackageXIcon } from "lucide-react";
-import { Card, CardContent } from "@platform/ui";
+import Link from "next/link";
+import { Button, Card, CardContent } from "@platform/ui";
 import { ClearCheckoutSessionCookie } from "@/components/clear-checkout-session-cookie";
 import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
@@ -14,10 +15,12 @@ import { getCheckoutSession } from "@/lib/runtime-api";
  * session DTO returns (`orderRef` + `totals`) — never `GET /checkouts/:id/order-draft` (deliberately
  * not public, see `public-checkout-routes.ts`'s header comment) and never `GET /orders/:orderId`
  * (admin-guarded; a shopper has no token). See `docs/plans/BLOCKERS.md`'s T2.3 entry: completing a
- * checkout for a genuine guest session currently fails server-side (`OrderCreationAdapter` requires
- * a `customerRef`, which guest checkout never has) — so `orderRef` being absent here is a real,
- * currently-reachable state, not a hypothetical one, and is rendered as a recoverable "nothing to
- * confirm" panel rather than assumed away.
+ * checkout for a genuine guest session used to fail server-side (`OrderCreationAdapter` required
+ * a `customerRef`, which guest checkout never has). That was closed by WP-1 / G-52 — the session
+ * now carries a contact email and Identity resolves a guest customer from it — but `orderRef`
+ * being absent here (a cleared cookie, an expired session, a checkout that never completed) is
+ * still a real, reachable state and is rendered as a recoverable "nothing to confirm" panel
+ * rather than assumed away.
  *
  * Resolves the just-completed session from `CHECKOUT_SESSION_COOKIE` (kept alive by
  * `completeCheckout` on purpose — see that action's own comment) and clears it once rendered via
@@ -43,6 +46,8 @@ export default async function CheckoutConfirmationPage() {
       : null;
   const totals = session?.body?.totals ?? null;
   const currency = session?.body?.currency;
+  // Cash on delivery: nothing was charged online, so say what is due when the order arrives.
+  const payOnDelivery = session?.body?.selectedPaymentMethod === "cod";
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 p-8">
@@ -85,6 +90,17 @@ export default async function CheckoutConfirmationPage() {
                 </div>
               )}
             </dl>
+            {payOnDelivery && totals !== null && currency !== undefined && (
+              <p className="text-md max-w-md font-medium">
+                {t.checkout.confirmation.codNotice.replace(
+                  "{total}",
+                  formatCurrency(locale, totals.grandTotalMinor, currency),
+                )}
+              </p>
+            )}
+            <Button asChild>
+              <Link href="/">{t.checkout.confirmation.continueShopping}</Link>
+            </Button>
           </CardContent>
         </Card>
       )}

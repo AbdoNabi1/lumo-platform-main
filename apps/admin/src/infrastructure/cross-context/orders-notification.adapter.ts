@@ -40,14 +40,21 @@ export class OrdersNotificationAdapter implements NotificationPort {
 
   private readonly notifications: Pick<NotificationsController, "create" | "queue" | "send">;
 
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `NotificationPort.notify` carries `tenantId` per call. */
   constructor(notifications: Pick<NotificationsController, "create" | "queue" | "send">) {
     this.notifications = notifications;
   }
 
-  async notify(customerRef: string, orderNumber: string, status: string): Promise<void> {
+  async notify(
+    customerRef: string,
+    orderNumber: string,
+    status: string,
+    tenantId: string,
+  ): Promise<void> {
     const idempotencyKey = `${orderNumber}:${status}`;
 
     const createResponse = await this.notifications.create({
+      tenantId,
       idempotencyKey,
       sourceRef: `orders:${orderNumber}`,
       recipientRef: customerRef,
@@ -66,7 +73,7 @@ export class OrdersNotificationAdapter implements NotificationPort {
     }
     const { notificationId } = createResponse.body as CreateNotificationBody;
 
-    const queueResponse = await this.notifications.queue({ notificationId });
+    const queueResponse = await this.notifications.queue({ notificationId, tenantId });
     if (queueResponse.status >= 400) {
       throw new Error(
         `OrdersNotificationAdapter: queue failed for order "${orderNumber}" ` +
@@ -74,7 +81,7 @@ export class OrdersNotificationAdapter implements NotificationPort {
       );
     }
 
-    const sendResponse = await this.notifications.send({ notificationId });
+    const sendResponse = await this.notifications.send({ notificationId, tenantId });
     if (sendResponse.status >= 400) {
       throw new Error(
         `OrdersNotificationAdapter: send failed for order "${orderNumber}" ` +

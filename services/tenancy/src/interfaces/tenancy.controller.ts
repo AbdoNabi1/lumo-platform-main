@@ -5,6 +5,23 @@ import type { GetWorkspace } from "../application/get-workspace.use-case";
 import type { ListTenants } from "../application/list-tenants.use-case";
 import type { ListWorkspaces } from "../application/list-workspaces.use-case";
 import type {
+  GetPublicStore,
+  GetStoreSettings,
+  UpdateStoreSettings,
+} from "../application/store-settings.use-cases";
+import type { StoreSettingsInput } from "../domain/store-settings";
+import type {
+  AddCustomDomain,
+  AddCustomDomainInput,
+  DomainIdInput,
+  ListShopDomains,
+  ResolveHost,
+  ResolveHostInput,
+  SetPrimaryDomain,
+  ShopIdInput,
+  VerifyDomain,
+} from "../application/shop-domains.use-cases";
+import type {
   ActivateTenant,
   ArchiveWorkspace,
   CancelTenant,
@@ -36,6 +53,14 @@ export interface TenancyControllerDeps {
   readonly listWorkspaces: ListWorkspaces;
   readonly getWorkspace: GetWorkspace;
   readonly getCurrentWorkspace: GetCurrentWorkspace;
+  readonly addCustomDomain: AddCustomDomain;
+  readonly verifyDomain: VerifyDomain;
+  readonly setPrimaryDomain: SetPrimaryDomain;
+  readonly listShopDomains: ListShopDomains;
+  readonly resolveHost: ResolveHost;
+  readonly getStoreSettings: GetStoreSettings;
+  readonly updateStoreSettings: UpdateStoreSettings;
+  readonly getPublicStore: GetPublicStore;
 }
 
 /** Framework-agnostic interface boundary for Tenancy use-cases (no HTTP server). */
@@ -44,6 +69,38 @@ export class TenancyController {
 
   constructor(deps: TenancyControllerDeps) {
     this.deps = deps;
+  }
+
+  async addCustomDomain(input: AddCustomDomainInput): Promise<ControllerResponse> {
+    return present(await this.deps.addCustomDomain.execute(input), 201);
+  }
+
+  async verifyDomain(input: DomainIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.verifyDomain.execute(input), 200);
+  }
+
+  async setPrimaryDomain(input: DomainIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.setPrimaryDomain.execute(input), 200);
+  }
+
+  async listShopDomains(input: ShopIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.listShopDomains.execute(input), 200);
+  }
+
+  async getStoreSettings(): Promise<ControllerResponse> {
+    return present(await this.deps.getStoreSettings.execute({}), 200);
+  }
+
+  async updateStoreSettings(input: StoreSettingsInput): Promise<ControllerResponse> {
+    return present(await this.deps.updateStoreSettings.execute(input), 200);
+  }
+
+  async getPublicStore(): Promise<ControllerResponse> {
+    return present(await this.deps.getPublicStore.execute({}), 200);
+  }
+
+  async resolveHost(input: ResolveHostInput): Promise<ControllerResponse> {
+    return present(await this.deps.resolveHost.execute(input), 200);
   }
 
   async createTenant(input: CreateTenantInput): Promise<ControllerResponse> {

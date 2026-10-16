@@ -91,6 +91,39 @@ module.exports = {
       from: { pathNot: "^services/feature-registry/" },
       to: { path: "^services/feature-registry/src/(domain|infrastructure|application)/" },
     },
+    {
+      name: "apps-no-testing-imports",
+      severity: "error",
+      comment:
+        "WP-17 / Morbeh F-14: a module under apps/*/src (test files are already excluded repo-wide, " +
+        "see options.exclude below) must not reach OUT OF ITS OWN APP into another package's " +
+        "`/testing` subpath, or into a cross-package `in-memory-*`-named module — those are test " +
+        "doubles, never a production composition root's dependency. `pathNot: ['^apps/$1/']` scopes " +
+        "this to cross-boundary imports only, deliberately: it does not police an app's own " +
+        "same-app fallback scaffolding (e.g. `apps/admin/src/infrastructure/in-memory-audit-trail.ts`, " +
+        "used as `deps.auditTrail ?? new InMemoryAuditTrail()` by ~20 of that app's own route tests " +
+        "and reached in production only via `wireAdmin`, whose one production caller — " +
+        "`apps/runtime/src/api.ts:397` — always passes a real `PrismaAuditTrail`, pinned by " +
+        "`apps/runtime/src/api.h-02-audit-trail-regression.test.ts` (H-02); that is a separate, " +
+        "already-remediated concern, not this WP's scope). The T17.1 violation this rule exists to " +
+        "catch — `apps/runtime/src/composition.ts` importing `InMemoryEventSerializer` from " +
+        "`@platform/domain-events/testing`, unconditionally, with no boot-refusal guard — is exactly " +
+        "the cross-package case this still catches. " +
+        "T17.4: the `objectStorage`/`paymentProvider` guarded fallbacks in " +
+        "`apps/runtime/src/composition.ts` do NOT trip this rule and need no exception listing — " +
+        "verified, not assumed (UNIFIED-ROADMAP.md §7 rule 1): `InMemoryObjectStorage` is imported " +
+        "from `@platform/media`'s public barrel (`services/media/src/index.ts`), not a `/testing` " +
+        "subpath or an `in-memory-*`-named file; `InMemoryPaymentProvider` is never imported into " +
+        "any `apps/*` file at all — `wirePayments` (`services/payments`) constructs it internally " +
+        "only when `paymentProvider` is `undefined`. Both are additionally gated by " +
+        "`apps/runtime/src/api.ts`'s `assertProductionObjectStorageConfigured` / " +
+        "`assertProductionPaymentProviderConfigured` boot-refusal guards regardless.",
+      from: { path: "^apps/([^/]+)/src/" },
+      to: {
+        path: "(^|/)testing/|(^|/)in-memory-[^/]+\\.ts$",
+        pathNot: ["^apps/$1/"],
+      },
+    },
   ],
   options: {
     tsPreCompilationDeps: "specify",

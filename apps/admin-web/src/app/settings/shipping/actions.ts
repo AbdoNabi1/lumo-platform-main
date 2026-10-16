@@ -1,0 +1,267 @@
+"use server";
+
+import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
+import {
+  addShippingRate,
+  createShippingZone,
+  deleteShippingRate,
+  deleteShippingZone,
+  updateShippingRate,
+  updateShippingZone,
+  type RateConditionDto,
+  type ZoneCountryDto,
+} from "@/lib/api/shipping-zones";
+import { newIdempotencyKey, toFormState, type FormState } from "@/lib/api/mutation";
+import { fetchStoreSettings } from "@/lib/api/store-settings";
+import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
+import { toMinorUnits } from "@/lib/products/money";
+import { toGrams } from "@/lib/products/weight";
+import { parseInlineRates, type InlineRateInput } from "@/lib/shipping/inline-rates";
+import { QUICK_SETUP_COUNTRIES, quickSetupPlan } from "@/lib/shipping/quick-setup";
+
+/**
+ * Plan 3C — Settings → Shipping and delivery. Every action follows the app's write shape: parse the
+ * form defensively, mint one idempotency key per submit, call the typed `lib/api/shipping-zones.ts`
+ * function and project any non-`ok` outcome through `toFormState`. The browser never sends a currency
+ * or a unit: amounts are read in the STORE's currency and weight unit, fetched here from the settings.
+ */
+
+const PATH = "/settings/shipping";
+
+async function currentLocale(): Promise<Locale> {
+  const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
+  return isLocale(stored) ? stored : DEFAULT_LOCALE;
+}
+
+async function dictionary() {
+  return dictionaryFor(await currentLocale());
+}
+
+function text(formData: FormData, name: string): string {
+  const value = formData.get(name);
+  return typeof value === "string" ? value : "";
+}
+
+function invalid(message: string, fieldErrors: Record<string, string> = {}): FormState {
+  return { status: "error", message, fieldErrors };
+}
+
+function parseCountries(raw: string): ZoneCountryDto[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const countries: ZoneCountryDto[] = [];
+  for (const entry of parsed as unknown[]) {
+    const candidate = entry as { code?: unknown; provinces?: unknown } | null;
+    if (typeof candidate?.code !== "string") return null;
+    const provinces = candidate.provinces;
+    if (provinces === null) {
+      countries.push({ code: candidate.code, provinces: null });
+    } else if (Array.isArray(provinces) && provinces.every((p) => typeof p === "string")) {
+      countries.push({ code: candidate.code, provinces: provinces });
+    } else {
+      return null;
+    }
+  }
+  return countries;
+}
+
+export async function saveZoneAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  const t = await dictionary();
+  const countries = parseCountries(text(formData, "countries"));
+  if (countries === null) {
+    return invalid(t.formErrors.invalid, { countries: t.formErrors.invalid });
+  }
+  const input = { name: text(formData, "name").trim(), countries };
+  const zoneId = text(formData, "zoneId");
+  if (zoneId.length > 0) {
+    const updated = await updateShippingZone(zoneId, input, newIdempotencyKey());
+    if (updated.outcome !== "ok") return toFormState(updated, t.formErrors);
+    revalidatePath(PATH);
+    return { status: "success" };
+  }
+
+  // Plan 3E: a new zone may carry its first rates, saved with it in one atomic call.
+  const rawRates = text(formData, "rates");
+  let rates: InlineRateInput[] = [];
+  if (rawRates.length > 0) {
+    const store = await fetchStoreSettings();
+    if (store.outcome !== "ok") {
+      return toFormState(
+        store.outcome === "error" ? store : { outcome: store.outcome },
+        t.formErrors,
+      );
+    }
+    const parsed = parseInlineRates(rawRates, store.settings.currency);
+    if (!parsed.ok) return invalid(t.formErrors.invalid, { [parsed.field]: t.formErrors.invalid });
+    rates = parsed.rates;
+  }
+  const result = await createShippingZone(
+    rates.length > 0 ? { ...input, rates } : input,
+    newIdempotencyKey(),
+  );
+  if (result.outcome !== "ok") return toFormState(result, t.formErrors);
+  revalidatePath(PATH);
+  return { status: "success" };
+}
+
+export async function deleteZoneAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const t = await dictionary();
+  const zoneId = text(formData, "zoneId");
+  if (zoneId.length === 0) return invalid(t.formErrors.invalid);
+  const result = await deleteShippingZone(zoneId, newIdempotencyKey());
+  if (result.outcome !== "ok") return toFormState(result, t.formErrors);
+  revalidatePath(PATH);
+  return { status: "success" };
+}
+
+export async function deleteRateAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const t = await dictionary();
+  const zoneId = text(formData, "zoneId");
+  const rateId = text(formData, "rateId");
+  if (zoneId.length === 0 || rateId.length === 0) return invalid(t.formErrors.invalid);
+  const result = await deleteShippingRate(zoneId, rateId, newIdempotencyKey());
+  if (result.outcome !== "ok") return toFormState(result, t.formErrors);
+  revalidatePath(PATH);
+  return { status: "success" };
+}
+
+/** A blank bound is "not set" (`undefined`); anything else must parse or it is `null`. */
+function bound(raw: string, parse: (text: string) => number | null): number | null | undefined {
+  const trimmed = raw.trim();
+  return trimmed.length === 0 ? undefined : parse(trimmed);
+}
+
+export async function saveRateAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  const t = await dictionary();
+  const zoneId = text(formData, "zoneId");
+  if (zoneId.length === 0) return invalid(t.formErrors.invalid);
+
+  const store = await fetchStoreSettings();
+  if (store.outcome !== "ok") {
+    return toFormState(
+      store.outcome === "error" ? store : { outcome: store.outcome },
+      t.formErrors,
+    );
+  }
+  const { currency, weightUnit } = store.settings;
+
+  const fieldErrors: Record<string, string> = {};
+  const priceMinor = toMinorUnits(text(formData, "price"), currency);
+  if (priceMinor === null) fieldErrors["price"] = t.formErrors.invalid;
+
+  let condition: RateConditionDto = { type: "none" };
+  const type = text(formData, "conditionType");
+  if (type === "orderPrice" || type === "weight") {
+    const parse =
+      type === "orderPrice"
+        ? (value: string) => toMinorUnits(value, currency)
+        : (value: string) => toGrams(value, weightUnit);
+    const min = bound(text(formData, "min"), parse);
+    const max = bound(text(formData, "max"), parse);
+    if (min === null) fieldErrors["min"] = t.formErrors.invalid;
+    if (max === null) fieldErrors["max"] = t.formErrors.invalid;
+    if (min !== null && max !== null && (min !== undefined || max !== undefined)) {
+      condition =
+        type === "orderPrice"
+          ? {
+              type,
+              ...(min === undefined ? {} : { minMinor: min }),
+              ...(max === undefined ? {} : { maxMinor: max }),
+            }
+          : {
+              type,
+              ...(min === undefined ? {} : { minGrams: min }),
+              ...(max === undefined ? {} : { maxGrams: max }),
+            };
+    }
+  }
+  if (priceMinor === null || Object.keys(fieldErrors).length > 0) {
+    return invalid(t.formErrors.invalid, fieldErrors);
+  }
+
+  const description = text(formData, "description").trim();
+  const input = {
+    name: text(formData, "name").trim(),
+    priceMinor,
+    condition,
+    description: description.length === 0 ? null : description,
+  };
+  const rateId = text(formData, "rateId");
+  const result =
+    rateId.length > 0
+      ? await updateShippingRate(zoneId, rateId, input, newIdempotencyKey())
+      : await addShippingRate(zoneId, input, newIdempotencyKey());
+  if (result.outcome !== "ok") return toFormState(result, t.formErrors);
+  revalidatePath(PATH);
+  return { status: "success" };
+}
+
+/**
+ * Plan 3E — quick setup for a shop with no zones. Prices are read in the STORE's currency; the plan
+ * (zones with their rates) comes from `quickSetupPlan`. Each zone is one atomic call, sent in turn with
+ * its own idempotency key; if a later one fails the message names what was saved and what was not.
+ */
+export async function quickSetupAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const locale = await currentLocale();
+  const t = dictionaryFor(locale);
+  const country = text(formData, "country");
+  if (!(QUICK_SETUP_COUNTRIES as readonly string[]).includes(country)) {
+    return invalid(t.formErrors.invalid, { country: t.formErrors.invalid });
+  }
+
+  const store = await fetchStoreSettings();
+  if (store.outcome !== "ok") {
+    return toFormState(
+      store.outcome === "error" ? store : { outcome: store.outcome },
+      t.formErrors,
+    );
+  }
+  const { currency } = store.settings;
+
+  const fieldErrors: Record<string, string> = {};
+  const cityPriceMinor = toMinorUnits(text(formData, "cityPrice"), currency);
+  if (cityPriceMinor === null) fieldErrors["cityPrice"] = t.formErrors.invalid;
+  const restPriceMinor = country === "EG" ? toMinorUnits(text(formData, "restPrice"), currency) : 0;
+  if (restPriceMinor === null) fieldErrors["restPrice"] = t.formErrors.invalid;
+  const freeOver = bound(text(formData, "freeOver"), (value) => toMinorUnits(value, currency));
+  if (freeOver === null || freeOver === 0) fieldErrors["freeOver"] = t.formErrors.invalid;
+  if (cityPriceMinor === null || restPriceMinor === null || Object.keys(fieldErrors).length > 0) {
+    return invalid(t.formErrors.invalid, fieldErrors);
+  }
+
+  const plan = quickSetupPlan({
+    country,
+    cityPriceMinor,
+    restPriceMinor,
+    freeOverMinor: freeOver ?? null,
+    zones: [],
+    locale,
+  });
+  for (const [index, zone] of plan.entries()) {
+    const result = await createShippingZone(zone, newIdempotencyKey());
+    if (result.outcome === "ok") continue;
+    if (index === 0) return toFormState(result, t.formErrors);
+    revalidatePath(PATH);
+    const message = t.shippingSettings.quickSetupPartial
+      .replace("{saved}", plan[0]?.name ?? "")
+      .replace("{missing}", zone.name);
+    return invalid(message);
+  }
+  revalidatePath(PATH);
+  return { status: "success" };
+}

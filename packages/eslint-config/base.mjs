@@ -32,6 +32,11 @@ const rootScriptGlobs = workspaceGroups.flatMap((group) => [
 // scripts/ops/check-env-docs.mjs`, which failed with the same "not found by the project service"
 // error `rootScriptGlobs` above exists to prevent for per-workspace scripts.
 const rootOpsScriptGlobs = ["scripts/*/*.ts", "scripts/*/*.mjs"];
+// WP-17: same "not found by the project service" gap as rootOpsScriptGlobs above, hit for the
+// first time when .dependency-cruiser.cjs (root-level tooling config, no tsconfig `include`s it)
+// was touched for the apps-no-testing-imports rule — nothing under `scripts/` or `*/*/`.config.*
+// covers a bare root dotfile config.
+const rootToolingConfigGlobs = [".dependency-cruiser.cjs"];
 
 /**
  * H-09 (audit): `tseslint.configs.recommended` runs zero type-aware rules — no
@@ -60,7 +65,12 @@ export default [
           // "was not found by the project service". Patterns are root-relative (built above from
           // `tsconfigRootDir`, not package-relative — `tsconfigRootDir` is now the fixed monorepo
           // root, not the invoking process's cwd; see that constant's own comment for why).
-          allowDefaultProject: [...rootConfigGlobs, ...rootScriptGlobs, ...rootOpsScriptGlobs],
+          allowDefaultProject: [
+            ...rootConfigGlobs,
+            ...rootScriptGlobs,
+            ...rootOpsScriptGlobs,
+            ...rootToolingConfigGlobs,
+          ],
         },
         tsconfigRootDir: monorepoRoot,
       },
@@ -125,6 +135,13 @@ export default [
   // `no-unsafe-*` findings that have nothing to do with these files' actual correctness.
   {
     files: rootOpsScriptGlobs,
+    ...tseslint.configs.disableTypeChecked,
+  },
+  // Same not-a-real-project situation as the flat-config files and root ops scripts above:
+  // .dependency-cruiser.cjs has no tsconfig and is evaluated standalone by dependency-cruiser
+  // itself, so its single-file inferred project can't resolve real types for its own `require`s.
+  {
+    files: rootToolingConfigGlobs,
     ...tseslint.configs.disableTypeChecked,
   },
   // Disable formatting rules that conflict with Prettier (must be last).

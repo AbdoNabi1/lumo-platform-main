@@ -42,22 +42,30 @@ describe("Localization read use-cases (Phase 4 T4.11)", () => {
   it("ListLocales paginates and GetLocale returns the locale, or NotFoundError", async () => {
     const h = harness();
     const create = new CreateLocale(h);
-    await create.execute({ code: "en", name: "English", isDefault: true });
-    const created = await create.execute({ code: "fr", name: "French", isDefault: false });
+    await create.execute({ code: "en", name: "English", isDefault: true, tenantId: "tenant-1" });
+    const created = await create.execute({
+      code: "fr",
+      name: "French",
+      isDefault: false,
+      tenantId: "tenant-1",
+    });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const listed = await new ListLocales(h).execute({ first: 10 });
+    const listed = await new ListLocales(h).execute({ first: 10, tenantId: "tenant-1" });
     expect(listed.ok).toBe(true);
     if (!listed.ok) return;
     expect(listed.value.items).toHaveLength(2);
 
-    const found = await new GetLocale(h).execute({ localeId: created.value.localeId });
+    const found = await new GetLocale(h).execute({
+      localeId: created.value.localeId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.code.value).toBe("fr");
 
-    const missing = await new GetLocale(h).execute({ localeId: "nope" });
+    const missing = await new GetLocale(h).execute({ localeId: "nope", tenantId: "tenant-1" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");
@@ -68,23 +76,28 @@ describe("Localization read use-cases (Phase 4 T4.11)", () => {
     const created = await new CreateTranslationSet(h).execute({
       localeRef: "en",
       namespace: "common",
+      tenantId: "tenant-1",
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const listed = await new ListTranslationSets(h).execute({ first: 10 });
+    const listed = await new ListTranslationSets(h).execute({ first: 10, tenantId: "tenant-1" });
     expect(listed.ok).toBe(true);
     if (!listed.ok) return;
     expect(listed.value.items).toHaveLength(1);
 
     const found = await new GetTranslationSet(h).execute({
       translationSetId: created.value.translationSetId,
+      tenantId: "tenant-1",
     });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.namespace).toBe("common");
 
-    const missing = await new GetTranslationSet(h).execute({ translationSetId: "nope" });
+    const missing = await new GetTranslationSet(h).execute({
+      translationSetId: "nope",
+      tenantId: "tenant-1",
+    });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

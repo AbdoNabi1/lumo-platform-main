@@ -16,6 +16,7 @@ import { InMemoryAttributeStore } from "../infrastructure/in-memory-attribute-st
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import type { AttributeEvaluationResult } from "../ports/attribute-evaluation";
 import { UpdateComputedAttributeProjection } from "./update-computed-attribute-projection.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 /**
  * Phase 6.4.1 hardening — Task 6 (Concurrency Validation), F2 follow-up sprint.
@@ -88,8 +89,16 @@ describe("UpdateComputedAttributeProjection — concurrency, POST-FIX (Task 6 / 
     const identifier = { type: "customer_id" as const, value: "cust-race" };
 
     const settled = await Promise.allSettled([
-      useCase.execute({ identifier, result: evaluationResult(identifier, "is_vip", true) }),
-      useCase.execute({ identifier, result: evaluationResult(identifier, "is_churn_risk", true) }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, "is_vip", true),
+      }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, "is_churn_risk", true),
+      }),
     ]);
 
     const fulfilled = settled.filter((s) => s.status === "fulfilled");
@@ -107,13 +116,13 @@ describe("UpdateComputedAttributeProjection — concurrency, POST-FIX (Task 6 / 
     ).value;
     expect(winningResult.ok).toBe(true);
 
-    const finalState = await attributes.getCurrent(identifier);
+    const finalState = await attributes.getCurrent(identifier, TENANT_A);
     // Exactly the winner's attribute is persisted — one attribute, not zero, not a silent merge.
     expect(finalState?.attributes.size).toBe(1);
 
     // The reordering in ADR-0060 (CAS write before history append) means the loser leaves NO trace
     // at all in the durable ledger either — not an orphaned snapshot with no corresponding cache row.
-    const snapshots = await history.listFor(identifier);
+    const snapshots = await history.listFor(identifier, TENANT_A);
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]?.attributes.size).toBe(1);
   });
@@ -123,8 +132,16 @@ describe("UpdateComputedAttributeProjection — concurrency, POST-FIX (Task 6 / 
     const identifier = { type: "customer_id" as const, value: "cust-race-retry" };
 
     const settled = await Promise.allSettled([
-      useCase.execute({ identifier, result: evaluationResult(identifier, "is_vip", true) }),
-      useCase.execute({ identifier, result: evaluationResult(identifier, "is_churn_risk", true) }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, "is_vip", true),
+      }),
+      useCase.execute({
+        tenantId: TENANT_A,
+        identifier,
+        result: evaluationResult(identifier, "is_churn_risk", true),
+      }),
     ]);
 
     const loserIndex = settled.findIndex((s) => s.status === "rejected");
@@ -136,12 +153,13 @@ describe("UpdateComputedAttributeProjection — concurrency, POST-FIX (Task 6 / 
     // `execute` again — `UpdateComputedAttributeProjection` itself re-reads `getCurrent` at the top
     // of `execute`, so it naturally picks up the winner's now-current version as its new base.
     const retried = await useCase.execute({
+      tenantId: TENANT_A,
       identifier,
       result: evaluationResult(identifier, loserDefinitionId, true),
     });
     expect(retried.ok).toBe(true);
 
-    const finalState = await attributes.getCurrent(identifier);
+    const finalState = await attributes.getCurrent(identifier, TENANT_A);
     expect(finalState?.attributes.size).toBe(2);
     expect(finalState?.attributes.get("is_vip")?.value).toBe(true);
     expect(finalState?.attributes.get("is_churn_risk")?.value).toBe(true);
@@ -154,10 +172,12 @@ describe("UpdateComputedAttributeProjection — concurrency, POST-FIX (Task 6 / 
 
     const [resultA, resultB] = await Promise.all([
       useCase.execute({
+        tenantId: TENANT_A,
         identifier: identifierA,
         result: evaluationResult(identifierA, "is_vip", true),
       }),
       useCase.execute({
+        tenantId: TENANT_A,
         identifier: identifierB,
         result: evaluationResult(identifierB, "is_vip", true),
       }),
@@ -166,8 +186,8 @@ describe("UpdateComputedAttributeProjection — concurrency, POST-FIX (Task 6 / 
     expect(resultA.ok).toBe(true);
     expect(resultB.ok).toBe(true);
 
-    const stateA = await attributes.getCurrent(identifierA);
-    const stateB = await attributes.getCurrent(identifierB);
+    const stateA = await attributes.getCurrent(identifierA, TENANT_A);
+    const stateB = await attributes.getCurrent(identifierB, TENANT_A);
     expect(stateA?.attributes.get("is_vip")?.value).toBe(true);
     expect(stateB?.attributes.get("is_vip")?.value).toBe(true);
   });
@@ -179,13 +199,18 @@ describe("UpdateComputedAttributeProjection — concurrency, POST-FIX (Task 6 / 
     for (let run = 0; run < 5; run += 1) {
       const { useCase, attributes } = wire();
       await Promise.allSettled([
-        useCase.execute({ identifier, result: evaluationResult(identifier, "is_vip", true) }),
         useCase.execute({
+          tenantId: TENANT_A,
+          identifier,
+          result: evaluationResult(identifier, "is_vip", true),
+        }),
+        useCase.execute({
+          tenantId: TENANT_A,
           identifier,
           result: evaluationResult(identifier, "is_churn_risk", true),
         }),
       ]);
-      const finalState = await attributes.getCurrent(identifier);
+      const finalState = await attributes.getCurrent(identifier, TENANT_A);
       const survivor = [...(finalState?.attributes.keys() ?? [])][0];
       winners.push(survivor ?? "none");
     }

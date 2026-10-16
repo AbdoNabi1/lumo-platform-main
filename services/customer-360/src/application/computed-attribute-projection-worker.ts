@@ -4,7 +4,10 @@ import type { DomainError } from "@platform/utils";
 import type { AttributeStore } from "../ports/attribute-store";
 import type { RebuildComputedAttributes } from "./rebuild-computed-attributes.use-case";
 
-export type ComputedAttributeProjectionWorkerInput = Record<string, never>;
+export interface ComputedAttributeProjectionWorkerInput {
+  /** The tenant this sweep is scoped to (ADR-0014). */
+  readonly tenantId: string;
+}
 
 export interface ComputedAttributeProjectionWorkerOutput {
   readonly rebuilt: number;
@@ -39,15 +42,15 @@ export class ComputedAttributeProjectionWorker implements UseCase<
   }
 
   async execute(
-    _input: ComputedAttributeProjectionWorkerInput,
+    input: ComputedAttributeProjectionWorkerInput,
   ): Promise<Result<ComputedAttributeProjectionWorkerOutput, DomainError>> {
-    const identifiers = await this.deps.attributes.listIdentifiers();
+    const identifiers = await this.deps.attributes.listIdentifiers(input.tenantId);
     let rebuilt = 0;
     let failed = 0;
 
     for (const identifier of identifiers) {
       try {
-        const result = await this.deps.rebuild.execute({ identifier });
+        const result = await this.deps.rebuild.execute({ tenantId: input.tenantId, identifier });
         if (result.ok) rebuilt += 1;
         else failed += 1;
       } catch {

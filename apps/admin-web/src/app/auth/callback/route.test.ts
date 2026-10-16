@@ -9,7 +9,7 @@ vi.mock("jose", () => ({
 
 const { GET } = await import("./route");
 
-const ORIGIN = "https://admin.lumo.example.com";
+const ORIGIN = "https://admin.morbeh.example.com";
 const VALID_STATE = "state-abc";
 const VALID_VERIFIER = "verifier-abc";
 const VALID_NONCE = "nonce-abc";
@@ -20,9 +20,9 @@ function callbackRequest(opts: {
 }): NextRequest {
   const headers = new Headers();
   const cookies = opts.cookies ?? {
-    lumo_oauth_state: VALID_STATE,
-    lumo_oauth_pkce_verifier: VALID_VERIFIER,
-    lumo_oauth_nonce: VALID_NONCE,
+    morbeh_oauth_state: VALID_STATE,
+    morbeh_oauth_pkce_verifier: VALID_VERIFIER,
+    morbeh_oauth_nonce: VALID_NONCE,
   };
   const cookieHeader = Object.entries(cookies)
     .map(([name, value]) => `${name}=${value}`)
@@ -73,7 +73,7 @@ describe("GET /auth/callback", () => {
   it("rejects a missing PKCE verifier cookie (L-03)", async () => {
     const response = await GET(
       callbackRequest({
-        cookies: { lumo_oauth_state: VALID_STATE, lumo_oauth_nonce: VALID_NONCE },
+        cookies: { morbeh_oauth_state: VALID_STATE, morbeh_oauth_nonce: VALID_NONCE },
       }),
     );
     expect(response.headers.get("location")).toBe(`${ORIGIN}/login?error=invalid_state`);
@@ -82,7 +82,7 @@ describe("GET /auth/callback", () => {
   it("rejects a missing nonce cookie (G0-1)", async () => {
     const response = await GET(
       callbackRequest({
-        cookies: { lumo_oauth_state: VALID_STATE, lumo_oauth_pkce_verifier: VALID_VERIFIER },
+        cookies: { morbeh_oauth_state: VALID_STATE, morbeh_oauth_pkce_verifier: VALID_VERIFIER },
       }),
     );
     expect(response.headers.get("location")).toBe(`${ORIGIN}/login?error=invalid_state`);
@@ -126,10 +126,10 @@ describe("GET /auth/callback", () => {
     const response = await GET(callbackRequest({}));
 
     expect(response.headers.get("location")).toBe(`${ORIGIN}/`);
-    expect(response.cookies.get("lumo_admin_session")?.value).toBe("real-access-token");
-    expect(response.cookies.get("lumo_oauth_state")?.value).toBe("");
-    expect(response.cookies.get("lumo_oauth_pkce_verifier")?.value).toBe("");
-    expect(response.cookies.get("lumo_oauth_nonce")?.value).toBe("");
+    expect(response.cookies.get("morbeh_admin_session")?.value).toBe("real-access-token");
+    expect(response.cookies.get("morbeh_oauth_state")?.value).toBe("");
+    expect(response.cookies.get("morbeh_oauth_pkce_verifier")?.value).toBe("");
+    expect(response.cookies.get("morbeh_oauth_nonce")?.value).toBe("");
   });
 
   it("sends the stashed code_verifier to the token endpoint (L-03 — proves PKCE isn't just generated but actually used)", async () => {

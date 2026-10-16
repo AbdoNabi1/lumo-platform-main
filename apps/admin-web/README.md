@@ -47,7 +47,7 @@ reference implementations (`docs/plans/PHASE-1-admin-write-layer.md`, T1.3/T1.4)
 - **Never call the runtime API from browser JS.** Every fetch to `RUNTIME_API_URL` happens in a
   Server Component, a Server Action, or a route handler — never in a Client Component.
 - **Never send a client-supplied price or amount.** The backend re-derives every price server-side
-  (`apps/admin/src/http/pricing-resolution.ts`); this app never sends one to trust.
+  (`apps/admin/src/http/merchandise-resolution.ts`); this app never sends one to trust.
 - **One `Idempotency-Key` per submit, not per retry.** Mint it once in the action, before the
   first attempt; do not mint a fresh one if `mutateAdminApi` is retried internally, or a retry
   stops being idempotent.

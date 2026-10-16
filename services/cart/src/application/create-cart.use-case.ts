@@ -8,6 +8,8 @@ import { Cart } from "../domain/cart";
 import type { CartRepository } from "../domain/cart-repository";
 
 export interface CreateCartInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   /** Omitted for a guest cart (Sprint 4.5). */
   readonly customerRef?: string;
   readonly sessionRef: string;
@@ -50,7 +52,7 @@ export class CreateCart implements UseCase<CreateCartInput, CreateCartOutput, Do
         input.sessionRef,
         input.currency,
       );
-      await this.deps.carts.save(cart, tx);
+      await this.deps.carts.save(cart, input.tenantId, tx);
       return ok({ cartId: cart.id.toString() });
     });
   }

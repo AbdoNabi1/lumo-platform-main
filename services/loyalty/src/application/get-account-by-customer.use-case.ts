@@ -6,6 +6,7 @@ import type { LoyaltyAccountRepository } from "../domain/loyalty-account-reposit
 
 export interface GetAccountByCustomerInput {
   readonly customerRef: string;
+  readonly tenantId: string;
 }
 
 export interface GetAccountByCustomerDeps {
@@ -21,9 +22,11 @@ export interface GetAccountByCustomerDeps {
  * admin/system action, e.g. first purchase, never self-service), not an error to paper over with a
  * fabricated zero-balance account.
  */
-export class GetAccountByCustomer
-  implements UseCase<GetAccountByCustomerInput, LoyaltyAccount, DomainError>
-{
+export class GetAccountByCustomer implements UseCase<
+  GetAccountByCustomerInput,
+  LoyaltyAccount,
+  DomainError
+> {
   private readonly deps: GetAccountByCustomerDeps;
 
   constructor(deps: GetAccountByCustomerDeps) {
@@ -31,7 +34,7 @@ export class GetAccountByCustomer
   }
 
   async execute(input: GetAccountByCustomerInput): Promise<Result<LoyaltyAccount, DomainError>> {
-    const account = await this.deps.accounts.findByCustomerRef(input.customerRef);
+    const account = await this.deps.accounts.findByCustomerRef(input.customerRef, input.tenantId);
     return account === null ? err(new NotFoundError("Loyalty account not found")) : ok(account);
   }
 }

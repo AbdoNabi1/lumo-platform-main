@@ -27,6 +27,7 @@ describe("security context (end to end)", () => {
 
     // ── Identity: a non-human (service) principal + a human principal (referenced from Identity) ──
     const svc = await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "svc-billing",
       kind: "service_account",
       displayName: "Billing Service",
@@ -34,6 +35,7 @@ describe("security context (end to end)", () => {
     });
     expect(svc.status).toBe(201);
     const human = await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "admin-1",
       kind: "human",
       displayName: "Admin",
@@ -45,6 +47,7 @@ describe("security context (end to end)", () => {
     expect(
       (
         await app.security.registerPrincipal({
+          tenantId: "tenant-a",
           externalId: "ghost",
           kind: "human",
           displayName: "Ghost",
@@ -55,6 +58,7 @@ describe("security context (end to end)", () => {
 
     // ── Credentials: issue → rotate (no secret value ever stored) ──
     const issued = await app.security.issueCredential({
+      tenantId: "tenant-a",
       principalExternalId: "svc-billing",
       kind: "api_key",
       material: "super-secret-value",
@@ -62,6 +66,7 @@ describe("security context (end to end)", () => {
     expect(issued.status).toBe(201);
     const credId = body<{ id: string }>(issued).id;
     const rotated = await app.security.rotateCredential({
+      tenantId: "tenant-a",
       credentialId: credId,
       newMaterial: "next-secret",
     });
@@ -70,6 +75,7 @@ describe("security context (end to end)", () => {
 
     // ── Sessions: establish → introspect → refresh (token rotation) ──
     const session = await app.security.establishSession({
+      tenantId: "tenant-a",
       principalExternalId: "admin-1",
       refreshFingerprint: "rt-1",
       deviceRef: "dev-1",
@@ -77,9 +83,12 @@ describe("security context (end to end)", () => {
     });
     const sessionId = body<{ id: string }>(session).id;
     expect(
-      body<{ active: boolean }>(await app.security.introspectSession({ sessionId })).active,
+      body<{ active: boolean }>(
+        await app.security.introspectSession({ tenantId: "tenant-a", sessionId }),
+      ).active,
     ).toBe(true);
     const refreshed = await app.security.refreshSession({
+      tenantId: "tenant-a",
       sessionId,
       newRefreshFingerprint: "rt-2",
       ttlSeconds: 3600,
@@ -88,11 +97,13 @@ describe("security context (end to end)", () => {
 
     // ── Authorization: role (with a permission) assigned to the service principal ──
     await app.security.defineRole({
+      tenantId: "tenant-a",
       key: "billing-operator",
       name: "Billing Operator",
       permissions: ["orders:refund"],
     });
     const assigned = await app.security.assignRole({
+      tenantId: "tenant-a",
       principalExternalId: "svc-billing",
       roleKey: "billing-operator",
       grantedBy: "admin-1",
@@ -101,11 +112,13 @@ describe("security context (end to end)", () => {
 
     // ── Policy + tenant profile: balanced policy blocks only on high risk ──
     await app.security.definePolicy({
+      tenantId: "tenant-a",
       key: "tenant-default",
       name: "Tenant Default",
       mode: "balanced",
     });
     await app.security.publishPolicyVersion({
+      tenantId: "tenant-a",
       key: "tenant-default",
       rules: [
         {
@@ -117,12 +130,14 @@ describe("security context (end to end)", () => {
       ],
     });
     await app.security.configureTenantSecurity({
+      tenantId: "tenant-a",
       tenantRef: "t1",
       config: { securityMode: "balanced", defaultPolicyKey: "tenant-default", mfaRequired: true },
     });
 
     // ── Zero-trust evaluation: allowed at low risk ──
     const allow = await app.security.evaluateAccess({
+      tenantId: "tenant-a",
       principalExternalId: "svc-billing",
       permission: "orders:refund",
       scope: { tenant: "t1" },
@@ -134,6 +149,7 @@ describe("security context (end to end)", () => {
 
     // blocked at high risk (threat intel + impossible travel + new device ⇒ ≥80)
     const risky = await app.security.evaluateAccess({
+      tenantId: "tenant-a",
       principalExternalId: "svc-billing",
       permission: "orders:refund",
       scope: { tenant: "t1" },
@@ -143,6 +159,7 @@ describe("security context (end to end)", () => {
 
     // blocked when the permission is not granted (fails closed)
     const denied = await app.security.evaluateAccess({
+      tenantId: "tenant-a",
       principalExternalId: "svc-billing",
       permission: "system:admin",
       scope: { tenant: "t1" },
@@ -153,6 +170,7 @@ describe("security context (end to end)", () => {
     expect(
       (
         await app.security.evaluateAccess({
+          tenantId: "tenant-a",
           principalExternalId: "svc-billing",
           permission: "bad-permission",
         })
@@ -161,6 +179,7 @@ describe("security context (end to end)", () => {
 
     // ── Delegation + impersonation ──
     await app.security.registerPrincipal({
+      tenantId: "tenant-a",
       externalId: "support-1",
       kind: "human",
       displayName: "Support",
@@ -168,12 +187,14 @@ describe("security context (end to end)", () => {
       tenantRef: "t1",
     });
     const delegation = await app.security.grantDelegation({
+      tenantId: "tenant-a",
       delegatorExternalId: "admin-1",
       delegateExternalId: "support-1",
       ttlSeconds: 600,
     });
     const delegationId = body<{ id: string }>(delegation).id;
     const impersonation = await app.security.startImpersonation({
+      tenantId: "tenant-a",
       delegationId,
       refreshFingerprint: "imp-rt",
       ttlSeconds: 300,
@@ -182,23 +203,27 @@ describe("security context (end to end)", () => {
     expect(body<{ impersonatedBy: string }>(impersonation).impersonatedBy).toBeDefined();
 
     // ── Policy simulation (Part 3) ──
-    const sim = await app.security.simulatePolicy({ key: "tenant-default", context: { risk: 90 } });
+    const sim = await app.security.simulatePolicy({
+      tenantId: "tenant-a",
+      key: "tenant-default",
+      context: { risk: 90 },
+    });
     expect(body<{ effect: string }>(sim).effect).toBe("block");
 
     // ── WORM audit chain verifies ──
-    const verify = await app.security.verifyAuditChain({ tenantRef: "t1" });
+    const verify = await app.security.verifyAuditChain({ tenantId: "tenant-a", tenantRef: "t1" });
     const report = body<{ valid: boolean; count: number }>(verify);
     expect(report.valid).toBe(true);
     expect(report.count).toBeGreaterThan(0);
 
     // ── Console read models (Part 10) ──
-    const overview = await app.security.identityOverview();
+    const overview = await app.security.identityOverview("tenant-a");
     expect(overview.total).toBe(3);
     expect(overview.humans).toBe(2);
     expect(overview.nonHumans).toBe(1);
-    const explorer = await app.security.permissionExplorer();
+    const explorer = await app.security.permissionExplorer("tenant-a");
     expect(explorer.roles.map((r) => r.key)).toContain("billing-operator");
-    const dashboard = await app.security.securityDashboard("t1");
+    const dashboard = await app.security.securityDashboard("tenant-a", "t1");
     expect(dashboard.chainValid).toBe(true);
 
     // ── Canonical events published through the outbox ──

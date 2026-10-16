@@ -16,18 +16,18 @@
 
 ## 1. Cross-cutting compliance baseline
 
-| Concern         | Requirement                                                                                                                                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Tracking        | Interactive blocks emit standardized events ([arch 16](../architecture/16-tracking-specification.md)); experiment-controlled blocks emit `experiment_exposed`                                                                  |
-| Analytics       | Block/layout performance (views, CTR, ATC, conversion) queryable in ClickHouse                                                                                                                                                 |
-| Audit logs      | Every layout/template/version change → `audit.entry.recorded` (WORM)                                                                                                                                                           |
-| Permissions     | Edit / publish / template-admin separated ([arch 07](../architecture/07-auth-and-authorization.md))                                                                                                                            |
-| Feature flags   | Layouts publishable behind a flag; experiment-driven layouts via the CRO engine                                                                                                                                                |
-| Dark mode       | Builder UI uses frozen tokens ([`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md)); storefront output themed per the storefront design system                                                                        |
-| Responsive      | Per-device layout config (§4); the **admin builder** follows [`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md) §11, the **storefront output** has its own desktop/tablet/mobile breakpoints (configured per layout) |
-| Localization    | Block content is i18n-keyed; per-locale overrides; RTL-aware                                                                                                                                                                   |
-| Accessibility   | Rendered output is WCAG 2.2 AA (semantic order independent of visual order, focus order, alt text, reduced-motion); the builder warns on a11y violations                                                                       |
-| Version history | Every layout has immutable versions with preview + rollback (§7)                                                                                                                                                               |
+| Concern         | Requirement                                                                                                                                                                                                                        |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tracking        | Interactive blocks emit standardized events ([arch 16](../architecture/16-tracking-specification.md)); experiment-controlled blocks emit `experiment_exposed`                                                                      |
+| Analytics       | Block/layout performance (views, CTR, ATC, conversion) queryable in ClickHouse                                                                                                                                                     |
+| Audit logs      | Every layout/template/version change → `audit.entry.recorded` (WORM)                                                                                                                                                               |
+| Permissions     | Edit / publish / template-admin separated ([arch 07](../architecture/07-auth-and-authorization.md))                                                                                                                                |
+| Feature flags   | Layouts publishable behind a flag; experiment-driven layouts via the CRO engine                                                                                                                                                    |
+| Dark mode       | Builder UI uses frozen tokens ([`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md)); storefront output themed per the storefront design system                                                                        |
+| Responsive      | Per-device layout config (§4); the **admin builder** follows [`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md) §11, the **storefront output** has its own desktop/tablet/mobile breakpoints (configured per layout) |
+| Localization    | Block content is i18n-keyed; per-locale overrides; RTL-aware                                                                                                                                                                       |
+| Accessibility   | Rendered output is WCAG 2.2 AA (semantic order independent of visual order, focus order, alt text, reduced-motion); the builder warns on a11y violations                                                                           |
+| Version history | Every layout has immutable versions with preview + rollback (§7)                                                                                                                                                                   |
 
 ## 2. Concepts
 

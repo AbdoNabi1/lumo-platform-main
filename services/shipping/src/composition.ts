@@ -12,6 +12,16 @@ import {
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { CreateShipment } from "./application/create-shipment.use-case";
+import { ListShippableCountries, QuoteShippingRates } from "./application/quote-shipping.use-cases";
+import {
+  AddRate,
+  CreateZone,
+  DeleteRate,
+  DeleteZone,
+  ListZones,
+  UpdateRate,
+  UpdateZone,
+} from "./application/shipping-zones.use-cases";
 import { GetShipmentByFulfillment } from "./application/get-shipment-by-fulfillment.use-case";
 import { RecordCarrierWebhook } from "./application/record-carrier-webhook.use-case";
 import {
@@ -22,7 +32,9 @@ import {
   VoidLabel,
 } from "./application/shipment-lifecycle.use-cases";
 import type { ShipmentRepository } from "./domain/shipment-repository";
+import type { ShippingZoneRepository } from "./domain/shipping-zone-repository";
 import { InMemoryShipmentRepository } from "./infrastructure/in-memory-shipment-repository";
+import { InMemoryShippingZoneRepository } from "./infrastructure/in-memory-shipping-zone-repository";
 import {
   InMemoryCarrierProvider,
   InMemoryFulfillmentAdapter,
@@ -31,11 +43,13 @@ import {
 } from "./infrastructure/in-memory-port-adapters";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import { PrismaShipmentRepository } from "./infrastructure/prisma-shipment-repository";
+import { PrismaShippingZoneRepository } from "./infrastructure/prisma-shipping-zone-repository";
 import {
   SHIPPING_PUBLISHED_EVENTS,
   ShippingEventTranslator,
 } from "./infrastructure/shipping-event-translator";
 import { ShippingController } from "./interfaces/shipping.controller";
+import { ShippingZonesController } from "./interfaces/shipping-zones.controller";
 
 export interface ShippingWiringDeps {
   readonly serializer: EventSerializer;
@@ -49,14 +63,34 @@ export interface ShippingWiringDeps {
    * out of scope for C-01.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Shipping table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredShipping {
   readonly shipping: ShippingController;
+  /** Plan 3C: the shop's shipping zones and rates (Settings → Shipping and delivery). */
+  readonly zones: ShippingZonesController;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
+}
+
+/** Plan 3C: the zones controller over an already-wired zone repository. */
+function buildZonesController(
+  zones: ShippingZoneRepository,
+  unitOfWork: TransactionalUnitOfWork<unknown>,
+  deps: ShippingWiringDeps,
+): ShippingZonesController {
+  const zoneDeps = { zones, unitOfWork, idGenerator: deps.idGenerator };
+  return new ShippingZonesController({
+    listZones: new ListZones(zoneDeps),
+    createZone: new CreateZone(zoneDeps),
+    updateZone: new UpdateZone(zoneDeps),
+    deleteZone: new DeleteZone(zoneDeps),
+    addRate: new AddRate(zoneDeps),
+    updateRate: new UpdateRate(zoneDeps),
+    deleteRate: new DeleteRate(zoneDeps),
+    quoteRates: new QuoteShippingRates({ zones }),
+    listShippableCountries: new ListShippableCountries({ zones }),
+  });
 }
 
 /** Builds the `ShippingController` from an already-wired repo + unit of work — shared by both branches so the use-case wiring is written exactly once. */
@@ -110,10 +144,6 @@ function buildController(
  */
 export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireShipping: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new ShippingEventTranslator(),
@@ -121,10 +151,11 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
       clock: deps.clock,
       producer: "shipping",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time (see ShippingWiringDeps) — every
+    // repository takes it per call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
     const shipments = new PrismaShipmentRepository({
       prisma: deps.prisma,
-      tenantId,
       outbox,
       context,
     });
@@ -132,6 +163,11 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
 
     return {
       shipping: buildController(shipments, unitOfWork, deps),
+      zones: buildZonesController(
+        new PrismaShippingZoneRepository({ prisma: deps.prisma }),
+        unitOfWork,
+        deps,
+      ),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -168,6 +204,7 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
 
   return {
     shipping: controller,
+    zones: buildZonesController(new InMemoryShippingZoneRepository(), unitOfWork, deps),
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

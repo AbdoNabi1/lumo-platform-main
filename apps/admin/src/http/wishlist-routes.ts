@@ -53,7 +53,8 @@ export function wishlistRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       idempotent: true,
       summary: "Create a wishlist for a customer",
       schema: { body: createWishlistBody },
-      handle: ({ body, context }) => admin.wishlist.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.wishlist.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -64,7 +65,11 @@ export function wishlistRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Advance a wishlist's status (archive/reactivate)",
       schema: { params: wishlistIdParams, body: advanceWishlistBody },
       handle: ({ params, body, context }) =>
-        admin.wishlist.advance(context.principal, { wishlistId: params.wishlistId, ...body }),
+        admin.wishlist.advance(context.principal, {
+          wishlistId: params.wishlistId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -75,7 +80,11 @@ export function wishlistRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Add a product to the wishlist",
       schema: { params: wishlistIdParams, body: wishlistItemBody },
       handle: ({ params, body, context }) =>
-        admin.wishlist.addItem(context.principal, { wishlistId: params.wishlistId, ...body }),
+        admin.wishlist.addItem(context.principal, {
+          wishlistId: params.wishlistId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -86,7 +95,11 @@ export function wishlistRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Remove a product from the wishlist",
       schema: { params: wishlistIdParams, body: wishlistItemBody },
       handle: ({ params, body, context }) =>
-        admin.wishlist.removeItem(context.principal, { wishlistId: params.wishlistId, ...body }),
+        admin.wishlist.removeItem(context.principal, {
+          wishlistId: params.wishlistId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -97,7 +110,11 @@ export function wishlistRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Generate (or replay) a share token for a wishlist item",
       schema: { params: wishlistIdParams, body: wishlistItemBody },
       handle: ({ params, body, context }) =>
-        admin.wishlist.shareItem(context.principal, { wishlistId: params.wishlistId, ...body }),
+        admin.wishlist.shareItem(context.principal, {
+          wishlistId: params.wishlistId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -111,6 +128,7 @@ export function wishlistRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         admin.wishlist.moveItemToCart(context.principal, {
           wishlistId: params.wishlistId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -121,7 +139,10 @@ export function wishlistRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "List wishlists (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.wishlist.list(context.principal, query), toWishlistDto),
+        mapPage(
+          await admin.wishlist.list(context.principal, { ...query, tenantId: context.tenantId }),
+          toWishlistDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -131,7 +152,10 @@ export function wishlistRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get the wishlist owned by one customer (at most one per customer)",
       schema: { params: customerRefParams },
       handle: async ({ params, context }) => {
-        const response = await admin.wishlist.getByCustomer(context.principal, params);
+        const response = await admin.wishlist.getByCustomer(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toWishlistDto(response.body as Wishlist) };
       },
@@ -144,7 +168,10 @@ export function wishlistRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Get one wishlist by id",
       schema: { params: wishlistIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.wishlist.get(context.principal, params);
+        const response = await admin.wishlist.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
         return { status: 200, body: toWishlistDto(response.body as Wishlist) };
       },

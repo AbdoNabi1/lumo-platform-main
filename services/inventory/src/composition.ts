@@ -20,7 +20,11 @@ import { ReceiveStock } from "./application/receive-stock.use-case";
 import { ReleaseReservation } from "./application/release-reservation.use-case";
 import { ReserveStock } from "./application/reserve-stock.use-case";
 import { TransferStock } from "./application/transfer-stock.use-case";
-import { DeactivateWarehouse, RegisterWarehouse } from "./application/warehouse.use-cases";
+import {
+  DeactivateWarehouse,
+  ListWarehouses,
+  RegisterWarehouse,
+} from "./application/warehouse.use-cases";
 import type { InventoryItemRepository } from "./domain/inventory-item-repository";
 import type { WarehouseRepository } from "./domain/warehouse-repository";
 import { InMemoryInventoryItemRepository } from "./infrastructure/in-memory-inventory-item-repository";
@@ -38,12 +42,11 @@ export interface InventoryWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaInventoryItemRepository` +
-   * `PrismaWarehouseRepository` + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wirePayments`); absent ⇒ in-memory, unchanged.
+   * `PrismaWarehouseRepository` + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014
+   * (WP-10, T10.3): the repositories built here are tenant-agnostic singletons — no `tenantId` at
+   * composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Inventory table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredInventory {
@@ -130,6 +133,7 @@ function buildControllers(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
     }),
+    listWarehouses: new ListWarehouses({ warehouses }),
   });
 
   return { inventory: controller, warehouse: warehouseController };
@@ -141,10 +145,6 @@ function buildControllers(
  */
 export function wireInventory(deps: InventoryWiringDeps): WiredInventory {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireInventory: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new InventoryEventTranslator(),
@@ -152,19 +152,11 @@ export function wireInventory(deps: InventoryWiringDeps): WiredInventory {
       clock: deps.clock,
       producer: "inventory",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const items = new PrismaInventoryItemRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
-    const warehouses = new PrismaWarehouseRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — every repository takes it per
+    // call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const items = new PrismaInventoryItemRepository({ prisma: deps.prisma, outbox, context });
+    const warehouses = new PrismaWarehouseRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
     const { inventory, warehouse } = buildControllers(items, warehouses, unitOfWork, deps);
 

@@ -5,19 +5,27 @@ import type { DomainError } from "@platform/utils";
 import type { LoyaltyAccount } from "../domain/loyalty-account";
 import type { LoyaltyAccountRepository } from "../domain/loyalty-account-repository";
 
+export interface ListAccountsInput extends CursorPage {
+  readonly tenantId: string;
+}
+
 export interface ListAccountsDeps {
   readonly accounts: LoyaltyAccountRepository;
 }
 
 /** Cursor-paginated loyalty-account listing. */
-export class ListAccounts implements UseCase<CursorPage, Paginated<LoyaltyAccount>, DomainError> {
+export class ListAccounts implements UseCase<
+  ListAccountsInput,
+  Paginated<LoyaltyAccount>,
+  DomainError
+> {
   private readonly deps: ListAccountsDeps;
 
   constructor(deps: ListAccountsDeps) {
     this.deps = deps;
   }
 
-  async execute(input: CursorPage): Promise<Result<Paginated<LoyaltyAccount>, DomainError>> {
-    return ok(await this.deps.accounts.list(input));
+  async execute(input: ListAccountsInput): Promise<Result<Paginated<LoyaltyAccount>, DomainError>> {
+    return ok(await this.deps.accounts.list(input, input.tenantId));
   }
 }

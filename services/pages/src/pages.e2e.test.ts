@@ -24,6 +24,7 @@ describe("pages (end to end)", () => {
     const template = await app.pages.createTemplate({
       name: "Product page",
       experienceRef: "experience-1",
+      tenantId: "tenant-local",
     });
     expect(template.status).toBe(201);
 
@@ -31,11 +32,16 @@ describe("pages (end to end)", () => {
       name: "Product detail",
       routePath: "/products/:slug",
       templateRef: "template-1",
+      tenantId: "tenant-local",
     });
     expect(page.status).toBe(201);
     const pageId = (page.body as { pageId: string }).pageId;
 
-    const published = await app.pages.advancePage({ pageId, toStatus: "published" });
+    const published = await app.pages.advancePage({
+      pageId,
+      toStatus: "published",
+      tenantId: "tenant-local",
+    });
     expect(published.status).toBe(200);
 
     expect(await app.drainOutbox()).toBeGreaterThan(0);
@@ -44,14 +50,22 @@ describe("pages (end to end)", () => {
 
   it("rejects creating a duplicate route path (409)", async () => {
     const app = wire();
-    await app.pages.createPage({ name: "Home", routePath: "/" });
-    const response = await app.pages.createPage({ name: "Home 2", routePath: "/" });
+    await app.pages.createPage({ name: "Home", routePath: "/", tenantId: "tenant-local" });
+    const response = await app.pages.createPage({
+      name: "Home 2",
+      routePath: "/",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(409);
   });
 
   it("rejects an invalid route path (422)", async () => {
     const app = wire();
-    const response = await app.pages.createPage({ name: "Bad", routePath: "Products" });
+    const response = await app.pages.createPage({
+      name: "Bad",
+      routePath: "Products",
+      tenantId: "tenant-local",
+    });
     expect(response.status).toBe(422);
   });
 });

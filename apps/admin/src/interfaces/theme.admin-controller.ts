@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { ThemeController } from "@platform/theme";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -46,7 +45,10 @@ export class ThemeAdminController {
     return this.theme.updateVariables(input);
   }
 
-  async list(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async list(
+    principal: Principal,
+    input: Parameters<ThemeController["list"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "theme:read");
     if (denied) return denied;
     return this.theme.list(input);

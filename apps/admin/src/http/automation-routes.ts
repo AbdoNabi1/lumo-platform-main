@@ -80,7 +80,8 @@ export function automationRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Create a workflow",
       schema: { body: createWorkflowBody },
-      handle: ({ body, context }) => admin.automation.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.automation.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -91,7 +92,11 @@ export function automationRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "Advance a workflow's status (activate/pause/archive)",
       schema: { params: workflowIdParams, body: advanceWorkflowBody },
       handle: ({ params, body, context }) =>
-        admin.automation.advance(context.principal, { workflowId: params.workflowId, ...body }),
+        admin.automation.advance(context.principal, {
+          workflowId: params.workflowId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -102,7 +107,11 @@ export function automationRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "Run a workflow for one trigger (replay-safe by triggerId)",
       schema: { params: workflowIdParams, body: triggerWorkflowBody },
       handle: ({ params, body, context }) =>
-        admin.automation.trigger(context.principal, { workflowId: params.workflowId, ...body }),
+        admin.automation.trigger(context.principal, {
+          workflowId: params.workflowId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -112,7 +121,13 @@ export function automationRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "List workflows, most recently created first (cursor-paginated)",
       schema: { querystring: listWorkflowsQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.automation.list(context.principal, query), toWorkflowListItemDto),
+        mapPage(
+          await admin.automation.list(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toWorkflowListItemDto,
+        ),
     }),
     defineRoute({
       method: "POST",
@@ -126,6 +141,7 @@ export function automationRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
         admin.automation.retryExecution(context.principal, {
           workflowId: params.workflowId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
   ] as readonly RouteDefinition[];

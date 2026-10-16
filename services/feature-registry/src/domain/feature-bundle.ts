@@ -18,6 +18,7 @@ export interface CreateBundleProps {
   readonly description?: string;
   readonly featureKeys?: readonly string[];
   readonly groups?: readonly string[];
+  readonly tenantId: string;
 }
 
 interface FeatureBundleProps {

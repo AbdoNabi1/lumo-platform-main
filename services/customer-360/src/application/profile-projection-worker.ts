@@ -4,7 +4,10 @@ import type { DomainError } from "@platform/utils";
 import type { ProfileStore } from "../ports/profile-store";
 import type { RebuildProfileProjection } from "./rebuild-profile-projection.use-case";
 
-export type ProfileProjectionWorkerInput = Record<string, never>;
+export interface ProfileProjectionWorkerInput {
+  /** The tenant this sweep is scoped to (ADR-0014). */
+  readonly tenantId: string;
+}
 
 export interface ProfileProjectionWorkerOutput {
   readonly rebuilt: number;
@@ -41,15 +44,15 @@ export class ProfileProjectionWorker implements UseCase<
   }
 
   async execute(
-    _input: ProfileProjectionWorkerInput,
+    input: ProfileProjectionWorkerInput,
   ): Promise<Result<ProfileProjectionWorkerOutput, DomainError>> {
-    const identifiers = await this.deps.profiles.listIdentifiers();
+    const identifiers = await this.deps.profiles.listIdentifiers(input.tenantId);
     let rebuilt = 0;
     let failed = 0;
 
     for (const identifier of identifiers) {
       try {
-        const result = await this.deps.rebuild.execute({ identifier });
+        const result = await this.deps.rebuild.execute({ tenantId: input.tenantId, identifier });
         if (result.ok) rebuilt += 1;
         else failed += 1;
       } catch {

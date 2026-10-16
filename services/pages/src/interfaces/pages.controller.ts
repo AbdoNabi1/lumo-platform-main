@@ -1,8 +1,7 @@
-import type { CursorPage } from "@platform/types";
 import type { GetPage } from "../application/get-page.use-case";
 import type { GetTemplate } from "../application/get-template.use-case";
-import type { ListPages } from "../application/list-pages.use-case";
-import type { ListTemplates } from "../application/list-templates.use-case";
+import type { ListPages, ListPagesInput } from "../application/list-pages.use-case";
+import type { ListTemplates, ListTemplatesInput } from "../application/list-templates.use-case";
 import type {
   AdvancePage,
   AdvancePageInput,
@@ -51,7 +50,7 @@ export class PagesController {
     return present(await this.deps.archiveTemplate.execute(input), 200);
   }
 
-  async listPages(input: CursorPage): Promise<ControllerResponse> {
+  async listPages(input: ListPagesInput): Promise<ControllerResponse> {
     return present(await this.deps.listPages.execute(input), 200);
   }
 
@@ -59,7 +58,7 @@ export class PagesController {
     return present(await this.deps.getPage.execute(input), 200);
   }
 
-  async listTemplates(input: CursorPage): Promise<ControllerResponse> {
+  async listTemplates(input: ListTemplatesInput): Promise<ControllerResponse> {
     return present(await this.deps.listTemplates.execute(input), 200);
   }
 

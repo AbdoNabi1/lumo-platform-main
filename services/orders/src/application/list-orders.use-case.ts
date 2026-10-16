@@ -5,7 +5,10 @@ import type { DomainError } from "@platform/utils";
 import type { Order } from "../domain/order";
 import type { OrderListQuery, OrderRepository } from "../domain/order-repository";
 
-export type ListOrdersInput = OrderListQuery;
+export interface ListOrdersInput extends OrderListQuery {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
+}
 
 export interface ListOrdersDeps {
   readonly orders: OrderRepository;
@@ -20,6 +23,7 @@ export class ListOrders implements UseCase<ListOrdersInput, Paginated<Order>, Do
   }
 
   async execute(input: ListOrdersInput): Promise<Result<Paginated<Order>, DomainError>> {
-    return ok(await this.deps.orders.list(input));
+    const { tenantId, ...query } = input;
+    return ok(await this.deps.orders.list(query, tenantId));
   }
 }

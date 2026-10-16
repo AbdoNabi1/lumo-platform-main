@@ -1,7 +1,7 @@
 # 01 — Workflow Automation Engine specification
 
 > **Status: CONTRACT (Phase 1 — Platform) — 2026-06-28.** A visual, integrated workflow automation
-> platform (n8n / Shopify Flow / Zapier / Make class). No application code. The UI follows the Lumo Design System
+> platform (n8n / Shopify Flow / Zapier / Make class). No application code. The UI follows the Morbeh Design System
 > ([`../ui/`](../ui/README.md)); the visual builder is a **net-new surface and requires approval**
 > (the **Automations** screen is the entry point but does not contain a full node editor).
 

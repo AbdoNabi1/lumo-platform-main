@@ -2,7 +2,17 @@ import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
 import type { Promotion } from "../domain/promotion";
-import type { PromotionRepository } from "../domain/promotion-repository";
+import type { AdminPromotionQuery, PromotionRepository } from "../domain/promotion-repository";
+
+/** ADR-0014 (WP-10, T10.3): per-tenant bucket, so every store is keyed by `(tenantId, id)`. */
+function bucketFor<T>(store: Map<string, Map<string, T>>, tenantId: string): Map<string, T> {
+  let bucket = store.get(tenantId);
+  if (bucket === undefined) {
+    bucket = new Map();
+    store.set(tenantId, bucket);
+  }
+  return bucket;
+}
 
 export interface InMemoryPromotionRepositoryDeps {
   readonly outbox: OutboxWriter;
@@ -11,7 +21,7 @@ export interface InMemoryPromotionRepositoryDeps {
 
 /** In-memory `PromotionRepository`. Persists the aggregate and writes events to the outbox on save. */
 export class InMemoryPromotionRepository implements PromotionRepository {
-  private readonly store = new Map<string, Promotion>();
+  private readonly store = new Map<string, Map<string, Promotion>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -20,22 +30,24 @@ export class InMemoryPromotionRepository implements PromotionRepository {
     this.context = deps.context;
   }
 
-  async save(promotion: Promotion, tx?: unknown): Promise<void> {
-    this.store.set(promotion.id.toString(), promotion);
-    await this.outbox.write(promotion.pullDomainEvents(), this.context, tx);
+  async save(promotion: Promotion, tenantId: string, tx?: unknown): Promise<void> {
+    bucketFor(this.store, tenantId).set(promotion.id.toString(), promotion);
+    await this.outbox.write(promotion.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<Promotion | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Promotion | null> {
+    return bucketFor(this.store, tenantId).get(id) ?? null;
   }
 
-  async findActive(): Promise<readonly Promotion[]> {
-    return [...this.store.values()].filter((promotion) => promotion.status.value === "active");
+  async findActive(tenantId: string): Promise<readonly Promotion[]> {
+    return [...bucketFor(this.store, tenantId).values()].filter(
+      (promotion) => promotion.status.value === "active",
+    );
   }
 
   /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
-  async list(page: CursorPage): Promise<Paginated<Promotion>> {
-    const all = [...this.store.values()].sort((a, b) =>
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Promotion>> {
+    const all = [...bucketFor(this.store, tenantId).values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
@@ -43,5 +55,31 @@ export class InMemoryPromotionRepository implements PromotionRepository {
     const limit = normalizePageSize(page.first);
     const window = start < 0 ? [] : all.slice(start, start + limit + 1);
     return buildPaginatedPage(window, limit, (x) => x.id.toString());
+  }
+
+  async findActiveAutomatic(tenantId: string): Promise<readonly Promotion[]> {
+    return [...bucketFor(this.store, tenantId).values()].filter(
+      (p) => p.status.value === "active" && p.method === "automatic",
+    );
+  }
+
+  async listForAdmin(query: AdminPromotionQuery, tenantId: string): Promise<Paginated<Promotion>> {
+    const search = query.search?.trim().toLowerCase();
+    const all = [...bucketFor(this.store, tenantId).values()]
+      .filter((p) => p.viewAt(query.now) !== "archived")
+      .filter((p) => query.view === "all" || p.viewAt(query.now) === query.view)
+      .filter(
+        (p) =>
+          search === undefined ||
+          search === "" ||
+          p.name.toLowerCase().includes(search) ||
+          (query.alsoIds ?? []).includes(p.id.toString()),
+      )
+      .sort((a, b) => b.id.toString().localeCompare(a.id.toString()));
+    const after = query.after !== undefined ? decodeCursor(query.after) : undefined;
+    const start = after === undefined ? 0 : all.findIndex((p) => p.id.toString() < after);
+    const limit = normalizePageSize(query.first);
+    const window = start < 0 ? [] : all.slice(start, start + limit + 1);
+    return buildPaginatedPage(window, limit, (p) => p.id.toString());
   }
 }

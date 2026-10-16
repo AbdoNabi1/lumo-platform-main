@@ -24,12 +24,8 @@ export default async function NewExperimentPage() {
               {t.experimentsPage.title}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">
-            {t.experimentCreateForm.title}
-          </h1>
-          <p className="text-md text-muted-foreground mt-1">
-            {t.experimentCreateForm.subtitle}
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.experimentCreateForm.title}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t.experimentCreateForm.subtitle}</p>
         </div>
 
         <Card>

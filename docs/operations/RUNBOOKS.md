@@ -6,7 +6,7 @@
 
 Conventions used below:
 
-- `NS=lumo-runtime` (Kubernetes namespace).
+- `NS=morbeh-runtime` (Kubernetes namespace).
 - Compose stack: `infrastructure/docker/docker-compose.yml` (+ `docker-compose.runtime.yml`).
 
 ---
@@ -18,18 +18,18 @@ Conventions used below:
 **Diagnose**
 
 ```bash
-kubectl -n lumo-runtime get pods -l app.kubernetes.io/name=runtime-api
-kubectl -n lumo-runtime describe pod <pod>      # events: OOMKilled? CrashLoopBackOff? ImagePullBackOff?
-kubectl -n lumo-runtime logs <pod> --previous   # crash cause from the prior container
+kubectl -n morbeh-runtime get pods -l app.kubernetes.io/name=runtime-api
+kubectl -n morbeh-runtime describe pod <pod>      # events: OOMKilled? CrashLoopBackOff? ImagePullBackOff?
+kubectl -n morbeh-runtime logs <pod> --previous   # crash cause from the prior container
 ```
 
 **Mitigate**
 
-- `CrashLoopBackOff` from a bad deploy → roll back: `kubectl -n lumo-runtime rollout undo deploy/runtime-api`.
+- `CrashLoopBackOff` from a bad deploy → roll back: `kubectl -n morbeh-runtime rollout undo deploy/runtime-api`.
 - `OOMKilled` → see [high-memory](#high-memory).
 - `ImagePullBackOff` → verify the image digest exists in GHCR and the pull secret is present.
 
-**Verify** — `kubectl -n lumo-runtime rollout status deploy/runtime-api` and the alert clears.
+**Verify** — `kubectl -n morbeh-runtime rollout status deploy/runtime-api` and the alert clears.
 **Escalate** — if the image itself is bad, page the release owner; block further promotion.
 
 ---
@@ -41,7 +41,7 @@ kubectl -n lumo-runtime logs <pod> --previous   # crash cause from the prior con
 **Diagnose**
 
 ```bash
-kubectl -n lumo-runtime exec <pod> -- wget -qO- localhost:3080/readyz    # shows failing component
+kubectl -n morbeh-runtime exec <pod> -- wget -qO- localhost:3080/readyz    # shows failing component
 ```
 
 The readiness report lists each dependency (`postgres`, `redis`, `redpanda`, `keto`, `hydra`).
@@ -58,12 +58,12 @@ Readiness fails **closed** by design — no traffic is routed to an unready pod 
 
 **Diagnose** — identify `{{ $labels.name }}`:
 
-| name         | check                                                                       |
-| ------------ | --------------------------------------------------------------------------- |
-| postgres     | `kubectl -n lumo-data get pods,svc -l app=postgres`; connections exhausted? |
-| redis        | `redis-cli -h <host> ping`                                                  |
-| redpanda     | `rpk cluster health`                                                        |
-| keto / hydra | `curl -sf http://<host>:4466/health/ready`                                  |
+| name         | check                                                                         |
+| ------------ | ----------------------------------------------------------------------------- |
+| postgres     | `kubectl -n morbeh-data get pods,svc -l app=postgres`; connections exhausted? |
+| redis        | `redis-cli -h <host> ping`                                                    |
+| redpanda     | `rpk cluster health`                                                          |
+| keto / hydra | `curl -sf http://<host>:4466/health/ready`                                    |
 
 **Mitigate** — restart/scale the dependency; check network policy (`50-networkpolicy.yaml`) wasn't
 changed. The runtime **retries with backoff** and self-heals when the dependency returns.
@@ -79,7 +79,7 @@ changed. The runtime **retries with backoff** and self-heals when the dependency
 **Diagnose**
 
 ```promql
-topk(10, sum by (status) (rate(http_requests_total{job="lumo-runtime",status=~"5.."}[5m])))
+topk(10, sum by (status) (rate(http_requests_total{job="morbeh-runtime",status=~"5.."}[5m])))
 ```
 
 Correlate with a recent deploy (Grafana annotations), a dependency alert, or a traffic spike.
@@ -87,7 +87,7 @@ Correlate with a recent deploy (Grafana annotations), a dependency alert, or a t
 
 - Deploy-correlated → `kubectl rollout undo`.
 - Dependency-correlated → follow [dependency-down](#dependency-down).
-- Load-correlated → confirm the HPA is scaling (`kubectl -n lumo-runtime get hpa`); raise `maxReplicas` if capped.
+- Load-correlated → confirm the HPA is scaling (`kubectl -n morbeh-runtime get hpa`); raise `maxReplicas` if capped.
   **Verify** — `slo:api_error_budget:burn1h < 1` and the budget stops draining.
   **Escalate** — budget exhausted → invoke the [error-budget policy](OPERATIONS_GUIDE.md#error-budget-policy).
 
@@ -151,7 +151,7 @@ been in state `FAILED` across at least 6 watchdog polls.
 
 ```bash
 curl -sf http://<debezium-connect-host>:8083/connectors/lumo-outbox/status | jq
-kubectl -n lumo-runtime logs deploy/runtime-scheduler --since=10m | grep "cdc watchdog"
+kubectl -n morbeh-runtime logs deploy/runtime-scheduler --since=10m | grep "cdc watchdog"
 ```
 
 The scheduler log line tells you which branch fired: `restarted FAILED task` (it's retrying and
@@ -238,7 +238,7 @@ causal); `Stop-Process -Force` on a Docker process that hasn't fully crashed yet
 further socket corruption — only force-kill once it's already crashed and idle).
 
 **Verify no data loss** — this fix never touches the VHDX, named volumes, or WSL registration. Confirm
-with `docker volume ls` (named volumes, e.g. `lumo_postgres-data`, still present) and
+with `docker volume ls` (named volumes, e.g. `morbeh_postgres-data`, still present) and
 `docker exec lumo-postgres-1 psql -U lumo -d lumo -c "SELECT 1"` +
 `prisma migrate status` → `Database schema is up to date!`. PostgreSQL's WAL-based crash recovery
 replays cleanly on next start with no manual intervention needed.

@@ -13,6 +13,7 @@ import type {
   ResolveIdentityOutput,
 } from "./resolve-identity.use-case";
 import { GetComputedAttributes } from "./get-computed-attributes.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const visitor = { type: "visitor_id" as const, value: "v1" };
 const customer = { type: "customer_id" as const, value: "cust-1" };
@@ -37,7 +38,7 @@ describe("GetComputedAttributes", () => {
     const resolveIdentity = fakeResolveIdentity(async () => ok({ cluster: null }));
     const useCase = new GetComputedAttributes({ attributes: storeWith(), resolveIdentity });
 
-    const result = await useCase.execute({ identifier: visitor, now: "t1" });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier: visitor, now: "t1" });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.attribute).toBeNull();
     expect(result.value.mergedFrom).toEqual([]);
@@ -62,7 +63,7 @@ describe("GetComputedAttributes", () => {
       resolveIdentity,
     });
 
-    const result = await useCase.execute({ identifier: visitor, now: "t1" });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier: visitor, now: "t1" });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.attribute?.attributes.get("is_vip")?.value).toBe(true);
     expect(result.value.mergedFrom).toEqual([visitor]);
@@ -123,7 +124,7 @@ describe("GetComputedAttributes", () => {
       resolveIdentity,
     });
 
-    const result = await useCase.execute({ identifier: visitor, now: "t2" });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier: visitor, now: "t2" });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.attribute?.attributes.get("engagement")?.value).toBe("high");
     expect(result.value.attribute?.attributes.get("is_vip")?.value).toBe(true);
@@ -136,7 +137,7 @@ describe("GetComputedAttributes", () => {
     );
     const useCase = new GetComputedAttributes({ attributes: storeWith(), resolveIdentity });
 
-    const result = await useCase.execute({ identifier: visitor, now: "t1" });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier: visitor, now: "t1" });
     expect(result.ok).toBe(false);
   });
 });

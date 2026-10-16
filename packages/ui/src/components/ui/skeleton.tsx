@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * Lumo Skeleton — a loading placeholder. `aria-hidden` because the shape carries no
+ * Morbeh Skeleton — a loading placeholder. `aria-hidden` because the shape carries no
  * information; announce the wait on the region that owns it (`aria-busy`/`aria-live`).
  * The pulse is suppressed automatically under `prefers-reduced-motion`.
  */

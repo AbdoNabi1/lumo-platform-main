@@ -1,10 +1,10 @@
-import type { CursorPage } from "@platform/types";
 import type {
   AdvanceContentBlock,
   AdvanceContentBlockInput,
   CreateContentBlock,
   CreateContentBlockInput,
   ListContentBlocks,
+  ListContentBlocksInput,
   UpdateContentBody,
   UpdateContentBodyInput,
 } from "../application/content.use-cases";
@@ -37,7 +37,7 @@ export class ContentController {
     return present(await this.deps.updateContentBody.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListContentBlocksInput): Promise<ControllerResponse> {
     return present(await this.deps.listContentBlocks.execute(input), 200);
   }
 }

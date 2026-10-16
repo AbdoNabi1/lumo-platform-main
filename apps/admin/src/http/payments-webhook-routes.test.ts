@@ -22,7 +22,7 @@ const rawBody = new TextEncoder().encode(
 function contextWith(headers: Record<string, string | undefined>): RequestContext {
   return {
     tenantId: "t-1",
-    principal: { id: "public", kind: "customer", roles: [] },
+    principal: { id: "public", kind: "customer", roles: [], tenantId: "t-1" },
     requestId: "req-1",
     correlationId: "req-1",
     rawBody,
@@ -62,11 +62,15 @@ describe("payments webhook route (C2-2/C2-6)", () => {
     });
 
     expect(verifyWebhook).toHaveBeenCalledTimes(1);
-    const [payloadArg, signatureArg] = verifyWebhook.mock.calls[0]!;
-    expect(signatureArg).toBe("t=1,v1=sig-abc");
-    expect(payloadArg).toBe(rawBody); // the EXACT raw bytes, not a reconstruction
+    const [verifyInput] = verifyWebhook.mock.calls[0]!;
+    expect(verifyInput.signature).toBe("t=1,v1=sig-abc");
+    expect(verifyInput.payload).toBe(rawBody); // the EXACT raw bytes, not a reconstruction
+    // WP-13 (ADR-0014): verified against the RECEIVING tenant's own provider, not a global one.
+    expect(verifyInput.tenantId).toBe("t-1");
+    expect(verifyInput.provider).toBe("stripe");
 
     expect(recordWebhook).toHaveBeenCalledWith({
+      tenantId: "t-1",
       paymentIntentId: "pi-1",
       provider: "stripe",
       eventId: "evt-1",

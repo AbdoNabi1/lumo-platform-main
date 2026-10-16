@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireCustomer360 } from "../composition";
 import { generateLayeredDag, toDefinitions } from "../test-support/synthetic-attribute-graph";
+import { TENANT_A } from "../test-support/tenants";
 
 /**
  * Phase 6.4.1 hardening — Task 9 (Performance Benchmarks): cold vs. warm vs. incremental vs. full
@@ -34,7 +35,7 @@ describe("Computed Attributes — evaluation lifecycle timing (Task 9)", () => {
       serializer: new InMemoryEventSerializer(),
       idGenerator: ids,
       clock,
-      computedAttributeDefinitions: definitions,
+      computedAttributeDefinitions: { tenantId: TENANT_A, definitions: definitions },
     });
 
     const rootDefinition = definitions[0]!;
@@ -42,6 +43,7 @@ describe("Computed Attributes — evaluation lifecycle timing (Task 9)", () => {
     // --- Cold: first-ever evaluation of one attribute for this identifier. ---
     const coldStart = performance.now();
     const cold = await wired.evaluateAttributeGraph.execute({
+      tenantId: TENANT_A,
       identifier,
       definitions: [rootDefinition],
     });
@@ -55,6 +57,7 @@ describe("Computed Attributes — evaluation lifecycle timing (Task 9)", () => {
     // finding: every evaluation re-runs the rule, cheap or not). ---
     const warmStart = performance.now();
     const warm = await wired.evaluateAttributeGraph.execute({
+      tenantId: TENANT_A,
       identifier,
       definitions: [rootDefinition],
     });
@@ -65,13 +68,17 @@ describe("Computed Attributes — evaluation lifecycle timing (Task 9)", () => {
 
     // --- Populate the full registry once (setup for the incremental/rebuild measurements below;
     // not itself one of the timed scenarios). ---
-    const populate = await wired.recalculateComputedAttributes.execute({ identifier });
+    const populate = await wired.recalculateComputedAttributes.execute({
+      tenantId: TENANT_A,
+      identifier,
+    });
     expect(populate.ok).toBe(true);
 
     // --- Incremental: one interior attribute changes; only its transitive dependents recompute. ---
     const midId = definitions[Math.floor(GRAPH_SIZE / 2)]!.id;
     const incrementalStart = performance.now();
     const incremental = await wired.recalculateComputedAttributes.execute({
+      tenantId: TENANT_A,
       identifier,
       changed: [midId],
     });
@@ -82,7 +89,10 @@ describe("Computed Attributes — evaluation lifecycle timing (Task 9)", () => {
 
     // --- Full recompute: every rule in the registry re-runs (no `changed` scope given). ---
     const fullRecomputeStart = performance.now();
-    const fullRecompute = await wired.recalculateComputedAttributes.execute({ identifier });
+    const fullRecompute = await wired.recalculateComputedAttributes.execute({
+      tenantId: TENANT_A,
+      identifier,
+    });
     const fullRecomputeMs = performance.now() - fullRecomputeStart;
     expect(fullRecompute.ok).toBe(true);
     if (!fullRecompute.ok) throw new Error("unreachable");
@@ -91,7 +101,10 @@ describe("Computed Attributes — evaluation lifecycle timing (Task 9)", () => {
     // --- Full rebuild: cache reconstructed from the latest history snapshot — no rule evaluation at
     // all. Expected to be dramatically cheaper than full recompute; that gap is the point. ---
     const fullRebuildStart = performance.now();
-    const fullRebuild = await wired.rebuildComputedAttributes.execute({ identifier });
+    const fullRebuild = await wired.rebuildComputedAttributes.execute({
+      tenantId: TENANT_A,
+      identifier,
+    });
     const fullRebuildMs = performance.now() - fullRebuildStart;
     expect(fullRebuild.ok).toBe(true);
     if (!fullRebuild.ok) throw new Error("unreachable");

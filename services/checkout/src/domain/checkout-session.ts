@@ -5,18 +5,33 @@ import { CheckoutFailed } from "./events/checkout-failed.event";
 import { CheckoutLocked } from "./events/checkout-locked.event";
 import { CheckoutRecalculated } from "./events/checkout-recalculated.event";
 import type { CheckoutAddress } from "./value-objects/checkout-address";
+import type { ContactEmail } from "./value-objects/contact-email";
 import { CheckoutState } from "./value-objects/checkout-state";
 import type { CheckoutItem } from "./value-objects/checkout-item";
 import { CheckoutTotals } from "./value-objects/checkout-totals";
+import {
+  DISCOUNT_ATTEMPT_LIMIT,
+  DISCOUNT_ATTEMPT_WINDOW_MS,
+  MAX_DISCOUNT_CODES,
+  normalizeDiscountCode,
+  type AppliedDiscountSnapshot,
+  type DiscountSnapshot,
+} from "./value-objects/discount-snapshot";
 import type { PaymentSelection, ShippingSelection } from "./value-objects/selections";
 
 export interface OrderDraft {
   readonly cartRef: string;
   readonly customerRef?: string;
+  /** The guest's receipt address, when set — what Identity resolves a guest customer from. */
+  readonly contactEmail?: string;
   readonly items: readonly CheckoutItem[];
   readonly billingAddress: CheckoutAddress;
   readonly shippingAddress: CheckoutAddress;
   readonly totals: CheckoutTotals;
+  /** The shipping method the shopper selected (e.g. "standard"); Orders snapshots it with the totals. */
+  readonly shippingMethod?: string;
+  /** Phase 2: the discounts the order is placed with (empty when none). */
+  readonly discounts: readonly AppliedDiscountSnapshot[];
 }
 
 export interface PaymentIntentRequest {
@@ -37,11 +52,23 @@ interface CheckoutSessionProps {
   items: readonly CheckoutItem[];
   billingAddress?: CheckoutAddress;
   shippingAddress?: CheckoutAddress;
+  /** Where a guest's receipt goes; Identity resolves a guest customer from it (WP-1, G-52). Absent on sessions created before it existed. */
+  contactEmail?: ContactEmail;
   shippingSelection?: ShippingSelection;
   paymentSelection?: PaymentSelection;
+  /** The payment intent opened for this session's order once the shopper paid/committed (WP-13). Set once. */
+  paymentIntentRef?: string;
   taxMinor?: number;
+  /** Plan 3C: whether `taxMinor` is already inside the prices. Persisted through the totals snapshot. */
+  taxIncluded?: boolean;
   discountMinor?: number;
   totals?: CheckoutTotals;
+  /** Phase 2: the codes the shopper entered, normalised, at most five. */
+  discountCodes: readonly string[];
+  /** Phase 2: the last decision Promotions made for this session. */
+  discountSnapshot?: DiscountSnapshot;
+  rejectedCodeAttempts: number;
+  codeAttemptsWindowStartedAt?: Date;
 }
 
 /**
@@ -70,6 +97,8 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         state: CheckoutState.started(),
         orderRef: null,
         items: [],
+        discountCodes: [],
+        rejectedCodeAttempts: 0,
       },
       id,
     );
@@ -92,11 +121,18 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     extra: {
       readonly billingAddress?: CheckoutAddress;
       readonly shippingAddress?: CheckoutAddress;
+      readonly contactEmail?: ContactEmail;
       readonly shippingSelection?: ShippingSelection;
       readonly paymentSelection?: PaymentSelection;
+      readonly paymentIntentRef?: string;
       readonly taxMinor?: number;
+      readonly taxIncluded?: boolean;
       readonly discountMinor?: number;
       readonly totals?: CheckoutTotals;
+      readonly discountCodes?: readonly string[];
+      readonly discountSnapshot?: DiscountSnapshot;
+      readonly rejectedCodeAttempts?: number;
+      readonly codeAttemptsWindowStartedAt?: Date;
     } = {},
   ): CheckoutSession {
     return new CheckoutSession(
@@ -110,11 +146,18 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         items: [...items],
         billingAddress: extra.billingAddress,
         shippingAddress: extra.shippingAddress,
+        contactEmail: extra.contactEmail,
         shippingSelection: extra.shippingSelection,
         paymentSelection: extra.paymentSelection,
+        paymentIntentRef: extra.paymentIntentRef,
         taxMinor: extra.taxMinor,
+        taxIncluded: extra.taxIncluded,
         discountMinor: extra.discountMinor,
         totals: extra.totals,
+        discountCodes: [...(extra.discountCodes ?? [])],
+        discountSnapshot: extra.discountSnapshot,
+        rejectedCodeAttempts: extra.rejectedCodeAttempts ?? 0,
+        codeAttemptsWindowStartedAt: extra.codeAttemptsWindowStartedAt,
       },
       id,
       version,
@@ -136,6 +179,11 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     this.props.shippingAddress = address;
   }
 
+  setContactEmail(email: ContactEmail): void {
+    this.ensureOpen();
+    this.props.contactEmail = email;
+  }
+
   selectShipping(selection: ShippingSelection): void {
     this.ensureOpen();
     this.props.shippingSelection = selection;
@@ -146,16 +194,92 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     this.props.paymentSelection = selection;
   }
 
-  /** Stores the tax snapshot requested from Finance via `TaxCalculationPort` — never computed here. */
-  applyTaxSnapshot(taxMinor: number): void {
+  /**
+   * Records the payment intent opened for this session's order (WP-13). Deliberately NOT gated by
+   * `ensureOpen`: payment is initiated AFTER `complete()` has created the order, when the session
+   * is no longer open. Requires the order to exist and the shopper's method to have been chosen —
+   * the intent is opened for exactly what they selected, never a default — and is set at most once,
+   * so a repeat initiation resumes the same intent instead of opening a second charge.
+   */
+  attachPaymentIntent(paymentIntentRef: string): void {
+    if (this.props.orderRef === null) {
+      throw new BusinessRuleError("Payment can only be initiated for a completed checkout");
+    }
+    if (this.props.paymentSelection === undefined) {
+      throw new BusinessRuleError(
+        "Payment cannot be initiated before a payment method is selected",
+      );
+    }
+    if (
+      this.props.paymentIntentRef !== undefined &&
+      this.props.paymentIntentRef !== paymentIntentRef
+    ) {
+      throw new BusinessRuleError("This checkout already has a payment intent");
+    }
+    this.props.paymentIntentRef = paymentIntentRef;
+  }
+
+  /**
+   * Stores the tax snapshot requested from Finance via `TaxCalculationPort` — never computed here.
+   * `included` says whether that tax is already inside the prices (Plan 3C); a caller that does not
+   * know keeps the pre-3C meaning: the tax is added to the total.
+   */
+  applyTaxSnapshot(taxMinor: number, included = false): void {
     this.ensureOpen();
     this.props.taxMinor = taxMinor;
+    this.props.taxIncluded = included;
   }
 
   /** Stores the discount snapshot requested from Promotions via `PromotionValidationPort` — never computed here. */
   applyPromotionSnapshot(discountMinor: number): void {
     this.ensureOpen();
     this.props.discountMinor = discountMinor;
+  }
+
+  /** Adds a code the shopper typed (Phase 2). Already entered: nothing changes. A sixth code: refused. */
+  enterDiscountCode(code: string): void {
+    this.ensureOpen();
+    const normalized = normalizeDiscountCode(code);
+    if (this.props.discountCodes.includes(normalized)) return;
+    if (this.props.discountCodes.length >= MAX_DISCOUNT_CODES) {
+      throw new BusinessRuleError(`TOO_MANY_CODES: at most ${MAX_DISCOUNT_CODES} discount codes`);
+    }
+    this.props.discountCodes = [...this.props.discountCodes, normalized];
+  }
+
+  removeDiscountCode(code: string): void {
+    this.ensureOpen();
+    const normalized = normalizeDiscountCode(code);
+    this.props.discountCodes = this.props.discountCodes.filter((c) => c !== normalized);
+  }
+
+  /** Stores what Promotions decided (Phase 2); the order discount becomes `discountMinor`. Never computed here. */
+  applyDiscountSnapshot(snapshot: DiscountSnapshot): void {
+    this.ensureOpen();
+    this.props.discountSnapshot = snapshot;
+    this.props.discountMinor = snapshot.orderDiscountMinor;
+  }
+
+  /** Counts a rejected code; the count restarts once the window has passed. */
+  recordRejectedDiscountCode(now: Date): void {
+    this.ensureOpen();
+    const start = this.props.codeAttemptsWindowStartedAt;
+    if (start === undefined || now.getTime() - start.getTime() >= DISCOUNT_ATTEMPT_WINDOW_MS) {
+      this.props.codeAttemptsWindowStartedAt = now;
+      this.props.rejectedCodeAttempts = 1;
+      return;
+    }
+    this.props.rejectedCodeAttempts += 1;
+  }
+
+  /** True after ten rejected codes within fifteen minutes — guards against guessing codes. */
+  isDiscountCodeEntryLocked(now: Date): boolean {
+    const start = this.props.codeAttemptsWindowStartedAt;
+    return (
+      start !== undefined &&
+      now.getTime() - start.getTime() < DISCOUNT_ATTEMPT_WINDOW_MS &&
+      this.props.rejectedCodeAttempts >= DISCOUNT_ATTEMPT_LIMIT
+    );
   }
 
   /** Assembles `CheckoutTotals` as a sum of the stored snapshots. Emits `checkout_session.recalculated`. */
@@ -170,6 +294,11 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
       this.props.shippingSelection?.rateAmountMinor ?? 0,
       this.props.discountMinor ?? 0,
       this.props.currency,
+      {
+        taxIncluded: this.props.taxIncluded ?? false,
+        shippingName: this.props.shippingSelection?.name,
+        shippingDiscountMinor: this.props.discountSnapshot?.shippingDiscountMinor ?? 0,
+      },
     );
     this.props.totals = totals;
     this.addDomainEvent(
@@ -253,10 +382,13 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     return {
       cartRef: this.props.cartRef,
       customerRef: this.props.customerRef,
+      contactEmail: this.props.contactEmail?.value,
       items: this.props.items,
       billingAddress: this.props.billingAddress,
       shippingAddress: this.props.shippingAddress,
       totals: this.props.totals,
+      shippingMethod: this.props.shippingSelection?.method,
+      discounts: this.props.discountSnapshot?.applied ?? [],
     };
   }
 
@@ -321,6 +453,10 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     return this.props.shippingAddress;
   }
 
+  get contactEmail(): ContactEmail | undefined {
+    return this.props.contactEmail;
+  }
+
   get shippingSelection(): ShippingSelection | undefined {
     return this.props.shippingSelection;
   }
@@ -329,8 +465,16 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     return this.props.paymentSelection;
   }
 
+  get paymentIntentRef(): string | undefined {
+    return this.props.paymentIntentRef;
+  }
+
   get taxMinor(): number | undefined {
     return this.props.taxMinor;
+  }
+
+  get taxIncluded(): boolean | undefined {
+    return this.props.taxIncluded;
   }
 
   get discountMinor(): number | undefined {
@@ -339,6 +483,27 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
 
   get totals(): CheckoutTotals | undefined {
     return this.props.totals;
+  }
+
+  get discountCodes(): readonly string[] {
+    return this.props.discountCodes;
+  }
+
+  get discountSnapshot(): DiscountSnapshot | undefined {
+    return this.props.discountSnapshot;
+  }
+
+  get rejectedCodeAttempts(): number {
+    return this.props.rejectedCodeAttempts;
+  }
+
+  get codeAttemptsWindowStartedAt(): Date | undefined {
+    return this.props.codeAttemptsWindowStartedAt;
+  }
+
+  /** Whether Phase 2 discounts have touched this session (a legacy `applyPromotionSnapshot` session has not). */
+  get hasDiscountState(): boolean {
+    return this.props.discountCodes.length > 0 || this.props.discountSnapshot !== undefined;
   }
 
   private ensureOpen(): void {

@@ -1,0 +1,70 @@
+{
+  "payment_keys": [
+    {
+      "integration": 158,
+      "key": "REDACTED-JWT",
+      "gateway_type": "MIGS",
+      "iframe_id": null,
+      "order_id": 265715202
+    }
+  ],
+  "intention_order_id": 265715202,
+  "id": "pi_test_bd49bb7fb4da48cfac4ec71ab4d8c433",
+  "intention_detail": {
+    "amount": 10,
+    "items": [
+      {
+        "name": "Item name",
+        "amount": 5,
+        "description": "Item description",
+        "quantity": 1,
+        "image": null
+      },
+      {
+        "name": "Item name",
+        "amount": 5,
+        "description": "Item description",
+        "quantity": 1,
+        "image": null
+      }
+    ],
+    "currency": "EGP",
+    "billing_data": {
+      "apartment": "dumy",
+      "floor": "dumy",
+      "first_name": "Andrea",
+      "last_name": "Nicolas",
+      "street": "dumy",
+      "building": "dumy",
+      "phone_number": "+201010101010",
+      "city": "dumy",
+      "country": "dumy",
+      "state": "dumy",
+      "email": "test@test.com"
+    }
+  },
+  "client_secret": "egy_csk_test_94042f793419c5a0f14a4cadfda9d626",
+  "payment_methods": [
+    {
+      "integration_id": 4345907,
+      "alias": null,
+      "name": "CardF",
+      "method_type": "online",
+      "currency": "EGP",
+      "live": false,
+      "use_cvc_with_moto": false
+    }
+  ],
+  "special_reference": "phe4sjw111q-11221-221",
+  "extras": {
+    "creation_extras": {
+      "ee": 22
+    },
+    "confirmation_extras": null
+  },
+  "confirmed": false,
+  "status": "intended",
+  "created": "2024-11-18T13:42:08.456634",
+  "card_detail": null,
+  "object": "paymentintention"
+}

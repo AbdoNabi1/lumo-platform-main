@@ -5,6 +5,7 @@ import { formatCurrency } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import { ProductStatusBadge } from "./product-status-badge";
+import { ProductThumb } from "./product-thumb";
 
 export function ProductsTable({
   products,
@@ -30,13 +31,19 @@ export function ProductsTable({
         {products.map((product) => (
           <TableRow key={product.id}>
             <TableCell className="font-medium">
-              <Link
-                href={`/products/${product.id}`}
-                className="hover:text-primary"
-                aria-label={t.productsPage.viewProduct.replace("{name}", product.name)}
-              >
-                {product.name}
-              </Link>
+              <div className="flex items-center gap-3">
+                <ProductThumb
+                  url={product.featuredImage?.url}
+                  alt={product.featuredImage?.alt ?? product.name}
+                />
+                <Link
+                  href={`/products/${product.id}`}
+                  className="hover:text-primary"
+                  aria-label={t.productsPage.viewProduct.replace("{name}", product.name)}
+                >
+                  {product.name}
+                </Link>
+              </div>
             </TableCell>
             <TableCell className="text-muted-foreground font-mono text-xs">{product.sku}</TableCell>
             <TableCell>

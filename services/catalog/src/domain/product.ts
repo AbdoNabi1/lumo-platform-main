@@ -15,12 +15,14 @@ import { ProductVariantUpdated } from "./events/product-variant-updated.event";
 import type { BrandRef } from "./value-objects/brand-ref";
 import type { CategoryRef } from "./value-objects/category-ref";
 import type { MediaRef } from "./value-objects/media-ref";
+import { ProductDetails } from "./value-objects/product-details";
 import type { ProductOption } from "./value-objects/product-option";
 import { PublishState } from "./value-objects/publish-state";
 import type { Seo } from "./value-objects/seo";
 import type { Sku } from "./value-objects/sku";
 import type { Slug } from "./value-objects/slug";
-import type { Variant } from "./variant";
+import type { VariantSelection } from "./value-objects/variant-selection";
+import type { Variant, VariantChanges } from "./variant";
 
 interface ProductProps {
   readonly sku: Sku;
@@ -35,6 +37,7 @@ interface ProductProps {
   variants: Variant[];
   media: readonly MediaRef[];
   deleted: boolean;
+  details: ProductDetails;
 }
 
 export interface NewProduct {
@@ -43,17 +46,23 @@ export interface NewProduct {
   readonly slug: Slug;
   readonly variants: readonly Variant[];
   readonly media?: readonly MediaRef[];
+  readonly details?: ProductDetails;
 }
 
 /**
  * Catalog product aggregate. Created as a draft; Commerce Sprint 1 added the publish/schedule/
  * unpublish/archive state machine, variant matrix, brand/category/option/seo, and Sprint 4.2
- * added the media lifecycle. `options` are mutable only while draft (Commerce Sprint 1 §invariant).
+ * added the media lifecycle. Plan 2C-1 added `details` (description/type/tags), a one-currency rule
+ * for the variants, and lets `options` change in any status (Commerce Sprint 1 had draft-only).
  */
 export class Product extends AggregateRoot<ProductProps> {
   static create(id: UniqueEntityId, props: NewProduct, eventId: string, occurredAt: Date): Product {
     if (props.variants.length === 0) {
       throw new BusinessRuleError("A product must have at least one variant");
+    }
+    const currencies = new Set(props.variants.map((v) => v.price.currency));
+    if (currencies.size > 1) {
+      throw new BusinessRuleError("All variants of a product must use the same currency");
     }
     const product = new Product(
       {
@@ -69,6 +78,7 @@ export class Product extends AggregateRoot<ProductProps> {
         variants: [...props.variants],
         media: props.media ?? [],
         deleted: false,
+        details: props.details ?? ProductDetails.empty(),
       },
       id,
     );
@@ -100,6 +110,7 @@ export class Product extends AggregateRoot<ProductProps> {
     media: readonly MediaRef[],
     deleted: boolean,
     version: number,
+    details: ProductDetails = ProductDetails.empty(),
   ): Product {
     return new Product(
       {
@@ -115,6 +126,7 @@ export class Product extends AggregateRoot<ProductProps> {
         variants: [...variants],
         media: [...media],
         deleted,
+        details,
       },
       id,
       version,
@@ -157,17 +169,46 @@ export class Product extends AggregateRoot<ProductProps> {
     this.props.scheduledAt = scheduledAt;
   }
 
+  /** Back to draft. An unlisted product was never listed, so only a published one raises an event. */
   unpublish(eventId: string, occurredAt: Date): void {
-    if (!this.props.status.isPublished) {
+    if (!this.props.status.isPublished && !this.props.status.isUnlisted) {
       throw new BusinessRuleError("Only a published product can be unpublished");
     }
+    const wasPublished = this.props.status.isPublished;
     this.props.status = PublishState.draft();
-    this.addDomainEvent(
-      new ProductUnpublished(
-        { eventId, aggregateId: this.id, occurredAt },
-        { sku: this.props.sku.value },
-      ),
-    );
+    if (wasPublished) {
+      this.addDomainEvent(
+        new ProductUnpublished(
+          { eventId, aggregateId: this.id, occurredAt },
+          { sku: this.props.sku.value },
+        ),
+      );
+    }
+  }
+
+  /**
+   * Plan 2C-1 (Shopify "Unlisted"): sellable and reachable by its link, but kept out of lists,
+   * search, collections and the sitemap. Leaving `published` raises the existing
+   * `product.unpublished` — the product left every listing — so no new event type is needed.
+   */
+  unlist(eventId: string, occurredAt: Date): void {
+    if (this.props.status.isUnlisted) {
+      throw new BusinessRuleError("Product is already unlisted");
+    }
+    if (this.props.status.isArchived) {
+      throw new BusinessRuleError("An archived product cannot be unlisted");
+    }
+    const wasPublished = this.props.status.isPublished;
+    this.props.status = PublishState.unlisted();
+    this.props.scheduledAt = null;
+    if (wasPublished) {
+      this.addDomainEvent(
+        new ProductUnpublished(
+          { eventId, aggregateId: this.id, occurredAt },
+          { sku: this.props.sku.value },
+        ),
+      );
+    }
   }
 
   archive(eventId: string, occurredAt: Date): void {
@@ -196,20 +237,8 @@ export class Product extends AggregateRoot<ProductProps> {
     if (this.props.variants.some((v) => v.sku.value === variant.sku.value)) {
       throw new BusinessRuleError(`Duplicate variant SKU: ${variant.sku.value}`);
     }
-    const selection = variant.selection;
-    if (selection !== null) {
-      for (const [optionName, value] of Object.entries(selection.values)) {
-        const option = this.props.options.find((o) => o.name === optionName);
-        if (!option || !option.values.includes(value)) {
-          throw new BusinessRuleError(
-            `Variant selection ${optionName}=${value} does not match a declared product option`,
-          );
-        }
-      }
-      if (this.props.variants.some((v) => v.selection !== null && v.selection.matches(selection))) {
-        throw new BusinessRuleError("Another variant already has this exact option selection");
-      }
-    }
+    if (variant.selection !== null) this.assertSelectionAllowed(variant.selection);
+    this.assertSameCurrency(variant.price.currency);
     this.props.variants.push(variant);
     this.addDomainEvent(
       new ProductVariantAdded(
@@ -242,13 +271,12 @@ export class Product extends AggregateRoot<ProductProps> {
   }
 
   /**
-   * In-place sku/price edit for an existing variant (Sprint 7.0 `UpdateVariant`) — `selection`
-   * never changes (mutating it could silently violate the unique-selection invariant above).
+   * Edits a variant in place (Sprint 7.0, widened by Plan 2C-1): SKU, price, attributes, and the
+   * selection, which is re-checked against the declared options and the other variants.
    */
   updateVariant(
     variantId: string,
-    sku: Sku,
-    price: Variant["price"],
+    changes: VariantChanges,
     eventId: string,
     occurredAt: Date,
   ): void {
@@ -257,22 +285,56 @@ export class Product extends AggregateRoot<ProductProps> {
       throw new BusinessRuleError(`Variant not found: ${variantId}`);
     }
     if (
-      this.props.variants.some((v) => v.id.toString() !== variantId && v.sku.value === sku.value)
+      this.props.variants.some(
+        (v) => v.id.toString() !== variantId && v.sku.value === changes.sku.value,
+      )
     ) {
-      throw new BusinessRuleError(`Duplicate variant SKU: ${sku.value}`);
+      throw new BusinessRuleError(`Duplicate variant SKU: ${changes.sku.value}`);
     }
-    variant.update(sku, price);
+    if (changes.selection !== null) this.assertSelectionAllowed(changes.selection, variantId);
+    this.assertSameCurrency(changes.price.currency, variantId);
+    variant.apply(changes);
     this.addDomainEvent(
       new ProductVariantUpdated({ eventId, aggregateId: this.id, occurredAt }, { variantId }),
     );
   }
 
-  /** Replaces the declared option set. Mutable only while draft (no event — internal config). */
+  /**
+   * Replaces the declared option set — in ANY status since Plan 2C-1 (Shopify lets a merchant add a
+   * size to a live product). Refused only when a variant would be left on a removed option value.
+   */
   setOptions(options: readonly ProductOption[]): void {
-    if (!this.props.status.isDraft) {
-      throw new BusinessRuleError("Options are mutable only while the product is draft");
+    for (const variant of this.props.variants) {
+      if (variant.selection === null) continue;
+      for (const [name, value] of Object.entries(variant.selection.values)) {
+        const option = options.find((o) => o.name === name);
+        if (!option || !option.values.includes(value)) {
+          throw new BusinessRuleError(
+            `Variant ${variant.sku.value} uses ${name}=${value}, which these options remove — ` +
+              "change or remove that variant first",
+          );
+        }
+      }
     }
     this.props.options = [...options];
+  }
+
+  /**
+   * Plan 3C: switches every variant to the store currency, keeping the amounts (Shopify relabels, it
+   * does not convert). Returns how many variants changed. No event: a mass relabel is not a per-product
+   * fact downstream contexts replay.
+   */
+  relabelCurrency(currency: string): number {
+    let changed = 0;
+    for (const variant of this.props.variants) {
+      if (variant.relabelCurrency(currency)) changed += 1;
+    }
+    return changed;
+  }
+
+  /** Plan 2C-1. No event of its own — `UpdateProduct` already raises `product.updated`. */
+  setDetails(details: ProductDetails): void {
+    this.props.details = details;
   }
 
   /** No event — SEO metadata is internal config, not a downstream-relevant fact. */
@@ -313,8 +375,34 @@ export class Product extends AggregateRoot<ProductProps> {
       throw new BusinessRuleError(`Media not attached: ${assetId}`);
     }
     this.props.media = this.props.media.filter((m) => m.assetId !== assetId);
+    // A variant must never point at media the product no longer has.
+    for (const variant of this.props.variants) {
+      if (variant.mediaRef === assetId) variant.setMediaRef(null);
+    }
     this.addDomainEvent(
       new ProductMediaDetached({ eventId, aggregateId: this.id, occurredAt }, { assetId }),
+    );
+  }
+
+  /**
+   * Plan 2C-3: Shopify's "variant image". `assetId` must be one of THIS product's media, or `null` to clear.
+   */
+  setVariantImage(
+    variantId: string,
+    assetId: string | null,
+    eventId: string,
+    occurredAt: Date,
+  ): void {
+    const variant = this.props.variants.find((v) => v.id.toString() === variantId);
+    if (!variant) {
+      throw new BusinessRuleError(`Variant not found: ${variantId}`);
+    }
+    if (assetId !== null && !this.props.media.some((m) => m.assetId === assetId)) {
+      throw new BusinessRuleError(`Media not attached: ${assetId}`);
+    }
+    variant.setMediaRef(assetId);
+    this.addDomainEvent(
+      new ProductVariantUpdated({ eventId, aggregateId: this.id, occurredAt }, { variantId }),
     );
   }
 
@@ -344,6 +432,39 @@ export class Product extends AggregateRoot<ProductProps> {
     }
     this.props.deleted = true;
     this.addDomainEvent(new ProductDeleted({ eventId, aggregateId: this.id, occurredAt }));
+  }
+
+  /** A selection must name declared option values, and no OTHER variant may already hold it. */
+  private assertSelectionAllowed(selection: VariantSelection, exceptVariantId?: string): void {
+    for (const [optionName, value] of Object.entries(selection.values)) {
+      const option = this.props.options.find((o) => o.name === optionName);
+      if (!option || !option.values.includes(value)) {
+        throw new BusinessRuleError(
+          `Variant selection ${optionName}=${value} does not match a declared product option`,
+        );
+      }
+    }
+    if (
+      this.props.variants.some(
+        (v) =>
+          v.id.toString() !== exceptVariantId &&
+          v.selection !== null &&
+          v.selection.matches(selection),
+      )
+    ) {
+      throw new BusinessRuleError("Another variant already has this exact option selection");
+    }
+  }
+
+  /** Plan 2C-1: one product, one currency (a cart holds one currency). */
+  private assertSameCurrency(currency: string, exceptVariantId?: string): void {
+    if (
+      this.props.variants.some(
+        (v) => v.id.toString() !== exceptVariantId && v.price.currency !== currency,
+      )
+    ) {
+      throw new BusinessRuleError("All variants of a product must use the same currency");
+    }
   }
 
   get sku(): Sku {
@@ -380,6 +501,10 @@ export class Product extends AggregateRoot<ProductProps> {
 
   get seo(): Seo | null {
     return this.props.seo;
+  }
+
+  get details(): ProductDetails {
+    return this.props.details;
   }
 
   get variants(): readonly Variant[] {

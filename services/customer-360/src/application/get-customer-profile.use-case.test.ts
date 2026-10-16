@@ -14,6 +14,7 @@ import type {
   ResolveIdentityOutput,
 } from "./resolve-identity.use-case";
 import { GetCustomerProfile } from "./get-customer-profile.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const visitor = { type: "visitor_id" as const, value: "v1" };
 const customer = { type: "customer_id" as const, value: "cust-1" };
@@ -42,7 +43,11 @@ describe("GetCustomerProfile", () => {
     const resolveIdentity = fakeResolveIdentity(async () => ok({ cluster: null }));
     const useCase = new GetCustomerProfile({ profiles: storeWith(), resolveIdentity });
 
-    const result = await useCase.execute({ identifier: visitor, now: "2026-07-21T00:00:00.000Z" });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier: visitor,
+      now: "2026-07-21T00:00:00.000Z",
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.profile).toBeNull();
@@ -63,7 +68,11 @@ describe("GetCustomerProfile", () => {
     const resolveIdentity = fakeResolveIdentity(async () => ok({ cluster: null }));
     const useCase = new GetCustomerProfile({ profiles: storeWith(profile), resolveIdentity });
 
-    const result = await useCase.execute({ identifier: visitor, now: "2026-07-21T00:00:02.000Z" });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier: visitor,
+      now: "2026-07-21T00:00:02.000Z",
+    });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.profile?.fields.get("email")?.value).toBe("a@example.com");
     expect(result.value.mergedFrom).toEqual([visitor]);
@@ -115,7 +124,11 @@ describe("GetCustomerProfile", () => {
       resolveIdentity,
     });
 
-    const result = await useCase.execute({ identifier: visitor, now: "2026-07-21T00:00:04.000Z" });
+    const result = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier: visitor,
+      now: "2026-07-21T00:00:04.000Z",
+    });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.profile?.fields.get("device")?.value).toBe("device-1");
     expect(result.value.profile?.fields.get("email")?.value).toBe("a@example.com");
@@ -136,11 +149,16 @@ describe("GetCustomerProfile", () => {
     const resolveIdentity = fakeResolveIdentity(async () => ok({ cluster: null }));
     const useCase = new GetCustomerProfile({ profiles: storeWith(profile), resolveIdentity });
 
-    const withoutExpectation = await useCase.execute({ identifier: visitor, now: "t1" });
+    const withoutExpectation = await useCase.execute({
+      tenantId: TENANT_A,
+      identifier: visitor,
+      now: "t1",
+    });
     if (!withoutExpectation.ok) throw new Error("unreachable");
     expect(withoutExpectation.value.completeness).toBeNull();
 
     const withExpectation = await useCase.execute({
+      tenantId: TENANT_A,
       identifier: visitor,
       now: "t1",
       expectedFields: ["email", "phone"],
@@ -155,7 +173,7 @@ describe("GetCustomerProfile", () => {
     );
     const useCase = new GetCustomerProfile({ profiles: storeWith(), resolveIdentity });
 
-    const result = await useCase.execute({ identifier: visitor, now: "t1" });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier: visitor, now: "t1" });
     expect(result.ok).toBe(false);
   });
 });

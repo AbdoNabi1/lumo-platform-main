@@ -52,15 +52,15 @@ export class InMemoryWebhookProvider implements WebhookProviderPort {
   }
 }
 
-/** Replay-safe provider-callback dedup — in-memory `Set` keyed `(provider, callbackId)`. Prisma-backed store supersedes this in production (unique `(tenant, provider, callback_id)`). */
+/** Replay-safe provider-callback dedup — in-memory `Set` keyed `(tenantId, provider, callbackId)`. Prisma-backed store supersedes this in production (unique `(tenant, provider, callback_id)`). */
 export class InMemoryProcessedProviderCallbackStore implements ProcessedProviderCallbackStore {
   private readonly processed = new Set<string>();
 
-  async hasProcessed(provider: string, callbackId: string): Promise<boolean> {
-    return this.processed.has(`${provider}:${callbackId}`);
+  async hasProcessed(provider: string, callbackId: string, tenantId: string): Promise<boolean> {
+    return this.processed.has(JSON.stringify([tenantId, provider, callbackId]));
   }
 
-  async markProcessed(provider: string, callbackId: string): Promise<void> {
-    this.processed.add(`${provider}:${callbackId}`);
+  async markProcessed(provider: string, callbackId: string, tenantId: string): Promise<void> {
+    this.processed.add(JSON.stringify([tenantId, provider, callbackId]));
   }
 }

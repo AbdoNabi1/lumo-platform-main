@@ -9,6 +9,8 @@ import { InMemoryNotificationRepository } from "../infrastructure/in-memory-noti
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { NotificationsEventTranslator } from "../infrastructure/notifications-event-translator";
 
+const TENANT = "tenant-a";
+
 function sequentialIds(): IdGenerator {
   let counter = 0;
   return { generate: () => `id-${(counter += 1)}` };
@@ -34,6 +36,7 @@ function harness() {
 
 function createInput(idempotencyKey: string) {
   return {
+    tenantId: TENANT,
     idempotencyKey,
     sourceRef: "order-1",
     recipientRef: "customer-1",
@@ -53,13 +56,14 @@ describe("Notifications read use-cases (Phase 4 T4.12)", () => {
       await create.execute(createInput(`idem-${i}`));
     }
 
-    const page = await new ListNotifications(h).execute({ first: 2 });
+    const page = await new ListNotifications(h).execute({ tenantId: TENANT, first: 2 });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
     expect(page.value.pageInfo.hasNextPage).toBe(true);
 
     const rest = await new ListNotifications(h).execute({
+      tenantId: TENANT,
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
     });
@@ -76,13 +80,17 @@ describe("Notifications read use-cases (Phase 4 T4.12)", () => {
     if (!created.ok) return;
 
     const found = await new GetNotification(h).execute({
+      tenantId: TENANT,
       notificationId: created.value.notificationId,
     });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.sourceRef).toBe("order-1");
 
-    const missing = await new GetNotification(h).execute({ notificationId: "nope" });
+    const missing = await new GetNotification(h).execute({
+      tenantId: TENANT,
+      notificationId: "nope",
+    });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

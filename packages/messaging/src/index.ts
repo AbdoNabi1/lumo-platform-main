@@ -18,6 +18,16 @@ export type { OutboxWriterDeps } from "./outbox/outbox-writer";
 export { InMemoryOutboxStore } from "./outbox/in-memory-outbox-store";
 export { OutboxRelay } from "./outbox/outbox-relay";
 export type { OutboxRelayDeps } from "./outbox/outbox-relay";
+export { OutboxDeliveryRelay } from "./outbox/outbox-delivery-relay";
+export type {
+  DirectConsumer,
+  DirectDeadLetter,
+  DueOutboxEntry,
+  OutboxDeliveryQueue,
+  OutboxDeliveryRelayDeps,
+  OutboxDeliveryReport,
+} from "./outbox/outbox-delivery-relay";
+export { InMemoryOutboxDeliveryQueue } from "./outbox/in-memory-outbox-delivery-queue";
 
 // Consumer
 export type { EventHandler } from "./consumer/event-handler";

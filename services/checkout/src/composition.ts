@@ -16,6 +16,7 @@ import {
   SelectPayment,
   SelectShipping,
   SetBillingAddress,
+  SetContactEmail,
   SetShippingAddress,
 } from "./application/checkout-details.use-cases";
 import {
@@ -32,13 +33,20 @@ import {
   ValidatePromotion,
 } from "./application/checkout-orchestration.use-cases";
 import { CompleteCheckout } from "./application/complete-checkout.use-case";
+import { AddDiscountCode, RemoveDiscountCode } from "./application/discount-code.use-cases";
 import { FailCheckout } from "./application/fail-checkout.use-case";
 import { GetCheckoutSession } from "./application/get-checkout-session.use-case";
+import { InitiatePayment, ListPaymentMethods } from "./application/payment-initiation.use-cases";
 import { StartCheckout } from "./application/start-checkout.use-case";
 import type { CheckoutSessionRepository } from "./domain/checkout-session-repository";
 import type {
+  DiscountUsagePort,
   InventoryValidationPort,
+  OrderCancellationPort,
+  OrderStockReservationPort,
   OrderCreationPort,
+  PaymentInitiationPort,
+  PaymentMethodPort,
   PricingValidationPort,
   PromotionValidationPort,
   ShippingCalculationPort,
@@ -55,6 +63,10 @@ import {
   InMemoryTaxCalculationAdapter,
 } from "./infrastructure/in-memory-orchestration-adapters";
 import { InMemoryOrderCreationAdapter } from "./infrastructure/in-memory-order-creation-adapter";
+import {
+  InMemoryPaymentInitiationAdapter,
+  InMemoryPaymentMethodAdapter,
+} from "./infrastructure/in-memory-payment-adapters";
 import { PrismaCheckoutSessionRepository } from "./infrastructure/prisma-checkout-session-repository";
 import { CheckoutController } from "./interfaces/checkout.controller";
 
@@ -73,9 +85,17 @@ export interface CheckoutWiringDeps {
    */
   readonly pricingValidation?: PricingValidationPort;
   readonly inventoryValidation?: InventoryValidationPort;
+  /**
+   * Plan 3C (G-114): reserves the order's stock when it is placed, and cancels the order if it
+   * cannot. Absent ⇒ no reservation at placement, as before.
+   */
+  readonly stockReservation?: OrderStockReservationPort;
+  readonly orderCancellation?: OrderCancellationPort;
   readonly taxCalculation?: TaxCalculationPort;
   readonly shippingCalculation?: ShippingCalculationPort;
   readonly promotionValidation?: PromotionValidationPort;
+  /** Phase 2: records each discount's use once an order is placed. Absent ⇒ nothing is recorded. */
+  readonly discountUsage?: DiscountUsagePort;
   /**
    * C-2: the outbound seam `CompleteCheckout` uses to materialize an order from a completed
    * session. Same `deps.X ?? new InMemoryXAdapter()` convention as the 5 orchestration ports
@@ -84,14 +104,20 @@ export interface CheckoutWiringDeps {
    */
   readonly orderCreation?: OrderCreationPort;
   /**
+   * WP-13: the two seams to Payments — which methods the merchant offers, and opening the payment
+   * for the shopper's selected method. Same `deps.X ?? new InMemoryXAdapter()` convention; `wireAdmin`
+   * unconditionally supplies the real adapters over Payments.
+   */
+  readonly paymentMethods?: PaymentMethodPort;
+  readonly paymentInitiation?: PaymentInitiationPort;
+  /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaCheckoutSessionRepository` +
-   * `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/`wireCart`);
-   * absent ⇒ in-memory, unchanged. The 5 orchestration ports stay in-memory in both branches —
-   * reference-only stubs, not persistence, out of scope for C-01.
+   * `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. The 5 orchestration ports stay in-memory
+   * in both branches — reference-only stubs, not persistence, out of scope for C-01. ADR-0014
+   * (WP-10, T10.3): the repository built here is a tenant-agnostic singleton — no `tenantId` at
+   * composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Checkout table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredCheckout {
@@ -112,6 +138,8 @@ function buildController(
   const shippingCalculation = deps.shippingCalculation ?? new InMemoryShippingCalculationAdapter();
   const promotionValidation = deps.promotionValidation ?? new InMemoryPromotionValidationAdapter();
   const orderCreation = deps.orderCreation ?? new InMemoryOrderCreationAdapter();
+  const paymentMethods = deps.paymentMethods ?? new InMemoryPaymentMethodAdapter();
+  const paymentInitiation = deps.paymentInitiation ?? new InMemoryPaymentInitiationAdapter();
 
   return new CheckoutController({
     startCheckout: new StartCheckout({ sessions, unitOfWork, idGenerator: deps.idGenerator }),
@@ -122,6 +150,19 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       orderCreation,
+      // Only the caller's own adapter gates completion (Plan 2B-3). The offline in-memory stub used
+      // by `ValidateCheckout` when nothing is supplied stays out of it, so in-memory callers keep
+      // completing exactly as before.
+      ...(deps.inventoryValidation === undefined
+        ? {}
+        : { inventoryValidation: deps.inventoryValidation }),
+      ...(deps.stockReservation === undefined ? {} : { stockReservation: deps.stockReservation }),
+      ...(deps.orderCancellation === undefined
+        ? {}
+        : { orderCancellation: deps.orderCancellation }),
+      promotionValidation,
+      taxCalculation,
+      ...(deps.discountUsage === undefined ? {} : { discountUsage: deps.discountUsage }),
     }),
     failCheckout: new FailCheckout({
       sessions,
@@ -132,8 +173,11 @@ function buildController(
     loadItems: new LoadItems({ sessions, unitOfWork }),
     setBillingAddress: new SetBillingAddress({ sessions, unitOfWork }),
     setShippingAddress: new SetShippingAddress({ sessions, unitOfWork }),
+    setContactEmail: new SetContactEmail({ sessions, unitOfWork }),
     selectShipping: new SelectShipping({ sessions, unitOfWork, shippingCalculation }),
-    selectPayment: new SelectPayment({ sessions, unitOfWork }),
+    selectPayment: new SelectPayment({ sessions, unitOfWork, paymentMethods }),
+    listPaymentMethods: new ListPaymentMethods({ paymentMethods }),
+    initiatePayment: new InitiatePayment({ sessions, unitOfWork, paymentInitiation }),
     validateCheckout: new ValidateCheckout({ sessions, pricingValidation, inventoryValidation }),
     requestTaxCalculation: new RequestTaxCalculation({
       sessions,
@@ -141,6 +185,7 @@ function buildController(
       idGenerator: deps.idGenerator,
       clock: deps.clock,
       taxCalculation,
+      promotionValidation,
     }),
     requestShippingQuote: new RequestShippingQuote({ sessions, shippingCalculation }),
     validatePromotion: new ValidatePromotion({
@@ -155,6 +200,24 @@ function buildController(
       unitOfWork,
       idGenerator: deps.idGenerator,
       clock: deps.clock,
+      promotionValidation,
+      taxCalculation,
+    }),
+    addDiscountCode: new AddDiscountCode({
+      sessions,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      promotionValidation,
+      taxCalculation,
+    }),
+    removeDiscountCode: new RemoveDiscountCode({
+      sessions,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      promotionValidation,
+      taxCalculation,
     }),
     lock: new Lock({ sessions, unitOfWork, idGenerator: deps.idGenerator, clock: deps.clock }),
     expireCheckout: new ExpireCheckout({
@@ -176,10 +239,6 @@ function buildController(
  */
 export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireCheckout: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new CheckoutEventTranslator(),
@@ -187,13 +246,10 @@ export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
       clock: deps.clock,
       producer: "checkout",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const sessions = new PrismaCheckoutSessionRepository({
-      prisma: deps.prisma,
-      tenantId,
-      outbox,
-      context,
-    });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time — every repository takes it per
+    // call and merges it into the event context at write time.
+    const context = rootEventContext(deps.idGenerator);
+    const sessions = new PrismaCheckoutSessionRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {

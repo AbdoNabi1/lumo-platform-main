@@ -26,7 +26,7 @@ interface OrderFulfillmentPageProps {
  * Fetches the order first (for its header, back link, and — when no fulfillment exists yet — its
  * real line items to populate the create-fulfillment item picker via `fetchOrder`, never letting
  * the operator free-type a `productRef`). Then fetches the fulfillment itself
- * (`fetchFulfillmentByOrder`, the same read `OrderFulfillmentCard` already uses) to decide which of
+ * (`fetchFulfillmentByOrder`) to decide which of
  * the three states to render: the read summary + gated write actions (`ok`), the
  * create-a-fulfillment form (`not_found`), or an explicit unavailable message
  * (`unauthorized`/`error` — never fabricated).
@@ -87,7 +87,7 @@ export default async function OrderFulfillmentPage({ params }: OrderFulfillmentP
               {t.fulfillmentScreen.back}
             </Link>
           </Button>
-          <h1 className="text-4xl font-semibold tracking-tight">{t.fulfillmentScreen.title}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.fulfillmentScreen.title}</h1>
           <p className="text-muted-foreground mt-1 text-sm">#{order.orderNumber}</p>
         </div>
 
@@ -98,7 +98,11 @@ export default async function OrderFulfillmentPage({ params }: OrderFulfillmentP
                 <CardTitle>{t.orderDetail.fulfillment}</CardTitle>
               </CardHeader>
               <CardContent>
-                <FulfillmentSummary fulfillment={fulfillmentResult.fulfillment} t={t} locale={locale} />
+                <FulfillmentSummary
+                  fulfillment={fulfillmentResult.fulfillment}
+                  t={t}
+                  locale={locale}
+                />
               </CardContent>
             </Card>
             <FulfillmentLifecycleActions

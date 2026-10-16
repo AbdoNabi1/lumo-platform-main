@@ -77,7 +77,8 @@ export function recommendationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       idempotent: true,
       summary: "Create a recommendation model",
       schema: { body: createModelBody },
-      handle: ({ body, context }) => admin.recommendations.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.recommendations.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -88,7 +89,11 @@ export function recommendationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       summary: "Advance a recommendation model's status (startTraining/activate/retire)",
       schema: { params: modelIdParams, body: advanceModelBody },
       handle: ({ params, body, context }) =>
-        admin.recommendations.advance(context.principal, { modelId: params.modelId, ...body }),
+        admin.recommendations.advance(context.principal, {
+          modelId: params.modelId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -98,7 +103,11 @@ export function recommendationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       summary: "Generate a recommendation set from an interaction event (replay-safe)",
       schema: { params: modelIdParams, body: generateSetBody },
       handle: ({ params, body, context }) =>
-        admin.recommendations.generate(context.principal, { modelId: params.modelId, ...body }),
+        admin.recommendations.generate(context.principal, {
+          modelId: params.modelId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -109,7 +118,11 @@ export function recommendationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       summary: "Force-regenerate a recommendation set for an anchor",
       schema: { params: modelIdParams, body: regenerateSetBody },
       handle: ({ params, body, context }) =>
-        admin.recommendations.regenerate(context.principal, { modelId: params.modelId, ...body }),
+        admin.recommendations.regenerate(context.principal, {
+          modelId: params.modelId,
+          ...body,
+          tenantId: context.tenantId,
+        }),
     }),
     defineRoute({
       method: "GET",
@@ -119,7 +132,13 @@ export function recommendationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       summary: "List recommendation models (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.recommendations.list(context.principal, query), toRecommendationModelDto),
+        mapPage(
+          await admin.recommendations.list(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toRecommendationModelDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -129,9 +148,15 @@ export function recommendationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       summary: "Get one recommendation model by id (including its generated sets)",
       schema: { params: modelIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.recommendations.get(context.principal, params);
+        const response = await admin.recommendations.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
-        return { status: 200, body: toRecommendationModelDto(response.body as RecommendationModel) };
+        return {
+          status: 200,
+          body: toRecommendationModelDto(response.body as RecommendationModel),
+        };
       },
     }),
   ] as readonly RouteDefinition[];

@@ -10,12 +10,14 @@ const startCheckoutApi = vi.fn();
 const loadCheckoutItems = vi.fn();
 const setCheckoutShippingAddress = vi.fn();
 const setCheckoutBillingAddress = vi.fn();
+const setCheckoutContact = vi.fn();
 const requestCheckoutShippingQuote = vi.fn();
 const selectCheckoutShipping = vi.fn();
 const requestCheckoutTax = vi.fn();
 const selectCheckoutPayment = vi.fn();
 const recalculateCheckoutApi = vi.fn();
 const completeCheckoutApi = vi.fn();
+const initiateCheckoutPayment = vi.fn();
 
 vi.mock("@/lib/runtime-api", () => ({
   getCurrentCart: (...args: unknown[]) => getCurrentCart(...args),
@@ -23,12 +25,14 @@ vi.mock("@/lib/runtime-api", () => ({
   loadCheckoutItems: (...args: unknown[]) => loadCheckoutItems(...args),
   setCheckoutShippingAddress: (...args: unknown[]) => setCheckoutShippingAddress(...args),
   setCheckoutBillingAddress: (...args: unknown[]) => setCheckoutBillingAddress(...args),
+  setCheckoutContact: (...args: unknown[]) => setCheckoutContact(...args),
   requestCheckoutShippingQuote: (...args: unknown[]) => requestCheckoutShippingQuote(...args),
   selectCheckoutShipping: (...args: unknown[]) => selectCheckoutShipping(...args),
   requestCheckoutTax: (...args: unknown[]) => requestCheckoutTax(...args),
   selectCheckoutPayment: (...args: unknown[]) => selectCheckoutPayment(...args),
   recalculateCheckout: (...args: unknown[]) => recalculateCheckoutApi(...args),
   completeCheckout: (...args: unknown[]) => completeCheckoutApi(...args),
+  initiateCheckoutPayment: (...args: unknown[]) => initiateCheckoutPayment(...args),
 }));
 
 const revalidatePath = vi.fn();
@@ -84,7 +88,9 @@ function session(overrides: Partial<CheckoutSessionSummary> = {}): CheckoutSessi
     totals: null,
     shippingAddress: null,
     billingAddress: null,
+    contactEmail: null,
     selectedShippingMethod: null,
+    selectedPaymentMethod: null,
     orderRef: null,
     ...overrides,
   };
@@ -107,7 +113,7 @@ describe("startCheckout — session cookie handling", () => {
   });
 
   it("starts a checkout session, loads items, and stores the checkout-session cookie on success", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     getCurrentCart.mockResolvedValue(cartResponse());
     startCheckoutApi.mockResolvedValue({ status: 201, body: session() });
     loadCheckoutItems.mockResolvedValue({ status: 200, body: session() });
@@ -118,14 +124,14 @@ describe("startCheckout — session cookie handling", () => {
     expect(startCheckoutApi).toHaveBeenCalledWith("session-a", "cart-1", "USD");
     expect(loadCheckoutItems).toHaveBeenCalledWith("checkout-1", "session-a", "cart-1");
     expect(cookieSet).toHaveBeenCalledWith(
-      "lumo_checkout_session",
+      "morbeh_checkout_session",
       "checkout-1",
       expect.objectContaining({ httpOnly: true }),
     );
   });
 
   it("a failure reading the current cart never calls startCheckout", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     getCurrentCart.mockResolvedValue({ status: 500, body: null });
 
     const result = await actions.startCheckout("cart-1");
@@ -143,7 +149,7 @@ describe("status → reason mapping (shared by every mutating action)", () => {
     [500, "network"],
     [0, "network"],
   ] as const)("status %i maps to reason %s", async (status, reason) => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     setCheckoutShippingAddress.mockResolvedValue({ status, body: null });
 
     const result = await actions.setShippingAddress("checkout-1", address);
@@ -152,7 +158,7 @@ describe("status → reason mapping (shared by every mutating action)", () => {
   });
 
   it("a 2xx response maps to ok with the checkoutSessionId echoed back, and revalidates /checkout", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     setCheckoutShippingAddress.mockResolvedValue({ status: 200, body: session() });
 
     const result = await actions.setShippingAddress("checkout-1", address);
@@ -162,16 +168,37 @@ describe("status → reason mapping (shared by every mutating action)", () => {
   });
 });
 
+describe("the recipient on the shipping address (Plan 3A)", () => {
+  it("forwards the name and phone to the runtime API untouched", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    setCheckoutShippingAddress.mockResolvedValue({ status: 200, body: session() });
+
+    await actions.setShippingAddress("checkout-1", {
+      ...address,
+      name: "Mona Ali",
+      phone: "+201012345678",
+    });
+
+    expect(setCheckoutShippingAddress).toHaveBeenCalledWith(
+      "checkout-1",
+      "session-a",
+      expect.objectContaining({ name: "Mona Ali", phone: "+201012345678" }),
+    );
+  });
+});
+
 describe("every mutating action requires an existing guest session — none mints one", () => {
   it.each([
     ["setShippingAddress", () => actions.setShippingAddress("checkout-1", address)],
     ["setBillingAddress", () => actions.setBillingAddress("checkout-1", address)],
+    ["setContactEmail", () => actions.setContactEmail("checkout-1", "guest@example.com")],
     ["requestShippingQuote", () => actions.requestShippingQuote("checkout-1")],
     ["selectShipping", () => actions.selectShipping("checkout-1", "standard")],
     ["requestTax", () => actions.requestTax("checkout-1")],
     ["selectPayment", () => actions.selectPayment("checkout-1", "pm_1", "stripe")],
     ["recalculate", () => actions.recalculate("checkout-1")],
     ["completeCheckout", () => actions.completeCheckout("checkout-1")],
+    ["initiatePayment", () => actions.initiatePayment("checkout-1")],
   ] as const)("%s returns an ownership error with no guest session cookie", async (_name, call) => {
     const result = await call();
 
@@ -180,12 +207,35 @@ describe("every mutating action requires an existing guest session — none mint
   });
 });
 
+describe("setContactEmail (WP-1, G-52)", () => {
+  it("sends the email with the server-held guest sessionRef — never one the caller supplies — and revalidates", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    setCheckoutContact.mockResolvedValue({ status: 200, body: session() });
+
+    const result = await actions.setContactEmail("checkout-1", "guest@example.com");
+
+    expect(result).toEqual({ ok: true, checkoutSessionId: "checkout-1" });
+    expect(setCheckoutContact).toHaveBeenCalledWith("checkout-1", "session-a", "guest@example.com");
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
+  });
+
+  it("maps a 422 from the Runtime API to a validation error", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    setCheckoutContact.mockResolvedValue({ status: 422, body: null });
+
+    expect(await actions.setContactEmail("checkout-1", "nope")).toEqual({
+      ok: false,
+      reason: "validation",
+    });
+  });
+});
+
 describe("requestShippingQuote — carries quotes on success", () => {
   it("returns the quoted methods on success", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
     const quotes: readonly ShippingQuoteSummary[] = [
-      { method: "standard", rateAmountMinor: 500 },
-      { method: "express", rateAmountMinor: 1500 },
+      { method: "rate-standard", name: "Standard", rateAmountMinor: 500 },
+      { method: "rate-express", name: "Express", rateAmountMinor: 1500 },
     ];
     requestCheckoutShippingQuote.mockResolvedValue({ status: 200, body: { quotes } });
 
@@ -197,29 +247,145 @@ describe("requestShippingQuote — carries quotes on success", () => {
 
 describe("completeCheckout", () => {
   it("generates a fresh idempotency key server-side and never clears the checkout-session cookie itself", async () => {
-    cookieStore.set("lumo-storefront-guest-session", "session-a");
-    cookieStore.set("lumo_checkout_session", "checkout-1");
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    cookieStore.set("morbeh_checkout_session", "checkout-1");
     completeCheckoutApi.mockResolvedValue({ status: 200, body: session({ orderRef: "order-1" }) });
 
     const result = await actions.completeCheckout("checkout-1");
 
     expect(result).toEqual({ ok: true, checkoutSessionId: "checkout-1" });
-    expect(completeCheckoutApi).toHaveBeenCalledWith(
-      "checkout-1",
-      "session-a",
-      expect.any(String),
-    );
+    expect(completeCheckoutApi).toHaveBeenCalledWith("checkout-1", "session-a", expect.any(String));
     expect(cookieDelete).not.toHaveBeenCalled();
-    expect(cookieStore.get("lumo_checkout_session")).toBe("checkout-1");
+    expect(cookieStore.get("morbeh_checkout_session")).toBe("checkout-1");
   });
 });
 
 describe("clearCheckoutSession", () => {
   it("deletes the checkout-session cookie", async () => {
-    cookieStore.set("lumo_checkout_session", "checkout-1");
+    cookieStore.set("morbeh_checkout_session", "checkout-1");
 
     await actions.clearCheckoutSession();
 
-    expect(cookieDelete).toHaveBeenCalledWith("lumo_checkout_session");
+    expect(cookieDelete).toHaveBeenCalledWith("morbeh_checkout_session");
+  });
+});
+
+describe("initiatePayment (WP-13 T13.6) — the COD / hosted-checkout divergence", () => {
+  function opened(provider: string, clientHandle?: string, status = 201) {
+    return {
+      status,
+      body: {
+        checkoutSessionId: "checkout-1",
+        provider,
+        paymentIntentId: "pi-1",
+        status: "created",
+        ...(clientHandle !== undefined ? { clientHandle } : {}),
+      },
+    };
+  }
+
+  beforeEach(() => cookieStore.set("morbeh-storefront-guest-session", "session-a"));
+
+  it("sends only the server-held sessionRef — never a provider or an amount", async () => {
+    initiateCheckoutPayment.mockResolvedValue(opened("cod"));
+
+    await actions.initiatePayment("checkout-1");
+
+    expect(initiateCheckoutPayment).toHaveBeenCalledWith("checkout-1", "session-a");
+  });
+
+  it("cash on delivery has no hosted page: it goes to confirmation", async () => {
+    initiateCheckoutPayment.mockResolvedValue(opened("cod"));
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({ ok: true, next: "confirmation" });
+  });
+
+  it("a hosted-checkout method with an https handle redirects to exactly that handle", async () => {
+    initiateCheckoutPayment.mockResolvedValue(
+      opened("paymob", "https://accept.paymob.example/pay?token=t1"),
+    );
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({
+      ok: true,
+      next: "redirect",
+      url: "https://accept.paymob.example/pay?token=t1",
+    });
+  });
+
+  it.each([
+    [
+      "no handle at all (a repeat call: the handle is returned once)",
+      opened("paymob", undefined, 201),
+    ],
+    [
+      "a handle that is not a URL (a Stripe client secret needs Stripe.js)",
+      opened("stripe", "cs_test_123"),
+    ],
+    ["a non-https handle", opened("paymob", "javascript:alert(1)")],
+    ["a plain http handle", opened("paymob", "http://accept.paymob.example/pay")],
+  ])("fails closed when a redirect was required but there is %s", async (_label, response) => {
+    initiateCheckoutPayment.mockResolvedValue(response);
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({ ok: false, reason: "handoff" });
+  });
+
+  it("does not treat an unknown provider as offline — it needs a handle like any hosted method", async () => {
+    initiateCheckoutPayment.mockResolvedValue(opened("mystery-pay"));
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({ ok: false, reason: "handoff" });
+  });
+
+  it.each([
+    [404, "ownership"],
+    [409, "unavailable"],
+    [422, "validation"],
+    [500, "network"],
+    [0, "network"],
+  ] as const)("maps a %s from the Runtime API to %s", async (status, reason) => {
+    initiateCheckoutPayment.mockResolvedValue({ status, body: null });
+
+    expect(await actions.initiatePayment("checkout-1")).toEqual({ ok: false, reason });
+  });
+});
+
+describe("completeCheckout — out of stock (Plan 2B-3)", () => {
+  it("maps a 409 whose message starts with OUT_OF_STOCK: to the out-of-stock reason", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue({
+      status: 409,
+      body: {
+        code: "BUSINESS_RULE",
+        message: 'OUT_OF_STOCK: insufficient stock for product "p1": requested 3, 1 available',
+      },
+    });
+
+    const result = await actions.completeCheckout("checkout-1");
+
+    expect(result).toEqual({ ok: false, reason: "out-of-stock" });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("keeps any other 409 as unavailable", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue({
+      status: 409,
+      body: {
+        code: "BUSINESS_RULE",
+        message: "Checkout session is completed and can no longer be modified",
+      },
+    });
+
+    const result = await actions.completeCheckout("checkout-1");
+
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+  });
+
+  it("keeps a 409 with no readable body as unavailable", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue({ status: 409, body: null });
+
+    const result = await actions.completeCheckout("checkout-1");
+
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
   });
 });

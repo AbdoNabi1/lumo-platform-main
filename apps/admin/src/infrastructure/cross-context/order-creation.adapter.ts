@@ -1,5 +1,11 @@
 import type { OrderController } from "@platform/orders";
 import type { OrderCreationPort } from "@platform/checkout";
+import type { CustomerController } from "@platform/identity";
+import { ValidationError } from "@platform/utils";
+
+interface ResolveGuestCustomerBody {
+  readonly customerId: string;
+}
 
 interface CreateFromCheckoutBody {
   readonly orderId: string;
@@ -17,19 +23,31 @@ type OrderCreationInput = Parameters<OrderCreationPort["create"]>[0];
  *
  * Mapping gaps, documented rather than silently papered over:
  *
- * - `customerRef` undefined (guest checkout): `CreateOrderFromCheckout`'s input requires a
+ * - `customerRef` undefined (guest checkout) — **CLOSED by WP-1 / G-52 (2026-09-21)**: the adapter
+ *   now resolves (finds or creates) a guest customer in Identity from the session's contact email
+ *   (`ResolveGuestCustomer`, scoped to `input.tenantId`) and places the order against that id. A
+ *   session with no contact email throws a `ValidationError` (a 4xx — the caller can fix it by
+ *   supplying an email), not a plain `Error`. Resolving is not authenticating: the guest gets an
+ *   order attached to that customer, never a session as them. The paragraph below is kept as the
+ *   record of the original limitation and the decision that closed it.
+ * - (historical) `customerRef` undefined (guest checkout): `CreateOrderFromCheckout`'s input requires a
  *   non-optional `customerRef: string`, but `OrderCreationPort.create`'s `customerRef` is
  *   `string | undefined` because `CheckoutSession` supports guest checkout (`session.isGuest`).
  *   This adapter throws rather than fabricating a placeholder value like `"guest"` — guest
  *   checkout cannot complete an order today; that is a known, deliberate C-2 scope boundary that
  *   needs a product decision (e.g. "require account creation before order creation" or "widen
  *   Orders to accept a nullable customerRef") before it can be closed.
- * - `CheckoutItem.productRef` is mapped to BOTH `productId` and `name` in Orders' item input.
- *   `CheckoutItem` carries no display-name field of its own (widening it is out of scope here), so
- *   order line items will show a product ref instead of a friendly name until a future task
- *   threads a real name through Cart -> Checkout snapshots.
- * - `CheckoutAddress.line2` is dropped: Orders' `CreateOrderFromCheckoutAddressInput` has no
- *   `line2` field to receive it.
+ * - **Order line names (Plan 2A).** A line that carries the product title snapshotted at cart-add
+ *   time (`CheckoutItem.title`) is named by it, and also passes its `variantRef`, `sku` and
+ *   `variantTitle`. Only a LEGACY line (added before variants were tracked, so with no title) still
+ *   falls back to the product ref as its name, exactly as before.
+ * - **Shipping method (Plan 3B).** The method the shopper selected (`CheckoutSession.shippingSelection`)
+ *   travels as `input.shippingMethod` and is snapshotted into the order's `totals` JSON, so the admin
+ *   can show "Delivery method" without asking Checkout. Orders placed before this have none.
+ * - **Province, rate name and tax (Plan 3C).** Both addresses carry their `province` (ISO 3166-2), and the
+ *   totals carry `shippingName` and `taxIncluded`, so the order records how its tax was worked out.
+ * - **Recipient (Plan 3A).** `CheckoutAddress.name`, `phone` and `line2` travel to Orders' address
+ *   input (`name`, `phone`, `line2`); Orders persists them as `recipient_name`, `phone` and `line2`.
  *
  * Residual idempotency risk — documented, not closed here, and WIDER than a crash window (an
  * earlier revision of this comment understated it; corrected per the C-2 final review):
@@ -62,44 +80,63 @@ type OrderCreationInput = Parameters<OrderCreationPort["create"]>[0];
  */
 export class OrderCreationAdapter implements OrderCreationPort {
   private readonly orders: Pick<OrderController, "createFromCheckout">;
+  private readonly customers: Pick<CustomerController, "resolveGuestCustomer">;
 
-  constructor(orders: Pick<OrderController, "createFromCheckout">) {
+  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `OrderCreationPort.create`'s input carries `tenantId`. */
+  constructor(
+    orders: Pick<OrderController, "createFromCheckout">,
+    customers: Pick<CustomerController, "resolveGuestCustomer">,
+  ) {
     this.orders = orders;
+    this.customers = customers;
   }
 
   async create(input: OrderCreationInput): Promise<{ readonly orderRef: string }> {
-    if (input.customerRef === undefined) {
-      throw new Error(
-        `OrderCreationAdapter: cannot create an order for checkout session ` +
-          `"${input.checkoutSessionId}" — guest checkout has no customerRef and order creation ` +
-          `currently requires one (C-2 known limitation, needs product decision before guest ` +
-          `checkout can complete)`,
-      );
-    }
+    const customerRef = input.customerRef ?? (await this.resolveGuestCustomerRef(input));
 
     const response = await this.orders.createFromCheckout({
+      tenantId: input.tenantId,
       checkoutRef: input.checkoutSessionId,
-      customerRef: input.customerRef,
+      customerRef,
       currency: input.currency,
       items: input.items.map((item) => ({
         productId: item.productRef,
-        // CheckoutItem carries no display name — see class doc comment.
-        name: item.productRef,
+        // The real product title when the line carries one; legacy lines keep the ref — see the
+        // class doc comment.
+        name: item.title ?? item.productRef,
         unitPriceAmountMinor: item.unitPriceAmountMinor,
         quantity: item.quantity,
+        ...(item.variantRef === undefined
+          ? {}
+          : {
+              variantRef: item.variantRef,
+              sku: item.sku,
+              variantTitle: item.variantTitle,
+            }),
       })),
       billingAddress: {
+        name: input.billingAddress.name,
+        phone: input.billingAddress.phone,
         line1: input.billingAddress.line1,
-        // line2 dropped — Orders' address input has no field for it, see class doc comment.
+        line2: input.billingAddress.line2,
         city: input.billingAddress.city,
         postalCode: input.billingAddress.postalCode,
         country: input.billingAddress.country,
+        ...(input.billingAddress.province === undefined
+          ? {}
+          : { province: input.billingAddress.province }),
       },
       shippingAddress: {
+        name: input.shippingAddress.name,
+        phone: input.shippingAddress.phone,
         line1: input.shippingAddress.line1,
+        line2: input.shippingAddress.line2,
         city: input.shippingAddress.city,
         postalCode: input.shippingAddress.postalCode,
         country: input.shippingAddress.country,
+        ...(input.shippingAddress.province === undefined
+          ? {}
+          : { province: input.shippingAddress.province }),
       },
       totals: {
         subtotalMinor: input.totals.subtotalMinor,
@@ -107,6 +144,29 @@ export class OrderCreationAdapter implements OrderCreationPort {
         shippingMinor: input.totals.shippingMinor,
         discountMinor: input.totals.discountMinor,
         totalMinor: input.totals.totalMinor,
+        // Plan 3B: snapshotted into the order's totals JSON (no migration). Absent when the session
+        // selected no shipping method — never a default.
+        ...(input.shippingMethod === undefined ? {} : { shippingMethod: input.shippingMethod }),
+        // Plan 3C: the rate's name as the shopper saw it, and whether the tax is inside the prices
+        // (so the order page can say "Including EGP 14.00 in taxes" instead of adding it again).
+        ...(input.totals.shippingName === undefined
+          ? {}
+          : { shippingName: input.totals.shippingName }),
+        taxIncluded: input.totals.taxIncluded,
+        // Phase 2: the free-shipping part and each discount, as the shopper saw them at checkout.
+        ...(input.totals.shippingDiscountMinor === 0
+          ? {}
+          : { shippingDiscountMinor: input.totals.shippingDiscountMinor }),
+        ...(input.discounts === undefined || input.discounts.length === 0
+          ? {}
+          : {
+              discounts: input.discounts.map((d) => ({
+                title: d.title,
+                ...(d.code === undefined ? {} : { code: d.code }),
+                discountClass: d.discountClass,
+                amountMinor: d.amountMinor,
+              })),
+            }),
       },
     });
 
@@ -120,5 +180,33 @@ export class OrderCreationAdapter implements OrderCreationPort {
 
     const { orderId } = response.body as CreateFromCheckoutBody;
     return { orderRef: orderId };
+  }
+
+  /**
+   * Guest checkout: find-or-create the customer for the session's contact email, in the session's
+   * own tenant (`input.tenantId` — never a default, never re-read from a request header).
+   */
+  private async resolveGuestCustomerRef(input: OrderCreationInput): Promise<string> {
+    if (input.contactEmail === undefined) {
+      throw new ValidationError(
+        `Checkout session "${input.checkoutSessionId}" has no customer and no contact email — ` +
+          `a guest must provide an email address before the order can be placed`,
+        [{ field: "email", message: "required to complete a guest checkout" }],
+      );
+    }
+    const response = await this.customers.resolveGuestCustomer({
+      email: input.contactEmail,
+      // The session carries no name; the local part is a display placeholder, never an identifier.
+      name: input.contactEmail.split("@")[0] ?? input.contactEmail,
+      tenantId: input.tenantId,
+    });
+    if (response.status !== 200) {
+      throw new Error(
+        `OrderCreationAdapter: could not resolve a guest customer for checkout session ` +
+          `"${input.checkoutSessionId}" (status ${response.status}): ` +
+          `${JSON.stringify(response.body)}`,
+      );
+    }
+    return (response.body as ResolveGuestCustomerBody).customerId;
   }
 }

@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -12,7 +12,6 @@ export interface PrismaLocalizationRepositoriesDeps {
   readonly prisma: Database;
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
-  readonly tenantId: string;
 }
 
 export class PrismaLocaleRepository implements LocaleRepository {
@@ -22,9 +21,8 @@ export class PrismaLocaleRepository implements LocaleRepository {
     this.deps = deps;
   }
 
-  async save(locale: Locale, tx?: unknown): Promise<void> {
+  async save(locale: Locale, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = locale.id.toString();
     const row = LocaleMapper.toRow(locale, tenantId);
 
@@ -42,32 +40,50 @@ export class PrismaLocaleRepository implements LocaleRepository {
       }
     }
 
-    await this.deps.outbox.write(locale.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      locale.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<Locale | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.locale.findFirst({ where: { id, tenantId: this.deps.tenantId } });
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<Locale | null> {
+    const run = (client: TransactionClient) => client.locale.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : LocaleMapper.toDomain(row);
   }
 
-  async findByCode(code: string, tx?: unknown): Promise<Locale | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.locale.findFirst({ where: { code, tenantId: this.deps.tenantId } });
+  async findByCode(code: string, tenantId: string, tx?: unknown): Promise<Locale | null> {
+    const run = (client: TransactionClient) =>
+      client.locale.findFirst({ where: { code, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return row === null ? null : LocaleMapper.toDomain(row);
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<Locale>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Locale>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.locale.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
-    return buildPaginatedPage(rows.map((row) => LocaleMapper.toDomain(row)), limit, (l) =>
-      l.id.toString(),
+    const run = (client: TransactionClient) =>
+      client.locale.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return buildPaginatedPage(
+      rows.map((row) => LocaleMapper.toDomain(row)),
+      limit,
+      (l) => l.id.toString(),
     );
   }
 
@@ -88,9 +104,8 @@ export class PrismaTranslationSetRepository implements TranslationSetRepository 
     this.deps = deps;
   }
 
-  async save(set: TranslationSet, tx?: unknown): Promise<void> {
+  async save(set: TranslationSet, tenantId: string, tx?: unknown): Promise<void> {
     const client = this.requireTx(tx);
-    const tenantId = this.deps.tenantId;
     const id = set.id.toString();
     const row = TranslationSetMapper.toRow(set, tenantId);
 
@@ -113,40 +128,52 @@ export class PrismaTranslationSetRepository implements TranslationSetRepository 
       }
     }
 
-    await this.deps.outbox.write(set.pullDomainEvents(), this.deps.context, client);
+    await this.deps.outbox.write(
+      set.pullDomainEvents(),
+      { ...this.deps.context, tenantId },
+      client,
+    );
   }
 
-  async findById(id: string, tx?: unknown): Promise<TranslationSet | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.translationSet.findFirst({
-      where: { id, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return TranslationSetMapper.toDomain(this.toMapperRow(row));
+  /** ADR-0014: `tenantId` is an explicit parameter; reuse the caller's `tx` if given, else scope via `runReadScoped`. */
+  async findById(id: string, tenantId: string, tx?: unknown): Promise<TranslationSet | null> {
+    const run = (client: TransactionClient) =>
+      client.translationSet.findFirst({ where: { id, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : TranslationSetMapper.toDomain(this.toMapperRow(row));
   }
 
   async findByLocaleAndNamespace(
     localeRef: string,
     namespace: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<TranslationSet | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.translationSet.findFirst({
-      where: { localeRef, namespace, tenantId: this.deps.tenantId },
-    });
-    if (row === null) return null;
-    return TranslationSetMapper.toDomain(this.toMapperRow(row));
+    const run = (client: TransactionClient) =>
+      client.translationSet.findFirst({ where: { localeRef, namespace, tenantId } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return row === null ? null : TranslationSetMapper.toDomain(this.toMapperRow(row));
   }
 
-  async list(page: CursorPage, tx?: unknown): Promise<Paginated<TranslationSet>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
+  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<TranslationSet>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.translationSet.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    const run = (client: TransactionClient) =>
+      client.translationSet.findMany({
+        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
     return buildPaginatedPage(
       rows.map((row) => TranslationSetMapper.toDomain(this.toMapperRow(row))),
       limit,

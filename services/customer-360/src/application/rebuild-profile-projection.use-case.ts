@@ -13,6 +13,9 @@ import type { ProfileHistoryStore } from "../ports/profile-history-store";
 import type { ProfileStore } from "../ports/profile-store";
 
 export interface RebuildProfileProjectionInput {
+  /** Tenant every read/write is scoped to (ADR-0014) — from the verified request context,
+   * never caller-supplied data. */
+  readonly tenantId: string;
   readonly identifier: IdentifierRef;
 }
 
@@ -52,7 +55,7 @@ export class RebuildProfileProjection implements UseCase<
   async execute(
     input: RebuildProfileProjectionInput,
   ): Promise<Result<RebuildProfileProjectionOutput, DomainError>> {
-    const latest = await this.deps.history.latestFor(input.identifier);
+    const latest = await this.deps.history.latestFor(input.identifier, input.tenantId);
     if (latest === null) {
       return ok({ profile: null, fieldCount: 0 });
     }
@@ -81,8 +84,8 @@ export class RebuildProfileProjection implements UseCase<
           },
         );
 
-        await this.deps.history.append(snapshot, event, tx);
-        await this.deps.profiles.saveCurrent(rebuilt, tx);
+        await this.deps.history.append(snapshot, event, input.tenantId, tx);
+        await this.deps.profiles.saveCurrent(rebuilt, input.tenantId, tx);
 
         return ok({ profile: rebuilt, fieldCount: rebuilt.fields.size });
       },

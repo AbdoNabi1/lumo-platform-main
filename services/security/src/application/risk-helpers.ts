@@ -14,6 +14,7 @@ export async function enrichRiskSignals(
     readonly deviceFingerprint?: string;
     readonly base?: RiskEngineSignals;
   },
+  tenantId: string,
 ): Promise<RiskEngineSignals> {
   let signals: RiskEngineSignals = { ...(input.base ?? {}) };
   if (input.ip !== undefined) {
@@ -28,7 +29,7 @@ export async function enrichRiskSignals(
     };
   }
   if (input.deviceFingerprint !== undefined && signals.deviceReputation === undefined) {
-    const device = await deps.devices.findByFingerprint(input.deviceFingerprint);
+    const device = await deps.devices.findByFingerprint(input.deviceFingerprint, tenantId);
     if (device !== null) signals = { ...signals, deviceReputation: device.reputation };
   }
   return signals;

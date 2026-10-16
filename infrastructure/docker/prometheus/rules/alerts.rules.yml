@@ -2,10 +2,10 @@
 # and carries a runbook link (docs/operations/RUNBOOKS.md#<anchor>). Severities: page = wake a human,
 # ticket = handle in business hours.
 groups:
-  - name: lumo-availability
+  - name: morbeh-availability
     rules:
       - alert: RuntimeProcessDown
-        expr: up{job="lumo-runtime"} == 0
+        expr: up{job="morbeh-runtime"} == 0
         for: 2m
         labels: { severity: page }
         annotations:
@@ -31,7 +31,7 @@ groups:
           description: "{{ $labels.component }} reports dependency '{{ $labels.name }}' down for 3m."
           runbook: "docs/operations/RUNBOOKS.md#dependency-down"
 
-  - name: lumo-slo
+  - name: morbeh-slo
     rules:
       # Fast burn: 14.4x over 1h exhausts a 30-day budget in ~2 days — page.
       - alert: ApiErrorBudgetFastBurn
@@ -62,10 +62,10 @@ groups:
           description: '5m average request handling time is {{ $value | printf "%.0f" }}ms (budget 300ms).'
           runbook: "docs/operations/RUNBOOKS.md#api-latency"
 
-  - name: lumo-messaging
+  - name: morbeh-messaging
     rules:
       - alert: MessagingDeadLettering
-        expr: rate(messaging_messages_dead_lettered_total{job="lumo-runtime"}[10m]) > 0
+        expr: rate(messaging_messages_dead_lettered_total{job="morbeh-runtime"}[10m]) > 0
         for: 10m
         labels: { severity: ticket }
         annotations:
@@ -82,10 +82,10 @@ groups:
           description: "Processed/dead-lettered ratio dropped below the messaging SLO."
           runbook: "docs/operations/RUNBOOKS.md#messaging-dead-letter"
 
-  - name: lumo-saturation
+  - name: morbeh-saturation
     rules:
       - alert: RuntimeHighMemory
-        expr: process_resident_memory_bytes{job="lumo-runtime"} > 480 * 1024 * 1024
+        expr: process_resident_memory_bytes{job="morbeh-runtime"} > 480 * 1024 * 1024
         for: 10m
         labels: { severity: ticket }
         annotations:
@@ -93,7 +93,7 @@ groups:
           description: "RSS above 480Mi for 10m — risk of OOMKill against the container limit."
           runbook: "docs/operations/RUNBOOKS.md#high-memory"
 
-  - name: lumo-cdc
+  - name: morbeh-cdc
     rules:
       # Phase A.23: the CDC watchdog (apps/runtime/src/scheduler.ts) restarts a FAILED Kafka Connect
       # task automatically — A.22 proved that restart always works and loses zero events, so a task
@@ -119,7 +119,7 @@ groups:
           description: "The watchdog's rolling-window restart cap (Task 4 Case D) was reached — automatic recovery has stopped for this task; it needs a human (or a config-level fix) now."
           runbook: "docs/operations/RUNBOOKS.md#cdc-watchdog-restart-cap-reached"
 
-  - name: lumo-security
+  - name: morbeh-security
     rules:
       # Requires the OTel pipeline (H-4). Absent metric → no alert, which is correct here.
       - alert: ElevatedFailedLogins

@@ -89,7 +89,11 @@ describe("EdgeZeroTrustEvaluator", () => {
       instrumentation: stubInstrumentation,
       logger: silent,
     });
-    const result = await evaluator.evaluate({ principalId: "p-1", permission: "orders:read" });
+    const result = await evaluator.evaluate({
+      tenantId: "tenant-a",
+      principalId: "p-1",
+      permission: "orders:read",
+    });
     expect(result).toMatchObject({ effect: "allow", allowed: true, status: 200 });
   });
 
@@ -101,7 +105,9 @@ describe("EdgeZeroTrustEvaluator", () => {
       instrumentation: stubInstrumentation,
       logger: silent,
     });
-    expect(await deny.evaluate({ principalId: "p", permission: "x:y" })).toMatchObject({
+    expect(
+      await deny.evaluate({ tenantId: "tenant-a", principalId: "p", permission: "x:y" }),
+    ).toMatchObject({
       effect: "deny",
       status: 403,
       reasons: ["no-permission"],
@@ -112,7 +118,9 @@ describe("EdgeZeroTrustEvaluator", () => {
       instrumentation: stubInstrumentation,
       logger: silent,
     });
-    expect(await challenge.evaluate({ principalId: "p", permission: "x:y" })).toMatchObject({
+    expect(
+      await challenge.evaluate({ tenantId: "tenant-a", principalId: "p", permission: "x:y" }),
+    ).toMatchObject({
       effect: "challenge",
       status: 401,
     });
@@ -133,7 +141,12 @@ describe("EdgeZeroTrustEvaluator", () => {
       logger: silent,
       threat,
     });
-    await evaluator.evaluate({ principalId: "p", permission: "x:y", ip: "1.2.3.4" });
+    await evaluator.evaluate({
+      tenantId: "tenant-a",
+      principalId: "p",
+      permission: "x:y",
+      ip: "1.2.3.4",
+    });
     expect(decider.lastInput?.risk).toMatchObject({ threatIntelHit: true, ipReputation: 88 });
   });
 
@@ -154,8 +167,18 @@ describe("EdgeZeroTrustEvaluator", () => {
       threat,
       cache,
     });
-    await evaluator.evaluate({ principalId: "p", permission: "x:y", ip: "1.2.3.4" });
-    await evaluator.evaluate({ principalId: "p", permission: "x:y", ip: "1.2.3.4" });
+    await evaluator.evaluate({
+      tenantId: "tenant-a",
+      principalId: "p",
+      permission: "x:y",
+      ip: "1.2.3.4",
+    });
+    await evaluator.evaluate({
+      tenantId: "tenant-a",
+      principalId: "p",
+      permission: "x:y",
+      ip: "1.2.3.4",
+    });
     expect(threat.calls).toBe(1);
   });
 });

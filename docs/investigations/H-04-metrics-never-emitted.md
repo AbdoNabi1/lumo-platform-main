@@ -116,7 +116,7 @@ Every metric name the rules reference is produced by this file.
 Two config files make factual claims about the repository that are false — and they are the files an on-call engineer trusts most.
 
 1. **`slo.recording.rules.yml` cites a source file that does not exist**, as its justification for which metrics are safe to build SLIs from.
-2. **`alerts.rules.yml` asserts every alert references an exposed metric.** Of its rules, only `up{job="lumo-runtime"} == 0` (Prometheus scrape failure) survives.
+2. **`alerts.rules.yml` asserts every alert references an exposed metric.** Of its rules, only `up{job="morbeh-runtime"} == 0` (Prometheus scrape failure) survives.
 
 The consequence is worse than absent monitoring, because the recording rules are written with divide-by-zero guards that **fail towards "healthy"**:
 
@@ -141,7 +141,7 @@ With no `http_requests_total` series at all, `job:http_requests_errors:rate5m` i
 - Combined with **H-10** (OTel never started), production has neither metrics nor traces. The only telemetry is the structured request log at `packages/http/src/server.ts:118-128`.
 - The three Grafana dashboards (`platform-overview.json`, `messaging.json`, `security.json`) render empty or "No data" panels.
 
-The single surviving signal — `up{job="lumo-runtime"} == 0` — detects only that the process stopped answering scrapes.
+The single surviving signal — `up{job="morbeh-runtime"} == 0` — detects only that the process stopped answering scrapes.
 
 ---
 

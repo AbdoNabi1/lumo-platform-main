@@ -1,11 +1,53 @@
+import { headers } from "next/headers";
+import { SHOP_ID_HEADER } from "./shop-host";
+import type { ShippableCountries } from "./checkout-address";
+
 const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
 const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
+
+/**
+ * Plan 1A: the shop this request is for. With host routing off (default) it is the one deployment
+ * tenant, as before. With it on, the middleware put the resolved shop id on the request; its absence
+ * is a wiring bug, so this throws rather than silently serving the default shop.
+ */
+async function currentTenantId(): Promise<string> {
+  if (process.env.STOREFRONT_HOST_ROUTING !== "on") return TENANT_ID;
+  const shopId = (await headers()).get(SHOP_ID_HEADER);
+  if (shopId === null || shopId === "") {
+    throw new Error("storefront: no shop resolved for this request (middleware did not run)");
+  }
+  return shopId;
+}
+
+/** Plan 2C-3: a product picture as the public API serves it — nothing but where it is, how to describe it, and its size. */
+export interface ProductImageSummary {
+  readonly id: string;
+  readonly url: string;
+  readonly alt: string | null;
+  readonly width: number | null;
+  readonly height: number | null;
+}
 
 export interface ProductVariantSummary {
   readonly id: string;
   readonly sku: string;
   readonly priceAmountMinor: number;
   readonly currency: string;
+  /** Plan 2A: the variant's position in the option matrix (`{ Size: "L" }`); null for a plain variant. */
+  readonly selection: Readonly<Record<string, string>> | null;
+  /** Plan 2A: human label in the product's option order (`"Red / L"`); null when no selection. */
+  readonly title: string | null;
+  /** Plan 2C-1: the struck-through "was" price (always above the price); null when unset. */
+  readonly compareAtAmountMinor: number | null;
+  /** Plan 2B-1: untracked, or keeps selling past zero — the storefront never shows "out of stock" for it. */
+  readonly sellableWhenOutOfStock: boolean;
+  /** Plan 2C-3: the id (in the product's `media`) to show when this variant is picked; null/absent when it has none. */
+  readonly imageId?: string | null;
+}
+
+export interface ProductOptionSummary {
+  readonly name: string;
+  readonly values: readonly string[];
 }
 
 export interface ProductSummary {
@@ -14,7 +56,21 @@ export interface ProductSummary {
   readonly name: string;
   readonly slug: string;
   readonly status: string;
+  /** Plan 2C-1: PLAIN TEXT — render as text (`whitespace-pre-line`), never as HTML. */
+  readonly description: string | null;
+  readonly productType: string | null;
+  readonly tags: readonly string[];
+  /** Plan 2A: the options a shopper picks from, in display order; empty for a single-variant product. */
+  readonly options: readonly ProductOptionSummary[];
   readonly variants: readonly ProductVariantSummary[];
+  /**
+   * Plan 2C-3: the pictures in the merchant's order (first = featured). Optional so a storefront deployed
+   * before the runtime still renders; the by-slug read has all of them, list pages the first few.
+   */
+  readonly media?: readonly ProductImageSummary[];
+  readonly featuredImage?: ProductImageSummary | null;
+  /** The second picture, for the card hover. */
+  readonly hoverImage?: ProductImageSummary | null;
 }
 
 export interface CategorySummary {
@@ -43,6 +99,8 @@ export interface PriceSummary {
 export interface InventoryItemSummary {
   readonly id: string;
   readonly productId: string;
+  /** Plan 2B-1: the variant this stock belongs to; null on a legacy product-level row. */
+  readonly variantId: string | null;
   readonly warehouseId: string;
   readonly onHand: number;
   readonly reserved: number;
@@ -62,11 +120,18 @@ export interface ProductReviewSummary {
 
 export interface CartItemSummary {
   readonly productId: string;
+  /** Plan 2A: the variant this line sells, with its snapshot; all null on a line added before variants. */
+  readonly variantId: string | null;
+  readonly sku: string | null;
+  readonly title: string | null;
+  readonly variantTitle: string | null;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
   readonly currency: string;
   readonly lineTotalAmountMinor: number;
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /** Plan 2C-3: the line's picture; null/absent shows the placeholder. */
+  readonly imageUrl?: string | null;
 }
 
 export interface CartSummary {
@@ -81,7 +146,7 @@ export interface CartSummary {
 /**
  * Fetches a cursor-paginated PUBLIC list route from the Runtime API for the storefront's server
  * components (Phase 9 hardening). Previously this module authenticated as an admin principal —
- * minting a Hydra `client_credentials` token with `audience: "lumo-admin"` via a hardcoded dev
+ * minting a Hydra `client_credentials` token with `audience: "morbeh-admin"` via a hardcoded dev
  * secret with no environment gate — to call the same admin-guarded routes `apps/admin` itself uses.
  * The storefront is a customer-facing surface; it has no business holding admin credentials, and a
  * hardcoded fallback secret with no gate was a real finding, not a hypothetical one. The Runtime
@@ -106,7 +171,7 @@ async function fetchList<T>(
           ).toString()}`
         : "";
     const response = await fetch(`${RUNTIME_API_URL}${path}${query}`, {
-      headers: { "x-tenant-id": TENANT_ID },
+      headers: { "x-tenant-id": await currentTenantId() },
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -145,7 +210,7 @@ async function fetchPage<T>(
           ).toString()}`
         : "";
     const response = await fetch(`${RUNTIME_API_URL}${path}${query}`, {
-      headers: { "x-tenant-id": TENANT_ID },
+      headers: { "x-tenant-id": await currentTenantId() },
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -174,7 +239,7 @@ async function fetchItem<T>(
 ): Promise<{ readonly status: number; readonly body: T | null }> {
   try {
     const response = await fetch(`${RUNTIME_API_URL}${path}`, {
-      headers: { "x-tenant-id": TENANT_ID, ...extraHeaders },
+      headers: { "x-tenant-id": await currentTenantId(), ...extraHeaders },
       cache: "no-store",
     });
     if (!response.ok) return { status: response.status, body: null };
@@ -199,7 +264,7 @@ async function postItem<T>(
     const response = await fetch(`${RUNTIME_API_URL}${path}`, {
       method: "POST",
       headers: {
-        "x-tenant-id": TENANT_ID,
+        "x-tenant-id": await currentTenantId(),
         "content-type": "application/json",
         ...extraHeaders,
       },
@@ -211,6 +276,46 @@ async function postItem<T>(
   } catch {
     return { status: 0, body: null };
   }
+}
+
+/** What the storefront may know about the shop without signing in (Plan 3C): its name and currency. */
+export interface PublicStore {
+  readonly name: string;
+  /** The store currency (ISO 4217): every price, cart and order of the shop is in it. */
+  readonly currency: string;
+}
+
+/** The shop's name and currency (`GET /public/store`); `null` when the Runtime API cannot answer. */
+export async function getPublicStore(): Promise<PublicStore | null> {
+  const response = await fetchItem<PublicStore>("/api/v1/public/store");
+  const body = response.body;
+  if (
+    response.status !== 200 ||
+    body === null ||
+    typeof body.name !== "string" ||
+    typeof body.currency !== "string"
+  ) {
+    return null;
+  }
+  return { name: body.name, currency: body.currency };
+}
+
+/**
+ * The countries the shop ships to (`GET /public/shipping/countries`, Plan 3C), from its shipping
+ * zones; `null` when the Runtime API cannot answer.
+ */
+export async function getShippableCountries(): Promise<ShippableCountries | null> {
+  const response = await fetchItem<ShippableCountries>("/api/v1/public/shipping/countries");
+  const body = response.body;
+  if (
+    response.status !== 200 ||
+    body === null ||
+    !Array.isArray(body.countries) ||
+    typeof body.restOfWorld !== "boolean"
+  ) {
+    return null;
+  }
+  return { countries: body.countries, restOfWorld: body.restOfWorld };
 }
 
 /** Products — Catalog (`GET /public/products`, Phase 9). */
@@ -283,8 +388,9 @@ export function getCollectionProducts(
 /**
  * Prices — Pricing (`GET /public/prices`, Phase 9). Despite the route's summary comment
  * ("list published prices"), `ListPrices` filters only soft-deleted rows, not `status` — this
- * can return `"draft"` prices too. Callers must filter `status === "published"` themselves;
- * see `resolvePublishedPrice` in `lib/catalog.ts`, which is the only place this should happen.
+ * can return `"draft"` prices too. Callers must filter `status === "published"` themselves.
+ * Plan 2C-1: the storefront no longer reads this for display or add-to-cart — a product's price is
+ * its variants' (`priceOf` in `lib/catalog.ts`); the Pricing screen is not a price source.
  */
 export function getPrices(first: number = MAX_PAGE_SIZE): Promise<readonly PriceSummary[] | null> {
   return fetchList<PriceSummary>("/api/v1/public/prices", { first });
@@ -324,6 +430,8 @@ export interface CurrentCartResponse {
 export interface AddCartItemInput {
   readonly sessionRef: string;
   readonly productId: string;
+  /** Plan 2A: the size/colour being bought. Omitted only for a single-variant product. */
+  readonly variantId?: string;
   readonly quantity: number;
   readonly inventoryAvailable?: number;
 }
@@ -369,10 +477,11 @@ export function changeCartItemQuantity(
   sessionRef: string,
   productId: string,
   quantity: number,
+  variantId?: string,
 ): Promise<{ readonly status: number; readonly body: CartSummary | null }> {
   return postItem<CartSummary>(
     `/api/v1/public/carts/${encodeURIComponent(cartId)}/items/quantity`,
-    { sessionRef, productId, quantity },
+    { sessionRef, productId, quantity, ...(variantId === undefined ? {} : { variantId }) },
   );
 }
 
@@ -380,10 +489,12 @@ export function removeCartItem(
   cartId: string,
   sessionRef: string,
   productId: string,
+  variantId?: string,
 ): Promise<{ readonly status: number; readonly body: CartSummary | null }> {
   return postItem<CartSummary>(`/api/v1/public/carts/${encodeURIComponent(cartId)}/items/remove`, {
     sessionRef,
     productId,
+    ...(variantId === undefined ? {} : { variantId }),
   });
 }
 
@@ -427,15 +538,46 @@ export interface CustomerProfile {
  * Sending one would be meaningless at best (the routes have no field for it) and an attempt to act
  * as another customer at worst.
  */
+/**
+ * G-72: the response body now depends on which of the request-signup outcomes the Runtime API
+ * chose — `{customerRef}` for a brand-new email (unchanged, immediate registration) or
+ * `{outcome: "link-sent"}` for an email that's already known (guest or registered; D2: the two
+ * are byte-identical, so this storefront call site cannot and must not try to tell them apart).
+ */
 export function registerCustomer(
   email: string,
   name: string,
   password: string,
   idempotencyKey: string,
-): Promise<{ readonly status: number; readonly body: { readonly customerRef: string } | null }> {
-  return postItem<{ readonly customerRef: string }>(
+): Promise<{
+  readonly status: number;
+  readonly body: { readonly customerRef: string } | { readonly outcome: "link-sent" } | null;
+}> {
+  return postItem<{ readonly customerRef: string } | { readonly outcome: "link-sent" }>(
     "/api/v1/public/auth/register",
     { email, name, password },
+    { "Idempotency-Key": idempotencyKey },
+  );
+}
+
+/**
+ * G-72: completes a guest-to-account upgrade using the token from the emailed signup-completion
+ * link. Idempotency-Key is still sent (the route is a POST write like `registerCustomer`), but the
+ * route itself is NOT declared idempotent — replaying it would try to consume an already-consumed
+ * token, which correctly fails rather than replaying a cached success.
+ */
+export function completeSignup(
+  token: string,
+  name: string,
+  password: string,
+  idempotencyKey: string,
+): Promise<{
+  readonly status: number;
+  readonly body: { readonly customerRef: string; readonly email: string } | null;
+}> {
+  return postItem<{ readonly customerRef: string; readonly email: string }>(
+    "/api/v1/public/auth/signup/complete",
+    { token, name, password },
     { "Idempotency-Key": idempotencyKey },
   );
 }
@@ -656,25 +798,43 @@ export function createProductReview(
   input: CreateProductReviewInput,
   idempotencyKey: string,
 ): Promise<{ readonly status: number; readonly body: ProductReviewWriteResult | null }> {
-  return postItem<ProductReviewWriteResult>(
-    "/api/v1/public/reviews",
-    input,
-    { "x-customer-session": sessionId, "Idempotency-Key": idempotencyKey },
-  );
+  return postItem<ProductReviewWriteResult>("/api/v1/public/reviews", input, {
+    "x-customer-session": sessionId,
+    "Idempotency-Key": idempotencyKey,
+  });
 }
 
 export interface CheckoutAddressInput {
+  /** Plan 3A: who receives the order and how to reach them. */
+  readonly name?: string;
+  readonly phone?: string;
   readonly line1: string;
   readonly line2?: string;
   readonly city: string;
+  /** May be empty. */
   readonly postalCode: string;
   readonly country: string;
+  /** Plan 3C: ISO 3166-2 code (e.g. `EG-C`), required for a country with province data. */
+  readonly province?: string | null;
 }
+
+/** An address as the session returns it to its owner: the recipient keys are null when never given. */
+export type CheckoutAddressSummary = Omit<CheckoutAddressInput, "name" | "phone"> & {
+  readonly name?: string | null;
+  readonly phone?: string | null;
+};
 
 export interface CheckoutSessionItemSummary {
   readonly productId: string;
+  /** Plan 2A: the variant snapshot carried from the Cart line; null on a line added before variants. */
+  readonly variantId?: string | null;
+  readonly sku?: string | null;
+  readonly title?: string | null;
+  readonly variantTitle?: string | null;
   readonly quantity: number;
   readonly unitPriceAmountMinor: number;
+  /** Plan 2C-3: the line's picture; null/absent shows the placeholder. */
+  readonly imageUrl?: string | null;
 }
 
 export interface CheckoutTotalsSummary {
@@ -682,6 +842,10 @@ export interface CheckoutTotalsSummary {
   readonly shippingMinor: number;
   readonly taxMinor: number;
   readonly grandTotalMinor: number;
+  /** Plan 3C: the tax is already inside the prices (the total does not add it again). */
+  readonly taxIncluded?: boolean;
+  /** Plan 3C: the name of the shipping rate the shopper chose. */
+  readonly shippingName?: string | null;
 }
 
 export interface CheckoutSessionSummary {
@@ -690,14 +854,22 @@ export interface CheckoutSessionSummary {
   readonly currency: string;
   readonly items: readonly CheckoutSessionItemSummary[];
   readonly totals: CheckoutTotalsSummary | null;
-  readonly shippingAddress: CheckoutAddressInput | null;
-  readonly billingAddress: CheckoutAddressInput | null;
+  readonly shippingAddress: CheckoutAddressSummary | null;
+  readonly billingAddress: CheckoutAddressSummary | null;
+  /** The receipt address a guest gave (WP-1, G-52) — `null` until set. Completing needs it. */
+  readonly contactEmail: string | null;
   readonly selectedShippingMethod: string | null;
+  /** The payment method the shopper selected ("cod", "stripe"…), or null before they choose. */
+  readonly selectedPaymentMethod: string | null;
   readonly orderRef: string | null;
 }
 
 export interface ShippingQuoteSummary {
+  /** The id of the shop's rate: what `selectShipping` sends back. */
   readonly method: string;
+  /** Plan 3C: the rate's name as the merchant wrote it. */
+  readonly name: string;
+  readonly description?: string | null;
   readonly rateAmountMinor: number;
 }
 
@@ -758,6 +930,17 @@ export function setCheckoutBillingAddress(
   return postItem<CheckoutSessionSummary>(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/billing-address`,
     { sessionRef, ...address },
+  );
+}
+
+export function setCheckoutContact(
+  checkoutSessionId: string,
+  sessionRef: string,
+  email: string,
+): Promise<CheckoutResult> {
+  return postItem<CheckoutSessionSummary>(
+    `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/contact`,
+    { sessionRef, email },
   );
 }
 
@@ -851,5 +1034,44 @@ export function generateCheckoutPaymentIntentRequest(
   return fetchItem<PaymentIntentRequestSummary>(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/payment-intent-request`,
     { "x-cart-session": sessionRef },
+  );
+}
+
+/**
+ * The payment methods this merchant offers (`GET /public/payment-methods`, WP-13). The API returns
+ * provider keys only — no display name and, by design, no priority — so the storefront renders
+ * them in the order given and never invents, orders or defaults one. `null` means the list could
+ * not be loaded (distinct from `[]`: the merchant enabled nothing).
+ */
+export async function getPaymentMethods(): Promise<readonly string[] | null> {
+  const response = await fetchItem<{ readonly methods?: readonly string[] }>(
+    "/api/v1/public/payment-methods",
+  );
+  if (response.status < 200 || response.status >= 300 || response.body === null) return null;
+  return response.body.methods ?? null;
+}
+
+export interface InitiatedPaymentSummary {
+  readonly checkoutSessionId: string;
+  /** The method the shopper selected — echoed by the API, never chosen by the storefront. */
+  readonly provider: string;
+  readonly paymentIntentId: string;
+  readonly status: string;
+  /** Present only on the call that opened the intent (a repeat call resumes it without one). */
+  readonly clientHandle?: string;
+}
+
+/**
+ * Opens the payment for the caller's COMPLETED checkout (`POST .../payment`). The body is the
+ * `sessionRef` alone — the route is `.strict()` and reads the shopper's selection off the session,
+ * so this function has no provider, amount or currency to send.
+ */
+export function initiateCheckoutPayment(
+  checkoutSessionId: string,
+  sessionRef: string,
+): Promise<{ readonly status: number; readonly body: InitiatedPaymentSummary | null }> {
+  return postItem<InitiatedPaymentSummary>(
+    `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/payment`,
+    { sessionRef },
   );
 }

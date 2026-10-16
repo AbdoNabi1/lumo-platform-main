@@ -32,13 +32,11 @@ export interface ThemeWiringDeps {
   readonly clock: Clock;
   readonly presets?: DesignPresetProvider;
   /**
-   * Production persistence (G-39/C-01). Present ⇒ `PrismaThemeRepository` + `PrismaUnitOfWork`
-   * (same `prisma?`/`tenantId?`-presence convention as `wireOrders`/`wireComponents`); absent ⇒
-   * in-memory, unchanged.
+   * Production persistence (G-39/C-01). Present ⇒ `PrismaThemeRepository` + `PrismaUnitOfWork`;
+   * absent ⇒ in-memory, unchanged. ADR-0014 (WP-10, T10.3): the repository built here is a
+   * tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Theme table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredTheme {
@@ -71,10 +69,6 @@ function buildController(
  */
 export function wireTheme(deps: ThemeWiringDeps): WiredTheme {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireTheme: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new ThemeEventTranslator(),
@@ -82,8 +76,10 @@ export function wireTheme(deps: ThemeWiringDeps): WiredTheme {
       clock: deps.clock,
       producer: "theme",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const themes = new PrismaThemeRepository({ prisma: deps.prisma, tenantId, outbox, context });
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see ThemeWiringDeps' doc
+    // comment) — the repository built below takes tenantId per call instead.
+    const context = rootEventContext(deps.idGenerator);
+    const themes = new PrismaThemeRepository({ prisma: deps.prisma, outbox, context });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {

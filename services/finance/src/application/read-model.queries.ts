@@ -14,6 +14,7 @@ export interface ReadModelQueryDeps {
 
 export interface GetReadModelInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly model: string;
   readonly key: string;
 }
@@ -38,7 +39,7 @@ export class GetReadModel implements UseCase<GetReadModelInput, { value: unknown
     );
     if (!authz.ok) return err(authz.error);
 
-    const value = await this.deps.readModels.get(input.model, input.key);
+    const value = await this.deps.readModels.get(input.model, input.key, input.tenantId);
     if (value === null)
       return err(new NotFoundError(`No ${input.model} read model for "${input.key}"`));
     return ok({ value });
@@ -47,6 +48,7 @@ export class GetReadModel implements UseCase<GetReadModelInput, { value: unknown
 
 export interface ListReadModelInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly model: string;
 }
 
@@ -72,12 +74,13 @@ export class ListReadModel implements UseCase<ListReadModelInput, { items: reado
     );
     if (!authz.ok) return err(authz.error);
 
-    return ok({ items: await this.deps.readModels.list(input.model) });
+    return ok({ items: await this.deps.readModels.list(input.model, input.tenantId) });
   }
 }
 
 export interface QueryReadModelInput {
   readonly principal: Principal;
+  readonly tenantId: string;
   readonly model: string;
   readonly dimension?: string;
   readonly periodKey?: string;
@@ -116,13 +119,17 @@ export class QueryReadModel implements UseCase<QueryReadModelInput, ReadModelPag
     if (input.dimension !== undefined) filter.dimension = input.dimension;
     if (input.periodKey !== undefined) filter.period = input.periodKey;
 
-    const page = await this.deps.readModels.query(input.model, {
-      filter: Object.keys(filter).length > 0 ? filter : undefined,
-      sort: input.sort,
-      order: input.order,
-      limit: input.limit,
-      cursor: input.cursor,
-    });
+    const page = await this.deps.readModels.query(
+      input.model,
+      {
+        filter: Object.keys(filter).length > 0 ? filter : undefined,
+        sort: input.sort,
+        order: input.order,
+        limit: input.limit,
+        cursor: input.cursor,
+      },
+      input.tenantId,
+    );
     return ok(page);
   }
 }

@@ -58,16 +58,22 @@ async function setup() {
     clock,
   });
 
-  await featureRegistry.featureRegistry.register({
-    key: "ai.copy",
-    name: "AI Copy",
-    category: "ai",
-  });
-  await featureRegistry.featureRegistry.setRequirements({
-    key: "ai.copy",
-    requirements: { requiredPlans: ["starter"] },
-  });
-  await featureRegistry.featureRegistry.advance({ key: "ai.copy", to: "publish" });
+  // T10.7: a definition is a per-tenant row and the port reads the asked-about tenant's catalog, so
+  // every tenant this file asks about publishes its own copy.
+  for (const tenantId of ["t1", "t-free"]) {
+    await featureRegistry.featureRegistry.register({
+      key: "ai.copy",
+      name: "AI Copy",
+      category: "ai",
+      tenantId,
+    });
+    await featureRegistry.featureRegistry.setRequirements({
+      key: "ai.copy",
+      requirements: { requiredPlans: ["starter"] },
+      tenantId,
+    });
+    await featureRegistry.featureRegistry.advance({ key: "ai.copy", to: "publish", tenantId });
+  }
 
   const licensing: LicensingDecider = {
     async checkEntitlement({ tenantRef }) {
@@ -83,7 +89,10 @@ async function setup() {
 describe("P1.3 — Licensing/FeatureRegistry entitlement adapter (real PDP delegation)", () => {
   it("allows an entitled, published feature and denies an unregistered one (fail-closed)", async () => {
     const { licensing, featureRegistry } = await setup();
-    const port = new LicensingEntitlementPort({ featureRegistry, licensing });
+    const port = new LicensingEntitlementPort({
+      featureRegistry,
+      licensing,
+    });
 
     const allowed = await port.check({ tenant: "t1", featureKey: "ai.copy" });
     expect(allowed.allowed).toBe(true);

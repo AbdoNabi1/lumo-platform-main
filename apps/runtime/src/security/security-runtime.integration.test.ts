@@ -39,6 +39,7 @@ function makeEvent<T>(type: string, payload: T): IntegrationEvent<T> {
     occurredAt: new Date("2026-07-19T00:00:00.000Z").toISOString(),
     correlationId: "corr-1",
     causationId: "cause-1",
+    tenantId: TENANT,
     payload,
     metadata: {},
   };
@@ -49,6 +50,7 @@ async function establishSession(
   principalExternalId: string,
 ): Promise<string> {
   const res = await wired.security.establishSession({
+    tenantId: TENANT,
     principalExternalId,
     refreshFingerprint: "fp-1",
     deviceRef: DEVICE,
@@ -93,6 +95,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
     // The RBAC grant resolves (proves RegisterPrincipal + AssignRole → platform-admin took effect for the
     // evaluator, which resolves principals from the principal repository the provisioning consumers write).
     const decision = await wired.sdk.authorize({
+      tenantId: TENANT,
       principalExternalId: ADMIN_USER,
       permission: "orders:read",
       sessionId: await establishSession(wired, ADMIN_USER),
@@ -114,18 +117,18 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
       }),
     );
     const sessionId = await establishSession(wired, ADMIN_USER);
-    const principal: Principal = { id: ADMIN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: ADMIN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     const denied = await guard.ensure(principal, "orders:read", {
+      tenantId: TENANT,
       sessionId,
       deviceRef: DEVICE,
       ip: "203.0.113.7",
-      tenantId: TENANT,
     });
     expect(denied).toBeNull(); // null ⇒ allowed
 
     // WORM audit ledger received the decision (+ registration/session) and its hash chain verifies.
-    const audit = await wired.security.verifyAuditChain({});
+    const audit = await wired.security.verifyAuditChain({ tenantId: TENANT });
     expect(audit.status).toBeLessThan(300);
     expect((audit.body as { valid: boolean; count: number }).valid).toBe(true);
     expect((audit.body as { count: number }).count).toBeGreaterThan(0);
@@ -148,9 +151,10 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
       }),
     );
     const sessionId = await establishSession(wired, SERVICE_USER);
-    const principal: Principal = { id: SERVICE_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: SERVICE_USER, kind: "staff", roles: [], tenantId: TENANT };
 
     const denied = await guard.ensure(principal, "orders:write", {
+      tenantId: TENANT,
       sessionId,
       deviceRef: DEVICE,
       ip: "203.0.113.7",
@@ -172,9 +176,12 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
         role: "admin",
       }),
     );
-    const principal: Principal = { id: ADMIN_USER, kind: "staff", roles: [] };
+    const principal: Principal = { id: ADMIN_USER, kind: "staff", roles: [], tenantId: TENANT };
 
-    const denied = await guard.ensure(principal, "orders:read", { deviceRef: DEVICE }); // no sessionId
+    const denied = await guard.ensure(principal, "orders:read", {
+      tenantId: TENANT,
+      deviceRef: DEVICE,
+    }); // no sessionId
     expect(denied?.status).toBe(403);
     expect(JSON.stringify(denied?.body)).toContain("no valid session");
   });
@@ -196,6 +203,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
 
     // threatIntelHit (+40) + ipReputation 100 (+30) = 70 ⇒ challenge (>= 60, < 85).
     const stepUp = await wired.sdk.authorize({
+      tenantId: TENANT,
       principalExternalId: ADMIN_USER,
       permission: "orders:read",
       sessionId,
@@ -207,6 +215,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
 
     // + newDevice (+15) = 85 ⇒ block (>= 85).
     const blocked = await wired.sdk.authorize({
+      tenantId: TENANT,
       principalExternalId: ADMIN_USER,
       permission: "orders:read",
       sessionId,
@@ -228,6 +237,7 @@ describe("P2.0.2 runtime security — provisioning + zero-trust enforcement chai
     const sessionId = await establishSession(wired, ADMIN_USER);
     // A disabled principal fails the "principal is not active" structural gate regardless of RBAC.
     const decision = await wired.sdk.authorize({
+      tenantId: TENANT,
       principalExternalId: ADMIN_USER,
       permission: "orders:read",
       sessionId,

@@ -1,5 +1,7 @@
 import { UniqueEntityId } from "@platform/domain";
+import type { Decimal } from "decimal.js";
 import { Credit, type CreditStatus } from "../domain/credit";
+import { Coupon, type CouponStatus, type CouponValue } from "../domain/coupon";
 import { Invoice, type InvoiceLineItem, type InvoiceStatus } from "../domain/invoice";
 import {
   MerchantCapabilities,
@@ -73,7 +75,11 @@ export interface UsageCounterRow {
   readonly id: string;
   readonly tenantRef: string;
   readonly resource: string;
-  readonly amount: number;
+  // WP-11 (F-07): `Decimal.Value` (decimal.js), not `number` — Prisma returns a `Prisma.Decimal`
+  // instance for this column at runtime (also accepts the string this mapper's `toRow` now
+  // writes on the way back in). Casting straight to `number` here would silently re-introduce
+  // the float-precision loss `UsageCounter`'s internal `Decimal` accumulator exists to prevent.
+  readonly amount: Decimal.Value;
   readonly unit: string;
   readonly lastRecordedAt: string | null;
   readonly version: number;
@@ -82,7 +88,7 @@ export interface UsageCounterRow {
 export interface CreditRow {
   readonly id: string;
   readonly tenantRef: string;
-  readonly amount: number;
+  readonly amount: Decimal.Value; // WP-11 (F-07) — see UsageCounterRow.amount's comment above.
   readonly reason: string;
   readonly status: CreditStatus;
   readonly version: number;
@@ -96,6 +102,25 @@ export interface InvoiceRow {
   readonly lineItems: readonly InvoiceLineItem[];
   readonly status: InvoiceStatus;
   readonly paymentReference: string | null;
+  /** T14.3: both null or both set (a CHECK in the migration says so too). */
+  readonly discountMinor: number | null;
+  readonly discountCouponRef: string | null;
+  readonly version: number;
+}
+
+export interface CouponRow {
+  readonly id: string;
+  readonly tenantRef: string | null;
+  readonly code: string;
+  readonly kind: string;
+  readonly percentBasisPoints: number | null;
+  readonly amountMinor: number | null;
+  readonly currency: string | null;
+  readonly expiresAt: Date;
+  readonly status: CouponStatus;
+  readonly redeemedInvoiceRef: string | null;
+  readonly redeemedAt: Date | null;
+  readonly revokedReason: string | null;
   readonly version: number;
 }
 
@@ -120,10 +145,10 @@ export class PlanMapper {
     );
   }
 
-  static toRow(plan: Plan, tenantId: string) {
+  /** WP-14: platform-global — no tenant on the row. `originTenantId` is migration provenance only. */
+  static toRow(plan: Plan) {
     return {
       id: plan.id.toString(),
-      tenantId,
       key: plan.key,
       name: plan.name,
       tier: plan.tier,
@@ -148,9 +173,27 @@ export class SubscriptionMapper {
       row.status,
       row.version,
       {
-        renewalSchedule: row.renewalSchedule ?? undefined,
+        // JSONB hands the date back as an ISO string; the domain type is `Date`.
+        renewalSchedule:
+          row.renewalSchedule === null
+            ? undefined
+            : {
+                cycleDays: row.renewalSchedule.cycleDays,
+                nextRenewalAt: new Date(row.renewalSchedule.nextRenewalAt),
+              },
         gracePeriodDays: row.gracePeriodDays ?? undefined,
-        retryPolicy: row.retryPolicy ?? undefined,
+        // JSONB hands `nextRetryAt` back as an ISO string too; revive it the same way as
+        // `renewalSchedule.nextRenewalAt` above (T14.5).
+        retryPolicy:
+          row.retryPolicy === null || row.retryPolicy === undefined
+            ? undefined
+            : {
+                ...row.retryPolicy,
+                nextRetryAt:
+                  row.retryPolicy.nextRetryAt === undefined
+                    ? undefined
+                    : new Date(row.retryPolicy.nextRetryAt),
+              },
         cancellationReason: row.cancellationReason ?? undefined,
         pausedUntil: row.pausedUntil === null ? undefined : new Date(row.pausedUntil),
       },
@@ -243,7 +286,7 @@ export class UsageCounterMapper {
       tenantId,
       tenantRef: counter.tenantRef,
       resource: counter.resource,
-      amount: counter.amount,
+      amount: counter.amountDecimalString, // WP-11 (F-07): exact decimal string, never a `number`.
       unit: counter.unit,
       lastRecordedAt: counter.lastRecordedAt?.toISOString() ?? null,
       version: 1,
@@ -268,7 +311,7 @@ export class CreditMapper {
       id: credit.id.toString(),
       tenantId,
       tenantRef: credit.tenantRef,
-      amount: credit.amount,
+      amount: credit.amountDecimalString, // WP-11 (F-07): exact decimal string, never a `number`.
       reason: credit.reason,
       status: credit.status,
       version: 1,
@@ -283,11 +326,47 @@ export class InvoiceMapper {
       row.tenantRef,
       row.subscriptionRef,
       row.currency,
-      row.lineItems,
+      InvoiceMapper.assertMinorUnitLines(row.id, row.lineItems),
       row.status,
       row.version,
       row.paymentReference ?? undefined,
+      InvoiceMapper.discountOf(row),
     );
+  }
+
+  private static discountOf(row: InvoiceRow) {
+    const { discountMinor, discountCouponRef } = row;
+    if (discountMinor === null && discountCouponRef === null) return undefined;
+    if (
+      discountMinor === null ||
+      discountCouponRef === null ||
+      !Number.isSafeInteger(discountMinor)
+    ) {
+      throw new Error(
+        `Invoice ${row.id} has a half-recorded or non-integer discount; refusing to read it as money`,
+      );
+    }
+    return { couponRef: discountCouponRef, amountMinor: discountMinor };
+  }
+
+  /**
+   * WP-14 (Trap 3): every persisted line must carry an INTEGER `amountMinor`. A pre-convention row
+   * (`{ amount }`, unit never recorded) is refused loudly rather than read as minor units — the
+   * migration `20260924000000_wp14_platform_plans` converts such rows; one that survives is a defect
+   * to surface, not a number to charge.
+   */
+  private static assertMinorUnitLines(
+    invoiceId: string,
+    lineItems: readonly InvoiceLineItem[],
+  ): readonly InvoiceLineItem[] {
+    for (const item of lineItems) {
+      if (!Number.isSafeInteger(item.amountMinor)) {
+        throw new Error(
+          `Invoice ${invoiceId} has a line without an integer amountMinor (pre-WP-14 row?); refusing to read it as money`,
+        );
+      }
+    }
+    return lineItems;
   }
 
   static toRow(invoice: Invoice, tenantId: string) {
@@ -300,6 +379,58 @@ export class InvoiceMapper {
       lineItems: invoice.lineItems,
       status: invoice.status,
       paymentReference: invoice.paymentReference ?? null,
+      discountMinor: invoice.discount?.amountMinor ?? null,
+      discountCouponRef: invoice.discount?.couponRef ?? null,
+      version: 1,
+    };
+  }
+}
+
+export class CouponMapper {
+  static toDomain(row: CouponRow): Coupon {
+    return Coupon.reconstitute(
+      UniqueEntityId.from(row.id),
+      {
+        code: row.code,
+        value: CouponMapper.valueOf(row),
+        expiresAt: row.expiresAt,
+        ...(row.tenantRef === null ? {} : { merchantRef: row.tenantRef }),
+        status: row.status,
+        ...(row.redeemedInvoiceRef === null || row.redeemedAt === null
+          ? {}
+          : { redemption: { invoiceRef: row.redeemedInvoiceRef, redeemedAt: row.redeemedAt } }),
+        ...(row.revokedReason === null ? {} : { revokedReason: row.revokedReason }),
+      },
+      row.version,
+    );
+  }
+
+  private static valueOf(row: CouponRow): CouponValue {
+    if (row.kind === "percentage" && row.percentBasisPoints !== null) {
+      return { kind: "percentage", basisPoints: row.percentBasisPoints };
+    }
+    if (row.kind === "fixed" && row.amountMinor !== null && row.currency !== null) {
+      return { kind: "fixed", amountMinor: row.amountMinor, currency: row.currency };
+    }
+    throw new Error(`Coupon ${row.id} has an inconsistent kind/value shape; refusing to read it`);
+  }
+
+  static toRow(coupon: Coupon, tenantId: string) {
+    const value = coupon.value;
+    return {
+      id: coupon.id.toString(),
+      tenantId,
+      tenantRef: coupon.merchantRef ?? null,
+      code: coupon.code,
+      kind: value.kind,
+      percentBasisPoints: value.kind === "percentage" ? value.basisPoints : null,
+      amountMinor: value.kind === "fixed" ? value.amountMinor : null,
+      currency: value.kind === "fixed" ? value.currency : null,
+      expiresAt: coupon.expiresAt,
+      status: coupon.status,
+      redeemedInvoiceRef: coupon.redemption?.invoiceRef ?? null,
+      redeemedAt: coupon.redemption?.redeemedAt ?? null,
+      revokedReason: coupon.revokedReason ?? null,
       version: 1,
     };
   }

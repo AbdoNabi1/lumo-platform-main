@@ -6,6 +6,8 @@ import type { Cart, CartStatus } from "../domain/cart";
 import type { CartRepository } from "../domain/cart-repository";
 
 export interface ListCartsInput extends CursorPage {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   /** Filters to one status — this is the operator's abandoned-cart recovery view. */
   readonly status?: CartStatus;
 }
@@ -23,7 +25,9 @@ export class ListCarts implements UseCase<ListCartsInput, Paginated<Cart>, Domai
   }
 
   async execute(input: ListCartsInput): Promise<Result<Paginated<Cart>, DomainError>> {
-    const { status, ...page } = input;
-    return ok(await this.deps.carts.list(page, status !== undefined ? { status } : undefined));
+    const { status, tenantId, ...page } = input;
+    return ok(
+      await this.deps.carts.list(page, tenantId, status !== undefined ? { status } : undefined),
+    );
   }
 }

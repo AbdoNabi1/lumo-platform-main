@@ -130,7 +130,12 @@ model ExchangeRate {
   tenantId       String   @map("tenant_id")
   baseCurrency   String   @map("base_currency")
   quoteCurrency  String   @map("quote_currency")
-  rate           Float
+  /// WP-11 (F-07): was Float. A rate, not a currency amount — Decimal(18,8) per the WP-11
+  /// decision (rates get 8 fractional digits, amounts get 4). Immutable (this model's own doc
+  /// comment: "never updated"), so no repeated-increment risk; see migration
+  /// `20260909000000_wp11_float_to_decimal_money_columns` for the rounding rule applied to
+  /// existing rows.
+  rate           Decimal  @db.Decimal(18, 8)
   effectiveAt    DateTime @map("effective_at")
   createdAt      DateTime @default(now()) @map("created_at")
 
@@ -196,5 +201,31 @@ model FinancialSnapshot {
 
   @@unique([tenantId, period])
   @@map("financial_snapshots")
+  @@schema("finance")
+}
+
+/// Plan 3C — Shopify's Taxes and duties for one shop. One row per tenant (the tenant is the key).
+/// Not `TaxProfile`, which serves finance reporting. See migration 20261013000000_store_shipping_taxes.
+model TaxSettings {
+  tenantId            String   @id @map("tenant_id")
+  pricesIncludeTax    Boolean  @default(true) @map("prices_include_tax")
+  chargeTaxOnShipping Boolean  @default(false) @map("charge_tax_on_shipping")
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("tax_settings")
+  @@schema("finance")
+}
+
+/// Plan 3C — a country the shop collects tax in. `provinces` is
+/// `[{ code, rateBasisPoints }]`: a province rate REPLACES the country rate. One region per country.
+model TaxRegion {
+  id              String @id @db.Uuid
+  tenantId        String @map("tenant_id")
+  countryCode     String @map("country_code") @db.Char(2)
+  rateBasisPoints Int    @map("rate_basis_points")
+  provinces       Json   @default("[]")
+
+  @@unique([tenantId, countryCode])
+  @@map("tax_regions")
   @@schema("finance")
 }

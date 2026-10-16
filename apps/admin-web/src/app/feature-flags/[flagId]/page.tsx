@@ -99,7 +99,7 @@ export default async function FeatureFlagDetailPage({ params }: FeatureFlagDetai
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="flex items-center gap-2 text-4xl font-semibold tracking-tight">
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
               <ToggleLeftIcon aria-hidden="true" className="size-7" />
               {flag.name}
             </h1>
@@ -144,14 +144,10 @@ export default async function FeatureFlagDetailPage({ params }: FeatureFlagDetai
                 <TableBody>
                   {flag.environments.map((environment, index) => (
                     <TableRow key={index}>
-                      <TableCell className="whitespace-nowrap">
-                        {environment.environment}
-                      </TableCell>
+                      <TableCell className="whitespace-nowrap">{environment.environment}</TableCell>
                       <TableCell>
                         <Badge variant={environment.enabled ? "success" : "outline"}>
-                          {environment.enabled
-                            ? t.featureFlagDetail.yes
-                            : t.featureFlagDetail.no}
+                          {environment.enabled ? t.featureFlagDetail.yes : t.featureFlagDetail.no}
                         </Badge>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
@@ -190,8 +186,7 @@ export default async function FeatureFlagDetailPage({ params }: FeatureFlagDetai
                   {flag.rules.map((rule, index) => (
                     <TableRow key={index}>
                       <TableCell className="whitespace-nowrap">
-                        {(t.featureFlagRuleType as Record<string, string>)[rule.type] ??
-                          rule.type}
+                        {(t.featureFlagRuleType as Record<string, string>)[rule.type] ?? rule.type}
                       </TableCell>
                       <TableCell className="font-mono text-sm">
                         {rule.attribute ?? t.featureFlagDetail.none}

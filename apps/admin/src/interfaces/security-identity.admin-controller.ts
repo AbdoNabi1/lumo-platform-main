@@ -122,16 +122,16 @@ export class SecurityIdentityAdminController {
   }
 
   /** Console read model — identity overview (Part 10). Not `present()`-wrapped upstream; wrapped here. */
-  async identityOverview(principal: Principal): Promise<AdminResponse> {
+  async identityOverview(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:identity_overview");
     if (denied) return denied;
-    return { status: 200, body: await this.security.identityOverview() };
+    return { status: 200, body: await this.security.identityOverview(tenantId) };
   }
 
   /** Console read model — machine-identity explorer (Part 10). Wrapped here (see above). */
-  async machineIdentityExplorer(principal: Principal): Promise<AdminResponse> {
+  async machineIdentityExplorer(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:machine_identity_explorer");
     if (denied) return denied;
-    return { status: 200, body: await this.security.machineIdentityExplorer() };
+    return { status: 200, body: await this.security.machineIdentityExplorer(tenantId) };
   }
 }

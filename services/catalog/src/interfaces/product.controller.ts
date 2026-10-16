@@ -15,6 +15,10 @@ import type {
 import type { GetProduct, GetProductInput } from "../application/get-product.use-case";
 import type { ListProducts, ListProductsInput } from "../application/list-products.use-case";
 import type { PublishProduct, PublishProductInput } from "../application/publish-product.use-case";
+import type {
+  RelabelVariantCurrency,
+  RelabelVariantCurrencyInput,
+} from "../application/relabel-variant-currency.use-case";
 import type { RemoveVariant, RemoveVariantInput } from "../application/remove-variant.use-case";
 import type { ReorderMedia, ReorderMediaInput } from "../application/reorder-media.use-case";
 import type {
@@ -34,7 +38,16 @@ import type {
   UnpublishProduct,
   UnpublishProductInput,
 } from "../application/unpublish-product.use-case";
+import type { UnlistProduct, UnlistProductInput } from "../application/unlist-product.use-case";
 import type { UpdateProduct, UpdateProductInput } from "../application/update-product.use-case";
+import type {
+  GetProductsByIds,
+  GetProductsByIdsInput,
+} from "../application/get-products-by-ids.use-case";
+import type {
+  SetVariantImage,
+  SetVariantImageInput,
+} from "../application/set-variant-image.use-case";
 import type { UpdateVariant, UpdateVariantInput } from "../application/update-variant.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
@@ -44,9 +57,11 @@ export interface ProductControllerDeps {
   readonly updateProduct: UpdateProduct;
   readonly getProduct: GetProduct;
   readonly getProductBySlug: GetProductBySlug;
+  readonly getProductsByIds: GetProductsByIds;
   readonly listProducts: ListProducts;
   readonly schedulePublishProduct: SchedulePublishProduct;
   readonly unpublishProduct: UnpublishProduct;
+  readonly unlistProduct: UnlistProduct;
   readonly archiveProduct: ArchiveProduct;
   readonly deleteProduct: DeleteProduct;
   readonly addVariant: AddVariant;
@@ -59,6 +74,8 @@ export interface ProductControllerDeps {
   readonly attachMedia: AttachMedia;
   readonly detachMedia: DetachMedia;
   readonly reorderMedia: ReorderMedia;
+  readonly setVariantImage: SetVariantImage;
+  readonly relabelVariantCurrency: RelabelVariantCurrency;
 }
 
 /** Framework-agnostic interface boundary for product use-cases (no HTTP server). */
@@ -71,6 +88,11 @@ export class ProductController {
 
   async create(input: CreateProductInput): Promise<ControllerResponse> {
     return present(await this.deps.createProduct.execute(input), 201);
+  }
+
+  /** Plan 3C: the store currency changed — relabel every variant, keeping the amounts. */
+  async relabelVariantCurrency(input: RelabelVariantCurrencyInput): Promise<ControllerResponse> {
+    return present(await this.deps.relabelVariantCurrency.execute(input), 200);
   }
 
   async publish(input: PublishProductInput): Promise<ControllerResponse> {
@@ -99,6 +121,10 @@ export class ProductController {
 
   async unpublish(input: UnpublishProductInput): Promise<ControllerResponse> {
     return present(await this.deps.unpublishProduct.execute(input), 200);
+  }
+
+  async unlist(input: UnlistProductInput): Promise<ControllerResponse> {
+    return present(await this.deps.unlistProduct.execute(input), 200);
   }
 
   async archive(input: ArchiveProductInput): Promise<ControllerResponse> {
@@ -147,5 +173,13 @@ export class ProductController {
 
   async reorderMedia(input: ReorderMediaInput): Promise<ControllerResponse> {
     return present(await this.deps.reorderMedia.execute(input), 200);
+  }
+
+  async getByIds(input: GetProductsByIdsInput): Promise<ControllerResponse> {
+    return present(await this.deps.getProductsByIds.execute(input), 200);
+  }
+
+  async setVariantImage(input: SetVariantImageInput): Promise<ControllerResponse> {
+    return present(await this.deps.setVariantImage.execute(input), 200);
   }
 }

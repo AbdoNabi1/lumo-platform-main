@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -10,12 +11,14 @@ import type {
   IdGenerator,
   IdempotencyKeyStore,
   Permission,
+  AuthenticatedIdentity,
   Principal,
   RateLimitDecision,
   RateLimiter,
 } from "@platform/contracts";
 import type { HealthReport, HealthRegistry } from "@platform/health";
 import {
+  AppError,
   AuthenticationError,
   AuthorizationError,
   ValidationError,
@@ -24,7 +27,8 @@ import {
 import { InProcessRateLimiter } from "./degraded-rate-limiter";
 import { mapError } from "./error-mapping";
 import type { RequestContext, RouteDefinition, TransportResponse } from "./route";
-import { resolveTenant, type TenantResolver } from "./tenant-resolution";
+import { suspendedTenantMayCall, type TenantAvailability, type TenantGate } from "./tenant-gate";
+import { PUBLIC_PRINCIPAL_ID, resolveTenant, type TenantResolver } from "./tenant-resolution";
 
 /**
  * Per-request signals a guard MAY consume for a context-aware authorization decision (zero-trust). Built
@@ -81,6 +85,12 @@ export interface HttpServerDeps {
   /** Optional metrics sink (F5); when present, requests are counted and appended to `/metrics`. */
   readonly metrics?: HttpMetricsSink;
   readonly tenantResolvers: readonly TenantResolver[];
+  /**
+   * T10.6: lifecycle gate consulted right after tenant resolution. Absent ⇒ no lifecycle enforcement
+   * (single-tenant mode, where the deployment tenant has no lifecycle). Present ⇒ suspended/cancelled/
+   * unknown tenants are refused and an unreadable status fails closed (503).
+   */
+  readonly tenantGate?: TenantGate;
   readonly rateLimiter: RateLimiter;
   /** Requests allowed per window per (tenant, principal) bucket. */
   readonly rateLimit: { readonly limit: number; readonly windowMs: number };
@@ -107,6 +117,15 @@ export interface HttpServerDeps {
    * probe actually needs. The status CODE (200/503) is unaffected either way.
    */
   readonly readinessDetail?: "full" | "status-only";
+  /**
+   * G-82: who may read `/metrics`. `"open"` (also what an absent value means — in-cluster Prometheus
+   * scrapers that send no credentials keep working) serves it to anyone who can reach the port.
+   * `"closed"` does not register the route (404). `{ bearerToken }` serves it only to a caller
+   * sending exactly `Authorization: Bearer <token>` (compared in constant time) and answers 401
+   * otherwise. The composition root picks per environment; on a public domain "open" hands anonymous
+   * callers process memory and per-route request counts.
+   */
+  readonly metricsAccess?: "open" | "closed" | { readonly bearerToken: string };
 }
 
 interface ReplaySnapshot {
@@ -232,6 +251,9 @@ export function createHttpServer(deps: HttpServerDeps): FastifyInstance {
       deps.logger.error("http request failed", {
         requestId: request.requestId,
         correlationId: request.correlationId,
+        // T10.7: a 5xx that cannot be attributed to a tenant cannot be investigated. `null` before
+        // resolution (the failure happened ahead of tenant resolution) is logged as absent, not defaulted.
+        tenantId: request.tenantId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -270,9 +292,9 @@ export async function registerRoutes(
     app.get("/openapi.json", () => app.swagger());
   }
 
-  for (const route of routes) {
+  const addRoute = (instance: FastifyInstance, route: RouteDefinition): void => {
     const url = `/api/v${route.version}${route.path}`;
-    app.route({
+    instance.route({
       method: route.method,
       url,
       schema: {
@@ -297,10 +319,84 @@ export async function registerRoutes(
         void reply.status(response.status).send(response.body);
       },
     });
+  };
+
+  for (const route of routes) {
+    const binary = route.binaryBody;
+    if (binary === undefined) {
+      addRoute(app, route);
+      continue;
+    }
+    // A binary parser lives in its own encapsulated scope so ONLY this route accepts an image body,
+    // each route with its own size cap (Fastify checks Content-Length against it before reading).
+    await app.register((scope, _options, done) => {
+      scope.addContentTypeParser(
+        [...binary.contentTypes],
+        { parseAs: "buffer", bodyLimit: binary.maxBytes },
+        (request, body: Buffer, parsed) => {
+          request.rawBody = body;
+          parsed(null, undefined);
+        },
+      );
+      addRoute(scope, route);
+      done();
+    });
   }
 }
 
-const PUBLIC_PRINCIPAL: Principal = { id: "public", kind: "customer", roles: [] };
+/**
+ * The fixed anonymous identity. It has no tenant of its own: the request's resolved tenant is bound
+ * to it below (`actor`), so the public principal carries the tenant the storefront request IS for.
+ */
+const PUBLIC_IDENTITY: AuthenticatedIdentity = {
+  id: PUBLIC_PRINCIPAL_ID,
+  kind: "customer",
+  roles: [],
+};
+
+const TENANT_REFUSALS = {
+  suspended: { code: "TENANT_SUSPENDED", message: "This store is suspended" },
+  cancelled: { code: "TENANT_CANCELLED", message: "This store's tenancy has ended" },
+  unknown: { code: "TENANT_UNKNOWN", message: "No such store" },
+} as const;
+
+async function lifecycleRefusal(
+  deps: HttpServerDeps,
+  request: FastifyRequest,
+  tenantId: string,
+  route: RouteDefinition,
+): Promise<TransportResponse | null> {
+  const gate = deps.tenantGate;
+  if (gate === undefined) return null;
+  let availability: TenantAvailability;
+  try {
+    availability = await gate.availability(tenantId);
+  } catch (error) {
+    deps.logger.error("tenant status unreadable; failing closed", {
+      requestId: request.requestId,
+      tenantId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      status: 503,
+      body: {
+        code: "UNAVAILABLE",
+        message: "Service temporarily unavailable",
+        retryable: true,
+        fields: [],
+        retryAfterMs: 5_000,
+      },
+      headers: { "retry-after": String(retryAfterSeconds(5_000)) },
+    };
+  }
+  if (availability === "active") return null;
+  if (availability === "suspended" && suspendedTenantMayCall(route)) return null;
+  const refusal = TENANT_REFUSALS[availability];
+  return {
+    status: 403,
+    body: { code: refusal.code, message: refusal.message, retryable: false, fields: [] },
+  };
+}
 
 async function executeRoute(
   route: RouteDefinition,
@@ -311,10 +407,10 @@ async function executeRoute(
   //    2.7 — expose verified claims for tenant resolution; null ⇒ 401). A `public` route (Phase 9
   //    hardening) accepts anonymous traffic instead — it resolves to a fixed principal rather than
   //    running the same verification every authenticated route requires.
-  let principal: Principal;
+  let identity: AuthenticatedIdentity;
   let claims: Record<string, unknown>;
   if (route.public === true) {
-    principal = PUBLIC_PRINCIPAL;
+    identity = PUBLIC_IDENTITY;
     claims = {};
   } else {
     const token = bearerToken(request);
@@ -329,23 +425,32 @@ async function executeRoute(
     if (authContext === null) {
       throw new AuthenticationError();
     }
-    principal = authContext.principal;
+    identity = authContext.principal;
     claims = authContext.claims;
   }
-  request.principal = principal;
 
   // 2. Tenant-resolution-first (ADR-0008): nothing below runs tenant-less, public routes included
   //    (a storefront read is still scoped to one merchant's catalog via `x-tenant-id`).
   const tenantId = resolveTenant(deps.tenantResolvers, {
     headers: request.headers as Record<string, string | undefined>,
     hostname: request.hostname,
-    principal,
+    principal: identity,
     claims,
   });
   if (tenantId === null) {
     throw new AuthorizationError("No tenant resolved for this request");
   }
   request.tenantId = tenantId;
+
+  // 2b. Tenant lifecycle (T10.6): the one place a suspended/cancelled tenant is refused. Same body for
+  //     every endpoint; an unreadable status is a 503, never a pass.
+  const refused = await lifecycleRefusal(deps, request, tenantId, route);
+  if (refused !== null) return refused;
+
+  // The identity is bound to the RESOLVED tenant exactly once, here — never defaulted. Everything
+  // downstream (guard, authorization cache key, audit record, handlers) sees a tenant-scoped principal.
+  const principal: Principal = { ...identity, tenantId };
+  request.principal = principal;
 
   // 3. Authorize through the single policy engine (the app injects AdminGuard, or — when zero-trust
   //    enforcement is enabled, P2.0.2 — SecurityPermissionGuard). Skipped entirely for a `public`
@@ -490,6 +595,15 @@ async function executeRoute(
   return route.handle({ body, params, query, context });
 }
 
+/** Constant-time `Authorization: Bearer <token>` check; a length mismatch is a plain mismatch. */
+function bearerMatches(request: FastifyRequest, expected: string): boolean {
+  const header = request.headers.authorization;
+  if (typeof header !== "string" || !header.startsWith("Bearer ")) return false;
+  const given = Buffer.from(header.slice("Bearer ".length));
+  const wanted = Buffer.from(expected);
+  return given.length === wanted.length && timingSafeEqual(given, wanted);
+}
+
 function registerOperationalEndpoints(
   app: FastifyInstance,
   deps: HttpServerDeps,
@@ -509,7 +623,12 @@ function registerOperationalEndpoints(
     const body = deps.readinessDetail === "full" ? report : { status: report.status };
     return reply.status(report.status === "unhealthy" ? 503 : 200).send(body);
   });
-  app.get("/metrics", async (_request, reply) => {
+  const metricsAccess = deps.metricsAccess ?? "open";
+  if (metricsAccess === "closed") return;
+  app.get("/metrics", async (request, reply) => {
+    if (typeof metricsAccess === "object" && !bearerMatches(request, metricsAccess.bearerToken)) {
+      return reply.status(401).header("www-authenticate", "Bearer").send({ error: "unauthorized" });
+    }
     const memory = process.memoryUsage();
     const lines = [
       "# TYPE process_uptime_seconds gauge",
@@ -598,6 +717,14 @@ function normalizeFastifyError(error: unknown): unknown {
     return new ValidationError("Malformed request", [
       { field: "body", message: (error as Error).message },
     ]);
+  }
+  if (statusCode === 413) {
+    return new AppError("The request body is too large", { code: "PAYLOAD_TOO_LARGE" });
+  }
+  if (statusCode === 415) {
+    return new AppError("This content type is not accepted here", {
+      code: "UNSUPPORTED_MEDIA_TYPE",
+    });
   }
   return error;
 }

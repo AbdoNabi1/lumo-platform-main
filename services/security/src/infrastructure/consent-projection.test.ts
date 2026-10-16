@@ -30,6 +30,7 @@ function event(
     occurredAt,
     correlationId: "c",
     causationId: "c",
+    tenantId: "tenant-a",
     payload: { scope, granted },
     metadata: {},
   };
@@ -42,8 +43,8 @@ describe("consent projection (H-2)", () => {
     const port = new ProjectionConsentPort(store);
 
     await consumer.handle(event("cust-1", "marketing", true, "2026-07-18T00:00:00.000Z"));
-    expect(await port.hasConsent("cust-1", "marketing")).toBe(true);
-    expect(await port.hasConsent("cust-1", "analytics")).toBe(false); // never granted ⇒ fail-closed
+    expect(await port.hasConsent("cust-1", "marketing", "tenant-a")).toBe(true);
+    expect(await port.hasConsent("cust-1", "analytics", "tenant-a")).toBe(false); // never granted ⇒ fail-closed
   });
 
   it("is last-writer-wins: an older redelivered event never regresses a newer decision", async () => {
@@ -53,7 +54,7 @@ describe("consent projection (H-2)", () => {
 
     await consumer.handle(event("cust-1", "marketing", false, "2026-07-18T10:00:00.000Z")); // newer: revoked
     await consumer.handle(event("cust-1", "marketing", true, "2026-07-18T09:00:00.000Z")); // older redelivery: grant
-    expect(await port.hasConsent("cust-1", "marketing")).toBe(false); // newer revoke wins
+    expect(await port.hasConsent("cust-1", "marketing", "tenant-a")).toBe(false); // newer revoke wins
   });
 
   it("is idempotent on exact redelivery", async () => {
@@ -63,7 +64,7 @@ describe("consent projection (H-2)", () => {
     const e = event("cust-1", "marketing", true, "2026-07-18T00:00:00.000Z");
     await consumer.handle(e);
     await consumer.handle(e);
-    expect(await port.hasConsent("cust-1", "marketing")).toBe(true);
+    expect(await port.hasConsent("cust-1", "marketing", "tenant-a")).toBe(true);
   });
 
   it("skips a malformed event (no subject) without throwing", async () => {

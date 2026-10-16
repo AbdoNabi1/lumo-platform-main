@@ -43,12 +43,11 @@ export interface LocalizationWiringDeps {
   readonly clock: Clock;
   /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaLocaleRepository` +
-   * `PrismaTranslationSetRepository` + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wireInventory`); absent ⇒ in-memory, unchanged.
+   * `PrismaTranslationSetRepository` + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. ADR-0014
+   * (WP-10, T10.5): the repositories built here are tenant-agnostic singletons — no `tenantId` at
+   * composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Localization table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredLocalization {
@@ -93,10 +92,6 @@ function buildController(
  */
 export function wireLocalization(deps: LocalizationWiringDeps): WiredLocalization {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireLocalization: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new LocalizationEventTranslator(),
@@ -104,8 +99,8 @@ export function wireLocalization(deps: LocalizationWiringDeps): WiredLocalizatio
       clock: deps.clock,
       producer: "localization",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const localizationDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    const context = rootEventContext(deps.idGenerator);
+    const localizationDeps = { prisma: deps.prisma, outbox, context };
     const repos: LocalizationRepos = {
       locales: new PrismaLocaleRepository(localizationDeps),
       translationSets: new PrismaTranslationSetRepository(localizationDeps),

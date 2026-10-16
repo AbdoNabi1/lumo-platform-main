@@ -14,14 +14,14 @@
 #   - API latency         : 99%  of the 30-day window under the 300ms average budget
 #   - Messaging success   : 99.5% of consumed messages processed without dead-lettering
 groups:
-  - name: lumo-sli
+  - name: morbeh-sli
     interval: 30s
     rules:
       # ---- API request rates ----
       - record: job:http_requests:rate5m
-        expr: sum(rate(http_requests_total{job="lumo-runtime"}[5m]))
+        expr: sum(rate(http_requests_total{job="morbeh-runtime"}[5m]))
       - record: job:http_requests_errors:rate5m
-        expr: sum(rate(http_requests_total{job="lumo-runtime",status=~"5.."}[5m]))
+        expr: sum(rate(http_requests_total{job="morbeh-runtime",status=~"5.."}[5m]))
 
       # ---- SLI: API availability (fraction of successful requests) ----
       # Guarded against divide-by-zero: falls back to 1 (perfectly available) when no traffic.
@@ -36,15 +36,15 @@ groups:
       # ---- SLI: API average latency (ms) over 5m ----
       - record: sli:api_latency_ms:avg5m
         expr: |
-          sum(rate(http_request_duration_ms_sum{job="lumo-runtime"}[5m]))
+          sum(rate(http_request_duration_ms_sum{job="morbeh-runtime"}[5m]))
           /
-          clamp_min(sum(rate(http_requests_total{job="lumo-runtime"}[5m])), 1)
+          clamp_min(sum(rate(http_requests_total{job="morbeh-runtime"}[5m])), 1)
 
       # ---- SLI: messaging processing success ----
       - record: job:messaging_processed:rate5m
-        expr: sum(rate(messaging_messages_processed_total{job="lumo-runtime"}[5m]))
+        expr: sum(rate(messaging_messages_processed_total{job="morbeh-runtime"}[5m]))
       - record: job:messaging_dead_lettered:rate5m
-        expr: sum(rate(messaging_messages_dead_lettered_total{job="lumo-runtime"}[5m]))
+        expr: sum(rate(messaging_messages_dead_lettered_total{job="morbeh-runtime"}[5m]))
       - record: sli:messaging_success:ratio5m
         expr: |
           1 - (
@@ -53,7 +53,7 @@ groups:
             clamp_min(job:messaging_processed:rate5m + job:messaging_dead_lettered:rate5m, 1)
           )
 
-  - name: lumo-error-budget
+  - name: morbeh-error-budget
     interval: 30s
     rules:
       # Multi-window burn rate against the 99.9% availability SLO (0.1% budget).
@@ -71,7 +71,7 @@ groups:
       - record: slo:api_error_budget:burn1h
         expr: |
           (
-            sum(rate(http_requests_total{job="lumo-runtime",status=~"5.."}[1h]))
+            sum(rate(http_requests_total{job="morbeh-runtime",status=~"5.."}[1h]))
             /
-            clamp_min(sum(rate(http_requests_total{job="lumo-runtime"}[1h])), 1)
+            clamp_min(sum(rate(http_requests_total{job="morbeh-runtime"}[1h])), 1)
           ) / (1 - 0.999)

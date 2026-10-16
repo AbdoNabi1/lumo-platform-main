@@ -1,4 +1,4 @@
-# Run the Lumo Platform on Supabase + Production Readiness — Implementation Plan
+# Run the Morbeh Platform on Supabase + Production Readiness — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,29 +12,30 @@
 
 ---
 
-## Execution Status (updated 2026-09-04)
+## Execution Status (updated 2026-09-05)
 
-Branch: `feat/cloud-platform-runtime`.
+Branch: `feat/cloud-platform-runtime-2` (the original `feat/cloud-platform-runtime` was merged to
+`main` and deleted on 2026-09-04; this branch continues from `main`).
 
 **`docs/operations/CLOUD_RUNBOOK.md` is the live source of truth for status.** This table is a
 summary; where the two disagree, the runbook is newer.
 
-| Task                       | Status                  | Evidence                                                                                                                                                                                    |
-| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Prerequisites          | **done**                | Developer Mode ON; Upstash provisioned; Ory Network project `sharp-hofstadter-ww7td17fbp` created and configured.                                                                           |
-| 1 — Upstash Redis          | **done**                | `/readyz` → 200 `{postgres: healthy, redis: healthy}` (was 503).                                                                                                                            |
-| 2 — Runtime Ory API key    | **done**                | `createOryFetch` + `ORY_API_KEY`; runtime suite green.                                                                                                                                      |
-| 3 — admin-web Ory API key  | **done**                | `oryAdminHeaders` at all 4 Hydra Admin call sites; admin-web suite green.                                                                                                                   |
-| 4 — Ory project config     | **done**                | OAuth2 URLs, allowed return URLs, and Branding → UI URLs all set. See runbook §3.5.                                                                                                         |
-| 5 — Seed Ory Network       | **partly done**         | OAuth2 client + admin identity seeded and verified. The 66 permission grants are blocked on the OPL namespace upload — runbook §3.2.                                                        |
-| 6 — Authenticated API call | **done**                | A real Hydra-issued JWT returns `200` on `/api/v1/products`. Runbook Check 2. Required finding `access_token_strategy: "jwt"` — Ory Network issues opaque tokens by default (runbook §3.1). |
-| 7 — Windows build          | **done**                | Both apps build: storefront 13 routes, admin-web 82 routes. See correction below.                                                                                                           |
-| 8 — Rich demo seed         | **done**                | `apps/runtime/src/seed-demo.ts`, idempotent.                                                                                                                                                |
-| 9 — Run all three apps     | **partly done**         | Runtime + admin-web + tunnel all up; login form renders from admin-web (runbook §3.5). Completing a login and walking the 82 screens is **not** done.                                       |
-| 10 — Outbox relay          | **blocked, documented** | No Kafka broker; flag reverted per plan. Runbook §3.3.                                                                                                                                      |
-| 11, 12, 13                 | **deferred**            | Each needs a dashboard credential (Supabase S3 keys, Stripe test keys, Supabase direct connection string).                                                                                  |
-| 14 — Zero-trust guard      | **blocked**             | Needs §3.2 resolved, plus the `ory-clients.ts` follow-up noted there.                                                                                                                       |
-| 15–18                      | not started             |                                                                                                                                                                                             |
+| Task                       | Status                     | Evidence                                                                                                                                                                                    |
+| -------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Prerequisites          | **done**                   | Developer Mode ON; Upstash provisioned; Ory Network project `sharp-hofstadter-ww7td17fbp` created and configured.                                                                           |
+| 1 — Upstash Redis          | **done**                   | `/readyz` → 200 `{postgres: healthy, redis: healthy}` (was 503).                                                                                                                            |
+| 2 — Runtime Ory API key    | **done**                   | `createOryFetch` + `ORY_API_KEY`; runtime suite green.                                                                                                                                      |
+| 3 — admin-web Ory API key  | **done**                   | `oryAdminHeaders` at all 4 Hydra Admin call sites; admin-web suite green.                                                                                                                   |
+| 4 — Ory project config     | **done**                   | OAuth2 URLs, allowed return URLs, Branding → UI URLs, and the OPL permission namespace all set. See runbook §3.2, §3.5.                                                                     |
+| 5 — Seed Ory Network       | **done**                   | OAuth2 client + admin identity seeded and verified; all 65 permissions granted (subject_set model) and confirmed with `{"allowed":true}` — runbook §3.2.                                    |
+| 6 — Authenticated API call | **done**                   | A real Hydra-issued JWT returns `200` on `/api/v1/products` **with real Keto authorization enforcing** (not the local escape hatch) — verified both an allow and a deny. Runbook Check 2/3. |
+| 7 — Windows build          | **done**                   | Both apps build: storefront 13 routes, admin-web 82 routes. See correction below.                                                                                                           |
+| 8 — Rich demo seed         | **done**                   | `apps/runtime/src/seed-demo.ts`, idempotent.                                                                                                                                                |
+| 9 — Run all three apps     | **partly done**            | Runtime + admin-web + tunnel all up; login form renders from admin-web (runbook §3.5). Completing a login and walking the 82 screens is **not** done — needs a human to type the password.  |
+| 10 — Outbox relay          | **blocked, documented**    | No Kafka broker; flag reverted per plan. Runbook §3.3.                                                                                                                                      |
+| 11, 12, 13                 | **deferred**               | Each needs a dashboard credential (Supabase S3 keys, Stripe test keys, Supabase direct connection string).                                                                                  |
+| 14 — Zero-trust guard      | **unblocked, not started** | §3.2's blocker is resolved; the remaining prerequisite is migrating `apps/runtime/src/security/ory-clients.ts` (tracked, see runbook §3.2's last paragraph).                                |
+| 15–18                      | not started                |                                                                                                                                                                                             |
 
 **Correction to Task 7's premise.** Developer Mode did fix the `EPERM: symlink` failure, so the
 conditional-`standalone` change the task describes was **not needed and was not made** — the
@@ -187,8 +188,8 @@ KRATOS_PUBLIC_URL=https://<slug>.projects.oryapis.com
 KRATOS_ADMIN_URL=https://<slug>.projects.oryapis.com
 KETO_READ_URL=https://<slug>.projects.oryapis.com
 KETO_WRITE_URL=https://<slug>.projects.oryapis.com
-AUTH_AUDIENCE=lumo-admin
-AUTH_CLIENT_ID=lumo-admin-web
+AUTH_AUDIENCE=morbeh-admin
+AUTH_CLIENT_ID=morbeh-admin-web
 AUTH_CLIENT_SECRET=<generate a strong random string; you will register it in Task 5>
 ```
 
@@ -229,8 +230,8 @@ const url = process.env.REDIS_URL;
 if (!url) throw new Error("REDIS_URL not set");
 const r = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 2 });
 await r.connect();
-await r.set("lumo:probe", "ok", "EX", 30);
-console.log("GET lumo:probe ->", await r.get("lumo:probe"));
+await r.set("morbeh:probe", "ok", "EX", 30);
+console.log("GET morbeh:probe ->", await r.get("morbeh:probe"));
 console.log("PING ->", await r.ping());
 await r.quit();
 ```
@@ -241,7 +242,7 @@ Run from `packages/redis`:
 node redis-probe.mjs
 ```
 
-Expected: `GET lumo:probe -> ok` then `PING -> PONG`.
+Expected: `GET morbeh:probe -> ok` then `PING -> PONG`.
 If it hangs or throws `ENOTFOUND`/`WRONGPASS`, the `REDIS_URL` is wrong — fix it before continuing. Delete `redis-probe.mjs` when it passes.
 
 - [ ] **Step 3: Boot the runtime and confirm `/readyz` is now 200**
@@ -742,10 +743,10 @@ Create `scripts/ops/seed-ory-network.mjs`:
 
 const ORY = required("ORY_SDK_URL");
 const KEY = required("ORY_API_KEY");
-const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "lumo-admin-web";
+const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "morbeh-admin-web";
 const CLIENT_SECRET = required("AUTH_CLIENT_SECRET");
-const AUDIENCE = process.env.AUTH_AUDIENCE ?? "lumo-admin";
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "admin@lumo.local";
+const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "admin@morbeh.local";
 const ADMIN_PASSWORD = required("ADMIN_DEV_PASSWORD");
 const REDIRECT_URI =
   process.env.ADMIN_WEB_ORIGIN !== undefined
@@ -1186,7 +1187,7 @@ From `apps/storefront`: `node node_modules/next/dist/bin/next dev`
 
 - [ ] **Step 4: Log in through the real OAuth flow**
 
-Open admin-web in a browser. You should be redirected to Ory, log in with `admin@lumo.local` and the password from Task 5, pass through the consent screen, and land back on the dashboard.
+Open admin-web in a browser. You should be redirected to Ory, log in with `admin@morbeh.local` and the password from Task 5, pass through the consent screen, and land back on the dashboard.
 
 If the redirect loops, the login/consent UI URLs in the Ory project (Task 4 Step 5) do not match the port admin-web is actually running on.
 
@@ -1658,7 +1659,7 @@ Grafana Cloud, Honeycomb, or the self-hosted stack in `infrastructure/docker/ote
 - [ ] **Step 2: Configure**
 
 ```
-OTEL_SERVICE_NAME=lumo-runtime
+OTEL_SERVICE_NAME=morbeh-runtime
 OTEL_EXPORTER_OTLP_ENDPOINT=<collector OTLP endpoint>
 OTEL_TRACES_ENABLED=true
 OTEL_METRICS_ENABLED=true

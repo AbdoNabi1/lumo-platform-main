@@ -174,31 +174,36 @@ export class PrismaEventRecordStore implements EventRecordWriterPort {
    */
   async appendHistory(input: {
     eventId: string;
+    tenantId: string;
     stages?: readonly StageHistoryEntry[];
     destinations?: readonly DestinationHistoryEntry[];
     state: EventState;
     at: string;
   }): Promise<void> {
     const base = await this.db.trackingEventRecord.findFirst({
-      where: { eventId: input.eventId },
+      where: { tenantId: input.tenantId, eventId: input.eventId },
       select: { tenantId: true },
     });
 
     if (base === null) {
-      // History for an unknown event means the base append never landed — which would mean an event
-      // was delivered with no record. Surfaced loudly; it must never be created implicitly here,
-      // because a synthesized base row would have no envelope, no snapshots and no payload.
-      throw new Error(`tracking: no event record for eventId "${input.eventId}"`);
+      // History for an unknown (tenantId, eventId) pair means the base append never landed under
+      // this tenant — which would mean an event was delivered with no record. Surfaced loudly; it
+      // must never be created implicitly here, because a synthesized base row would have no
+      // envelope, no snapshots and no payload. It must also never fall back to a same-eventId row
+      // under a DIFFERENT tenant (G-75) — the table's key is `(tenantId, eventId)`, not `eventId`.
+      throw new Error(
+        `tracking: no event record for eventId "${input.eventId}" under tenant "${input.tenantId}"`,
+      );
     }
 
     const existing = await this.db.trackingEventRevision.count({
-      where: { tenantId: base.tenantId, eventId: input.eventId },
+      where: { tenantId: input.tenantId, eventId: input.eventId },
     });
 
     await this.db.trackingEventRevision.create({
       data: {
         id: this.idGenerator.generate(),
-        tenantId: base.tenantId,
+        tenantId: input.tenantId,
         eventId: input.eventId,
         revisionSeq: existing + 1,
         stages: input.stages ?? [],
@@ -209,12 +214,12 @@ export class PrismaEventRecordStore implements EventRecordWriterPort {
     });
   }
 
-  async get(eventId: string): Promise<EventRecord | null> {
-    const base = await this.db.trackingEventRecord.findFirst({ where: { eventId } });
+  async get(eventId: string, tenantId: string): Promise<EventRecord | null> {
+    const base = await this.db.trackingEventRecord.findFirst({ where: { tenantId, eventId } });
     if (base === null) return null;
 
     const revisions = await this.db.trackingEventRevision.findMany({
-      where: { tenantId: base.tenantId, eventId },
+      where: { tenantId, eventId },
       orderBy: { revisionSeq: "asc" },
     });
 

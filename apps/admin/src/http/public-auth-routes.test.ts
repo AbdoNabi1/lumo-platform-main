@@ -8,7 +8,28 @@ import type { WiredAdmin } from "../composition";
 import { CustomerAuthAdminController } from "../interfaces/customer-auth.admin-controller";
 import type { CustomerCredentialsPort } from "../interfaces/customer-credentials.port";
 import { CustomerGuard } from "../interfaces/customer-guard";
+import type { SignupEmailPort } from "../interfaces/signup-email.port";
 import { publicAuthRoutes } from "./public-auth-routes";
+
+/** Records every signup email a test dispatched, instead of actually sending or logging one. */
+class RecordingSignupEmailPort implements SignupEmailPort {
+  readonly completeAccountCalls: Array<{ email: string; link: string; tenantId: string }> = [];
+  readonly alreadyRegisteredCalls: Array<{ email: string; tenantId: string }> = [];
+
+  async sendCompleteAccountEmail(input: {
+    email: string;
+    link: string;
+    tenantId: string;
+  }): Promise<void> {
+    this.completeAccountCalls.push(input);
+  }
+
+  async sendAlreadyRegisteredEmail(input: { email: string; tenantId: string }): Promise<void> {
+    this.alreadyRegisteredCalls.push(input);
+  }
+}
+
+const SIGNUP_COMPLETION_URL_BASE = "https://shop.example.com/account/signup/complete";
 
 /**
  * The public customer-auth HTTP surface (T5.17 Part A) driven through the actual
@@ -36,6 +57,7 @@ interface Harness {
   readonly security: WiredSecurity;
   readonly identity: WiredIdentity;
   readonly cart: WiredCart;
+  readonly signupEmail: RecordingSignupEmailPort;
 }
 
 /**
@@ -62,6 +84,7 @@ function harness(): Harness {
     },
   };
   const guard = new CustomerGuard({ security: security.security, customers: identity.customers });
+  const signupEmail = new RecordingSignupEmailPort();
   const customerAuth = new CustomerAuthAdminController({
     security: security.security,
     customers: identity.customers,
@@ -69,6 +92,8 @@ function harness(): Harness {
     guard,
     idGenerator: sequentialIds(),
     sessionTtlSeconds: 3600,
+    signupEmail,
+    signupCompletionUrlBase: SIGNUP_COMPLETION_URL_BASE,
   });
 
   const admin = {
@@ -80,7 +105,7 @@ function harness(): Harness {
     },
   } as unknown as WiredAdmin;
 
-  return { admin, security, identity, cart };
+  return { admin, security, identity, cart, signupEmail };
 }
 
 interface Response {
@@ -104,13 +129,16 @@ function call(
     context: {
       tenantId: "tenant-local",
       requestId: "req-1",
-      headers:
-        options.sessionId !== undefined ? { "x-customer-session": options.sessionId } : {},
+      headers: options.sessionId !== undefined ? { "x-customer-session": options.sessionId } : {},
     },
   } as never) as Promise<Response>;
 }
 
-const CREDENTIALS = { email: "shopper@example.com", name: "Sam Shopper", password: "correct-horse" };
+const CREDENTIALS = {
+  email: "shopper@example.com",
+  name: "Sam Shopper",
+  password: "correct-horse",
+};
 
 async function register(admin: WiredAdmin, overrides: Partial<typeof CREDENTIALS> = {}) {
   return call(admin, "POST", "/public/auth/register", { body: { ...CREDENTIALS, ...overrides } });
@@ -119,6 +147,19 @@ async function register(admin: WiredAdmin, overrides: Partial<typeof CREDENTIALS
 async function login(admin: WiredAdmin, overrides: Partial<typeof CREDENTIALS> = {}) {
   const { email, password } = { ...CREDENTIALS, ...overrides };
   return call(admin, "POST", "/public/auth/login", { body: { email, password } });
+}
+
+async function completeSignup(
+  admin: WiredAdmin,
+  input: { token: string; name?: string; password?: string },
+) {
+  return call(admin, "POST", "/public/auth/signup/complete", {
+    body: {
+      token: input.token,
+      name: input.name ?? "Real Name",
+      password: input.password ?? "new-password",
+    },
+  });
 }
 
 /** Registers then logs in, returning the established opaque session id. */
@@ -144,9 +185,19 @@ describe("POST /public/auth/register", () => {
     const { customerRef } = response.body as { customerRef: string };
 
     // The Identity customer exists...
-    expect((await h.identity.customers.getCustomer({ customerId: customerRef })).status).toBe(200);
+    expect(
+      (
+        await h.identity.customers.getCustomer({
+          customerId: customerRef,
+          tenantId: "tenant-local",
+        })
+      ).status,
+    ).toBe(200);
     // ...and so does the Security principal that references it — the link T5.16 §1 identified as missing.
-    const resolved = await h.security.security.resolvePrincipal({ subjectRef: customerRef });
+    const resolved = await h.security.security.resolvePrincipal({
+      tenantId: "tenant-local",
+      subjectRef: customerRef,
+    });
     const principal = (resolved.body as { principal: { externalId: string; kind: string } | null })
       .principal;
     expect(principal).not.toBeNull();
@@ -165,22 +216,150 @@ describe("POST /public/auth/register", () => {
     expect(JSON.stringify(response.body)).not.toContain(CREDENTIALS.password);
   });
 
-  it("refuses a duplicate email with Identity's own 409 — the email uniqueness authority is unchanged", async () => {
+  it("G-72/D2: a duplicate email gets the check-email response, not a 409 (no purchase/account oracle)", async () => {
     await register(h.admin);
     const second = await register(h.admin, { name: "Impostor" });
-    expect(second.status).toBe(409);
+    expect(second.status).toBe(202);
+    expect(second.body).toEqual({ outcome: "link-sent" });
   });
 
-  it("a rejected duplicate registration cannot overwrite the existing account's credential", async () => {
-    // The account-takeover shape this ordering exists to prevent: if provisioning ran before (or
-    // regardless of) Identity's uniqueness check, re-registering someone else's email with a
-    // password of your choosing would silently re-point their credential at it.
+  it("a duplicate-email signup cannot overwrite the existing account's credential", async () => {
+    // The account-takeover shape this ordering exists to prevent: submitting someone else's email
+    // with a password of your choosing must never re-point their credential at it.
     await register(h.admin);
     const hijack = await register(h.admin, { name: "Impostor", password: "attacker-chosen" });
-    expect(hijack.status).toBe(409);
+    expect(hijack.status).toBe(202);
 
     expect((await login(h.admin, { password: "attacker-chosen" })).status).toBe(401);
     expect((await login(h.admin)).status).toBe(200);
+  });
+});
+
+describe("POST /public/auth/register — G-72 guest-to-account upgrade", () => {
+  /** Simulates WP-1's guest checkout creating a guest `identity.customers` row for an email. */
+  async function guestCheckout(email: string, name = "Guest Buyer"): Promise<string> {
+    const resolved = await h.identity.customers.resolveGuestCustomer({
+      email,
+      name,
+      tenantId: "tenant-local",
+    });
+    expect(resolved.status).toBe(200);
+    return (resolved.body as { customerId: string }).customerId;
+  }
+
+  it("a brand-new email still registers immediately, unchanged", async () => {
+    const response = await register(h.admin, { email: "brand-new@example.com" });
+    expect(response.status).toBe(201);
+    expect(h.signupEmail.completeAccountCalls).toHaveLength(0);
+    expect(h.signupEmail.alreadyRegisteredCalls).toHaveLength(0);
+  });
+
+  it("a guest email gets the check-email response — no principal, no credential created", async () => {
+    const customerId = await guestCheckout("guest@example.com");
+
+    const response = await register(h.admin, { email: "guest@example.com" });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ outcome: "link-sent" });
+    const resolved = await h.security.security.resolvePrincipal({
+      tenantId: "tenant-local",
+      subjectRef: customerId,
+    });
+    expect((resolved.body as { principal: unknown }).principal).toBeNull();
+    expect((await login(h.admin, { email: "guest@example.com" })).status).toBe(401);
+  });
+
+  it("D2: an already-registered email and a guest email get the byte-identical HTTP response", async () => {
+    await register(h.admin, { email: "verified@example.com" });
+    await guestCheckout("guest2@example.com");
+
+    const alreadyRegistered = await register(h.admin, { email: "verified@example.com" });
+    const guest = await register(h.admin, { email: "guest2@example.com" });
+
+    expect(alreadyRegistered.status).toBe(guest.status);
+    expect(alreadyRegistered.body).toEqual(guest.body);
+    expect(h.signupEmail.alreadyRegisteredCalls).toHaveLength(1);
+    expect(h.signupEmail.completeAccountCalls).toHaveLength(1);
+  });
+
+  it("dispatches exactly one email, containing a link with a token, for a guest signup", async () => {
+    await guestCheckout("guest3@example.com");
+    await register(h.admin, { email: "guest3@example.com" });
+
+    expect(h.signupEmail.completeAccountCalls).toHaveLength(1);
+    expect(h.signupEmail.alreadyRegisteredCalls).toHaveLength(0);
+    const [sent] = h.signupEmail.completeAccountCalls;
+    expect(sent?.link).toContain(SIGNUP_COMPLETION_URL_BASE);
+    expect(sent?.link).toMatch(/[?&]token=/);
+  });
+
+  it("the attack: a guest email is registered by someone else and the link is never opened — login stays refused", async () => {
+    await guestCheckout("victim@example.com");
+
+    const attackerAttempt = await register(h.admin, {
+      email: "victim@example.com",
+      name: "Attacker",
+      password: "attacker-chosen",
+    });
+    expect(attackerAttempt.status).toBe(202);
+    expect(attackerAttempt.body).toEqual({ outcome: "link-sent" });
+
+    // The attacker never opens the emailed link — nothing else happens with the token.
+
+    expect(
+      (await login(h.admin, { email: "victim@example.com", password: "attacker-chosen" })).status,
+    ).toBe(401);
+    expect((await call(h.admin, "GET", "/public/auth/me")).status).toBe(401);
+  });
+
+  it("completing with a valid token upgrades the SAME customer id and the prior guest identity is preserved", async () => {
+    const customerId = await guestCheckout("upgrade@example.com");
+    await register(h.admin, { email: "upgrade@example.com" });
+    const [sent] = h.signupEmail.completeAccountCalls;
+    const token = new URL(sent?.link ?? "").searchParams.get("token") ?? "";
+
+    const completed = await completeSignup(h.admin, {
+      token,
+      name: "Real Name",
+      password: "new-password",
+    });
+
+    expect(completed.status).toBe(201);
+    const { customerRef, email } = completed.body as { customerRef: string; email: string };
+    expect(customerRef).toBe(customerId);
+    expect(email).toBe("upgrade@example.com");
+
+    expect(
+      (await login(h.admin, { email: "upgrade@example.com", password: "new-password" })).status,
+    ).toBe(200);
+  });
+
+  it("expired, reused, wrong-tenant, and tampered tokens are all rejected indistinguishably", async () => {
+    await guestCheckout("multi@example.com");
+    await register(h.admin, { email: "multi@example.com" });
+    const [sent] = h.signupEmail.completeAccountCalls;
+    const token = new URL(sent?.link ?? "").searchParams.get("token") ?? "";
+
+    const unknown = await completeSignup(h.admin, { token: "bogus-token-value" });
+    // Replace the last character with one that is guaranteed to differ, so the token is always tampered.
+    const last = token.slice(-1);
+    const tampered = await completeSignup(h.admin, {
+      token: token.slice(0, -1) + (last === "0" ? "1" : "0"),
+    });
+    const first = await completeSignup(h.admin, { token });
+    expect(first.status).toBe(201);
+    const reused = await completeSignup(h.admin, { token });
+
+    expect(unknown.status).toBe(404);
+    expect(tampered.status).toBe(404);
+    expect(reused.status).toBe(404);
+    expect(unknown.body).toEqual(tampered.body);
+    expect(tampered.body).toEqual(reused.body);
+  });
+
+  it("does not accept a completely made-up token as valid", async () => {
+    const response = await completeSignup(h.admin, { token: "never-issued-at-all" });
+    expect(response.status).toBe(404);
   });
 });
 
@@ -314,8 +493,9 @@ describe("POST /public/auth/logout", () => {
     // with no session cannot revoke a named one.
     const response = await call(h.admin, "POST", "/public/auth/logout", { body: {} });
     expect(response.body).toEqual({ revoked: false });
-    expect((await call(h.admin, "GET", "/public/auth/me", { sessionId: victim.sessionId })).status)
-      .toBe(200);
+    expect(
+      (await call(h.admin, "GET", "/public/auth/me", { sessionId: victim.sessionId })).status,
+    ).toBe(200);
   });
 });
 
@@ -361,10 +541,12 @@ describe("POST /public/auth/logout-all", () => {
 
     expect(response.status).toBe(200);
     expect((response.body as { revoked: number }).revoked).toBe(2);
-    expect((await call(h.admin, "GET", "/public/auth/me", { sessionId: first.sessionId })).status)
-      .toBe(401);
-    expect((await call(h.admin, "GET", "/public/auth/me", { sessionId: second.sessionId })).status)
-      .toBe(401);
+    expect(
+      (await call(h.admin, "GET", "/public/auth/me", { sessionId: first.sessionId })).status,
+    ).toBe(401);
+    expect(
+      (await call(h.admin, "GET", "/public/auth/me", { sessionId: second.sessionId })).status,
+    ).toBe(401);
   });
 
   it("401s for an unauthenticated caller — it never takes a principal from the request", async () => {
@@ -374,7 +556,11 @@ describe("POST /public/auth/logout-all", () => {
 
 describe("POST /public/auth/claim-cart (login-time cart continuity)", () => {
   async function guestCart(sessionRef: string): Promise<string> {
-    const created = await h.cart.cart.create({ sessionRef, currency: "USD" });
+    const created = await h.cart.cart.create({
+      tenantId: "tenant-local",
+      sessionRef,
+      currency: "USD",
+    });
     expect(created.status).toBe(201);
     return (created.body as { cartId: string }).cartId;
   }

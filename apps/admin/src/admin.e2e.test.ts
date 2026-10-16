@@ -4,7 +4,7 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireAdmin } from "./composition";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
 
-const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"], tenantId: "tenant-1" };
 
 function sequentialIds(): IdGenerator {
   let counter = 0;
@@ -31,29 +31,46 @@ describe("admin wiring (end to end)", () => {
       name: "Toy Wagon",
       slug: "toy-wagon",
       variants: [{ sku: "P-1-RED", priceAmountMinor: 1999, currency: "USD" }],
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const productId = (created.body as { id: string }).id;
-    expect((await admin.products.publishProduct(staff, { productId })).status).toBe(200);
     expect(
-      (await admin.products.createCategory(staff, { name: "Wagons", slug: "wagons" })).status,
+      (await admin.products.publishProduct(staff, { productId, tenantId: "tenant-1" })).status,
+    ).toBe(200);
+    expect(
+      (
+        await admin.products.createCategory(staff, {
+          name: "Wagons",
+          slug: "wagons",
+          tenantId: "tenant-1",
+        })
+      ).status,
     ).toBe(201);
 
     // Inventory screen → Inventory
     expect(
-      (await admin.inventory.receiveStock(staff, { productId, warehouseId: "wh-1", quantity: 10 }))
-        .status,
+      (
+        await admin.inventory.receiveStock(staff, {
+          tenantId: "tenant-1",
+          productId,
+          warehouseId: "wh-1",
+          quantity: 10,
+        })
+      ).status,
     ).toBe(200);
 
     // Customers screen → Identity
     const customer = await admin.customers.registerCustomer(staff, {
       email: "alice@example.com",
       name: "Alice",
+      tenantId: "tenant-1",
     });
     expect(customer.status).toBe(201);
 
     // Orders screen → Orders
     const order = await admin.orders.placeOrder(staff, {
+      tenantId: "tenant-1",
       customerRef: "customer-1",
       currency: "USD",
       items: [{ productId, name: "Toy Wagon", unitPriceAmountMinor: 1999, quantity: 2 }],
@@ -63,14 +80,22 @@ describe("admin wiring (end to end)", () => {
 
     // Discounts/Coupons screens → Pricing
     expect(
-      (await admin.pricing.createPriceList(staff, { name: "Retail", currency: "USD" })).status,
+      (
+        await admin.pricing.createPriceList(staff, {
+          tenantId: "tenant-1",
+          name: "Retail",
+          currency: "USD",
+        })
+      ).status,
     ).toBe(201);
 
     // Events from every context flow through the aggregated outbox drain.
     const published = await admin.drainOutbox();
     // product.created + product.published + category.created (Commerce Sprint 1: create now
-    // emits) + inventory.adjusted + customer.registered + order.placed
-    expect(published).toBe(6);
+    // emits) + inventory.adjusted + customer.registered + order.placed + the platform.usage.recorded
+    // row creating the product wrote in the same transaction (G-79 link 1). It is relayed but is not a
+    // catalog event, so it is absent from `deliveredEventTypes` below.
+    expect(published).toBe(7);
     expect(admin.deliveredEventTypes).toEqual(
       expect.arrayContaining([
         "catalog.product.created",
@@ -88,26 +113,33 @@ describe("admin wiring (end to end)", () => {
     const response = await admin.customers.registerCustomer(staff, {
       email: "not-an-email",
       name: "X",
+      tenantId: "tenant-1",
     });
     expect(response.status).toBe(422);
   });
 
   it("delegates not-found unchanged — publishing a missing product is 404", async () => {
     const admin = wire();
-    const response = await admin.products.publishProduct(staff, { productId: "missing" });
+    const response = await admin.products.publishProduct(staff, {
+      productId: "missing",
+      tenantId: "tenant-1",
+    });
     expect(response.status).toBe(404);
   });
 
   it("delegates business-rule errors unchanged — refunding an unpaid order is 409", async () => {
     const admin = wire();
     const order = await admin.orders.placeOrder(staff, {
+      tenantId: "tenant-1",
       customerRef: "customer-1",
       currency: "USD",
       items: [{ productId: "p1", name: "Item", unitPriceAmountMinor: 500, quantity: 1 }],
       shippingAddress: { line1: "1 Main St", city: "Town", postalCode: "12345", country: "US" },
     });
     const orderId = (order.body as { orderId: string }).orderId;
-    expect((await admin.orders.refundOrder(staff, { orderId })).status).toBe(409);
+    expect((await admin.orders.refundOrder(staff, { tenantId: "tenant-1", orderId })).status).toBe(
+      409,
+    );
   });
 
   it("drives the Coupons screen through create, advance, and redeem", async () => {
@@ -117,6 +149,7 @@ describe("admin wiring (end to end)", () => {
       code: "WELCOME10",
       promotionRef: "promotion-1",
       multiUse: true,
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const couponId = (created.body as { couponId: string }).couponId;
@@ -125,11 +158,16 @@ describe("admin wiring (end to end)", () => {
       code: "WELCOME10",
       customerRef: "customer-1",
       idempotencyKey: "idem-1",
+      tenantId: "tenant-1",
     });
     expect(redeemed.status).toBe(200);
     expect((redeemed.body as { duplicate: boolean }).duplicate).toBe(false);
 
-    const disabled = await admin.coupons.advance(staff, { couponId, toStatus: "disabled" });
+    const disabled = await admin.coupons.advance(staff, {
+      couponId,
+      toStatus: "disabled",
+      tenantId: "tenant-1",
+    });
     expect(disabled.status).toBe(200);
     expect((disabled.body as { status: string }).status).toBe("disabled");
   });
@@ -144,6 +182,7 @@ describe("admin wiring (end to end)", () => {
         { key: "variant-a", allocationPercentage: 50, isControl: false },
       ],
       goalMetricRef: "conversion-rate",
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const experimentId = (created.body as { experimentId: string }).experimentId;
@@ -151,6 +190,7 @@ describe("admin wiring (end to end)", () => {
     const started = await admin.experimentation.advance(staff, {
       experimentId,
       toStatus: "running",
+      tenantId: "tenant-1",
     });
     expect(started.status).toBe(200);
 
@@ -159,18 +199,21 @@ describe("admin wiring (end to end)", () => {
       variantKey: "variant-a",
       metricValue: 0.12,
       sampleSize: 1000,
+      tenantId: "tenant-1",
     });
     expect(recorded.status).toBe(200);
 
     const completed = await admin.experimentation.advance(staff, {
       experimentId,
       toStatus: "completed",
+      tenantId: "tenant-1",
     });
     expect(completed.status).toBe(200);
 
     const winner = await admin.experimentation.declareWinner(staff, {
       experimentId,
       variantKey: "variant-a",
+      tenantId: "tenant-1",
     });
     expect(winner.status).toBe(200);
     expect((winner.body as { status: string }).status).toBe("completed");
@@ -180,6 +223,7 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const created = await admin.promotions.create(staff, {
+      tenantId: "tenant-1",
       name: "10% off carts over $50",
       ruleType: "automatic",
       scope: "cart",
@@ -195,12 +239,14 @@ describe("admin wiring (end to end)", () => {
     const promotionId = (created.body as { promotionId: string }).promotionId;
 
     const activated = await admin.promotions.advance(staff, {
+      tenantId: "tenant-1",
       promotionId,
       toStatus: "active",
     });
     expect(activated.status).toBe(200);
 
     const evaluated = await admin.promotions.evaluate(staff, {
+      tenantId: "tenant-1",
       cart: {
         lines: [{ productRef: "p1", categoryRefs: [], quantity: 1, unitPriceAmountMinor: 6000 }],
         subtotalAmountMinor: 6000,
@@ -212,7 +258,10 @@ describe("admin wiring (end to end)", () => {
       1,
     );
 
-    const recorded = await admin.promotions.recordUsage(staff, { promotionId });
+    const recorded = await admin.promotions.recordUsage(staff, {
+      tenantId: "tenant-1",
+      promotionId,
+    });
     expect(recorded.status).toBe(200);
   });
 
@@ -222,6 +271,7 @@ describe("admin wiring (end to end)", () => {
     const created = await admin.recommendations.create(staff, {
       name: "Frequently bought together",
       strategy: "frequently_bought_together",
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const modelId = (created.body as { modelId: string }).modelId;
@@ -229,12 +279,14 @@ describe("admin wiring (end to end)", () => {
     const training = await admin.recommendations.advance(staff, {
       modelId,
       toStatus: "training",
+      tenantId: "tenant-1",
     });
     expect(training.status).toBe(200);
 
     const activated = await admin.recommendations.advance(staff, {
       modelId,
       toStatus: "active",
+      tenantId: "tenant-1",
     });
     expect(activated.status).toBe(200);
 
@@ -242,6 +294,7 @@ describe("admin wiring (end to end)", () => {
       modelId,
       interactionId: "interaction-1",
       anchorRef: "product-1",
+      tenantId: "tenant-1",
     });
     expect(generated.status).toBe(200);
     expect((generated.body as { setCount: number }).setCount).toBe(1);
@@ -249,6 +302,7 @@ describe("admin wiring (end to end)", () => {
     const regenerated = await admin.recommendations.regenerate(staff, {
       modelId,
       anchorRef: "product-1",
+      tenantId: "tenant-1",
     });
     expect(regenerated.status).toBe(200);
   });
@@ -261,6 +315,7 @@ describe("admin wiring (end to end)", () => {
       triggerType: "event",
       eventType: "customer.created",
       actions: [{ actionType: "send_email", params: { template: "welcome" } }],
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const workflowId = (created.body as { workflowId: string }).workflowId;
@@ -268,12 +323,14 @@ describe("admin wiring (end to end)", () => {
     const activated = await admin.automation.advance(staff, {
       workflowId,
       toStatus: "active",
+      tenantId: "tenant-1",
     });
     expect(activated.status).toBe(200);
 
     const triggered = await admin.automation.trigger(staff, {
       workflowId,
       triggerId: "trigger-1",
+      tenantId: "tenant-1",
     });
     expect(triggered.status).toBe(200);
     expect((triggered.body as { duplicate: boolean }).duplicate).toBe(false);
@@ -281,6 +338,7 @@ describe("admin wiring (end to end)", () => {
     const replayed = await admin.automation.trigger(staff, {
       workflowId,
       triggerId: "trigger-1",
+      tenantId: "tenant-1",
     });
     expect(replayed.status).toBe(200);
     expect((replayed.body as { duplicate: boolean }).duplicate).toBe(true);
@@ -292,6 +350,7 @@ describe("admin wiring (end to end)", () => {
     const created = await admin.featureFlags.create(staff, {
       key: "new-checkout-flow",
       name: "New checkout flow",
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const flagId = (created.body as { flagId: string }).flagId;
@@ -300,6 +359,7 @@ describe("admin wiring (end to end)", () => {
       flagId,
       percentage: 25,
       changedBy: "staff-1",
+      tenantId: "tenant-1",
     });
     expect(rolledOut.status).toBe(200);
     expect((rolledOut.body as { rolloutPercentage: number }).rolloutPercentage).toBe(25);
@@ -310,6 +370,7 @@ describe("admin wiring (end to end)", () => {
       values: ["tenant-1"],
       enabled: true,
       changedBy: "staff-1",
+      tenantId: "tenant-1",
     });
     expect(ruled.status).toBe(200);
 
@@ -318,6 +379,7 @@ describe("admin wiring (end to end)", () => {
       environment: "staging",
       enabled: true,
       changedBy: "staff-1",
+      tenantId: "tenant-1",
     });
     expect(overridden.status).toBe(200);
 
@@ -325,6 +387,7 @@ describe("admin wiring (end to end)", () => {
       flagId,
       toStatus: "killed",
       changedBy: "staff-1",
+      tenantId: "tenant-1",
     });
     expect(killed.status).toBe(200);
     expect((killed.body as { status: string }).status).toBe("killed");
@@ -334,6 +397,7 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const definition = await admin.reporting.createReportDefinition(staff, {
+      tenantId: "tenant-1",
       name: "Weekly revenue",
       type: "table",
       metricRefs: ["revenue"],
@@ -343,15 +407,20 @@ describe("admin wiring (end to end)", () => {
       .reportDefinitionId;
 
     const activated = await admin.reporting.advanceReportDefinition(staff, {
+      tenantId: "tenant-1",
       reportDefinitionId,
       toStatus: "active",
     });
     expect(activated.status).toBe(200);
 
-    const generated = await admin.reporting.generateReport(staff, { reportDefinitionId });
+    const generated = await admin.reporting.generateReport(staff, {
+      tenantId: "tenant-1",
+      reportDefinitionId,
+    });
     expect(generated.status).toBe(200);
 
     const dashboard = await admin.reporting.createDashboard(staff, {
+      tenantId: "tenant-1",
       name: "Executive overview",
       tileRefs: ["revenue-tile"],
     });
@@ -359,6 +428,7 @@ describe("admin wiring (end to end)", () => {
     const dashboardId = (dashboard.body as { dashboardId: string }).dashboardId;
 
     const archived = await admin.reporting.advanceDashboard(staff, {
+      tenantId: "tenant-1",
       dashboardId,
       toStatus: "archived",
     });
@@ -374,6 +444,7 @@ describe("admin wiring (end to end)", () => {
       customerRef: "customer-1",
       rating: 5,
       bodyText: "Great toy, sturdy build.",
+      tenantId: "tenant-1",
     });
     expect(created.status).toBe(201);
     const reviewId = (created.body as { reviewId: string }).reviewId;
@@ -382,24 +453,28 @@ describe("admin wiring (end to end)", () => {
       reviewId,
       customerRef: "customer-2",
       helpful: true,
+      tenantId: "tenant-1",
     });
     expect(voted.status).toBe(200);
 
     const reported = await admin.reviews.report(staff, {
       reviewId,
       reporterRef: "customer-3",
+      tenantId: "tenant-1",
     });
     expect(reported.status).toBe(200);
 
     const responded = await admin.reviews.respond(staff, {
       reviewId,
       responseText: "Thanks for the feedback!",
+      tenantId: "tenant-1",
     });
     expect(responded.status).toBe(200);
 
     const published = await admin.reviews.advance(staff, {
       reviewId,
       toStatus: "published",
+      tenantId: "tenant-1",
     });
     expect(published.status).toBe(200);
 
@@ -408,6 +483,7 @@ describe("admin wiring (end to end)", () => {
       actionId: "action-1",
       action: "flag",
       moderatorRef: "moderator-1",
+      tenantId: "tenant-1",
     });
     expect(moderated.status).toBe(200);
     expect((moderated.body as { duplicate: boolean }).duplicate).toBe(false);
@@ -416,7 +492,10 @@ describe("admin wiring (end to end)", () => {
   it("drives the Loyalty screen through open, earn, spend, cashback, redeem, referral, and advance", async () => {
     const admin = wire();
 
-    const opened = await admin.loyalty.open(staff, { customerRef: "customer-1" });
+    const opened = await admin.loyalty.open(staff, {
+      customerRef: "customer-1",
+      tenantId: "tenant-1",
+    });
     expect(opened.status).toBe(201);
     const accountId = (opened.body as { accountId: string }).accountId;
 
@@ -425,6 +504,7 @@ describe("admin wiring (end to end)", () => {
       idempotencyKey: "earn-1",
       points: 1000,
       ref: "order-1",
+      tenantId: "tenant-1",
     });
     expect(earned.status).toBe(200);
     expect((earned.body as { balance: number }).balance).toBe(1000);
@@ -434,6 +514,7 @@ describe("admin wiring (end to end)", () => {
       idempotencyKey: "spend-1",
       points: 200,
       ref: "redemption-1",
+      tenantId: "tenant-1",
     });
     expect(spent.status).toBe(200);
     expect((spent.body as { balance: number }).balance).toBe(800);
@@ -443,6 +524,7 @@ describe("admin wiring (end to end)", () => {
       idempotencyKey: "cashback-1",
       points: 50,
       ref: "order-2",
+      tenantId: "tenant-1",
     });
     expect(cashback.status).toBe(200);
 
@@ -452,6 +534,7 @@ describe("admin wiring (end to end)", () => {
       rewardRef: "reward-1",
       rewardName: "$10 off",
       costPoints: 500,
+      tenantId: "tenant-1",
     });
     expect(redeemed.status).toBe(200);
 
@@ -460,12 +543,14 @@ describe("admin wiring (end to end)", () => {
       idempotencyKey: "referral-1",
       bonusPoints: 100,
       referredCustomerRef: "customer-2",
+      tenantId: "tenant-1",
     });
     expect(referral.status).toBe(200);
 
     const suspended = await admin.loyalty.advance(staff, {
       accountId,
       toStatus: "suspended",
+      tenantId: "tenant-1",
     });
     expect(suspended.status).toBe(200);
     expect((suspended.body as { status: string }).status).toBe("suspended");
@@ -503,7 +588,7 @@ describe("admin wiring (end to end)", () => {
   it("drives the Search screen through create, upsert/delete document, synonyms, suggestion, log-query, and advance", async () => {
     const admin = wire();
 
-    const created = await admin.search.create(staff, { name: "products" });
+    const created = await admin.search.create(staff, { name: "products", tenantId: "tenant-1" });
     expect(created.status).toBe(201);
     const indexId = (created.body as { indexId: string }).indexId;
 
@@ -512,6 +597,7 @@ describe("admin wiring (end to end)", () => {
       productRef: "product-1",
       title: "Toy Wagon",
       categoryRefs: ["toys"],
+      tenantId: "tenant-1",
     });
     expect(upserted.status).toBe(200);
     expect((upserted.body as { documentCount: number }).documentCount).toBe(1);
@@ -520,23 +606,44 @@ describe("admin wiring (end to end)", () => {
       indexId,
       term: "wagon",
       synonyms: ["cart"],
+      tenantId: "tenant-1",
     });
     expect(synonymAdded.status).toBe(200);
 
-    const synonymRemoved = await admin.search.removeSynonym(staff, { indexId, term: "wagon" });
+    const synonymRemoved = await admin.search.removeSynonym(staff, {
+      indexId,
+      term: "wagon",
+      tenantId: "tenant-1",
+    });
     expect(synonymRemoved.status).toBe(200);
 
-    const suggested = await admin.search.addSuggestion(staff, { indexId, term: "wagon" });
+    const suggested = await admin.search.addSuggestion(staff, {
+      indexId,
+      term: "wagon",
+      tenantId: "tenant-1",
+    });
     expect(suggested.status).toBe(200);
 
-    const logged = await admin.search.logQuery(staff, { indexId, term: "wagon" });
+    const logged = await admin.search.logQuery(staff, {
+      indexId,
+      term: "wagon",
+      tenantId: "tenant-1",
+    });
     expect(logged.status).toBe(200);
 
-    const deleted = await admin.search.deleteDocument(staff, { indexId, productRef: "product-1" });
+    const deleted = await admin.search.deleteDocument(staff, {
+      indexId,
+      productRef: "product-1",
+      tenantId: "tenant-1",
+    });
     expect(deleted.status).toBe(200);
     expect((deleted.body as { documentCount: number }).documentCount).toBe(0);
 
-    const disabled = await admin.search.advance(staff, { indexId, toStatus: "disabled" });
+    const disabled = await admin.search.advance(staff, {
+      indexId,
+      toStatus: "disabled",
+      tenantId: "tenant-1",
+    });
     expect(disabled.status).toBe(200);
     expect((disabled.body as { status: string }).status).toBe("disabled");
   });
@@ -548,35 +655,40 @@ describe("admin wiring (end to end)", () => {
       key: "commerce.new_checkout",
       name: "New Checkout Flow",
       category: "commerce",
+      tenantId: "tenant-1",
     });
     expect(registered.status).toBe(201);
 
     const requirementsSet = await admin.featureRegistry.setRequirements(staff, {
       key: "commerce.new_checkout",
       requirements: { requiredPlans: ["pro"] },
+      tenantId: "tenant-1",
     });
     expect(requirementsSet.status).toBe(200);
 
     const groupsSet = await admin.featureRegistry.setGroups(staff, {
       key: "commerce.new_checkout",
       groups: ["commerce"],
+      tenantId: "tenant-1",
     });
     expect(groupsSet.status).toBe(200);
 
     const published = await admin.featureRegistry.advance(staff, {
       key: "commerce.new_checkout",
       to: "publish",
+      tenantId: "tenant-1",
     });
     expect(published.status).toBe(200);
     expect((published.body as { lifecycle: string }).lifecycle).toBe("active");
 
     const resolved = await admin.featureRegistry.resolve(staff, {
       key: "commerce.new_checkout",
+      tenantId: "tenant-1",
     });
     expect(resolved.status).toBe(200);
     expect((resolved.body as { available: boolean }).available).toBe(true);
 
-    const listed = await admin.featureRegistry.list(staff, {});
+    const listed = await admin.featureRegistry.list(staff, { tenantId: "tenant-1" });
     expect(listed.status).toBe(200);
     expect(
       (listed.body as { features: readonly { key: string }[] }).features.some(
@@ -584,7 +696,7 @@ describe("admin wiring (end to end)", () => {
       ),
     ).toBe(true);
 
-    const graph = await admin.featureRegistry.analyzeGraph(staff, {});
+    const graph = await admin.featureRegistry.analyzeGraph(staff, { tenantId: "tenant-1" });
     expect(graph.status).toBe(200);
     expect((graph.body as { acyclic: boolean }).acyclic).toBe(true);
 
@@ -592,19 +704,21 @@ describe("admin wiring (end to end)", () => {
       key: "commerce.pro_pack",
       name: "Pro Pack",
       featureKeys: ["commerce.new_checkout"],
+      tenantId: "tenant-1",
     });
     expect(bundle.status).toBe(201);
 
     const bundleUpdated = await admin.featureRegistry.updateBundle(staff, {
       key: "commerce.pro_pack",
       groups: ["commerce"],
+      tenantId: "tenant-1",
     });
     expect(bundleUpdated.status).toBe(200);
 
-    const bundlesListed = await admin.featureRegistry.listBundles(staff);
+    const bundlesListed = await admin.featureRegistry.listBundles(staff, { tenantId: "tenant-1" });
     expect(bundlesListed.status).toBe(200);
 
-    const validated = await admin.featureRegistry.validate(staff);
+    const validated = await admin.featureRegistry.validate(staff, { tenantId: "tenant-1" });
     expect(validated.status).toBe(200);
   });
 
@@ -612,6 +726,7 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const registered = await admin.securityIdentity.registerPrincipal(staff, {
+      tenantId: "tenant-1",
       externalId: "svc-checkout-worker",
       kind: "service_account",
       displayName: "Checkout Worker",
@@ -619,6 +734,7 @@ describe("admin wiring (end to end)", () => {
     expect(registered.status).toBe(201);
 
     const issued = await admin.securityIdentity.issueCredential(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-checkout-worker",
       kind: "api_key",
       material: "super-secret-material",
@@ -627,6 +743,7 @@ describe("admin wiring (end to end)", () => {
     const credentialId = (issued.body as { id: string }).id;
 
     const rotated = await admin.securityIdentity.rotateCredential(staff, {
+      tenantId: "tenant-1",
       credentialId,
       newMaterial: "rotated-secret-material",
     });
@@ -634,40 +751,45 @@ describe("admin wiring (end to end)", () => {
     const rotatedCredentialId = (rotated.body as { id: string }).id;
 
     const revoked = await admin.securityIdentity.revokeCredential(staff, {
+      tenantId: "tenant-1",
       credentialId: rotatedCredentialId,
     });
     expect(revoked.status).toBe(200);
     expect((revoked.body as { status: string }).status).toBe("revoked");
 
     const governed = await admin.securityIdentity.governMachineIdentity(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-checkout-worker",
       config: { owner: "commerce-team", purpose: "checkout automation" },
     });
     expect(governed.status).toBe(200);
 
     const resolvedMachine = await admin.securityIdentity.resolveMachineIdentity(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-checkout-worker",
     });
     expect(resolvedMachine.status).toBe(200);
     expect((resolvedMachine.body as { owner: string }).owner).toBe("commerce-team");
 
     const suspended = await admin.securityIdentity.suspendMachineIdentity(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-checkout-worker",
     });
     expect(suspended.status).toBe(200);
     expect((suspended.body as { status: string }).status).toBe("suspended");
 
     const transitioned = await admin.securityIdentity.transitionPrincipal(staff, {
+      tenantId: "tenant-1",
       externalId: "svc-checkout-worker",
       to: "suspended",
     });
     expect(transitioned.status).toBe(200);
     expect((transitioned.body as { status: string }).status).toBe("suspended");
 
-    const overview = await admin.securityIdentity.identityOverview(staff);
+    const overview = await admin.securityIdentity.identityOverview(staff, "tenant-1");
     expect(overview.status).toBe(200);
 
-    const explorer = await admin.securityIdentity.machineIdentityExplorer(staff);
+    const explorer = await admin.securityIdentity.machineIdentityExplorer(staff, "tenant-1");
     expect(explorer.status).toBe(200);
   });
 
@@ -675,6 +797,7 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const principal = await admin.securityIdentity.registerPrincipal(staff, {
+      tenantId: "tenant-1",
       externalId: "svc-sessions-test",
       kind: "service_account",
       displayName: "Sessions Test Worker",
@@ -682,18 +805,21 @@ describe("admin wiring (end to end)", () => {
     expect(principal.status).toBe(201);
 
     const authMethodRegistered = await admin.securitySessions.registerAuthMethod(staff, {
+      tenantId: "tenant-1",
       kind: "password",
       displayName: "Password",
     });
     expect(authMethodRegistered.status).toBe(201);
 
     const mfaMethodRegistered = await admin.securitySessions.registerMfaMethod(staff, {
+      tenantId: "tenant-1",
       kind: "totp",
       displayName: "Authenticator App",
     });
     expect(mfaMethodRegistered.status).toBe(201);
 
     const enrolled = await admin.securitySessions.enrollMfa(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-sessions-test",
       method: "totp",
     });
@@ -701,23 +827,29 @@ describe("admin wiring (end to end)", () => {
     const enrollmentId = (enrolled.body as { id: string }).id;
 
     const verified = await admin.securitySessions.verifyMfaEnrollment(staff, {
+      tenantId: "tenant-1",
       enrollmentId,
       code: "123456",
     });
     expect(verified.status).toBe(200);
     expect((verified.body as { status: string }).status).toBe("active");
 
-    const backupCodes = await admin.securitySessions.generateBackupCodes(staff, { enrollmentId });
+    const backupCodes = await admin.securitySessions.generateBackupCodes(staff, {
+      tenantId: "tenant-1",
+      enrollmentId,
+    });
     expect(backupCodes.status).toBe(200);
     expect((backupCodes.body as { codes: readonly string[] }).codes.length).toBe(10);
 
     const deviceRegistered = await admin.securitySessions.registerDevice(staff, {
+      tenantId: "tenant-1",
       fingerprint: "device-1",
       principalExternalId: "svc-sessions-test",
     });
     expect(deviceRegistered.status).toBe(201);
 
     const signalRecorded = await admin.securitySessions.recordDeviceSignal(staff, {
+      tenantId: "tenant-1",
       fingerprint: "device-1",
       type: "new_location",
       severity: "low",
@@ -725,23 +857,27 @@ describe("admin wiring (end to end)", () => {
     expect(signalRecorded.status).toBe(200);
 
     const deviceTrusted = await admin.securitySessions.trustDevice(staff, {
+      tenantId: "tenant-1",
       fingerprint: "device-1",
     });
     expect(deviceTrusted.status).toBe(200);
     expect((deviceTrusted.body as { trustLevel: string }).trustLevel).toBe("trusted");
 
     const mfaDecided = await admin.securitySessions.decideMfa(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-sessions-test",
       riskBand: "low",
     });
     expect(mfaDecided.status).toBe(200);
 
     const riskEvaluated = await admin.securitySessions.evaluateRisk(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-sessions-test",
     });
     expect(riskEvaluated.status).toBe(200);
 
     const established = await admin.securitySessions.establishSession(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-sessions-test",
       refreshFingerprint: "rf-1",
       ttlSeconds: 3600,
@@ -750,37 +886,49 @@ describe("admin wiring (end to end)", () => {
     const sessionId = (established.body as { id: string }).id;
 
     const refreshed = await admin.securitySessions.refreshSession(staff, {
+      tenantId: "tenant-1",
       sessionId,
       newRefreshFingerprint: "rf-2",
       ttlSeconds: 3600,
     });
     expect(refreshed.status).toBe(200);
 
-    const introspected = await admin.securitySessions.introspectSession(staff, { sessionId });
+    const introspected = await admin.securitySessions.introspectSession(staff, {
+      tenantId: "tenant-1",
+      sessionId,
+    });
     expect(introspected.status).toBe(200);
     expect((introspected.body as { active: boolean }).active).toBe(true);
 
-    const sessionRevoked = await admin.securitySessions.revokeSession(staff, { sessionId });
+    const sessionRevoked = await admin.securitySessions.revokeSession(staff, {
+      tenantId: "tenant-1",
+      sessionId,
+    });
     expect(sessionRevoked.status).toBe(200);
 
     const allRevoked = await admin.securitySessions.revokeAllSessions(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-sessions-test",
     });
     expect(allRevoked.status).toBe(200);
 
-    const mfaRevoked = await admin.securitySessions.revokeMfa(staff, { enrollmentId });
+    const mfaRevoked = await admin.securitySessions.revokeMfa(staff, {
+      tenantId: "tenant-1",
+      enrollmentId,
+    });
     expect(mfaRevoked.status).toBe(200);
 
     const deviceBlocked = await admin.securitySessions.blockDevice(staff, {
+      tenantId: "tenant-1",
       fingerprint: "device-1",
     });
     expect(deviceBlocked.status).toBe(200);
     expect((deviceBlocked.body as { trustLevel: string }).trustLevel).toBe("blocked");
 
-    const sessionExplorer = await admin.securitySessions.sessionExplorer(staff);
+    const sessionExplorer = await admin.securitySessions.sessionExplorer(staff, "tenant-1");
     expect(sessionExplorer.status).toBe(200);
 
-    const deviceExplorer = await admin.securitySessions.deviceExplorer(staff);
+    const deviceExplorer = await admin.securitySessions.deviceExplorer(staff, "tenant-1");
     expect(deviceExplorer.status).toBe(200);
 
     const riskExplorer = await admin.securitySessions.riskExplorer(staff);
@@ -791,12 +939,14 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const principal = await admin.securityIdentity.registerPrincipal(staff, {
+      tenantId: "tenant-1",
       externalId: "svc-authz-test",
       kind: "service_account",
       displayName: "Authz Test Worker",
     });
     expect(principal.status).toBe(201);
     const delegate = await admin.securityIdentity.registerPrincipal(staff, {
+      tenantId: "tenant-1",
       externalId: "svc-authz-delegate",
       kind: "service_account",
       displayName: "Authz Test Delegate",
@@ -804,12 +954,14 @@ describe("admin wiring (end to end)", () => {
     expect(delegate.status).toBe(201);
 
     const roleDefined = await admin.securityAuthorization.defineRole(staff, {
+      tenantId: "tenant-1",
       key: "orders-viewer",
       name: "Orders Viewer",
     });
     expect(roleDefined.status).toBe(201);
 
     const permissionGranted = await admin.securityAuthorization.grantRolePermission(staff, {
+      tenantId: "tenant-1",
       roleKey: "orders-viewer",
       permission: "orders:read",
     });
@@ -819,6 +971,7 @@ describe("admin wiring (end to end)", () => {
     );
 
     const assigned = await admin.securityAuthorization.assignRole(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-authz-test",
       roleKey: "orders-viewer",
       grantedBy: "staff-1",
@@ -827,6 +980,7 @@ describe("admin wiring (end to end)", () => {
     const assignmentId = (assigned.body as { id: string }).id;
 
     const policyDefined = await admin.securityAuthorization.definePolicy(staff, {
+      tenantId: "tenant-1",
       key: "default-policy",
       name: "Default Policy",
       mode: "balanced",
@@ -834,6 +988,7 @@ describe("admin wiring (end to end)", () => {
     expect(policyDefined.status).toBe(201);
 
     const versionPublished = await admin.securityAuthorization.publishPolicyVersion(staff, {
+      tenantId: "tenant-1",
       key: "default-policy",
       rules: [{ id: "rule-1", description: "always allow", when: {}, effect: "allow" }],
     });
@@ -841,12 +996,14 @@ describe("admin wiring (end to end)", () => {
     expect((versionPublished.body as { activeVersion: number }).activeVersion).toBe(1);
 
     const simulated = await admin.securityAuthorization.simulatePolicy(staff, {
+      tenantId: "tenant-1",
       key: "default-policy",
       context: {},
     });
     expect(simulated.status).toBe(200);
 
     const tupleWritten = await admin.securityAuthorization.writeRelationTuple(staff, {
+      tenantId: "tenant-1",
       namespace: "orders",
       object: "order-1",
       relation: "viewer",
@@ -855,6 +1012,7 @@ describe("admin wiring (end to end)", () => {
     expect(tupleWritten.status).toBe(201);
 
     const accessChecked = await admin.securityAuthorization.checkAccess(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-authz-test",
       permission: "orders:read",
     });
@@ -862,6 +1020,7 @@ describe("admin wiring (end to end)", () => {
     expect((accessChecked.body as { allowed: boolean }).allowed).toBe(true);
 
     const tupleDeleted = await admin.securityAuthorization.deleteRelationTuple(staff, {
+      tenantId: "tenant-1",
       namespace: "orders",
       object: "order-1",
       relation: "viewer",
@@ -871,6 +1030,7 @@ describe("admin wiring (end to end)", () => {
     expect((tupleDeleted.body as { removed: boolean }).removed).toBe(true);
 
     const accessEvaluated = await admin.securityAuthorization.evaluateAccess(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-authz-test",
       permission: "orders:read",
       policyKey: "default-policy",
@@ -879,18 +1039,21 @@ describe("admin wiring (end to end)", () => {
     expect((accessEvaluated.body as { effect: string }).effect).toBe("allow");
 
     const fragmentRegistered = await admin.securityAuthorization.registerPolicyFragment(staff, {
+      tenantId: "tenant-1",
       key: "always-allow-fragment",
       expression: { leaf: {} },
     });
     expect(fragmentRegistered.status).toBe(201);
 
     const permissionRegistered = await admin.securityAuthorization.registerPermission(staff, {
+      tenantId: "tenant-1",
       permission: "orders:export",
       description: "Export orders",
     });
     expect(permissionRegistered.status).toBe(201);
 
     const delegationGranted = await admin.securityAuthorization.grantDelegation(staff, {
+      tenantId: "tenant-1",
       delegatorExternalId: "svc-authz-test",
       delegateExternalId: "svc-authz-delegate",
     });
@@ -898,6 +1061,7 @@ describe("admin wiring (end to end)", () => {
     const delegationId = (delegationGranted.body as { id: string }).id;
 
     const impersonationStarted = await admin.securityAuthorization.startImpersonation(staff, {
+      tenantId: "tenant-1",
       delegationId,
       refreshFingerprint: "rf-impersonate-1",
       ttlSeconds: 3600,
@@ -905,22 +1069,26 @@ describe("admin wiring (end to end)", () => {
     expect(impersonationStarted.status).toBe(201);
 
     const delegationRevoked = await admin.securityAuthorization.revokeDelegation(staff, {
+      tenantId: "tenant-1",
       delegationId,
     });
     expect(delegationRevoked.status).toBe(200);
 
     const assignmentRevoked = await admin.securityAuthorization.revokeRoleAssignment(staff, {
+      tenantId: "tenant-1",
       assignmentId,
     });
     expect(assignmentRevoked.status).toBe(200);
 
     const policyArchived = await admin.securityAuthorization.archivePolicy(staff, {
+      tenantId: "tenant-1",
       key: "default-policy",
     });
     expect(policyArchived.status).toBe(200);
     expect((policyArchived.body as { status: string }).status).toBe("archived");
 
     const consentChecked = await admin.securityAuthorization.checkConsent(staff, {
+      tenantId: "tenant-1",
       subjectRef: "subject-1",
       purpose: "marketing",
     });
@@ -928,16 +1096,20 @@ describe("admin wiring (end to end)", () => {
     expect((consentChecked.body as { granted: boolean }).granted).toBe(false);
 
     const tenantConfigured = await admin.securityAuthorization.configureTenantSecurity(staff, {
+      tenantId: "tenant-1",
       tenantRef: "tenant-1",
       config: { mfaRequired: true },
     });
     expect(tenantConfigured.status).toBe(200);
     expect((tenantConfigured.body as { mfaRequired: boolean }).mfaRequired).toBe(true);
 
-    const permissionExplorer = await admin.securityAuthorization.permissionExplorer(staff);
+    const permissionExplorer = await admin.securityAuthorization.permissionExplorer(
+      staff,
+      "tenant-1",
+    );
     expect(permissionExplorer.status).toBe(200);
 
-    const policyExplorer = await admin.securityAuthorization.policyExplorer(staff);
+    const policyExplorer = await admin.securityAuthorization.policyExplorer(staff, "tenant-1");
     expect(policyExplorer.status).toBe(200);
 
     const registryExplorer = await admin.securityAuthorization.registryExplorer(staff);
@@ -948,6 +1120,7 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const principal = await admin.securityIdentity.registerPrincipal(staff, {
+      tenantId: "tenant-1",
       externalId: "svc-secrets-test",
       kind: "service_account",
       displayName: "Secrets Test Worker",
@@ -955,6 +1128,7 @@ describe("admin wiring (end to end)", () => {
     expect(principal.status).toBe(201);
 
     const issued = await admin.securityIdentity.issueCredential(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-secrets-test",
       kind: "api_key",
       material: "initial-secret-material",
@@ -963,6 +1137,7 @@ describe("admin wiring (end to end)", () => {
     const credentialId = (issued.body as { id: string }).id;
 
     const scheduled = await admin.securitySecrets.scheduleCredentialRotation(staff, {
+      tenantId: "tenant-1",
       credentialId,
       intervalDays: 90,
       graceSeconds: 3600,
@@ -970,22 +1145,28 @@ describe("admin wiring (end to end)", () => {
     expect(scheduled.status).toBe(200);
     expect((scheduled.body as { rotationDueAt: string | null }).rotationDueAt).not.toBeNull();
 
-    const dueRotated = await admin.securitySecrets.rotateDueCredentials(staff);
+    const dueRotated = await admin.securitySecrets.rotateDueCredentials(staff, {
+      tenantId: "tenant-1",
+    });
     expect(dueRotated.status).toBe(200);
     expect((dueRotated.body as { rotated: number }).rotated).toBe(0);
 
-    const lineage = await admin.securitySecrets.getCredentialLineage(staff, { credentialId });
+    const lineage = await admin.securitySecrets.getCredentialLineage(staff, {
+      tenantId: "tenant-1",
+      credentialId,
+    });
     expect(lineage.status).toBe(200);
     expect((lineage.body as { chain: readonly { id: string }[] }).chain).toHaveLength(1);
 
     const emergencyRevoked = await admin.securitySecrets.emergencyRevokeCredentials(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "svc-secrets-test",
       reason: "suspected leak",
     });
     expect(emergencyRevoked.status).toBe(200);
     expect((emergencyRevoked.body as { revoked: number }).revoked).toBe(1);
 
-    const secretExplorer = await admin.securitySecrets.secretExplorer(staff);
+    const secretExplorer = await admin.securitySecrets.secretExplorer(staff, "tenant-1");
     expect(secretExplorer.status).toBe(200);
   });
 
@@ -993,6 +1174,7 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const opened = await admin.securityOperations.openIncident(staff, {
+      tenantId: "tenant-1",
       title: "Suspicious login pattern",
       severity: "high",
       category: "account_takeover",
@@ -1001,6 +1183,7 @@ describe("admin wiring (end to end)", () => {
     expect(opened.status).toBe(201);
 
     const triaged = await admin.securityOperations.triageIncident(staff, {
+      tenantId: "tenant-1",
       reference: "INC-TEST-1",
       assignee: "staff-1",
       note: "Investigating",
@@ -1009,12 +1192,14 @@ describe("admin wiring (end to end)", () => {
     expect((triaged.body as { status: string }).status).toBe("triaged");
 
     const mitigated = await admin.securityOperations.mitigateIncident(staff, {
+      tenantId: "tenant-1",
       reference: "INC-TEST-1",
       note: "Blocked offending IPs",
     });
     expect(mitigated.status).toBe(200);
 
     const evidenceAdded = await admin.securityOperations.addIncidentEvidence(staff, {
+      tenantId: "tenant-1",
       reference: "INC-TEST-1",
       kind: "audit_record",
       ref: "audit-1",
@@ -1023,12 +1208,14 @@ describe("admin wiring (end to end)", () => {
     expect((evidenceAdded.body as { evidenceCount: number }).evidenceCount).toBe(1);
 
     const resolved = await admin.securityOperations.resolveIncident(staff, {
+      tenantId: "tenant-1",
       reference: "INC-TEST-1",
       resolution: "Accounts secured, no data loss",
     });
     expect(resolved.status).toBe(200);
 
     const closed = await admin.securityOperations.closeIncident(staff, {
+      tenantId: "tenant-1",
       reference: "INC-TEST-1",
       note: "Post-mortem complete",
     });
@@ -1036,23 +1223,27 @@ describe("admin wiring (end to end)", () => {
     expect((closed.body as { status: string }).status).toBe("closed");
 
     const threatChecked = await admin.securityOperations.checkThreatIndicator(staff, {
+      tenantId: "tenant-1",
       indicator: "203.0.113.1",
     });
     expect(threatChecked.status).toBe(200);
 
     const auditVerified = await admin.securityOperations.verifyAuditChain(staff, {
+      tenantId: "tenant-1",
       tenantRef: null,
     });
     expect(auditVerified.status).toBe(200);
     expect((auditVerified.body as { valid: boolean }).valid).toBe(true);
 
     const complianceEvaluated = await admin.securityOperations.evaluateCompliance(staff, {
+      tenantId: "tenant-1",
       framework: "soc2",
     });
     expect(complianceEvaluated.status).toBe(200);
     expect((complianceEvaluated.body as { framework: string }).framework).toBe("soc2");
 
     const ruleRegistered = await admin.securityOperations.registerComplianceRule(staff, {
+      tenantId: "tenant-1",
       id: "custom-control-1",
       framework: "soc2",
       description: "Custom control",
@@ -1060,16 +1251,16 @@ describe("admin wiring (end to end)", () => {
     });
     expect(ruleRegistered.status).toBe(201);
 
-    const incidentExplorer = await admin.securityOperations.incidentExplorer(staff);
+    const incidentExplorer = await admin.securityOperations.incidentExplorer(staff, "tenant-1");
     expect(incidentExplorer.status).toBe(200);
 
-    const auditExplorer = await admin.securityOperations.auditExplorer(staff);
+    const auditExplorer = await admin.securityOperations.auditExplorer(staff, "tenant-1");
     expect(auditExplorer.status).toBe(200);
 
-    const dashboard = await admin.securityOperations.securityDashboard(staff);
+    const dashboard = await admin.securityOperations.securityDashboard(staff, "tenant-1");
     expect(dashboard.status).toBe(200);
 
-    const trustCenter = await admin.securityOperations.trustCenter(staff);
+    const trustCenter = await admin.securityOperations.trustCenter(staff, "tenant-1");
     expect(trustCenter.status).toBe(200);
 
     const analytics = await admin.securityOperations.securityAnalytics(staff);
@@ -1080,6 +1271,7 @@ describe("admin wiring (end to end)", () => {
     const admin = wire();
 
     const principal = await admin.securityIdentity.registerPrincipal(staff, {
+      tenantId: "tenant-1",
       externalId: "ai-copywriter",
       kind: "ai",
       displayName: "AI Copywriter",
@@ -1087,6 +1279,7 @@ describe("admin wiring (end to end)", () => {
     expect(principal.status).toBe(201);
 
     const governed = await admin.securityAiGovernance.governAiIdentity(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "ai-copywriter",
       config: {
         tokenBudget: 1000,
@@ -1099,6 +1292,7 @@ describe("admin wiring (end to end)", () => {
     expect((governed.body as { isolationLevel: string }).isolationLevel).toBe("sandboxed");
 
     const allowedCheck = await admin.securityAiGovernance.checkAiAction(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "ai-copywriter",
       tool: "draft_copy",
       tokens: 100,
@@ -1108,6 +1302,7 @@ describe("admin wiring (end to end)", () => {
     expect((allowedCheck.body as { remainingTokens: number | null }).remainingTokens).toBe(900);
 
     const deniedCheck = await admin.securityAiGovernance.checkAiAction(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "ai-copywriter",
       tool: "delete_database",
     });
@@ -1115,47 +1310,69 @@ describe("admin wiring (end to end)", () => {
     expect((deniedCheck.body as { allowed: boolean }).allowed).toBe(false);
 
     const suspended = await admin.securityAiGovernance.suspendAiIdentity(staff, {
+      tenantId: "tenant-1",
       principalExternalId: "ai-copywriter",
     });
     expect(suspended.status).toBe(200);
     expect((suspended.body as { status: string }).status).toBe("suspended");
 
-    const explorer = await admin.securityAiGovernance.aiGovernanceExplorer(staff);
+    const explorer = await admin.securityAiGovernance.aiGovernanceExplorer(staff, "tenant-1");
     expect(explorer.status).toBe(200);
   });
 
   it("drives the Wishlist screen through create, add-item, share-item, move-to-cart, remove-item, and advance", async () => {
     const admin = wire();
 
-    const created = await admin.wishlist.create(staff, { customerRef: "customer-1" });
+    const created = await admin.wishlist.create(staff, {
+      customerRef: "customer-1",
+      tenantId: "tenant-1",
+    });
     expect(created.status).toBe(201);
     const wishlistId = (created.body as { wishlistId: string }).wishlistId;
 
-    const added = await admin.wishlist.addItem(staff, { wishlistId, productRef: "product-1" });
+    const added = await admin.wishlist.addItem(staff, {
+      wishlistId,
+      productRef: "product-1",
+      tenantId: "tenant-1",
+    });
     expect(added.status).toBe(200);
     expect((added.body as { itemCount: number }).itemCount).toBe(1);
 
-    const shared = await admin.wishlist.shareItem(staff, { wishlistId, productRef: "product-1" });
+    const shared = await admin.wishlist.shareItem(staff, {
+      wishlistId,
+      productRef: "product-1",
+      tenantId: "tenant-1",
+    });
     expect(shared.status).toBe(200);
     expect((shared.body as { shareToken: string }).shareToken).toBeTruthy();
 
     const moved = await admin.wishlist.moveItemToCart(staff, {
       wishlistId,
       productRef: "product-1",
+      tenantId: "tenant-1",
     });
     expect(moved.status).toBe(200);
     expect((moved.body as { itemCount: number }).itemCount).toBe(0);
 
-    const readded = await admin.wishlist.addItem(staff, { wishlistId, productRef: "product-2" });
+    const readded = await admin.wishlist.addItem(staff, {
+      wishlistId,
+      productRef: "product-2",
+      tenantId: "tenant-1",
+    });
     expect(readded.status).toBe(200);
     const removed = await admin.wishlist.removeItem(staff, {
       wishlistId,
       productRef: "product-2",
+      tenantId: "tenant-1",
     });
     expect(removed.status).toBe(200);
     expect((removed.body as { itemCount: number }).itemCount).toBe(0);
 
-    const archived = await admin.wishlist.advance(staff, { wishlistId, toStatus: "archived" });
+    const archived = await admin.wishlist.advance(staff, {
+      wishlistId,
+      toStatus: "archived",
+      tenantId: "tenant-1",
+    });
     expect(archived.status).toBe(200);
     expect((archived.body as { status: string }).status).toBe("archived");
   });
@@ -1166,6 +1383,7 @@ describe("admin wiring (end to end)", () => {
     const profile = await admin.customer360.getProfile(staff, {
       identifierType: "customer_id",
       identifierValue: "customer-1",
+      tenantId: "tenant-1",
     });
     expect(profile.status).toBe(200);
     expect((profile.body as { profile: unknown }).profile).toBeNull();
@@ -1173,16 +1391,19 @@ describe("admin wiring (end to end)", () => {
     const identityTimeline = await admin.customer360.getIdentityTimeline(staff, {
       identifierType: "customer_id",
       identifierValue: "customer-1",
+      tenantId: "tenant-1",
     });
     expect(identityTimeline.status).toBe(200);
 
     const journeyTimeline = await admin.customer360.getJourneyTimeline(staff, {
       visitorId: "visitor-1",
+      tenantId: "tenant-1",
     });
     expect(journeyTimeline.status).toBe(200);
 
     const journeyState = await admin.customer360.getJourneyState(staff, {
       visitorId: "visitor-1",
+      tenantId: "tenant-1",
     });
     expect(journeyState.status).toBe(200);
   });
@@ -1195,7 +1416,10 @@ describe("admin wiring (end to end)", () => {
       accessControl: { authorize: async () => false },
     });
 
-    const response = await admin.orders.refundOrder(staff, { orderId: "o-1" });
+    const response = await admin.orders.refundOrder(staff, {
+      tenantId: "tenant-1",
+      orderId: "o-1",
+    });
 
     expect(response.status).toBe(403);
     expect((response.body as { code: string }).code).toBe("FORBIDDEN");
@@ -1211,13 +1435,18 @@ describe("admin wiring (end to end)", () => {
       auditTrail,
     });
 
-    await admin.products.createCategory(staff, { name: "Wagons", slug: "wagons" });
-    await admin.orders.refundOrder(staff, { orderId: "o-1" });
+    await admin.products.createCategory(staff, {
+      name: "Wagons",
+      slug: "wagons",
+      tenantId: "tenant-1",
+    });
+    await admin.orders.refundOrder(staff, { tenantId: "tenant-1", orderId: "o-1" });
 
     expect(auditTrail.snapshot()).toEqual([
       {
         principalId: "staff-1",
         principalKind: "staff",
+        tenantId: "tenant-1",
         permission: "categories:create",
         decision: "allow",
         occurredAt: "2026-06-30T00:00:00.000Z",
@@ -1225,6 +1454,7 @@ describe("admin wiring (end to end)", () => {
       {
         principalId: "staff-1",
         principalKind: "staff",
+        tenantId: "tenant-1",
         permission: "orders:refund",
         decision: "deny",
         occurredAt: "2026-06-30T00:00:00.000Z",

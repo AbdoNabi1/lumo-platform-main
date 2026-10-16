@@ -7,9 +7,9 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: hydra
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: hydra
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
@@ -30,10 +30,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - auth.lumo.example.com
+        - auth.morbeh.example.com
       secretName: hydra-tls
   rules:
-    - host: auth.lumo.example.com
+    - host: auth.morbeh.example.com
       http:
         paths:
           - path: /oauth2
@@ -53,9 +53,9 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: kratos
-  namespace: lumo-runtime
+  namespace: morbeh-runtime
   labels:
-    app.kubernetes.io/part-of: lumo
+    app.kubernetes.io/part-of: morbeh
     app.kubernetes.io/name: kratos
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
@@ -76,10 +76,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - identity.lumo.example.com
+        - identity.morbeh.example.com
       secretName: kratos-tls
   rules:
-    - host: identity.lumo.example.com
+    - host: identity.morbeh.example.com
       http:
         paths:
           - path: /self-service

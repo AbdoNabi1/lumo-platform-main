@@ -1,14 +1,14 @@
 import type { CursorPage, Paginated } from "@platform/types";
 import type { Price } from "./price";
 
-/** Persistence port for {@link Price}. Implemented in infrastructure. The optional `tx` scopes the call to the caller's transaction (ADR-0003). */
+/** Persistence port for {@link Price}. Implemented in infrastructure. The optional `tx` scopes the call to the caller's transaction (ADR-0003). ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface PriceRepository {
-  save(price: Price, tx?: unknown): Promise<void>;
-  findById(id: string, tx?: unknown): Promise<Price | null>;
+  save(price: Price, tenantId: string, tx?: unknown): Promise<void>;
+  findById(id: string, tenantId: string, tx?: unknown): Promise<Price | null>;
   /** Persists a price already marked deleted (via `Price.delete`) — same shape as `save` (Sprint 7.0). */
-  delete(price: Price, tx?: unknown): Promise<void>;
+  delete(price: Price, tenantId: string, tx?: unknown): Promise<void>;
   /** Cursor-paginated listing (Sprint 7.0). No `search` — no free-text field exists on `Price`. */
-  list(page: CursorPage, tx?: unknown): Promise<Paginated<Price>>;
+  list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Price>>;
   /**
    * Every published, non-deleted price for `productRef` in `currency` (Phase 3 Task 9, H-1) — the
    * authoritative lookup `PricingValidationPort`'s adapter uses instead of paging `list()` and
@@ -23,6 +23,7 @@ export interface PriceRepository {
   findPublishedByProduct(
     productRef: string,
     currency: string,
+    tenantId: string,
     tx?: unknown,
   ): Promise<readonly Price[]>;
 }

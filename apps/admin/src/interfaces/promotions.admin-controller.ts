@@ -1,6 +1,5 @@
 import type { Principal } from "@platform/contracts";
 import type { PromotionsController } from "@platform/promotions";
-import type { CursorPage } from "@platform/types";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -55,7 +54,10 @@ export class PromotionsAdminController {
     return this.promotions.recordUsage(input);
   }
 
-  async list(principal: Principal, input: CursorPage): Promise<AdminResponse> {
+  async list(
+    principal: Principal,
+    input: Parameters<PromotionsController["list"]>[0],
+  ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "promotions:read");
     if (denied) return denied;
     return this.promotions.list(input);

@@ -92,7 +92,7 @@ export class CreateShipment implements UseCase<
   async execute(
     input: FulfillmentOrderIdInput,
   ): Promise<Result<FulfillmentOrderStatusOutput, DomainError>> {
-    const precheck = await this.precheck(input.fulfillmentOrderId);
+    const precheck = await this.precheck(input.fulfillmentOrderId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     if (precheck.value.alreadyShipped) {
       return ok({ fulfillmentOrderId: input.fulfillmentOrderId, status: precheck.value.status });
@@ -100,19 +100,25 @@ export class CreateShipment implements UseCase<
     const { orderRef } = precheck.value;
 
     const providerShipment = await this.deps.shippingProvider.createShipment({
+      tenantId: input.tenantId,
       fulfillmentOrderId: input.fulfillmentOrderId,
       orderRef,
       idempotencyKey: `${input.fulfillmentOrderId}:shipment`,
     });
 
-    return this.settle(input.fulfillmentOrderId, providerShipment);
+    return this.settle(input.fulfillmentOrderId, input.tenantId, providerShipment);
   }
 
   private async precheck(
     fulfillmentOrderId: string,
+    tenantId: string,
   ): Promise<Result<ShipmentPrecheck, DomainError>> {
     return this.deps.unitOfWork.run<Result<ShipmentPrecheck, DomainError>>(async (tx) => {
-      const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(fulfillmentOrderId, tx);
+      const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(
+        fulfillmentOrderId,
+        tenantId,
+        tx,
+      );
       if (fulfillmentOrder === null) {
         return err(new NotFoundError("Fulfillment order not found"));
       }
@@ -134,11 +140,16 @@ export class CreateShipment implements UseCase<
 
   private async settle(
     fulfillmentOrderId: string,
+    tenantId: string,
     providerShipment: ProviderShipment,
   ): Promise<Result<FulfillmentOrderStatusOutput, DomainError>> {
     return withConcurrencyRetry(CreateShipment.MAX_CONCURRENCY_RETRIES, () =>
       this.deps.unitOfWork.run<Result<FulfillmentOrderStatusOutput, DomainError>>(async (tx) => {
-        const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(fulfillmentOrderId, tx);
+        const fulfillmentOrder = await this.deps.fulfillmentOrders.findById(
+          fulfillmentOrderId,
+          tenantId,
+          tx,
+        );
         if (fulfillmentOrder === null) {
           return err(new NotFoundError("Fulfillment order not found"));
         }
@@ -170,8 +181,8 @@ export class CreateShipment implements UseCase<
           throw error;
         }
 
-        await this.deps.fulfillmentOrders.save(fulfillmentOrder, tx);
-        await notifyBestEffort(this.deps, fulfillmentOrder);
+        await this.deps.fulfillmentOrders.save(fulfillmentOrder, tenantId, tx);
+        await notifyBestEffort(this.deps, fulfillmentOrder, tenantId);
         return ok({
           fulfillmentOrderId: fulfillmentOrder.id.toString(),
           status: fulfillmentOrder.status.value,

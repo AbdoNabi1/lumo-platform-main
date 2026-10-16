@@ -6,6 +6,8 @@ import type { ComplianceFramework } from "../domain/value-objects/compliance";
 import { recordAudit, securityEvent, type SecurityDeps } from "./deps";
 
 export interface EvaluateComplianceInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly framework: ComplianceFramework;
   readonly tenantRef?: string | null;
   /** Caller attestations (with evidence) for signals not derivable from platform state. */
@@ -67,8 +69,10 @@ export class EvaluateCompliance implements UseCase<
 
     const tenantRef = input.tenantRef ?? null;
     const profile =
-      tenantRef !== null ? await this.deps.tenantProfiles.findByTenant(tenantRef) : null;
-    const auditRecords = await this.deps.auditLedger.list(tenantRef);
+      tenantRef !== null
+        ? await this.deps.tenantProfiles.findByTenant(tenantRef, input.tenantId)
+        : null;
+    const auditRecords = await this.deps.auditLedger.list(tenantRef, input.tenantId);
     const auditChainValid = this.deps.auditChain.verify(auditRecords).valid;
     const attest = input.attestations ?? {};
 
@@ -92,9 +96,11 @@ export class EvaluateCompliance implements UseCase<
             report.compliant ? "compliant" : "non_compliant",
           ),
         ],
+        input.tenantId,
         tx,
       );
       await recordAudit(this.deps, tx, {
+        tenantId: input.tenantId,
         principalRef: "system",
         action: "security.compliance.evaluated",
         decision: report.compliant ? "allow" : "deny",

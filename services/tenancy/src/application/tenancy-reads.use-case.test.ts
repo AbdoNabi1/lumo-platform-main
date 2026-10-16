@@ -31,7 +31,7 @@ function harness() {
     clock,
     producer: "tenancy",
   });
-  const context = rootEventContext(sequentialIds());
+  const context = rootEventContext(sequentialIds(), "tenant-test");
   const tenants = new InMemoryTenantRepository({ outbox, context });
   const workspaces = new InMemoryWorkspaceRepository({ outbox, context });
   const unitOfWork = new InMemoryUnitOfWork();
@@ -43,7 +43,11 @@ describe("Tenancy read use-cases (Phase 4 T4.15)", () => {
   it("ListTenants paginates and GetTenant returns the tenant, or NotFoundError", async () => {
     const h = harness();
     const create = new CreateTenant(h);
-    const created = await create.execute({ slug: "acme", name: "Acme Inc", isolationTier: "pooled" });
+    const created = await create.execute({
+      slug: "acme",
+      name: "Acme Inc",
+      isolationTier: "pooled",
+    });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 

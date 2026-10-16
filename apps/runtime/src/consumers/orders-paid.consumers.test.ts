@@ -29,8 +29,8 @@ const WORKER_ENV = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
   KAFKA_BROKERS: "localhost:19092",
-  AUTH_ISSUER_URL: "https://auth.lumo.local",
-  AUTH_JWKS_URL: "https://auth.lumo.local/.well-known/jwks.json",
+  AUTH_ISSUER_URL: "https://auth.morbeh.local",
+  AUTH_JWKS_URL: "https://auth.morbeh.local/.well-known/jwks.json",
   APP_ENV: "local",
 } as NodeJS.ProcessEnv;
 
@@ -62,6 +62,7 @@ function orderPaidEvent(
     occurredAt: "2026-08-24T10:00:00.000Z",
     correlationId: "corr-1",
     causationId: "cause-1",
+    tenantId: "tenant-local",
     metadata: {},
     payload: {
       orderNumber: "ORD-1001",
@@ -93,7 +94,9 @@ const POSTING_ACCOUNTS = {
   fees: "6100-FEES",
 };
 
-function financeConsumer(append: (journal: Journal, tx?: unknown) => Promise<void>) {
+function financeConsumer(
+  append: (journal: Journal, tenantId?: string, tx?: unknown) => Promise<void>,
+) {
   return new FinanceOrdersPaidConsumer({
     journals: { append, findById: vi.fn(), findBySourceRef: vi.fn() },
     postingAccounts: POSTING_ACCOUNTS,
@@ -132,15 +135,19 @@ describe("FinanceOrdersPaidConsumer — atomic ledger posting (C-2 fix round 1, 
   });
 
   it("appends the journal on the tx it was handed — never a transaction of its own", async () => {
-    const append = vi.fn(async (_journal: Journal, _tx?: unknown): Promise<void> => undefined);
+    const append = vi.fn(
+      async (_journal: Journal, _tenantId?: string, _tx?: unknown): Promise<void> => undefined,
+    );
     const consumer = financeConsumer(append);
 
     await consumer.handleAtomic(orderPaidEvent(), "runtime-tx" as unknown as TransactionClient);
 
-    // Finance's OrdersPaidConsumer calls `journals.append(journal)` with NO tx argument; the tx
-    // reaching the repository is therefore proof the consumer bound the runtime's transaction.
+    // Finance's OrdersPaidConsumer calls `journals.append(journal, tenantId)` with NO tx argument;
+    // the tx reaching the repository is therefore proof the consumer bound the runtime's
+    // transaction.
     expect(append).toHaveBeenCalledTimes(1);
-    expect(append.mock.calls[0]?.[1]).toBe("runtime-tx");
+    expect(append.mock.calls[0]?.[1]).toBe("tenant-local");
+    expect(append.mock.calls[0]?.[2]).toBe("runtime-tx");
   });
 
   it("REFUSES the non-atomic path rather than risk double-posting the ledger", async () => {
@@ -201,6 +208,7 @@ describe("LoyaltyOrdersPaidConsumer (Task 17b, C-2)", () => {
       // 12_345 minor units -> 123 points at the documented placeholder 1-per-100 rate.
       points: 123,
       ref: "ORD-1001",
+      tenantId: "tenant-local",
     });
   });
 
@@ -260,11 +268,13 @@ describe("Customer360OrdersPaidConsumer (Task 17b, C-2)", () => {
     const execute = vi.fn(async () => ok({ applied: true, version: 1 }));
     const consumer = new Customer360OrdersPaidConsumer({
       updateProfileProjection: { execute } as unknown as UpdateProfileProjection,
+      logger: silentLogger,
     });
 
     await consumer.handle(orderPaidEvent());
 
     expect(execute).toHaveBeenCalledWith({
+      tenantId: "tenant-local",
       identifier: { type: "customer_id", value: "customer-9" },
       field: "lastOrderRef",
       value: "ORD-1001",
@@ -281,6 +291,7 @@ describe("Customer360OrdersPaidConsumer (Task 17b, C-2)", () => {
       updateProfileProjection: {
         execute: vi.fn(async () => err(new ValidationError("bad field", []))),
       } as unknown as UpdateProfileProjection,
+      logger: silentLogger,
     });
 
     await expect(consumer.handle(orderPaidEvent())).rejects.toThrow(/bad field/);
@@ -292,11 +303,13 @@ describe("NotificationsOrdersPaidConsumer (Task 17b, C-2)", () => {
     const execute = vi.fn(async () => ok({ notificationId: "ntf-1", status: "created" }));
     const consumer = new NotificationsOrdersPaidConsumer({
       createNotification: { execute } as unknown as CreateNotification,
+      logger: silentLogger,
     });
 
     await consumer.handle(orderPaidEvent());
 
     expect(execute).toHaveBeenCalledWith({
+      tenantId: "tenant-local",
       idempotencyKey: "orders.order.paid:confirmation:ORD-1001",
       // `orders:<orderNumber>` matches OrdersNotificationAdapter's existing sourceRef convention.
       sourceRef: "orders:ORD-1001",
@@ -316,6 +329,7 @@ describe("NotificationsOrdersPaidConsumer (Task 17b, C-2)", () => {
       createNotification: {
         execute: vi.fn(async () => err(new ValidationError("no channels", []))),
       } as unknown as CreateNotification,
+      logger: silentLogger,
     });
 
     await expect(consumer.handle(orderPaidEvent())).rejects.toThrow(/no channels/);

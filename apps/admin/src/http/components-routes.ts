@@ -78,7 +78,8 @@ export function componentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       idempotent: true,
       summary: "Create a component definition",
       schema: { body: createComponentDefinitionBody },
-      handle: ({ body, context }) => admin.components.create(context.principal, body),
+      handle: ({ body, context }) =>
+        admin.components.create(context.principal, { ...body, tenantId: context.tenantId }),
     }),
     defineRoute({
       method: "POST",
@@ -92,6 +93,7 @@ export function componentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
         admin.components.advance(context.principal, {
           componentDefinitionId: params.componentDefinitionId,
           ...body,
+          tenantId: context.tenantId,
         }),
     }),
     defineRoute({
@@ -102,7 +104,13 @@ export function componentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "List component definitions (cursor pagination)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
-        mapPage(await admin.components.list(context.principal, query), toComponentDefinitionDto),
+        mapPage(
+          await admin.components.list(context.principal, {
+            ...query,
+            tenantId: context.tenantId,
+          }),
+          toComponentDefinitionDto,
+        ),
     }),
     defineRoute({
       method: "GET",
@@ -112,9 +120,15 @@ export function componentsRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       summary: "Get one component definition by id",
       schema: { params: componentDefinitionIdParams },
       handle: async ({ params, context }) => {
-        const response = await admin.components.get(context.principal, params);
+        const response = await admin.components.get(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
         if (response.status !== 200) return response;
-        return { status: 200, body: toComponentDefinitionDto(response.body as ComponentDefinition) };
+        return {
+          status: 200,
+          body: toComponentDefinitionDto(response.body as ComponentDefinition),
+        };
       },
     }),
   ] as readonly RouteDefinition[];

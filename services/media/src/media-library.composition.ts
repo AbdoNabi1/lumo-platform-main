@@ -11,6 +11,7 @@ import {
   type Subscriber,
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
+import { StorageKeyFactory } from "@platform/storage";
 import { GetFolder } from "./application/get-folder.use-case";
 import { GetMediaAsset } from "./application/get-media-asset.use-case";
 import { ListFolders } from "./application/list-folders.use-case";
@@ -23,12 +24,16 @@ import {
   RegisterMediaAsset,
 } from "./application/media-library.use-cases";
 import type { ObjectStoragePort } from "./application/object-storage.port";
+import { ResolveMediaImages } from "./application/resolve-media-images.use-case";
+import { UpdateMediaAlt, UploadProductImage } from "./application/upload-product-image.use-case";
+import type { LegacyStorageKeys } from "./application/storage-key-ownership";
 import type { FolderRepository, MediaAssetRepository } from "./domain/library-repositories";
 import {
   InMemoryFolderRepository,
   InMemoryMediaAssetRepository,
 } from "./infrastructure/in-memory-library-repositories";
 import { InMemoryObjectStorage } from "./infrastructure/object-storage-adapters";
+import { TenantPrefixedKeyPolicy } from "./infrastructure/tenant-prefixed-key-policy";
 import {
   MEDIA_LIBRARY_PUBLISHED_EVENTS,
   MediaLibraryEventTranslator,
@@ -46,19 +51,31 @@ export interface MediaLibraryWiringDeps {
   readonly clock: Clock;
   readonly objectStorage?: ObjectStoragePort;
   /**
+   * What `getDownloadUrl` does with an existing row whose key is not in the tenant-prefixed shape.
+   * Default `"refuse"`. The admin composition passes `"allow"` only under `TENANT_MODE=single` — the
+   * explicit, recorded legacy allowance (G-68). Registration ignores it: it never accepts legacy keys.
+   */
+  readonly legacyStorageKeys?: LegacyStorageKeys;
+  /**
+   * Where the public media bucket is served from (`MEDIA_PUBLIC_BASE_URL`). Absent ⇒ product-image
+   * uploads answer 503. Also how a stored key becomes the url the storefront renders.
+   */
+  readonly publicMediaBaseUrl?: string;
+  /**
    * Production persistence (G-39/C-01). Present ⇒ `PrismaFolderRepository` +
-   * `PrismaMediaAssetRepository` + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wirePages`); absent ⇒ in-memory, unchanged. `wireMedia` (the
-   * Phase-1 Asset slice) is a separate, unrelated composition function never called by
+   * `PrismaMediaAssetRepository` + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged. `wireMedia`
+   * (the Phase-1 Asset slice) is a separate, unrelated composition function never called by
    * `apps/admin` — out of scope here, same "not part of the production graph" exclusion.
+   * ADR-0014 (WP-10, T10.3): both repositories built here are tenant-agnostic singletons — no
+   * `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Media Library table is tenant-scoped. */
-  readonly tenantId?: string;
 }
 
 export interface WiredMediaLibrary {
   readonly mediaLibrary: MediaLibraryController;
+  /** Plan 2C-3: the batched, tenant-scoped image read for admin and storefront DTOs. No auth: callers authorize. */
+  readonly images: ResolveMediaImages;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
 }
@@ -75,6 +92,7 @@ function buildController(
   deps: MediaLibraryWiringDeps,
 ): MediaLibraryController {
   const objectStorage = deps.objectStorage ?? new InMemoryObjectStorage();
+  const keyPolicy = new TenantPrefixedKeyPolicy();
   const libraryDeps = {
     ...repos,
     unitOfWork,
@@ -85,13 +103,37 @@ function buildController(
   return new MediaLibraryController({
     createFolder: new CreateFolder(libraryDeps),
     archiveFolder: new ArchiveFolder(libraryDeps),
-    registerMediaAsset: new RegisterMediaAsset({ ...libraryDeps, objectStorage }),
+    registerMediaAsset: new RegisterMediaAsset({ ...libraryDeps, objectStorage, keyPolicy }),
     archiveMediaAsset: new ArchiveMediaAsset(libraryDeps),
-    getDownloadUrl: new GetDownloadUrl({ ...libraryDeps, objectStorage }),
+    getDownloadUrl: new GetDownloadUrl({
+      ...libraryDeps,
+      objectStorage,
+      keyPolicy,
+      ...(deps.legacyStorageKeys === undefined
+        ? {}
+        : { legacyStorageKeys: deps.legacyStorageKeys }),
+    }),
     listFolders: new ListFolders({ folders: repos.folders }),
     getFolder: new GetFolder({ folders: repos.folders }),
     listMediaAssets: new ListMediaAssets({ mediaAssets: repos.mediaAssets }),
     getMediaAsset: new GetMediaAsset({ mediaAssets: repos.mediaAssets }),
+    uploadProductImage: new UploadProductImage({
+      mediaAssets: repos.mediaAssets,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      objectStorage,
+      keyFactory: new StorageKeyFactory({ idGenerator: deps.idGenerator, clock: deps.clock }),
+      ...(deps.publicMediaBaseUrl === undefined ? {} : { publicBaseUrl: deps.publicMediaBaseUrl }),
+    }),
+    updateMediaAlt: new UpdateMediaAlt({ mediaAssets: repos.mediaAssets, unitOfWork }),
+  });
+}
+
+function buildImages(repos: MediaLibraryRepos, deps: MediaLibraryWiringDeps): ResolveMediaImages {
+  return new ResolveMediaImages({
+    mediaAssets: repos.mediaAssets,
+    ...(deps.publicMediaBaseUrl === undefined ? {} : { publicBaseUrl: deps.publicMediaBaseUrl }),
   });
 }
 
@@ -103,10 +145,6 @@ function buildController(
  */
 export function wireMediaLibrary(deps: MediaLibraryWiringDeps): WiredMediaLibrary {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireMediaLibrary: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new MediaLibraryEventTranslator(),
@@ -114,8 +152,11 @@ export function wireMediaLibrary(deps: MediaLibraryWiringDeps): WiredMediaLibrar
       clock: deps.clock,
       producer: "media",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const libraryDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see
+    // MediaLibraryWiringDeps' doc comment) — both repositories built below take tenantId per call
+    // instead.
+    const context = rootEventContext(deps.idGenerator);
+    const libraryDeps = { prisma: deps.prisma, outbox, context };
     const repos: MediaLibraryRepos = {
       folders: new PrismaFolderRepository(libraryDeps),
       mediaAssets: new PrismaMediaAssetRepository(libraryDeps),
@@ -124,6 +165,7 @@ export function wireMediaLibrary(deps: MediaLibraryWiringDeps): WiredMediaLibrar
 
     return {
       mediaLibrary: buildController(repos, unitOfWork, deps),
+      images: buildImages(repos, deps),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -163,6 +205,7 @@ export function wireMediaLibrary(deps: MediaLibraryWiringDeps): WiredMediaLibrar
 
   return {
     mediaLibrary: controller,
+    images: buildImages(repos, deps),
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

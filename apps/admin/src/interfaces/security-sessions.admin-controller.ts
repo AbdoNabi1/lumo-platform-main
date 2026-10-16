@@ -185,17 +185,17 @@ export class SecuritySessionsAdminController {
   }
 
   /** Console read model — session explorer (Part 10). Not `present()`-wrapped upstream; wrapped here. */
-  async sessionExplorer(principal: Principal): Promise<AdminResponse> {
+  async sessionExplorer(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:session_explorer");
     if (denied) return denied;
-    return { status: 200, body: await this.security.sessionExplorer() };
+    return { status: 200, body: await this.security.sessionExplorer(tenantId) };
   }
 
   /** Console read model — device explorer (Part 10). Wrapped here (see above). */
-  async deviceExplorer(principal: Principal): Promise<AdminResponse> {
+  async deviceExplorer(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "security:device_explorer");
     if (denied) return denied;
-    return { status: 200, body: await this.security.deviceExplorer() };
+    return { status: 200, body: await this.security.deviceExplorer(tenantId) };
   }
 
   /** Console read model — risk explorer (Part 10). Synchronous upstream; wrapped here for uniformity. */

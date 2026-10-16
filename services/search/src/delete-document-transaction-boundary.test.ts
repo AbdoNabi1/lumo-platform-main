@@ -129,7 +129,10 @@ async function seedIndexWithDocuments(
 ): Promise<string> {
   const seedProvider = new RecordingIndexProvider();
   const createDeps = buildDeps(repo, seedProvider, unitOfWork);
-  const created = await new CreateIndex(createDeps).execute({ name: "products" });
+  const created = await new CreateIndex(createDeps).execute({
+    name: "products",
+    tenantId: "tenant-local",
+  });
   if (!created.ok) throw new Error("seed failed");
   const indexId = created.value.indexId;
 
@@ -139,6 +142,7 @@ async function seedIndexWithDocuments(
       productRef,
       title: `title-${productRef}`,
       categoryRefs: [],
+      tenantId: "tenant-local",
     });
     if (!upserted.ok) throw new Error("seed upsert failed");
   }
@@ -154,7 +158,11 @@ describe("Task 1 — exploit proof: IndexProviderPort.delete() call happens whil
     const provider = new RecordingIndexProvider(uow);
     const lifecycle = new DeleteDocument(buildDeps(repo, provider, uow));
 
-    const result = await lifecycle.execute({ indexId, productRef: "product-1" });
+    const result = await lifecycle.execute({
+      indexId,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
 
     expect(result.ok).toBe(true);
     expect(provider.deleteCalls).toHaveLength(1);
@@ -176,9 +184,9 @@ describe("Task 2 — provider failure recovery on delete", () => {
     const failingProvider = new RecordingIndexProvider(uow, true);
     const lifecycle = new DeleteDocument(buildDeps(repo, failingProvider, uow));
 
-    await expect(lifecycle.execute({ indexId, productRef: "product-1" })).rejects.toThrow(
-      /simulated index provider delete failure/,
-    );
+    await expect(
+      lifecycle.execute({ indexId, productRef: "product-1", tenantId: "tenant-local" }),
+    ).rejects.toThrow(/simulated index provider delete failure/);
 
     // No domain mutation happened: recordDocumentDeleted/save were never reached, so the index
     // still correctly reflects that the delete did not happen (matches the pre-fix single-tx
@@ -195,11 +203,17 @@ describe("Task 2 — provider failure recovery on delete", () => {
 
     const failingProvider = new RecordingIndexProvider(uow, true);
     const failingLifecycle = new DeleteDocument(buildDeps(repo, failingProvider, uow));
-    await expect(failingLifecycle.execute({ indexId, productRef: "product-1" })).rejects.toThrow();
+    await expect(
+      failingLifecycle.execute({ indexId, productRef: "product-1", tenantId: "tenant-local" }),
+    ).rejects.toThrow();
 
     const workingProvider = new RecordingIndexProvider(uow, false);
     const retryLifecycle = new DeleteDocument(buildDeps(repo, workingProvider, uow));
-    const retried = await retryLifecycle.execute({ indexId, productRef: "product-1" });
+    const retried = await retryLifecycle.execute({
+      indexId,
+      productRef: "product-1",
+      tenantId: "tenant-local",
+    });
 
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.documentCount).toBe(0);
@@ -217,7 +231,11 @@ describe("Task 3 — concurrent deletes never lose updates or leak ConcurrencyEr
 
       const results = await Promise.all(
         productRefs.map((productRef) =>
-          new DeleteDocument(buildDeps(repo, provider, uow)).execute({ indexId, productRef }),
+          new DeleteDocument(buildDeps(repo, provider, uow)).execute({
+            indexId,
+            productRef,
+            tenantId: "tenant-local",
+          }),
         ),
       );
 

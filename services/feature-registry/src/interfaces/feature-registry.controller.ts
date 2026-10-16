@@ -29,6 +29,8 @@ import type {
   UpdateBundle,
   UpdateBundleInput,
   ValidateRegistry,
+  ValidateRegistryInput,
+  ListBundlesInput,
 } from "../application/feature-registry.use-cases";
 import type { CreateBundleProps } from "../domain/feature-bundle";
 import type { RegisterFeatureProps } from "../domain/feature-definition";
@@ -93,8 +95,8 @@ export class FeatureRegistryController {
     return present(await this.useCases.setFeatureMetadata.execute(input), 200);
   }
 
-  async validate(): Promise<ControllerResponse> {
-    return present(await this.useCases.validateRegistry.execute(), 200);
+  async validate(input: ValidateRegistryInput): Promise<ControllerResponse> {
+    return present(await this.useCases.validateRegistry.execute(input), 200);
   }
 
   async analyzeGraph(input: AnalyzeCapabilityGraphInput): Promise<ControllerResponse> {
@@ -109,8 +111,8 @@ export class FeatureRegistryController {
     return present(await this.useCases.updateBundle.execute(input), 200);
   }
 
-  async listBundles(): Promise<ControllerResponse> {
-    return present(await this.useCases.listBundles.execute(), 200);
+  async listBundles(input: ListBundlesInput): Promise<ControllerResponse> {
+    return present(await this.useCases.listBundles.execute(input), 200);
   }
 
   async advance(input: FeatureActionInput): Promise<ControllerResponse> {

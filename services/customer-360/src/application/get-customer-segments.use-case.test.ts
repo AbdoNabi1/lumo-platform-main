@@ -9,6 +9,7 @@ import type {
   ResolveIdentityOutput,
 } from "./resolve-identity.use-case";
 import { GetCustomerSegments } from "./get-customer-segments.use-case";
+import { TENANT_A } from "../test-support/tenants";
 
 const visitor = { type: "visitor_id" as const, value: "v1" };
 const customer = { type: "customer_id" as const, value: "cust-1" };
@@ -27,7 +28,7 @@ describe("GetCustomerSegments", () => {
       resolveIdentity,
     });
 
-    const result = await useCase.execute({ identifier: visitor });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier: visitor });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.segment.memberships.size).toBe(0);
     expect(result.value.mergedFrom).toEqual([]);
@@ -43,12 +44,12 @@ describe("GetCustomerSegments", () => {
       inputs: new Map(),
       evaluatedAt: "t0",
     }).membership!;
-    await segments.saveCurrent(membership);
+    await segments.saveCurrent(membership, TENANT_A);
 
     const resolveIdentity = fakeResolveIdentity(async () => ok({ cluster: null }));
     const useCase = new GetCustomerSegments({ segments, resolveIdentity });
 
-    const result = await useCase.execute({ identifier: visitor });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier: visitor });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.segment.memberships.get("high_value")?.status).toBe("entered");
     expect(result.value.mergedFrom).toEqual([visitor]);
@@ -65,6 +66,7 @@ describe("GetCustomerSegments", () => {
         inputs: new Map(),
         evaluatedAt: "t0",
       }).membership!,
+      TENANT_A,
     );
     await segments.saveCurrent(
       applyMembershipUpdate(null, customer.type, customer.value, "high_value", {
@@ -75,6 +77,7 @@ describe("GetCustomerSegments", () => {
         inputs: new Map(),
         evaluatedAt: "t0",
       }).membership!,
+      TENANT_A,
     );
 
     const resolveIdentity = fakeResolveIdentity(async () =>
@@ -97,7 +100,7 @@ describe("GetCustomerSegments", () => {
     );
 
     const useCase = new GetCustomerSegments({ segments, resolveIdentity });
-    const result = await useCase.execute({ identifier: visitor });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier: visitor });
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.segment.memberships.get("engaged")?.status).toBe("entered");
     expect(result.value.segment.memberships.get("high_value")?.status).toBe("entered");
@@ -113,7 +116,7 @@ describe("GetCustomerSegments", () => {
       resolveIdentity,
     });
 
-    const result = await useCase.execute({ identifier: visitor });
+    const result = await useCase.execute({ tenantId: TENANT_A, identifier: visitor });
     expect(result.ok).toBe(false);
   });
 });

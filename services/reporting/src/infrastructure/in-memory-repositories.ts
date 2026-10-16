@@ -10,6 +10,16 @@ import type {
   ReportDefinitionRepository,
 } from "../domain/repositories";
 
+/** ADR-0014 (WP-10, T10.3): per-tenant bucket, so every store is keyed by `(tenantId, id)`. */
+function bucketFor<T>(store: Map<string, Map<string, T>>, tenantId: string): Map<string, T> {
+  let bucket = store.get(tenantId);
+  if (bucket === undefined) {
+    bucket = new Map();
+    store.set(tenantId, bucket);
+  }
+  return bucket;
+}
+
 export interface InMemoryReportingRepositoriesDeps {
   readonly outbox: OutboxWriter;
   readonly context: EventContext;
@@ -17,7 +27,7 @@ export interface InMemoryReportingRepositoriesDeps {
 
 /** In-memory `ReportDefinitionRepository`. Persists the aggregate and writes events to the outbox on save. */
 export class InMemoryReportDefinitionRepository implements ReportDefinitionRepository {
-  private readonly store = new Map<string, ReportDefinition>();
+  private readonly store = new Map<string, Map<string, ReportDefinition>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -26,24 +36,24 @@ export class InMemoryReportDefinitionRepository implements ReportDefinitionRepos
     this.context = deps.context;
   }
 
-  async save(definition: ReportDefinition, tx?: unknown): Promise<void> {
-    this.store.set(definition.id.toString(), definition);
-    await this.outbox.write(definition.pullDomainEvents(), this.context, tx);
+  async save(definition: ReportDefinition, tenantId: string, tx?: unknown): Promise<void> {
+    bucketFor(this.store, tenantId).set(definition.id.toString(), definition);
+    await this.outbox.write(definition.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<ReportDefinition | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<ReportDefinition | null> {
+    return bucketFor(this.store, tenantId).get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<ReportDefinition | null> {
-    for (const definition of this.store.values()) {
+  async findByName(name: string, tenantId: string): Promise<ReportDefinition | null> {
+    for (const definition of bucketFor(this.store, tenantId).values()) {
       if (definition.name === name) return definition;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<ReportDefinition>> {
-    const all = [...this.store.values()].sort((a, b) =>
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<ReportDefinition>> {
+    const all = [...bucketFor(this.store, tenantId).values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
@@ -56,7 +66,7 @@ export class InMemoryReportDefinitionRepository implements ReportDefinitionRepos
 
 /** In-memory `DashboardRepository`. Persists the aggregate and writes events to the outbox on save. */
 export class InMemoryDashboardRepository implements DashboardRepository {
-  private readonly store = new Map<string, Dashboard>();
+  private readonly store = new Map<string, Map<string, Dashboard>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -65,24 +75,24 @@ export class InMemoryDashboardRepository implements DashboardRepository {
     this.context = deps.context;
   }
 
-  async save(dashboard: Dashboard, tx?: unknown): Promise<void> {
-    this.store.set(dashboard.id.toString(), dashboard);
-    await this.outbox.write(dashboard.pullDomainEvents(), this.context, tx);
+  async save(dashboard: Dashboard, tenantId: string, tx?: unknown): Promise<void> {
+    bucketFor(this.store, tenantId).set(dashboard.id.toString(), dashboard);
+    await this.outbox.write(dashboard.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<Dashboard | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<Dashboard | null> {
+    return bucketFor(this.store, tenantId).get(id) ?? null;
   }
 
-  async findByName(name: string): Promise<Dashboard | null> {
-    for (const dashboard of this.store.values()) {
+  async findByName(name: string, tenantId: string): Promise<Dashboard | null> {
+    for (const dashboard of bucketFor(this.store, tenantId).values()) {
       if (dashboard.name === name) return dashboard;
     }
     return null;
   }
 
-  async list(page: CursorPage): Promise<Paginated<Dashboard>> {
-    const all = [...this.store.values()].sort((a, b) =>
+  async list(page: CursorPage, tenantId: string): Promise<Paginated<Dashboard>> {
+    const all = [...bucketFor(this.store, tenantId).values()].sort((a, b) =>
       a.id.toString().localeCompare(b.id.toString()),
     );
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
@@ -95,7 +105,7 @@ export class InMemoryDashboardRepository implements DashboardRepository {
 
 /** In-memory `AnalyticsReportRepository`. Persists the write-once run and writes events to the outbox on save. */
 export class InMemoryAnalyticsReportRepository implements AnalyticsReportRepository {
-  private readonly store = new Map<string, AnalyticsReport>();
+  private readonly store = new Map<string, Map<string, AnalyticsReport>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -104,12 +114,12 @@ export class InMemoryAnalyticsReportRepository implements AnalyticsReportReposit
     this.context = deps.context;
   }
 
-  async save(report: AnalyticsReport, tx?: unknown): Promise<void> {
-    this.store.set(report.id.toString(), report);
-    await this.outbox.write(report.pullDomainEvents(), this.context, tx);
+  async save(report: AnalyticsReport, tenantId: string, tx?: unknown): Promise<void> {
+    bucketFor(this.store, tenantId).set(report.id.toString(), report);
+    await this.outbox.write(report.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string): Promise<AnalyticsReport | null> {
-    return this.store.get(id) ?? null;
+  async findById(id: string, tenantId: string): Promise<AnalyticsReport | null> {
+    return bucketFor(this.store, tenantId).get(id) ?? null;
   }
 }

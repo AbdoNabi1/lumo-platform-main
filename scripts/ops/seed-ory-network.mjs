@@ -9,7 +9,13 @@
 //
 // Usage:  ADMIN_DEV_PASSWORD='<strong password>' node scripts/ops/seed-ory-network.mjs
 // Reads ORY_SDK_URL, ORY_API_KEY, AUTH_CLIENT_ID, AUTH_CLIENT_SECRET, AUTH_AUDIENCE,
-// ADMIN_WEB_ORIGIN from the environment.
+// ADMIN_WEB_ORIGIN from the environment. TENANT_DEFAULT_ID (default tenant-local) is the tenant every
+// grant is qualified with (G-70) — it must match the runtime's TENANT_DEFAULT_ID.
+//
+// G-70: each grant is written tenant-qualified only, `tenant/<tenantId>/<permission>` — the object
+// reads check. The live bare tuples were migrated and deleted on 2026-09-21
+// (docs/operations/KETO_TENANT_MIGRATION.md). Ory Network acknowledged writes in a burst with 2xx and
+// persisted only a prefix of them, so every grant here is paced and read back (putVerified).
 
 function required(name) {
   const v = process.env[name];
@@ -19,13 +25,15 @@ function required(name) {
 
 const ORY = required("ORY_SDK_URL").replace(/\/$/, "");
 const KEY = required("ORY_API_KEY");
-const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "lumo-admin-web";
+const CLIENT_ID = process.env.AUTH_CLIENT_ID ?? "morbeh-admin-web";
 const CLIENT_SECRET = required("AUTH_CLIENT_SECRET");
-const AUDIENCE = process.env.AUTH_AUDIENCE ?? "lumo-admin";
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "admin@lumo.local";
+const AUDIENCE = process.env.AUTH_AUDIENCE ?? "morbeh-admin";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "admin@morbeh.local";
 const ADMIN_PASSWORD = required("ADMIN_DEV_PASSWORD");
 const ORIGIN = process.env.ADMIN_WEB_ORIGIN ?? "http://localhost:3100";
 const SCHEMA_ID = process.env.ORY_IDENTITY_SCHEMA_ID ?? "preset://email";
+// Named once here and passed to grantAll; the writer reads no default of its own.
+const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 const PERMISSIONS = [
   "analytics:read",
@@ -115,10 +123,10 @@ function clientBody() {
     redirect_uris: [`${ORIGIN}/auth/callback`],
     // Must cover every scope the middleware asks for, or Ory rejects the authorization request
     // with `invalid_scope` and admin-web redirect-loops on /login?error=invalid_scope.
-    // `openid lumo.admin` is what apps/admin-web/src/middleware.ts requests; `lumo.admin` also
+    // `openid morbeh.admin` is what apps/admin-web/src/middleware.ts requests; `morbeh.admin` also
     // matches scripts/dev/mint-local-token.mjs's own client. `offline_access` backs the
     // refresh_token grant below.
-    scope: "openid offline_access lumo.admin",
+    scope: "openid offline_access morbeh.admin",
     audience: [AUDIENCE],
     token_endpoint_auth_method: "client_secret_post",
     // Ory Network's default is an OPAQUE access token (`ory_at_...`, 2 segments). The runtime's
@@ -188,10 +196,11 @@ async function ensureIdentity() {
 // subject_id. Must match keto.ts's `subjectSetNamespace` default exactly, or checks silently deny.
 const SUBJECT_SET_NAMESPACE = "User";
 
-function grantTupleBody(subjectId, permission) {
+/** `object` is the tenant-qualified permission (`tenant/<tenantId>/<permission>`). */
+function grantTupleBody(subjectId, object) {
   return {
     namespace: "permissions",
-    object: permission,
+    object,
     relation: "granted",
     subject_set: { namespace: SUBJECT_SET_NAMESPACE, object: subjectId, relation: "" },
   };
@@ -216,10 +225,46 @@ function grantTupleBody(subjectId, permission) {
  * the client and identity above are still fully usable without Permissions, and `KetoAccessControl`
  * fails closed, so a half-granted store would be worse than none.
  */
-async function grantAll(subjectId) {
+const GRANT_PACING_MS = 300;
+const GRANT_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Whether this exact grant tuple exists (a filtered list on object, relation and subject set). */
+async function grantExists(body) {
+  const params = new URLSearchParams({
+    namespace: body.namespace,
+    object: body.object,
+    relation: body.relation,
+    "subject_set.namespace": body.subject_set.namespace,
+    "subject_set.object": body.subject_set.object,
+    "subject_set.relation": body.subject_set.relation,
+  });
+  const res = await api(`/relation-tuples?${params.toString()}`);
+  if (res.status !== 200) {
+    throw new Error(`read back "${body.object}" failed: ${res.status} ${await res.text()}`);
+  }
+  return ((await res.json()).relation_tuples ?? []).length > 0;
+}
+
+/** PUT a grant and re-issue it with backoff until a read-back sees it; throw if it never lands. */
+async function putVerified(body) {
+  for (const delay of [0, ...GRANT_RETRY_DELAYS_MS]) {
+    if (delay > 0) await sleep(delay);
+    const res = await api("/admin/relation-tuples", { method: "PUT", body: JSON.stringify(body) });
+    if (!res.ok)
+      throw new Error(`grant "${body.object}" failed: ${res.status} ${await res.text()}`);
+    if (await grantExists(body)) return;
+  }
+  throw new Error(
+    `grant "${body.object}": Ory answered 2xx but the tuple never appeared ` +
+      "(see docs/operations/KETO_TENANT_MIGRATION.md). Re-run this script; grants are idempotent.",
+  );
+}
+
+async function grantAll(subjectId, tenantId) {
   const probe = await api("/admin/relation-tuples", {
     method: "PUT",
-    body: JSON.stringify(grantTupleBody(subjectId, PERMISSIONS[0])),
+    body: JSON.stringify(grantTupleBody(subjectId, `tenant/${tenantId}/${PERMISSIONS[0]}`)),
   });
 
   if (!probe.ok) {
@@ -241,20 +286,21 @@ async function grantAll(subjectId) {
     return false;
   }
 
-  for (const permission of PERMISSIONS.slice(1)) {
-    const res = await api("/admin/relation-tuples", {
-      method: "PUT",
-      body: JSON.stringify(grantTupleBody(subjectId, permission)),
-    });
-    if (!res.ok) throw new Error(`grant "${permission}" failed: ${res.status} ${await res.text()}`);
+  // The probe proved Permissions is usable. Now write (and read back) every grant, the probe's
+  // included: a 2xx from Ory Network is not proof that a tuple persisted.
+  for (const permission of PERMISSIONS) {
+    await putVerified(grantTupleBody(subjectId, `tenant/${tenantId}/${permission}`));
+    await sleep(GRANT_PACING_MS);
   }
-  console.log(`Granted all ${PERMISSIONS.length} permissions to ${subjectId}.`);
+  console.log(
+    `Granted all ${PERMISSIONS.length} permissions to ${subjectId} (tenant/${tenantId}/, each read back).`,
+  );
   return true;
 }
 
 await ensureOAuthClient();
 const identityId = await ensureIdentity();
-const permissionsGranted = await grantAll(identityId);
+const permissionsGranted = await grantAll(identityId, TENANT_ID);
 
 console.log(`\nOry Network seeded.`);
 console.log(`  project      : ${ORY}`);

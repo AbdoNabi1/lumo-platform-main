@@ -16,31 +16,44 @@
 
 ## 1.1 Implemented events — reconciliation (ADR-0004)
 
+> **Superseded as the list of topics that must EXIST (G-80, 2026-09-29):** that list is now
+> generated from code — `apps/runtime/src/kafka-topics/topic-inventory.ts`, 430 topics — and provisioned
+> from it (`apps/runtime/src/provision-topics.ts` on Railway, the generated
+> `infrastructure/docker/redpanda/topics.manifest` in compose). The table below still records the
+> Phase-1 topics and what raises them.
+>
 > **This table is the source of truth for the Phase-1 topics that exist in code.** Event names are
 > canonically **3 segments** (`<context>.<aggregate>.<event>`, enforced by `topicFor`); rows
 > elsewhere in this catalog that use older 2-segment shorthand (e.g. `cart.abandoned.v1`) or
 > divergent names (e.g. `inventory.stock.adjusted.v1`, `payments.payment.captured.v1`) are
 > **superseded** by the names below and will be normalized when their sections are next revised.
 
-| Implemented topic                        | Producer  | Raised by                                                                 |
-| ---------------------------------------- | --------- | ------------------------------------------------------------------------- |
-| `catalog.product.published.v1`           | catalog   | `Product.publish`                                                         |
-| `catalog.product.updated.v1`             | catalog   | `Product.update`                                                          |
-| `media.asset.ready.v1`                   | media     | `Asset` ready transition                                                  |
-| `pricing.price.changed.v1`               | pricing   | `Price.change`                                                            |
-| `inventory.inventory_item.adjusted.v1`   | inventory | every `InventoryItem` quantity change (reason field)                      |
-| `cart.cart.checked_out.v1`               | cart      | `Cart.checkOut`                                                           |
-| `cart.cart.abandoned.v1`                 | cart      | `Cart.abandon`                                                            |
-| `checkout.checkout_session.completed.v1` | checkout  | `CheckoutSession.complete`                                                |
-| `checkout.checkout_session.failed.v1`    | checkout  | `CheckoutSession.fail`                                                    |
-| `orders.order.placed.v1`                 | orders    | `Order.place`                                                             |
-| `orders.order.paid.v1`                   | orders    | `Order.markPaid`                                                          |
-| `orders.order.refunded.v1`               | orders    | `Order.refund`                                                            |
-| `payments.payment_intent.captured.v1`    | payments  | `PaymentIntent.capture`                                                   |
-| `payments.payment_intent.failed.v1`      | payments  | `PaymentIntent.fail`                                                      |
-| `payments.payment_intent.refunded.v1`    | payments  | `PaymentIntent.refund`                                                    |
-| `identity.customer.registered.v1`        | identity  | `Customer.register` — payload is `{ customerId }` only (no PII, ADR-0006) |
-| `identity.customer.consent_changed.v1`   | identity  | `Customer.changeConsent`                                                  |
+| Implemented topic                                | Producer  | Raised by                                                                 |
+| ------------------------------------------------ | --------- | ------------------------------------------------------------------------- |
+| `catalog.product.published.v1`                   | catalog   | `Product.publish`                                                         |
+| `catalog.product.updated.v1`                     | catalog   | `Product.update`                                                          |
+| `media.asset.ready.v1`                           | media     | `Asset` ready transition                                                  |
+| `pricing.price.changed.v1`                       | pricing   | `Price.change`                                                            |
+| `inventory.inventory_item.adjusted.v1`           | inventory | every `InventoryItem` quantity change (reason field)                      |
+| `cart.cart.checked_out.v1`                       | cart      | `Cart.checkOut`                                                           |
+| `cart.cart.abandoned.v1`                         | cart      | `Cart.abandon`                                                            |
+| `checkout.checkout_session.completed.v1`         | checkout  | `CheckoutSession.complete`                                                |
+| `checkout.checkout_session.failed.v1`            | checkout  | `CheckoutSession.fail`                                                    |
+| `orders.order.placed.v1`                         | orders    | `Order.place`                                                             |
+| `orders.order.paid.v1`                           | orders    | `Order.markPaid`                                                          |
+| `orders.order.refunded.v1`                       | orders    | `Order.refund`                                                            |
+| `payments.payment_intent.captured.v1`            | payments  | `PaymentIntent.capture`                                                   |
+| `payments.payment_intent.failed.v1`              | payments  | `PaymentIntent.fail`                                                      |
+| `payments.payment_intent.refunded.v1`            | payments  | `PaymentIntent.refund`                                                    |
+| `identity.customer.registered.v1`                | identity  | `Customer.register` — payload is `{ customerId }` only (no PII, ADR-0006) |
+| `identity.customer.consent_changed.v1`           | identity  | `Customer.changeConsent`                                                  |
+| `licensing.subscription.entered_grace.v1`        | licensing | `Subscription.enterGrace` (T14.5 dunning)                                 |
+| `licensing.subscription.recovered_from_grace.v1` | licensing | `Subscription.recoverFromGrace` (T14.5 dunning)                           |
+| `licensing.subscription.dunning_exhausted.v1`    | licensing | `Subscription.exhaustDunning` (T14.5 dunning)                             |
+| `platform.usage.recorded.v1`                     | catalog   | `CreateProduct` via `OutboxUsageRecorder` (G-79; resource `PRODUCT`)      |
+| `identity.user.created.v1`                       | identity  | `User.create` — consumed by H-04 principal provisioning                   |
+| `identity.user.deactivated.v1`                   | identity  | `User.deactivate` — consumed by H-04 principal provisioning               |
+| `identity.membership.created.v1`                 | identity  | `Membership.create` — consumed by H-04 principal provisioning             |
 
 ## 2. Authentication
 

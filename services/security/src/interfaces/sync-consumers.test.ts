@@ -22,7 +22,10 @@ const silent: Logger = {
   child: () => silent,
 };
 
-function relEvent(key: string): IntegrationEvent<SecurityRelationPayload> {
+function relEvent(
+  key: string,
+  tenantId: string | null = "tenant-a", // null = an envelope with no tenant
+): IntegrationEvent<SecurityRelationPayload> {
   return {
     messageId: "m",
     type: "security.relation.written",
@@ -32,9 +35,11 @@ function relEvent(key: string): IntegrationEvent<SecurityRelationPayload> {
     occurredAt: "2026-07-18T00:00:00.000Z",
     correlationId: "c",
     causationId: "c",
+    ...(tenantId !== null ? { tenantId } : {}),
     payload: { key },
     metadata: {},
-  };
+    // Off the wire the tenant can be absent even though the type now requires it (G-64).
+  } as IntegrationEvent<SecurityRelationPayload>;
 }
 function sessionEvent(key: string): IntegrationEvent<SessionRevokedAllPayload> {
   return {
@@ -46,6 +51,7 @@ function sessionEvent(key: string): IntegrationEvent<SessionRevokedAllPayload> {
     occurredAt: "2026-07-18T00:00:00.000Z",
     correlationId: "c",
     causationId: "c",
+    tenantId: "tenant-test",
     payload: { key, status: "revoked" },
     metadata: {},
   };
@@ -65,14 +71,34 @@ function recordingSync(): RelationshipSyncPort & {
   };
 }
 
+function capturingLogger(): Logger & {
+  warns: { message: string }[];
+  errors: { message: string }[];
+} {
+  const warns: { message: string }[] = [];
+  const errors: { message: string }[] = [];
+  return {
+    ...silent,
+    warns,
+    errors,
+    warn: (message: string) => void warns.push({ message }),
+    error: (message: string) => void errors.push({ message }),
+  };
+}
+
 describe("relationship synchronization (H-2)", () => {
-  it("parses the tuple key and writes it to the sync port", async () => {
+  it("parses the tuple key and writes ONLY the tenant-qualified tuple (G-70, contracted)", async () => {
     const sync = recordingSync();
     await new RelationWrittenConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:doc:1#viewer@principal:a"),
     );
     expect(sync.writes).toEqual([
-      { namespace: "permissions", object: "doc:1", relation: "viewer", subject: "principal:a" },
+      {
+        namespace: "permissions",
+        object: "tenant/tenant-a/doc:1",
+        relation: "viewer",
+        subject: "principal:a",
+      },
     ]);
   });
 
@@ -81,20 +107,30 @@ describe("relationship synchronization (H-2)", () => {
     await new RelationWrittenConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:doc:1#viewer@group:eng#member"),
     );
-    expect(sync.writes[0]).toEqual({
-      namespace: "permissions",
-      object: "doc:1",
-      relation: "viewer",
-      subject: "group:eng#member",
-    });
+    expect(sync.writes).toEqual([
+      {
+        namespace: "permissions",
+        object: "tenant/tenant-a/doc:1",
+        relation: "viewer",
+        subject: "group:eng#member",
+      },
+    ]);
   });
 
-  it("deletes the enforcement tuple on relation.deleted", async () => {
+  it("qualifies with the ENVELOPE's tenant, not a fixed one", async () => {
+    const sync = recordingSync();
+    await new RelationWrittenConsumer({ sync, logger: silent }).handle(
+      relEvent("permissions:orders:refund#granted@user-1", "tenant-b"),
+    );
+    expect(sync.writes.map((t) => t.object)).toEqual(["tenant/tenant-b/orders:refund"]);
+  });
+
+  it("revokes the qualified tuple first, then sweeps any stray bare one", async () => {
     const sync = recordingSync();
     await new RelationDeletedConsumer({ sync, logger: silent }).handle(
       relEvent("permissions:doc:1#viewer@principal:a"),
     );
-    expect(sync.deletes).toHaveLength(1);
+    expect(sync.deletes.map((t) => t.object)).toEqual(["tenant/tenant-a/doc:1", "doc:1"]);
   });
 
   it("skips (does not throw) on an unparseable key", async () => {
@@ -103,6 +139,82 @@ describe("relationship synchronization (H-2)", () => {
       new RelationWrittenConsumer({ sync, logger: silent }).handle(relEvent("not-a-tuple")),
     ).resolves.toBeUndefined();
     expect(sync.writes).toHaveLength(0);
+  });
+
+  describe("an envelope with no tenant (required on the type, but absent off the wire)", () => {
+    it("write: writes NOTHING — no bare tuple either — and warns", async () => {
+      const sync = recordingSync();
+      const logger = capturingLogger();
+      await expect(
+        new RelationWrittenConsumer({ sync, logger }).handle(
+          relEvent("permissions:orders:refund#granted@user-1", null),
+        ),
+      ).resolves.toBeUndefined();
+      expect(sync.writes).toEqual([]);
+      expect(logger.warns).toHaveLength(1);
+      expect(logger.warns[0]?.message).toMatch(/no tenant/);
+    });
+
+    it("write: an empty-string tenant is treated as absent", async () => {
+      const sync = recordingSync();
+      await new RelationWrittenConsumer({ sync, logger: silent }).handle(
+        relEvent("permissions:orders:refund#granted@user-1", ""),
+      );
+      expect(sync.writes).toEqual([]);
+    });
+
+    // The type says `string`; the wire says whatever JSON.parse returned.
+    const malformed: Array<[string, unknown]> = [
+      ["whitespace only", "   "],
+      ["JSON null", null],
+      ["a number", 42],
+      ["an object", { id: "tenant-a" }],
+    ];
+    const withTenant = (tenantId: unknown) =>
+      ({ ...relEvent("permissions:orders:refund#granted@user-1"), tenantId }) as never;
+
+    it.each(malformed)(
+      "write: %s is treated as absent — nothing is written",
+      async (_l, tenantId) => {
+        const sync = recordingSync();
+        await new RelationWrittenConsumer({ sync, logger: silent }).handle(withTenant(tenantId));
+        expect(sync.writes).toEqual([]);
+      },
+    );
+
+    it.each(malformed)(
+      "delete: %s THROWS — a revocation is never silently acknowledged",
+      async (_l, tenantId) => {
+        const sync = recordingSync();
+        await expect(
+          new RelationDeletedConsumer({ sync, logger: silent }).handle(withTenant(tenantId)),
+        ).rejects.toThrow(/cannot be revoked/);
+        expect(sync.deletes).toEqual([]);
+      },
+    );
+
+    it("delete: THROWS (to retry/DLQ) rather than acknowledge a revocation it cannot apply", async () => {
+      // A skipped write denies; a skipped delete ALLOWS. So this must not be a quiet warn-and-ack.
+      const sync = recordingSync();
+      const logger = capturingLogger();
+      await expect(
+        new RelationDeletedConsumer({ sync, logger }).handle(
+          relEvent("permissions:orders:refund#granted@user-1", null),
+        ),
+      ).rejects.toThrow(/cannot be revoked/);
+      expect(sync.deletes).toEqual([]);
+      expect(logger.errors[0]?.message).toMatch(/revocation was NOT applied/);
+    });
+
+    it("delete: an empty-string tenant is treated as absent too", async () => {
+      const sync = recordingSync();
+      await expect(
+        new RelationDeletedConsumer({ sync, logger: silent }).handle(
+          relEvent("permissions:orders:refund#granted@user-1", ""),
+        ),
+      ).rejects.toThrow(/cannot be revoked/);
+      expect(sync.deletes).toEqual([]);
+    });
   });
 });
 

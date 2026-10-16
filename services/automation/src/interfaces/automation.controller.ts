@@ -1,10 +1,10 @@
-import type { CursorPage } from "@platform/types";
 import type {
   AdvanceWorkflow,
   AdvanceWorkflowInput,
   CreateWorkflow,
   CreateWorkflowInput,
   ListWorkflows,
+  ListWorkflowsInput,
   RetryExecution,
   RetryExecutionInput,
   TriggerWorkflow,
@@ -44,7 +44,7 @@ export class AutomationController {
     return present(await this.deps.retryExecution.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListWorkflowsInput): Promise<ControllerResponse> {
     return present(await this.deps.listWorkflows.execute(input), 200);
   }
 }

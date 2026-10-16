@@ -5,6 +5,8 @@ import type { CheckoutSession } from "../domain/checkout-session";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
 
 export interface GetCheckoutSessionInput {
+  /** ADR-0014 (WP-10, T10.3): per-call tenant scope. */
+  readonly tenantId: string;
   readonly checkoutSessionId: string;
 }
 
@@ -13,9 +15,11 @@ export interface GetCheckoutSessionDeps {
 }
 
 /** Fetches a single checkout session by id. */
-export class GetCheckoutSession
-  implements UseCase<GetCheckoutSessionInput, CheckoutSession, DomainError>
-{
+export class GetCheckoutSession implements UseCase<
+  GetCheckoutSessionInput,
+  CheckoutSession,
+  DomainError
+> {
   private readonly deps: GetCheckoutSessionDeps;
 
   constructor(deps: GetCheckoutSessionDeps) {
@@ -23,7 +27,7 @@ export class GetCheckoutSession
   }
 
   async execute(input: GetCheckoutSessionInput): Promise<Result<CheckoutSession, DomainError>> {
-    const session = await this.deps.sessions.findById(input.checkoutSessionId);
+    const session = await this.deps.sessions.findById(input.checkoutSessionId, input.tenantId);
     return session === null ? err(new NotFoundError("Checkout session not found")) : ok(session);
   }
 }

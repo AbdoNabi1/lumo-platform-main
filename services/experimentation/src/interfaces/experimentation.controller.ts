@@ -1,4 +1,3 @@
-import type { CursorPage } from "@platform/types";
 import type {
   AdvanceExperiment,
   AdvanceExperimentInput,
@@ -11,7 +10,10 @@ import type {
   RecordResultInput,
 } from "../application/experiment.use-cases";
 import type { GetExperiment } from "../application/get-experiment.use-case";
-import type { ListExperiments } from "../application/list-experiments.use-case";
+import type {
+  ListExperiments,
+  ListExperimentsInput,
+} from "../application/list-experiments.use-case";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface ExperimentationControllerDeps {
@@ -47,7 +49,7 @@ export class ExperimentationController {
     return present(await this.deps.declareWinner.execute(input), 200);
   }
 
-  async list(input: CursorPage): Promise<ControllerResponse> {
+  async list(input: ListExperimentsInput): Promise<ControllerResponse> {
     return present(await this.deps.listExperiments.execute(input), 200);
   }
 

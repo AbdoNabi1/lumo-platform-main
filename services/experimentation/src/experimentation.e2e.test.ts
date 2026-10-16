@@ -26,6 +26,7 @@ function createInput() {
       { key: "treatment", allocationPercentage: 50, isControl: false },
     ],
     goalMetricRef: "conversion_rate",
+    tenantId: "tenant-local",
   };
 }
 
@@ -36,7 +37,11 @@ describe("experimentation (end to end)", () => {
     expect(created.status).toBe(201);
     const experimentId = (created.body as { experimentId: string }).experimentId;
 
-    const started = await app.experimentation.advance({ experimentId, toStatus: "running" });
+    const started = await app.experimentation.advance({
+      experimentId,
+      toStatus: "running",
+      tenantId: "tenant-local",
+    });
     expect(started.status).toBe(200);
 
     await app.experimentation.recordResult({
@@ -44,17 +49,20 @@ describe("experimentation (end to end)", () => {
       variantKey: "control",
       metricValue: 0.1,
       sampleSize: 1000,
+      tenantId: "tenant-local",
     });
     await app.experimentation.recordResult({
       experimentId,
       variantKey: "treatment",
       metricValue: 0.15,
       sampleSize: 1000,
+      tenantId: "tenant-local",
     });
 
     const winner = await app.experimentation.declareWinner({
       experimentId,
       variantKey: "treatment",
+      tenantId: "tenant-local",
     });
     expect(winner.status).toBe(200);
 
@@ -85,6 +93,7 @@ describe("experimentation (end to end)", () => {
     const response = await app.experimentation.advance({
       experimentId: "missing",
       toStatus: "running",
+      tenantId: "tenant-local",
     });
     expect(response.status).toBe(404);
   });

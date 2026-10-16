@@ -1,7 +1,7 @@
 # 01 — Admin Dashboard specification (functional)
 
 > **Status: CONTRACT (Phase 1 — Admin) — 2026-06-28.** **Functional** specification for the admin
-> dashboard application. The UI follows the **Lumo Design System**: [`../ui/`](../ui/README.md) is the single visual
+> dashboard application. The UI follows the **Morbeh Design System**: [`../ui/`](../ui/README.md) is the single visual
 > source of truth (layout, colors, spacing, navigation, screens) and is **not superseded** by this
 > document. This document governs **functionality only** — data sources, actions, permissions, and
 > which platform capabilities power each existing screen. No application code. No UI redesign.
@@ -9,29 +9,29 @@
 ## 1. Purpose
 
 The admin dashboard is the operator application. It is composed of the **25 screens** defined
-in [`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md) and implemented in `apps/admin-web`.
+in [`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md) and implemented in `apps/admin-web`.
 This spec wires functionality behind those screens by pointing each to the owning context and the
 relevant growth/analytics/architecture spec — without changing anything visual.
 
 ## 2. Cross-cutting compliance baseline (every screen)
 
-| Concern         | Requirement                                                                                                                                        |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tracking        | Operator actions emit admin events ([arch 16 §10.10](../architecture/16-tracking-specification.md))                                                |
-| Analytics       | Operator usage measurable in ClickHouse                                                                                                            |
-| Audit logs      | Every mutation → `audit.entry.recorded` (WORM) with actor + before/after ([arch 14](../architecture/14-security.md))                               |
-| Permissions     | RBAC+ReBAC per screen/action/field; step-up for sensitive actions ([arch 07](../architecture/07-auth-and-authorization.md))                        |
-| Feature flags   | Screens/features gated + kill-switchable ([growth 06](../growth/06-FEATURE_MANAGEMENT_SPEC.md))                                                    |
-| Dark mode       | Per the Lumo Design System (toggle + tokens, [`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md)) — already implemented; not changed here |
-| Responsive      | Per [`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md) §11 (1440/1280/1024/768/390)                                                      |
-| Localization    | All copy i18n-keyed; locale/currency/timezone-aware                                                                                                |
-| Accessibility   | WCAG 2.2 AA (Lumo Design System baseline)                                                                                                          |
-| Version history | Config-bearing screens (flags, experiments, layouts, feeds, payload profiles) versioned with rollback                                              |
+| Concern         | Requirement                                                                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tracking        | Operator actions emit admin events ([arch 16 §10.10](../architecture/16-tracking-specification.md))                                                      |
+| Analytics       | Operator usage measurable in ClickHouse                                                                                                                  |
+| Audit logs      | Every mutation → `audit.entry.recorded` (WORM) with actor + before/after ([arch 14](../architecture/14-security.md))                                     |
+| Permissions     | RBAC+ReBAC per screen/action/field; step-up for sensitive actions ([arch 07](../architecture/07-auth-and-authorization.md))                              |
+| Feature flags   | Screens/features gated + kill-switchable ([growth 06](../growth/06-FEATURE_MANAGEMENT_SPEC.md))                                                          |
+| Dark mode       | Per the Morbeh Design System (toggle + tokens, [`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md)) — already implemented; not changed here |
+| Responsive      | Per [`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md) §11 (1440/1280/1024/768/390)                                                        |
+| Localization    | All copy i18n-keyed; locale/currency/timezone-aware                                                                                                      |
+| Accessibility   | WCAG 2.2 AA (Morbeh Design System baseline)                                                                                                              |
+| Version history | Config-bearing screens (flags, experiments, layouts, feeds, payload profiles) versioned with rollback                                                    |
 
 ## 3. Screen → functionality mapping
 
 Each row: the screen, the owning context/data source, the powering spec, key actions, and the
-primary permission role. Visuals are governed by [`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md).
+primary permission role. Visuals are governed by [`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md).
 
 | Screen        | Data source / context   | Powering spec                                                                                                                                                                                                           | Key actions                        | Primary role        |
 | ------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------- |
@@ -67,7 +67,7 @@ primary permission role. Visuals are governed by [`../ui/LUMO_DESIGN_SYSTEM.md`]
 - **Bulk actions** run as async jobs with progress/polling ([arch 05](../architecture/05-events-queues-workers-and-jobs.md)) — no UI change to the existing controls.
 - **Global search / command** (the top-bar search) is wired to a cross-entity search service; wiring it functional is **not** a UI change.
 - **Notifications** (the notifications bell) surface system/operational alerts.
-- **Wiring roadmap:** this spec is the contract for connecting the admin's controls (search, filters, tabs, primary buttons) to the backend. Their appearance is governed by [`../ui/LUMO_DESIGN_SYSTEM.md`](../ui/LUMO_DESIGN_SYSTEM.md).
+- **Wiring roadmap:** this spec is the contract for connecting the admin's controls (search, filters, tabs, primary buttons) to the backend. Their appearance is governed by [`../ui/MORBEH_DESIGN_SYSTEM.md`](../ui/MORBEH_DESIGN_SYSTEM.md).
 
 ## 5. Freeze compliance (non-negotiable)
 

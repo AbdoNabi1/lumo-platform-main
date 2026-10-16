@@ -39,10 +39,10 @@ describe("Theme read use-cases (Phase 4 T4.8)", () => {
     const h = harness();
     const create = new CreateTheme(h);
     for (let i = 0; i < 3; i += 1) {
-      await create.execute({ name: `Theme ${i}`, presetKey: "default" });
+      await create.execute({ name: `Theme ${i}`, presetKey: "default", tenantId: "tenant-1" });
     }
 
-    const page = await new ListThemes(h).execute({ first: 2 });
+    const page = await new ListThemes(h).execute({ first: 2, tenantId: "tenant-1" });
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.value.items).toHaveLength(2);
@@ -51,6 +51,7 @@ describe("Theme read use-cases (Phase 4 T4.8)", () => {
     const rest = await new ListThemes(h).execute({
       first: 10,
       after: page.value.pageInfo.endCursor ?? undefined,
+      tenantId: "tenant-1",
     });
     expect(rest.ok).toBe(true);
     if (!rest.ok) return;
@@ -60,16 +61,23 @@ describe("Theme read use-cases (Phase 4 T4.8)", () => {
 
   it("GetTheme returns the theme, or NotFoundError when absent", async () => {
     const h = harness();
-    const created = await new CreateTheme(h).execute({ name: "Default", presetKey: "default" });
+    const created = await new CreateTheme(h).execute({
+      name: "Default",
+      presetKey: "default",
+      tenantId: "tenant-1",
+    });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    const found = await new GetTheme(h).execute({ themeId: created.value.themeId });
+    const found = await new GetTheme(h).execute({
+      themeId: created.value.themeId,
+      tenantId: "tenant-1",
+    });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.id.toString()).toBe(created.value.themeId);
 
-    const missing = await new GetTheme(h).execute({ themeId: "nope" });
+    const missing = await new GetTheme(h).execute({ themeId: "nope", tenantId: "tenant-1" });
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");

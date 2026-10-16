@@ -8,6 +8,8 @@ import { Price } from "../domain/price";
 import type { PriceRepository } from "../domain/price-repository";
 
 export interface CreatePriceInput {
+  /** ADR-0014: the caller's verified tenant. */
+  readonly tenantId: string;
   readonly priceListId: string;
   readonly productId: string;
   readonly amountMinor: number;
@@ -78,7 +80,7 @@ export class CreatePrice implements UseCase<CreatePriceInput, CreatePriceOutput,
         throw error;
       }
 
-      await this.deps.prices.save(price, tx);
+      await this.deps.prices.save(price, input.tenantId, tx);
       return ok({ id: id.toString() });
     });
   }

@@ -11,6 +11,12 @@ import {
   type Subscriber,
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
+import {
+  OutboxUsageRecorder,
+  PLATFORM_USAGE_EVENT,
+  UsageEventTranslator,
+  type UsageRecorderPort,
+} from "@platform/usage";
 import { AddProductToCollection } from "./application/add-product-to-collection.use-case";
 import { AddVariant } from "./application/add-variant.use-case";
 import { ArchiveProduct } from "./application/archive-product.use-case";
@@ -37,16 +43,21 @@ import { MoveCategory } from "./application/move-category.use-case";
 import { MoveProductBetweenCollections } from "./application/move-product-between-collections.use-case";
 import { PublishCollection } from "./application/publish-collection.use-case";
 import { PublishProduct } from "./application/publish-product.use-case";
+import { RelabelVariantCurrency } from "./application/relabel-variant-currency.use-case";
 import { RemoveProductFromCollection } from "./application/remove-product-from-collection.use-case";
 import { RemoveVariant } from "./application/remove-variant.use-case";
 import { RenameCollection } from "./application/rename-collection.use-case";
 import { ReorderCollectionProducts } from "./application/reorder-collection-products.use-case";
+import { GetProductsByIds } from "./application/get-products-by-ids.use-case";
+import type { MediaLookupPort } from "./application/media-lookup.port";
 import { ReorderMedia } from "./application/reorder-media.use-case";
+import { SetVariantImage } from "./application/set-variant-image.use-case";
 import { SchedulePublishProduct } from "./application/schedule-publish-product.use-case";
 import { SetProductBrand } from "./application/set-product-brand.use-case";
 import { SetProductOptions } from "./application/set-product-options.use-case";
 import { SetProductSeo } from "./application/set-product-seo.use-case";
 import { UnpublishCollection } from "./application/unpublish-collection.use-case";
+import { UnlistProduct } from "./application/unlist-product.use-case";
 import { UnpublishProduct } from "./application/unpublish-product.use-case";
 import { UpdateBrand } from "./application/update-brand.use-case";
 import { UpdateProduct } from "./application/update-product.use-case";
@@ -54,7 +65,11 @@ import { UpdateVariant } from "./application/update-variant.use-case";
 import type { BrandRepository } from "./domain/brand-repository";
 import type { CategoryRepository } from "./domain/category-repository";
 import type { CollectionRepository } from "./domain/collection-repository";
-import type { ProductRepository } from "./domain/product-repository";
+import type {
+  ProductBatchReader,
+  ProductRepository,
+  VariantCurrencyRelabeler,
+} from "./domain/product-repository";
 import { CatalogEventTranslator } from "./infrastructure/catalog-event-translator";
 import { InMemoryBrandRepository } from "./infrastructure/in-memory-brand-repository";
 import { InMemoryCategoryRepository } from "./infrastructure/in-memory-category-repository";
@@ -79,12 +94,25 @@ export interface CatalogWiringDeps {
   /**
    * Production persistence (G-39/C-01). Present ⇒ all 4 Prisma repositories
    * (`PrismaProductRepository`/`PrismaCategoryRepository`/`PrismaBrandRepository`/
-   * `PrismaCollectionRepository`) + `PrismaUnitOfWork` (same `prisma?`/`tenantId?`-presence
-   * convention as `wireOrders`/`wireCheckout`); absent ⇒ in-memory, unchanged.
+   * `PrismaCollectionRepository`) + `PrismaUnitOfWork`; absent ⇒ in-memory, unchanged.
+   * ADR-0014 (WP-10, T10.3): every repository built here is a tenant-agnostic singleton — no
+   * `tenantId` at composition time any more (a caller's `deps` object may still carry one for an
+   * unrelated wireX call sharing the same literal — an unused excess field, not consumed here).
    */
   readonly prisma?: Database;
-  /** Required alongside `prisma` (ADR-0008) — every Catalog table is tenant-scoped. */
-  readonly tenantId?: string;
+  /**
+   * TEST SEAM, in-memory branch only (G-79): called with each `platform.usage.recorded` record when
+   * `drainOutbox()` relays it, standing in for the Kafka topic a real consumer reads. It exists because
+   * the in-memory bus is otherwise closed (a fixed sink on `CATALOG_EVENT_TYPES`, bus not exposed).
+   * Ignored when `prisma` is present: there the outbox is relayed by the runtime's Kafka relay, and
+   * nothing in this process delivers to a subscriber.
+   */
+  readonly onUsageRecorded?: Subscriber;
+  /**
+   * Plan 2C-3: Catalog's question to Media (is this asset the caller's own?). Present ⇒ attaching media
+   * checks it; absent only in compositions with no Media.
+   */
+  readonly mediaLookup?: MediaLookupPort;
 }
 
 export interface WiredCatalog {
@@ -100,7 +128,7 @@ export interface WiredCatalog {
 }
 
 interface CatalogRepos {
-  readonly products: ProductRepository;
+  readonly products: ProductRepository & VariantCurrencyRelabeler & ProductBatchReader;
   readonly categories: CategoryRepository;
   readonly brands: BrandRepository;
   readonly collections: CollectionRepository;
@@ -111,6 +139,7 @@ function buildControllers(
   repos: CatalogRepos,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   deps: CatalogWiringDeps,
+  usage: UsageRecorderPort,
 ): {
   products: ProductController;
   categories: CategoryController;
@@ -121,14 +150,16 @@ function buildControllers(
   const { idGenerator, clock } = deps;
 
   const productController = new ProductController({
-    createProduct: new CreateProduct({ products, unitOfWork, idGenerator, clock }),
+    createProduct: new CreateProduct({ products, unitOfWork, idGenerator, clock, usage }),
     publishProduct: new PublishProduct({ products, unitOfWork, idGenerator, clock }),
     updateProduct: new UpdateProduct({ products, unitOfWork, idGenerator, clock }),
     getProduct: new GetProduct({ products }),
     getProductBySlug: new GetProductBySlug({ products }),
+    getProductsByIds: new GetProductsByIds({ products }),
     listProducts: new ListProducts({ products }),
     schedulePublishProduct: new SchedulePublishProduct({ products, unitOfWork, clock }),
     unpublishProduct: new UnpublishProduct({ products, unitOfWork, idGenerator, clock }),
+    unlistProduct: new UnlistProduct({ products, unitOfWork, idGenerator, clock }),
     archiveProduct: new ArchiveProduct({ products, unitOfWork, idGenerator, clock }),
     deleteProduct: new DeleteProduct({ products, unitOfWork, idGenerator, clock }),
     addVariant: new AddVariant({ products, unitOfWork, idGenerator, clock }),
@@ -144,9 +175,17 @@ function buildControllers(
       idGenerator,
       clock,
     }),
-    attachMedia: new AttachMedia({ products, unitOfWork, idGenerator, clock }),
+    attachMedia: new AttachMedia({
+      products,
+      unitOfWork,
+      idGenerator,
+      clock,
+      ...(deps.mediaLookup === undefined ? {} : { mediaLookup: deps.mediaLookup }),
+    }),
+    setVariantImage: new SetVariantImage({ products, unitOfWork, idGenerator, clock }),
     detachMedia: new DetachMedia({ products, unitOfWork, idGenerator, clock }),
     reorderMedia: new ReorderMedia({ products, unitOfWork, idGenerator, clock }),
+    relabelVariantCurrency: new RelabelVariantCurrency({ products, unitOfWork }),
   });
 
   const categoryController = new CategoryController({
@@ -243,10 +282,6 @@ const CATALOG_EVENT_TYPES = [
  */
 export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
   if (deps.prisma !== undefined) {
-    const tenantId = deps.tenantId;
-    if (tenantId === undefined) {
-      throw new Error("wireCatalog: tenantId is required when prisma is provided (ADR-0008).");
-    }
     const outbox = new OutboxWriter({
       store: new PrismaOutboxStore(deps.prisma),
       translator: new CatalogEventTranslator(),
@@ -254,8 +289,10 @@ export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
       clock: deps.clock,
       producer: "catalog",
     });
-    const context = rootEventContext(deps.idGenerator, tenantId);
-    const prismaDeps = { prisma: deps.prisma, tenantId, outbox, context };
+    // ADR-0014, WP-10 T10.3: no tenantId at composition time any more (see CatalogWiringDeps'
+    // doc comment) — every repository built below takes tenantId per call instead.
+    const context = rootEventContext(deps.idGenerator);
+    const prismaDeps = { prisma: deps.prisma, outbox, context };
     const repos: CatalogRepos = {
       products: new PrismaProductRepository(prismaDeps),
       categories: new PrismaCategoryRepository(prismaDeps),
@@ -263,7 +300,20 @@ export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
       collections: new PrismaCollectionRepository(prismaDeps),
     };
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
-    const controllers = buildControllers(repos, unitOfWork, deps);
+    // Usage rides the same outbox table as the catalog events, written in the caller's transaction.
+    const usage = new OutboxUsageRecorder({
+      outbox: new OutboxWriter({
+        store: new PrismaOutboxStore(deps.prisma),
+        translator: new UsageEventTranslator(),
+        serializer: deps.serializer,
+        clock: deps.clock,
+        producer: "catalog",
+      }),
+      context,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    });
+    const controllers = buildControllers(repos, unitOfWork, deps, usage);
 
     return { ...controllers, drainOutbox: async () => 0, deliveredEventTypes: [] };
   }
@@ -285,7 +335,19 @@ export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
     collections: new InMemoryCollectionRepository({ outbox: outboxWriter, context }),
   };
   const unitOfWork = new InMemoryUnitOfWork();
-  const controllers = buildControllers(repos, unitOfWork, deps);
+  const usage = new OutboxUsageRecorder({
+    outbox: new OutboxWriter({
+      store: outboxStore,
+      translator: new UsageEventTranslator(),
+      serializer: deps.serializer,
+      clock: deps.clock,
+      producer: "catalog",
+    }),
+    context,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+  });
+  const controllers = buildControllers(repos, unitOfWork, deps, usage);
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];
@@ -294,6 +356,9 @@ export function wireCatalog(deps: CatalogWiringDeps): WiredCatalog {
   };
   for (const type of CATALOG_EVENT_TYPES) {
     bus.subscribe(type, sink);
+  }
+  if (deps.onUsageRecorded !== undefined) {
+    bus.subscribe(`${PLATFORM_USAGE_EVENT}.v1`, deps.onUsageRecorded);
   }
 
   const relay = new OutboxRelay({

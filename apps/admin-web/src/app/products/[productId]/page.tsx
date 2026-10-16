@@ -1,44 +1,41 @@
 import type { ReactNode } from "react";
-import { Suspense } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { AlertTriangleIcon, ArrowLeftIcon, LockIcon, SearchXIcon } from "lucide-react";
-import { Button, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
+import { Button, Card, CardContent } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
-import {
-  ProductInventoryCard,
-  ProductInventoryCardSkeleton,
-} from "@/components/products/product-inventory-card";
-import { ProductEditForm } from "@/components/products/product-edit-form";
+import { ProductMediaCard } from "@/components/products/editor/media-card";
+import { ProductEditor } from "@/components/products/editor/product-editor";
 import { ProductLifecycleActions } from "@/components/products/product-lifecycle-actions";
-import { ProductMediaSeoCard } from "@/components/products/product-media-seo-card";
-import { ProductOrganizationCard } from "@/components/products/product-organization-card";
 import { ProductStatusBadge } from "@/components/products/product-status-badge";
-import { ProductVariantsCard } from "@/components/products/product-variants-card";
 import { fetchBrandsPage } from "@/lib/api/brands";
 import { fetchCategoriesPage } from "@/lib/api/categories";
-import { fetchMediaDownloadUrl } from "@/lib/api/media";
-import { fetchProduct } from "@/lib/api/products";
+import { fetchWarehouses } from "@/lib/api/inventory";
+import { fetchProduct, fetchProductInventory } from "@/lib/api/products";
+import { storeSettingsOrDefaults } from "@/lib/api/store-settings";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { formatDateTime } from "@/lib/format";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { buildStockView, UNAVAILABLE_STOCK } from "@/lib/products/stock";
 
 interface ProductDetailPageProps {
   readonly params: Promise<{ readonly productId: string }>;
+  readonly searchParams: Promise<{ readonly saved?: string }>;
 }
 
 /**
- * The Product Detail screen (Phase A.30). Resolves the real `GET /products/:productId` endpoint.
- * Inventory gets its own `<Suspense>` boundary (separate bounded context) so a slow/failed
- * Inventory read never blocks the rest of the product from rendering — same streaming discipline
- * as the Order Detail screen.
+ * The Product Detail screen (Phase A.30), rebuilt in Plan 2C-2 as the one-page, one-save editor.
+ * Resolves the real `GET /products/:productId` endpoint. Plan 2B-2 reads the stock (locations and
+ * this product's rows) here too, so the quantities sit in the editor itself; a failed stock read
+ * degrades to read-only quantities rather than blocking the product.
  */
-export default async function ProductDetailPage({ params }: ProductDetailPageProps) {
+export default async function ProductDetailPage({ params, searchParams }: ProductDetailPageProps) {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
   const user = await getCurrentUser();
   const { productId } = await params;
+  const { saved } = await searchParams;
 
   const result = await fetchProduct(productId);
 
@@ -78,30 +75,30 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
 
   const product = result.product;
 
-  // T3.6: resolve a download URL per attached media asset — there is no list/batch endpoint
-  // (see `docs/plans/BLOCKERS.md`), so this fans out one `GET /media/assets/:id/download-url`
-  // call per id, same fan-out shape as `lib/api/licensing.ts`'s `fetchUsageCounters`. A failed
-  // lookup renders an explicit "unavailable" state for that one asset (README rule #4) rather
-  // than hiding it or fabricating a link.
-  const mediaAssets = await Promise.all(
-    product.mediaAssetIds.map(async (id) => {
-      const downloadResult = await fetchMediaDownloadUrl(id);
-      return { id, url: downloadResult.outcome === "ok" ? downloadResult.url : null };
-    }),
-  );
-
-  // T5.7: brand/category pickers on `ProductOrganizationCard` need the lists to render `<select>`/
-  // checklist options — fetched server-side here (never from the Client Component, per the
-  // repo-wide "never call the runtime API from browser JS" rule) and passed down as plain DTO
-  // arrays. Capped to the first page (100): a search-as-you-type picker is out of scope for this
-  // task. A failed fetch degrades to an empty list rather than fabricating options — the card still
-  // renders the product's actual assigned id(s) as an "unlisted" option either way.
+  // The editor's vendor select and categories checklist need the lists — fetched here, server-side
+  // (never from the Client Component), and capped to the first page (100). A failed fetch degrades
+  // to an empty list; the editor still renders the product's own assigned ids as options.
   const [brandsResult, categoriesResult] = await Promise.all([
     fetchBrandsPage({ first: 100 }),
     fetchCategoriesPage({ first: 100 }),
   ]);
   const brands = brandsResult.outcome === "ok" ? brandsResult.items : [];
   const categories = categoriesResult.outcome === "ok" ? categoriesResult.items : [];
+
+  // Never default a failed read to zeros: Save would write them. Read-only quantities instead.
+  const [warehousesResult, inventoryResult, settings] = await Promise.all([
+    fetchWarehouses(),
+    fetchProductInventory(product.id),
+    storeSettingsOrDefaults(),
+  ]);
+  const stock =
+    warehousesResult.outcome === "ok" && inventoryResult.outcome === "ok"
+      ? buildStockView(warehousesResult.items, inventoryResult.rows, product.variants)
+      : UNAVAILABLE_STOCK;
+
+  // Read here, per request: a `NEXT_PUBLIC_` variable would be frozen at build time, and this app's
+  // image is built without build args. Unset or blank hides the editor's Preview button.
+  const storefrontUrl = process.env["STOREFRONT_URL"]?.trim() || null;
 
   return (
     <AppShell t={t} locale={locale} activeNavId="products" user={user}>
@@ -115,7 +112,7 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-4xl font-semibold tracking-tight">{product.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{product.name}</h1>
             <ProductStatusBadge status={product.status} t={t} />
           </div>
           <p className="text-muted-foreground mt-1 text-sm">
@@ -130,57 +127,39 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
               )}
             </p>
           )}
-
-          <div className="mt-4">
-            <ProductLifecycleActions productId={product.id} status={product.status} t={t} />
-          </div>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-3 [&>*]:min-w-0">
-          <div className="flex flex-col gap-6 xl:col-span-2">
-            <ProductVariantsCard
-              productId={product.id}
-              variants={product.variants}
-              t={t}
-              locale={locale}
-            />
-            <Suspense fallback={<ProductInventoryCardSkeleton t={t} />}>
-              <ProductInventoryCard productId={product.id} t={t} />
-            </Suspense>
-          </div>
+        {saved === "partial" && (
+          <p role="status" className="text-muted-foreground text-sm">
+            {t.productEditor.partiallySaved}
+          </p>
+        )}
 
-          <div className="flex flex-col gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>{t.productEdit.title}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ProductEditForm
-                  productId={product.id}
-                  name={product.name}
-                  slug={product.slug}
-                  t={t}
-                />
-              </CardContent>
-            </Card>
-            <ProductOrganizationCard
-              productId={product.id}
-              brandId={product.brandId}
-              categoryIds={product.categoryIds}
-              options={product.options}
-              brands={brands}
-              categories={categories}
-              t={t}
-            />
-            <ProductMediaSeoCard
-              productId={product.id}
-              mediaAssets={mediaAssets}
-              seoTitle={product.seoTitle}
-              seoDescription={product.seoDescription}
-              t={t}
-            />
-          </div>
-        </div>
+        <ProductEditor
+          mode="edit"
+          product={product}
+          brands={brands}
+          categories={categories}
+          defaultCurrency={product.variants[0]?.currency ?? settings.currency}
+          weightUnit={settings.weightUnit}
+          t={t}
+          locale={locale}
+          stock={stock}
+          storefrontUrl={storefrontUrl}
+          slots={{
+            media: (
+              <ProductMediaCard
+                productId={product.id}
+                productName={product.name}
+                media={product.media ?? []}
+                t={t}
+              />
+            ),
+            dangerZone: (
+              <ProductLifecycleActions productId={product.id} status={product.status} t={t} />
+            ),
+          }}
+        />
       </div>
     </AppShell>
   );
