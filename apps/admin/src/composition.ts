@@ -559,6 +559,13 @@ export interface WiredAdmin {
   readonly tenantProvisioner: TenantProvisioner;
   /** Licensing screen → Licensing (Sprint 5.5/5.6 — Licensing's first admin-transport wiring). */
   readonly licensing: LicensingAdminController;
+  /**
+   * The scope Morbeh's own billing rows (subscriptions, invoices, saved cards) live under:
+   * `deps.platformTenantId`, or — in a single-tenant deployment — the request's own tenant. A FUNCTION
+   * on purpose: the tenant-mode-guard walks the admin graph for fields named `tenantId`, and a
+   * function is not walked. The merchant billing routes pair it with `context.tenantId` as the ref.
+   */
+  readonly platformScope: (requestTenantId: string) => string;
   /** Platform Console screen → Platform Console (Sprint 5.6, ADR-0018 addendum-2 §J — read-model only). */
   readonly platformConsole: PlatformConsoleAdminController;
   /** Wishlist screen → Wishlist (Sprint S1 — Wishlist's first admin-transport wiring). */
@@ -1277,6 +1284,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     tenantAvailability: tenancy.tenantAvailability,
     tenantProvisioner: new TenantProvisioner({ security: security.security, logger: adminLogger }),
     licensing: new LicensingAdminController({ licensing: licensing.licensing, guard }),
+    platformScope: (requestTenantId: string): string => deps.platformTenantId ?? requestTenantId,
     platformConsole: new PlatformConsoleAdminController({
       platformConsole: platformConsole.platformConsole,
       guard,
