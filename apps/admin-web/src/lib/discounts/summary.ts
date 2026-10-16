@@ -165,7 +165,7 @@ export function discountSummary(src: DiscountSummarySource, ctx: SummaryContext)
     lines.push(t.oncePerOrder);
   }
   if (src.type === "buy_x_get_y" && src.maxUsesPerOrder != null) {
-    lines.push(t.maxUsesPerOrder.replace("{count}", formatNumber(ctx.locale, src.maxUsesPerOrder)));
+    lines.push(pluralCount(t.maxUsesPerOrder, src.maxUsesPerOrder, ctx.locale));
   }
   if (src.type === "free_shipping" && src.maxShippingRateMinor != null) {
     lines.push(
@@ -178,7 +178,7 @@ export function discountSummary(src: DiscountSummarySource, ctx: SummaryContext)
   if (src.type !== "buy_x_get_y") lines.push(minimumLine(src, ctx) ?? t.noMinimum);
   lines.push(src.customerEligibility.kind === "all" ? t.allCustomers : t.someCustomers);
   if (src.usageLimit != null) {
-    lines.push(t.usageLimit.replace("{count}", formatNumber(ctx.locale, src.usageLimit)));
+    lines.push(pluralCount(t.usageLimit, src.usageLimit, ctx.locale));
   }
   if (src.oncePerCustomer) lines.push(t.oncePerCustomer);
   lines.push(combinesLine(src.combinesWith, ctx));

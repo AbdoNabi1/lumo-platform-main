@@ -136,3 +136,32 @@ describe("pluralCount / combinationsShort", () => {
     );
   });
 });
+
+describe("usage limit and per-order plurals", () => {
+  it("pluralises the English usage limit and per-order cap", () => {
+    expect(discountSummary({ ...sale10, usageLimit: 1 }, ctx)).toContain("Limit of 1 use");
+    expect(
+      discountSummary(
+        {
+          ...sale10,
+          type: "buy_x_get_y",
+          value: null,
+          buys: { kind: "quantity", value: 2, scope: "products", refs: ["p"] },
+          gets: { quantity: 1, scope: "products", refs: ["p"], effect: { kind: "free" } },
+          maxUsesPerOrder: 1,
+        },
+        ctx,
+      ),
+    ).toContain("Up to 1 use per order");
+  });
+
+  it("uses the Arabic plural form for each usage limit count", () => {
+    const arabic: SummaryContext = { ...ctx, t: ar.discounts.summary, locale: "ar" };
+    const limitLine = (usageLimit: number) =>
+      discountSummary({ ...sale10, usageLimit }, arabic).find((line) => line.startsWith("حد أقصى"));
+    expect(limitLine(1)).toBe("حد أقصى استخدام واحد");
+    expect(limitLine(2)).toBe("حد أقصى استخدامان");
+    expect(limitLine(5)).toBe("حد أقصى ٥ استخدامات");
+    expect(limitLine(11)).toBe("حد أقصى ١١ استخدامًا");
+  });
+});
