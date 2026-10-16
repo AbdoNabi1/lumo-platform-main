@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@platform/ui";
-import { DISCOUNT_TYPES } from "@/lib/api/discounts";
+import { DISCOUNT_TYPES } from "@/lib/discounts/model";
 import type { Dictionary } from "@/messages/en";
 
 /**

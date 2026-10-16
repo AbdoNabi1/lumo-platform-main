@@ -5,7 +5,7 @@ import {
   type DiscountInput,
   type DiscountType,
   type TargetScope,
-} from "@/lib/api/discounts";
+} from "@/lib/discounts/model";
 import { fromMinorUnits, normalizeDigits, toMinorUnits } from "@/lib/products/money";
 import { isoToZoned, zonedToIso } from "./zoned-time";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DiscountDto } from "@/lib/api/discounts";
+import type { DiscountDto } from "@/lib/discounts/model";
 import {
   apiFieldToFormField,
   emptyFormValues,

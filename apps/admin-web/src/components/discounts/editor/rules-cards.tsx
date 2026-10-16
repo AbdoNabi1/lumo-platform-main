@@ -4,7 +4,7 @@ import { useId } from "react";
 import { searchDiscountTargetsAction } from "@/app/discounts/actions";
 import { MoneyInput } from "@/components/products/editor/controls";
 import { CheckboxRow } from "@/components/products/editor/field";
-import { discountClassOf, type DiscountClass } from "@/lib/api/discounts";
+import { discountClassOf, type DiscountClass } from "@/lib/discounts/model";
 import type { Locale } from "@/lib/i18n";
 import { ErrorText, FormCard, RadioGroup, RadioRow, TextField, type CardProps } from "./inputs";
 import { ResourcePicker } from "./resource-picker";

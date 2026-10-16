@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { cn } from "@platform/ui";
-import { DISCOUNT_VIEWS, type DiscountView } from "@/lib/api/discounts";
+import { DISCOUNT_VIEWS, type DiscountView } from "@/lib/discounts/model";
 import type { Dictionary } from "@/messages/en";
 
 /**

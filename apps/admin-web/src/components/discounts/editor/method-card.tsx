@@ -2,9 +2,12 @@
 
 import { useId } from "react";
 import { Button, cn } from "@platform/ui";
-import { discountClassOf } from "@/lib/api/discounts";
+import { discountClassOf } from "@/lib/discounts/model";
 import { generateDiscountCode } from "@/lib/discounts/form";
 import { FormCard, TextField, type CardProps } from "./inputs";
+
+/** The save action keeps at most this many characters of a text field (`parseFormValues`). */
+const MAX_TEXT_LENGTH = 255;
 
 /**
  * The type card at the top of Shopify's form: the type as its heading, the class beside it, the
@@ -67,6 +70,10 @@ export function MethodCard({
           label={copy.code}
           value={values.code}
           onValueChange={(code) => set({ code })}
+          maxLength={MAX_TEXT_LENGTH}
+          dir="ltr"
+          autoCapitalize="characters"
+          spellCheck={false}
           error={errors["code"]}
           hint={copy.codeHint}
           end={
@@ -85,6 +92,7 @@ export function MethodCard({
           label={copy.title}
           value={values.title}
           onValueChange={(title) => set({ title })}
+          maxLength={MAX_TEXT_LENGTH}
           error={errors["title"]}
           hint={copy.titleHint}
         />

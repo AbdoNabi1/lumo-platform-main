@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { Button } from "@platform/ui";
 import { deleteDiscountAction, setDiscountActiveAction } from "@/app/discounts/actions";
-import type { DiscountDto } from "@/lib/api/discounts";
+import type { DiscountDto } from "@/lib/discounts/model";
 import type { FormState } from "@/lib/api/mutation";
 import type { Dictionary } from "@/messages/en";
 

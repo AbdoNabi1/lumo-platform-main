@@ -1,9 +1,9 @@
 "use client";
 
-import { useActionState, useCallback, useMemo, useState } from "react";
+import { startTransition, useActionState, useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "@platform/ui";
 import { saveDiscountAction } from "@/app/discounts/actions";
-import type { DiscountDto } from "@/lib/api/discounts";
+import type { DiscountDto } from "@/lib/discounts/model";
 import type { FormState } from "@/lib/api/mutation";
 import { toDiscountInput, type DiscountFormValues } from "@/lib/discounts/form";
 import type { Locale } from "@/lib/i18n";
@@ -30,8 +30,11 @@ const FORM_ID = "discount-editor";
  * cards, minimum requirements, eligibility, maximum uses (codes only), combinations, active dates.
  * Right: the live Summary and, once saved, Performance. One `<form>` posts the whole form as JSON
  * (`payload`) to `saveDiscountAction`; the save bar says "Unsaved changes" while the form differs
- * from what was loaded, and Discard puts every field back. The page remounts the editor (by `key`)
- * after a save, so what was saved becomes the new starting point.
+ * from its starting point, and Discard puts every field back. The starting point is what was loaded,
+ * then what was last saved: the page remounts the editor (by `key`) only when the saved discount
+ * reads back differently, so a successful save also moves the starting point to the values it sent
+ * ("10.00" saved as 10 is no longer "unsaved"). While there are unsaved changes the lifecycle
+ * actions are hidden — their remount would drop the edits.
  */
 export function DiscountEditor({
   mode,
@@ -55,15 +58,26 @@ export function DiscountEditor({
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
-  const [state, formAction, isPending] = useActionState(saveDiscountAction, INITIAL_STATE);
   const [values, setValues] = useState(initialValues);
+  /** What "Unsaved changes" compares against: what was loaded, then what was last saved. */
+  const [baseline, setBaseline] = useState(initialValues);
+  /** The values the pending submit sent, captured when the form is submitted. */
+  const submitted = useRef<DiscountFormValues | null>(null);
+  const save = useCallback(async (previous: FormState, formData: FormData): Promise<FormState> => {
+    const sent = submitted.current;
+    const next = await saveDiscountAction(previous, formData);
+    // After an `await`, a state update needs its own transition to land with the action's result.
+    if (next.status === "success" && sent !== null) startTransition(() => setBaseline(sent));
+    return next;
+  }, []);
+  const [state, formAction, isPending] = useActionState(save, INITIAL_STATE);
   const set = useCallback(
     (patch: Partial<DiscountFormValues>) => setValues((current) => ({ ...current, ...patch })),
     [],
   );
   const dirty = useMemo(
-    () => JSON.stringify(values) !== JSON.stringify(initialValues),
-    [values, initialValues],
+    () => JSON.stringify(values) !== JSON.stringify(baseline),
+    [values, baseline],
   );
   const { input } = useMemo(
     () => toDiscountInput(values, currency, timeZone),
@@ -78,14 +92,20 @@ export function DiscountEditor({
 
   return (
     <div className="flex flex-col gap-6">
-      <form id={FORM_ID} action={formAction}>
+      <form
+        id={FORM_ID}
+        action={formAction}
+        onSubmit={() => {
+          submitted.current = values;
+        }}
+      >
         <input type="hidden" name="payload" value={JSON.stringify(values)} />
         {discount !== null && <input type="hidden" name="discountId" value={discount.id} />}
       </form>
 
       {/* top-16: below the app shell's sticky header, as on the product page. */}
       <div className="bg-background/95 sticky top-16 z-20 flex flex-wrap items-center justify-end gap-3 py-2 backdrop-blur">
-        {discount !== null && (
+        {discount !== null && !dirty && (
           <div className="me-auto">
             <DiscountLifecycleActions discount={discount} t={t} />
           </div>
@@ -100,7 +120,7 @@ export function DiscountEditor({
           <Button
             type="button"
             variant="outline"
-            onClick={() => setValues(initialValues)}
+            onClick={() => setValues(baseline)}
             disabled={isPending}
           >
             {copy.discard}

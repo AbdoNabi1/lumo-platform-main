@@ -2,7 +2,7 @@
 
 import { useId } from "react";
 import { Card, CardContent } from "@platform/ui";
-import type { DiscountDto, DiscountInput } from "@/lib/api/discounts";
+import type { DiscountDto, DiscountInput } from "@/lib/discounts/model";
 import { discountSummary, pluralCount } from "@/lib/discounts/summary";
 import type { DiscountFormValues } from "@/lib/discounts/form";
 import type { Locale } from "@/lib/i18n";

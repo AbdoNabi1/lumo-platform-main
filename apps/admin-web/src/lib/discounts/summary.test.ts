@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DiscountDto } from "@/lib/api/discounts";
+import type { DiscountDto } from "@/lib/discounts/model";
 import { formatNumber } from "@/lib/format";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
@@ -129,12 +129,26 @@ describe("pluralCount / combinationsShort", () => {
   });
 
   it("names the classes a discount combines with", () => {
-    expect(combinationsShort({ product: true, order: false, shipping: true }, en.discounts)).toBe(
-      "Product, Shipping",
+    expect(
+      combinationsShort({ product: true, order: false, shipping: true }, en.discounts, "en"),
+    ).toBe("Product, Shipping");
+    expect(
+      combinationsShort({ product: false, order: false, shipping: false }, en.discounts, "en"),
+    ).toBe("Not combinable");
+  });
+
+  it("joins the classes the Arabic way", () => {
+    const all = combinationsShort(
+      { product: true, order: true, shipping: true },
+      ar.discounts,
+      "ar",
     );
-    expect(combinationsShort({ product: false, order: false, shipping: false }, en.discounts)).toBe(
-      "Not combinable",
-    );
+    expect(all).not.toContain(", ");
+    expect(all).toContain("، ");
+    for (const name of Object.values(ar.discounts.combinesShort)) expect(all).toContain(name);
+    expect(
+      combinationsShort({ product: false, order: false, shipping: false }, ar.discounts, "ar"),
+    ).toBe(ar.discounts.combinesNone);
   });
 });
 

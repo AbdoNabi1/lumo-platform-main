@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@platform/ui";
-import type { DiscountDto } from "@/lib/api/discounts";
+import type { DiscountDto } from "@/lib/discounts/model";
 import { combinationsShort, listSummary } from "@/lib/discounts/summary";
 import { formatNumber } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
@@ -60,7 +60,7 @@ export function DiscountsTable({
               </TableCell>
               <TableCell>{t.discounts.methods[discount.method]}</TableCell>
               <TableCell>{t.discounts.types[discount.type]}</TableCell>
-              <TableCell>{combinationsShort(discount.combinesWith, t.discounts)}</TableCell>
+              <TableCell>{combinationsShort(discount.combinesWith, t.discounts, locale)}</TableCell>
               <TableCell className="text-end tabular-nums">
                 {formatNumber(locale, discount.usageCount)}
               </TableCell>

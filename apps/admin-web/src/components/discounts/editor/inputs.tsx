@@ -115,6 +115,10 @@ export function TextField({
   type = "text",
   className,
   end,
+  maxLength,
+  dir,
+  autoCapitalize,
+  spellCheck,
 }: {
   readonly label: string;
   readonly value: string;
@@ -126,6 +130,11 @@ export function TextField({
   readonly className?: string;
   /** Something after the input on the same line (a "%" sign, a button). */
   readonly end?: ReactNode;
+  readonly maxLength?: number;
+  /** "ltr" for Latin-only values (codes) that stay left to right in the Arabic UI. */
+  readonly dir?: "ltr" | "rtl";
+  readonly autoCapitalize?: ComponentProps<"input">["autoCapitalize"];
+  readonly spellCheck?: boolean;
 }) {
   const id = useId();
   const describedBy = [
@@ -142,6 +151,10 @@ export function TextField({
           id={id}
           type={type}
           inputMode={inputMode}
+          maxLength={maxLength}
+          dir={dir}
+          autoCapitalize={autoCapitalize}
+          spellCheck={spellCheck}
           value={value}
           aria-invalid={error === undefined ? undefined : true}
           aria-describedby={describedBy === "" ? undefined : describedBy}

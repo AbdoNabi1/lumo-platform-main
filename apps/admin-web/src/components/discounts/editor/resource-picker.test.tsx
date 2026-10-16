@@ -26,6 +26,7 @@ describe("ResourcePicker", () => {
 
     fireEvent.click(screen.getByRole("button", { name: en.discounts.form.browse }));
     const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("searchbox")).toHaveFocus();
     await waitFor(() => expect(search).toHaveBeenCalledWith(""));
     fireEvent.click(await within(dialog).findByRole("checkbox", { name: /Sneaker/ }));
     fireEvent.click(within(dialog).getByRole("button", { name: en.discounts.form.pickerDone }));

@@ -17,7 +17,8 @@ export function CreateMenu({ t }: { readonly t: Dictionary }) {
   const items = [
     { id: "product", label: t.topbar.createProduct, href: "/products/new", Icon: PackageIcon },
     { id: "order", label: t.topbar.createOrder, href: "/orders/new", Icon: ShoppingBagIcon },
-    { id: "discount", label: t.topbar.createDiscount, href: "/discounts/new", Icon: PercentIcon },
+    // The list, where "Create discount" first asks for the type (as Shopify does).
+    { id: "discount", label: t.topbar.createDiscount, href: "/discounts", Icon: PercentIcon },
   ];
 
   return (

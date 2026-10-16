@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import type { DiscountDto } from "@/lib/api/discounts";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { DiscountDto } from "@/lib/discounts/model";
 import { emptyFormValues, formValuesFromDto } from "@/lib/discounts/form";
 import { ar } from "@/messages/ar";
 import { en, type Dictionary } from "@/messages/en";
@@ -148,6 +148,18 @@ describe("DiscountEditor — create", () => {
     expect(container.querySelector('input[name="discountId"]')).toBeNull();
   });
 
+  it("types codes left to right in capitals, and caps the code and title at 255", () => {
+    renderCreate("free_shipping", ar, "ar");
+    const code = screen.getByRole("textbox", { name: ar.discounts.form.code });
+    expect(code).toHaveAttribute("dir", "ltr");
+    expect(code).toHaveAttribute("autocapitalize", "characters");
+    expect(code).toHaveAttribute("spellcheck", "false");
+    expect(code).toHaveAttribute("maxlength", "255");
+
+    fireEvent.click(screen.getByRole("radio", { name: ar.discounts.form.methodAutomatic }));
+    expect(screen.getByLabelText(ar.discounts.form.title)).toHaveAttribute("maxlength", "255");
+  });
+
   it("speaks Arabic", () => {
     renderCreate("free_shipping", ar, "ar");
     expect(
@@ -196,5 +208,54 @@ describe("DiscountEditor — edit", () => {
     expect(container.querySelector<HTMLInputElement>('input[name="discountId"]')?.value).toBe(
       "promo-1",
     );
+  });
+
+  it("takes what was saved as the new starting point when the saved discount reads back the same", async () => {
+    // "15" → "15.00" saves the same DTO, so the page keeps this editor mounted (same `key`).
+    actions.saveDiscountAction.mockResolvedValue({ status: "success" });
+    renderEdit();
+    const save = screen.getByRole("button", { name: en.discounts.form.save });
+
+    fireEvent.change(screen.getByLabelText(en.discounts.form.value), {
+      target: { value: "15.00" },
+    });
+    expect(screen.getByText(en.discounts.form.unsaved)).toBeInTheDocument();
+    fireEvent.click(save);
+
+    await waitFor(() => expect(actions.saveDiscountAction).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText(en.discounts.form.unsaved)).toBeNull());
+    expect(screen.getByRole("button", { name: en.discounts.form.save })).toBeDisabled();
+    expect((screen.getByLabelText(en.discounts.form.value) as HTMLInputElement).value).toBe(
+      "15.00",
+    );
+  });
+
+  it("keeps the earlier starting point when the save fails", async () => {
+    actions.saveDiscountAction.mockResolvedValue({
+      status: "error",
+      message: "Nope",
+      fieldErrors: {},
+    });
+    renderEdit();
+
+    fireEvent.change(screen.getByLabelText(en.discounts.form.value), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: en.discounts.form.save }));
+
+    expect(await screen.findByText("Nope")).toBeInTheDocument();
+    expect(screen.getByText(en.discounts.form.unsaved)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.discounts.form.save })).toBeEnabled();
+  });
+
+  it("hides Deactivate and Delete while there are unsaved changes, so they cannot drop them", () => {
+    renderEdit();
+    expect(screen.getByRole("button", { name: en.discounts.form.deactivate })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(en.discounts.form.value), { target: { value: "20" } });
+    expect(screen.queryByRole("button", { name: en.discounts.form.deactivate })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.discounts.form.delete })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: en.discounts.form.discard }));
+    expect(screen.getByRole("button", { name: en.discounts.form.deactivate })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.discounts.form.delete })).toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import type { DiscountDto } from "@/lib/api/discounts";
+import type { DiscountDto } from "@/lib/discounts/model";
 import { ar } from "@/messages/ar";
 import { en, type Dictionary } from "@/messages/en";
 import { DiscountsTable } from "./discounts-table";

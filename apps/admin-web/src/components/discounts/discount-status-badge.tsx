@@ -1,5 +1,5 @@
 import { Badge } from "@platform/ui";
-import type { DiscountStatus } from "@/lib/api/discounts";
+import type { DiscountStatus } from "@/lib/discounts/model";
 import type { Dictionary } from "@/messages/en";
 
 const VARIANT: Readonly<Record<DiscountStatus, "success" | "info" | "outline">> = {

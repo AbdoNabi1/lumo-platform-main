@@ -49,6 +49,7 @@ export function ResourcePicker({
   const [result, setResult] = useState<TargetSearchResult | null>(null);
   const [searching, setSearching] = useState(false);
   const searchRef = useRef(search);
+  const dialogSearchInput = useRef<HTMLInputElement>(null);
   searchRef.current = search;
 
   useEffect(() => {
@@ -133,7 +134,15 @@ export function ResourcePicker({
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-xl" aria-describedby={undefined}>
+        <DialogContent
+          className="max-w-xl"
+          aria-describedby={undefined}
+          onOpenAutoFocus={(event) => {
+            // Start in the search box (not the first result or the close button).
+            event.preventDefault();
+            dialogSearchInput.current?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
           </DialogHeader>
@@ -141,8 +150,8 @@ export function ResourcePicker({
             type="search"
             aria-label={searchLabel}
             placeholder={searchLabel}
+            ref={dialogSearchInput}
             value={query}
-            autoFocus
             onChange={(event) => setQuery(event.target.value)}
           />
           <div className="max-h-80 overflow-y-auto" aria-busy={searching || undefined}>

@@ -6,7 +6,7 @@ import type {
   DiscountType,
   DiscountValue,
   MinimumRequirement,
-} from "@/lib/api/discounts";
+} from "@/lib/discounts/model";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
@@ -186,13 +186,18 @@ export function discountSummary(src: DiscountSummarySource, ctx: SummaryContext)
   return lines.filter((line): line is string => line !== null);
 }
 
-/** The list's Combinations column: "Product, Shipping" or "Not combinable". */
+/**
+ * The list's Combinations column: "Product, Shipping" or "Not combinable". Joined the locale's way
+ * — a "unit" list, short style, keeps English's plain "Product, Shipping" and gives Arabic its "،".
+ */
 export function combinationsShort(
   combinesWith: CombinesWith,
   t: Pick<Dictionary["discounts"], "combinesShort" | "combinesNone">,
+  locale: Locale,
 ): string {
   const names = (["product", "order", "shipping"] as const)
     .filter((key) => combinesWith[key])
     .map((key) => t.combinesShort[key]);
-  return names.length === 0 ? t.combinesNone : names.join(", ");
+  if (names.length === 0) return t.combinesNone;
+  return new Intl.ListFormat(locale, { type: "unit", style: "short" }).format(names);
 }
