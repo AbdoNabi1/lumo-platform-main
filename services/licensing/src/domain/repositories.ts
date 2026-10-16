@@ -26,6 +26,8 @@ export interface PlanRepository {
   save(plan: Plan, actingTenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tx?: unknown): Promise<Plan | null>;
   findByKey(key: string, tx?: unknown): Promise<Plan | null>;
+  /** Every plan with a published version, cheapest published price first, then by key. */
+  listPublished(tx?: unknown): Promise<readonly Plan[]>;
 }
 
 export interface SubscriptionRepository {
@@ -113,6 +115,12 @@ export interface BillingPaymentMethodRepository {
 export interface InvoiceRepository {
   save(invoice: Invoice, tenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tenantId: string, tx?: unknown): Promise<Invoice | null>;
+  /**
+   * Every invoice billed to the merchant `tenantRef`, newest first. `tenantId` is the PLATFORM scope
+   * the invoices live under; `tenantRef` is the merchant — a caller derives it from the session,
+   * never from a request.
+   */
+  listByTenantRef(tenantRef: string, tenantId: string, tx?: unknown): Promise<readonly Invoice[]>;
 }
 
 /**

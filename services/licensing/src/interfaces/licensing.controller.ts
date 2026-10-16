@@ -84,6 +84,15 @@ import type {
   RetryDunningInvoice,
   RetryDunningInvoiceInput,
 } from "../application/dunning.use-cases";
+import type {
+  ChangeMerchantPlan,
+  ChangeMerchantPlanInput,
+  GetMerchantBilling,
+  ListPublishedPlans,
+  MerchantScopeInput,
+  ResolveDefaultPlanVersion,
+  ResolveDefaultPlanVersionInput,
+} from "../application/merchant-billing.use-cases";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface LicensingControllerDeps {
@@ -125,6 +134,11 @@ export interface LicensingControllerDeps {
   readonly expireCoupon: ExpireCoupon;
   readonly revokeCoupon: RevokeCoupon;
   readonly getCoupon: GetCoupon;
+  /** Merchant-facing billing reads/actions (Task 5). NOT platform-only: see the methods below. */
+  readonly getMerchantBilling: GetMerchantBilling;
+  readonly listPublishedPlans: ListPublishedPlans;
+  readonly resolveDefaultPlanVersion: ResolveDefaultPlanVersion;
+  readonly changeMerchantPlan: ChangeMerchantPlan;
   /**
    * Saved-card use cases (G-74 (1)). Present only when the deployment composes stored-method billing;
    * absent ⇒ the operations answer 404, never a silent success.
@@ -454,6 +468,37 @@ export class LicensingController {
     return this.platformOnly(input, async () =>
       present(await this.deps.getCoupon.execute(input), 200),
     );
+  }
+
+  /**
+   * A merchant's own billing view. NOT `platformOnly`: the caller (an admin route) passes the PLATFORM
+   * scope as `tenantId` and the signed-in merchant's own tenant as `tenantRef`, so which billing is
+   * read is decided by the session on the server, never by anything the merchant sends.
+   */
+  async getMerchantBilling(input: MerchantScopeInput): Promise<ControllerResponse> {
+    return present(await this.deps.getMerchantBilling.execute(input), 200);
+  }
+
+  /** The published plans a merchant may choose from. Platform catalogue data, same for every caller. */
+  async listPublishedPlans(): Promise<ControllerResponse> {
+    return present(await this.deps.listPublishedPlans.execute({}), 200);
+  }
+
+  /** The published version of a plan key (the default sign-up plan). 404 for an unknown/unpublished plan. */
+  async resolveDefaultPlanVersion(
+    input: ResolveDefaultPlanVersionInput,
+  ): Promise<ControllerResponse> {
+    return present(await this.deps.resolveDefaultPlanVersion.execute(input), 200);
+  }
+
+  /**
+   * Moves the merchant's own subscription to another published plan, by plan key. NOT `platformOnly`
+   * for the same reason as {@link getMerchantBilling}: the subscription is addressed by the `tenantRef`
+   * the caller derives from its session, and the version by a plan key resolved here — no client-chosen
+   * subscription id, version id or price.
+   */
+  async changeMerchantPlan(input: ChangeMerchantPlanInput): Promise<ControllerResponse> {
+    return present(await this.deps.changeMerchantPlan.execute(input), 200);
   }
 }
 

@@ -72,6 +72,11 @@ export type {
   RecordInvoiceTransactionOutput,
 } from "./application/payment-method.use-cases";
 export type { StoredMethodBillingDeps } from "./composition";
+export type {
+  MerchantBillingView,
+  MerchantInvoiceView,
+  MerchantPlanView,
+} from "./application/merchant-billing.use-cases";
 export {
   DEFAULT_DUNNING_POLICY,
   type DunningPolicy,
