@@ -198,6 +198,13 @@ export class TenancyAdminController {
     return this.tenancy.updateStoreSettings(tenantId, input);
   }
 
+  /** Hides Home's setup guide for this shop — staff who can change the settings may dismiss it. */
+  async dismissSetupGuide(principal: Principal, tenantId: string): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:update");
+    if (denied) return denied;
+    return this.tenancy.dismissSetupGuide(tenantId);
+  }
+
   /**
    * Plan 3C: UNGUARDED on purpose — the storefront needs the shop's name and currency before anyone
    * is signed in. The Tenancy use case returns only those two fields.

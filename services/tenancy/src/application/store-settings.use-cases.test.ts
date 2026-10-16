@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { ValidationError } from "@platform/utils";
 import { InMemoryStoreSettingsRepository } from "../infrastructure/in-memory-repositories";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
-import { GetPublicStore, GetStoreSettings, UpdateStoreSettings } from "./store-settings.use-cases";
+import {
+  DismissSetupGuide,
+  GetPublicStore,
+  GetStoreSettings,
+  UpdateStoreSettings,
+} from "./store-settings.use-cases";
 
 function harness() {
   const settings = new InMemoryStoreSettingsRepository();
@@ -36,6 +41,7 @@ describe("GetStoreSettings", () => {
         currency: "EGP",
         timezone: "Africa/Cairo",
         weightUnit: "kg",
+        setupGuideDismissedAt: null,
       },
     });
   });
@@ -96,5 +102,46 @@ describe("per-store isolation", () => {
     expect(b.ok && b.value.currency).toBe("SAR");
     const c = await get.execute({ tenantId: "shop-c" });
     expect(c.ok && c.value.storeName).toBe(""); // defaults, never another store's row
+  });
+});
+
+describe("DismissSetupGuide", () => {
+  it("a settings save keeps the setup guide dismissed", async () => {
+    const settings = new InMemoryStoreSettingsRepository();
+    const unitOfWork = new InMemoryUnitOfWork();
+    const clock = { now: () => new Date("2026-10-16T10:00:00.000Z") };
+    const dismiss = new DismissSetupGuide({ settings, unitOfWork, clock });
+    const update = new UpdateStoreSettings({ settings, unitOfWork });
+    const dismissed = await dismiss.execute({ tenantId: "shop-a" });
+    expect(dismissed.ok && dismissed.value.setupGuideDismissedAt).toBe("2026-10-16T10:00:00.000Z");
+    const saved = await update.execute({
+      tenantId: "shop-a",
+      storeName: "A",
+      contactEmail: null,
+      currency: "EGP",
+      timezone: "Africa/Cairo",
+      weightUnit: "kg",
+    });
+    expect(saved.ok && saved.value.setupGuideDismissedAt).toBe("2026-10-16T10:00:00.000Z");
+  });
+
+  it("keeps the first timestamp when dismissed again", async () => {
+    const settings = new InMemoryStoreSettingsRepository();
+    const unitOfWork = new InMemoryUnitOfWork();
+    let now = new Date("2026-10-16T10:00:00.000Z");
+    const dismiss = new DismissSetupGuide({ settings, unitOfWork, clock: { now: () => now } });
+    await dismiss.execute({ tenantId: "shop-a" });
+    now = new Date("2026-10-17T10:00:00.000Z");
+    const again = await dismiss.execute({ tenantId: "shop-a" });
+    expect(again.ok && again.value.setupGuideDismissedAt).toBe("2026-10-16T10:00:00.000Z");
+  });
+
+  it("dismisses per shop", async () => {
+    const settings = new InMemoryStoreSettingsRepository();
+    const unitOfWork = new InMemoryUnitOfWork();
+    const clock = { now: () => new Date("2026-10-16T10:00:00.000Z") };
+    await new DismissSetupGuide({ settings, unitOfWork, clock }).execute({ tenantId: "shop-a" });
+    const other = await new GetStoreSettings({ settings }).execute({ tenantId: "shop-b" });
+    expect(other.ok && other.value.setupGuideDismissedAt).toBeNull();
   });
 });

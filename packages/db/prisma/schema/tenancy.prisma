@@ -61,13 +61,14 @@ model ShopDomain {
 // so there is no id/version; a save replaces the row. `currency` is the store currency: every price
 // is in it. See migration 20261013000000_store_shipping_taxes.
 model StoreSettings {
-  tenantId     String   @id @map("tenant_id")
-  storeName    String   @default("") @map("store_name")
-  contactEmail String?  @map("contact_email")
-  currency     String   @default("EGP") @db.Char(3)
-  timezone     String   @default("Africa/Cairo")
-  weightUnit   String   @default("kg") @map("weight_unit") // kg | g | lb | oz (CHECK + domain-enforced)
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+  tenantId              String    @id @map("tenant_id")
+  storeName             String    @default("") @map("store_name")
+  contactEmail          String?   @map("contact_email")
+  currency              String    @default("EGP") @db.Char(3)
+  timezone              String    @default("Africa/Cairo")
+  weightUnit            String    @default("kg") @map("weight_unit") // kg | g | lb | oz (CHECK + domain-enforced)
+  setupGuideDismissedAt DateTime? @map("setup_guide_dismissed_at")
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@map("store_settings")
   @@schema("tenancy")

@@ -47,6 +47,16 @@ export function storeSettingsRoutes(admin: WiredAdmin): readonly RouteDefinition
       },
     }),
     defineRoute({
+      method: "POST",
+      path: "/store/setup-guide/dismiss",
+      version: 1,
+      permission: "settings:update",
+      idempotent: true,
+      summary: "Dismiss Home's setup guide for the shop (remembered; dismissing again is a no-op)",
+      schema: {},
+      handle: ({ context }) => admin.tenancy.dismissSetupGuide(context.principal, context.tenantId),
+    }),
+    defineRoute({
       method: "GET",
       path: "/public/store",
       version: 1,

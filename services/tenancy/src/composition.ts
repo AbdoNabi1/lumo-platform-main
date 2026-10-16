@@ -26,6 +26,7 @@ import {
 } from "./application/shop-domains.use-cases";
 import {
   GetPublicStore,
+  DismissSetupGuide,
   GetStoreSettings,
   UpdateStoreSettings,
 } from "./application/store-settings.use-cases";
@@ -146,6 +147,11 @@ function buildController(
     resolveHost: new ResolveHost(tenancyDeps),
     getStoreSettings: new GetStoreSettings({ settings: repos.storeSettings }),
     updateStoreSettings: new UpdateStoreSettings({ settings: repos.storeSettings, unitOfWork }),
+    dismissSetupGuide: new DismissSetupGuide({
+      settings: repos.storeSettings,
+      unitOfWork,
+      clock: deps.clock,
+    }),
     getPublicStore: new GetPublicStore({ settings: repos.storeSettings }),
   });
 }

@@ -1,4 +1,9 @@
-import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
+import {
+  runInTenantTransaction,
+  runReadScoped,
+  type Database,
+  type TransactionClient,
+} from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -265,12 +270,19 @@ export class PrismaStoreSettingsRepository implements StoreSettingsRepository {
   }
 
   async save(tenantId: string, settings: StoreSettings, tx?: unknown): Promise<void> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
     const data = StoreSettingsMapper.toRow(settings);
-    await client.storeSettings.upsert({
-      where: { tenantId },
-      create: { tenantId, ...data },
-      update: data,
-    });
+    const run = async (client: TransactionClient): Promise<void> => {
+      await client.storeSettings.upsert({
+        where: { tenantId },
+        create: { tenantId, ...data },
+        update: data,
+      });
+    };
+    // Reuse the caller's transaction; without one, open our own so `app.tenant_id` is set for RLS.
+    if (tx !== undefined && tx !== null) {
+      await run(tx as TransactionClient);
+      return;
+    }
+    await runInTenantTransaction(this.deps.prisma, tenantId, run);
   }
 }

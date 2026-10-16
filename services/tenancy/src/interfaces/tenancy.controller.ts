@@ -6,6 +6,7 @@ import type { ListTenants } from "../application/list-tenants.use-case";
 import type { ListWorkspaces } from "../application/list-workspaces.use-case";
 import type {
   GetPublicStore,
+  DismissSetupGuide,
   GetStoreSettings,
   UpdateStoreSettings,
 } from "../application/store-settings.use-cases";
@@ -60,6 +61,7 @@ export interface TenancyControllerDeps {
   readonly resolveHost: ResolveHost;
   readonly getStoreSettings: GetStoreSettings;
   readonly updateStoreSettings: UpdateStoreSettings;
+  readonly dismissSetupGuide: DismissSetupGuide;
   readonly getPublicStore: GetPublicStore;
 }
 
@@ -96,6 +98,10 @@ export class TenancyController {
     input: StoreSettingsInput,
   ): Promise<ControllerResponse> {
     return present(await this.deps.updateStoreSettings.execute({ tenantId, ...input }), 200);
+  }
+
+  async dismissSetupGuide(tenantId: string): Promise<ControllerResponse> {
+    return present(await this.deps.dismissSetupGuide.execute({ tenantId }), 200);
   }
 
   async getPublicStore(tenantId: string): Promise<ControllerResponse> {

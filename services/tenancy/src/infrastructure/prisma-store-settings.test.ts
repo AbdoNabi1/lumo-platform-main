@@ -85,4 +85,18 @@ describe("PrismaStoreSettingsRepository", () => {
       update: { currency: "EGP" },
     });
   });
+
+  it("scopes a save made without a transaction to the tenant it is given", async () => {
+    const { client, calls } = fakeClient(null);
+    await new PrismaStoreSettingsRepository(deps(client)).save(
+      "tenant-c",
+      StoreSettings.defaults().withSetupGuideDismissed(new Date("2026-10-16T10:00:00.000Z")),
+    );
+    expect(calls.map((call) => call.op)).toEqual(["set_config", "upsert"]);
+    expect(calls[0]?.args).toBe("tenant-c");
+    expect(calls[1]?.args).toMatchObject({
+      where: { tenantId: "tenant-c" },
+      create: { tenantId: "tenant-c", setupGuideDismissedAt: new Date("2026-10-16T10:00:00.000Z") },
+    });
+  });
 });

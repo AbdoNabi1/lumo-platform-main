@@ -25,6 +25,19 @@ describe("StoreSettings", () => {
     expect(defaults.currency).toBe("EGP");
     expect(defaults.timezone).toBe("Africa/Cairo");
     expect(defaults.weightUnit).toBe("kg");
+    expect(defaults.setupGuideDismissedAt).toBeNull();
+  });
+
+  it("dismisses the setup guide without mutating the original, keeping the first dismissal", () => {
+    const at = new Date("2026-10-16T10:00:00.000Z");
+    const original = StoreSettings.defaults();
+    const dismissed = original.withSetupGuideDismissed(at);
+    expect(original.setupGuideDismissedAt).toBeNull();
+    expect(dismissed.setupGuideDismissedAt).toEqual(at);
+    const later = dismissed.withSetupGuideDismissed(new Date("2026-10-17T00:00:00.000Z"));
+    expect(later.setupGuideDismissedAt).toEqual(at);
+    expect(dismissed.withSetupGuideDismissedAt(null).setupGuideDismissedAt).toBeNull();
+    expect(dismissed.withSetupGuideDismissedAt(null).currency).toBe("EGP");
   });
 
   it("creates from valid input", () => {
