@@ -7,7 +7,7 @@ import {
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, ConflictError } from "@platform/utils";
 import type { Prisma } from "@prisma/client";
 import type {
   ShopDomainRepository,
@@ -312,25 +312,53 @@ export class PrismaStaffDirectoryRepository implements StaffDirectoryRepository 
         });
   }
 
+  async create(entry: StaffDirectoryEntry, tx?: unknown): Promise<void> {
+    const tenantId = this.deps.tenantId;
+    await this.inTransaction(tx, async (client) => {
+      try {
+        await client.staffDirectoryEntry.create({
+          data: {
+            tenantId,
+            email: entry.email,
+            shopRef: entry.shopId,
+            ownerExternalId: entry.ownerExternalId,
+            status: entry.status,
+          },
+        });
+      } catch (error) {
+        // P2002 = unique constraint violation: the email already has a store (the primary key).
+        if ((error as { code?: unknown } | null)?.code === "P2002") {
+          throw new ConflictError("Email already has a store");
+        }
+        throw error;
+      }
+    });
+  }
+
   async save(entry: StaffDirectoryEntry, tx?: unknown): Promise<void> {
     const tenantId = this.deps.tenantId;
-    const data = {
-      shopRef: entry.shopId,
-      ownerExternalId: entry.ownerExternalId,
-      status: entry.status,
-    };
-    const run = async (client: TransactionClient): Promise<void> => {
-      await client.staffDirectoryEntry.upsert({
-        where: { email: entry.email },
-        create: { email: entry.email, tenantId, ...data },
-        update: data,
+    await this.inTransaction(tx, async (client) => {
+      const updated = await client.staffDirectoryEntry.updateMany({
+        where: { email: entry.email, tenantId },
+        data: {
+          shopRef: entry.shopId,
+          ownerExternalId: entry.ownerExternalId,
+          status: entry.status,
+        },
       });
-    };
-    // Reuse the caller's transaction; without one, open our own so `app.tenant_id` is set for RLS.
+      if (updated.count === 0) throw new Error("staff directory entry does not exist");
+    });
+  }
+
+  /** Reuse the caller's transaction; without one, open our own so `app.tenant_id` is set for RLS. */
+  private async inTransaction(
+    tx: unknown,
+    run: (client: TransactionClient) => Promise<void>,
+  ): Promise<void> {
     if (tx !== undefined && tx !== null) {
       await run(tx as TransactionClient);
       return;
     }
-    await runInTenantTransaction(this.deps.prisma, tenantId, run);
+    await runInTenantTransaction(this.deps.prisma, this.deps.tenantId, run);
   }
 }

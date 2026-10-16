@@ -46,6 +46,21 @@ describe("staff directory", () => {
     expect((await tenancy.findStaffDirectoryEntry("a@b.test"))?.shopId).toBe("shop-a");
   });
 
+  it("lets exactly one of two concurrent sign-ups for the same email through", async () => {
+    const { tenancy } = wire();
+    const [first, second] = await Promise.all([
+      tenancy.recordPendingOwner({ email: "a@b.test", shopId: "shop-a", ownerExternalId: "x" }),
+      tenancy.recordPendingOwner({ email: "A@b.test", shopId: "shop-b", ownerExternalId: "y" }),
+    ]);
+    expect([first.ok, second.ok].filter(Boolean)).toHaveLength(1);
+    const loser = first.ok ? second : first;
+    expect(!loser.ok && loser.error).toBeInstanceOf(ConflictError);
+    const winner = first.ok ? first : second;
+    expect((await tenancy.findStaffDirectoryEntry("a@b.test"))?.shopId).toBe(
+      winner.ok ? winner.value.shopId : "",
+    );
+  });
+
   it("activating an unknown email is not found", async () => {
     const { tenancy } = wire();
     const res = await tenancy.activateDirectoryEntry("nobody@b.test");

@@ -44,7 +44,13 @@ export class RecordPendingOwner implements UseCase<
     return this.deps.unitOfWork.run<Result<StaffDirectoryEntryView, DomainError>>(async (tx) => {
       const existing = await this.deps.staffDirectory.findByEmail(entry.value.email, tx);
       if (existing !== null) return err(new ConflictError("Email already has a store"));
-      await this.deps.staffDirectory.save(entry.value, tx);
+      try {
+        // `create` is the race-proof guard; the pre-check above only gives the common-case answer.
+        await this.deps.staffDirectory.create(entry.value, tx);
+      } catch (error) {
+        if (error instanceof ConflictError) return err(error);
+        throw error;
+      }
       return ok(toStaffDirectoryEntryView(entry.value));
     });
   }

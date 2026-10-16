@@ -49,5 +49,8 @@ export interface StoreSettingsRepository {
 export interface StaffDirectoryRepository {
   /** `email` is already normalised (`normaliseEmail`). */
   findByEmail(email: string, tx?: unknown): Promise<StaffDirectoryEntry | null>;
+  /** Inserts a NEW row. Throws `ConflictError` when the email already has one (race-proof). */
+  create(entry: StaffDirectoryEntry, tx?: unknown): Promise<void>;
+  /** Updates an EXISTING row (e.g. activation); never creates one. */
   save(entry: StaffDirectoryEntry, tx?: unknown): Promise<void>;
 }
