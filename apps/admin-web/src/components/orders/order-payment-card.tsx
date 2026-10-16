@@ -30,7 +30,10 @@ function itemsNote(count: number, locale: Locale, t: Dictionary): string {
 /**
  * The payment card, like Shopify's: titled with the payment status, then Subtotal ("3 items"),
  * Shipping (the method), Taxes and a bold Total, a divider, "Paid by customer" and — while payment is
- * pending — the Balance still owed. Under it, how the customer pays, and the one action that fits:
+ * pending — the Balance still owed. Phase 2: one Discount line per discount, with its code (or an
+ * automatic discount's title) beside it — Shopify's "Discount SALE10"; a shipping discount is its own
+ * line, since Shipping shows the rate before it. Under it, how the customer pays, and the one action
+ * that fits:
  *
  * - a cash-on-delivery payment not yet collected → "Mark as paid" (the confirmed collection, with its
  *   confirm, `confirmCodCollectionAction`);
@@ -108,12 +111,21 @@ export async function OrderPaymentCard({
               {!taxIncluded && (
                 <Line label={t.orderPage.paymentTaxes} value={money(order.totals.taxMinor)} />
               )}
-              {order.totals.discountMinor > 0 && (
-                <Line
-                  label={t.orderPage.paymentDiscount}
-                  value={money(-order.totals.discountMinor)}
-                />
-              )}
+              {(order.totals.discounts ?? []).length > 0
+                ? (order.totals.discounts ?? []).map((discount, index) => (
+                    <Line
+                      key={`${discount.code ?? discount.title}-${index}`}
+                      label={t.orderPage.paymentDiscount}
+                      note={discount.code ?? discount.title}
+                      value={money(-discount.amountMinor)}
+                    />
+                  ))
+                : order.totals.discountMinor > 0 && (
+                    <Line
+                      label={t.orderPage.paymentDiscount}
+                      value={money(-order.totals.discountMinor)}
+                    />
+                  )}
             </>
           )}
           <Line label={t.orderPage.paymentTotal} value={money(total)} strong />

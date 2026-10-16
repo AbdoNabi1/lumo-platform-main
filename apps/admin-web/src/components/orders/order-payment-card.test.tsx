@@ -173,6 +173,27 @@ describe("OrderPaymentCard — the payment card like Shopify's (Plan 3B)", () =>
     expect(screen.queryByText("Discount")).toBeNull();
   });
 
+  it("shows each discount with its code, or an automatic discount's title", async () => {
+    const base = order();
+    await renderCard(
+      order({
+        totals: {
+          ...base.totals!,
+          discountMinor: 2000,
+          shippingDiscountMinor: 5000,
+          discounts: [
+            { title: "SALE10", code: "SALE10", discountClass: "order", amountMinor: 2000 },
+            { title: "Free over 500", code: null, discountClass: "shipping", amountMinor: 5000 },
+          ],
+        },
+      }),
+    );
+
+    expect(screen.getAllByText(en.orderPage.paymentDiscount)).toHaveLength(2);
+    expect(screen.getByText("SALE10")).toBeInTheDocument();
+    expect(screen.getByText("Free over 500")).toBeInTheDocument();
+  });
+
   it("while pending: Paid by customer is nothing and the Balance is the whole total", async () => {
     await renderCard(order());
 
