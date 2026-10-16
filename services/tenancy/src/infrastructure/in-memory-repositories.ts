@@ -3,11 +3,13 @@ import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/r
 import type { CursorPage, Paginated } from "@platform/types";
 import type {
   ShopDomainRepository,
+  StaffDirectoryRepository,
   StoreSettingsRepository,
   TenantRepository,
   WorkspaceRepository,
 } from "../domain/repositories";
 import type { ShopDomain } from "../domain/shop-domain";
+import type { StaffDirectoryEntry } from "../domain/staff-directory";
 import type { StoreSettings } from "../domain/store-settings";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
@@ -125,6 +127,18 @@ export class InMemoryShopDomainRepository implements ShopDomainRepository {
     return [...this.store.values()]
       .filter((domain) => domain.shopRef === shopRef)
       .sort((a, b) => a.hostname.value.localeCompare(b.hostname.value));
+  }
+}
+
+export class InMemoryStaffDirectoryRepository implements StaffDirectoryRepository {
+  private readonly store = new Map<string, StaffDirectoryEntry>();
+
+  async findByEmail(email: string): Promise<StaffDirectoryEntry | null> {
+    return this.store.get(email) ?? null;
+  }
+
+  async save(entry: StaffDirectoryEntry): Promise<void> {
+    this.store.set(entry.email, entry);
   }
 }
 

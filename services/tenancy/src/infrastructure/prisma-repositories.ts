@@ -11,11 +11,13 @@ import { ConcurrencyError } from "@platform/utils";
 import type { Prisma } from "@prisma/client";
 import type {
   ShopDomainRepository,
+  StaffDirectoryRepository,
   StoreSettingsRepository,
   TenantRepository,
   WorkspaceRepository,
 } from "../domain/repositories";
 import type { ShopDomain } from "../domain/shop-domain";
+import { StaffDirectoryEntry, type StaffDirectoryStatus } from "../domain/staff-directory";
 import type { StoreSettings } from "../domain/store-settings";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
@@ -275,6 +277,52 @@ export class PrismaStoreSettingsRepository implements StoreSettingsRepository {
       await client.storeSettings.upsert({
         where: { tenantId },
         create: { tenantId, ...data },
+        update: data,
+      });
+    };
+    // Reuse the caller's transaction; without one, open our own so `app.tenant_id` is set for RLS.
+    if (tx !== undefined && tx !== null) {
+      await run(tx as TransactionClient);
+      return;
+    }
+    await runInTenantTransaction(this.deps.prisma, tenantId, run);
+  }
+}
+
+/** Platform-scoped like `PrismaShopDomainRepository`: every row carries the deployment's `tenantId`. */
+export class PrismaStaffDirectoryRepository implements StaffDirectoryRepository {
+  private readonly deps: PrismaTenancyRepositoriesDeps;
+
+  constructor(deps: PrismaTenancyRepositoriesDeps) {
+    this.deps = deps;
+  }
+
+  async findByEmail(email: string, tx?: unknown): Promise<StaffDirectoryEntry | null> {
+    const tenantId = this.deps.tenantId;
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.staffDirectoryEntry.findFirst({ where: { email, tenantId } }),
+    );
+    return row === null
+      ? null
+      : StaffDirectoryEntry.restore({
+          email: row.email,
+          shopId: row.shopRef,
+          ownerExternalId: row.ownerExternalId,
+          status: row.status as StaffDirectoryStatus,
+        });
+  }
+
+  async save(entry: StaffDirectoryEntry, tx?: unknown): Promise<void> {
+    const tenantId = this.deps.tenantId;
+    const data = {
+      shopRef: entry.shopId,
+      ownerExternalId: entry.ownerExternalId,
+      status: entry.status,
+    };
+    const run = async (client: TransactionClient): Promise<void> => {
+      await client.staffDirectoryEntry.upsert({
+        where: { email: entry.email },
+        create: { email: entry.email, tenantId, ...data },
         update: data,
       });
     };

@@ -57,6 +57,22 @@ model ShopDomain {
   @@schema("tenancy")
 }
 
+// Project 1 — which store a staff email signs in to. Platform-tenant scoped like ShopDomain;
+// `shop_ref` is the merchant tenant. One store per email.
+model StaffDirectoryEntry {
+  tenantId        String   @map("tenant_id")
+  email           String   @id
+  shopRef         String   @map("shop_ref")
+  ownerExternalId String   @map("owner_external_id")
+  status          String // pending | active (CHECK + domain-enforced)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([shopRef])
+  @@map("staff_directory")
+  @@schema("tenancy")
+}
+
 // Plan 3C — Shopify's Settings → General for one shop. One row per tenant (the tenant is the key),
 // so there is no id/version; a save replaces the row. `currency` is the store currency: every price
 // is in it. See migration 20261013000000_store_shipping_taxes.

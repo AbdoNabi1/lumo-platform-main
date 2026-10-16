@@ -10,6 +10,7 @@ export { TenantSlug } from "./domain/value-objects/tenant-slug";
 export { WorkspaceConfig } from "./domain/value-objects/workspace-config";
 export type {
   ShopDomainRepository,
+  StaffDirectoryRepository,
   StoreSettingsRepository,
   TenantRepository,
   WorkspaceRepository,
@@ -20,6 +21,8 @@ export type { ShopDomainKind, ShopDomainStatus } from "./domain/shop-domain";
 export type { DnsVerifier } from "./domain/dns-verifier";
 export { NodeDnsVerifier } from "./infrastructure/node-dns-verifier";
 export type { ResolvedHost, ShopDomainView } from "./application/shop-domains.use-cases";
+export { normaliseEmail } from "./domain/staff-directory";
+export type { StaffDirectoryEntryView, StaffDirectoryStatus } from "./domain/staff-directory";
 export { StoreSettings, WEIGHT_UNITS } from "./domain/store-settings";
 export type { StoreSettingsInput, WeightUnit } from "./domain/store-settings";
 export type { PublicStoreView, StoreSettingsView } from "./application/store-settings.use-cases";

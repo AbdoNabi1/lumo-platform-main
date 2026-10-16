@@ -1,4 +1,5 @@
-import type { CursorPage } from "@platform/types";
+import type { CursorPage, Result } from "@platform/types";
+import type { DomainError } from "@platform/utils";
 import type { GetCurrentWorkspace } from "../application/get-current-workspace.use-case";
 import type { GetTenant } from "../application/get-tenant.use-case";
 import type { GetWorkspace } from "../application/get-workspace.use-case";
@@ -10,6 +11,12 @@ import type {
   GetStoreSettings,
   UpdateStoreSettings,
 } from "../application/store-settings.use-cases";
+import type {
+  ActivateDirectoryEntry,
+  FindStaffDirectoryEntry,
+  RecordPendingOwner,
+} from "../application/staff-directory.use-cases";
+import type { StaffDirectoryEntryInput, StaffDirectoryEntryView } from "../domain/staff-directory";
 import type { StoreSettingsInput } from "../domain/store-settings";
 import type {
   AddCustomDomain,
@@ -63,6 +70,9 @@ export interface TenancyControllerDeps {
   readonly updateStoreSettings: UpdateStoreSettings;
   readonly dismissSetupGuide: DismissSetupGuide;
   readonly getPublicStore: GetPublicStore;
+  readonly recordPendingOwner: RecordPendingOwner;
+  readonly activateDirectoryEntry: ActivateDirectoryEntry;
+  readonly findStaffDirectoryEntry: FindStaffDirectoryEntry;
 }
 
 /** Framework-agnostic interface boundary for Tenancy use-cases (no HTTP server). */
@@ -106,6 +116,26 @@ export class TenancyController {
 
   async getPublicStore(tenantId: string): Promise<ControllerResponse> {
     return present(await this.deps.getPublicStore.execute({ tenantId }), 200);
+  }
+
+  /**
+   * Staff directory (email -> store). Raw and unguarded on purpose: these return plain values and
+   * `Result`s, not `ControllerResponse`, and are only called by `apps/admin` services, never over HTTP.
+   */
+  async findStaffDirectoryEntry(email: string): Promise<StaffDirectoryEntryView | null> {
+    return this.deps.findStaffDirectoryEntry.execute(email);
+  }
+
+  async recordPendingOwner(
+    input: StaffDirectoryEntryInput,
+  ): Promise<Result<StaffDirectoryEntryView, DomainError>> {
+    return this.deps.recordPendingOwner.execute(input);
+  }
+
+  async activateDirectoryEntry(
+    email: string,
+  ): Promise<Result<StaffDirectoryEntryView, DomainError>> {
+    return this.deps.activateDirectoryEntry.execute({ email });
   }
 
   async resolveHost(input: ResolveHostInput): Promise<ControllerResponse> {
