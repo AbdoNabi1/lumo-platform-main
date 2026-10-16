@@ -130,6 +130,31 @@ describe("shop domain use cases", () => {
     expect(primaries).toEqual(["two.com"]);
   });
 
+  it("verify and set-primary scoped to another shop answer NOT_FOUND and change nothing", async () => {
+    const deps = await setup(pointsHere);
+    const added = await new AddCustomDomain(deps).execute({
+      shopId: "shop-1",
+      hostname: "acme.com",
+    });
+    if (!added.ok) throw new Error("add failed");
+    const domainId = added.value.id;
+
+    const verifyOther = await new VerifyDomain(deps).execute({ domainId, shopId: "shop-b" });
+    expect(!verifyOther.ok && verifyOther.error.code).toBe("NOT_FOUND");
+    expect(!verifyOther.ok && verifyOther.error.message).toBe("Domain not found");
+    const primaryOther = await new SetPrimaryDomain(deps).execute({ domainId, shopId: "shop-b" });
+    expect(!primaryOther.ok && primaryOther.error.code).toBe("NOT_FOUND");
+    const untouched = await new ListShopDomains(deps).execute({ shopId: "shop-1" });
+    expect(untouched.ok && untouched.value.items).toEqual([
+      expect.objectContaining({ hostname: "acme.com", status: "pending", isPrimary: false }),
+    ]);
+
+    const verified = await new VerifyDomain(deps).execute({ domainId, shopId: "shop-1" });
+    expect(verified.ok && verified.value.status).toBe("verified");
+    const primary = await new SetPrimaryDomain(deps).execute({ domainId, shopId: "shop-1" });
+    expect(primary.ok && primary.value.isPrimary).toBe(true);
+  });
+
   it("resolves a verified hostname to its shop and primary hostname; pending and unknown are NOT_FOUND", async () => {
     const deps = await setup(pointsHere);
     const added = await new AddCustomDomain(deps).execute({

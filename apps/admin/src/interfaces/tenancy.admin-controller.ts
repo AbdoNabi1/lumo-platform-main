@@ -157,6 +157,44 @@ export class TenancyAdminController {
     return this.tenancy.setPrimaryDomain(input);
   }
 
+  /** Merchant domain routes: the shop is the caller's own (the route passes `context.tenantId`). */
+  async listMyDomains(principal: Principal, shopId: string): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:read");
+    if (denied) return denied;
+    return this.tenancy.listShopDomains({ shopId });
+  }
+
+  async addMyDomain(
+    principal: Principal,
+    shopId: string,
+    hostname: string,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:update");
+    if (denied) return denied;
+    return this.tenancy.addCustomDomain({ shopId, hostname });
+  }
+
+  /** A domain of another shop answers 404, exactly like an unknown id. */
+  async verifyMyDomain(
+    principal: Principal,
+    shopId: string,
+    domainId: string,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:update");
+    if (denied) return denied;
+    return this.tenancy.verifyDomain({ domainId, shopId });
+  }
+
+  async makeMyDomainPrimary(
+    principal: Principal,
+    shopId: string,
+    domainId: string,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:update");
+    if (denied) return denied;
+    return this.tenancy.setPrimaryDomain({ domainId, shopId });
+  }
+
   /**
    * Plan 1A: UNGUARDED on purpose — the storefront edge resolves a hostname before anyone is signed
    * in (same reasoning as `admin.publicReads`). Returns only shop id, hostnames and shop status.

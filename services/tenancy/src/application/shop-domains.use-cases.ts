@@ -97,6 +97,11 @@ export class AddCustomDomain implements UseCase<AddCustomDomainInput, { id: stri
 
 export interface DomainIdInput {
   readonly domainId: string;
+  /**
+   * Set by merchant routes: a domain of any other shop is then NOT_FOUND (never FORBIDDEN, so the
+   * ids of other shops are not confirmed to exist). Operator routes leave it out.
+   */
+  readonly shopId?: string;
 }
 
 /** Marks a custom domain verified once its DNS points at the platform. Idempotent. */
@@ -114,7 +119,9 @@ export class VerifyDomain implements UseCase<DomainIdInput, ShopDomainView, Doma
     }
     return this.deps.unitOfWork.run<Result<ShopDomainView, DomainError>>(async (tx) => {
       const domain = await this.deps.domains.findById(input.domainId, tx);
-      if (domain === null) return err(new NotFoundError("Domain not found"));
+      if (domain === null || (input.shopId !== undefined && domain.shopRef !== input.shopId)) {
+        return err(new NotFoundError("Domain not found"));
+      }
       if (domain.status === "verified") return ok(toShopDomainView(domain));
       if (!(await verifier.pointsToPlatform(domain.hostname.value))) {
         return err(
@@ -141,7 +148,9 @@ export class SetPrimaryDomain implements UseCase<DomainIdInput, ShopDomainView, 
   async execute(input: DomainIdInput): Promise<Result<ShopDomainView, DomainError>> {
     return this.deps.unitOfWork.run<Result<ShopDomainView, DomainError>>(async (tx) => {
       const domain = await this.deps.domains.findById(input.domainId, tx);
-      if (domain === null) return err(new NotFoundError("Domain not found"));
+      if (domain === null || (input.shopId !== undefined && domain.shopRef !== input.shopId)) {
+        return err(new NotFoundError("Domain not found"));
+      }
       if (domain.isPrimary) return ok(toShopDomainView(domain));
       if (domain.status !== "verified") {
         return err(new BusinessRuleError("Only a verified domain can be made primary"));
