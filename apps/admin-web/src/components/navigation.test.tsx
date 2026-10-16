@@ -136,4 +136,16 @@ describe("SidebarNav (Shopify layout)", () => {
     expect(within(tools).getByRole("link", { name: en.nav.featureFlags })).toBeInTheDocument();
     expect(within(tools).getByRole("link", { name: en.nav.security })).toBeInTheDocument();
   });
+
+  it("keeps Promotions out of Discounts and lists it under Platform tools", () => {
+    renderNav("discounts");
+    expect(screen.queryByRole("link", { name: en.nav.promotions })).toBeNull();
+
+    renderNav("dashboard", { showPlatformTools: true });
+    const tools = screen.getByRole("navigation", { name: en.nav.platformTools });
+    expect(within(tools).getByRole("link", { name: en.nav.promotions })).toHaveAttribute(
+      "href",
+      "/promotions",
+    );
+  });
 });

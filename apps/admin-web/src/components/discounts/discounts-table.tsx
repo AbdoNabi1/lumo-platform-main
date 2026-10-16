@@ -1,117 +1,73 @@
-"use client";
-
-import { useActionState, useId } from "react";
 import Link from "next/link";
-import { Badge, Button, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@platform/ui";
-import { advanceCouponAction } from "@/app/discounts/actions";
-import type { CouponListItemDto } from "@/lib/api/discounts";
-import { couponAdvanceableStatusesFrom } from "@/lib/coupon-lifecycle";
-import type { FormState } from "@/lib/api/mutation";
-import { formatDateTime } from "@/lib/format";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@platform/ui";
+import type { DiscountDto } from "@/lib/discounts/model";
+import { combinationsShort, listSummary } from "@/lib/discounts/summary";
+import { formatNumber } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
-
-const INITIAL_STATE: FormState = { status: "idle" };
-
-const STATUS_VARIANT: Readonly<Record<string, "success" | "outline" | "warning" | "neutral">> = {
-  active: "success",
-  disabled: "outline",
-  expired: "outline",
-  depleted: "warning",
-};
-
-const SELECT_CLASS =
-  "border-input bg-card text-foreground hover:border-foreground/40 duration-(--duration-fast) h-8 rounded-xl border px-2.5 text-xs transition-colors ease-out";
+import { DiscountStatusBadge } from "./discount-status-badge";
 
 /**
- * The Discounts list's table (T5.8 Part A), extracted to a Client Component so each row can carry
- * its own "advance status" control — same "no detail page, per-row inline actions" discipline
- * `ContentBlocksTable` established for the Content Blocks list.
+ * Shopify's discount list: Title (the code, or an automatic discount's title, with its summary line
+ * under it), Status, Method, Type, Combinations, Used. The title links to the discount.
  */
 export function DiscountsTable({
   items,
   t,
   locale,
+  currency,
+  timeZone,
 }: {
-  readonly items: readonly CouponListItemDto[];
+  readonly items: readonly DiscountDto[];
   readonly t: Dictionary;
   readonly locale: Locale;
+  readonly currency: string;
+  readonly timeZone: string;
 }) {
+  const ctx = { t: t.discounts.summary, locale, currency, timeZone };
   return (
-    <Table aria-label={t.discountsPage.title}>
+    <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>{t.discountsPage.columns.code}</TableHead>
-          <TableHead>{t.discountsPage.columns.status}</TableHead>
-          <TableHead>{t.discountsPage.columns.usage}</TableHead>
-          <TableHead>{t.discountsPage.columns.expires}</TableHead>
-          <TableHead>{t.discountsPage.columns.promotion}</TableHead>
-          <TableHead className="text-end">{t.discountsRowActions.actions}</TableHead>
+          <TableHead>{t.discounts.columns.title}</TableHead>
+          <TableHead>{t.discounts.columns.status}</TableHead>
+          <TableHead>{t.discounts.columns.method}</TableHead>
+          <TableHead>{t.discounts.columns.type}</TableHead>
+          <TableHead>{t.discounts.columns.combinations}</TableHead>
+          <TableHead className="text-end">{t.discounts.columns.used}</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {items.map((coupon) => (
-          <TableRow key={coupon.id}>
-            <TableCell className="font-mono font-medium">{coupon.code}</TableCell>
-            <TableCell>
-              <Badge variant={STATUS_VARIANT[coupon.status] ?? "neutral"}>
-                {(t.discountStatus as Record<string, string>)[coupon.status] ?? coupon.status}
-              </Badge>
-            </TableCell>
-            <TableCell className="tabular-nums">
-              {coupon.usageCount}
-              {coupon.usageLimit !== null
-                ? ` / ${coupon.usageLimit}`
-                : ` (${t.discountsPage.unlimited})`}
-            </TableCell>
-            <TableCell className="text-muted-foreground">
-              {coupon.expiresAt !== null
-                ? formatDateTime(locale, coupon.expiresAt)
-                : t.discountsPage.noExpiry}
-            </TableCell>
-            <TableCell className="text-muted-foreground font-mono text-xs">
-              <Link href={`/promotions/${encodeURIComponent(coupon.promotionRef)}`} className="hover:underline">
-                {coupon.promotionRef}
-              </Link>
-            </TableCell>
-            <TableCell className="text-end">
-              <AdvanceForm coupon={coupon} t={t} />
-            </TableCell>
-          </TableRow>
-        ))}
+        {items.map((discount) => {
+          const summary = listSummary(discount, ctx);
+          return (
+            <TableRow key={discount.id}>
+              <TableCell>
+                <div className="flex flex-col">
+                  <Link
+                    href={`/discounts/${encodeURIComponent(discount.id)}`}
+                    className="font-medium hover:underline"
+                  >
+                    {discount.code ?? discount.title}
+                  </Link>
+                  {summary !== "" && (
+                    <span className="text-muted-foreground text-xs">{summary}</span>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell>
+                <DiscountStatusBadge status={discount.status} t={t} />
+              </TableCell>
+              <TableCell>{t.discounts.methods[discount.method]}</TableCell>
+              <TableCell>{t.discounts.types[discount.type]}</TableCell>
+              <TableCell>{combinationsShort(discount.combinesWith, t.discounts, locale)}</TableCell>
+              <TableCell className="text-end tabular-nums">
+                {formatNumber(locale, discount.usageCount)}
+              </TableCell>
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
-  );
-}
-
-function AdvanceForm({ coupon, t }: { readonly coupon: CouponListItemDto; readonly t: Dictionary }) {
-  const [state, formAction, isPending] = useActionState(advanceCouponAction, INITIAL_STATE);
-  const formId = useId();
-  const targets = couponAdvanceableStatusesFrom(coupon.status);
-
-  if (targets.length === 0) return null;
-
-  return (
-    <form action={formAction} className="flex items-center justify-end gap-1.5">
-      <input type="hidden" name="couponId" value={coupon.id} />
-      <Label htmlFor={`${formId}-toStatus`} className="sr-only">
-        {t.discountsRowActions.advanceToLabel}
-      </Label>
-      <select id={`${formId}-toStatus`} name="toStatus" className={SELECT_CLASS}>
-        {targets.map((status) => (
-          <option key={status} value={status}>
-            {(t.discountStatus as Record<string, string>)[status] ?? status}
-          </option>
-        ))}
-      </select>
-      <Button type="submit" size="sm" variant="outline" loading={isPending} disabled={isPending}>
-        {isPending ? t.discountsRowActions.advancing : t.discountsRowActions.advance}
-      </Button>
-      {state.status === "error" && (
-        <p role="alert" className="text-destructive text-xs">
-          {state.message}
-        </p>
-      )}
-    </form>
   );
 }

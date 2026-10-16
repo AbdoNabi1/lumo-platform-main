@@ -102,20 +102,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
       },
     ],
   },
-  {
-    id: "discounts",
-    label: (t) => t.nav.discounts,
-    href: "/discounts",
-    Icon: PercentIcon,
-    children: [
-      {
-        id: "promotions",
-        label: (t) => t.nav.promotions,
-        href: "/promotions",
-        Icon: GiftIcon,
-      },
-    ],
-  },
+  { id: "discounts", label: (t) => t.nav.discounts, href: "/discounts", Icon: PercentIcon },
   { id: "content", label: (t) => t.nav.content, href: "/content", Icon: FileTextIcon },
   { id: "finance", label: (t) => t.nav.finance, href: "/finance", Icon: LandmarkIcon },
   { id: "analytics", label: (t) => t.nav.analytics, href: "/analytics", Icon: BarChart3Icon },
@@ -151,6 +138,8 @@ export const PLATFORM_TOOLS_NAV: readonly NavItem[] = [
     href: "/notifications",
     Icon: BellIcon,
   },
+  // Phase 2: the raw promotion rules behind Discounts — an engineering view, not the merchant's.
+  { id: "promotions", label: (t) => t.nav.promotions, href: "/promotions", Icon: GiftIcon },
   { id: "templates", label: (t) => t.nav.templates, href: "/templates", Icon: LayoutTemplateIcon },
   {
     id: "components-library",

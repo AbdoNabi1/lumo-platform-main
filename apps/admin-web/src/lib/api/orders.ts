@@ -136,6 +136,14 @@ export interface OrderRecipientAddressDto extends OrderAddressDto {
   readonly province?: string | null;
 }
 
+/** Phase 2: one discount an order was placed with; `code` is null for an automatic discount. */
+export interface OrderDiscountLineDto {
+  readonly title: string;
+  readonly code: string | null;
+  readonly discountClass: string;
+  readonly amountMinor: number;
+}
+
 export interface OrderTotalsDto {
   readonly subtotalMinor: number;
   readonly taxMinor: number;
@@ -147,6 +155,10 @@ export interface OrderTotalsDto {
   readonly taxIncluded?: boolean;
   /** Plan 3C: the shipping rate's name as the shopper saw it; null/absent on older orders. */
   readonly shippingName?: string | null;
+  /** Phase 2: the free-shipping part of the discounts; absent from an older API, 0 on older orders. */
+  readonly shippingDiscountMinor?: number;
+  /** Phase 2: each discount the order was placed with; absent from an older API, empty on older orders. */
+  readonly discounts?: readonly OrderDiscountLineDto[];
 }
 
 export interface OrderHistoryEntryDto {

@@ -1,138 +1,148 @@
+import {
+  isDiscountDto,
+  type DiscountDto,
+  type DiscountInput,
+  type DiscountsPageInfo,
+  type DiscountView,
+} from "@/lib/discounts/model";
 import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
-export interface CouponListItemDto {
-  readonly id: string;
-  readonly code: string;
-  readonly promotionRef: string;
-  readonly status: string;
-  readonly usageLimit: number | null;
-  readonly usageCount: number;
-  readonly expiresAt: string | null;
+/**
+ * Phase 2 Part 2 — the admin `/discounts` API (`apps/admin/src/http/discounts-routes.ts`): Shopify's
+ * discounts, one facade over Promotions (the rule) and Coupons (the code). Reads need
+ * `promotions:read`, every write `promotions:create` and is idempotent. The model (types and type
+ * guards) lives in `lib/discounts/model.ts`, server-import-free so client components can share it;
+ * it is re-exported here.
+ */
+
+export * from "@/lib/discounts/model";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
-export interface DiscountsPageInfo {
-  readonly hasNextPage: boolean;
-  readonly endCursor: string | null;
-}
-
-interface CouponsPageDto {
-  readonly items: readonly CouponListItemDto[];
+interface DiscountsPageDto {
+  readonly items: readonly DiscountDto[];
   readonly pageInfo: DiscountsPageInfo;
 }
 
-function isCouponsPageDto(value: unknown): value is CouponsPageDto {
+function isDiscountsPageDto(value: unknown): value is DiscountsPageDto {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as { items?: unknown }).items)
+    isRecord(value) &&
+    Array.isArray(value["items"]) &&
+    value["items"].every(isDiscountDto) &&
+    isRecord(value["pageInfo"])
   );
 }
 
-export type FetchCouponsPageResult =
+function isUnknown(_value: unknown): _value is unknown {
+  return true;
+}
+
+export type FetchDiscountsPageResult =
   | {
       readonly outcome: "ok";
-      readonly items: readonly CouponListItemDto[];
+      readonly items: readonly DiscountDto[];
       readonly pageInfo: DiscountsPageInfo;
     }
   | { readonly outcome: "unauthorized" }
   | { readonly outcome: "error"; readonly message: string };
 
-/** Fetches a cursor-paginated page of coupons for the Discounts list screen. */
-export async function fetchCouponsPage(query: {
+/** `GET /discounts` — one tab of the list, searched by title or code, cursor-paginated. */
+export async function fetchDiscountsPage(query: {
+  readonly view?: DiscountView;
+  readonly q?: string;
   readonly first?: number;
   readonly after?: string;
-}): Promise<FetchCouponsPageResult> {
+}): Promise<FetchDiscountsPageResult> {
   const params = new URLSearchParams();
+  if (query.view !== undefined && query.view !== "all") params.set("view", query.view);
+  const q = query.q?.trim() ?? "";
+  if (q !== "") params.set("q", q);
   if (query.first !== undefined) params.set("first", String(query.first));
   if (query.after !== undefined) params.set("after", query.after);
 
-  const result = await getAdminApi(`/api/v1/coupons?${params.toString()}`, isCouponsPageDto);
+  const result = await getAdminApi(`/api/v1/discounts?${params.toString()}`, isDiscountsPageDto);
   if (result.outcome === "ok") {
     return { outcome: "ok", items: result.data.items, pageInfo: result.data.pageInfo };
   }
-  if (result.outcome === "unauthorized") {
-    return { outcome: "unauthorized" };
-  }
+  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
   return {
     outcome: "error",
     message: result.outcome === "not_found" ? "Not found" : result.message,
   };
 }
 
-/**
- * T5.8 — the 3 Coupons write routes (`apps/admin/src/http/coupons-routes.ts`). None of their
- * handlers map the response through a DTO (`admin.coupons.create`/`.advance`/`.redeem` all return
- * the `Coupon` aggregate or its own result directly) — same discipline `lib/api/products.ts`'s
- * doc comment describes for its own write routes: read only an `id` off a create response,
- * nothing off the rest, and let the caller `revalidatePath` the list to pick up the real,
- * DTO-mapped state.
- */
+export type FetchDiscountResult =
+  | { readonly outcome: "ok"; readonly discount: DiscountDto }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "not_found" }
+  | { readonly outcome: "error"; readonly message: string };
 
-function isUnknown(_value: unknown): _value is unknown {
-  return true;
+function discountPath(discountId: string, suffix = ""): string {
+  return `/api/v1/discounts/${encodeURIComponent(discountId)}${suffix}`;
 }
 
-function isCreatedRecord(value: unknown): value is { readonly id?: unknown } {
-  return typeof value === "object" && value !== null;
+/** `GET /discounts/:discountId` — the form's shape. A deleted discount is `not_found`. */
+export async function fetchDiscount(discountId: string): Promise<FetchDiscountResult> {
+  const result = await getAdminApi(discountPath(discountId), isDiscountDto);
+  if (result.outcome === "ok") return { outcome: "ok", discount: result.data };
+  return result;
 }
 
-export interface CreateCouponInput {
-  readonly code: string;
-  readonly promotionRef: string;
-  readonly multiUse: boolean;
-  readonly usageLimit?: number;
-  readonly customerRef?: string;
-  readonly expiresAt?: string;
-  readonly campaignRef?: string;
-}
-
-/** `POST /coupons` (`idempotent: true`, `coupons:create`). */
-export async function createCoupon(
-  input: CreateCouponInput,
+/** `POST /discounts` — creates the discount (and its code) and activates it. */
+export function createDiscount(
+  input: DiscountInput,
   idempotencyKey: string,
-): Promise<MutationResult<{ readonly id: string }>> {
-  const result = await mutateAdminApi(
-    "/api/v1/coupons",
+): Promise<MutationResult<DiscountDto>> {
+  return mutateAdminApi(
+    "/api/v1/discounts",
     { method: "POST", body: input, idempotencyKey },
-    isCreatedRecord,
-  );
-  if (result.outcome !== "ok") return result;
-  const id = typeof result.data.id === "string" ? result.data.id : "";
-  return { outcome: "ok", data: { id } };
-}
-
-/** `POST /coupons/:couponId/transitions` (`idempotent: true`, `coupons:advance`). */
-export function advanceCoupon(
-  couponId: string,
-  toStatus: "active" | "disabled" | "expired" | "depleted",
-  idempotencyKey: string,
-): Promise<MutationResult<unknown>> {
-  return mutateAdminApi(
-    `/api/v1/coupons/${encodeURIComponent(couponId)}/transitions`,
-    { method: "POST", body: { toStatus }, idempotencyKey },
-    isUnknown,
+    isDiscountDto,
   );
 }
 
-export interface RedeemCouponInput {
-  readonly code: string;
-  readonly customerRef: string;
-  readonly orderRef?: string;
+/** `PUT /discounts/:discountId` — every field except the type and the method. */
+export function updateDiscount(
+  discountId: string,
+  input: DiscountInput,
+  idempotencyKey: string,
+): Promise<MutationResult<DiscountDto>> {
+  return mutateAdminApi(
+    discountPath(discountId),
+    { method: "PUT", body: input, idempotencyKey },
+    isDiscountDto,
+  );
 }
 
-/**
- * `POST /coupons/redeem` (`idempotent: true`, `coupons:redeem`). Unlike every other write route
- * in this codebase, the redeem body carries its own `idempotencyKey` field in addition to the
- * `Idempotency-Key` HTTP header `mutateAdminApi` already sends — the caller mints ONE value and
- * this function threads it into both places, never two different values.
- */
-export function redeemCoupon(
-  input: RedeemCouponInput,
+/** `DELETE /discounts/:discountId` — archives it; it leaves every list. */
+export function deleteDiscount(
+  discountId: string,
   idempotencyKey: string,
 ): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(discountPath(discountId), { method: "DELETE", idempotencyKey }, isUnknown);
+}
+
+/** `POST /discounts/:discountId/activate` — resumes a deactivated discount. */
+export function activateDiscount(
+  discountId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<DiscountDto>> {
   return mutateAdminApi(
-    "/api/v1/coupons/redeem",
-    { method: "POST", body: { ...input, idempotencyKey }, idempotencyKey },
-    isUnknown,
+    discountPath(discountId, "/activate"),
+    { method: "POST", idempotencyKey },
+    isDiscountDto,
+  );
+}
+
+/** `POST /discounts/:discountId/deactivate` — Shopify's Deactivate: it stops at once. */
+export function deactivateDiscount(
+  discountId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<DiscountDto>> {
+  return mutateAdminApi(
+    discountPath(discountId, "/deactivate"),
+    { method: "POST", idempotencyKey },
+    isDiscountDto,
   );
 }
