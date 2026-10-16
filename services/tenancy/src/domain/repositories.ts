@@ -35,11 +35,11 @@ export interface ShopDomainRepository {
 }
 
 /**
- * One row per shop. Like every Tenancy repository it is scoped to the tenant its composition was
- * built for (ADR-0008); there is no tenant argument.
+ * One row per shop. Unlike the other Tenancy repositories the tenant is a per-call argument: a
+ * merchant reads and writes their own row whichever tenant the deployment was composed for.
  */
 export interface StoreSettingsRepository {
   /** `null` until the merchant has saved once; callers fall back to {@link StoreSettings.defaults}. */
-  get(tx?: unknown): Promise<StoreSettings | null>;
-  save(settings: StoreSettings, tx?: unknown): Promise<void>;
+  get(tenantId: string, tx?: unknown): Promise<StoreSettings | null>;
+  save(tenantId: string, settings: StoreSettings, tx?: unknown): Promise<void>;
 }

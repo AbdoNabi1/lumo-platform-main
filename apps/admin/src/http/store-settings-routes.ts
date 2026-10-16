@@ -25,7 +25,7 @@ export function storeSettingsRoutes(admin: WiredAdmin): readonly RouteDefinition
       summary:
         "The shop's general settings (name, contact email, currency, time zone, weight unit)",
       schema: {},
-      handle: ({ context }) => admin.tenancy.getStoreSettings(context.principal),
+      handle: ({ context }) => admin.tenancy.getStoreSettings(context.principal, context.tenantId),
     }),
     defineRoute({
       method: "PUT",
@@ -36,7 +36,11 @@ export function storeSettingsRoutes(admin: WiredAdmin): readonly RouteDefinition
       summary: "Save the shop's general settings; a new currency relabels prices, keeping amounts",
       schema: { body: settingsBody },
       handle: async ({ body, context }) => {
-        const saved = await admin.tenancy.updateStoreSettings(context.principal, body);
+        const saved = await admin.tenancy.updateStoreSettings(
+          context.principal,
+          context.tenantId,
+          body,
+        );
         if (saved.status >= 300) return saved;
         await admin.storeCurrency.relabel(context.tenantId, body.currency);
         return saved;
@@ -50,7 +54,7 @@ export function storeSettingsRoutes(admin: WiredAdmin): readonly RouteDefinition
       public: true,
       summary: "Public: the shop's name and currency (nothing else)",
       schema: {},
-      handle: () => admin.tenancy.getPublicStore(),
+      handle: ({ context }) => admin.tenancy.getPublicStore(context.tenantId),
     }),
   ] as readonly RouteDefinition[];
 }

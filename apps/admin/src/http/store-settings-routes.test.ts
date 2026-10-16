@@ -167,6 +167,32 @@ describe("store settings API (Plan 3C)", () => {
   });
 });
 
+describe("store settings API — one row per request tenant", () => {
+  it("keeps two shops' settings apart through the same routes", async () => {
+    const app = await buildApp();
+    try {
+      const shopA = { ...authed, "x-tenant-id": "shop-a" };
+      const shopB = { ...authed, "x-tenant-id": "shop-b" };
+      expect((await put(app, { ...settings, storeName: "Shop A" }, shopA)).statusCode).toBe(200);
+      expect((await put(app, { ...settings, storeName: "Shop B" }, shopB)).statusCode).toBe(200);
+
+      const read = (headers: Record<string, string>) =>
+        app.inject({ method: "GET", url: "/api/v1/store/settings", headers });
+      expect((await read(shopA)).json()).toMatchObject({ storeName: "Shop A" });
+      expect((await read(shopB)).json()).toMatchObject({ storeName: "Shop B" });
+
+      const pub = await app.inject({
+        method: "GET",
+        url: "/api/v1/public/store",
+        headers: { "x-tenant-id": "shop-b" },
+      });
+      expect(pub.json()).toEqual({ name: "Shop B", currency: "SAR" });
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe("store settings API — permissions (Plan 3C)", () => {
   function denying(...denied: string[]): AccessControl {
     return { authorize: async (_principal, permission) => !denied.includes(permission) };

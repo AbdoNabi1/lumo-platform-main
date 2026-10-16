@@ -1,4 +1,4 @@
-import type { Database, TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
@@ -238,6 +238,18 @@ export class PrismaShopDomainRepository implements ShopDomainRepository {
   }
 }
 
+/** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
+}
+
 export class PrismaStoreSettingsRepository implements StoreSettingsRepository {
   private readonly deps: PrismaTenancyRepositoriesDeps;
 
@@ -245,15 +257,15 @@ export class PrismaStoreSettingsRepository implements StoreSettingsRepository {
     this.deps = deps;
   }
 
-  async get(tx?: unknown): Promise<StoreSettings | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.storeSettings.findFirst({ where: { tenantId: this.deps.tenantId } });
+  async get(tenantId: string, tx?: unknown): Promise<StoreSettings | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.storeSettings.findFirst({ where: { tenantId } }),
+    );
     return row === null ? null : StoreSettingsMapper.toDomain(row);
   }
 
-  async save(settings: StoreSettings, tx?: unknown): Promise<void> {
+  async save(tenantId: string, settings: StoreSettings, tx?: unknown): Promise<void> {
     const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const tenantId = this.deps.tenantId;
     const data = StoreSettingsMapper.toRow(settings);
     await client.storeSettings.upsert({
       where: { tenantId },

@@ -115,7 +115,7 @@ describe("GET /analytics/sales", () => {
       to: "2026-10-13",
     });
 
-    expect(getStoreRegion).toHaveBeenCalledWith(principal);
+    expect(getStoreRegion).toHaveBeenCalledWith(principal, "tenant-a");
     expect(salesReport).toHaveBeenCalledWith(principal, {
       tenantId: "tenant-a",
       from: "2026-10-06",

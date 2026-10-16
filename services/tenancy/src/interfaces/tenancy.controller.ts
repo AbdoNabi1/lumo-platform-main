@@ -87,16 +87,19 @@ export class TenancyController {
     return present(await this.deps.listShopDomains.execute(input), 200);
   }
 
-  async getStoreSettings(): Promise<ControllerResponse> {
-    return present(await this.deps.getStoreSettings.execute({}), 200);
+  async getStoreSettings(tenantId: string): Promise<ControllerResponse> {
+    return present(await this.deps.getStoreSettings.execute({ tenantId }), 200);
   }
 
-  async updateStoreSettings(input: StoreSettingsInput): Promise<ControllerResponse> {
-    return present(await this.deps.updateStoreSettings.execute(input), 200);
+  async updateStoreSettings(
+    tenantId: string,
+    input: StoreSettingsInput,
+  ): Promise<ControllerResponse> {
+    return present(await this.deps.updateStoreSettings.execute({ tenantId, ...input }), 200);
   }
 
-  async getPublicStore(): Promise<ControllerResponse> {
-    return present(await this.deps.getPublicStore.execute({}), 200);
+  async getPublicStore(tenantId: string): Promise<ControllerResponse> {
+    return present(await this.deps.getPublicStore.execute({ tenantId }), 200);
   }
 
   async resolveHost(input: ResolveHostInput): Promise<ControllerResponse> {

@@ -167,10 +167,10 @@ export class TenancyAdminController {
     return this.tenancy.resolveHost(input);
   }
 
-  async getStoreSettings(principal: Principal): Promise<AdminResponse> {
+  async getStoreSettings(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "settings:read");
     if (denied) return denied;
-    return this.tenancy.getStoreSettings();
+    return this.tenancy.getStoreSettings(tenantId);
   }
 
   /**
@@ -179,10 +179,10 @@ export class TenancyAdminController {
    * else of the settings (name, contact email, weight unit) is returned. A failed read is answered as
    * it is: a guessed zone would put orders on the wrong days.
    */
-  async getStoreRegion(principal: Principal): Promise<AdminResponse> {
+  async getStoreRegion(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "orders:read");
     if (denied) return denied;
-    const settings = await this.tenancy.getStoreSettings();
+    const settings = await this.tenancy.getStoreSettings(tenantId);
     if (settings.status !== 200) return settings;
     const { currency, timezone } = settings.body as { currency: string; timezone: string };
     return { status: 200, body: { currency, timezone } };
@@ -190,19 +190,20 @@ export class TenancyAdminController {
 
   async updateStoreSettings(
     principal: Principal,
-    input: Parameters<TenancyController["updateStoreSettings"]>[0],
+    tenantId: string,
+    input: Parameters<TenancyController["updateStoreSettings"]>[1],
   ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "settings:update");
     if (denied) return denied;
-    return this.tenancy.updateStoreSettings(input);
+    return this.tenancy.updateStoreSettings(tenantId, input);
   }
 
   /**
    * Plan 3C: UNGUARDED on purpose — the storefront needs the shop's name and currency before anyone
    * is signed in. The Tenancy use case returns only those two fields.
    */
-  async getPublicStore(): Promise<AdminResponse> {
-    return this.tenancy.getPublicStore();
+  async getPublicStore(tenantId: string): Promise<AdminResponse> {
+    return this.tenancy.getPublicStore(tenantId);
   }
 
   async getCurrentWorkspace(principal: Principal): Promise<AdminResponse> {

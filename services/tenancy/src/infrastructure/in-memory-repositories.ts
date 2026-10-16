@@ -129,14 +129,14 @@ export class InMemoryShopDomainRepository implements ShopDomainRepository {
 }
 
 export class InMemoryStoreSettingsRepository implements StoreSettingsRepository {
-  private current: StoreSettings | null = null;
+  private readonly rows = new Map<string, StoreSettings>();
 
-  get(): Promise<StoreSettings | null> {
-    return Promise.resolve(this.current);
+  get(tenantId: string): Promise<StoreSettings | null> {
+    return Promise.resolve(this.rows.get(tenantId) ?? null);
   }
 
-  save(settings: StoreSettings): Promise<void> {
-    this.current = settings;
+  save(tenantId: string, settings: StoreSettings): Promise<void> {
+    this.rows.set(tenantId, settings);
     return Promise.resolve();
   }
 }

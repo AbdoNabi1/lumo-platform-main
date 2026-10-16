@@ -30,7 +30,7 @@ export interface StoreSettingsDeps {
 }
 
 export class GetStoreSettings implements UseCase<
-  Record<string, never>,
+  { readonly tenantId: string },
   StoreSettingsView,
   DomainError
 > {
@@ -40,15 +40,19 @@ export class GetStoreSettings implements UseCase<
     this.deps = deps;
   }
 
-  async execute(_input: Record<string, never>): Promise<Result<StoreSettingsView, DomainError>> {
-    const stored = await this.deps.settings.get();
+  async execute(input: {
+    readonly tenantId: string;
+  }): Promise<Result<StoreSettingsView, DomainError>> {
+    const stored = await this.deps.settings.get(input.tenantId);
     return ok(toStoreSettingsView(stored ?? StoreSettings.defaults()));
   }
 }
 
+export type UpdateStoreSettingsInput = StoreSettingsInput & { readonly tenantId: string };
+
 /** Replaces the shop's settings wholesale (Shopify's Settings → General "Save"). */
 export class UpdateStoreSettings implements UseCase<
-  StoreSettingsInput,
+  UpdateStoreSettingsInput,
   StoreSettingsView,
   DomainError
 > {
@@ -58,11 +62,12 @@ export class UpdateStoreSettings implements UseCase<
     this.deps = deps;
   }
 
-  async execute(input: StoreSettingsInput): Promise<Result<StoreSettingsView, DomainError>> {
-    const created = StoreSettings.create(input);
+  async execute(input: UpdateStoreSettingsInput): Promise<Result<StoreSettingsView, DomainError>> {
+    const { tenantId, ...rest } = input;
+    const created = StoreSettings.create(rest);
     if (!created.ok) return err(created.error);
     await this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.settings.save(created.value, tx);
+      await this.deps.settings.save(tenantId, created.value, tx);
     });
     return ok(toStoreSettingsView(created.value));
   }
@@ -75,7 +80,7 @@ export interface PublicStoreView {
 }
 
 export class GetPublicStore implements UseCase<
-  Record<string, never>,
+  { readonly tenantId: string },
   PublicStoreView,
   DomainError
 > {
@@ -85,8 +90,10 @@ export class GetPublicStore implements UseCase<
     this.deps = deps;
   }
 
-  async execute(_input: Record<string, never>): Promise<Result<PublicStoreView, DomainError>> {
-    const settings = (await this.deps.settings.get()) ?? StoreSettings.defaults();
+  async execute(input: {
+    readonly tenantId: string;
+  }): Promise<Result<PublicStoreView, DomainError>> {
+    const settings = (await this.deps.settings.get(input.tenantId)) ?? StoreSettings.defaults();
     return ok({ name: settings.storeName, currency: settings.currency });
   }
 }
