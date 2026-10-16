@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DiscountDto } from "@/lib/api/discounts";
+import { formatNumber } from "@/lib/format";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import {
@@ -161,7 +162,7 @@ describe("usage limit and per-order plurals", () => {
       discountSummary({ ...sale10, usageLimit }, arabic).find((line) => line.startsWith("حد أقصى"));
     expect(limitLine(1)).toBe("حد أقصى استخدام واحد");
     expect(limitLine(2)).toBe("حد أقصى استخدامان");
-    expect(limitLine(5)).toBe("حد أقصى ٥ استخدامات");
-    expect(limitLine(11)).toBe("حد أقصى ١١ استخدامًا");
+    expect(limitLine(5)).toBe(`حد أقصى ${formatNumber("ar", 5)} استخدامات`);
+    expect(limitLine(11)).toBe(`حد أقصى ${formatNumber("ar", 11)} استخدامًا`);
   });
 });
