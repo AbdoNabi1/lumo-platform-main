@@ -587,6 +587,13 @@ export interface WiredAdmin {
    * — so the tenant-mode guard's graph walk finds nothing under it.
    */
   readonly merchantOnboarding: MerchantOnboarding;
+  /**
+   * The store a merchant email belongs to (the staff directory), for the public merchant sign-in and
+   * reset routes. A FUNCTION on purpose, like `platformScope`: the tenant-mode guard does not walk it.
+   */
+  readonly findStoreForEmail: (
+    email: string,
+  ) => Promise<{ readonly shopId: string; readonly status: string } | null>;
   /** Platform Console screen → Platform Console (Sprint 5.6, ADR-0018 addendum-2 §J — read-model only). */
   readonly platformConsole: PlatformConsoleAdminController;
   /** Wishlist screen → Wishlist (Sprint S1 — Wishlist's first admin-transport wiring). */
@@ -1334,6 +1341,10 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     licensing: new LicensingAdminController({ licensing: licensing.licensing, guard }),
     platformScope: (requestTenantId: string): string => deps.platformTenantId ?? requestTenantId,
     merchantOnboarding,
+    findStoreForEmail: async (email) => {
+      const entry = await tenancy.tenancy.findStaffDirectoryEntry(email.trim().toLowerCase());
+      return entry === null ? null : { shopId: entry.shopId, status: entry.status };
+    },
     platformConsole: new PlatformConsoleAdminController({
       platformConsole: platformConsole.platformConsole,
       guard,

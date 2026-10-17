@@ -186,6 +186,10 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     httpDeps,
     adminRoutes(admin, {
       ...(scope.tenancyPinnedTo === undefined ? {} : { tenancyPinnedTo: scope.tenancyPinnedTo }),
+      // Merchant sign-up exists only under multi; in single mode it answers 503.
+      ...(deps.tenantMode === "multi" && platformTenantId !== undefined
+        ? { platformTenantId }
+        : {}),
       rateLimiter: deps.rateLimiter,
       ...(tenantGate === undefined
         ? {}

@@ -132,6 +132,8 @@ export class StaffAuthAdminController {
   async requestPasswordReset(input: {
     readonly tenantId: string;
     readonly email: string;
+    /** Merchant resets: the store the link must complete against (`&store=<id>`). */
+    readonly storeId?: string;
   }): Promise<AdminResponse> {
     const { passwordReset, emailSender, adminPublicUrl } = this.deps;
     if (passwordReset === undefined || emailSender === undefined || adminPublicUrl === undefined) {
@@ -141,7 +143,9 @@ export class StaffAuthAdminController {
       const issued = await passwordReset.request(input.tenantId, staffIdentifier(input.email));
       if (issued !== null) {
         const origin = adminPublicUrl.replace(/\/$/, "");
-        const link = `${origin}/reset-password?token=${encodeURIComponent(issued.token)}`;
+        const store =
+          input.storeId === undefined ? "" : `&store=${encodeURIComponent(input.storeId)}`;
+        const link = `${origin}/reset-password?token=${encodeURIComponent(issued.token)}${store}`;
         await emailSender.send({
           to: input.email.trim().toLowerCase(),
           ...passwordResetEmail(link),

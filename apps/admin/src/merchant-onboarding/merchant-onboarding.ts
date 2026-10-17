@@ -120,6 +120,9 @@ export class MerchantOnboarding {
     let ownerExternalId: string;
     let slug: string | null = null;
     if (existing !== null) {
+      // A retry for a PENDING email completes that store with the retrier's password, name and
+      // country: no email-ownership proof exists (same as a first sign-up). Safe because merchant
+      // login refuses pending entries, so nobody can sign in before the store is activated.
       tenantId = existing.shopId; // resume the half-created store, never a second one
       ownerExternalId = existing.ownerExternalId;
     } else {

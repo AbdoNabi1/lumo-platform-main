@@ -60,6 +60,7 @@ import {
 } from "./product-images";
 import { mapPage, publicCatalogRoutes } from "./public-catalog-routes";
 import { publicAuthRoutes } from "./public-auth-routes";
+import { publicMerchantRoutes } from "./public-merchant-routes";
 import { publicStaffAuthRoutes } from "./public-staff-auth-routes";
 import { staffAccountRoutes } from "./staff-account-routes";
 import { publicCartRoutes } from "./public-cart-routes";
@@ -954,6 +955,8 @@ export function adminRoutes(
   options: {
     readonly tenancyPinnedTo?: string;
     readonly rateLimiter?: RateLimiter;
+    /** Set only under TENANT_MODE=multi; without it merchant sign-up answers 503. */
+    readonly platformTenantId?: string;
     readonly onTenantLifecycleChange?: (tenantId: string) => void;
   } = {},
 ): readonly RouteDefinition[] {
@@ -2225,6 +2228,12 @@ export function adminRoutes(
     ...promotionsRoutes(admin),
     ...publicAuthRoutes(admin, options.rateLimiter),
     ...publicStaffAuthRoutes(admin, options.rateLimiter),
+    ...publicMerchantRoutes(admin, {
+      ...(options.rateLimiter === undefined ? {} : { rateLimiter: options.rateLimiter }),
+      ...(options.platformTenantId === undefined
+        ? {}
+        : { platformTenantId: options.platformTenantId }),
+    }),
     ...staffAccountRoutes(admin),
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),

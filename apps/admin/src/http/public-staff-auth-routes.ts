@@ -36,7 +36,7 @@ const STAFF_LOGIN_WINDOW_MS = 15 * 60 * 1000;
  * normalisation `staffIdentifier` applies) and counts every attempt, successful or not, whether or not
  * the account exists — so a refusal reveals nothing about the account.
  */
-function rateLimited(retryAfterMs: number, message: string) {
+export function rateLimited(retryAfterMs: number, message: string) {
   return {
     status: 429,
     body: { code: "RATE_LIMITED", message, retryable: true, fields: [], retryAfterMs },
