@@ -1577,8 +1577,7 @@ export const ar: Dictionary = {
     planCardTitle: "الباقة",
     perMonth: "{price} / شهر",
     perYear: "{price} / سنة",
-    statusTrial: "تجربة مجانية — فاضل {days} يوم (بتنتهي {date})",
-    statusTrialOneDay: "تجربة مجانية — فاضل يوم واحد (بتنتهي {date})",
+    statusTrial: "تجربة مجانية — فاضل {days} (بتنتهي {date})",
     statusTrialNoDate: "تجربة مجانية",
     statusTrialEnded: "التجربة المجانية خلصت",
     statusActive: "الدفعة الجاية يوم {date}",
@@ -1614,9 +1613,14 @@ export const ar: Dictionary = {
     loadError: "معرفناش نحمّل بيانات الفواتير بتاعتك.",
     tryAgain: "جرّب تاني",
   },
+  dayCount: {
+    one: "يوم واحد",
+    two: "يومين",
+    few: "{count} أيام",
+    many: "{count} يوم",
+  },
   trialBanner: {
-    trialEnding: "تجربتك المجانية بتنتهي بعد {days} أيام — اختار باقة",
-    trialEndingOneDay: "تجربتك المجانية بتنتهي بعد يوم واحد — اختار باقة",
+    trialEnding: "تجربتك المجانية بتنتهي بعد {days} — اختار باقة",
     pastDue: "الدفع متأخر — ادفع دلوقتي عشان متجرك يفضل مفتوح",
   },
   setupGuide: {

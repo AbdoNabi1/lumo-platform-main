@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cn } from "@platform/ui";
 import type { Locale } from "@/lib/i18n";
+import { dayCountPhrase } from "@/lib/day-count";
 import { formatNumber } from "@/lib/format";
 import type { Dictionary } from "@/messages/en";
 
@@ -25,10 +26,8 @@ export function TrialBanner({ banner, trialDaysLeft, t, locale }: TrialBannerPro
     text = t.trialBanner.pastDue;
   } else {
     if (trialDaysLeft === null) return null;
-    text =
-      trialDaysLeft === 1
-        ? t.trialBanner.trialEndingOneDay
-        : t.trialBanner.trialEnding.replace("{days}", formatNumber(locale, trialDaysLeft));
+    const days = dayCountPhrase(t.dayCount, trialDaysLeft, formatNumber(locale, trialDaysLeft));
+    text = t.trialBanner.trialEnding.replace("{days}", days);
   }
 
   const pastDue = banner === "past-due";

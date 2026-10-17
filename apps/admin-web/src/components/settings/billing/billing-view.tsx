@@ -24,6 +24,7 @@ import {
   type MerchantInvoiceDto,
   type MerchantPlanDto,
 } from "@/lib/billing/model";
+import { dayCountPhrase } from "@/lib/day-count";
 import { formatCurrency, formatMediumDate, formatNumber } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
@@ -43,8 +44,9 @@ function statusLine(
   billing: MerchantBillingDto,
   locale: Locale,
   now: Date,
-  copy: BillingCopy,
+  t: Dictionary,
 ): { readonly text: string; readonly destructive: boolean } {
+  const copy = t.billingPage;
   if (billing.plan === null || billing.status === null) {
     return { text: copy.statusNone, destructive: false };
   }
@@ -57,9 +59,9 @@ function statusLine(
   if (days !== null && billing.trialEndsAt !== null) {
     if (days === 0) return { text: copy.statusTrialEnded, destructive: false };
     const date = formatMediumDate(locale, billing.trialEndsAt);
-    const template = days === 1 ? copy.statusTrialOneDay : copy.statusTrial;
+    const left = dayCountPhrase(t.dayCount, days, formatNumber(locale, days));
     return {
-      text: template.replace("{days}", formatNumber(locale, days)).replace("{date}", date),
+      text: copy.statusTrial.replace("{days}", left).replace("{date}", date),
       destructive: false,
     };
   }
@@ -246,7 +248,7 @@ export function BillingView({
 }) {
   const copy = t.billingPage;
   const [choosing, setChoosing] = useState(false);
-  const status = statusLine(billing, locale, now, copy);
+  const status = statusLine(billing, locale, now, t);
 
   return (
     <div className="flex flex-col gap-4">

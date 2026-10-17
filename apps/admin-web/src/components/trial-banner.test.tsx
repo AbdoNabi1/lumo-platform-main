@@ -46,6 +46,23 @@ describe("TrialBanner", () => {
     expect(screen.getByRole("alert").className).toContain("destructive");
   });
 
+  it.each([
+    [1, /بعد يوم واحد —/],
+    [2, /بعد يومين —/],
+    [3, /بعد (3|٣) أيام —/],
+    [11, /بعد (11|١١) يوم —/],
+  ] as const)("agrees the Arabic noun with %i day(s)", (days, pattern) => {
+    render(<TrialBanner banner="trial-ending" trialDaysLeft={days} t={ar} locale="ar" />);
+    expect(screen.getByRole("link").textContent).toMatch(pattern);
+  });
+
+  it("uses the English plural for two days", () => {
+    render(<TrialBanner banner="trial-ending" trialDaysLeft={2} t={en} locale="en" />);
+    expect(
+      screen.getByRole("link", { name: "Your free trial ends in 2 days — choose a plan" }),
+    ).toBeInTheDocument();
+  });
+
   it("renders in Arabic", () => {
     render(<TrialBanner banner="trial-ending" trialDaysLeft={3} t={ar} locale="ar" />);
     const link = screen.getByRole("link", { name: /^تجربتك المجانية/ });

@@ -301,9 +301,19 @@ describe("BillingView in Arabic", () => {
     arabic(billing({ ...inTrial("2026-10-27T10:00:00.000Z"), cardOnFile: false }));
 
     expect(screen.getByText(ar.billingPage.planCardTitle)).toBeInTheDocument();
-    expect(screen.getByText(/فاضل (10|١٠) يوم/)).toBeInTheDocument();
+    expect(screen.getByText(/فاضل (10|١٠) أيام/)).toBeInTheDocument();
     expect(screen.getByText(ar.billingPage.noCard)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: ar.billingPage.changePlan })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["2026-10-18T09:00:00.000Z", /فاضل يوم واحد \(/],
+    ["2026-10-19T09:00:00.000Z", /فاضل يومين \(/],
+    ["2026-10-20T09:00:00.000Z", /فاضل (3|٣) أيام \(/],
+    ["2026-10-28T09:00:00.000Z", /فاضل (11|١١) يوم \(/],
+  ] as const)("agrees the Arabic trial noun with the day count (ends %s)", (endsAt, pattern) => {
+    arabic(billing(inTrial(endsAt)));
+    expect(screen.getByText(pattern)).toBeInTheDocument();
   });
 
   it("renders an issued bill with Arabic copy", () => {
