@@ -61,17 +61,19 @@ export type MutationResult<T> =
  * Resolves the same tenant id every admin-web request already sends as the `x-tenant-id` header
  * below — exported for the rare route (Licensing's `GET /usage-counters`, see `lib/api/
  * licensing.ts`) that also requires it as an explicit `tenantRef` querystring parameter, so that
- * caller doesn't duplicate `TENANT_DEFAULT_ID`/`DEFAULT_TENANT_ID` resolution or drift from the
- * header value.
+ * caller doesn't duplicate the session/`TENANT_DEFAULT_ID` resolution or drift from the header
+ * value. The signed-in store (the session token's `tenant_id` claim) wins; with no session it is
+ * `TENANT_DEFAULT_ID`.
  */
-export function currentTenantRef(): string {
-  return requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);
+export async function currentTenantRef(): Promise<string> {
+  const session = await readSession();
+  return session?.tenantId ?? requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);
 }
 
 /** The shared preamble every admin-API call needs — resolved once so `getAdminApi`/`mutateAdminApi` cannot drift apart. */
 async function adminRequestHeaders(): Promise<Record<string, string>> {
-  const tenantId = requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);
   const session = await readSession();
+  const tenantId = session?.tenantId ?? requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);
   const token = session?.token ?? process.env["ADMIN_API_TOKEN"];
 
   const headers: Record<string, string> = { "x-tenant-id": tenantId };
