@@ -90,3 +90,19 @@ LEVEL SECURITY`, and — checked explicitly — **no** tenant-scoped table witho
 - Read models / projections are **not** in these schemas (G-8): they are CDC-fed and land with
   their own design; command-side tables here stay write-shaped.
 - Metafields (G-34) intentionally absent: the ADR must precede the tables it attaches to.
+
+## 5. Owner deploys (written, not yet applied)
+
+Hand-written and additive (expand-only); the agent never applies them. Deploy with
+`prisma migrate deploy` **before** the release that reads them (merchant onboarding, branch
+`morbeh/merchant-onboarding`):
+
+- `20261016020000_setup_guide_dismissed` — adds the nullable
+  `tenancy.store_settings.setup_guide_dismissed_at` (when the merchant dismissed Home's setup
+  guide). The table keeps its existing RLS policy.
+- `20261016030000_staff_directory` — creates `tenancy.staff_directory` (which store a staff email
+  signs in to; one store per email) with RLS enabled and forced and its own `tenant_isolation`
+  policy.
+
+Neither touches existing rows. Self-serve sign-up stays off (503) until the owner also sets
+`TENANT_MODE=multi` and `DEFAULT_PLAN_KEY`.
