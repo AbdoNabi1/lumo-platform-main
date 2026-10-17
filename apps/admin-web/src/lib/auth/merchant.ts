@@ -18,6 +18,13 @@ export type SignupResult =
       readonly fields?: readonly { field: string; message: string }[];
     };
 
+/**
+ * A merchant sign-in outcome: the staff `ExchangeResult` plus `disabled` — this deployment has no
+ * merchant directory at all (single mode answers 503 `SIGNUP_UNAVAILABLE`), which is NOT an outage.
+ */
+export type MerchantExchangeResult =
+  ExchangeResult | { readonly ok: false; readonly reason: "disabled" };
+
 export type MerchantResetRequestResult = "sent" | "limited" | "unavailable";
 export type MerchantResetCompleteResult = "done" | "invalid" | "weak" | "limited" | "unavailable";
 
@@ -58,6 +65,12 @@ async function post(
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+/** True when the reply's error code (flat `code` or nested `error.code`) is `code`. */
+function hasCode(value: unknown, code: string): boolean {
+  const body = asRecord(value);
+  return body["code"] === code || asRecord(body["error"])["code"] === code;
 }
 
 function fieldIssues(value: unknown): { field: string; message: string }[] {
@@ -120,7 +133,7 @@ export async function exchangeMerchantPassword(input: {
   readonly email: string;
   readonly password: string;
   readonly fetchImpl?: typeof fetch;
-}): Promise<ExchangeResult> {
+}): Promise<MerchantExchangeResult> {
   const reply = await post(
     `${input.runtimeUrl}${PUBLIC}/auth/merchant/login`,
     input.tenantId,
@@ -132,11 +145,13 @@ export async function exchangeMerchantPassword(input: {
   if (reply.status === 403) {
     // The runtime passes the staff MFA response through as `{ error: { code }, mfaRequirement }`;
     // a flat `{ code }` envelope is accepted too.
-    const body = asRecord(reply.body);
-    const code = body["code"] ?? asRecord(body["error"])["code"];
-    return code === "MFA_REQUIRED"
+    return hasCode(reply.body, "MFA_REQUIRED")
       ? { ok: false, reason: "mfa" }
       : { ok: false, reason: "unavailable" };
+  }
+  // Single mode (no platform tenant): merchant sign-in does not exist on this deployment.
+  if (reply.status === 503 && hasCode(reply.body, "SIGNUP_UNAVAILABLE")) {
+    return { ok: false, reason: "disabled" };
   }
   if (reply.status !== 200) return { ok: false, reason: "unavailable" };
   const body = asRecord(reply.body);

@@ -28,7 +28,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   };
   // Merchants first (the store directory), then the platform team's own staff directory: the two
   // never overlap, so the first success wins. `mfa` from either stops here; of two failures the
-  // "worse" one (unavailable) is reported so a transient outage never reads as a wrong password.
+  // "worse" one (unavailable) is reported so a transient outage never reads as a wrong password. A
+  // `disabled` merchant directory (single mode) is not an outage: the staff result alone decides.
   const merchant = await exchangeMerchantPassword(credentials);
   if (merchant.ok) return signedIn(merchant, returnTo, origin);
   if (merchant.reason === "mfa") return signInFailed("mfa", returnTo, origin);

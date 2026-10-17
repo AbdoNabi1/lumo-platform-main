@@ -83,6 +83,24 @@ describe("POST /auth/native-login", () => {
     );
   });
 
+  it("ignores a merchant directory that is disabled on this deployment (single mode)", async () => {
+    merchantMock.mockResolvedValue({ ok: false, reason: "disabled" });
+    staffMock.mockResolvedValue({ ok: false, reason: "invalid" });
+    const refused = await POST(loginRequest());
+    expect(refused.headers.get("location")).toBe(`${ORIGIN}/login?error=invalid`);
+    expect(refused.cookies.get(SESSION_COOKIE)).toBeUndefined();
+
+    staffMock.mockResolvedValue(OK);
+    const signed = await POST(loginRequest());
+    expect(signed.headers.get("location")).toBe(`${ORIGIN}/`);
+    expect(signed.cookies.get(SESSION_COOKIE)?.value).toBe("tok");
+
+    staffMock.mockResolvedValue({ ok: false, reason: "unavailable" });
+    expect((await POST(loginRequest())).headers.get("location")).toBe(
+      `${ORIGIN}/login?error=unavailable`,
+    );
+  });
+
   it("reports mfa from either side", async () => {
     merchantMock.mockResolvedValue({ ok: false, reason: "mfa" });
     expect((await POST(loginRequest())).headers.get("location")).toBe(`${ORIGIN}/login?error=mfa`);

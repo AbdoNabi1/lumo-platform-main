@@ -198,6 +198,22 @@ describe("exchangeMerchantPassword", () => {
     ).toEqual({ ok: false, reason: "unavailable" });
   });
 
+  it.each([
+    { code: "SIGNUP_UNAVAILABLE" },
+    { error: { code: "SIGNUP_UNAVAILABLE", message: "Merchant sign-up is not available" } },
+  ])("maps a 503 SIGNUP_UNAVAILABLE (%j) to disabled", async (body) => {
+    expect(await exchangeMerchantPassword({ ...loginBase, fetchImpl: reply(503, body) })).toEqual({
+      ok: false,
+      reason: "disabled",
+    });
+  });
+
+  it("keeps any other 503 as unavailable", async () => {
+    expect(
+      await exchangeMerchantPassword({ ...loginBase, fetchImpl: reply(503, { code: "DOWN" }) }),
+    ).toEqual({ ok: false, reason: "unavailable" });
+  });
+
   it.each([429, 500, 503])("maps %s to unavailable", async (status) => {
     expect(await exchangeMerchantPassword({ ...loginBase, fetchImpl: reply(status) })).toEqual({
       ok: false,
