@@ -559,6 +559,11 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
             cnameTarget: runtime.config.STOREFRONT_CNAME_TARGET,
             ipv4Targets: runtime.config.STOREFRONT_IPV4,
           }),
+          // The same values, shown on the Domains screen, so its instructions match the check.
+          storefrontDnsTarget: {
+            cname: runtime.config.STOREFRONT_CNAME_TARGET,
+            ipv4: runtime.config.STOREFRONT_IPV4,
+          },
         }),
     paymentVerification: new PrismaPaymentVerificationAdapter(runtime.prisma),
     // Phase A.2 (F-04 closure): gates Returns' DecideResolution refund amount against the

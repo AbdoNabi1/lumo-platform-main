@@ -14,7 +14,12 @@ import { tenancyRoutes } from "./tenancy-routes";
 const clock: Clock = { now: () => new Date("2026-10-16T00:00:00.000Z") };
 const staff: Principal = { id: "staff-1", kind: "staff", roles: ["admin"], tenantId: "x" };
 
-function wire() {
+function wire(
+  storefrontDnsTarget: { cname?: string; ipv4: readonly string[] } | null = {
+    cname: "shops.morbeh.store",
+    ipv4: ["203.0.113.10", "203.0.113.11"],
+  },
+) {
   let n = 0;
   const idGenerator: IdGenerator = { generate: () => `id-${(n += 1)}` };
   const admin = wireAdmin({
@@ -23,6 +28,7 @@ function wire() {
     clock,
     platformStoreDomain: "morbeh.store",
     dnsVerifier: { pointsToPlatform: async () => true },
+    ...(storefrontDnsTarget === null ? {} : { storefrontDnsTarget }),
   });
   return { operator: tenancyRoutes(admin), store: storeDomainsRoutes(admin) };
 }
@@ -133,6 +139,43 @@ describe("merchant domain routes (/store/domains)", () => {
     const listA = await call(route(store, "GET", "/store/domains"), shopA);
     const mine = items(listA).find((d) => d["id"] === domainId);
     expect(mine).toMatchObject({ status: "pending", isPrimary: false });
+  });
+
+  it("lists the DNS target the verifier checks alongside the domains", async () => {
+    const { operator, store } = wire();
+    const shop = await createShop(operator, "shop-dns");
+    const list = await call(route(store, "GET", "/store/domains"), shop);
+    expect(list.status).toBe(200);
+    expect(Array.isArray(items(list))).toBe(true);
+    expect(field(list, "dnsTarget")).toEqual({
+      cname: "shops.morbeh.store",
+      ipv4: ["203.0.113.10", "203.0.113.11"],
+    });
+  });
+
+  it("reports an empty DNS target when none is configured", async () => {
+    const { operator, store } = wire(null);
+    const shop = await createShop(operator, "shop-nodns");
+    const list = await call(route(store, "GET", "/store/domains"), shop);
+    expect(field(list, "dnsTarget")).toEqual({ cname: null, ipv4: [] });
+
+    const ipOnly = wire({ ipv4: ["203.0.113.10"] });
+    const other = await createShop(ipOnly.operator, "shop-ip");
+    const listed = await call(route(ipOnly.store, "GET", "/store/domains"), other);
+    expect(field(listed, "dnsTarget")).toEqual({ cname: null, ipv4: ["203.0.113.10"] });
+  });
+
+  it("does not add a DNS target to a refused list", async () => {
+    const admin = wireAdmin({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: { generate: () => "id-1" },
+      clock,
+      accessControl: { authorize: async () => false },
+      storefrontDnsTarget: { cname: "shops.morbeh.store", ipv4: [] },
+    });
+    const refused = await call(route(storeDomainsRoutes(admin), "GET", "/store/domains"), "shop");
+    expect(refused.status).toBe(403);
+    expect(field(refused, "dnsTarget")).toBeUndefined();
   });
 
   it("rejects a body that tries to name the shop or is not a valid hostname length", () => {

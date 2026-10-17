@@ -23,7 +23,7 @@ import {
 } from "@/app/settings/domains/actions";
 import { Field } from "@/components/products/editor/field";
 import type { FormState } from "@/lib/api/mutation";
-import { platformDomain, type ShopDomainDto } from "@/lib/domains/model";
+import { dnsRecordsFor, type DnsTargetDto, type ShopDomainDto } from "@/lib/domains/model";
 import type { Dictionary } from "@/messages/en";
 import { CopyLinkButton } from "./copy-link-button";
 
@@ -125,17 +125,23 @@ function ConnectForm({ t, onClose }: { readonly t: Dictionary; readonly onClose:
   );
 }
 
+/**
+ * The DNS record(s) that will make this domain verify — taken from the runtime verifier's own target
+ * (a CNAME for a subdomain, A records for an apex, both when the host could be either). With no such
+ * target configured it says to contact support rather than show a record that would never verify.
+ */
 function SetupInstructions({
   domain,
-  target,
+  dnsTarget,
   t,
 }: {
   readonly domain: ShopDomainDto;
-  readonly target: string;
+  readonly dnsTarget: DnsTargetDto;
   readonly t: Dictionary;
 }) {
   const copy = t.domainsPage;
   const headingId = useId();
+  const records = dnsRecordsFor(domain.hostname, dnsTarget);
   return (
     <section
       aria-labelledby={headingId}
@@ -144,9 +150,29 @@ function SetupInstructions({
       <h3 id={headingId} className="text-sm font-semibold">
         {copy.setupTitle.replace("{hostname}", domain.hostname)}
       </h3>
-      <p className="text-muted-foreground text-sm">
-        {fillTemplate(copy.setupBody, { hostname: domain.hostname, target })}
-      </p>
+      {records.length === 0 ? (
+        <p className="text-muted-foreground text-sm">{copy.setupContactSupport}</p>
+      ) : (
+        <>
+          {records.length > 1 && (
+            <p className="text-muted-foreground text-sm">{copy.setupEither}</p>
+          )}
+          {records.map((record) => (
+            <p key={record.type} className="text-muted-foreground text-sm">
+              {record.type === "CNAME"
+                ? fillTemplate(copy.setupCname, {
+                    hostname: domain.hostname,
+                    target: record.target,
+                  })
+                : fillTemplate(copy.setupA, {
+                    hostname: domain.hostname,
+                    target: record.targets.join(", "),
+                  })}
+            </p>
+          ))}
+          <p className="text-muted-foreground text-sm">{copy.setupVerify}</p>
+        </>
+      )}
     </section>
   );
 }
@@ -158,14 +184,16 @@ function SetupInstructions({
  */
 export function DomainsView({
   domains,
+  dnsTarget,
   t,
 }: {
   readonly domains: readonly ShopDomainDto[];
+  /** What the runtime's DNS verifier accepts (`GET /store/domains`'s `dnsTarget`). */
+  readonly dnsTarget: DnsTargetDto;
   readonly t: Dictionary;
 }) {
   const copy = t.domainsPage;
   const [connecting, setConnecting] = useState(false);
-  const target = platformDomain(domains)?.hostname ?? copy.setupTargetFallback;
   const pending = domains.filter(
     (domain) => domain.kind === "custom" && domain.status === "pending",
   );
@@ -252,7 +280,7 @@ export function DomainsView({
       </Card>
 
       {pending.map((domain) => (
-        <SetupInstructions key={domain.id} domain={domain} target={target} t={t} />
+        <SetupInstructions key={domain.id} domain={domain} dnsTarget={dnsTarget} t={t} />
       ))}
     </div>
   );

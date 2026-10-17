@@ -226,6 +226,20 @@ const DEFAULT_FINANCE_POSTING_ACCOUNTS: PostingAccounts = {
   fees: "6100-FEES",
 };
 
+/** The DNS records custom domains must point at, as configured for the runtime's DNS verifier. */
+export interface StorefrontDnsTargetInput {
+  /** The name a subdomain CNAMEs to; absent ⇒ no CNAME target configured. */
+  readonly cname?: string;
+  /** The storefront's public IPv4s, for apex domains (A records). */
+  readonly ipv4: readonly string[];
+}
+
+/** `GET /store/domains`'s `dnsTarget`: always present, `null`/empty when not configured. */
+export interface StorefrontDnsTarget {
+  readonly cname: string | null;
+  readonly ipv4: readonly string[];
+}
+
 export interface AdminWiringDeps {
   readonly serializer: EventSerializer;
   readonly idGenerator: IdGenerator;
@@ -267,6 +281,12 @@ export interface AdminWiringDeps {
   readonly defaultPlanKey?: string;
   /** Plan 1A: verifies custom domains' DNS; absent ⇒ custom domains stay pending. */
   readonly dnsVerifier?: DnsVerifier;
+  /**
+   * What `dnsVerifier` accepts (`STOREFRONT_CNAME_TARGET` / `STOREFRONT_IPV4`), so the Domains screen
+   * tells a merchant exactly the record that will verify. A plain value — never a tenant. Absent ⇒
+   * no target to show (`{ cname: null, ipv4: [] }`).
+   */
+  readonly storefrontDnsTarget?: StorefrontDnsTargetInput;
   /** In-memory Security only (tests/dev): Identity subject refs treated as known, so an owner can be registered offline. */
   readonly knownSubjects?: readonly string[];
   /**
@@ -734,6 +754,11 @@ export interface WiredAdmin {
    * can ask what really backs each method. Nothing at request time reaches a provider through this.
    */
   readonly paymentProviders: PaymentProviderResolver;
+  /**
+   * The DNS target custom domains must point at (`deps.storefrontDnsTarget`), read by
+   * `GET /store/domains`. A plain config value, the same for every shop.
+   */
+  readonly storefrontDnsTarget: StorefrontDnsTarget;
 }
 
 interface DrainableContext {
@@ -1392,6 +1417,10 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       verifyWebhook: (input) => payments.payments.verifyWebhook(input),
     },
     paymentProviders: payments.providers,
+    storefrontDnsTarget: {
+      cname: deps.storefrontDnsTarget?.cname ?? null,
+      ipv4: [...(deps.storefrontDnsTarget?.ipv4 ?? [])],
+    },
   };
 }
 

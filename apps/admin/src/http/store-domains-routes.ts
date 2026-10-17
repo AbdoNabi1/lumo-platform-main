@@ -17,9 +17,18 @@ export function storeDomainsRoutes(admin: WiredAdmin): readonly RouteDefinition[
       path: "/store/domains",
       version: 1,
       permission: "settings:read",
-      summary: "The shop's domains (its platform subdomain and any custom domains)",
+      summary:
+        "The shop's domains (its platform subdomain and any custom domains) and the DNS target " +
+        "a custom domain must point at",
       schema: {},
-      handle: ({ context }) => admin.tenancy.listMyDomains(context.principal, context.tenantId),
+      handle: async ({ context }) => {
+        const listed = await admin.tenancy.listMyDomains(context.principal, context.tenantId);
+        if (listed.status !== 200 || typeof listed.body !== "object" || listed.body === null) {
+          return listed;
+        }
+        // The exact records the DNS verifier accepts, so the screen never shows a wrong target.
+        return { ...listed, body: { ...listed.body, dnsTarget: admin.storefrontDnsTarget } };
+      },
     }),
     defineRoute({
       method: "POST",

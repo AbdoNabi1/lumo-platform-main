@@ -57,10 +57,29 @@ describe("store domains API", () => {
 
     const result = await fetchMyDomains();
 
-    expect(result).toEqual({ outcome: "ok", domains: [platform, custom] });
+    // An older runtime sends no `dnsTarget`: it still validates, with an empty target.
+    expect(result).toEqual({
+      outcome: "ok",
+      domains: [platform, custom],
+      dnsTarget: { cname: null, ipv4: [] },
+    });
     expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
       "http://runtime.test/api/v1/store/domains",
     );
+  });
+
+  it("reads the DNS target the runtime's verifier checks", async () => {
+    const dnsTarget = { cname: "shops.morbeh.store", ipv4: ["203.0.113.10"] };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { items: [], dnsTarget })));
+    expect(await fetchMyDomains()).toEqual({ outcome: "ok", domains: [], dnsTarget });
+  });
+
+  it("refuses a malformed DNS target", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { items: [], dnsTarget: { cname: 5 } })),
+    );
+    expect((await fetchMyDomains()).outcome).toBe("error");
   });
 
   it("refuses a bare array or a malformed domain", async () => {

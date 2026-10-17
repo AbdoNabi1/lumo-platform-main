@@ -30,7 +30,7 @@ export default async function DomainsSettingsPage() {
         </header>
 
         {result.outcome === "ok" ? (
-          <DomainsView domains={result.domains} t={t} />
+          <DomainsView domains={result.domains} dnsTarget={result.dnsTarget} t={t} />
         ) : (
           <div role="note" className="text-muted-foreground flex items-center gap-2 text-sm">
             {result.outcome === "unauthorized" ? (

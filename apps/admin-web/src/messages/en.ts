@@ -1653,9 +1653,12 @@ export const en = {
     copied: "Copied",
     empty: "No domains yet.",
     setupTitle: "Finish connecting {hostname}",
-    setupBody:
-      "Add a CNAME record for {hostname} pointing to {target}, then press Verify. DNS can take up to 48 hours.",
-    setupTargetFallback: "your Morbeh address",
+    setupCname: "Add a CNAME record for {hostname} pointing to {target}.",
+    setupA: "Add an A record for {hostname} pointing to {target}.",
+    setupEither:
+      "Use the CNAME record if this address is a subdomain, or the A record if it is your root domain.",
+    setupVerify: "Then press Verify. DNS changes can take up to 48 hours.",
+    setupContactSupport: "Contact support to connect this domain.",
     errorAlreadyConnected: "This domain is already connected to a store.",
     errorDnsNotReady:
       "We couldn't see your DNS change yet. It can take up to 48 hours, so try again later.",
