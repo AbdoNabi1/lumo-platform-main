@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { authConfig, SESSION_COOKIE } from "@/lib/auth/config";
 import { exchangeMerchantPassword } from "@/lib/auth/merchant";
 import { exchangePassword, isNativeAuth, nativeTenantId } from "@/lib/auth/native";
 import { safeReturnTo } from "@/lib/auth/safe-return-to";
+import { setSessionCookie } from "@/lib/auth/session-cookie";
 import { requireProdEnv } from "@/lib/env";
 import { publicOrigin } from "@/lib/public-origin";
 
@@ -52,14 +52,5 @@ function signedIn(
   returnTo: string,
   origin: string,
 ): NextResponse {
-  const response = NextResponse.redirect(new URL(returnTo, origin), 303);
-  response.cookies.set(SESSION_COOKIE, result.token, {
-    httpOnly: true,
-    secure: true,
-    sameSite: authConfig.cookieSameSite,
-    domain: authConfig.cookieDomain,
-    path: "/",
-    maxAge: result.expiresIn,
-  });
-  return response;
+  return setSessionCookie(NextResponse.redirect(new URL(returnTo, origin), 303), result);
 }
