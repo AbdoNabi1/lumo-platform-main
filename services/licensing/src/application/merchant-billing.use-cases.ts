@@ -60,7 +60,11 @@ export interface MerchantBillingView {
   readonly status: string | null;
   /** `renewalSchedule.nextRenewalAt`. */
   readonly nextChargeAt: string | null;
-  /** Equal to `nextChargeAt` while no invoice exists and the pinned plan has a trial. */
+  /**
+   * Equal to `nextChargeAt` while the subscription is active with a schedule and no invoice exists
+   * yet (the first charge is the end of the trial); else null. Deliberately NOT read off the current
+   * plan's `trialDays`: a plan change re-pins the version but keeps the schedule set at activation.
+   */
   readonly trialEndsAt: string | null;
   readonly cardOnFile: boolean;
   readonly invoices: readonly MerchantInvoiceView[];
@@ -133,7 +137,8 @@ export class GetMerchantBilling implements UseCase<
     const planPart = plan !== null && version !== undefined ? planView(plan, version) : null;
 
     const nextChargeAt = subscription.renewalSchedule?.nextRenewalAt.toISOString() ?? null;
-    const inTrial = invoiceViews.length === 0 && (planPart?.trialDays ?? 0) > 0;
+    const inTrial =
+      subscription.status === "active" && nextChargeAt !== null && invoiceViews.length === 0;
     return ok({
       plan: planPart,
       status: subscription.status,

@@ -23,7 +23,7 @@ function wire() {
   });
 }
 
-function spec(basePriceMinor: number): PlanSpec {
+function spec(basePriceMinor: number, trialDays = 14): PlanSpec {
   return {
     limits: { maxProducts: 100 },
     featureEntitlements: ["basic_reports"],
@@ -31,7 +31,7 @@ function spec(basePriceMinor: number): PlanSpec {
       basePriceMinor,
       currency: "EGP",
       billingCycle: "monthly",
-      trialDays: 14,
+      trialDays,
       creditAllowances: {},
     },
   };
@@ -44,7 +44,7 @@ async function seedPlan(
   app: App,
   key: string,
   basePriceMinor: number,
-  options: { readonly publish: boolean } = { publish: true },
+  options: { readonly publish: boolean; readonly trialDays?: number } = { publish: true },
 ): Promise<{ planId: string; planVersionId: string }> {
   const plan = await app.licensing.createPlan({
     key,
@@ -55,7 +55,7 @@ async function seedPlan(
   const planId = (plan.body as { id: string }).id;
   const draft = await app.licensing.createPlanDraft({
     planId,
-    spec: spec(basePriceMinor),
+    spec: spec(basePriceMinor, options.trialDays),
     tenantId: PLATFORM,
   });
   const planVersionId = (draft.body as { planVersionId: string }).planVersionId;
@@ -128,6 +128,28 @@ describe("merchant billing (platform-owned data, read and changed by the merchan
     expect(view.trialEndsAt).toBe(view.nextChargeAt);
     expect(view.cardOnFile).toBe(false);
     expect(view.invoices).toEqual([]);
+  });
+
+  it("a plan change during the trial keeps the trial end, even onto a plan with no trial", async () => {
+    const app = wire();
+    const basic = await seedPlan(app, "basic", 29900);
+    await seedPlan(app, "pro", 99900, { publish: true, trialDays: 0 });
+    await subscribe(app, "shop-a", basic.planVersionId);
+    const before = await billing(app, "shop-a");
+    expect(before.trialEndsAt).toBe("2026-10-30T00:00:00.000Z");
+
+    const changed = await app.licensing.changeMerchantPlan({
+      tenantRef: "shop-a",
+      tenantId: PLATFORM,
+      planKey: "pro",
+    });
+    expect(changed.status).toBe(200);
+
+    const after = await billing(app, "shop-a");
+    expect(after.plan?.key).toBe("pro");
+    expect(after.plan?.trialDays).toBe(0);
+    expect(after.nextChargeAt).toBe(before.nextChargeAt);
+    expect(after.trialEndsAt).toBe(before.nextChargeAt);
   });
 
   it("a merchant with no subscription gets an empty view, never another merchant's data", async () => {
