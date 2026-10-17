@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Button, Card, CardContent, Input, Label } from "@platform/ui";
+import { Card, CardContent, Input, Label } from "@platform/ui";
 import { BrandMark } from "@/components/brand-mark";
 import { signupEnabled } from "@/lib/auth/merchant";
 import { isNativeAuth } from "@/lib/auth/native";
+import { SignupSubmitButton } from "./signup-submit-button";
 
 /** The public "Open your store" page. Only exists when native sign-in AND ADMIN_SIGNUP_ENABLED are on. */
 const ERROR_TEXT: Readonly<Record<string, string>> = {
@@ -86,9 +87,9 @@ export default async function SignupPage({
                 <option value="AE">UAE / الإمارات</option>
               </select>
             </div>
-            <Button type="submit" className="mt-2 w-full">
+            <SignupSubmitButton pendingLabel="Creating your store… / بنجهّز متجرك…">
               Create store / افتح المتجر
-            </Button>
+            </SignupSubmitButton>
           </form>
           <p className="mt-4 text-center text-sm">
             <Link href="/login" className="text-muted-foreground underline">

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   notFound: () => {
@@ -62,6 +62,14 @@ describe("/signup", () => {
   ])("shows the %s error", async (error, text) => {
     await renderPage(error);
     expect(screen.getByRole("alert").textContent).toMatch(text);
+  });
+
+  it("locks the Create store button once the form submits (no double sign-up)", async () => {
+    const { container } = await renderPage();
+    act(() => {
+      fireEvent.submit(container.querySelector("form")!);
+    });
+    expect(screen.getByRole("button", { name: /Creating your store/ })).toBeDisabled();
   });
 
   it("shows no alert for an unknown error code", async () => {
