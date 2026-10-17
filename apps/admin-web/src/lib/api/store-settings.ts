@@ -10,6 +10,8 @@ export interface StoreSettingsDto {
   readonly currency: string;
   readonly timezone: string;
   readonly weightUnit: WeightUnit;
+  /** When the merchant dismissed Home's setup guide; optional so an older API still validates. */
+  readonly setupGuideDismissedAt?: string | null;
 }
 
 const WEIGHT_UNITS: readonly string[] = ["kg", "g", "lb", "oz"];
@@ -23,7 +25,10 @@ function isStoreSettingsDto(value: unknown): value is StoreSettingsDto {
     typeof candidate["currency"] === "string" &&
     typeof candidate["timezone"] === "string" &&
     typeof candidate["weightUnit"] === "string" &&
-    WEIGHT_UNITS.includes(candidate["weightUnit"])
+    WEIGHT_UNITS.includes(candidate["weightUnit"]) &&
+    (candidate["setupGuideDismissedAt"] === undefined ||
+      candidate["setupGuideDismissedAt"] === null ||
+      typeof candidate["setupGuideDismissedAt"] === "string")
   );
 }
 
@@ -47,6 +52,17 @@ export function updateStoreSettings(
   return mutateAdminApi(
     "/api/v1/store/settings",
     { method: "PUT", body: settings, idempotencyKey },
+    isStoreSettingsDto,
+  );
+}
+
+/** Hides Home's setup guide for the shop (remembered; dismissing again changes nothing). */
+export function dismissSetupGuide(
+  idempotencyKey: string,
+): Promise<MutationResult<StoreSettingsDto>> {
+  return mutateAdminApi(
+    "/api/v1/store/setup-guide/dismiss",
+    { method: "POST", idempotencyKey },
     isStoreSettingsDto,
   );
 }
