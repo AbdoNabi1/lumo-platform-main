@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authConfig, SESSION_COOKIE } from "@/lib/auth/config";
+import { exchangeMerchantPassword } from "@/lib/auth/merchant";
 import { exchangePassword, isNativeAuth, nativeTenantId } from "@/lib/auth/native";
 import { safeReturnTo } from "@/lib/auth/safe-return-to";
 import { requireProdEnv } from "@/lib/env";
@@ -19,18 +20,38 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const email = field(form, "email", "");
   const password = field(form, "password", "");
   const returnTo = safeReturnTo(field(form, "return_to", "/"), origin);
-  const result = await exchangePassword({
+  const credentials = {
     runtimeUrl: requireProdEnv("RUNTIME_API_URL", "http://localhost:3080"),
     tenantId: nativeTenantId(),
     email,
     password,
-  });
-  if (!result.ok) {
-    const back = new URL("/login", origin);
-    back.searchParams.set("error", result.reason);
-    if (returnTo !== "/") back.searchParams.set("return_to", returnTo);
-    return NextResponse.redirect(back, 303);
-  }
+  };
+  // Merchants first (the store directory), then the platform team's own staff directory: the two
+  // never overlap, so the first success wins. `mfa` from either stops here; of two failures the
+  // "worse" one (unavailable) is reported so a transient outage never reads as a wrong password.
+  const merchant = await exchangeMerchantPassword(credentials);
+  if (merchant.ok) return signedIn(merchant, returnTo, origin);
+  if (merchant.reason === "mfa") return signInFailed("mfa", returnTo, origin);
+  const staff = await exchangePassword(credentials);
+  if (staff.ok) return signedIn(staff, returnTo, origin);
+  if (staff.reason === "mfa") return signInFailed("mfa", returnTo, origin);
+  const unavailable = merchant.reason === "unavailable" || staff.reason === "unavailable";
+  return signInFailed(unavailable ? "unavailable" : "invalid", returnTo, origin);
+}
+
+function signInFailed(reason: string, returnTo: string, origin: string): NextResponse {
+  const back = new URL("/login", origin);
+  back.searchParams.set("error", reason);
+  if (returnTo !== "/") back.searchParams.set("return_to", returnTo);
+  return NextResponse.redirect(back, 303);
+}
+
+/** The one place the session cookie is set after a successful sign-in. */
+function signedIn(
+  result: { readonly token: string; readonly expiresIn: number },
+  returnTo: string,
+  origin: string,
+): NextResponse {
   const response = NextResponse.redirect(new URL(returnTo, origin), 303);
   response.cookies.set(SESSION_COOKIE, result.token, {
     httpOnly: true,
