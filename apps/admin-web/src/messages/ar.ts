@@ -1584,7 +1584,7 @@ export const ar: Dictionary = {
     statusActiveNoDate: "باقتك شغّالة",
     statusPastDue: "الدفع متأخر — ادفع آخر فاتورة عشان متجرك يفضل شغّال",
     statusCancelled: "باقتك اتلغت",
-    statusNone: "مفيش باقة لسه",
+    statusNone: "باقتك هتظهر هنا أول ما اشتراك متجرك يبدأ.",
     changePlan: "غيّر الباقة",
     choosePlan: "اختار باقة",
     currentPlan: "باقتك الحالية",

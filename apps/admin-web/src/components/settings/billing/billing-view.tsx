@@ -270,7 +270,8 @@ export function BillingView({
               {status.text}
             </p>
           </div>
-          {!choosing && (
+          {/* No subscription yet ⇒ nothing to change from (the runtime would refuse it anyway). */}
+          {!choosing && billing.plan !== null && (
             <Button type="button" variant="outline" onClick={() => setChoosing(true)}>
               {copy.changePlan}
             </Button>
@@ -278,7 +279,7 @@ export function BillingView({
         </CardContent>
       </Card>
 
-      {choosing && (
+      {choosing && billing.plan !== null && (
         <ChangePlanForm
           plans={plans}
           currentKey={billing.plan?.key ?? null}

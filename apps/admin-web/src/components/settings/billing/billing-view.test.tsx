@@ -156,11 +156,29 @@ describe("BillingView plan card", () => {
     },
   );
 
-  it("says there is no plan yet when there is no subscription", () => {
+  it("explains the plan will appear, and offers no plan change, before a subscription exists", () => {
     view(billing({ plan: null, status: null, nextChargeAt: null, cardOnFile: false }));
 
-    expect(screen.getByText(t.statusNone)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t.changePlan })).toBeInTheDocument();
+    expect(
+      screen.getByText("Your plan will appear here once your store's subscription starts."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t.changePlan })).not.toBeInTheDocument();
+  });
+
+  it("hides Change plan in Arabic too when there is no subscription", () => {
+    render(
+      <BillingView
+        billing={billing({ plan: null, status: null, nextChargeAt: null })}
+        plans={[starter]}
+        locale="ar"
+        now={NOW}
+        t={ar}
+      />,
+    );
+    expect(screen.getByText(ar.billingPage.statusNone)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: ar.billingPage.changePlan }),
+    ).not.toBeInTheDocument();
   });
 });
 

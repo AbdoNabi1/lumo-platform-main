@@ -1681,7 +1681,7 @@ export const en = {
     statusActiveNoDate: "Your plan is active",
     statusPastDue: "Payment overdue — pay your latest invoice to keep your store running",
     statusCancelled: "Your plan has been cancelled",
-    statusNone: "No plan yet",
+    statusNone: "Your plan will appear here once your store's subscription starts.",
     changePlan: "Change plan",
     choosePlan: "Choose a plan",
     currentPlan: "Current plan",
