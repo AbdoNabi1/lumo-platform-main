@@ -11,7 +11,7 @@ import { SignOutLink } from "./sign-out-link";
 import { TrialBanner } from "./trial-banner";
 import type { Locale } from "@/lib/i18n";
 import { showPlatformTools as platformToolsOn } from "@/lib/platform-tools";
-import { getStoreContext, type StoreContext } from "@/lib/shell/store-context";
+import { getStoreContext, storeUrlForSession, type StoreContext } from "@/lib/shell/store-context";
 import type { Dictionary } from "@/messages/en";
 
 export interface CurrentUser {
@@ -57,9 +57,8 @@ export async function AppShell(props: AppShellProps) {
 
 /** The synchronous layout behind {@link AppShell}; tests render this with a `store` of their own. */
 export function AppShellView({ children, t, locale, activeNavId, user, store }: AppShellViewProps) {
-  // Read per request, on the server: NEXT_PUBLIC_* would be frozen at build time (Plan 3C).
-  // The shop's own domain wins; the env address is the fallback.
-  const storefrontUrl = store?.storeUrl ?? (process.env["STOREFRONT_URL"]?.trim() || null);
+  // The shop's own domain wins; STOREFRONT_URL only for the default store — never another store's.
+  const storefrontUrl = storeUrlForSession(store ?? { storeUrl: null, sessionTenantId: null });
   const storeName = store?.storeName?.trim() || t.brand;
   const showPlatformTools = platformToolsOn();
   const nav = (

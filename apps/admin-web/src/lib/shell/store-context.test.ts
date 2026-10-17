@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MerchantBillingDto } from "@/lib/billing/model";
 import type { ShopDomainDto } from "@/lib/domains/model";
 
@@ -12,7 +12,7 @@ vi.mock("@/lib/api/store-settings", () => ({ fetchStoreSettings: () => fetchStor
 vi.mock("@/lib/api/store-domains", () => ({ fetchMyDomains: () => fetchMyDomains() }));
 vi.mock("@/lib/api/store-billing", () => ({ fetchMyBilling: () => fetchMyBilling() }));
 
-import { loadStoreContext } from "./store-context";
+import { loadStoreContext, storeUrlForSession } from "./store-context";
 
 const NOW = new Date("2026-10-17T10:00:00.000Z");
 
@@ -42,10 +42,16 @@ function billing(overrides: Partial<MerchantBillingDto>): MerchantBillingDto {
   };
 }
 
-const NO_CONTEXT = { storeName: null, storeUrl: null, banner: null, trialDaysLeft: null };
+const NO_CONTEXT = {
+  storeName: null,
+  storeUrl: null,
+  banner: null,
+  trialDaysLeft: null,
+  sessionTenantId: null,
+};
 
 beforeEach(() => {
-  readSession.mockReset().mockResolvedValue({ token: "t" });
+  readSession.mockReset().mockResolvedValue({ token: "t", tenantId: "shop-acme" });
   fetchStoreSettings
     .mockReset()
     .mockResolvedValue({ outcome: "ok", settings: { storeName: "Acme" } });
@@ -62,6 +68,7 @@ describe("loadStoreContext", () => {
       storeUrl: "https://acme.morbeh.shop",
       banner: "trial-ending",
       trialDaysLeft: 2,
+      sessionTenantId: "shop-acme",
     });
   });
 
@@ -90,6 +97,7 @@ describe("loadStoreContext", () => {
       storeUrl: null,
       banner: null,
       trialDaysLeft: null,
+      sessionTenantId: "shop-acme",
     });
   });
 
@@ -97,7 +105,10 @@ describe("loadStoreContext", () => {
     fetchStoreSettings.mockRejectedValue(new Error("a"));
     fetchMyDomains.mockRejectedValue(new Error("b"));
     fetchMyBilling.mockRejectedValue(new Error("c"));
-    await expect(loadStoreContext(NOW)).resolves.toEqual(NO_CONTEXT);
+    await expect(loadStoreContext(NOW)).resolves.toEqual({
+      ...NO_CONTEXT,
+      sessionTenantId: "shop-acme",
+    });
     readSession.mockRejectedValue(new Error("d"));
     await expect(loadStoreContext(NOW)).resolves.toEqual(NO_CONTEXT);
   });
@@ -137,5 +148,39 @@ describe("loadStoreContext", () => {
       banner: "past-due",
       trialDaysLeft: null,
     });
+  });
+});
+
+describe("storeUrlForSession", () => {
+  beforeEach(() => {
+    vi.stubEnv("STOREFRONT_URL", "https://default-store.example.com");
+    vi.stubEnv("TENANT_DEFAULT_ID", "tenant-default");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("uses the store's own primary domain whenever it is known", () => {
+    expect(
+      storeUrlForSession({ storeUrl: "https://acme.morbeh.shop", sessionTenantId: "shop-acme" }),
+    ).toBe("https://acme.morbeh.shop");
+  });
+
+  it("falls back to STOREFRONT_URL with no session tenant, or for the default tenant", () => {
+    expect(storeUrlForSession({ storeUrl: null, sessionTenantId: null })).toBe(
+      "https://default-store.example.com",
+    );
+    expect(storeUrlForSession({ storeUrl: null, sessionTenantId: "tenant-default" })).toBe(
+      "https://default-store.example.com",
+    );
+  });
+
+  it("hides the link for another store rather than open the default store", () => {
+    expect(storeUrlForSession({ storeUrl: null, sessionTenantId: "shop-acme" })).toBeNull();
+  });
+
+  it("hides the link when STOREFRONT_URL is unset or blank", () => {
+    vi.stubEnv("STOREFRONT_URL", "  ");
+    expect(storeUrlForSession({ storeUrl: null, sessionTenantId: null })).toBeNull();
   });
 });

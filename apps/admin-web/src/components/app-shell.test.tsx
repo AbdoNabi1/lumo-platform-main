@@ -15,7 +15,13 @@ vi.mock("next/link", () => ({
 }));
 
 const user = { name: "owner@example.com", role: "Admin", initials: "OW" };
-const emptyStore = { storeName: null, storeUrl: null, banner: null, trialDaysLeft: null } as const;
+const emptyStore = {
+  storeName: null,
+  storeUrl: null,
+  banner: null,
+  trialDaysLeft: null,
+  sessionTenantId: null,
+} as const;
 
 function renderShell(store?: Parameters<typeof AppShellView>[0]["store"]) {
   return render(
@@ -62,6 +68,12 @@ describe("AppShellView store context", () => {
     const links = screen.getAllByRole("link", { name: /view your store/i });
     expect(links.length).toBeGreaterThan(0);
     for (const link of links) expect(link).toHaveAttribute("href", "https://fallback.example.com");
+  });
+
+  it("hides View your store for a store with no domain rather than open the default store", () => {
+    vi.stubEnv("TENANT_DEFAULT_ID", "tenant-default");
+    renderShell({ ...emptyStore, sessionTenantId: "shop-acme" });
+    expect(screen.queryByRole("link", { name: /view your store/i })).not.toBeInTheDocument();
   });
 
   it("shows the trial banner above the page content", () => {
