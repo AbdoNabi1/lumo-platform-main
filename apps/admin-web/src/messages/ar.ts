@@ -1611,6 +1611,11 @@ export const ar: Dictionary = {
     loadError: "معرفناش نحمّل بيانات الفواتير بتاعتك.",
     tryAgain: "جرّب تاني",
   },
+  trialBanner: {
+    trialEnding: "تجربتك المجانية بتنتهي بعد {days} أيام — اختار باقة",
+    trialEndingOneDay: "تجربتك المجانية بتنتهي بعد يوم واحد — اختار باقة",
+    pastDue: "الدفع متأخر — ادفع دلوقتي عشان متجرك يفضل مفتوح",
+  },
   setupGuide: {
     welcome: "أهلاً بيك في Morbeh — يلا نجهّز متجرك",
     title: "جهّز متجرك",

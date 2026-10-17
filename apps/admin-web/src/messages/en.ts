@@ -1708,6 +1708,12 @@ export const en = {
     loadError: "Your billing details couldn't be loaded.",
     tryAgain: "Try again",
   },
+  /** The shell's notice above every page: a trial about to end, or a payment that is overdue. */
+  trialBanner: {
+    trialEnding: "Your free trial ends in {days} days — choose a plan",
+    trialEndingOneDay: "Your free trial ends in 1 day — choose a plan",
+    pastDue: "Your payment is overdue — pay now to keep your store open",
+  },
   /** Home's "Set up your store" guide (Shopify's setup guide): steps, progress and dismiss. */
   setupGuide: {
     welcome: "Welcome to Morbeh — let's set up your store",
