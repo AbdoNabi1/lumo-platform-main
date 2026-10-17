@@ -1707,6 +1707,9 @@ export const en = {
     paying: "Opening checkout…",
     errorInvoiceGone: "This invoice is no longer available",
     errorCheckout: "We couldn't open the payment page. Try again in a moment.",
+    errorPlanConflict: "Your plan couldn't be changed right now. Refresh the page and try again.",
+    errorInvoiceConflict:
+      "This bill can't be paid right now — it may already be paid. Refresh the page to check.",
     unauthorized: "Sign in to manage your plan and billing.",
     loadError: "Your billing details couldn't be loaded.",
     tryAgain: "Try again",

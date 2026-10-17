@@ -10,7 +10,8 @@ import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i1
 /**
  * Settings → Plan and billing. Same shape every write action follows: parse the form defensively,
  * mint one idempotency key per submit, call the typed `lib/api/store-billing.ts` function and project
- * any non-`ok` outcome through `toFormState`.
+ * any non-`ok` outcome through `toFormState` — except a 409, whose server sentence is English: each
+ * action replaces it with its own localized copy (as the domain actions do).
  */
 
 const PATH = "/settings/billing";
@@ -46,6 +47,9 @@ export async function changeMyPlanAction(
   }
 
   const result = await changeMyPlan(planKey, newIdempotencyKey());
+  if (result.outcome === "conflict") {
+    return { status: "error", message: t.billingPage.errorPlanConflict, fieldErrors: {} };
+  }
   if (result.outcome !== "ok") return toFormState(result, t.formErrors);
 
   revalidatePath(PATH);
@@ -71,6 +75,9 @@ export async function payMyInvoiceAction(
   const result = await payMyInvoice(invoiceId, newIdempotencyKey());
   if (result.outcome === "not_found") {
     return { status: "error", message: t.billingPage.errorInvoiceGone, fieldErrors: {} };
+  }
+  if (result.outcome === "conflict") {
+    return { status: "error", message: t.billingPage.errorInvoiceConflict, fieldErrors: {} };
   }
   if (result.outcome !== "ok") return toFormState(result, t.formErrors);
 

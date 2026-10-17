@@ -67,6 +67,23 @@ describe("changeMyPlanAction", () => {
     expect(state).toMatchObject({ status: "error", message: ar.formErrors.notFound });
     expect(revalidatePath).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["en", en.billingPage.errorPlanConflict],
+    ["ar", ar.billingPage.errorPlanConflict],
+  ] as const)(
+    "maps a 409 to dictionary copy, never the raw server text (%s)",
+    async (locale, copy) => {
+      cookieValue.locale = locale;
+      api.changeMyPlan.mockResolvedValue({ outcome: "conflict", message: "Subscription is busy" });
+
+      const state = await changeMyPlanAction(idle, form({ planKey: "growth" }));
+
+      expect(state).toEqual({ status: "error", message: copy, fieldErrors: {} });
+      expect(copy).not.toContain("Subscription is busy");
+      expect(revalidatePath).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("payMyInvoiceAction", () => {
@@ -120,6 +137,26 @@ describe("payMyInvoiceAction", () => {
     expect(state).toMatchObject({ status: "error", message: en.formErrors.unexpected });
     expect(redirect).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["en", en.billingPage.errorInvoiceConflict],
+    ["ar", ar.billingPage.errorInvoiceConflict],
+  ] as const)(
+    "maps a 409 to dictionary copy, never the raw server text (%s)",
+    async (locale, copy) => {
+      cookieValue.locale = locale;
+      api.payMyInvoice.mockResolvedValue({
+        outcome: "conflict",
+        message: "Invoice is not payable",
+      });
+
+      const state = await payMyInvoiceAction(idle, form({ invoiceId: "inv1" }));
+
+      expect(state).toEqual({ status: "error", message: copy, fieldErrors: {} });
+      expect(copy).not.toContain("Invoice is not payable");
+      expect(redirect).not.toHaveBeenCalled();
+    },
+  );
 
   it("does nothing without an invoice id", async () => {
     const state = await payMyInvoiceAction(idle, form({}));
