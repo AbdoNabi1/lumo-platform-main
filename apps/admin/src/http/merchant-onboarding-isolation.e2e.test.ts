@@ -1,8 +1,14 @@
 import { generateKeyPairSync } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { JwtVerifier, NativeTokenIssuer, localKeyResolver } from "@platform/auth";
+import {
+  JwtVerifier,
+  NativeTokenIssuer,
+  RoleTableAccessControl,
+  localKeyResolver,
+} from "@platform/auth";
 import type {
+  AccessControl,
   Cache,
   Clock,
   IdempotencyClaim,
@@ -105,12 +111,73 @@ interface Store {
 const PASSWORD = "correct horse battery staple";
 const silent = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never;
 
+/**
+ * The real multi-mode admin pipeline over its own licensing instance. `accessControl` stays the server
+ * default (permissive) unless a case needs the real role table.
+ */
+async function boot(
+  accessControl?: AccessControl,
+): Promise<{ app: FastifyInstance; licensing: WiredLicensing }> {
+  let n = 0;
+  const idGenerator = {
+    generate: () => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`,
+  };
+  const serializer = new InMemoryEventSerializer();
+  // The app is built over THIS licensing instance, so the plan seeded afterwards is the plan sign-up
+  // finds. (`createAdminHttpApi` forwards `licensing` to `wireAdmin`; no HTTP seeding needed.)
+  const licensing = wireLicensing({ serializer, idGenerator, clock, platformTenantId: PLATFORM });
+
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const tokenIssuer = new NativeTokenIssuer({
+    privateKey,
+    issuer: "https://api.test/",
+    audience: "morbeh-admin",
+    ttlSeconds: 7200,
+  });
+  const resolver = localKeyResolver(tokenIssuer);
+  // `JwtVerifier` is the Authenticator and the ClaimsAuthenticator in one: it already returns
+  // `{ principal, claims }` with the token's `tenant_id` claim.
+  const authenticator = new JwtVerifier({
+    issuer: "https://api.test/",
+    audience: "morbeh-admin",
+    getKey: (header, token) => resolver.then((getKey) => getKey(header, token)),
+    logger: silent,
+  });
+
+  const fx = infra();
+  const app = await createAdminHttpApi({
+    tenantMode: "multi",
+    tenantId: PLATFORM,
+    serializer,
+    idGenerator,
+    clock,
+    licensing,
+    authenticator,
+    ...(accessControl === undefined ? {} : { accessControl }),
+    rateLimiter: fx.rateLimiter,
+    idempotencyKeys: fx.idempotencyKeys,
+    responseCache: fx.cache,
+    passwordAuthProvider: new HashedPasswordAuthProvider({
+      store: new InMemoryPasswordCredentialStore(),
+      hasher: new ScryptPasswordHasher({ log2N: 10 }),
+      clock,
+    }),
+    staffTokenIssuer: tokenIssuer,
+    adminPublicUrl: "https://admin.test",
+    platformStoreDomain: "morbeh.test",
+    // Without a verifier `verify` answers 409 "not configured" before it looks at ownership, which
+    // would hide the 404 this suite is after. No domain here points at the platform.
+    dnsVerifier: { pointsToPlatform: async () => false },
+    defaultPlanKey: "basic",
+  });
+  return { app, licensing };
+}
+
 describe("two self-serve stores stay apart (merchant onboarding)", () => {
   let app: FastifyInstance;
   let licensing: WiredLicensing;
   let a: Store;
   let b: Store;
-  let tokenIssuer: NativeTokenIssuer;
   let invoiceOfA: string;
   let invoiceOfB: string;
 
@@ -171,57 +238,7 @@ describe("two self-serve stores stay apart (merchant onboarding)", () => {
   }
 
   beforeAll(async () => {
-    let n = 0;
-    const idGenerator = {
-      generate: () => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`,
-    };
-    const serializer = new InMemoryEventSerializer();
-    // The app is built over THIS licensing instance, so the plan seeded below is the plan sign-up
-    // finds. (`createAdminHttpApi` forwards `licensing` to `wireAdmin`; no HTTP seeding needed.)
-    licensing = wireLicensing({ serializer, idGenerator, clock, platformTenantId: PLATFORM });
-
-    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-    tokenIssuer = new NativeTokenIssuer({
-      privateKey,
-      issuer: "https://api.test/",
-      audience: "morbeh-admin",
-      ttlSeconds: 7200,
-    });
-    const resolver = localKeyResolver(tokenIssuer);
-    // `JwtVerifier` is the Authenticator and the ClaimsAuthenticator in one: it already returns
-    // `{ principal, claims }` with the token's `tenant_id` claim.
-    const authenticator = new JwtVerifier({
-      issuer: "https://api.test/",
-      audience: "morbeh-admin",
-      getKey: (header, token) => resolver.then((getKey) => getKey(header, token)),
-      logger: silent,
-    });
-
-    const fx = infra();
-    app = await createAdminHttpApi({
-      tenantMode: "multi",
-      tenantId: PLATFORM,
-      serializer,
-      idGenerator,
-      clock,
-      licensing,
-      authenticator,
-      rateLimiter: fx.rateLimiter,
-      idempotencyKeys: fx.idempotencyKeys,
-      responseCache: fx.cache,
-      passwordAuthProvider: new HashedPasswordAuthProvider({
-        store: new InMemoryPasswordCredentialStore(),
-        hasher: new ScryptPasswordHasher({ log2N: 10 }),
-        clock,
-      }),
-      staffTokenIssuer: tokenIssuer,
-      adminPublicUrl: "https://admin.test",
-      platformStoreDomain: "morbeh.test",
-      // Without a verifier `verify` answers 409 "not configured" before it looks at ownership, which
-      // would hide the 404 this suite is after. No domain here points at the platform.
-      dnsVerifier: { pointsToPlatform: async () => false },
-      defaultPlanKey: "basic",
-    });
+    ({ app, licensing } = await boot());
 
     // Seeded only AFTER the boot check: `assertMultiTenantReady` walks the composed graph, and an
     // in-memory outbox that already holds the plan's events (each stamped with the platform tenant)
@@ -400,5 +417,62 @@ describe("two self-serve stores stay apart (merchant onboarding)", () => {
       const res = await get(b.token, `/tenants/${a.tenantId}`);
       expect(res.statusCode).toBe(403);
     });
+  });
+});
+
+/**
+ * Review fix A: under `AUTH_MODE=native` a merchant owner's token carries the `admin` role, which the
+ * role table maps to `*:*`, so a permission check alone lets it through to platform-global reads. This
+ * suite runs the REAL `RoleTableAccessControl` (as `apps/runtime` composes it for native auth), so the
+ * refusals below can only come from those routes being pinned to the platform tenant.
+ */
+describe("a self-signed-up merchant under the real role table (native auth)", () => {
+  let app: FastifyInstance;
+  let token: string;
+
+  beforeAll(async () => {
+    let licensing: WiredLicensing;
+    ({ app, licensing } = await boot(new RoleTableAccessControl()));
+    await seedBasicPlan(licensing);
+    const res = await app.inject({
+      method: "POST",
+      url: `${API}/public/merchant-signup`,
+      headers: { "content-type": "application/json", "x-tenant-id": PLATFORM },
+      payload: {
+        storeName: "Gamma Store",
+        email: "owner@gamma.test",
+        password: PASSWORD,
+        country: "EG",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    token = (res.json() as { accessToken: string }).accessToken;
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const as = (method: "GET" | "POST", url: string, extra: Record<string, string> = {}) =>
+    app.inject({
+      method,
+      url: `${API}${url}`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...extra },
+      ...(method === "POST" ? { payload: {} } : {}),
+    });
+
+  it("control: the owner's role still reads its own store settings", async () => {
+    const res = await as("GET", "/store/settings");
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ storeName: "Gamma Store" });
+  });
+
+  it("is refused the platform-wide KPIs (403), with or without a header naming the platform", async () => {
+    expect((await as("POST", "/platform/kpis")).statusCode).toBe(403);
+    expect((await as("POST", "/platform/kpis", { "x-tenant-id": PLATFORM })).statusCode).toBe(403);
+  });
+
+  it("is refused the process-wide security telemetry reads (403)", async () => {
+    expect((await as("GET", "/security/console/analytics")).statusCode).toBe(403);
+    expect((await as("GET", "/security/console/risk-explorer")).statusCode).toBe(403);
   });
 });
