@@ -152,6 +152,18 @@ describe("merchant billing (platform-owned data, read and changed by the merchan
     expect(after.trialEndsAt).toBe(before.nextChargeAt);
   });
 
+  it("an activation on a plan with no trial (first charge due now) shows no trial end", async () => {
+    const app = wire();
+    const noTrial = await seedPlan(app, "no-trial", 29900, { publish: true, trialDays: 0 });
+    await subscribe(app, "shop-a", noTrial.planVersionId);
+
+    const view = await billing(app, "shop-a");
+    expect(view.status).toBe("active");
+    expect(view.nextChargeAt).toBe("2026-10-16T00:00:00.000Z");
+    expect(view.invoices).toEqual([]);
+    expect(view.trialEndsAt).toBeNull();
+  });
+
   it("a merchant with no subscription gets an empty view, never another merchant's data", async () => {
     const app = wire();
     const { planVersionId } = await seedPlan(app, "basic", 29900);

@@ -61,8 +61,9 @@ export interface MerchantBillingView {
   /** `renewalSchedule.nextRenewalAt`. */
   readonly nextChargeAt: string | null;
   /**
-   * Equal to `nextChargeAt` while the subscription is active with a schedule and no invoice exists
-   * yet (the first charge is the end of the trial); else null. Deliberately NOT read off the current
+   * Equal to `nextChargeAt` while the subscription is active, its first charge is still in the future
+   * and no invoice exists yet (that charge is the end of the trial); else null — so an activation with
+   * no trial (charge due at once) shows none. Deliberately NOT read off the current
    * plan's `trialDays`: a plan change re-pins the version but keeps the schedule set at activation.
    */
   readonly trialEndsAt: string | null;
@@ -136,9 +137,14 @@ export class GetMerchantBilling implements UseCase<
     const plan = planId === null ? null : await this.deps.plans.findById(planId);
     const planPart = plan !== null && version !== undefined ? planView(plan, version) : null;
 
-    const nextChargeAt = subscription.renewalSchedule?.nextRenewalAt.toISOString() ?? null;
+    const nextRenewalAt = subscription.renewalSchedule?.nextRenewalAt;
+    const nextChargeAt = nextRenewalAt?.toISOString() ?? null;
+    // A first charge still in the future: an activation with no trial schedules it for "now".
     const inTrial =
-      subscription.status === "active" && nextChargeAt !== null && invoiceViews.length === 0;
+      subscription.status === "active" &&
+      nextRenewalAt !== undefined &&
+      nextRenewalAt.getTime() > this.deps.clock.now().getTime() &&
+      invoiceViews.length === 0;
     return ok({
       plan: planPart,
       status: subscription.status,
