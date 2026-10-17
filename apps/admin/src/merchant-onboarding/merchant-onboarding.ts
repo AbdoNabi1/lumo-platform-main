@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Logger } from "@platform/utils";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { COUNTRY_DEFAULTS, type SignupCountry } from "./country";
-import { deriveSlugBase, randomSlugSuffix } from "./slug";
+import { deriveSlugBase, isReservedSlug, randomSlugSuffix } from "./slug";
 
 export type { SignupCountry } from "./country";
 export { COUNTRY_DEFAULTS } from "./country";
@@ -26,7 +26,8 @@ export type SignupOutcome =
   | { readonly kind: "email-taken" }
   | {
       readonly kind: "unavailable";
-      readonly reason: "no-default-plan" | "provisioning-incomplete" | "not-multi";
+      readonly reason:
+        "no-default-plan" | "provisioning-incomplete" | "not-multi" | "sign-in-unavailable";
     };
 
 export interface DirectoryEntry {
@@ -53,6 +54,11 @@ export interface MerchantOnboardingPorts {
   readonly platformTenantId: string | undefined;
   readonly defaultPlanKey: string | undefined;
   readonly platformStoreDomain: string | undefined;
+  /**
+   * Whether a merchant can sign in to the store sign-up makes: native staff sign-in (a staff token
+   * issuer) over the durable hashed password store. Without it the store would be unusable.
+   */
+  readonly nativeSignInAvailable: boolean;
   readonly logger: Logger;
   readonly findEntry: (email: string) => Promise<DirectoryEntry | null>;
   /** `false` ⇒ the email already has an entry (a concurrent sign-up won). */
@@ -99,6 +105,12 @@ export class MerchantOnboarding {
     const p = this.ports;
     if (p.platformTenantId === undefined || p.platformTenantId === "") {
       return { kind: "unavailable", reason: "not-multi" };
+    }
+    if (!p.nativeSignInAvailable) {
+      p.logger.error(
+        "merchant signup refused: native staff sign-in is not configured (AUTH_MODE=native, staff token issuer)",
+      );
+      return { kind: "unavailable", reason: "sign-in-unavailable" };
     }
     const email = input.email.trim().toLowerCase();
     const storeName = input.storeName.trim();
@@ -161,7 +173,8 @@ export class MerchantOnboarding {
     const base = deriveSlugBase(name, randomSlugSuffix);
     for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt += 1) {
       const slug = attempt === 1 ? base : `${base}-${attempt}`;
-      if (await this.ports.slugTaken(slug)) continue;
+      // A reserved word (admin, api, www…) is treated as taken: "Admin" becomes `admin-2`.
+      if (isReservedSlug(slug) || (await this.ports.slugTaken(slug))) continue;
       const tenantId = await this.ports.createTenant({ slug, name });
       if (tenantId !== null) return { tenantId, slug };
     }

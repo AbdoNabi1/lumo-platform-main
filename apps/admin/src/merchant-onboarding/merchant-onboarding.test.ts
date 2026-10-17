@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { NativeTokenIssuer } from "@platform/auth";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
@@ -32,6 +32,8 @@ function issuer() {
 interface SetupOptions {
   readonly platformTenantId?: string;
   readonly defaultPlanKey?: string;
+  /** `"no-issuer"`: no staff token issuer; `"in-memory-passwords"`: not the durable hashed provider. */
+  readonly signIn?: "native" | "no-issuer" | "in-memory-passwords";
 }
 
 async function setup(
@@ -55,12 +57,17 @@ async function setup(
     idGenerator,
     clock,
     licensing,
-    passwordAuthProvider: new HashedPasswordAuthProvider({
-      store: new InMemoryPasswordCredentialStore(),
-      hasher: new ScryptPasswordHasher({ log2N: 10 }),
-      clock,
-    }),
-    staffTokenIssuer: issuer(),
+    // Without an injected provider Security falls back to its in-memory reference one.
+    ...(options.signIn === "in-memory-passwords"
+      ? {}
+      : {
+          passwordAuthProvider: new HashedPasswordAuthProvider({
+            store: new InMemoryPasswordCredentialStore(),
+            hasher: new ScryptPasswordHasher({ log2N: 10 }),
+            clock,
+          }),
+        }),
+    ...(options.signIn === "no-issuer" ? {} : { staffTokenIssuer: issuer() }),
     platformStoreDomain: "morbeh.test",
     ...(options.platformTenantId === undefined
       ? {}
@@ -252,6 +259,37 @@ describe("MerchantOnboarding.signUp", () => {
       tenantId: PLATFORM,
     });
     expect((billing.body as { status: string }).status).toBe("active");
+  });
+
+  it.each([
+    ["no staff token issuer", "no-issuer"],
+    ["no durable hashed password store", "in-memory-passwords"],
+  ] as const)(
+    "refuses sign-up without creating a tenant when native sign-in is not configured (%s)",
+    async (_, signIn) => {
+      const { admin } = await setup({
+        platformTenantId: PLATFORM,
+        defaultPlanKey: "basic",
+        signIn,
+      });
+      const error = vi.spyOn(admin.merchantOnboarding.ports.logger, "error");
+
+      const outcome = await admin.merchantOnboarding.signUp(nour);
+
+      expect(outcome).toEqual({ kind: "unavailable", reason: "sign-in-unavailable" });
+      expect(await tenantCount(admin)).toBe(0);
+      expect(await admin.merchantOnboarding.ports.findEntry("owner@nour.test")).toBeNull();
+      expect(error).toHaveBeenCalledWith(
+        "merchant signup refused: native staff sign-in is not configured (AUTH_MODE=native, staff token issuer)",
+      );
+      error.mockRestore();
+    },
+  );
+
+  it('treats a reserved word as a taken slug ("Admin" becomes admin-2)', async () => {
+    const { admin } = await setup();
+    const outcome = await admin.merchantOnboarding.signUp({ ...nour, storeName: "Admin" });
+    expect(outcome.kind === "created" && outcome.storeUrl).toBe("https://admin-2.morbeh.test");
   });
 
   it("answers not-multi when no platform tenant is configured", async () => {

@@ -105,4 +105,5 @@ Hand-written and additive (expand-only); the agent never applies them. Deploy wi
   policy.
 
 Neither touches existing rows. Self-serve sign-up stays off (503) until the owner also sets
-`TENANT_MODE=multi` and `DEFAULT_PLAN_KEY`.
+`TENANT_MODE=multi`, `DEFAULT_PLAN_KEY` and `AUTH_MODE=native` (native staff sign-in: the API's own
+token issuer over the hashed password store; without it a new store could never be signed in to).

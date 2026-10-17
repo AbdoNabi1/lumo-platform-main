@@ -10,6 +10,7 @@ import {
   InMemoryPasswordCredentialStore,
   ScryptPasswordHasher,
 } from "@platform/security";
+import { logger } from "@platform/utils";
 import { wireAdmin, type WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { publicMerchantRoutes } from "./public-merchant-routes";
@@ -212,6 +213,38 @@ describe("merchant sign-up", () => {
     expect(JSON.stringify(res.body)).not.toContain("no-default-plan");
   });
 
+  it("answers 503 SIGNUP_UNAVAILABLE when native sign-in is not configured, and creates nothing", async () => {
+    let n = 0;
+    const idGenerator: IdGenerator = {
+      generate: () => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`,
+    };
+    const serializer = new InMemoryEventSerializer();
+    const licensing = wireLicensing({ serializer, idGenerator, clock, platformTenantId: PLATFORM });
+    // No staff token issuer: nobody could ever sign in to the store sign-up would make.
+    const admin = wireAdmin({
+      serializer,
+      idGenerator,
+      clock,
+      licensing,
+      passwordAuthProvider: new HashedPasswordAuthProvider({
+        store: new InMemoryPasswordCredentialStore(),
+        hasher: new ScryptPasswordHasher({ log2N: 10 }),
+        clock,
+      }),
+      platformStoreDomain: "morbeh.test",
+      platformTenantId: PLATFORM,
+      defaultPlanKey: "basic",
+    });
+    await seedPlan(licensing, "basic");
+    const routes = publicMerchantRoutes(admin, { platformTenantId: PLATFORM });
+
+    const res = await call(find(routes, "POST", SIGNUP), nour);
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("SIGNUP_UNAVAILABLE");
+    expect(await admin.findStoreForEmail("owner@nour.test")).toBeNull();
+  });
+
   it("created but sign-in failed: 201 with signInRequired and no token fields", async () => {
     const { admin } = await setup();
     const failed: AdminResponse = {
@@ -352,6 +385,33 @@ describe("merchant login", () => {
     const body = { email: "owner@nour.test", password: "x" };
     expect(await call(login, body)).toEqual({ status: 403, body: mfa.body });
     expect((await call(login, body)).status).toBe(401);
+  });
+
+  it("answers the same 401 when native sign-in is not configured, and tells the operator", async () => {
+    const { admin } = await setup();
+    const notConfigured: AdminResponse = {
+      status: 503,
+      body: {
+        error: { code: "NOT_CONFIGURED", message: "Native staff sign-in is not configured" },
+      },
+    };
+    const stub = {
+      ...admin,
+      findStoreForEmail: () => Promise.resolve({ shopId: "s", status: "active" }),
+      staffAuth: { login: () => Promise.resolve(notConfigured) },
+    } as unknown as WiredAdmin;
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const login = find(publicMerchantRoutes(stub, { platformTenantId: PLATFORM }), "POST", LOGIN);
+      const res = await call(login, { email: "owner@nour.test", password: "correct-horse-1" });
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_CREDENTIALS");
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls[0]?.[0]).toContain("native staff sign-in is not configured");
+      expect(JSON.stringify(error.mock.calls)).not.toContain("correct-horse-1");
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it("limits 10 per email per 15 minutes, and refuses non-platform tenants", async () => {

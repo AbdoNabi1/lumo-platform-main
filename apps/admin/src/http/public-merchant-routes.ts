@@ -2,6 +2,7 @@ import { z } from "zod";
 import { defineRoute, type RequestContext, type RouteDefinition } from "@platform/http";
 import type { RateLimiter } from "@platform/contracts";
 import { ScryptPasswordHasher } from "@platform/security";
+import { logger } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./public-staff-auth-routes";
 
@@ -197,6 +198,14 @@ export function publicMerchantRoutes(
         if (session.status === 200) return session;
         const error = (session.body as { error?: { code?: string } } | null)?.error;
         if (session.status === 403 && error?.code === "MFA_REQUIRED") return session;
+        if (session.status === 503 || error?.code === "NOT_CONFIGURED") {
+          // The client still gets the ordinary 401 (nothing about the deployment on the wire), but
+          // every merchant sign-in is failing, so the operator has to hear about it.
+          logger.error(
+            "merchant login failed: native staff sign-in is not configured (AUTH_MODE=native, staff token issuer)",
+            { tenantId: store.shopId },
+          );
+        }
         return INVALID_CREDENTIALS;
       },
     }),

@@ -1429,6 +1429,12 @@ function buildMerchantOnboarding(wiring: MerchantOnboardingWiring): MerchantOnbo
     platformTenantId: deps.platformTenantId,
     defaultPlanKey: deps.defaultPlanKey,
     platformStoreDomain: deps.platformStoreDomain,
+    // The same condition staff login needs to issue a token over durable credentials (Plan 1B):
+    // an issuer, and the hashed store `staffAuth` is wired with (an in-memory provider forgets
+    // every password on restart).
+    nativeSignInAvailable:
+      deps.staffTokenIssuer !== undefined &&
+      deps.passwordAuthProvider instanceof HashedPasswordAuthProvider,
     logger: adminLogger,
     findEntry: (email) => tenancy.findStaffDirectoryEntry(email),
     recordPending: async (entry) => {
