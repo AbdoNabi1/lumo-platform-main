@@ -51,11 +51,10 @@ function statusLine(
   if (billingBanner(billing, now) === "past-due") {
     return { text: copy.statusPastDue, destructive: true };
   }
-  if (billing.status === "trial") {
-    const days = trialDaysLeft(billing.trialEndsAt, now);
-    if (days === null || billing.trialEndsAt === null) {
-      return { text: copy.statusActiveNoDate, destructive: false };
-    }
+  // The runtime reports a trial as an `active` subscription with `trialEndsAt` set (no invoice yet,
+  // the first charge still ahead), so the end date — not the status — is what marks a trial.
+  const days = trialDaysLeft(billing.trialEndsAt, now);
+  if (days !== null && billing.trialEndsAt !== null) {
     if (days === 0) return { text: copy.statusTrialEnded, destructive: false };
     const date = formatMediumDate(locale, billing.trialEndsAt);
     const template = days === 1 ? copy.statusTrialOneDay : copy.statusTrial;
@@ -64,6 +63,7 @@ function statusLine(
       destructive: false,
     };
   }
+  if (billing.status === "trial") return { text: copy.statusTrialNoDate, destructive: false };
   if (billing.status === "cancelled") return { text: copy.statusCancelled, destructive: false };
   if (billing.nextChargeAt === null) return { text: copy.statusActiveNoDate, destructive: false };
   return {

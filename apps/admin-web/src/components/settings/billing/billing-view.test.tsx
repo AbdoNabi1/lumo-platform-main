@@ -3,7 +3,12 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import type { FormState } from "@/lib/api/mutation";
-import type { MerchantBillingDto, MerchantInvoiceDto, MerchantPlanDto } from "@/lib/billing/model";
+import {
+  isMerchantBillingDto,
+  type MerchantBillingDto,
+  type MerchantInvoiceDto,
+  type MerchantPlanDto,
+} from "@/lib/billing/model";
 import { BillingView } from "./billing-view";
 
 type Action = (previous: FormState, formData: FormData) => Promise<FormState>;
@@ -76,9 +81,36 @@ function view(b: MerchantBillingDto, plans: readonly MerchantPlanDto[] = [starte
   return render(<BillingView billing={b} plans={plans} locale="en" now={NOW} t={en} />);
 }
 
+/**
+ * A trial exactly as the runtime's `MerchantBillingView` reports it: the subscription is already
+ * `active` (activated at sign-up), no invoice exists yet, and the first charge — the trial's end — is
+ * in the future, so `trialEndsAt` and `nextChargeAt` are the same instant.
+ */
+function inTrial(endsAt: string): Partial<MerchantBillingDto> {
+  return { status: "active", trialEndsAt: endsAt, nextChargeAt: endsAt, invoices: [] };
+}
+
 describe("BillingView plan card", () => {
+  it("reads the runtime's real trial shape as a free trial with days left (contract)", () => {
+    const wire: unknown = JSON.parse(
+      JSON.stringify({
+        plan: starter,
+        status: "active",
+        nextChargeAt: "2026-10-27T10:00:00.000Z",
+        trialEndsAt: "2026-10-27T10:00:00.000Z",
+        cardOnFile: false,
+        invoices: [],
+      }),
+    );
+    expect(isMerchantBillingDto(wire)).toBe(true);
+    view(wire as MerchantBillingDto);
+
+    expect(screen.getByText(/Free trial — 10 days left \(ends Oct 27, 2026\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/Next charge on/)).not.toBeInTheDocument();
+  });
+
   it("shows the trial with whole days left and the end date", () => {
-    view(billing({ status: "trial", trialEndsAt: "2026-10-27T10:00:00.000Z", nextChargeAt: null }));
+    view(billing(inTrial("2026-10-27T10:00:00.000Z")));
 
     expect(screen.getByText("Starter")).toBeInTheDocument();
     expect(screen.getByText(/EGP\s*299\.00\s*\/\s*month/)).toBeInTheDocument();
@@ -86,12 +118,24 @@ describe("BillingView plan card", () => {
   });
 
   it("reads 1 day left in the singular and a lapsed trial as ended", () => {
-    view(billing({ status: "trial", trialEndsAt: "2026-10-18T09:00:00.000Z" }));
+    view(billing(inTrial("2026-10-18T09:00:00.000Z")));
     expect(screen.getByText(/Free trial — 1 day left/)).toBeInTheDocument();
     cleanup();
 
-    view(billing({ status: "trial", trialEndsAt: "2026-10-01T00:00:00.000Z" }));
+    view(billing(inTrial("2026-10-01T00:00:00.000Z")));
     expect(screen.getByText(t.statusTrialEnded)).toBeInTheDocument();
+  });
+
+  it("shows a neutral free-trial line for a trial status with no end date", () => {
+    view(billing({ status: "trial", trialEndsAt: null, nextChargeAt: null }));
+    expect(screen.getByText(t.statusTrialNoDate)).toBeInTheDocument();
+    expect(screen.queryByText(/ends/)).not.toBeInTheDocument();
+  });
+
+  it("lets an overdue payment outrank a trial end date", () => {
+    view(billing({ ...inTrial("2026-10-27T10:00:00.000Z"), status: "grace" }));
+    expect(screen.getByText(t.statusPastDue)).toBeInTheDocument();
+    expect(screen.queryByText(/Free trial/)).not.toBeInTheDocument();
   });
 
   it("shows the next charge date for an active plan, priced per year when annual", () => {
@@ -250,27 +294,22 @@ describe("BillingView change plan", () => {
 });
 
 describe("BillingView in Arabic", () => {
-  it("renders the trial line, card note and bills with Arabic copy and digits", () => {
-    render(
-      <BillingView
-        billing={billing({
-          status: "trial",
-          trialEndsAt: "2026-10-27T10:00:00.000Z",
-          cardOnFile: false,
-          invoices: [invoice({})],
-        })}
-        plans={[starter]}
-        locale="ar"
-        now={NOW}
-        t={ar}
-      />,
-    );
+  const arabic = (b: MerchantBillingDto) =>
+    render(<BillingView billing={b} plans={[starter]} locale="ar" now={NOW} t={ar} />);
+
+  it("renders the trial line and card note with Arabic copy and digits", () => {
+    arabic(billing({ ...inTrial("2026-10-27T10:00:00.000Z"), cardOnFile: false }));
 
     expect(screen.getByText(ar.billingPage.planCardTitle)).toBeInTheDocument();
     expect(screen.getByText(/فاضل (10|١٠) يوم/)).toBeInTheDocument();
     expect(screen.getByText(ar.billingPage.noCard)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: ar.billingPage.payNow })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: ar.billingPage.changePlan })).toBeInTheDocument();
+  });
+
+  it("renders an issued bill with Arabic copy", () => {
+    arabic(billing({ invoices: [invoice({})] }));
+
+    expect(screen.getByRole("button", { name: ar.billingPage.payNow })).toBeInTheDocument();
     expect(screen.getByText(ar.billingPage.invoiceIssued)).toBeInTheDocument();
   });
 });

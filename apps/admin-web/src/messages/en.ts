@@ -1673,6 +1673,7 @@ export const en = {
     perYear: "{price} / year",
     statusTrial: "Free trial — {days} days left (ends {date})",
     statusTrialOneDay: "Free trial — 1 day left (ends {date})",
+    statusTrialNoDate: "Free trial",
     statusTrialEnded: "Your free trial has ended",
     statusActive: "Next charge on {date}",
     statusActiveNoDate: "Your plan is active",

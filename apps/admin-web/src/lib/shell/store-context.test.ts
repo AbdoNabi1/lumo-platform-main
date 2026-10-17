@@ -29,11 +29,12 @@ function domain(overrides: Partial<ShopDomainDto>): ShopDomainDto {
   };
 }
 
+/** The runtime's real trial shape: `active`, no invoice, first charge = trial end, still ahead. */
 function billing(overrides: Partial<MerchantBillingDto>): MerchantBillingDto {
   return {
     plan: null,
-    status: "trial",
-    nextChargeAt: null,
+    status: "active",
+    nextChargeAt: "2026-10-19T10:00:00.000Z",
     trialEndsAt: "2026-10-19T10:00:00.000Z",
     cardOnFile: false,
     invoices: [],

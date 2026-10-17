@@ -1577,6 +1577,7 @@ export const ar: Dictionary = {
     perYear: "{price} / سنة",
     statusTrial: "تجربة مجانية — فاضل {days} يوم (بتنتهي {date})",
     statusTrialOneDay: "تجربة مجانية — فاضل يوم واحد (بتنتهي {date})",
+    statusTrialNoDate: "تجربة مجانية",
     statusTrialEnded: "التجربة المجانية خلصت",
     statusActive: "الدفعة الجاية يوم {date}",
     statusActiveNoDate: "باقتك شغّالة",
