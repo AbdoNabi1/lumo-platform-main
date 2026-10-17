@@ -12,6 +12,7 @@ import {
   ReceiptIcon,
   StoreIcon,
   TruckIcon,
+  WalletIcon,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -48,6 +49,12 @@ const SECTIONS: readonly SettingsSection[] = [
     Icon: StoreIcon,
     title: (t) => t.settingsPage.generalTitle,
     body: (t) => t.settingsPage.generalBody,
+  },
+  {
+    href: "/settings/billing",
+    Icon: WalletIcon,
+    title: (t) => t.settingsPage.billingTitle,
+    body: (t) => t.settingsPage.billingBody,
   },
   {
     href: "/settings/payments",

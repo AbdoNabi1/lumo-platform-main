@@ -6,6 +6,7 @@ import {
   formatCurrencyCompact,
   formatDelta,
   formatLongDate,
+  formatMediumDate,
   formatNumber,
   formatPercent,
   formatRelativeMinutes,
@@ -160,5 +161,19 @@ describe("formatCalendarDay / formatCalendarRange (days in the shop's calendar)"
 
   it("crosses a month end", () => {
     expect(formatCalendarRange("en", "2026-09-29", "2026-10-06")).toBe("Sep 29 – Oct 5");
+  });
+});
+
+describe("formatMediumDate (billing dates)", () => {
+  it("formats an instant as a medium date in UTC, whatever the machine's time zone", () => {
+    expect(formatMediumDate("en", "2026-10-27T23:30:00.000Z")).toBe("Oct 27, 2026");
+  });
+
+  it("formats in the Arabic locale rather than as English text", () => {
+    const label = formatMediumDate("ar", "2026-10-27T10:00:00.000Z");
+    expect(label).not.toContain("Oct");
+    // Arabic-Indic or Latin digits depending on the ICU build; either way the day and year are there.
+    expect(label).toMatch(/(27|٢٧)/);
+    expect(label).toMatch(/(2026|٢٠٢٦)/);
   });
 });
