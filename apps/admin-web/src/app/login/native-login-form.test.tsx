@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { ar } from "@/messages/ar";
 import { NativeLoginForm } from "./native-login-form";
 
 vi.mock("next/link", () => ({
@@ -18,6 +19,13 @@ describe("NativeLoginForm sign-up entry", () => {
     );
     rerender(<NativeLoginForm error={undefined} returnTo={undefined} />);
     expect(screen.queryByRole("link", { name: /Open your store/ })).toBeNull();
+  });
+
+  it("names the brand in Arabic the way the Arabic dictionary does", () => {
+    render(<NativeLoginForm error={undefined} returnTo={undefined} signupEnabled />);
+    const link = screen.getByRole("link", { name: /Open your store/ });
+    expect(link.textContent).toContain(ar.brand);
+    expect(link.textContent).not.toContain("مربح");
   });
 
   it("shows the store-ready notice after ?signup=done", () => {

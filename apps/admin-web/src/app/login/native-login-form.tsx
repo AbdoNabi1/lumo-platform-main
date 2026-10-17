@@ -92,7 +92,7 @@ export function NativeLoginForm({
           {signupEnabled && (
             <p className="mt-2 text-center text-sm">
               <Link href="/signup" className="text-muted-foreground underline">
-                New to Morbeh? Open your store / جديد على مربح؟ افتح متجرك
+                New to Morbeh? Open your store / جديد على موربيه؟ افتح متجرك
               </Link>
             </p>
           )}
