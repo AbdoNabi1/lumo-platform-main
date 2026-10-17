@@ -58,10 +58,7 @@ export async function SetupGuideSection({
       const result = await fetchRecentOrders(1);
       return result.outcome === "ok" ? result.orders.length : null;
     }),
-    fact(async () => {
-      const result = await fetchStoreSettings();
-      return result.outcome === "ok" ? result.settings : null;
-    }),
+    fact(async () => fetchStoreSettings()),
   ]);
 
   const facts: SetupFacts = {
@@ -72,7 +69,10 @@ export async function SetupGuideSection({
     orderCount: orders,
   };
   const steps = buildSetupSteps(facts);
-  const visible = setupGuideVisible(steps, settings?.setupGuideDismissedAt);
+  const storeSettings = settings?.outcome === "ok" ? settings.settings : null;
+  const visible = setupGuideVisible(steps, storeSettings?.setupGuideDismissedAt);
+  // A viewer/operator cannot read (so cannot write) store settings: keep the guide, drop Dismiss.
+  const canDismiss = settings?.outcome !== "unauthorized";
 
   if (!welcome && !visible) return null;
   return (
@@ -82,7 +82,7 @@ export async function SetupGuideSection({
           {t.setupGuide.welcome}
         </p>
       )}
-      {visible && <SetupGuide steps={steps} t={t} locale={locale} />}
+      {visible && <SetupGuide steps={steps} t={t} locale={locale} canDismiss={canDismiss} />}
     </div>
   );
 }

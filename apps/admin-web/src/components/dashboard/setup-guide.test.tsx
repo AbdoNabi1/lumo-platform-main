@@ -144,6 +144,13 @@ describe("SetupGuide", () => {
     await waitFor(() => expect(dismissSetupGuideAction).toHaveBeenCalledTimes(1));
   });
 
+  it("keeps the guide but offers no Dismiss when the user may not change settings", () => {
+    render(<SetupGuide steps={buildSetupSteps(NOTHING)} t={en} canDismiss={false} />);
+
+    expect(screen.getByText("0 of 5 tasks complete")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+  });
+
   it("shows why the dismiss failed", async () => {
     dismissSetupGuideAction.mockResolvedValue({
       status: "error",

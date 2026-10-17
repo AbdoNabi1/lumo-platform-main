@@ -16,16 +16,20 @@ const INITIAL_STATE: FormState = { status: "idle" };
 /**
  * Home's "Set up your store" card, like Shopify's: a progress line and bar, then one expandable row
  * per step with a check once it is done (the theme step is never checked) and a button to the screen
- * that finishes it. "Dismiss" hides the guide for good through a server action.
+ * that finishes it. "Dismiss" hides the guide for good through a server action — offered only when
+ * the user may change store settings (`canDismiss`).
  */
 export function SetupGuide({
   steps,
   t,
   locale = "en",
+  canDismiss = true,
 }: {
   readonly steps: readonly SetupStep[];
   readonly t: Dictionary;
   readonly locale?: Locale;
+  /** `false` for a viewer/operator who cannot read store settings: the guide stays, Dismiss goes. */
+  readonly canDismiss?: boolean;
 }) {
   const copy = t.setupGuide;
   const { done, total } = setupProgress(steps);
@@ -58,18 +62,20 @@ export function SetupGuide({
             />
           </div>
         </div>
-        <form action={formAction} className="shrink-0">
-          <Button
-            type="submit"
-            variant="ghost"
-            size="sm"
-            disabled={pending}
-            aria-label={copy.dismiss}
-            title={pending ? copy.dismissing : copy.dismiss}
-          >
-            <XIcon aria-hidden="true" />
-          </Button>
-        </form>
+        {canDismiss && (
+          <form action={formAction} className="shrink-0">
+            <Button
+              type="submit"
+              variant="ghost"
+              size="sm"
+              disabled={pending}
+              aria-label={copy.dismiss}
+              title={pending ? copy.dismissing : copy.dismiss}
+            >
+              <XIcon aria-hidden="true" />
+            </Button>
+          </form>
+        )}
       </CardHeader>
       <CardContent className="px-0 sm:px-0">
         {state.status === "error" && (

@@ -132,6 +132,21 @@ describe("SetupGuideSection", () => {
     expect(screen.getByText("0 of 5 tasks complete")).toBeInTheDocument();
   });
 
+  it("keeps the guide but hides Dismiss when store settings are unauthorized (viewer/operator)", async () => {
+    api.fetchStoreSettings.mockResolvedValue({ outcome: "unauthorized" });
+
+    await section();
+
+    expect(screen.getByText("0 of 5 tasks complete")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en.setupGuide.dismiss })).not.toBeInTheDocument();
+  });
+
+  it("offers Dismiss when store settings could be read", async () => {
+    await section();
+
+    expect(screen.getByRole("button", { name: en.setupGuide.dismiss })).toBeInTheDocument();
+  });
+
   it("renders nothing once dismissed", async () => {
     api.fetchStoreSettings.mockResolvedValue(settings("2026-10-17T10:00:00.000Z"));
 
