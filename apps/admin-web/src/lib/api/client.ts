@@ -19,6 +19,8 @@
  * fetch has a timeout (`lib/fetch-with-timeout.ts`) so a hung Admin API no longer hangs this
  * Suspense boundary indefinitely.
  */
+import { cookies } from "next/headers";
+import { SESSION_COOKIE } from "@/lib/auth/config";
 import { readSession } from "@/lib/auth/session";
 import { requireProdEnv } from "@/lib/env";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
@@ -70,11 +72,31 @@ export async function currentTenantRef(): Promise<string> {
   return session?.tenantId ?? requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);
 }
 
-/** The shared preamble every admin-API call needs — resolved once so `getAdminApi`/`mutateAdminApi` cannot drift apart. */
+/** Whether the browser sent a session cookie at all (valid or not); `false` outside a request. */
+async function hasSessionCookie(): Promise<boolean> {
+  try {
+    const value = (await cookies()).get(SESSION_COOKIE)?.value;
+    return value !== undefined && value.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The shared preamble every admin-API call needs — resolved once so `getAdminApi`/`mutateAdminApi`
+ * cannot drift apart. `ADMIN_API_TOKEN` stands in ONLY when there is no session cookie at all: a
+ * cookie that is present but invalid or expired sends no credential, so the API answers 401 and the
+ * screen shows its signed-out state instead of acting with the server's own token.
+ */
 async function adminRequestHeaders(): Promise<Record<string, string>> {
   const session = await readSession();
   const tenantId = session?.tenantId ?? requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);
-  const token = session?.token ?? process.env["ADMIN_API_TOKEN"];
+  const token =
+    session !== null
+      ? session.token
+      : (await hasSessionCookie())
+        ? undefined
+        : process.env["ADMIN_API_TOKEN"];
 
   const headers: Record<string, string> = { "x-tenant-id": tenantId };
   if (token !== undefined && token.length > 0) {

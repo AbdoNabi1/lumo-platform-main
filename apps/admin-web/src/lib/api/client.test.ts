@@ -159,6 +159,36 @@ describe("mutateAdminApi", () => {
   });
 });
 
+describe("ADMIN_API_TOKEN fallback", () => {
+  it("is used only when there is no session cookie at all", async () => {
+    vi.stubEnv("ADMIN_API_TOKEN", "server-token");
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getAdminApi("/api/v1/products", isRecord);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["authorization"]).toBe("Bearer server-token");
+  });
+
+  it("is NOT used when a session cookie is present but invalid or expired", async () => {
+    vi.stubEnv("ADMIN_API_TOKEN", "server-token");
+    cookiesMock.mockResolvedValue({ get: () => ({ value: "expired-session-jwt" }) });
+    jwtVerifyMock.mockRejectedValue(new Error("JWTExpired"));
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(401, {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const read = await getAdminApi("/api/v1/products", isRecord);
+    const write = await mutateAdminApi("/api/v1/products", { method: "POST", body: {} }, isRecord);
+
+    expect(read).toEqual({ outcome: "unauthorized" });
+    expect(write).toEqual({ outcome: "unauthorized" });
+    for (const call of fetchMock.mock.calls as [string, RequestInit][]) {
+      expect((call[1].headers as Record<string, string>)["authorization"]).toBeUndefined();
+    }
+  });
+});
+
 describe("session tenant", () => {
   function sessionAs(payload: Record<string, unknown>): void {
     cookiesMock.mockResolvedValue({ get: () => ({ value: "staff-session-jwt" }) });
