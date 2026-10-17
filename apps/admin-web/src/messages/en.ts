@@ -1472,6 +1472,8 @@ export const en = {
     locationsBody: "The places where you keep and sell your stock.",
     languagesTitle: "Languages",
     languagesBody: "The languages your store is available in.",
+    domainsTitle: "Domains",
+    domainsBody: "Your store's web address and any domains you've connected.",
   },
   /** Plan 3A — Settings → Payments: which payment methods the storefront offers. */
   paymentSettings: {
@@ -1619,6 +1621,45 @@ export const en = {
     rateNameLooksLikePrice:
       "Customers see this name at checkout. Use words like 'Standard', and put the amount in Price.",
     quickSetupPartial: "“{saved}” is saved. “{missing}” was not — add it with Create zone.",
+  },
+  /** Settings → Domains: the store's Morbeh subdomain and the custom domains connected to it. */
+  domainsPage: {
+    title: "Domains",
+    subtitle: "Manage the web addresses customers use to reach your store.",
+    back: "Back to settings",
+    connect: "Connect existing domain",
+    cancel: "Cancel",
+    hostname: "Domain",
+    hostnamePlaceholder: "www.example.com",
+    hostnameHint: "The address you already own, for example www.example.com.",
+    connectSubmit: "Connect",
+    connecting: "Connecting…",
+    tableLabel: "Domains",
+    columnDomain: "Domain",
+    columnType: "Type",
+    columnStatus: "Status",
+    typePlatform: "Morbeh subdomain",
+    typeCustom: "Custom",
+    statusConnected: "Connected",
+    statusPending: "Pending",
+    primary: "Primary",
+    verify: "Verify",
+    verifying: "Checking…",
+    makePrimary: "Make primary",
+    updating: "Updating…",
+    copyLink: "Copy link",
+    copied: "Copied",
+    empty: "No domains yet.",
+    setupTitle: "Finish connecting {hostname}",
+    setupBody:
+      "Add a CNAME record for {hostname} pointing to {target}, then press Verify. DNS can take up to 48 hours.",
+    setupTargetFallback: "your Morbeh address",
+    errorAlreadyConnected: "This domain is already connected to a store.",
+    errorDnsNotReady:
+      "We couldn't see your DNS change yet. It can take up to 48 hours, so try again later.",
+    errorNotVerified: "Only a connected domain can be made primary. Verify it first.",
+    unauthorized: "Sign in to manage your domains.",
+    loadError: "Your domains couldn't be loaded. Try again in a moment.",
   },
   /** Plan 3C — Settings → General (store name, currency, time zone, weight unit). */
   generalSettings: {

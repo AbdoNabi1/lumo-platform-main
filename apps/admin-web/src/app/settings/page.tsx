@@ -5,6 +5,7 @@ import {
   AlertTriangleIcon,
   ChevronRightIcon,
   CreditCardIcon,
+  GlobeIcon,
   LanguagesIcon,
   LockIcon,
   MapPinIcon,
@@ -71,6 +72,12 @@ const SECTIONS: readonly SettingsSection[] = [
     Icon: MapPinIcon,
     title: (t) => t.settingsPage.locationsTitle,
     body: (t) => t.settingsPage.locationsBody,
+  },
+  {
+    href: "/settings/domains",
+    Icon: GlobeIcon,
+    title: (t) => t.settingsPage.domainsTitle,
+    body: (t) => t.settingsPage.domainsBody,
   },
   {
     href: "/locales",
