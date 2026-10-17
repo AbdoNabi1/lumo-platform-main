@@ -168,7 +168,19 @@ describe("exchangeMerchantPassword", () => {
     });
   });
 
-  it("maps 403 MFA_REQUIRED to mfa", async () => {
+  it("maps the runtime's nested 403 MFA_REQUIRED envelope to mfa", async () => {
+    expect(
+      await exchangeMerchantPassword({
+        ...loginBase,
+        fetchImpl: reply(403, {
+          error: { code: "MFA_REQUIRED", message: "An additional factor is required" },
+          mfaRequirement: "totp",
+        }),
+      }),
+    ).toEqual({ ok: false, reason: "mfa" });
+  });
+
+  it("also accepts a flat 403 MFA_REQUIRED envelope", async () => {
     expect(
       await exchangeMerchantPassword({
         ...loginBase,

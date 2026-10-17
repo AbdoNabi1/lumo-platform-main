@@ -130,7 +130,11 @@ export async function exchangeMerchantPassword(input: {
   if (reply === null) return { ok: false, reason: "unavailable" };
   if (reply.status === 401) return { ok: false, reason: "invalid" };
   if (reply.status === 403) {
-    return asRecord(reply.body)["code"] === "MFA_REQUIRED"
+    // The runtime passes the staff MFA response through as `{ error: { code }, mfaRequirement }`;
+    // a flat `{ code }` envelope is accepted too.
+    const body = asRecord(reply.body);
+    const code = body["code"] ?? asRecord(body["error"])["code"];
+    return code === "MFA_REQUIRED"
       ? { ok: false, reason: "mfa" }
       : { ok: false, reason: "unavailable" };
   }
