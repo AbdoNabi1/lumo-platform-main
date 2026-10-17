@@ -1708,6 +1708,49 @@ export const en = {
     loadError: "Your billing details couldn't be loaded.",
     tryAgain: "Try again",
   },
+  /** Home's "Set up your store" guide (Shopify's setup guide): steps, progress and dismiss. */
+  setupGuide: {
+    welcome: "Welcome to Morbeh — let's set up your store",
+    title: "Set up your store",
+    progress: "{done} of {total} tasks complete",
+    dismiss: "Dismiss",
+    dismissing: "Dismissing…",
+    dismissError: "Couldn't dismiss the guide. Try again.",
+    done: "Done",
+    notDone: "Not done",
+    steps: {
+      product: {
+        title: "Add your first product",
+        body: "Write a description, upload photos and set a price so customers can buy it.",
+        action: "Add product",
+      },
+      shipping: {
+        title: "Set up shipping",
+        body: "Choose where you ship and what each delivery costs.",
+        action: "Set up shipping",
+      },
+      payments: {
+        title: "Choose payment methods",
+        body: "Decide how customers pay you: cash on delivery, card and more.",
+        action: "Choose payment methods",
+      },
+      theme: {
+        title: "Customize your store",
+        body: "Pick a theme and make your storefront look like your brand.",
+        action: "Customize theme",
+      },
+      domain: {
+        title: "Connect a domain",
+        body: "Use your own web address instead of the free Morbeh one.",
+        action: "Connect domain",
+      },
+      order: {
+        title: "Place a test order",
+        body: "Buy something from your own store to see what customers will see.",
+        action: "View orders",
+      },
+    },
+  },
   /** Plan 3C — Settings → General (store name, currency, time zone, weight unit). */
   generalSettings: {
     title: "General",
