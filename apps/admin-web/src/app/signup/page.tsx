@@ -10,7 +10,8 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   taken:
     "This email already has a store — sign in instead / الإيميل ده عنده متجر بالفعل، سجّل دخول",
   limited: "Too many attempts, try again later / محاولات كتير، حاول تاني بعدين",
-  invalid: "Check the highlighted details / راجع البيانات المعلّمة",
+  invalid:
+    "Check your details: store name 2–60 characters, a valid email, password at least 8 characters / راجع بياناتك: اسم المتجر من 2 لـ 60 حرف، إيميل صحيح، وكلمة سر 8 حروف على الأقل",
   unavailable:
     "Opening new stores isn't available right now — try again later / فتح متاجر جديدة مش متاح دلوقتي، حاول تاني بعدين",
 };

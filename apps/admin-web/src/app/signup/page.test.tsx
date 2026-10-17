@@ -57,7 +57,7 @@ describe("/signup", () => {
   it.each([
     ["taken", /already has a store/],
     ["limited", /Too many attempts/],
-    ["invalid", /Check the highlighted details/],
+    ["invalid", /Check your details/],
     ["unavailable", /isn't available right now/],
   ])("shows the %s error", async (error, text) => {
     await renderPage(error);
