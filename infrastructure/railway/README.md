@@ -256,6 +256,7 @@ No start command. `<ory>` is the Ory project's base URL, no trailing slash.
 | `RUNTIME_API_URL`         | the `runtime-api` service's public URL, no trailing slash                            |
 | `TENANT_DEFAULT_ID`       | `tenant-local`                                                                       |
 | `MEDIA_PUBLIC_BASE_URL`   | (empty until §3b) the same value as the API's — read at build time for the image CSP |
+| `ADMIN_SIGNUP_ENABLED`    | **unset** (off) — see the prerequisites and the launch blocker below                 |
 
 Leave unset: `COOKIE_DOMAIN` (host-only cookies are correct here), `ADMIN_API_TOKEN` (a static
 fallback token that would bypass the login), `AUTH_AUDIENCE` and `AUTH_CLIENT_ID` (their defaults
@@ -263,6 +264,16 @@ match what the seed script registers). `ADMIN_WEB_ORIGIN` matters: behind Railwa
 reports the container's own address as the request origin, which put
 `redirect_uri=https://localhost:8080/auth/callback` into the authorize request until the origin was
 taken from `ADMIN_WEB_ORIGIN` / the forwarded headers (`apps/admin-web/src/lib/public-origin.ts`).
+
+`ADMIN_SIGNUP_ENABLED` (`1`/`true`) shows the public "Open your store" page (`/signup`) and its link on
+`/login`. Prerequisites — on the **runtime-api**: `TENANT_MODE=multi`, `AUTH_MODE=native` and
+`DEFAULT_PLAN_KEY` (a plan with a published version); on **admin-web**: `AUTH_MODE=native`. Without
+them the runtime answers sign-up with 503 and the page only ever shows "not available".
+**Launch blocker — do not enable it yet:** sign-up is a server-to-server call from admin-web to the
+runtime, and the API has no `trustProxy`, so the sign-up per-IP limit (5 per IP per hour) sees the
+admin-web server's address for every visitor — one shared bucket for the whole world. Before
+enabling, admin-web must forward the browser's IP in a header the runtime trusts only from admin-web
+(and the runtime must key the limit on it).
 
 In the **Ory Console** two settings that earlier local development pointed at `http://localhost:3100`
 must be reset: OAuth 2 → URLs → **Login UI**, and Branding → UI URLs → **Login UI**, both back to
