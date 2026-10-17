@@ -180,7 +180,7 @@ describe("merchant sign-up", () => {
 
     const again = await call(signup, { ...nour, email: "owner@nour.test" });
     expect(again.status).toBe(409);
-    expect(again.body).toMatchObject({ code: "EMAIL_TAKEN" });
+    expect(again.body).toMatchObject({ code: "EMAIL_TAKEN", retryable: false, fields: [] });
   });
 
   it("is refused on any tenant but the platform's", async () => {
@@ -188,6 +188,7 @@ describe("merchant sign-up", () => {
     const routes = publicMerchantRoutes(admin, { platformTenantId: PLATFORM });
     const res = await call(find(routes, "POST", SIGNUP), nour, { tenantId: "shop-x" });
     expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: "FORBIDDEN", retryable: false, fields: [] });
   });
 
   it("answers 503 SIGNUP_UNAVAILABLE when the deployment has no platform tenant", async () => {
@@ -195,7 +196,7 @@ describe("merchant sign-up", () => {
     const routes = publicMerchantRoutes(admin, { platformTenantId: undefined });
     const res = await call(find(routes, "POST", SIGNUP), nour);
     expect(res.status).toBe(503);
-    expect(res.body).toMatchObject({ code: "SIGNUP_UNAVAILABLE" });
+    expect(res.body).toMatchObject({ code: "SIGNUP_UNAVAILABLE", retryable: true, fields: [] });
   });
 
   it("answers 503 SIGNUP_UNAVAILABLE, with no internal reason, when onboarding is unavailable", async () => {
@@ -209,8 +210,31 @@ describe("merchant sign-up", () => {
     const routes = publicMerchantRoutes(stub, { platformTenantId: PLATFORM });
     const res = await call(find(routes, "POST", SIGNUP), nour);
     expect(res.status).toBe(503);
-    expect(res.body.code).toBe("SIGNUP_UNAVAILABLE");
+    expect(res.body).toMatchObject({ code: "SIGNUP_UNAVAILABLE", retryable: true, fields: [] });
     expect(JSON.stringify(res.body)).not.toContain("no-default-plan");
+  });
+
+  it("answers 503 SIGNUP_UNAVAILABLE when sign-up throws, and logs the error without the password", async () => {
+    const { admin } = await setup();
+    const stub = {
+      ...admin,
+      merchantOnboarding: {
+        signUp: () => Promise.reject(new Error("database went away")),
+      },
+    } as unknown as WiredAdmin;
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const routes = publicMerchantRoutes(stub, { platformTenantId: PLATFORM });
+      const res = await call(find(routes, "POST", SIGNUP), nour);
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({ code: "SIGNUP_UNAVAILABLE", retryable: true, fields: [] });
+      expect(JSON.stringify(res.body)).not.toContain("database went away");
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(error.mock.calls)).toContain("database went away");
+      expect(JSON.stringify(error.mock.calls)).not.toContain(nour.password);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it("answers 503 SIGNUP_UNAVAILABLE when native sign-in is not configured, and creates nothing", async () => {
@@ -345,6 +369,8 @@ describe("merchant login", () => {
     expect(wrong.body).toEqual({
       code: "INVALID_CREDENTIALS",
       message: "Email or password is incorrect",
+      retryable: false,
+      fields: [],
     });
   });
 
@@ -365,6 +391,8 @@ describe("merchant login", () => {
     expect(res.body).toEqual({
       code: "INVALID_CREDENTIALS",
       message: "Email or password is incorrect",
+      retryable: false,
+      fields: [],
     });
     expect(login).not.toHaveBeenCalled();
   });
@@ -384,7 +412,9 @@ describe("merchant login", () => {
     const login = find(publicMerchantRoutes(stub, { platformTenantId: PLATFORM }), "POST", LOGIN);
     const body = { email: "owner@nour.test", password: "x" };
     expect(await call(login, body)).toEqual({ status: 403, body: mfa.body });
-    expect((await call(login, body)).status).toBe(401);
+    const other = await call(login, body);
+    expect(other.status).toBe(401);
+    expect(other.body.code).toBe("INVALID_CREDENTIALS");
   });
 
   it("answers the same 401 when native sign-in is not configured, and tells the operator", async () => {
@@ -423,8 +453,8 @@ describe("merchant login", () => {
     });
     const login = find(routes, "POST", LOGIN);
     expect(
-      (await call(login, { email: "A@b.test", password: "x" }, { tenantId: "shop-x" })).status,
-    ).toBe(403);
+      (await call(login, { email: "A@b.test", password: "x" }, { tenantId: "shop-x" })).body.code,
+    ).toBe("FORBIDDEN");
     for (let i = 0; i < 10; i += 1) await call(login, { email: "A@b.test", password: "x" });
     const refused = await call(login, { email: "a@B.test", password: "x" });
     expect(refused.status).toBe(429);

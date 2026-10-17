@@ -2,7 +2,15 @@ import { z } from "zod";
 import { defineRoute, type RequestContext, type RouteDefinition } from "@platform/http";
 import type { RateLimiter } from "@platform/contracts";
 import { ScryptPasswordHasher } from "@platform/security";
-import { logger } from "@platform/utils";
+import {
+  AuthenticationError,
+  AuthorizationError,
+  ConflictError,
+  type DomainError,
+  logger,
+  toErrorEnvelope,
+  UnexpectedError,
+} from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./public-staff-auth-routes";
 
@@ -37,10 +45,29 @@ const LOGIN_LIMIT = 10;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const RESET_LIMIT = 5;
 
-const INVALID_CREDENTIALS = {
-  status: 401,
-  body: { code: "INVALID_CREDENTIALS", message: "Email or password is incorrect" },
-} as const;
+/**
+ * The shared flat error envelope (`toErrorEnvelope`) for the matching DomainError, with `code`
+ * overridden to this surface's wire code where the subclass's own code differs.
+ */
+function failure(status: number, error: DomainError, wireCode: string) {
+  return { status, body: { ...toErrorEnvelope(error), code: wireCode } };
+}
+
+const INVALID_CREDENTIALS = failure(
+  401,
+  new AuthenticationError("Email or password is incorrect"),
+  "INVALID_CREDENTIALS",
+);
+const EMAIL_TAKEN = failure(
+  409,
+  new ConflictError("An account with this email already exists"),
+  "EMAIL_TAKEN",
+);
+const SIGNUP_TEMPORARILY_UNAVAILABLE = failure(
+  503,
+  new UnexpectedError("Sign-up is temporarily unavailable, please try again later"),
+  "SIGNUP_UNAVAILABLE",
+);
 
 /**
  * A verify against a hash nobody can match, so a missing or half-made account costs the same time as
@@ -71,16 +98,14 @@ export function publicMerchantRoutes(
   /** 503 without a platform tenant (single mode), 403 on any other tenant, else `null`. */
   const gate = (context: RequestContext) => {
     if (platformTenantId === undefined || platformTenantId === "") {
-      return {
-        status: 503,
-        body: { code: "SIGNUP_UNAVAILABLE", message: "Merchant sign-up is not available" },
-      };
+      return failure(
+        503,
+        new UnexpectedError("Merchant sign-up is not available"),
+        "SIGNUP_UNAVAILABLE",
+      );
     }
     if (context.tenantId !== platformTenantId) {
-      return {
-        status: 403,
-        body: { code: "FORBIDDEN", message: "Not available for this store" },
-      };
+      return failure(403, new AuthorizationError("Not available for this store"), "FORBIDDEN");
     }
     return null;
   };
@@ -119,25 +144,23 @@ export function publicMerchantRoutes(
         );
         if (byEmail !== null) return byEmail;
 
-        const outcome = await admin.merchantOnboarding.signUp(body);
+        let outcome: Awaited<ReturnType<typeof admin.merchantOnboarding.signUp>>;
+        try {
+          outcome = await admin.merchantOnboarding.signUp(body);
+        } catch (error) {
+          // A step failed unexpectedly (a store write, provisioning): the next attempt with the same
+          // email resumes the half-made store. Only the error's message is logged, never the body.
+          logger.error("merchant signup failed unexpectedly; a retry with the same email resumes", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return SIGNUP_TEMPORARILY_UNAVAILABLE;
+        }
         switch (outcome.kind) {
           case "email-taken":
-            return {
-              status: 409,
-              body: {
-                code: "EMAIL_TAKEN",
-                message: "An account with this email already exists",
-              },
-            };
+            return EMAIL_TAKEN;
           case "unavailable":
             // The reason (missing plan, incomplete provisioning) is for the logs, not the wire.
-            return {
-              status: 503,
-              body: {
-                code: "SIGNUP_UNAVAILABLE",
-                message: "Sign-up is temporarily unavailable, please try again later",
-              },
-            };
+            return SIGNUP_TEMPORARILY_UNAVAILABLE;
           case "created": {
             const { tenantId, storeUrl, session } = outcome;
             if (session.status !== 200) {
