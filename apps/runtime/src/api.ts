@@ -549,6 +549,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     ...(runtime.config.PLATFORM_STORE_DOMAIN === undefined
       ? {}
       : { platformStoreDomain: runtime.config.PLATFORM_STORE_DOMAIN }),
+    ...(runtime.config.DEFAULT_PLAN_KEY === undefined
+      ? {}
+      : { defaultPlanKey: runtime.config.DEFAULT_PLAN_KEY }),
     ...(runtime.config.STOREFRONT_CNAME_TARGET === undefined
       ? {}
       : {

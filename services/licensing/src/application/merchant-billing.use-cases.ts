@@ -198,6 +198,36 @@ export class ResolveDefaultPlanVersion implements UseCase<
   }
 }
 
+export interface MerchantSubscriptionRef {
+  readonly id: string;
+  readonly status: string;
+}
+
+/**
+ * The merchant's one subscription, by its `tenantRef`: its id and status. For platform-side callers
+ * (the sign-up orchestrator resuming a trial that was created but not yet activated) — never routed.
+ */
+export class FindMerchantSubscription implements UseCase<
+  MerchantScopeInput,
+  MerchantSubscriptionRef,
+  DomainError
+> {
+  private readonly deps: MerchantBillingDeps;
+
+  constructor(deps: MerchantBillingDeps) {
+    this.deps = deps;
+  }
+
+  async execute(input: MerchantScopeInput): Promise<Result<MerchantSubscriptionRef, DomainError>> {
+    const subscription = await this.deps.subscriptions.findByTenantRef(
+      input.tenantRef,
+      input.tenantId,
+    );
+    if (subscription === null) return err(new NotFoundError("Subscription not found"));
+    return ok({ id: subscription.id.toString(), status: subscription.status });
+  }
+}
+
 export interface ChangeMerchantPlanInput extends MerchantScopeInput {
   readonly planKey: string;
 }

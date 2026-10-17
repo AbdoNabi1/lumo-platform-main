@@ -76,6 +76,7 @@ export type {
   MerchantBillingView,
   MerchantInvoiceView,
   MerchantPlanView,
+  MerchantSubscriptionRef,
 } from "./application/merchant-billing.use-cases";
 export {
   DEFAULT_DUNNING_POLICY,

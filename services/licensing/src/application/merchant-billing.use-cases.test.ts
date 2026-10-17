@@ -243,4 +243,33 @@ describe("merchant billing (platform-owned data, read and changed by the merchan
     expect(noSubscription.status).toBe(404);
     expect((await billing(app, "shop-b")).plan).toBeNull();
   });
+
+  it("findMerchantSubscription names the merchant's subscription id and status, platform-only", async () => {
+    const app = wire();
+    const { planVersionId } = await seedPlan(app, "basic", 29900);
+    const created = await app.licensing.createSubscription({
+      tenantRef: "shop-a",
+      planVersionRef: planVersionId,
+      tenantId: PLATFORM,
+    });
+    const id = (created.body as { id: string }).id;
+
+    const found = await app.licensing.findMerchantSubscription({
+      tenantRef: "shop-a",
+      tenantId: PLATFORM,
+    });
+    expect(found).toEqual({ status: 200, body: { id, status: "trial" } });
+
+    const none = await app.licensing.findMerchantSubscription({
+      tenantRef: "shop-b",
+      tenantId: PLATFORM,
+    });
+    expect(none.status).toBe(404);
+
+    const asMerchant = await app.licensing.findMerchantSubscription({
+      tenantRef: "shop-a",
+      tenantId: "shop-a",
+    });
+    expect(asMerchant.status).toBe(403);
+  });
 });

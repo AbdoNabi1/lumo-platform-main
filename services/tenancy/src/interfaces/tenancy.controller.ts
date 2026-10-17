@@ -73,6 +73,7 @@ export interface TenancyControllerDeps {
   readonly recordPendingOwner: RecordPendingOwner;
   readonly activateDirectoryEntry: ActivateDirectoryEntry;
   readonly findStaffDirectoryEntry: FindStaffDirectoryEntry;
+  readonly slugTaken: (slug: string) => Promise<boolean>;
 }
 
 /** Framework-agnostic interface boundary for Tenancy use-cases (no HTTP server). */
@@ -124,6 +125,11 @@ export class TenancyController {
    */
   async findStaffDirectoryEntry(email: string): Promise<StaffDirectoryEntryView | null> {
     return this.deps.findStaffDirectoryEntry.execute(email);
+  }
+
+  /** Whether a tenant already holds `slug` (sign-up picks a free one). Raw, like the directory reads. */
+  async slugTaken(slug: string): Promise<boolean> {
+    return this.deps.slugTaken(slug);
   }
 
   async recordPendingOwner(

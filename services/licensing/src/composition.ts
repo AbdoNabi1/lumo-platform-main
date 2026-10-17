@@ -51,6 +51,7 @@ import {
 } from "./application/licensing.use-cases";
 import {
   ChangeMerchantPlan,
+  FindMerchantSubscription,
   GetMerchantBilling,
   ListPublishedPlans,
   ResolveDefaultPlanVersion,
@@ -347,6 +348,7 @@ function buildController(
     listPublishedPlans: new ListPublishedPlans(merchantBillingDeps),
     resolveDefaultPlanVersion: new ResolveDefaultPlanVersion(merchantBillingDeps),
     changeMerchantPlan: new ChangeMerchantPlan(merchantBillingDeps),
+    findMerchantSubscription: new FindMerchantSubscription(merchantBillingDeps),
     createPlan: new CreatePlan(licensingDeps),
     createPlanDraft: new CreatePlanDraft(licensingDeps),
     schedulePlanVersion: new SchedulePlanVersion(licensingDeps),

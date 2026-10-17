@@ -87,6 +87,7 @@ import type {
 import type {
   ChangeMerchantPlan,
   ChangeMerchantPlanInput,
+  FindMerchantSubscription,
   GetMerchantBilling,
   ListPublishedPlans,
   MerchantScopeInput,
@@ -139,6 +140,7 @@ export interface LicensingControllerDeps {
   readonly listPublishedPlans: ListPublishedPlans;
   readonly resolveDefaultPlanVersion: ResolveDefaultPlanVersion;
   readonly changeMerchantPlan: ChangeMerchantPlan;
+  readonly findMerchantSubscription: FindMerchantSubscription;
   /**
    * Saved-card use cases (G-74 (1)). Present only when the deployment composes stored-method billing;
    * absent ⇒ the operations answer 404, never a silent success.
@@ -499,6 +501,13 @@ export class LicensingController {
    */
   async changeMerchantPlan(input: ChangeMerchantPlanInput): Promise<ControllerResponse> {
     return present(await this.deps.changeMerchantPlan.execute(input), 200);
+  }
+
+  /** A merchant's subscription id and status (200), or 404. Platform-only: never a merchant route. */
+  async findMerchantSubscription(input: MerchantScopeInput): Promise<ControllerResponse> {
+    return this.platformOnly(input, async () =>
+      present(await this.deps.findMerchantSubscription.execute(input), 200),
+    );
   }
 }
 

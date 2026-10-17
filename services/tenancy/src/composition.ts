@@ -171,6 +171,7 @@ function buildController(
       unitOfWork,
     }),
     findStaffDirectoryEntry: new FindStaffDirectoryEntry({ staffDirectory: repos.staffDirectory }),
+    slugTaken: async (slug) => (await repos.tenants.findBySlug(slug)) !== null,
   });
 }
 
