@@ -25,7 +25,6 @@ describe("NativeLoginForm sign-up entry", () => {
     render(<NativeLoginForm error={undefined} returnTo={undefined} signupEnabled />);
     const link = screen.getByRole("link", { name: /Open your store/ });
     expect(link.textContent).toContain(ar.brand);
-    expect(link.textContent).not.toContain("مربح");
   });
 
   it("shows the store-ready notice after ?signup=done", () => {

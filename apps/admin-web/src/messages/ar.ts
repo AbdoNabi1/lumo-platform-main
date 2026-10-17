@@ -5,7 +5,7 @@ import type { Dictionary } from "./en";
  * a compile error rather than a string that silently falls back to English.
  */
 export const ar: Dictionary = {
-  brand: "موربيه",
+  brand: "مربح",
   nav: {
     primary: "الرئيسية",
     dashboard: "الرئيسية",
@@ -1675,7 +1675,7 @@ export const ar: Dictionary = {
     storeDetails: "بيانات المتجر",
     storeName: "اسم المتجر",
     contactEmail: "إيميل التواصل مع المتجر",
-    contactEmailHint: "العملاء وموربيه بيستخدموا الإيميل ده عشان يتواصلوا معاك.",
+    contactEmailHint: "العملاء ومربح بيستخدموا الإيميل ده عشان يتواصلوا معاك.",
     standards: "المعايير والتنسيقات",
     currency: "عملة المتجر",
     currencyHint: "كل الأسعار في متجرك بتبقى بالعملة دي.",
@@ -2969,7 +2969,7 @@ export const ar: Dictionary = {
   },
   notFound: {
     title: "لم تُبنَ بعد",
-    body: "تعرض القائمة كامل واجهة التشغيل في موربيه، لكن لوحة التحكم وحدها هي المنفَّذة حتى الآن. لا توجد شاشة خلف هذه الوجهة بعد.",
+    body: "تعرض القائمة كامل واجهة التشغيل في مربح، لكن لوحة التحكم وحدها هي المنفَّذة حتى الآن. لا توجد شاشة خلف هذه الوجهة بعد.",
     backToDashboard: "العودة إلى لوحة التحكم",
   },
   forbidden: {
