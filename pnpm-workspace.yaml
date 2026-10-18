@@ -9,13 +9,24 @@ packages:
 # installed next package.json), and @fastify/swagger-ui@5.x still requests @fastify/static ^9.x.
 # Bumping @fastify/swagger-ui to its 6.x major (which pulls a patched @fastify/static) or pinning
 # an unreleased-for-next sharp major are both larger changes than this finding's fix shape.
+# 2026-10-16 (CI re-enabled after the env-docs/migration fixes): raised sharp and js-yaml to their
+# newest patched floors and added the transitive patch-level fixes below. brace-expansion is
+# overridden PER MAJOR (`@1`/`@2`/`@5` selectors), which is what the note further down said a
+# blanket override could not safely do — each consumer keeps the major it asked for.
 overrides:
-  sharp: ">=0.35.0"
+  sharp: ">=0.35.5"
   find-my-way: ">=9.6.1"
   "@fastify/static": ">=10.1.2"
   postcss: ">=8.5.23"
   nanoid: ">=3.3.18 <4"
-  js-yaml: ">=4.3.1 <5"
+  js-yaml: ">=4.3.2 <5"
+  "@grpc/grpc-js": ">=1.14.5 <2"
+  fast-uri: ">=3.1.7 <4"
+  source-map-js: ">=1.2.2 <2"
+  browserslist: ">=4.28.7 <5"
+  "brace-expansion@1": ">=1.1.20 <2"
+  "brace-expansion@2": ">=2.1.6 <3"
+  "brace-expansion@5": ">=5.0.11 <6"
 
 # Approve build scripts for these trusted dependencies. pnpm sandboxes dependency
 # build scripts by default; these are required to run (Prisma query engine, esbuild
@@ -89,3 +100,11 @@ auditConfig:
     - GHSA-rgw5-rvv9-x895
     - GHSA-4c8g-83qw-93j6
     - GHSA-ggr8-5vv4-36mx
+    # 2026-10-16: tinypool (vitest 2.x's worker pool; test runner only, absent from the --prod
+    # graph) — the fix is tinypool 2.x, which only vitest 3 uses. Revisit with the vitest 3 upgrade.
+    - GHSA-5gmw-xhrv-c9v3
+    - GHSA-85c8-ppgw-ccpr
+    # 2026-10-16: braces 3.0.3 — no patched version is published (latest is 3.0.3). Reached only
+    # via micromatch <- fast-glob <- @next/eslint-plugin-next <- @platform/eslint-config: lint
+    # tooling, no path into a built image. Revisit when braces publishes a fix.
+    - GHSA-vfj7-8cjw-p6xm
