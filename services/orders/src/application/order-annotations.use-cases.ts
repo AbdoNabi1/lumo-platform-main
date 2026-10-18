@@ -66,10 +66,18 @@ async function setArchiveState(
         ? []
         : await deps.annotations.setArchived(known, target, input.tenantId, tx),
     );
+    // An order the guarded update left alone may have been changed by a concurrent writer after the
+    // read above: answer its state AFTER the update (same tx), never that stale read.
+    const unchanged = known.filter((orderId) => !changed.has(orderId));
+    const after =
+      unchanged.length === 0
+        ? new Map<string, OrderAnnotations>()
+        : await deps.annotations.annotationsOf(unchanged, input.tenantId, tx);
     return ids.map((orderId): OrderArchiveResult => {
-      const current = before.get(orderId);
-      if (current === undefined) return { orderId, outcome: "not_found", archivedAt: null };
+      if (!before.has(orderId)) return { orderId, outcome: "not_found", archivedAt: null };
       if (changed.has(orderId)) return { orderId, outcome: "changed", archivedAt: target };
+      const current = after.get(orderId);
+      if (current === undefined) return { orderId, outcome: "not_found", archivedAt: null };
       return { orderId, outcome: "unchanged", archivedAt: current.archivedAt };
     });
   });

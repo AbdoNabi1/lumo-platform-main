@@ -138,6 +138,32 @@ describe("ArchiveOrders / UnarchiveOrders (order operations Part 1)", () => {
     expect(orders.archivedAtOf("o-0", TENANT)).toBeNull();
   });
 
+  it("answers an unchanged order's real archive time when a concurrent writer won the race", async () => {
+    const { orders } = await wire();
+    const CONCURRENT = new Date("2026-10-18T09:30:00.000Z");
+    const real = new InMemoryOrderAnnotationRepository({ orders });
+    // Between this call's read and its guarded update, another request archives o-1 first.
+    const racing = {
+      annotationsOf: real.annotationsOf.bind(real),
+      setArchived: async (...args: Parameters<typeof real.setArchived>) => {
+        orders.writeArchivedAt("o-1", TENANT, CONCURRENT);
+        return real.setArchived(...args);
+      },
+    };
+    const archive = new ArchiveOrders({
+      annotations: racing,
+      unitOfWork: new InMemoryUnitOfWork(),
+      clock: { now: () => LATER },
+    });
+
+    const result = await archive.execute(input(["o-1", "o-2"]));
+
+    expect(result.ok && result.value.results).toEqual([
+      { orderId: "o-1", outcome: "unchanged", archivedAt: CONCURRENT },
+      { orderId: "o-2", outcome: "changed", archivedAt: LATER },
+    ]);
+  });
+
   it("never touches the Order aggregate: same version, same history", async () => {
     const { archive, orders } = await wire();
     const before = await orders.findById("o-1", TENANT);
