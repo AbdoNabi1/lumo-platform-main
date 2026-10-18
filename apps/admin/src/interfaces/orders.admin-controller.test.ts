@@ -395,4 +395,35 @@ describe("OrdersAdminController", () => {
       expect(calls).toEqual(["orders.getOrder"]);
     });
   });
+  describe("archive (order operations Part 1)", () => {
+    it("archive and unarchive ask for orders:archive and pass the input through", async () => {
+      const { guard, asked } = guardAnswering(true);
+      const archiveOrders = vi.fn().mockResolvedValue({ status: 200, body: { results: [] } });
+      const unarchiveOrders = vi.fn().mockResolvedValue({ status: 200, body: { results: [] } });
+      const target = controller(guard, {
+        orders: { archiveOrders, unarchiveOrders } as unknown as OrderController,
+      });
+      const input = { tenantId: "t-1", orderIds: ["o-1"], actorRef: "staff-1" };
+
+      await target.archiveOrders(staff, input);
+      await target.unarchiveOrders(staff, input);
+
+      expect(asked).toEqual(["orders:archive", "orders:archive"]);
+      expect(archiveOrders).toHaveBeenCalledWith(input);
+      expect(unarchiveOrders).toHaveBeenCalledWith(input);
+    });
+
+    it("reads annotations under orders:read", async () => {
+      const { guard, asked } = guardAnswering(true);
+      const orderAnnotations = vi.fn().mockResolvedValue({ status: 200, body: new Map() });
+      const target = controller(guard, {
+        orders: { orderAnnotations } as unknown as OrderController,
+      });
+
+      await target.orderAnnotations(staff, { tenantId: "t-1", orderIds: ["o-1"] });
+
+      expect(asked).toEqual(["orders:read"]);
+      expect(orderAnnotations).toHaveBeenCalledWith({ tenantId: "t-1", orderIds: ["o-1"] });
+    });
+  });
 });

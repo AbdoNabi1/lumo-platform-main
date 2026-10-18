@@ -196,6 +196,35 @@ export class OrdersAdminController {
     return this.orders.listOrders(input);
   }
 
+  /** Order operations Part 1: Shopify's Archive. The order's lifecycle and version are untouched. */
+  async archiveOrders(
+    principal: Principal,
+    input: Parameters<OrderController["archiveOrders"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:archive");
+    if (denied) return denied;
+    return this.orders.archiveOrders(input);
+  }
+
+  async unarchiveOrders(
+    principal: Principal,
+    input: Parameters<OrderController["unarchiveOrders"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:archive");
+    if (denied) return denied;
+    return this.orders.unarchiveOrders(input);
+  }
+
+  /** Each order's annotations (Part 1: the archive timestamp) — part of reading an order, so `orders:read`. */
+  async orderAnnotations(
+    principal: Principal,
+    input: Parameters<OrderController["orderAnnotations"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    return this.orders.orderAnnotations(input);
+  }
+
   /**
    * The fulfillment orders of a page of orders, in ONE read (Plan 3B) — what the orders list and the
    * order page derive `fulfillmentStatus` from. Authorized as `orders:read`, not `fulfillment:read`:

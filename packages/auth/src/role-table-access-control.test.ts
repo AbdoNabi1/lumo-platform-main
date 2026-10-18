@@ -61,4 +61,15 @@ describe("RoleTableAccessControl", () => {
       ),
     ).toBe(false);
   });
+  it("operators archive and export orders; viewers do neither; cash stays admin-only (orders Part 1)", async () => {
+    const op = who(["operator"]);
+    const viewer = who(["viewer"]);
+    expect(await acl.authorize(op, "orders:archive")).toBe(true);
+    expect(await acl.authorize(op, "orders:export")).toBe(true);
+    expect(await acl.authorize(viewer, "orders:archive")).toBe(false);
+    expect(await acl.authorize(viewer, "orders:export")).toBe(false);
+    expect(await acl.authorize(viewer, "orders:read")).toBe(true);
+    expect(await acl.authorize(op, "payments:confirm_cod_collection")).toBe(false);
+    expect(await acl.authorize(who(["admin"]), "payments:confirm_cod_collection")).toBe(true);
+  });
 });

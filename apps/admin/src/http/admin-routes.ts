@@ -8,6 +8,7 @@ import type { InventoryItem, WarehouseOutput } from "@platform/inventory";
 import {
   derivePaymentStatus,
   type Order,
+  type OrderAnnotations,
   type OrderFulfillmentStatus,
   type OrderPaymentStatus,
   RefundPolicy,
@@ -18,7 +19,14 @@ import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { fulfillmentStatusesOf } from "./fulfillment-statuses-of";
 import { customerNameOf, customerNamesFor } from "./order-customer-names";
-import { listUnfulfilledOrders } from "./unfulfilled-orders";
+import {
+  ORDER_STATUS_VALUES,
+  ORDER_VIEWS,
+  listOrdersForView,
+  orderAnnotationsFor,
+  resolveOrderView,
+} from "./order-views";
+import { orderOperationsRoutes } from "./order-operations-routes";
 import { analyticsRoutes } from "./analytics-routes";
 import { salesAnalyticsRoutes } from "./sales-analytics-routes";
 import { automationRoutes } from "./automation-routes";
@@ -145,36 +153,15 @@ const createProductBody = z.object({
 });
 
 const orderIdParams = z.object({ orderId: z.string().min(1) });
-const orderStatusValues = [
-  "placed",
-  "paid",
-  "refunded",
-  "created",
-  "confirmed",
-  "cancelled",
-  "held",
-  "resumed",
-  "awaiting_payment",
-  "payment_requested",
-  "payment_received",
-  "payment_failed",
-  "ready_for_fulfillment",
-  "fulfillment_requested",
-  "fulfilled",
-  "partially_fulfilled",
-  "delivered",
-  "return_requested",
-  "returned",
-  "refund_requested",
-  "closed",
-] as const;
 const listOrdersQuery = z.object({
   first: z.coerce.number().int().min(1).max(100).optional(),
   after: z.string().min(1).optional(),
-  status: z.enum(orderStatusValues).optional(),
+  status: z.enum(ORDER_STATUS_VALUES).optional(),
   search: z.string().min(1).optional(),
   /** Plan 3D: only the open orders still waiting to be fulfilled (the Home card links here). */
   fulfillment: z.enum(["unfulfilled"]).optional(),
+  /** Order operations Part 1: Shopify's tab (all/unfulfilled/unpaid/open/archived); wins over `fulfillment`. */
+  view: z.enum(ORDER_VIEWS).optional(),
 });
 const customerIdParams = z.object({ customerId: z.string().min(1) });
 const listCustomersQuery = z.object({
@@ -211,12 +198,15 @@ export interface OrderListItemDto {
   readonly paymentStatus: OrderPaymentStatus;
   /** Plan 3B: Shopify's fulfillment status, derived from the Fulfillment context. */
   readonly fulfillmentStatus: OrderFulfillmentStatus;
+  /** Order operations Part 1: when the order was archived (Shopify's badge); null when not. */
+  readonly archivedAt: string | null;
 }
 
 function toOrderListItemDto(
   order: Order,
   fulfillmentStatus: OrderFulfillmentStatus,
   customerNames: ReadonlyMap<string, string>,
+  annotations: OrderAnnotations | undefined,
 ): OrderListItemDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
@@ -235,6 +225,7 @@ function toOrderListItemDto(
     shippingMethod: order.totals?.shippingMethod ?? null,
     paymentStatus: derivePaymentStatus(order.history),
     fulfillmentStatus,
+    archivedAt: annotations?.archivedAt?.toISOString() ?? null,
   };
 }
 
@@ -327,6 +318,8 @@ export interface OrderDetailDto {
    * which never had one).
    */
   readonly refundable: boolean;
+  /** Order operations Part 1: when the order was archived; null when not. */
+  readonly archivedAt: string | null;
 }
 
 const orderRefundPolicy = new RefundPolicy();
@@ -356,6 +349,7 @@ function toOrderDetailDto(
   paymentProvider: string | null,
   linkedPaymentStatus: string | null,
   lineImages: ReadonlyMap<string, ImageDto | null>,
+  archivedAt: Date | null,
 ): OrderDetailDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
@@ -420,6 +414,7 @@ function toOrderDetailDto(
     paymentProvider,
     shippingMethod: order.totals?.shippingMethod ?? null,
     refundable: isRefundable(order, linkedPaymentStatus),
+    archivedAt: archivedAt?.toISOString() ?? null,
   };
 }
 
@@ -1524,51 +1519,47 @@ export function adminRoutes(
       path: "/orders",
       version: 1,
       permission: "orders:read",
-      summary: "List orders, most recently placed first (cursor-paginated)",
+      summary:
+        "List orders by Shopify view (all/unfulfilled/unpaid/open/archived), most recent first",
       schema: { querystring: listOrdersQuery },
       handle: async ({ query, context }): Promise<AdminResponse> => {
-        const { fulfillment, ...listQuery } = query;
-        let response: AdminResponse;
-        let fulfillmentByOrder: ReadonlyMap<string, OrderFulfillmentStatus>;
-        if (fulfillment === "unfulfilled") {
-          const found = await listUnfulfilledOrders(
-            admin,
-            context.principal,
-            context.tenantId,
-            listQuery,
-          );
-          if (!found.ok) return found.response;
-          response = { status: 200, body: found.page };
-          fulfillmentByOrder = found.statuses;
-        } else {
-          response = await admin.orders.listOrders(context.principal, {
-            ...listQuery,
-            tenantId: context.tenantId,
-          });
-          if (response.status !== 200) return response;
-          const statuses = await fulfillmentStatusesOf(
-            admin,
-            context.principal,
-            context.tenantId,
-            (response.body as Paginated<Order>).items.map((order) => order.id.toString()),
-          );
-          if (!statuses.ok) return statuses.response;
-          fulfillmentByOrder = statuses.byOrder;
-        }
-        const orders = (response.body as Paginated<Order>).items;
+        const { view, fulfillment, ...filters } = query;
+        const found = await listOrdersForView(
+          admin,
+          context.principal,
+          context.tenantId,
+          resolveOrderView(view, fulfillment),
+          filters,
+        );
+        if (!found.ok) return found.response;
+        const orders = found.page.items;
+        const annotations = await orderAnnotationsFor(
+          admin,
+          context.principal,
+          context.tenantId,
+          orders.map((order) => order.id.toString()),
+        );
+        if (!annotations.ok) return annotations.response;
         const customerNames = await customerNamesFor(
           admin,
           context.principal,
           context.tenantId,
           orders,
         );
-        return mapPage(response, (order: Order) =>
-          toOrderListItemDto(
-            order,
-            fulfillmentByOrder.get(order.id.toString()) ?? "unfulfilled",
-            customerNames,
-          ),
-        );
+        return {
+          status: 200,
+          body: {
+            items: orders.map((order) =>
+              toOrderListItemDto(
+                order,
+                found.statuses.get(order.id.toString()) ?? "unfulfilled",
+                customerNames,
+                annotations.byOrder.get(order.id.toString()),
+              ),
+            ),
+            pageInfo: found.page.pageInfo,
+          },
+        };
       },
     }),
     defineRoute({
@@ -1591,6 +1582,10 @@ export function adminRoutes(
           order.id.toString(),
         ]);
         if (!statuses.ok) return statuses.response;
+        const annotations = await orderAnnotationsFor(admin, context.principal, context.tenantId, [
+          order.id.toString(),
+        ]);
+        if (!annotations.ok) return annotations.response;
         // How the customer pays is cosmetic: a payment that cannot be read shows as a dash, it does
         // not fail the order page.
         let paymentProvider: string | null = null;
@@ -1622,6 +1617,7 @@ export function adminRoutes(
             paymentProvider,
             linkedPaymentStatus,
             lineImages,
+            annotations.byOrder.get(order.id.toString())?.archivedAt ?? null,
           ),
         };
       },
@@ -2175,6 +2171,7 @@ export function adminRoutes(
     ...paymentsWebhookRoutes(admin),
     ...platformBillingRoutes(admin),
     ...fulfillmentRoutes(admin),
+    ...orderOperationsRoutes(admin),
     ...shippingRoutes(admin),
     ...shippingZonesRoutes(admin),
     ...taxesRoutes(admin),
