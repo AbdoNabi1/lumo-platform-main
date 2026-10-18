@@ -74,6 +74,7 @@ describe("OrdersAdminController", () => {
         "paymentIntentOf",
         "paymentIntentsOf",
         "salesReport",
+        "authorizeBulkAction",
       ]),
     );
 
@@ -90,6 +91,7 @@ describe("OrdersAdminController", () => {
         to: "2026-10-13",
         timezone: "Africa/Cairo",
         currency: "EGP",
+        action: "archive",
       });
       expect(response?.status, method).toBe(403);
     }
@@ -447,6 +449,27 @@ describe("OrdersAdminController", () => {
         tenantId: "t-1",
         paymentIntentIds: ["p-1", "p-2"],
       });
+    });
+  });
+
+  describe("authorizeBulkAction (order operations Part 1)", () => {
+    it.each([
+      ["archive", "orders:archive"],
+      ["unarchive", "orders:archive"],
+      ["fulfill", "fulfillment:create"],
+      ["capture_payments", "orders:request_payment_capture"],
+      ["mark_cod_collected", "payments:confirm_cod_collection"],
+    ] as const)("%s asks for %s", async (action, permission) => {
+      const { guard, asked } = guardAnswering(true);
+      expect(await controller(guard).authorizeBulkAction(staff, { action })).toBeNull();
+      expect(asked).toEqual([permission]);
+    });
+
+    it("answers 403 when the caller lacks the action's permission", async () => {
+      const { guard } = guardAnswering(false);
+      expect(
+        (await controller(guard).authorizeBulkAction(staff, { action: "archive" }))?.status,
+      ).toBe(403);
     });
   });
 });

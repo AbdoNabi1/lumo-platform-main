@@ -4,6 +4,7 @@ import { type OrderController, previousSalesRange, RefundPolicy } from "@platfor
 import type { PaymentController } from "@platform/payments";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
+import { BULK_ACTION_PERMISSIONS, type BulkOrderAction } from "./bulk-order-actions";
 
 export interface OrdersAdminControllerDeps {
   readonly orders: OrderController;
@@ -222,6 +223,18 @@ export class OrdersAdminController {
     const denied = await this.guard.ensure(principal, "orders:archive");
     if (denied) return denied;
     return this.orders.unarchiveOrders(input);
+  }
+
+  /**
+   * The permission of a bulk action, checked ONCE before any order is touched (spec §1.4): a viewer, or
+   * an operator asking for an admin-only action, gets one 403 instead of fifty. Each order's own call is
+   * still authorized by its controller. `null` = allowed.
+   */
+  async authorizeBulkAction(
+    principal: Principal,
+    input: { readonly action: BulkOrderAction },
+  ): Promise<AdminResponse | null> {
+    return this.guard.ensure(principal, BULK_ACTION_PERMISSIONS[input.action]);
   }
 
   /** Each order's annotations (Part 1: the archive timestamp) — part of reading an order, so `orders:read`. */
