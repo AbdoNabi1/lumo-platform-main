@@ -12,9 +12,13 @@ import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
+import { createFakePrisma } from "@platform/db/testing";
+import type { OrderAnnotationRepository } from "../domain/order-annotations";
+import { InMemoryOrderAnnotationRepository } from "./in-memory-order-annotation-repository";
 import { InMemoryOrderRepository } from "./in-memory-order-repository";
 import { InMemoryInventoryAdapter, InMemoryShippingAdapter } from "./in-memory-port-adapters";
 import { OrderEventTranslator } from "./order-event-translator";
+import { PrismaOrderAnnotationRepository } from "./prisma-order-annotation-repository";
 
 /** ADR-0014 (WP-10, T10.3): one Orders repository / port stub serves every tenant. */
 function unwrap<T>(result: { ok: boolean; value?: T }): T {
@@ -101,4 +105,47 @@ describe("orders tenant isolation via the shared harness (T10.5)", () => {
     make: orderStore,
   }))
     it(c.name, c.run);
+});
+
+// ── order operations Part 1: the archive timestamp ──────────────────────────────────────────────
+// `setArchived`/`annotationsOf` are plain `where` reads/writes, so the Prisma adapter runs over the
+// fake that applies `where` literally: it cannot pass because of RLS.
+const VICTIM = "01900000-0000-7000-8000-00000000000a";
+
+async function annotationLayers(): Promise<
+  readonly [string, OrderAnnotationRepository, unknown][]
+> {
+  const fake = createFakePrisma();
+  // fake-prisma has no column defaults: seed archivedAt explicitly, as the column's NULL.
+  await fake.database.order.create({
+    data: { id: VICTIM, tenantId: "tenant-b", archivedAt: null } as never,
+  });
+  const memoryOrders = repository();
+  await memoryOrders.save(placeOrder(VICTIM), "tenant-b");
+  return [
+    [
+      "prisma over fake-prisma",
+      new PrismaOrderAnnotationRepository({ prisma: fake.database }),
+      fake.database,
+    ],
+    ["in-memory", new InMemoryOrderAnnotationRepository({ orders: memoryOrders }), undefined],
+  ];
+}
+
+describe("order annotations tenant isolation (order operations Part 1)", () => {
+  it("tenant A can neither archive nor read tenant B's order; B can archive its own", async () => {
+    for (const [layer, annotations, tx] of await annotationLayers()) {
+      expect(await annotations.setArchived([VICTIM], new Date(1), "tenant-a", tx), layer).toEqual(
+        [],
+      );
+      expect((await annotations.annotationsOf([VICTIM], "tenant-a", tx)).size, layer).toBe(0);
+      expect(
+        (await annotations.annotationsOf([VICTIM], "tenant-b", tx)).get(VICTIM),
+        layer,
+      ).toEqual({ archivedAt: null });
+      expect(await annotations.setArchived([VICTIM], new Date(1), "tenant-b", tx), layer).toEqual([
+        VICTIM,
+      ]);
+    }
+  });
 });

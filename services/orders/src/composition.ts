@@ -17,6 +17,11 @@ import { GetSalesSummary } from "./application/get-sales-summary.use-case";
 import { ListOrders } from "./application/list-orders.use-case";
 import { MarkOrderPaid } from "./application/mark-order-paid.use-case";
 import {
+  ArchiveOrders,
+  GetOrderAnnotations,
+  UnarchiveOrders,
+} from "./application/order-annotations.use-cases";
+import {
   AdvanceOrder,
   RequestFulfillment,
   RequestPaymentCapture,
@@ -25,6 +30,7 @@ import { PlaceOrder } from "./application/place-order.use-case";
 import { RecordCheckoutPayment } from "./application/record-checkout-payment.use-case";
 import { RefundOrder } from "./application/refund-order.use-case";
 import type { SalesSummaryQuery } from "./application/sales-summary";
+import type { OrderAnnotationRepository } from "./domain/order-annotations";
 import type { OrderRepository } from "./domain/order-repository";
 import type {
   InventoryPort,
@@ -37,6 +43,7 @@ import type {
   PaymentVerificationPort,
   ShippingPort,
 } from "./application/ports";
+import { InMemoryOrderAnnotationRepository } from "./infrastructure/in-memory-order-annotation-repository";
 import { InMemoryOrderNumberAllocator } from "./infrastructure/in-memory-order-number-allocator";
 import { InMemoryOrderRepository } from "./infrastructure/in-memory-order-repository";
 import { InMemorySalesSummaryQuery } from "./infrastructure/in-memory-sales-summary-query";
@@ -52,6 +59,7 @@ import {
   ORDERS_PUBLISHED_EVENTS,
   OrderEventTranslator,
 } from "./infrastructure/order-event-translator";
+import { PrismaOrderAnnotationRepository } from "./infrastructure/prisma-order-annotation-repository";
 import { PrismaOrderNumberAllocator } from "./infrastructure/prisma-order-number-allocator";
 import { PrismaOrderRepository } from "./infrastructure/prisma-order-repository";
 import { PrismaSalesSummaryQuery } from "./infrastructure/prisma-sales-summary-query";
@@ -109,6 +117,7 @@ function buildController(
   unitOfWork: TransactionalUnitOfWork<unknown>,
   orderNumbers: OrderNumberAllocator,
   sales: SalesSummaryQuery,
+  annotations: OrderAnnotationRepository,
   deps: OrdersWiringDeps,
 ): OrderController {
   const paymentPort = deps.paymentPort ?? new InMemoryPaymentAdapter();
@@ -183,6 +192,9 @@ function buildController(
     getOrder: new GetOrder({ orders }),
     listOrders: new ListOrders({ orders }),
     getSalesSummary: new GetSalesSummary({ sales }),
+    archiveOrders: new ArchiveOrders({ annotations, unitOfWork, clock: deps.clock }),
+    unarchiveOrders: new UnarchiveOrders({ annotations, unitOfWork, clock: deps.clock }),
+    getOrderAnnotations: new GetOrderAnnotations({ annotations }),
   });
 }
 
@@ -213,6 +225,7 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
         unitOfWork,
         new PrismaOrderNumberAllocator(),
         new PrismaSalesSummaryQuery({ prisma: deps.prisma }),
+        new PrismaOrderAnnotationRepository({ prisma: deps.prisma }),
         deps,
       ),
       drainOutbox: async () => 0,
@@ -236,7 +249,11 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
     orders,
     unitOfWork,
     new InMemoryOrderNumberAllocator(),
-    new InMemorySalesSummaryQuery({ ordersOf: (tenantId) => orders.ordersOf(tenantId) }),
+    new InMemorySalesSummaryQuery({
+      ordersOf: (tenantId) => orders.ordersOf(tenantId),
+      isArchived: (orderId, tenantId) => orders.archivedAtOf(orderId, tenantId) !== null,
+    }),
+    new InMemoryOrderAnnotationRepository({ orders }),
     deps,
   );
 

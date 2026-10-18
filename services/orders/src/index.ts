@@ -4,7 +4,14 @@ export { OrderController } from "./interfaces/order.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { Order } from "./domain/order";
 export type { OrderStatus } from "./domain/order";
-export type { OrderRepository } from "./domain/order-repository";
+export type { OrderListQuery, OrderRepository } from "./domain/order-repository";
+export type { OrderAnnotationRepository, OrderAnnotations } from "./domain/order-annotations";
+export {
+  MAX_ARCHIVE_BATCH,
+  type ArchiveOrdersInput,
+  type ArchiveOrdersOutput,
+  type OrderArchiveResult,
+} from "./application/order-annotations.use-cases";
 export {
   PrismaOrderRepository,
   type PrismaOrderRepositoryDeps,

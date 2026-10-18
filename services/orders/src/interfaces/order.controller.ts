@@ -8,6 +8,13 @@ import type { SalesSummaryInput } from "../application/sales-summary";
 import type { ListOrders, ListOrdersInput } from "../application/list-orders.use-case";
 import type { MarkOrderPaid, MarkOrderPaidInput } from "../application/mark-order-paid.use-case";
 import type {
+  ArchiveOrders,
+  ArchiveOrdersInput,
+  GetOrderAnnotations,
+  GetOrderAnnotationsInput,
+  UnarchiveOrders,
+} from "../application/order-annotations.use-cases";
+import type {
   AdvanceOrder,
   AdvanceOrderInput,
   OrderIdInput,
@@ -34,6 +41,9 @@ export interface OrderControllerDeps {
   readonly getOrder: GetOrder;
   readonly listOrders: ListOrders;
   readonly getSalesSummary: GetSalesSummary;
+  readonly archiveOrders: ArchiveOrders;
+  readonly unarchiveOrders: UnarchiveOrders;
+  readonly getOrderAnnotations: GetOrderAnnotations;
 }
 
 /** Framework-agnostic interface boundary for order use-cases (no HTTP server). */
@@ -88,5 +98,19 @@ export class OrderController {
   /** The dashboard's sales figures for one range (Plan 3D); a read model, nothing is written. */
   async salesSummary(input: SalesSummaryInput): Promise<ControllerResponse> {
     return present(await this.deps.getSalesSummary.execute(input), 200);
+  }
+
+  /** Order operations Part 1: Shopify's Archive (outside the aggregate; idempotent). */
+  async archiveOrders(input: ArchiveOrdersInput): Promise<ControllerResponse> {
+    return present(await this.deps.archiveOrders.execute(input), 200);
+  }
+
+  async unarchiveOrders(input: ArchiveOrdersInput): Promise<ControllerResponse> {
+    return present(await this.deps.unarchiveOrders.execute(input), 200);
+  }
+
+  /** The annotations of a page of orders, in one read (body: `ReadonlyMap<string, OrderAnnotations>`). */
+  async orderAnnotations(input: GetOrderAnnotationsInput): Promise<ControllerResponse> {
+    return present(await this.deps.getOrderAnnotations.execute(input), 200);
   }
 }

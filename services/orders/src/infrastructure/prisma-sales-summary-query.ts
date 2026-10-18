@@ -189,7 +189,7 @@ export class PrismaSalesSummaryQuery implements SalesSummaryQuery {
     return toNumber(rows[0]?.count ?? 0);
   }
 
-  /** Every order that is neither cancelled nor closed, all-time: the candidates for "orders to fulfill". */
+  /** Every order that is neither cancelled nor closed nor archived, all-time: the candidates for "orders to fulfill". */
   private async openOrderIds(
     client: TransactionClient,
     tenantId: string,
@@ -198,6 +198,7 @@ export class PrismaSalesSummaryQuery implements SalesSummaryQuery {
       SELECT o."id"::text AS "id"
       FROM "orders"."orders" o
       WHERE o."tenant_id" = ${tenantId}
+        AND o."archived_at" IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM "orders"."order_events" e
           WHERE e."order_id" = o."id" AND e."tenant_id" = ${tenantId} AND e."type" = ANY(${CANCELLED_OR_CLOSED})

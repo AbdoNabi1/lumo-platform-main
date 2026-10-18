@@ -273,6 +273,7 @@ describe.runIf(Boolean(databaseUrl))(
       order.transition("payment_requested", nextId(), new Date());
       await new PrismaUnitOfWork(prisma).run((tx) => repository.save(order, tenantId, tx));
       const row = await prisma.order.findFirst({ where: { id, tenantId } });
+      expect(row).not.toBeNull();
       expect(row?.archivedAt).not.toBeNull();
     });
   },

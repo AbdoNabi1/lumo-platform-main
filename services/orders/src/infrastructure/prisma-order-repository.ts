@@ -203,6 +203,8 @@ export class PrismaOrderRepository implements OrderRepository {
       // The tenant is restated here so `check-prisma-tenant-where` can read it at the call site.
       where: { ...recipientSearchWhere(search, tenantId), tenantId },
       select: { orderId: true },
+      // Newest first, so when the cap bites the kept set is deterministic (and the recent orders win).
+      orderBy: { orderId: "desc" },
       take: RECIPIENT_SEARCH_CAP,
     });
     return rows.map((row) => row.orderId);
