@@ -87,6 +87,18 @@ describe("codAmountOf (spec §1.4)", () => {
       ),
     ).toBe(0);
   });
+
+  it("is 0 when the cash was already received but the order is not yet marked paid", () => {
+    expect(codAmountOf(stubOrder(), { ...cod, status: "captured" })).toBe(0);
+  });
+
+  it("is 0 for an intent that belongs to another order", () => {
+    expect(codAmountOf(stubOrder(), { ...cod, orderRef: "o-2" })).toBe(0);
+  });
+
+  it("keeps the total when the intent was cancelled but the order still waits for payment", () => {
+    expect(codAmountOf(stubOrder(), { ...cod, status: "cancelled" })).toBe(50000);
+  });
 });
 
 describe("toOrderExportRowDto", () => {

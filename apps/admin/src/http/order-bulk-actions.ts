@@ -10,6 +10,7 @@ import { logger } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import type { BulkOrderAction } from "../interfaces/bulk-order-actions";
+import { codCollectionState } from "./cod-collection";
 import { fulfillmentStatusesOf } from "./fulfillment-statuses-of";
 import { paymentIntentsOfOrders } from "./order-payment-intents";
 
@@ -186,21 +187,10 @@ const capturePaymentsRunner: BulkRunner = async (context) => {
   return { ok: true, results };
 };
 
-/** Intent statuses after which a collection can no longer be confirmed. */
-const NOT_COLLECTIBLE = new Set([
-  "captured",
-  "refunded",
-  "partially_refunded",
-  "cancelled",
-  "expired",
-  "closed",
-  "failed",
-]);
-
 /**
  * "Mark cash as received": `ConfirmCodCollection` for each pending cash-on-delivery payment of THESE
  * orders, with the amount read from the intent server-side — exactly what `confirmCodCollectionAction`
- * does for one order. Eligibility is by capability (`settledByOperatorConfirmation`), not by name.
+ * does for one order. Eligibility is `codCollectionState` — the same rule as the printed COD amount.
  */
 const markCodCollectedRunner: BulkRunner = async (context) => {
   const loaded = await loadOrders(context);
@@ -220,12 +210,7 @@ const markCodCollectedRunner: BulkRunner = async (context) => {
         return skipped(orderId, "payment_not_pending");
       const intent =
         order.paymentRef === undefined ? undefined : intents.byId.get(order.paymentRef);
-      if (
-        intent === undefined ||
-        !intent.settledByOperatorConfirmation ||
-        intent.orderRef !== orderId ||
-        NOT_COLLECTIBLE.has(intent.status)
-      ) {
+      if (intent === undefined || !codCollectionState(order, intent).canMarkCollected) {
         return skipped(orderId, "not_cash_on_delivery");
       }
       const response = await context.admin.payments.confirmCodCollection(context.principal, {

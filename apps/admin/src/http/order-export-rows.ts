@@ -8,6 +8,7 @@ import {
 } from "@platform/orders";
 import type { PaymentIntentSummary } from "@platform/payments";
 import { UnexpectedError } from "@platform/utils";
+import { codCollectionState } from "./cod-collection";
 import { customerNameOf } from "./order-customer-names";
 
 export interface OrderExportLineDto {
@@ -85,12 +86,9 @@ export interface PackingSlipFacts {
   readonly annotations: OrderAnnotations | undefined;
 }
 
-/** What the courier collects: the order total while a payment settled only by an operator's confirmation (cash on delivery) is pending. */
+/** What the courier collects: the order total while THIS order's cash-on-delivery payment is still owed (`codCollectionState`). */
 export function codAmountOf(order: Order, intent: PaymentIntentSummary | undefined): number {
-  return derivePaymentStatus(order.history) === "pending" &&
-    intent?.settledByOperatorConfirmation === true
-    ? order.totalAmount().amountMinor
-    : 0;
+  return codCollectionState(order, intent).printAmount ? order.totalAmount().amountMinor : 0;
 }
 
 function placedAt(order: Order): string {

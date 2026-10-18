@@ -228,6 +228,31 @@ describe("bulk mark_cod_collected (Mark cash as received)", () => {
     expect(admin.payments.confirmCodCollection).not.toHaveBeenCalled();
   });
 
+  it("skips a pending order whose intent is already settled, or cancelled", async () => {
+    const admin = stubAdmin([
+      order("o-1", PENDING_COD, "i-1"),
+      order("o-2", PENDING_COD, "i-2"),
+      order("o-3", PENDING_COD, "i-3"),
+    ]);
+    admin.orders.paymentIntentsOf.mockResolvedValue({
+      status: 200,
+      body: [
+        cod({ status: "refunded" }),
+        cod({ id: "i-2", orderRef: "o-2", status: "cancelled" }),
+        cod({ id: "i-3", orderRef: "o-3", status: "partially_refunded" }),
+      ],
+    });
+
+    const outcome = await run("mark_cod_collected", admin, ["o-1", "o-2", "o-3"]);
+
+    expect(outcome.ok && outcome.results).toEqual([
+      { orderId: "o-1", outcome: "skipped", reason: "not_cash_on_delivery" },
+      { orderId: "o-2", outcome: "skipped", reason: "not_cash_on_delivery" },
+      { orderId: "o-3", outcome: "skipped", reason: "not_cash_on_delivery" },
+    ]);
+    expect(admin.payments.confirmCodCollection).not.toHaveBeenCalled();
+  });
+
   it("settles nothing when the payments read fails", async () => {
     const admin = stubAdmin([order("o-1", PENDING_COD, "i-1")]);
     admin.orders.paymentIntentsOf.mockResolvedValue({ status: 503, body: {} });
