@@ -14,9 +14,12 @@ export default defineConfig({
       // 2026-10-18 re-baseline (CI): this gate never ran in CI from August to October (earlier steps
       // failed first), so coverage fell unseen. Lowered to 1pt under the CI-measured value: lines 74->71 (CI 72.68%), statements 74->71 (CI 72.68%).
       // A floor to raise again as tests are backfilled, not a new target.
+      // 2026-10-18 backfill: the Prisma adapters now run against @platform/db/testing's fake client on
+      // every run (*.fake-prisma.test.ts). Raised lines/statements 71->88: 1pt under the local value (Windows local
+      // 89.18%, a lower bound for CI, which drops type-only files from the denominator).
       thresholds: {
-        lines: 71,
-        statements: 71,
+        lines: 88,
+        statements: 88,
         functions: 77,
         branches: 80,
       },
