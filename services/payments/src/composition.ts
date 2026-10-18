@@ -21,6 +21,7 @@ import { VerifyPaymentWebhook } from "./application/verify-payment-webhook";
 import { CreatePaymentIntent } from "./application/create-payment-intent.use-case";
 import { FailPayment } from "./application/fail-payment.use-case";
 import { GetPaymentIntent } from "./application/get-payment-intent.use-case";
+import { GetPaymentIntentsByIds } from "./application/get-payment-intents-by-ids.use-case";
 import {
   AdvancePayment,
   AuthorizePayment,
@@ -43,7 +44,10 @@ import {
   type ProviderRegistration,
 } from "./application/provider-registry";
 import type { MerchantPaymentSettingsRepository } from "./domain/merchant-payment-settings-repository";
-import type { PaymentIntentRepository } from "./domain/payment-intent-repository";
+import type {
+  PaymentIntentBatchReader,
+  PaymentIntentRepository,
+} from "./domain/payment-intent-repository";
 import { composePaymentProviderRegistrations } from "./infrastructure/built-in-provider-registrations";
 import { InMemoryPaymentCredentialVault } from "./infrastructure/envelope-payment-credential-vault";
 import { InMemoryMerchantPaymentSettingsRepository } from "./infrastructure/in-memory-merchant-payment-settings-repository";
@@ -129,7 +133,7 @@ export interface WiredPayments {
 
 /** Builds the `PaymentController` from an already-wired repo + unit of work — shared by both branches so the use-case wiring is written exactly once. */
 function buildController(
-  intents: PaymentIntentRepository,
+  intents: PaymentIntentRepository & PaymentIntentBatchReader,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   processedWebhooks: ProcessedWebhookStore,
   settings: MerchantPaymentSettingsRepository,
@@ -199,6 +203,7 @@ function buildController(
       captureSettlement: capturePaymentLifecycle,
     }),
     getPaymentIntent: new GetPaymentIntent({ intents }),
+    getPaymentIntentsByIds: new GetPaymentIntentsByIds({ intents, providers }),
     confirmCodCollection: new ConfirmCodCollection({
       intents,
       unitOfWork,

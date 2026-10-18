@@ -12,7 +12,10 @@ export interface OrdersAdminControllerDeps {
    * reached under `orders:read` — see {@link OrdersAdminController.fulfillmentsOfOrders}.
    */
   readonly fulfillment: Pick<FulfillmentController, "getByOrders">;
-  readonly payments: Pick<PaymentController, "getPaymentIntent" | "refundLifecycle">;
+  readonly payments: Pick<
+    PaymentController,
+    "getPaymentIntent" | "refundLifecycle" | "getPaymentIntentsByIds"
+  >;
   readonly guard: AdminGuard;
 }
 
@@ -53,7 +56,10 @@ function conflict(message: string): AdminResponse {
  */
 async function refundOrderThroughPayments(
   orders: OrderController,
-  payments: Pick<PaymentController, "getPaymentIntent" | "refundLifecycle">,
+  payments: Pick<
+    PaymentController,
+    "getPaymentIntent" | "refundLifecycle" | "getPaymentIntentsByIds"
+  >,
   input: Parameters<OrderController["refund"]>[0],
 ): Promise<AdminResponse> {
   const found = await orders.getOrder({ tenantId: input.tenantId, orderId: input.orderId });
@@ -105,7 +111,10 @@ async function refundOrderThroughPayments(
 export class OrdersAdminController {
   private readonly orders: OrderController;
   private readonly fulfillment: Pick<FulfillmentController, "getByOrders">;
-  private readonly payments: Pick<PaymentController, "getPaymentIntent" | "refundLifecycle">;
+  private readonly payments: Pick<
+    PaymentController,
+    "getPaymentIntent" | "refundLifecycle" | "getPaymentIntentsByIds"
+  >;
   private readonly guard: AdminGuard;
 
   constructor(deps: OrdersAdminControllerDeps) {
@@ -292,5 +301,15 @@ export class OrdersAdminController {
     const denied = await this.guard.ensure(principal, "orders:read");
     if (denied) return denied;
     return this.payments.getPaymentIntent(input);
+  }
+
+  /** The payment intents of a page of orders in ONE read (order operations Part 1). `orders:read`, like `paymentIntentOf`. */
+  async paymentIntentsOf(
+    principal: Principal,
+    input: { readonly tenantId: string; readonly paymentIntentIds: readonly string[] },
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    return this.payments.getPaymentIntentsByIds(input);
   }
 }

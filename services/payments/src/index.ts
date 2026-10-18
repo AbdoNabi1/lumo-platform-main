@@ -5,6 +5,10 @@ export type { ControllerResponse } from "./interfaces/presenter";
 export { PaymentIntent } from "./domain/payment-intent";
 export type { PaymentIntentRepository } from "./domain/payment-intent-repository";
 export {
+  MAX_PAYMENT_INTENTS_PER_READ,
+  type PaymentIntentSummary,
+} from "./application/get-payment-intents-by-ids.use-case";
+export {
   PrismaPaymentIntentRepository,
   type PrismaPaymentIntentRepositoryDeps,
 } from "./infrastructure/prisma-payment-intent-repository";

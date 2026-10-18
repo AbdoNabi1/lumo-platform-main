@@ -28,3 +28,16 @@ export interface PaymentIntentRepository {
     tx?: unknown,
   ): Promise<PaymentIntent | null>;
 }
+
+/**
+ * Order operations Part 1: many intents in ONE read (the orders list, export rows, packing slips and
+ * the bulk "Mark cash as received"). A separate port so the many `PaymentIntentRepository` doubles in
+ * tests stay valid. Ids of other shops and unknown ids are simply absent from the answer.
+ */
+export interface PaymentIntentBatchReader {
+  findByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly PaymentIntent[]>;
+}

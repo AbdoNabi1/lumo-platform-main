@@ -1,6 +1,9 @@
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { PaymentIntent } from "../domain/payment-intent";
-import type { PaymentIntentRepository } from "../domain/payment-intent-repository";
+import type {
+  PaymentIntentBatchReader,
+  PaymentIntentRepository,
+} from "../domain/payment-intent-repository";
 
 export interface InMemoryPaymentIntentRepositoryDeps {
   readonly outbox: OutboxWriter;
@@ -8,7 +11,9 @@ export interface InMemoryPaymentIntentRepositoryDeps {
 }
 
 /** In-memory `PaymentIntentRepository`. Persists the aggregate and writes events to the outbox on save. ADR-0014 (WP-10, T10.3): keyed by `(tenantId, intentId)`. */
-export class InMemoryPaymentIntentRepository implements PaymentIntentRepository {
+export class InMemoryPaymentIntentRepository
+  implements PaymentIntentRepository, PaymentIntentBatchReader
+{
   private readonly store = new Map<string, Map<string, PaymentIntent>>();
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
@@ -50,5 +55,15 @@ export class InMemoryPaymentIntentRepository implements PaymentIntentRepository 
       if (intent.pspReference?.value === pspReference) return intent;
     }
     return null;
+  }
+
+  /** Mirrors `PrismaPaymentIntentRepository.findByIds`: this shop's intents among `ids`, deduped. */
+  async findByIds(ids: readonly string[], tenantId: string): Promise<readonly PaymentIntent[]> {
+    const bucket = this.store.get(tenantId);
+    if (bucket === undefined) return [];
+    return [...new Set(ids)].flatMap((id) => {
+      const intent = bucket.get(id);
+      return intent === undefined ? [] : [intent];
+    });
   }
 }

@@ -49,9 +49,9 @@ function controller(
     orders: unreachable<OrderController>("OrderController"),
     fulfillment: unreachable<Pick<FulfillmentController, "getByOrders">>("FulfillmentController"),
     payments:
-      unreachable<Pick<PaymentController, "getPaymentIntent" | "refundLifecycle">>(
-        "PaymentController",
-      ),
+      unreachable<
+        Pick<PaymentController, "getPaymentIntent" | "refundLifecycle" | "getPaymentIntentsByIds">
+      >("PaymentController"),
     guard,
     ...overrides,
   });
@@ -72,6 +72,7 @@ describe("OrdersAdminController", () => {
         "listOrders",
         "fulfillmentsOfOrders",
         "paymentIntentOf",
+        "paymentIntentsOf",
         "salesReport",
       ]),
     );
@@ -84,6 +85,7 @@ describe("OrdersAdminController", () => {
         orderId: "o-1",
         orderIds: ["o-1"],
         paymentIntentId: "p-1",
+        paymentIntentIds: ["p-1"],
         from: "2026-10-06",
         to: "2026-10-13",
         timezone: "Africa/Cairo",
@@ -214,7 +216,7 @@ describe("OrdersAdminController", () => {
       const { guard, asked } = guardAnswering(true);
       const getPaymentIntent = vi.fn().mockResolvedValue({ status: 200, body: {} });
       const target = controller(guard, {
-        payments: { getPaymentIntent, refundLifecycle: vi.fn() },
+        payments: { getPaymentIntent, refundLifecycle: vi.fn(), getPaymentIntentsByIds: vi.fn() },
       });
 
       const response = await target.paymentIntentOf(staff, {
@@ -282,7 +284,7 @@ describe("OrdersAdminController", () => {
         });
       const target = controller(guard, {
         orders: { getOrder, refund } as unknown as OrderController,
-        payments: { getPaymentIntent, refundLifecycle },
+        payments: { getPaymentIntent, refundLifecycle, getPaymentIntentsByIds: vi.fn() },
       });
       return { target, calls, asked, refund, refundLifecycle, getPaymentIntent };
     }
@@ -424,6 +426,27 @@ describe("OrdersAdminController", () => {
 
       expect(asked).toEqual(["orders:read"]);
       expect(orderAnnotations).toHaveBeenCalledWith({ tenantId: "t-1", orderIds: ["o-1"] });
+    });
+  });
+
+  describe("paymentIntentsOf (order operations Part 1)", () => {
+    it("asks for orders:read and reads every intent in one call", async () => {
+      const { guard, asked } = guardAnswering(true);
+      const getPaymentIntentsByIds = vi.fn().mockResolvedValue({ status: 200, body: [] });
+      const target = controller(guard, {
+        payments: { getPaymentIntentsByIds } as unknown as Pick<
+          PaymentController,
+          "getPaymentIntent" | "refundLifecycle" | "getPaymentIntentsByIds"
+        >,
+      });
+
+      await target.paymentIntentsOf(staff, { tenantId: "t-1", paymentIntentIds: ["p-1", "p-2"] });
+
+      expect(asked).toEqual(["orders:read"]);
+      expect(getPaymentIntentsByIds).toHaveBeenCalledWith({
+        tenantId: "t-1",
+        paymentIntentIds: ["p-1", "p-2"],
+      });
     });
   });
 });
