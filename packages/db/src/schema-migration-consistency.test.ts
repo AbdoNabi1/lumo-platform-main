@@ -322,3 +322,13 @@ describe("inventory.inventory_items and catalog.product_variants — stock per v
     expect(actual.has("inventory_policy")).toBe(true);
   });
 });
+
+describe("orders schema — order archive (order operations Part 1)", () => {
+  it("a migration adds orders.orders.archived_at", () => {
+    const sql = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+      .join("\n");
+    expect(columnsEverAddedTo("orders", "orders", sql).has("archived_at")).toBe(true);
+  });
+});

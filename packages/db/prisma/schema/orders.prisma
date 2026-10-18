@@ -16,12 +16,15 @@ model Order {
   version        Int      @default(0)
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
+  /// Order operations Part 1: Shopify's Archive. Outside the aggregate — never written by OrderMapper.
+  archivedAt     DateTime? @map("archived_at")
 
   items  OrderItem[]
   events OrderEvent[]
 
   @@unique([tenantId, orderNumber])
   @@index([tenantId, customerRef, createdAt])
+  @@index([tenantId, archivedAt])
   @@map("orders")
   @@schema("orders")
 }

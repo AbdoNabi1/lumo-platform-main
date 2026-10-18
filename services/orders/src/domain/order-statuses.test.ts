@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { OrderEventType } from "./order-event";
-import { derivePaymentStatus, isOpenOrder } from "./order-statuses";
+import {
+  derivePaymentStatus,
+  isOpenOrder,
+  NOT_OPEN_EVENT_TYPES,
+  ORDER_ENTRY_EVENT_TYPES,
+  PAYMENT_DECIDED_EVENT_TYPES,
+} from "./order-statuses";
 
 function history(...types: OrderEventType[]) {
   return types.map((type) => ({ type }));
@@ -167,5 +173,51 @@ describe("isOpenOrder (Plan 3D: an order that can still need fulfilling)", () =>
 
   it("is not open once it is closed", () => {
     expect(isOpenOrder(history("created", "delivered", "closed"))).toBe(false);
+  });
+});
+
+const EVERY_EVENT_TYPE: readonly OrderEventType[] = [
+  "placed",
+  "paid",
+  "refunded",
+  "created",
+  "confirmed",
+  "cancelled",
+  "held",
+  "resumed",
+  "awaiting_payment",
+  "payment_requested",
+  "payment_received",
+  "payment_failed",
+  "ready_for_fulfillment",
+  "fulfillment_requested",
+  "fulfilled",
+  "partially_fulfilled",
+  "delivered",
+  "return_requested",
+  "returned",
+  "refund_requested",
+  "closed",
+];
+
+describe("the event-type sets behind the list's SQL predicates (order operations Part 1)", () => {
+  it("payment is pending exactly when the history holds none of PAYMENT_DECIDED_EVENT_TYPES", () => {
+    for (const type of EVERY_EVENT_TYPE) {
+      const history: { type: OrderEventType }[] = [{ type: "created" }, { type }];
+      expect(derivePaymentStatus(history) === "pending", type).toBe(
+        !PAYMENT_DECIDED_EVENT_TYPES.includes(type),
+      );
+    }
+  });
+
+  it("an order is open exactly when the history holds none of NOT_OPEN_EVENT_TYPES", () => {
+    for (const type of EVERY_EVENT_TYPE) {
+      const history: { type: OrderEventType }[] = [{ type: "created" }, { type }];
+      expect(isOpenOrder(history), type).toBe(!NOT_OPEN_EVENT_TYPES.includes(type));
+    }
+  });
+
+  it("every order starts with placed (legacy) or created (checkout)", () => {
+    expect([...ORDER_ENTRY_EVENT_TYPES].sort()).toEqual(["created", "placed"]);
   });
 });

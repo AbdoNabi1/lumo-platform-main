@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { PrismaOutboxStore, PrismaUnitOfWork } from "@platform/db";
 import { createTestPrismaClient } from "@platform/db/testing";
@@ -12,6 +12,12 @@ import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
 import { OrderEventTranslator } from "./order-event-translator";
+import {
+  ARCHIVED_FIXTURE_KEYS,
+  buildListFixture,
+  ORDER_LIST_CASES,
+  type ListFixtureKey,
+} from "./order-list-fixture";
 import { PrismaOrderRepository } from "./prisma-order-repository";
 
 /**
@@ -204,3 +210,70 @@ describe.runIf(Boolean(databaseUrl))("PrismaOrderRepository (integration)", () =
     });
   });
 });
+
+describe.runIf(Boolean(databaseUrl))(
+  "PrismaOrderRepository list views (integration, shared cases — order operations Part 1)",
+  () => {
+    const runPrefix = crypto.randomUUID().slice(0, 8);
+    let n = 0;
+    const nextId = () => `${runPrefix}-0000-7000-8000-${(n++).toString().padStart(12, "0")}`;
+    const tenantId = `tenant-views-${runPrefix}`;
+    const fixture = buildListFixture(nextId);
+    const idOf = (key: ListFixtureKey) => {
+      const found = fixture.find((entry) => entry.key === key);
+      if (found === undefined) throw new Error(`no fixture order ${key}`);
+      return found.order.id.toString();
+    };
+    const keyOf = (id: string) => fixture.find((entry) => entry.order.id.toString() === id)?.key;
+    let prisma: ReturnType<typeof createTestPrismaClient>;
+    let repository: PrismaOrderRepository;
+
+    beforeAll(async () => {
+      prisma = createTestPrismaClient(databaseUrl);
+      repository = new PrismaOrderRepository({
+        prisma,
+        outbox: new OutboxWriter({
+          store: new PrismaOutboxStore(prisma),
+          translator: new OrderEventTranslator(),
+          serializer: new InMemoryEventSerializer(),
+          clock: { now: () => new Date() },
+          producer: "orders",
+        }),
+        context: rootEventContext({ generate: nextId }),
+      });
+      const unitOfWork = new PrismaUnitOfWork(prisma);
+      for (const { order } of fixture) {
+        await unitOfWork.run((tx) => repository.save(order, tenantId, tx));
+      }
+      for (const key of ARCHIVED_FIXTURE_KEYS) {
+        await prisma.order.updateMany({
+          where: { id: idOf(key), tenantId },
+          data: { archivedAt: new Date() },
+        });
+      }
+    });
+
+    afterAll(async () => {
+      await prisma.$disconnect();
+    });
+
+    for (const listCase of ORDER_LIST_CASES) {
+      it(listCase.name, async () => {
+        const page = await repository.list({ ...listCase.query(idOf), first: 100 }, tenantId);
+        expect(page.items.map((order) => keyOf(order.id.toString())).sort()).toEqual(
+          [...listCase.expected].sort(),
+        );
+      });
+    }
+
+    it("save() never clears archived_at", async () => {
+      const id = idOf("archivedUnpaid");
+      const order = await repository.findById(id, tenantId);
+      if (order === null) throw new Error("setup");
+      order.transition("payment_requested", nextId(), new Date());
+      await new PrismaUnitOfWork(prisma).run((tx) => repository.save(order, tenantId, tx));
+      const row = await prisma.order.findFirst({ where: { id, tenantId } });
+      expect(row?.archivedAt).not.toBeNull();
+    });
+  },
+);

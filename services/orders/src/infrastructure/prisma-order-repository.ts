@@ -1,11 +1,17 @@
 import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
-import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
+import { buildPaginatedPage, decodeCursor } from "@platform/repository";
 import type { Paginated } from "@platform/types";
 import { ConcurrencyError, UnexpectedError } from "@platform/utils";
 import { Prisma } from "@prisma/client";
 import type { Order } from "../domain/order";
 import type { OrderListQuery, OrderRepository } from "../domain/order-repository";
+import {
+  orderListWhere,
+  orderPageSize,
+  RECIPIENT_SEARCH_CAP,
+  recipientSearchWhere,
+} from "./order-list-where";
 import { OrderMapper } from "./order.mapper";
 
 /**
@@ -141,6 +147,13 @@ export class PrismaOrderRepository implements OrderRepository {
    * works unchanged in either direction. Reconstructs full aggregates (batching the one-row-per-
    * order shipping address lookup instead of N+1, since `findById` fetches it separately) — this
    * mirrors Product's `list()`, which also rehydrates full aggregates rather than a shortcut shape.
+   *
+   * Order operations Part 1: the list tabs' predicates (`archived`, `open`, `paymentStatus`, `ids`,
+   * `createdFrom`/`createdTo`) are pushed into SQL by {@link orderListWhere} — `archived_at` checks plus
+   * `EXISTS`/`NOT EXISTS` over `order_events`, built from the same event-type sets the pure status
+   * functions read — and `search` also matches the shipping recipient's name and phone (a capped
+   * first query on `order_shipping_addresses`, see {@link recipientSearchWhere}). Pages are capped by
+   * {@link orderPageSize} (250, for export), not the generic 100.
    */
   async list(query: OrderListQuery, tenantId: string, tx?: unknown): Promise<Paginated<Order>> {
     return this.scoped(tenantId, tx, (client) => this.listWith(client, query, tenantId));
@@ -151,8 +164,11 @@ export class PrismaOrderRepository implements OrderRepository {
     query: OrderListQuery,
     tenantId: string,
   ): Promise<Paginated<Order>> {
-    const limit = normalizePageSize(query.first);
+    const limit = orderPageSize(query.first);
     const after = query.after !== undefined ? decodeCursor(query.after) : undefined;
+    const search = query.search?.trim() ?? "";
+    const recipientOrderIds =
+      search.length > 0 ? await this.recipientMatches(client, tenantId, search) : [];
 
     if (query.status !== undefined) {
       return this.fetchStatusFilteredPage(
@@ -161,12 +177,35 @@ export class PrismaOrderRepository implements OrderRepository {
         after,
         limit,
         query.status,
-        query.search,
+        query,
+        recipientOrderIds,
       );
     }
 
-    const orders = await this.fetchOrders(client, tenantId, after, limit + 1, query.search);
+    const orders = await this.fetchOrders(
+      client,
+      tenantId,
+      after,
+      limit + 1,
+      query,
+      recipientOrderIds,
+    );
     return buildPaginatedPage(orders, limit, (order) => order.id.toString());
+  }
+
+  /** Step one of the recipient search (spec §1.3): the orders whose shipping recipient name or phone matches, capped. */
+  private async recipientMatches(
+    client: Database | TransactionClient,
+    tenantId: string,
+    search: string,
+  ): Promise<readonly string[]> {
+    const rows = await client.orderShippingAddress.findMany({
+      // The tenant is restated here so `check-prisma-tenant-where` can read it at the call site.
+      where: { ...recipientSearchWhere(search, tenantId), tenantId },
+      select: { orderId: true },
+      take: RECIPIENT_SEARCH_CAP,
+    });
+    return rows.map((row) => row.orderId);
   }
 
   /**
@@ -184,16 +223,25 @@ export class PrismaOrderRepository implements OrderRepository {
     after: string | undefined,
     limit: number,
     status: string,
-    search: string | undefined,
+    query: OrderListQuery,
+    recipientOrderIds: readonly string[],
   ): Promise<Paginated<Order>> {
-    const batchSize = Math.max(limit * 4, 50);
+    // An export page (250) must not turn one batch into 1,000 hydrated rows: never batch past the cap.
+    const batchSize = Math.min(Math.max(limit * 4, 50), STATUS_FILTER_SCAN_CAP);
     const matches: Order[] = [];
     let cursor = after;
     let scanned = 0;
     let exhausted = false;
 
     while (matches.length <= limit && scanned < STATUS_FILTER_SCAN_CAP) {
-      const batch = await this.fetchOrders(client, tenantId, cursor, batchSize, search);
+      const batch = await this.fetchOrders(
+        client,
+        tenantId,
+        cursor,
+        batchSize,
+        query,
+        recipientOrderIds,
+      );
       if (batch.length === 0) {
         exhausted = true;
         break;
@@ -229,29 +277,18 @@ export class PrismaOrderRepository implements OrderRepository {
     };
   }
 
-  /** Fetches `take` orders (fully hydrated) ordered `id desc`, optionally filtered by `search` (order number or customer ref, case-insensitive substring). Shared by the unfiltered and status-filtered paths. */
+  /** Fetches `take` orders (fully hydrated), `id desc`, filtered by {@link orderListWhere}. Shared by the unfiltered and status-filtered paths. */
   private async fetchOrders(
     client: Database | TransactionClient,
     tenantId: string,
     after: string | undefined,
     take: number,
-    search: string | undefined,
+    query: OrderListQuery,
+    recipientOrderIds: readonly string[],
   ): Promise<Order[]> {
-    const searchFilter =
-      search !== undefined && search.trim().length > 0
-        ? {
-            OR: [
-              { orderNumber: { contains: search.trim(), mode: "insensitive" as const } },
-              { customerRef: { contains: search.trim(), mode: "insensitive" as const } },
-            ],
-          }
-        : {};
     const rows = await client.order.findMany({
-      where: {
-        tenantId,
-        ...(after !== undefined ? { id: { lt: after } } : {}),
-        ...searchFilter,
-      },
+      // The tenant is restated here so `check-prisma-tenant-where` can read it at the call site.
+      where: { ...orderListWhere(query, tenantId, after, recipientOrderIds), tenantId },
       include: { items: true, events: { orderBy: { occurredAt: "asc" } } },
       orderBy: { id: "desc" },
       take,
