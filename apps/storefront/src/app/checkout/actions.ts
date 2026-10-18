@@ -67,6 +67,25 @@ export type DiscountCodeActionResult =
   | { readonly ok: false; readonly reason: "rejected"; readonly rejection: string }
   | { readonly ok: false; readonly reason: "ownership" | "validation" | "unavailable" | "network" };
 
+/** What the applied discounts take off the items (`order`) and off the shipping, in minor units. */
+export interface CheckoutDiscountFigures {
+  readonly order: number;
+  readonly shipping: number;
+}
+
+/**
+ * What happens after `recalculate`. On success it carries the discount figures the runtime just
+ * computed — `null` when the response did not say (an older API, an unreadable body) — so placing
+ * the order can stop before completion when they differ from what the shopper reviewed.
+ */
+export type RecalculateActionResult =
+  | {
+      readonly ok: true;
+      readonly checkoutSessionId: string;
+      readonly discounts: CheckoutDiscountFigures | null;
+    }
+  | { readonly ok: false; readonly reason: "ownership" | "validation" | "unavailable" | "network" };
+
 /**
  * `requestShippingQuote` is the one step that returns data the session DTO doesn't carry (the
  * available methods/rates to choose from) — every other action's caller already has what it needs
@@ -142,6 +161,22 @@ function codeRejection(body: unknown): string | null {
   return field === "code" && typeof message === "string" && message !== "" ? message : null;
 }
 
+/** The discount figures of a session DTO's totals, or `null` unless both are plain numbers. */
+function discountFigures(body: unknown): CheckoutDiscountFigures | null {
+  if (typeof body !== "object" || body === null) return null;
+  const { totals } = body as { readonly totals?: unknown };
+  if (typeof totals !== "object" || totals === null) return null;
+  const { discountMinor, shippingDiscountMinor } = totals as {
+    readonly discountMinor?: unknown;
+    readonly shippingDiscountMinor?: unknown;
+  };
+  if (typeof discountMinor !== "number" || !Number.isFinite(discountMinor)) return null;
+  if (typeof shippingDiscountMinor !== "number" || !Number.isFinite(shippingDiscountMinor)) {
+    return null;
+  }
+  return { order: discountMinor, shipping: shippingDiscountMinor };
+}
+
 /** The existing guest session, if any — mirrors `existingSessionRef()` in `app/cart/actions.ts`. */
 async function existingSessionRef(): Promise<string | undefined> {
   const jar = await cookies();
@@ -186,7 +221,12 @@ export async function applyDiscountCode(
   if (response.status < 200 || response.status >= 300) {
     if (response.status === 422) {
       const rejection = codeRejection(response.body);
-      if (rejection !== null) return { ok: false, reason: "rejected", rejection };
+      if (rejection !== null) {
+        // Re-entering a code the session already holds and that no longer applies makes the
+        // runtime drop it, so the chips can be stale: refresh them along with the message.
+        revalidatePath("/checkout");
+        return { ok: false, reason: "rejected", rejection };
+      }
     }
     return { ok: false, reason: mapFailureStatus(response.status) };
   }
@@ -313,10 +353,21 @@ export async function selectPayment(
   );
 }
 
-export async function recalculate(checkoutSessionId: string): Promise<CheckoutActionResult> {
-  return withSession(checkoutSessionId, (sessionRef) =>
-    recalculateCheckoutApi(checkoutSessionId, sessionRef),
-  );
+/**
+ * Recalculates the totals. The runtime answers with the session, so the result also carries the
+ * discount figures it just computed (see `RecalculateActionResult`); callers that only need
+ * `ok`/`reason` can ignore them.
+ */
+export async function recalculate(checkoutSessionId: string): Promise<RecalculateActionResult> {
+  const sessionRef = await existingSessionRef();
+  if (sessionRef === undefined) return { ok: false, reason: "ownership" };
+
+  const response = await recalculateCheckoutApi(checkoutSessionId, sessionRef);
+  if (response.status < 200 || response.status >= 300) {
+    return { ok: false, reason: mapFailureStatus(response.status) };
+  }
+  revalidatePath("/checkout");
+  return { ok: true, checkoutSessionId, discounts: discountFigures(response.body) };
 }
 
 /**

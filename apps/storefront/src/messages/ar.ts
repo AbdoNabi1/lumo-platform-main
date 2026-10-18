@@ -206,7 +206,7 @@ export const ar: Dictionary = {
       applying: "جاري التطبيق…",
       removeLabel: "إزالة الكود {code}",
       notApplicable: "غير مطبّق: {reason}",
-      codesLabel: "أكواد الخصم المطبّقة",
+      codesLabel: "أكواد الخصم",
       reasons: {
         not_found: "الكود ده مش موجود. اتأكد منه وجرّب تاني.",
         expired: "الكود ده انتهت صلاحيته.",

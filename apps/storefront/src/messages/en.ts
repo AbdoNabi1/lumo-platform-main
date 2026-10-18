@@ -202,7 +202,7 @@ export const en = {
       applying: "Applying…",
       removeLabel: "Remove code {code}",
       notApplicable: "Not applicable: {reason}",
-      codesLabel: "Applied discount codes",
+      codesLabel: "Discount codes",
       reasons: {
         not_found: "That code doesn't exist. Check it and try again.",
         expired: "This code has expired.",

@@ -412,6 +412,54 @@ describe("completeCheckout — discounts changed", () => {
   });
 });
 
+describe("recalculate — carries the fresh discount figures", () => {
+  const totals = {
+    subtotalMinor: 24000,
+    shippingMinor: 500,
+    taxMinor: 0,
+    grandTotalMinor: 21100,
+    discountMinor: 2400,
+    shippingDiscountMinor: 500,
+  };
+
+  it("returns the order and shipping discounts the runtime just computed, and revalidates", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    recalculateCheckoutApi.mockResolvedValue({ status: 200, body: session({ totals }) });
+
+    const result = await actions.recalculate("checkout-1");
+
+    expect(result).toEqual({
+      ok: true,
+      checkoutSessionId: "checkout-1",
+      discounts: { order: 2400, shipping: 500 },
+    });
+    expect(recalculateCheckoutApi).toHaveBeenCalledWith("checkout-1", "session-a");
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
+  });
+
+  it.each([
+    ["no body", null],
+    ["no totals", session()],
+    ["totals without the discount figures", { totals: { ...totals, discountMinor: undefined } }],
+    ["a non-numeric figure", { totals: { ...totals, shippingDiscountMinor: "500" } }],
+  ])("returns null discounts for %s", async (_label, body) => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    recalculateCheckoutApi.mockResolvedValue({ status: 200, body });
+
+    const result = await actions.recalculate("checkout-1");
+
+    expect(result).toEqual({ ok: true, checkoutSessionId: "checkout-1", discounts: null });
+  });
+
+  it("maps a failure status like every other action", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    recalculateCheckoutApi.mockResolvedValue({ status: 409, body: null });
+
+    expect(await actions.recalculate("checkout-1")).toEqual({ ok: false, reason: "unavailable" });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
 describe("applyDiscountCode", () => {
   const rejection = (message: string) => ({
     status: 422,
@@ -442,7 +490,15 @@ describe("applyDiscountCode", () => {
     const result = await actions.applyDiscountCode("checkout-1", "SAVE10");
 
     expect(result).toEqual({ ok: false, reason: "rejected", rejection: "minimum_not_met" });
-    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("revalidates /checkout on a rejection too: the runtime drops a re-entered code", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    applyCheckoutDiscountCode.mockResolvedValue(rejection("expired"));
+
+    await actions.applyDiscountCode("checkout-1", "SAVE10");
+
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
   });
 
   it("treats a 422 about another field, or with no readable envelope, as validation", async () => {

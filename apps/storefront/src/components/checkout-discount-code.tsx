@@ -33,27 +33,34 @@ export function CheckoutDiscountCode({
   codes,
   t,
   onError,
+  onSuccess,
 }: {
   readonly checkoutSessionId: string;
   readonly codes: readonly CheckoutDiscountCodeSummary[];
   readonly t: Dictionary;
   /** A failure other than a rejected code: shown in the page's error banner. */
   readonly onError: (reason: DiscountCodeFailure) => void;
+  /** A code was applied or removed: the page clears its (now stale) banner or notice. */
+  readonly onSuccess: () => void;
 }) {
   const id = useId();
   const [code, setCode] = useState("");
   const [rejection, setRejection] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  // Separate, so "Applying…" never shows while a chip is being removed.
+  const [isApplying, startApply] = useTransition();
+  const [isRemoving, startRemove] = useTransition();
+  const isPending = isApplying || isRemoving;
   const copy = t.checkout.discount;
 
   function onApply(): void {
     const trimmed = code.trim();
     if (trimmed === "" || isPending) return;
-    startTransition(async () => {
+    startApply(async () => {
       const result = await applyDiscountCode(checkoutSessionId, trimmed);
       if (result.ok) {
         setCode("");
         setRejection(null);
+        onSuccess();
       } else if (result.reason === "rejected") {
         setRejection(result.rejection);
       } else {
@@ -63,9 +70,11 @@ export function CheckoutDiscountCode({
   }
 
   function onRemove(removed: string): void {
-    startTransition(async () => {
+    startRemove(async () => {
       const result = await removeDiscountCode(checkoutSessionId, removed);
-      if (!result.ok) {
+      if (result.ok) {
+        onSuccess();
+      } else {
         // `CheckoutActionResult` also names order-time reasons that a removal never returns.
         onError(
           result.reason === "ownership" ||
@@ -95,7 +104,9 @@ export function CheckoutDiscountCode({
             placeholder={copy.placeholder}
             autoComplete="off"
             autoCapitalize="characters"
-            dir="ltr"
+            maxLength={64}
+            // `auto`, not `ltr`: the Arabic placeholder keeps its direction; a typed code reads LTR.
+            dir="auto"
             aria-invalid={rejection !== null ? "true" : undefined}
             aria-describedby={rejection !== null ? messageId : undefined}
             onKeyDown={(event) => {
@@ -114,9 +125,9 @@ export function CheckoutDiscountCode({
             onClick={onApply}
             variant="outline"
             disabled={code.trim() === "" || isPending}
-            loading={isPending}
+            loading={isApplying}
           >
-            {isPending ? copy.applying : copy.apply}
+            {isApplying ? copy.applying : copy.apply}
           </Button>
         </div>
         {rejection !== null && (
@@ -145,7 +156,7 @@ export function CheckoutDiscountCode({
                   aria-label={copy.removeLabel.replace("{code}", entry.code)}
                   disabled={isPending}
                   onClick={() => onRemove(entry.code)}
-                  className="hover:text-foreground -me-0.5 rounded-sm p-0.5 disabled:opacity-50"
+                  className="hover:text-foreground -me-1 inline-flex min-h-6 min-w-6 items-center justify-center rounded-sm p-1 disabled:opacity-50"
                 >
                   <XIcon aria-hidden="true" className="size-3.5" />
                 </button>

@@ -417,6 +417,11 @@ function CheckoutForm({
     return false;
   }
 
+  /** Like choosing a shipping method: a change the shopper just made supersedes the old message. */
+  function clearError(): void {
+    setError(null);
+  }
+
   /** Runs `job` after every earlier job, so address saves and the final submit never overlap. */
   function enqueue<T>(job: () => Promise<T>): Promise<T> {
     const next = queueRef.current.then(job, job);
@@ -555,6 +560,12 @@ function CheckoutForm({
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    // The discounts the shopper reviewed. Tax and recalculation below refresh them server-side and
+    // store the new snapshot, so completion's own check would compare against the refreshed one.
+    const seen = {
+      order: session.totals?.discountMinor ?? 0,
+      shipping: session.totals?.shippingDiscountMinor ?? 0,
+    };
     // 1. Contact.
     if (contactSetRef.current !== emailValue) {
       const contact = await setContactEmail(session.id, emailValue);
@@ -584,13 +595,31 @@ function CheckoutForm({
       fail(payment.reason);
       return;
     }
-    // 5-7. Tax, fresh totals, completion.
-    for (const step of [requestTax, recalculate, completeCheckout] as const) {
-      const result: CheckoutActionResult = await step(session.id);
-      if (!result.ok) {
-        fail(result.reason);
-        return;
-      }
+    // 5. Tax.
+    const taxed = await requestTax(session.id);
+    if (!taxed.ok) {
+      fail(taxed.reason);
+      return;
+    }
+    // 6. Fresh totals. Stop before completing when the discounts are no longer the ones the
+    // shopper saw (a code expired, a limit was reached): `recalculate` revalidated `/checkout`, so
+    // the new total is on screen. Only discounts are compared — tax may legitimately appear here.
+    // Unreadable figures (`null`) go on; completion's DISCOUNTS_CHANGED 409 is the backstop.
+    const recalculated = await recalculate(session.id);
+    if (!recalculated.ok) {
+      fail(recalculated.reason);
+      return;
+    }
+    const fresh = recalculated.discounts;
+    if (fresh !== null && (fresh.order !== seen.order || fresh.shipping !== seen.shipping)) {
+      fail("discounts-changed");
+      return;
+    }
+    // 7. Completion.
+    const completed: CheckoutActionResult = await completeCheckout(session.id);
+    if (!completed.ok) {
+      fail(completed.reason);
+      return;
     }
     // 8. Strictly after completion: the API only opens a payment for a completed checkout.
     setError(null);
@@ -650,6 +679,7 @@ function CheckoutForm({
               t={t}
               locale={locale}
               onError={setError}
+              onDiscountChange={clearError}
             />
           </div>
         </details>
@@ -853,6 +883,7 @@ function CheckoutForm({
             t={t}
             locale={locale}
             onError={setError}
+            onDiscountChange={clearError}
           />
         </aside>
       </div>
@@ -1123,6 +1154,7 @@ function SummaryBody({
   t,
   locale,
   onError,
+  onDiscountChange,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly quotes: readonly ShippingQuoteSummary[];
@@ -1130,6 +1162,8 @@ function SummaryBody({
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly onError: (reason: ErrorReason) => void;
+  /** A code was applied or removed: the page's banner/notice is stale. */
+  readonly onDiscountChange: () => void;
 }) {
   const shippingMinor = shippingAmount(session, quotes, selected);
   const shippingDiscountMinor = session.totals?.shippingDiscountMinor ?? 0;
@@ -1168,6 +1202,7 @@ function SummaryBody({
         codes={session.discount?.codes ?? []}
         t={t}
         onError={onError}
+        onSuccess={onDiscountChange}
       />
       <dl className="border-border flex flex-col gap-1.5 border-t pt-3 text-sm">
         <SummaryRow
