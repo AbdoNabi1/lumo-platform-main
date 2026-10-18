@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Order } from "@platform/orders";
 import type { WiredAdmin } from "../composition";
-import { customerNameOf, customerNamesFor } from "./order-customer-names";
+import {
+  customerContactsFor,
+  customerLabelsOf,
+  customerNameOf,
+  customerNamesFor,
+} from "./order-customer-names";
 
 const principal = { id: "staff-1", kind: "staff", roles: ["admin"] } as never;
 
@@ -116,5 +121,38 @@ describe("customerNamesFor", () => {
 
     expect(a.size).toBe(0);
     expect(b.size).toBe(0);
+  });
+});
+
+describe("customerContactsFor / customerLabelsOf (export emails)", () => {
+  it("reads every order's customer in ONE call and labels guests by email", async () => {
+    const contacts = [
+      { id: "c-1", name: "Alice", email: "a@example.com", isGuest: false },
+      { id: "c-2", name: "guest", email: "g@example.com", isGuest: true },
+    ];
+    const { admin, contactsOfCustomers } = adminAnswering({ status: 200, body: contacts });
+
+    const found = await customerContactsFor(admin, principal, "tenant-a", [
+      order("c-1", "Mona"),
+      order("c-2", null),
+      order("c-1", null),
+    ]);
+
+    expect(contactsOfCustomers).toHaveBeenCalledWith(principal, {
+      tenantId: "tenant-a",
+      customerIds: ["c-1", "c-2"],
+    });
+    expect(found.get("c-1")?.email).toBe("a@example.com");
+    expect([...customerLabelsOf(found)]).toEqual([
+      ["c-1", "Alice"],
+      ["c-2", "g@example.com"],
+    ]);
+  });
+
+  it("gives no contacts, rather than failing, when Identity cannot be read", async () => {
+    const { admin } = adminAnswering(new Error("down"));
+    expect(
+      (await customerContactsFor(admin, principal, "tenant-a", [order("c-1", null)])).size,
+    ).toBe(0);
   });
 });

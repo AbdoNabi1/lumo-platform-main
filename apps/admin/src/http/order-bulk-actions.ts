@@ -6,6 +6,7 @@ import {
   type Order,
 } from "@platform/orders";
 import type { Paginated } from "@platform/types";
+import { logger } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import type { BulkOrderAction } from "../interfaces/bulk-order-actions";
@@ -64,8 +65,13 @@ export function reasonOf(response: AdminResponse): string {
   return typeof body?.message === "string" ? body.message : `status ${response.status}`;
 }
 
-/** One call per order, one after another (each its own transaction); a throw fails that order only. */
+/**
+ * One call per order, one after another (each its own transaction); a throw fails that order only —
+ * and is logged (message, action, order — never a request body) so it can be found afterwards.
+ */
 async function perOrder(
+  action: BulkOrderAction,
+  tenantId: string,
   orderIds: readonly string[],
   run: (orderId: string) => Promise<BulkOrderResultDto>,
 ): Promise<BulkOrderResultDto[]> {
@@ -73,7 +79,13 @@ async function perOrder(
   for (const orderId of orderIds) {
     try {
       results.push(await run(orderId));
-    } catch {
+    } catch (error) {
+      logger.error("bulk order action failed unexpectedly", {
+        action,
+        orderId,
+        tenantId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       results.push(failed(orderId, "unexpected_error"));
     }
   }
@@ -125,7 +137,7 @@ const fulfillRunner: BulkRunner = async (context) => {
     ...loaded.byId.keys(),
   ]);
   if (!statuses.ok) return { ok: false, response: statuses.response };
-  const results = await perOrder(context.orderIds, async (orderId) => {
+  const results = await perOrder("fulfill", context.tenantId, context.orderIds, async (orderId) => {
     const order = loaded.byId.get(orderId);
     if (order === undefined) return failed(orderId, "not_found");
     if (!isOpenOrder(order.history)) return skipped(orderId, "order_not_open");
@@ -153,19 +165,24 @@ const fulfillRunner: BulkRunner = async (context) => {
 const capturePaymentsRunner: BulkRunner = async (context) => {
   const loaded = await loadOrders(context);
   if (!loaded.ok) return loaded;
-  const results = await perOrder(context.orderIds, async (orderId) => {
-    const order = loaded.byId.get(orderId);
-    if (order === undefined) return failed(orderId, "not_found");
-    if (!isOpenOrder(order.history)) return skipped(orderId, "order_not_open");
-    if (derivePaymentStatus(order.history) !== "pending")
-      return skipped(orderId, "payment_not_pending");
-    if (order.paymentRef !== undefined) return skipped(orderId, "payment_already_requested");
-    const response = await context.admin.orders.requestPaymentCapture(context.principal, {
-      tenantId: context.tenantId,
-      orderId,
-    });
-    return succeeded(response) ? done(orderId) : failed(orderId, reasonOf(response));
-  });
+  const results = await perOrder(
+    "capture_payments",
+    context.tenantId,
+    context.orderIds,
+    async (orderId) => {
+      const order = loaded.byId.get(orderId);
+      if (order === undefined) return failed(orderId, "not_found");
+      if (!isOpenOrder(order.history)) return skipped(orderId, "order_not_open");
+      if (derivePaymentStatus(order.history) !== "pending")
+        return skipped(orderId, "payment_not_pending");
+      if (order.paymentRef !== undefined) return skipped(orderId, "payment_already_requested");
+      const response = await context.admin.orders.requestPaymentCapture(context.principal, {
+        tenantId: context.tenantId,
+        orderId,
+      });
+      return succeeded(response) ? done(orderId) : failed(orderId, reasonOf(response));
+    },
+  );
   return { ok: true, results };
 };
 
@@ -192,28 +209,34 @@ const markCodCollectedRunner: BulkRunner = async (context) => {
     ...loaded.byId.values(),
   ]);
   if (!intents.ok) return intents;
-  const results = await perOrder(context.orderIds, async (orderId) => {
-    const order = loaded.byId.get(orderId);
-    if (order === undefined) return failed(orderId, "not_found");
-    if (derivePaymentStatus(order.history) !== "pending")
-      return skipped(orderId, "payment_not_pending");
-    const intent = order.paymentRef === undefined ? undefined : intents.byId.get(order.paymentRef);
-    if (
-      intent === undefined ||
-      !intent.settledByOperatorConfirmation ||
-      intent.orderRef !== orderId ||
-      NOT_COLLECTIBLE.has(intent.status)
-    ) {
-      return skipped(orderId, "not_cash_on_delivery");
-    }
-    const response = await context.admin.payments.confirmCodCollection(context.principal, {
-      tenantId: context.tenantId,
-      paymentIntentId: intent.id,
-      collectedAmountMinor: intent.amountMinor,
-      currency: intent.currency,
-    });
-    return succeeded(response) ? done(orderId) : failed(orderId, reasonOf(response));
-  });
+  const results = await perOrder(
+    "mark_cod_collected",
+    context.tenantId,
+    context.orderIds,
+    async (orderId) => {
+      const order = loaded.byId.get(orderId);
+      if (order === undefined) return failed(orderId, "not_found");
+      if (derivePaymentStatus(order.history) !== "pending")
+        return skipped(orderId, "payment_not_pending");
+      const intent =
+        order.paymentRef === undefined ? undefined : intents.byId.get(order.paymentRef);
+      if (
+        intent === undefined ||
+        !intent.settledByOperatorConfirmation ||
+        intent.orderRef !== orderId ||
+        NOT_COLLECTIBLE.has(intent.status)
+      ) {
+        return skipped(orderId, "not_cash_on_delivery");
+      }
+      const response = await context.admin.payments.confirmCodCollection(context.principal, {
+        tenantId: context.tenantId,
+        paymentIntentId: intent.id,
+        collectedAmountMinor: intent.amountMinor,
+        currency: intent.currency,
+      });
+      return succeeded(response) ? done(orderId) : failed(orderId, reasonOf(response));
+    },
+  );
   return { ok: true, results };
 };
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Order } from "@platform/orders";
 import type { PaymentIntentSummary } from "@platform/payments";
+import { logger } from "@platform/utils";
 import { BULK_RUNNERS } from "./order-bulk-actions";
 
 const principal = { id: "staff-1", kind: "staff", roles: ["admin"], tenantId: "t-1" } as never;
@@ -112,6 +113,37 @@ describe("bulk fulfill (Fulfill items)", () => {
   });
 });
 
+describe("a throw while running one order", () => {
+  it("is logged with the action and order (no bodies), fails that order and still runs the others", async () => {
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      const admin = stubAdmin([order("o-1", ["placed"]), order("o-2", ["placed"])]);
+      admin.orders.requestPaymentCapture.mockImplementation(
+        async (_p: unknown, input: { orderId: string }) => {
+          if (input.orderId === "o-1") throw new Error("db down");
+          return { status: 200, body: {} };
+        },
+      );
+
+      const outcome = await run("capture_payments", admin, ["o-1", "o-2"]);
+
+      expect(outcome.ok && outcome.results).toEqual([
+        { orderId: "o-1", outcome: "failed", reason: "unexpected_error" },
+        { orderId: "o-2", outcome: "ok" },
+      ]);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalledWith(expect.any(String), {
+        action: "capture_payments",
+        orderId: "o-1",
+        tenantId: "t-1",
+        error: "db down",
+      });
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+});
+
 describe("bulk capture_payments (Capture payments)", () => {
   it("requests payment only for open, pending orders with no linked payment", async () => {
     const admin = stubAdmin([
@@ -182,6 +214,18 @@ describe("bulk mark_cod_collected (Mark cash as received)", () => {
       collectedAmountMinor: 45000,
       currency: "EGP",
     });
+  });
+
+  it("skips a cancelled order whose cash-on-delivery payment is still pending, confirming nothing", async () => {
+    const admin = stubAdmin([order("o-1", [...PENDING_COD, "cancelled"], "i-1")]);
+    admin.orders.paymentIntentsOf.mockResolvedValue({ status: 200, body: [cod()] });
+
+    const outcome = await run("mark_cod_collected", admin, ["o-1"]);
+
+    expect(outcome.ok && outcome.results).toEqual([
+      { orderId: "o-1", outcome: "skipped", reason: "payment_not_pending" },
+    ]);
+    expect(admin.payments.confirmCodCollection).not.toHaveBeenCalled();
   });
 
   it("settles nothing when the payments read fails", async () => {
