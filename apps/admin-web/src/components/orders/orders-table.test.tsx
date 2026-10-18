@@ -340,4 +340,55 @@ describe("OrdersTable selection and bulk bar (order operations Part 1)", () => {
       "noopener",
     );
   });
+
+  it("names an unknown or missing reason with the generic text, never a raw token or an empty dash", async () => {
+    actions.runBulkOrderAction.mockResolvedValue({
+      status: "done",
+      results: [
+        { orderId: "order-1", outcome: "failed", reason: "some_future_reason" },
+        { orderId: "order-2", outcome: "skipped" },
+      ],
+    });
+    renderTable(two());
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all orders on this page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive orders" }));
+
+    await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
+    expect(screen.getByText("#1001 — Something went wrong")).toBeInTheDocument();
+    expect(screen.getByText("#1002 — Something went wrong")).toBeInTheDocument();
+    expect(screen.queryByText(/some_future_reason/)).toBeNull();
+  });
+
+  it('shows the error state, not a stuck "Working…", when the action throws (network)', async () => {
+    actions.runBulkOrderAction.mockRejectedValue(new Error("fetch failed"));
+    renderTable(two());
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all orders on this page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive orders" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(en.formErrors.unexpected),
+    );
+    expect(screen.queryByText("Working…")).toBeNull();
+  });
+
+  it("offers Export selected when the page passes its export context, preselecting the selection", () => {
+    render(
+      <OrdersTable
+        orders={two()}
+        t={en}
+        locale="en"
+        now={NOW}
+        exportContext={{ view: "all", hasFilters: false }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export selected" }));
+    expect(screen.getByRole("radio", { name: "Selected: 1 orders" })).toBeChecked();
+  });
+
+  it("has no Export selected without the export context", () => {
+    renderTable(two());
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
+    expect(screen.queryByRole("button", { name: "Export selected" })).toBeNull();
+  });
 });

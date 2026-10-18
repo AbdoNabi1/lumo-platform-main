@@ -55,7 +55,7 @@ export function OrdersBulkBar({
   readonly locale: Locale;
   readonly canMarkCashReceived: boolean;
   readonly onFinished: (outcome: BulkOutcome) => void;
-  readonly onExportSelected?: () => void;
+  readonly onExportSelected?: (() => void) | undefined;
 }) {
   const [isPending, startTransition] = useTransition();
   const b = t.ordersPage.bulk;
@@ -64,7 +64,13 @@ export function OrdersBulkBar({
 
   const run = (action: BulkOrderAction) =>
     startTransition(async () => {
-      const state = await runBulkOrderAction(action, orderIds);
+      let state: BulkActionState;
+      try {
+        state = await runBulkOrderAction(action, orderIds);
+      } catch {
+        // A thrown action (network) must end as the error state, not as a "Working…" that never clears.
+        state = { status: "error", message: t.formErrors.unexpected };
+      }
       onFinished({ state, orderNumbers });
     });
   const printSlips = () => {
@@ -176,8 +182,11 @@ export function BulkResultNote({
       .replace("{skipped}", formatNumber(locale, count("skipped"))) +
     (failed > 0 ? b.failedSuffix.replace("{failed}", formatNumber(locale, failed)) : "");
   const problems = state.results.filter((result) => result.outcome !== "ok");
+  /** An unknown or missing reason reads as the generic text — never a raw token or an empty "#1002 — ". */
   const reasonLabel = (reason: string | undefined) =>
-    reason === undefined ? "" : ((b.reasons as Record<string, string>)[reason] ?? reason);
+    (reason === undefined
+      ? undefined
+      : (b.reasons as Record<string, string | undefined>)[reason]) ?? b.reasons.unexpected_error;
 
   return (
     <div className="border-border bg-muted/40 flex items-start gap-3 border-b px-4 py-3 text-sm sm:px-5">

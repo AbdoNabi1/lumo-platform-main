@@ -107,6 +107,101 @@ export async function fetchOrdersPage(query: OrdersListQuery): Promise<FetchOrde
   };
 }
 
+export interface OrderExportLineDto {
+  readonly title: string;
+  readonly variantTitle: string | null;
+  readonly sku: string | null;
+  readonly quantity: number;
+}
+
+/** One courier row per order (`GET /orders/export-rows`, spec §1.4). */
+export interface OrderExportRowDto {
+  readonly orderId: string;
+  readonly orderNumber: string;
+  readonly createdAt: string;
+  readonly customerName: string | null;
+  readonly email: string | null;
+  readonly phone: string | null;
+  readonly line1: string;
+  readonly line2: string | null;
+  readonly city: string;
+  readonly province: string | null;
+  readonly country: string;
+  readonly items: readonly OrderExportLineDto[];
+  readonly itemCount: number;
+  readonly subtotalMinor: number;
+  readonly shippingMinor: number;
+  readonly discountMinor: number;
+  readonly totalMinor: number;
+  readonly codAmountMinor: number;
+  readonly currency: string;
+  readonly paymentStatus: OrderPaymentStatus;
+  readonly paymentProvider: string | null;
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
+  readonly shippingMethod: string | null;
+  readonly tags: readonly string[];
+  readonly note: string | null;
+}
+
+export interface OrderExportQuery {
+  readonly view?: OrderView | undefined;
+  readonly search?: string | undefined;
+  readonly status?: string | undefined;
+  readonly ids?: readonly string[] | undefined;
+  /** ISO instants (the route handler turns shop-local days into them). */
+  readonly createdFrom?: string | undefined;
+  readonly createdTo?: string | undefined;
+  readonly first?: number | undefined;
+  readonly after?: string | undefined;
+}
+
+export type FetchOrderExportRowsResult =
+  | {
+      readonly outcome: "ok";
+      readonly items: readonly OrderExportRowDto[];
+      readonly pageInfo: OrdersPageInfo;
+    }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "error"; readonly message: string };
+
+function isExportRowsPage(
+  value: unknown,
+): value is { items: readonly OrderExportRowDto[]; pageInfo: OrdersPageInfo } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { items?: unknown }).items) &&
+    typeof (value as { pageInfo?: unknown }).pageInfo === "object"
+  );
+}
+
+/** One page of export rows (`orders:export`). Server-only, like every `lib/api` call. */
+export async function fetchOrderExportRows(
+  query: OrderExportQuery,
+): Promise<FetchOrderExportRowsResult> {
+  const params = new URLSearchParams();
+  if (query.view !== undefined && query.view !== "all") params.set("view", query.view);
+  if (query.search !== undefined) params.set("search", query.search);
+  if (query.status !== undefined) params.set("status", query.status);
+  if (query.ids !== undefined) params.set("ids", query.ids.join(","));
+  if (query.createdFrom !== undefined) params.set("createdFrom", query.createdFrom);
+  if (query.createdTo !== undefined) params.set("createdTo", query.createdTo);
+  if (query.first !== undefined) params.set("first", String(query.first));
+  if (query.after !== undefined) params.set("after", query.after);
+  const result = await getAdminApi(
+    `/api/v1/orders/export-rows?${params.toString()}`,
+    isExportRowsPage,
+  );
+  if (result.outcome === "ok") {
+    return { outcome: "ok", items: result.data.items, pageInfo: result.data.pageInfo };
+  }
+  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
+  return {
+    outcome: "error",
+    message: result.outcome === "not_found" ? "Not found" : result.message,
+  };
+}
+
 export interface OrderDetailItemDto {
   readonly id: string;
   readonly productId: string;

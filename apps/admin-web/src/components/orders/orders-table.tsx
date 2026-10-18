@@ -9,6 +9,7 @@ import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import { BulkResultNote, OrdersBulkBar, type BulkOutcome } from "./orders-bulk-bar";
 import { OrderFulfillmentStatusBadge, OrderPaymentStatusBadge } from "./order-status-badge";
+import { OrdersExportDialog, type OrdersExportContext } from "./orders-export-dialog";
 
 /** Columns that only fit from the medium breakpoint up. On a phone: Order, Customer, Total, Payment status. */
 const FROM_MD = "hidden md:table-cell";
@@ -76,6 +77,7 @@ export function OrdersTable({
   locale,
   now,
   canMarkCashReceived = false,
+  exportContext,
 }: {
   readonly orders: readonly OrderListItemDto[];
   readonly t: Dictionary;
@@ -83,11 +85,14 @@ export function OrdersTable({
   readonly now?: Date;
   /** Admins only (payments stay admin-only): shows "Mark cash as received". */
   readonly canMarkCashReceived?: boolean;
+  /** What the list is showing; when given, "Export selected" opens the export dialog on the selection. */
+  readonly exportContext?: OrdersExportContext;
 }) {
   const reference = now ?? new Date();
   const pageKey = orders.map((order) => order.id).join(",");
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [outcome, setOutcome] = useState<BulkOutcome | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
 
   useEffect(() => {
     setSelected(new Set());
@@ -135,6 +140,9 @@ export function OrdersTable({
                   t={t}
                   locale={locale}
                   canMarkCashReceived={canMarkCashReceived}
+                  onExportSelected={
+                    exportContext === undefined ? undefined : () => setExportOpen(true)
+                  }
                   onFinished={(next) => {
                     setOutcome(next);
                     setSelected(new Set());
@@ -227,6 +235,16 @@ export function OrdersTable({
           })}
         </TableBody>
       </Table>
+      {exportOpen && exportContext !== undefined && (
+        <OrdersExportDialog
+          open
+          onOpenChange={setExportOpen}
+          context={exportContext}
+          selectedIds={selectedOrders.map((order) => order.id)}
+          defaultScope="selected"
+          t={t}
+        />
+      )}
     </div>
   );
 }

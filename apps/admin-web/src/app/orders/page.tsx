@@ -12,6 +12,10 @@ import {
 } from "lucide-react";
 import { Button, Card, CardContent, Skeleton } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import {
+  OrdersExportButton,
+  type OrdersExportContext,
+} from "@/components/orders/orders-export-dialog";
 import { OrdersPagination } from "@/components/orders/orders-pagination";
 import { OrdersTable } from "@/components/orders/orders-table";
 import { OrdersToolbar } from "@/components/orders/orders-toolbar";
@@ -35,6 +39,8 @@ interface OrdersPageProps {
     readonly view?: string;
     /** Plan 3D: `unfulfilled` when opened from Home's "Orders to fulfill" card. */
     readonly fulfillment?: string;
+    /** Set by the export route handler when it sends the merchant back instead of a file. */
+    readonly exportError?: string;
   }>;
 }
 
@@ -55,6 +61,16 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const view = parseOrderView(params);
   const session = await readSession();
   const canMarkCashReceived = highestRole(session?.roles ?? []) === "admin";
+  const exportContext: OrdersExportContext = {
+    view,
+    ...(params.q === undefined ? {} : { q: params.q }),
+    ...(params.status === undefined ? {} : { status: params.status }),
+    ...(params.after === undefined ? {} : { after: params.after }),
+    hasFilters: Boolean(params.q) || Boolean(params.status) || view !== "all",
+  };
+  const exportError = (["too_many", "failed", "invalid"] as const).find(
+    (error) => error === params.exportError,
+  );
 
   return (
     <AppShell t={t} locale={locale} activeNavId="orders" user={user}>
@@ -71,6 +87,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
                 </Link>
               </Button>
             )}
+            <OrdersExportButton context={exportContext} t={t} />
             <Button asChild>
               <Link href="/orders/new">
                 <PlusIcon aria-hidden="true" />
@@ -84,6 +101,15 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
 
         <OrdersToolbar t={t} />
 
+        {exportError !== undefined && (
+          <p
+            role="alert"
+            className="bg-warning-subtle text-warning-foreground rounded-2xl px-4 py-3 text-base"
+          >
+            {t.ordersExport.errors[exportError]}
+          </p>
+        )}
+
         <Suspense
           key={`${view}:${params.q ?? ""}:${params.status ?? ""}:${params.after ?? ""}`}
           fallback={<OrdersTableSkeleton />}
@@ -95,6 +121,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
             search={params.q}
             view={view}
             canMarkCashReceived={canMarkCashReceived}
+            exportContext={exportContext}
             t={t}
             locale={locale}
           />
@@ -111,6 +138,7 @@ async function OrdersResults({
   search,
   view,
   canMarkCashReceived,
+  exportContext,
   t,
   locale,
 }: {
@@ -120,6 +148,7 @@ async function OrdersResults({
   readonly search: string | undefined;
   readonly view: OrderView;
   readonly canMarkCashReceived: boolean;
+  readonly exportContext: OrdersExportContext;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
@@ -165,6 +194,7 @@ async function OrdersResults({
           t={t}
           locale={locale}
           canMarkCashReceived={canMarkCashReceived}
+          exportContext={exportContext}
         />
       </CardContent>
       <div className="border-border flex items-center justify-between border-t px-4 py-3 sm:px-5">

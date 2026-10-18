@@ -21,6 +21,7 @@ const {
   requestPaymentCapture,
   requestFulfillment,
   bulkOrders,
+  fetchOrderExportRows,
 } = await import("./orders");
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -387,5 +388,27 @@ describe("bulkOrders", () => {
     expect(url).toMatch(/\/api\/v1\/orders\/bulk$/);
     expect(JSON.parse(String(init.body))).toEqual({ action: "archive", orderIds: ["o-1"] });
     expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-1");
+  });
+});
+
+describe("fetchOrderExportRows", () => {
+  it("sends the API's own parameter names (search, not q) and the ids as one comma list", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(200, { items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchOrderExportRows({ view: "unpaid", search: "mona", ids: ["a", "b"], first: 250 });
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.pathname).toBe("/api/v1/orders/export-rows");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      view: "unpaid",
+      search: "mona",
+      ids: "a,b",
+      first: "250",
+    });
   });
 });
