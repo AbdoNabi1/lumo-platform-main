@@ -11,9 +11,15 @@ export default defineConfig({
       // under that measured baseline (a regression floor, not the target) so this gate blocks a coverage
       // DROP today without demanding an immediate backfill sprint — raise them as real tests are added;
       // never lower them to make a red run green.
+      // 2026-10-18 re-baseline (CI): this gate never ran in CI from August to October (earlier steps
+      // failed first), so coverage fell unseen. Lowered to 1pt under the CI-measured value: lines 65->63 (CI 64.47%), statements 65->63 (CI 64.47%).
+      // A floor to raise again as tests are backfilled, not a new target.
+      // 2026-10-18 backfill: the Prisma adapters now run against @platform/db/testing's fake client on
+      // every run (*.fake-prisma.test.ts). Raised lines/statements 63->90: 1pt under the local value (Windows local
+      // 91.26%, a lower bound for CI, which drops type-only files from the denominator).
       thresholds: {
-        lines: 65,
-        statements: 65,
+        lines: 90,
+        statements: 90,
         functions: 68,
         branches: 80,
       },
