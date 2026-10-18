@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { SearchIcon } from "lucide-react";
+import { FilterIcon, SearchIcon } from "lucide-react";
 import { Input, Label } from "@platform/ui";
 import type { Dictionary } from "@/messages/en";
 
@@ -98,24 +98,33 @@ export function OrdersToolbar({ t }: { readonly t: Dictionary }) {
         />
       </div>
 
-      <div className="flex items-center gap-2">
-        <Label htmlFor="orders-status-filter" className="text-muted-foreground text-sm">
-          {t.ordersPage.statusFilterLabel}
-        </Label>
-        <select
-          id="orders-status-filter"
-          value={currentStatus}
-          onChange={(event) => pushParams({ status: event.target.value })}
-          className="border-input bg-card text-foreground hover:border-foreground/40 duration-(--duration-fast) h-9 rounded-xl border px-3.5 text-base transition-colors ease-out"
-        >
-          <option value="">{t.ordersPage.allStatuses}</option>
-          {ORDER_STATUS_VALUES.map((status) => (
-            <option key={status} value={status}>
-              {(t.orderStatus as Record<string, string>)[status]}
-            </option>
-          ))}
-        </select>
-      </div>
+      <details className="relative">
+        <summary className="border-input bg-card text-foreground hover:border-foreground/40 focus-visible:ring-ring inline-flex h-9 cursor-pointer list-none items-center gap-2 rounded-xl border px-3.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 [&::-webkit-details-marker]:hidden">
+          <FilterIcon aria-hidden="true" className="size-4" />
+          {t.ordersPage.filter}
+          {currentStatus.length > 0 && (
+            <span aria-hidden="true" className="bg-primary size-2 rounded-full" />
+          )}
+        </summary>
+        <div className="border-border bg-card absolute start-0 z-20 mt-2 flex min-w-64 flex-col gap-2 rounded-xl border p-3 shadow-lg">
+          <Label htmlFor="orders-status-filter" className="text-muted-foreground text-sm">
+            {t.ordersPage.statusFilterLabel}
+          </Label>
+          <select
+            id="orders-status-filter"
+            value={currentStatus}
+            onChange={(event) => pushParams({ status: event.target.value })}
+            className="border-input bg-card text-foreground hover:border-foreground/40 duration-(--duration-fast) h-9 rounded-xl border px-3.5 text-base transition-colors ease-out"
+          >
+            <option value="">{t.ordersPage.allStatuses}</option>
+            {ORDER_STATUS_VALUES.map((status) => (
+              <option key={status} value={status}>
+                {(t.orderStatus as Record<string, string>)[status]}
+              </option>
+            ))}
+          </select>
+        </div>
+      </details>
     </div>
   );
 }

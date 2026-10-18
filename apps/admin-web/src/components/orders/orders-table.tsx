@@ -1,9 +1,13 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@platform/ui";
+import { Badge, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@platform/ui";
 import type { OrderListItemDto } from "@/lib/api/orders";
 import { formatCurrency, formatNumber, orderDateParts } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
+import { BulkResultNote, OrdersBulkBar, type BulkOutcome } from "./orders-bulk-bar";
 import { OrderFulfillmentStatusBadge, OrderPaymentStatusBadge } from "./order-status-badge";
 
 /** Columns that only fit from the medium breakpoint up. On a phone: Order, Customer, Total, Payment status. */
@@ -32,84 +36,197 @@ function deliveryLabel(method: string | null, t: Dictionary): string {
   return (t.shippingMethodLabel as Record<string, string>)[method] ?? method;
 }
 
+function SelectAllCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  label,
+}: {
+  readonly checked: boolean;
+  readonly indeterminate: boolean;
+  readonly onChange: () => void;
+  readonly label: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current !== null) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="accent-primary relative z-10 size-4"
+      checked={checked}
+      onChange={onChange}
+      aria-label={label}
+    />
+  );
+}
+
 /**
- * The orders list, like Shopify's (Plan 3B): the short number, a relative date, the customer's name,
- * the total, and the two statuses. The whole row is a link target (the Order link is stretched over
- * it) so it is clickable with a mouse and reachable by keyboard through that one link. `now` is
- * injectable so the relative date is testable.
+ * The orders list, like Shopify's: a checkbox column (select all on this page), the short number with an
+ * Archived badge, a relative date, the customer, the total and both statuses. While rows are selected the
+ * header becomes the bulk-action bar. Selection is per page: it clears whenever the page's orders change.
+ * The Order link is stretched over the row; the checkboxes sit above it (`z-10`). `now` is injectable so
+ * the relative date is testable.
  */
 export function OrdersTable({
   orders,
   t,
   locale,
   now,
+  canMarkCashReceived = false,
 }: {
   readonly orders: readonly OrderListItemDto[];
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly now?: Date;
+  /** Admins only (payments stay admin-only): shows "Mark cash as received". */
+  readonly canMarkCashReceived?: boolean;
 }) {
   const reference = now ?? new Date();
+  const pageKey = orders.map((order) => order.id).join(",");
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [outcome, setOutcome] = useState<BulkOutcome | null>(null);
+
+  useEffect(() => {
+    setSelected(new Set());
+  }, [pageKey]);
+
+  const selectedOrders = orders.filter((order) => selected.has(order.id));
+  const allSelected = orders.length > 0 && selectedOrders.length === orders.length;
+  const toggleAll = () =>
+    setSelected(allSelected ? new Set() : new Set(orders.map((order) => order.id)));
+  const toggleOne = (orderId: string) =>
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+
+  const selectAll = (
+    <SelectAllCheckbox
+      checked={allSelected}
+      indeterminate={selectedOrders.length > 0 && !allSelected}
+      onChange={toggleAll}
+      label={t.ordersPage.selectAll}
+    />
+  );
+
   return (
-    <Table aria-label={t.ordersPage.title}>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{t.ordersPage.columns.order}</TableHead>
-          <TableHead className={FROM_MD}>{t.ordersPage.columns.date}</TableHead>
-          <TableHead>{t.ordersPage.columns.customer}</TableHead>
-          <TableHead className="text-end">{t.ordersPage.columns.total}</TableHead>
-          <TableHead>{t.ordersPage.columns.paymentStatus}</TableHead>
-          <TableHead className={FROM_MD}>{t.ordersPage.columns.fulfillmentStatus}</TableHead>
-          <TableHead className={FROM_MD}>{t.ordersPage.columns.items}</TableHead>
-          <TableHead className={FROM_MD}>{t.ordersPage.columns.deliveryMethod}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {orders.map((order) => {
-          const date = orderDateParts(locale, order.createdAt, reference);
-          return (
-            <TableRow key={order.id} className="hover:bg-muted/50 relative">
-              <TableCell className="font-semibold">
-                <Link
-                  href={`/orders/${order.id}`}
-                  className="hover:text-primary focus-visible:after:ring-ring after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:ring-2"
-                  aria-label={t.ordersPage.viewOrder.replace("{orderNumber}", order.orderNumber)}
-                >
-                  #{order.orderNumber}
-                </Link>
-              </TableCell>
-              <TableCell
-                className={`text-muted-foreground whitespace-nowrap ${FROM_MD}`}
-                title={date.full}
-              >
-                {dateLabel(date, t)}
-              </TableCell>
-              <TableCell>
-                {order.customerName === null ? (
-                  <span className="text-muted-foreground">{t.ordersPage.noCustomer}</span>
-                ) : (
-                  <span className="truncate">{order.customerName}</span>
-                )}
-              </TableCell>
-              <TableCell className="text-end font-medium tabular-nums">
-                {formatCurrency(locale, order.totalMinor, order.currency)}
-              </TableCell>
-              <TableCell>
-                <OrderPaymentStatusBadge status={order.paymentStatus} t={t} />
-              </TableCell>
-              <TableCell className={FROM_MD}>
-                <OrderFulfillmentStatusBadge status={order.fulfillmentStatus} t={t} />
-              </TableCell>
-              <TableCell className={`text-muted-foreground whitespace-nowrap ${FROM_MD}`}>
-                {itemCountLabel(order.itemCount, locale, t)}
-              </TableCell>
-              <TableCell className={`text-muted-foreground ${FROM_MD}`}>
-                {deliveryLabel(order.shippingMethod, t)}
-              </TableCell>
+    <div className="flex flex-col">
+      {outcome !== null && (
+        <BulkResultNote
+          outcome={outcome}
+          t={t}
+          locale={locale}
+          onDismiss={() => setOutcome(null)}
+        />
+      )}
+      <Table aria-label={t.ordersPage.title}>
+        <TableHeader>
+          {selectedOrders.length > 0 ? (
+            <TableRow>
+              <TableHead className="w-10">{selectAll}</TableHead>
+              <TableHead colSpan={8}>
+                <OrdersBulkBar
+                  selected={selectedOrders}
+                  t={t}
+                  locale={locale}
+                  canMarkCashReceived={canMarkCashReceived}
+                  onFinished={(next) => {
+                    setOutcome(next);
+                    setSelected(new Set());
+                  }}
+                />
+              </TableHead>
             </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
+          ) : (
+            <TableRow>
+              <TableHead className="w-10">{selectAll}</TableHead>
+              <TableHead>{t.ordersPage.columns.order}</TableHead>
+              <TableHead className={FROM_MD}>{t.ordersPage.columns.date}</TableHead>
+              <TableHead>{t.ordersPage.columns.customer}</TableHead>
+              <TableHead className="text-end">{t.ordersPage.columns.total}</TableHead>
+              <TableHead>{t.ordersPage.columns.paymentStatus}</TableHead>
+              <TableHead className={FROM_MD}>{t.ordersPage.columns.fulfillmentStatus}</TableHead>
+              <TableHead className={FROM_MD}>{t.ordersPage.columns.items}</TableHead>
+              <TableHead className={FROM_MD}>{t.ordersPage.columns.deliveryMethod}</TableHead>
+            </TableRow>
+          )}
+        </TableHeader>
+        <TableBody>
+          {orders.map((order) => {
+            const date = orderDateParts(locale, order.createdAt, reference);
+            return (
+              <TableRow
+                key={order.id}
+                className="hover:bg-muted/50 relative"
+                data-state={selected.has(order.id) ? "selected" : undefined}
+              >
+                <TableCell className="relative z-10 w-10">
+                  <input
+                    type="checkbox"
+                    className="accent-primary size-4"
+                    checked={selected.has(order.id)}
+                    onChange={() => toggleOne(order.id)}
+                    aria-label={t.ordersPage.selectOrder.replace(
+                      "{orderNumber}",
+                      order.orderNumber,
+                    )}
+                  />
+                </TableCell>
+                <TableCell className="font-semibold">
+                  <span className="inline-flex items-center gap-2">
+                    <Link
+                      href={`/orders/${order.id}`}
+                      className="hover:text-primary focus-visible:after:ring-ring after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:ring-2"
+                      aria-label={t.ordersPage.viewOrder.replace(
+                        "{orderNumber}",
+                        order.orderNumber,
+                      )}
+                    >
+                      #{order.orderNumber}
+                    </Link>
+                    {order.archivedAt ? (
+                      <Badge variant="neutral">{t.ordersPage.archivedBadge}</Badge>
+                    ) : null}
+                  </span>
+                </TableCell>
+                <TableCell
+                  className={`text-muted-foreground whitespace-nowrap ${FROM_MD}`}
+                  title={date.full}
+                >
+                  {dateLabel(date, t)}
+                </TableCell>
+                <TableCell>
+                  {order.customerName === null ? (
+                    <span className="text-muted-foreground">{t.ordersPage.noCustomer}</span>
+                  ) : (
+                    <span className="truncate">{order.customerName}</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-end font-medium tabular-nums">
+                  {formatCurrency(locale, order.totalMinor, order.currency)}
+                </TableCell>
+                <TableCell>
+                  <OrderPaymentStatusBadge status={order.paymentStatus} t={t} />
+                </TableCell>
+                <TableCell className={FROM_MD}>
+                  <OrderFulfillmentStatusBadge status={order.fulfillmentStatus} t={t} />
+                </TableCell>
+                <TableCell className={`text-muted-foreground whitespace-nowrap ${FROM_MD}`}>
+                  {itemCountLabel(order.itemCount, locale, t)}
+                </TableCell>
+                <TableCell className={`text-muted-foreground ${FROM_MD}`}>
+                  {deliveryLabel(order.shippingMethod, t)}
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

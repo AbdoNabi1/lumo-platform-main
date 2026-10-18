@@ -20,6 +20,7 @@ const {
   markOrderPaid,
   requestPaymentCapture,
   requestFulfillment,
+  bulkOrders,
 } = await import("./orders");
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -354,30 +355,37 @@ describe("T5.2 write functions", () => {
   });
 });
 
-describe("fetchOrdersPage: the orders to fulfill filter (Plan 3D)", () => {
-  const emptyPage = { items: [], pageInfo: { hasNextPage: false, endCursor: null } };
-
-  it("asks only for the orders to fulfill when told to, next to the other filters", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, emptyPage));
+describe("fetchOrdersPage view (order operations Part 1)", () => {
+  it("sends ?view= for a tab, and nothing for All", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse(200, { items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
+        ),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
-    await fetchOrdersPage({ first: 20, search: "1001", fulfillment: "unfulfilled" });
+    await fetchOrdersPage({ view: "unpaid", first: 50 });
+    await fetchOrdersPage({ view: "all" });
 
-    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
-    expect(url.pathname).toBe("/api/v1/orders");
-    expect(url.searchParams.get("fulfillment")).toBe("unfulfilled");
-    expect(url.searchParams.get("search")).toBe("1001");
-    expect(url.searchParams.get("first")).toBe("20");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("view=unpaid");
+    expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain("view=");
   });
+});
 
-  it("does not send the filter when it is not asked for", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, emptyPage));
+describe("bulkOrders", () => {
+  it("posts the action and ids with the idempotency key and returns the per-order results", async () => {
+    const results = [{ orderId: "o-1", outcome: "ok" }];
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { results }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await fetchOrdersPage({ first: 20 });
+    const result = await bulkOrders("archive", ["o-1"], "key-1");
 
-    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).searchParams.has("fulfillment")).toBe(
-      false,
-    );
+    expect(result).toEqual({ outcome: "ok", data: { results } });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/v1\/orders\/bulk$/);
+    expect(JSON.parse(String(init.body))).toEqual({ action: "archive", orderIds: ["o-1"] });
+    expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-1");
   });
 });

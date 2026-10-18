@@ -6,6 +6,9 @@ export type OrderPaymentStatus = "pending" | "paid" | "refunded" | "voided";
 /** Plan 3B: Shopify's fulfillment status, derived on the server from the Fulfillment context. */
 export type OrderFulfillmentStatus = "unfulfilled" | "in_progress" | "fulfilled" | "delivered";
 
+/** Order operations Part 1: Shopify's default views of the list. */
+export type OrderView = "all" | "unfulfilled" | "unpaid" | "open" | "archived";
+
 export interface OrderListItemDto {
   readonly id: string;
   readonly orderNumber: string;
@@ -22,6 +25,8 @@ export interface OrderListItemDto {
   readonly shippingMethod: string | null;
   readonly paymentStatus: OrderPaymentStatus;
   readonly fulfillmentStatus: OrderFulfillmentStatus;
+  /** Order operations Part 1: when the order was archived; null/absent when not (an older API omits it). */
+  readonly archivedAt?: string | null;
 }
 
 export interface OrdersPageInfo {
@@ -67,8 +72,8 @@ export interface OrdersListQuery {
   readonly after?: string;
   readonly status?: string;
   readonly search?: string;
-  /** Plan 3D: only the open orders still waiting to be fulfilled (what Home's card counts). */
-  readonly fulfillment?: "unfulfilled";
+  /** Order operations Part 1: Shopify's tab; absent or "all" sends no param. */
+  readonly view?: OrderView;
 }
 
 export type FetchOrdersPageResult =
@@ -87,7 +92,7 @@ export async function fetchOrdersPage(query: OrdersListQuery): Promise<FetchOrde
   if (query.after !== undefined) params.set("after", query.after);
   if (query.status !== undefined) params.set("status", query.status);
   if (query.search !== undefined) params.set("search", query.search);
-  if (query.fulfillment !== undefined) params.set("fulfillment", query.fulfillment);
+  if (query.view !== undefined && query.view !== "all") params.set("view", query.view);
 
   const result = await getAdminApi(`/api/v1/orders?${params.toString()}`, isOrdersPageDto);
   if (result.outcome === "ok") {
@@ -387,5 +392,44 @@ export function requestFulfillment(
     orderPath(orderId, "/request-fulfillment"),
     { method: "POST", idempotencyKey },
     isUnknown,
+  );
+}
+
+/** Order operations Part 1 — the list's bulk actions (`POST /orders/bulk`, one result per order). */
+export const BULK_ORDER_ACTIONS = [
+  "archive",
+  "unarchive",
+  "fulfill",
+  "capture_payments",
+  "mark_cod_collected",
+] as const;
+export type BulkOrderAction = (typeof BULK_ORDER_ACTIONS)[number];
+
+export interface BulkOrderResultDto {
+  readonly orderId: string;
+  readonly outcome: "ok" | "skipped" | "failed";
+  readonly reason?: string;
+}
+
+function isBulkResults(
+  value: unknown,
+): value is { readonly results: readonly BulkOrderResultDto[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { results?: unknown }).results)
+  );
+}
+
+/** `POST /orders/bulk` (`idempotent: true`; the action's own permission is checked by the API). */
+export function bulkOrders(
+  action: BulkOrderAction,
+  orderIds: readonly string[],
+  idempotencyKey: string,
+): Promise<MutationResult<{ readonly results: readonly BulkOrderResultDto[] }>> {
+  return mutateAdminApi(
+    "/api/v1/orders/bulk",
+    { method: "POST", body: { action, orderIds }, idempotencyKey },
+    isBulkResults,
   );
 }

@@ -6,12 +6,16 @@ import { redirect } from "next/navigation";
 import { newIdempotencyKey, toFormState, type FormState } from "@/lib/api/mutation";
 import {
   advanceOrder,
+  bulkOrders,
+  BULK_ORDER_ACTIONS,
   createOrderFromCheckout,
   markOrderPaid,
   placeOrder,
   refundOrder,
   requestFulfillment,
   requestPaymentCapture,
+  type BulkOrderAction,
+  type BulkOrderResultDto,
   type OrderAddressInput,
   type OrderLineItemInput,
 } from "@/lib/api/orders";
@@ -310,4 +314,41 @@ export async function confirmCodCollectionAction(
     return { status: "success" };
   }
   return toFormState(result, t);
+}
+
+/** What the bulk bar shows after an action (order operations Part 1). */
+export type BulkActionState =
+  | { readonly status: "idle" }
+  | { readonly status: "done"; readonly results: readonly BulkOrderResultDto[] }
+  | { readonly status: "error"; readonly message: string };
+
+const MAX_BULK_ORDERS = 50;
+
+function isBulkOrderAction(value: string): value is BulkOrderAction {
+  return (BULK_ORDER_ACTIONS as readonly string[]).includes(value);
+}
+
+/**
+ * Runs one bulk action on the selected orders (`POST /orders/bulk`). Called directly by the client bar,
+ * so both arguments are untrusted: the action must be a known one and the ids 1..50 strings. One fresh
+ * idempotency key per click.
+ */
+export async function runBulkOrderAction(
+  action: string,
+  orderIds: readonly string[],
+): Promise<BulkActionState> {
+  const t = await formErrorDictionary();
+  const ids = [
+    ...new Set(orderIds.filter((id): id is string => typeof id === "string" && id.length > 0)),
+  ];
+  if (!isBulkOrderAction(action) || ids.length === 0 || ids.length > MAX_BULK_ORDERS) {
+    return { status: "error", message: t.invalid };
+  }
+  const result = await bulkOrders(action, ids, newIdempotencyKey());
+  if (result.outcome !== "ok") {
+    const state = toFormState(result, t);
+    return { status: "error", message: state.status === "error" ? state.message : t.unexpected };
+  }
+  revalidatePath("/orders");
+  return { status: "done", results: result.data.results };
 }

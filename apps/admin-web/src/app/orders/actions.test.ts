@@ -5,6 +5,7 @@ const payments = vi.hoisted(() => ({
   fetchPaymentIntent: vi.fn(),
   confirmCodCollection: vi.fn(),
 }));
+const orders = vi.hoisted(() => ({ bulkOrders: vi.fn() }));
 const revalidatePath = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/api/payments", () => ({
@@ -19,6 +20,8 @@ vi.mock("@/lib/api/orders", () => ({
   refundOrder: vi.fn(),
   requestFulfillment: vi.fn(),
   requestPaymentCapture: vi.fn(),
+  bulkOrders: orders.bulkOrders,
+  BULK_ORDER_ACTIONS: ["archive", "unarchive", "fulfill", "capture_payments", "mark_cod_collected"],
 }));
 vi.mock("next/cache", () => ({ revalidatePath }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
@@ -26,7 +29,7 @@ vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined }),
 }));
 
-const { confirmCodCollectionAction } = await import("./actions");
+const { confirmCodCollectionAction, runBulkOrderAction } = await import("./actions");
 
 const idle: FormState = { status: "idle" };
 
@@ -160,6 +163,41 @@ describe("confirmCodCollectionAction (Plan 3A)", () => {
       status: "error",
       message: "The collected amount must equal the amount due",
     });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("runBulkOrderAction (order operations Part 1)", () => {
+  beforeEach(() => {
+    orders.bulkOrders.mockReset().mockResolvedValue({
+      outcome: "ok",
+      data: { results: [{ orderId: "o-1", outcome: "ok" }] },
+    });
+  });
+
+  it("sends the deduped ids with one fresh key, returns the results and refreshes the list", async () => {
+    const state = await runBulkOrderAction("archive", ["o-1", "o-1"]);
+
+    expect(state).toEqual({ status: "done", results: [{ orderId: "o-1", outcome: "ok" }] });
+    expect(orders.bulkOrders).toHaveBeenCalledWith("archive", ["o-1"], expect.any(String));
+    expect(revalidatePath).toHaveBeenCalledWith("/orders");
+  });
+
+  it("refuses an unknown action, no ids or more than 50 without calling the API", async () => {
+    for (const [action, ids] of [
+      ["cancel", ["o-1"]],
+      ["archive", []],
+      ["archive", Array.from({ length: 51 }, (_, i) => `o-${i}`)],
+    ] as const) {
+      expect((await runBulkOrderAction(action, ids)).status).toBe("error");
+    }
+    expect(orders.bulkOrders).not.toHaveBeenCalled();
+  });
+
+  it("turns a 403 into the form's forbidden message and does not refresh", async () => {
+    orders.bulkOrders.mockResolvedValue({ outcome: "forbidden" });
+    const state = await runBulkOrderAction("mark_cod_collected", ["o-1"]);
+    expect(state.status).toBe("error");
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 });
