@@ -45,6 +45,7 @@ type ErrorReason =
   | "validation"
   | "unavailable"
   | "out-of-stock"
+  | "discounts-changed"
   | "network"
   | "paymentOpen"
   | "handoff";
@@ -140,6 +141,7 @@ function errorBody(reason: ErrorReason, t: Dictionary): string {
   if (reason === "validation") return t.checkout.validationErrorBody;
   if (reason === "unavailable") return t.checkout.unavailableErrorBody;
   if (reason === "out-of-stock") return t.checkout.outOfStock;
+  if (reason === "discounts-changed") return t.checkout.discountsChanged;
   if (reason === "paymentOpen") return t.checkout.paymentOpenError;
   if (reason === "handoff") return t.checkout.paymentHandoffError;
   return t.checkout.networkErrorBody;

@@ -8,11 +8,13 @@ import {
   GUEST_SESSION_COOKIE,
 } from "@/lib/cart";
 import {
+  applyCheckoutDiscountCode,
   completeCheckout as completeCheckoutApi,
   getCurrentCart,
   initiateCheckoutPayment,
   loadCheckoutItems,
   recalculateCheckout as recalculateCheckoutApi,
+  removeCheckoutDiscountCode,
   requestCheckoutShippingQuote,
   requestCheckoutTax,
   selectCheckoutPayment,
@@ -43,9 +45,27 @@ export type CheckoutActionResult =
       /** `"ownership"`: no session cookie, or the Runtime API 404'd (stale/cross-session cookie).
        * `"validation"`: the Runtime API 422'd. `"unavailable"`: the Runtime API 409'd (the session
        * can no longer be modified). `"out-of-stock"` (Plan 2B-3): completion refused because a line
-       * is not in stock in the chosen quantity. `"network"`: unreachable or an unexpected status. */
-      readonly reason: "ownership" | "validation" | "unavailable" | "out-of-stock" | "network";
+       * is not in stock in the chosen quantity. `"discounts-changed"` (Discounts Part 3): completion
+       * refused because the discounts no longer give the total the shopper reviewed; the session
+       * was revalidated, so the new total is on screen. `"network"`: unreachable or an unexpected status. */
+      readonly reason:
+        | "ownership"
+        | "validation"
+        | "unavailable"
+        | "out-of-stock"
+        | "discounts-changed"
+        | "network";
     };
+
+/**
+ * What happens after `applyDiscountCode`. `"rejected"` carries the runtime's stable reason token
+ * (`minimum_not_met`, `expired`, …) for the caller to word; the other reasons are as in
+ * `CheckoutActionResult`.
+ */
+export type DiscountCodeActionResult =
+  | { readonly ok: true; readonly checkoutSessionId: string }
+  | { readonly ok: false; readonly reason: "rejected"; readonly rejection: string }
+  | { readonly ok: false; readonly reason: "ownership" | "validation" | "unavailable" | "network" };
 
 /**
  * `requestShippingQuote` is the one step that returns data the session DTO doesn't carry (the
@@ -105,6 +125,23 @@ function isOutOfStock(body: unknown): boolean {
   return typeof message === "string" && message.startsWith("OUT_OF_STOCK:");
 }
 
+function isDiscountsChanged(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false;
+  const { message } = body as { readonly message?: unknown };
+  return typeof message === "string" && message.startsWith("DISCOUNTS_CHANGED:");
+}
+
+/** The reason token of a 422 about the `code` field, or `null` for any other envelope. */
+function codeRejection(body: unknown): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const { fields } = body as { readonly fields?: unknown };
+  if (!Array.isArray(fields)) return null;
+  const first: unknown = fields[0];
+  if (typeof first !== "object" || first === null) return null;
+  const { field, message } = first as { readonly field?: unknown; readonly message?: unknown };
+  return field === "code" && typeof message === "string" && message !== "" ? message : null;
+}
+
 /** The existing guest session, if any — mirrors `existingSessionRef()` in `app/cart/actions.ts`. */
 async function existingSessionRef(): Promise<string | undefined> {
   const jar = await cookies();
@@ -129,6 +166,41 @@ async function withSession(
   }
   revalidatePath("/checkout");
   return { ok: true, checkoutSessionId };
+}
+
+/**
+ * Applies a discount code the shopper typed. Only the trimmed code is sent — never an amount — and
+ * the runtime answers a code it will not take with a 422 whose first field error is the `code`
+ * field and whose message is the reason token. A blank code is refused here, without a call.
+ */
+export async function applyDiscountCode(
+  checkoutSessionId: string,
+  code: string,
+): Promise<DiscountCodeActionResult> {
+  const sessionRef = await existingSessionRef();
+  if (sessionRef === undefined) return { ok: false, reason: "ownership" };
+  const trimmed = code.trim();
+  if (trimmed === "") return { ok: false, reason: "validation" };
+
+  const response = await applyCheckoutDiscountCode(checkoutSessionId, sessionRef, trimmed);
+  if (response.status < 200 || response.status >= 300) {
+    if (response.status === 422) {
+      const rejection = codeRejection(response.body);
+      if (rejection !== null) return { ok: false, reason: "rejected", rejection };
+    }
+    return { ok: false, reason: mapFailureStatus(response.status) };
+  }
+  revalidatePath("/checkout");
+  return { ok: true, checkoutSessionId };
+}
+
+export async function removeDiscountCode(
+  checkoutSessionId: string,
+  code: string,
+): Promise<CheckoutActionResult> {
+  return withSession(checkoutSessionId, (sessionRef) =>
+    removeCheckoutDiscountCode(checkoutSessionId, sessionRef, code),
+  );
 }
 
 /**
@@ -268,6 +340,12 @@ export async function completeCheckout(checkoutSessionId: string): Promise<Check
     // starts `OUT_OF_STOCK:` — a different outcome from "the session can no longer be modified".
     if (response.status === 409 && isOutOfStock(response.body)) {
       return { ok: false, reason: "out-of-stock" };
+    }
+    // Discounts Part 3: the discounts no longer give the total the shopper reviewed. The session's
+    // totals changed, so refresh them before the caller shows the notice.
+    if (response.status === 409 && isDiscountsChanged(response.body)) {
+      revalidatePath("/checkout");
+      return { ok: false, reason: "discounts-changed" };
     }
     return { ok: false, reason: mapFailureStatus(response.status) };
   }

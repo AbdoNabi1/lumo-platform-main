@@ -216,6 +216,8 @@ export const en = {
     unavailableErrorBody: "This checkout can no longer be changed. Start again from your cart.",
     outOfStock:
       "Some items in your cart are no longer available in the quantity you chose. Update your cart and try again.",
+    discountsChanged:
+      "Your discounts changed, so the total was updated. Review it and place your order again.",
     networkErrorBody: "Couldn't reach the checkout service. Try again.",
     confirmation: {
       title: "Thanks for your order",
