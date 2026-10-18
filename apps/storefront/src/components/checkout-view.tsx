@@ -37,6 +37,7 @@ import type {
   ShippingQuoteSummary,
 } from "@/lib/runtime-api";
 import type { Dictionary } from "@/messages/en";
+import { CheckoutDiscountCode } from "./checkout-discount-code";
 import { LineThumb } from "./line-thumb";
 
 /** `"paymentOpen"` / `"handoff"` only ever follow a PLACED order — see `openPaymentFor`. */
@@ -186,8 +187,13 @@ function ErrorBanner({
   return (
     <div
       ref={bannerRef}
-      role="alert"
-      className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
+      // Changed discounts are news, not a failure: the summary already shows the new total.
+      role={reason === "discounts-changed" ? "status" : "alert"}
+      className={
+        reason === "discounts-changed"
+          ? "border-border bg-muted rounded-md border px-3 py-2 text-sm"
+          : "border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
+      }
     >
       {errorBody(reason, t)}
       {reason === "out-of-stock" && (
@@ -643,6 +649,7 @@ function CheckoutForm({
               selected={selectedMethod}
               t={t}
               locale={locale}
+              onError={setError}
             />
           </div>
         </details>
@@ -845,6 +852,7 @@ function CheckoutForm({
             selected={selectedMethod}
             t={t}
             locale={locale}
+            onError={setError}
           />
         </aside>
       </div>
@@ -1057,6 +1065,9 @@ function AddressFields({
   );
 }
 
+/** The sign shown before a discount amount (U+2212, a real minus). */
+const MINUS = "−";
+
 /** Display-only sum of the lines (price × quantity); the server's totals take over once they exist. */
 function linesTotal(session: CheckoutSessionSummary): number {
   return session.items.reduce((sum, item) => sum + item.unitPriceAmountMinor * item.quantity, 0);
@@ -1078,9 +1089,10 @@ function totalAmount(
   quotes: readonly ShippingQuoteSummary[],
   selected: string | null,
 ): number {
-  const subtotal = session.totals?.subtotalMinor ?? linesTotal(session);
-  if (selected === null) return subtotal;
+  // The server's total, always: with discounts in play the client never works one out itself.
   if (session.totals !== null) return session.totals.grandTotalMinor;
+  const subtotal = linesTotal(session);
+  if (selected === null) return subtotal;
   return subtotal + (shippingAmount(session, quotes, selected) ?? 0);
 }
 
@@ -1110,14 +1122,17 @@ function SummaryBody({
   selected,
   t,
   locale,
+  onError,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly quotes: readonly ShippingQuoteSummary[];
   readonly selected: string | null;
   readonly t: Dictionary;
   readonly locale: Locale;
+  readonly onError: (reason: ErrorReason) => void;
 }) {
   const shippingMinor = shippingAmount(session, quotes, selected);
+  const shippingDiscountMinor = session.totals?.shippingDiscountMinor ?? 0;
   return (
     <div className="flex flex-col gap-4">
       <ul className="flex flex-col gap-3">
@@ -1148,6 +1163,12 @@ function SummaryBody({
           </li>
         ))}
       </ul>
+      <CheckoutDiscountCode
+        checkoutSessionId={session.id}
+        codes={session.discount?.codes ?? []}
+        t={t}
+        onError={onError}
+      />
       <dl className="border-border flex flex-col gap-1.5 border-t pt-3 text-sm">
         <SummaryRow
           label={t.checkout.summary.subtotal}
@@ -1157,12 +1178,35 @@ function SummaryBody({
             session.currency,
           )}
         />
+        {(session.discount?.applied ?? [])
+          .filter((applied) => applied.discountClass !== "shipping")
+          .map((applied, index) => (
+            <SummaryRow
+              key={`${applied.code ?? applied.title}-${index}`}
+              label={applied.code ?? applied.title}
+              value={`${MINUS}${formatCurrency(locale, applied.amountMinor, session.currency)}`}
+            />
+          ))}
         <SummaryRow
           label={t.checkout.summary.shipping}
           value={
-            shippingMinor === null
-              ? t.checkout.summary.enterShippingAddress
-              : priceLabel(shippingMinor, session.currency, locale, t)
+            shippingMinor === null ? (
+              t.checkout.summary.enterShippingAddress
+            ) : shippingDiscountMinor > 0 ? (
+              <>
+                <s className="text-muted-foreground me-2">
+                  {formatCurrency(locale, shippingMinor, session.currency)}
+                </s>
+                {priceLabel(
+                  Math.max(0, shippingMinor - shippingDiscountMinor),
+                  session.currency,
+                  locale,
+                  t,
+                )}
+              </>
+            ) : (
+              priceLabel(shippingMinor, session.currency, locale, t)
+            )
           }
           muted={shippingMinor === null}
         />
@@ -1201,7 +1245,7 @@ function SummaryRow({
   muted = false,
 }: {
   readonly label: string;
-  readonly value: string;
+  readonly value: ReactNode;
   readonly muted?: boolean;
 }) {
   return (

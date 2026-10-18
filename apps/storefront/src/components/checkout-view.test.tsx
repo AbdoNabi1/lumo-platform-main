@@ -7,6 +7,7 @@ import type { ShippableCountries } from "@/lib/checkout-address";
 import type { CheckoutSessionSummary } from "@/lib/runtime-api";
 import type {
   CheckoutActionResult,
+  DiscountCodeActionResult,
   PaymentInitiationResult,
   ShippingQuoteActionResult,
 } from "@/app/checkout/actions";
@@ -26,6 +27,8 @@ const recalculate = vi.fn<(id: string) => Promise<CheckoutActionResult>>();
 const requestTax = vi.fn<(id: string) => Promise<CheckoutActionResult>>();
 const completeCheckout = vi.fn<(id: string) => Promise<CheckoutActionResult>>();
 const initiatePayment = vi.fn<(id: string) => Promise<PaymentInitiationResult>>();
+const applyDiscountCode = vi.fn<(id: string, code: string) => Promise<DiscountCodeActionResult>>();
+const removeDiscountCode = vi.fn<(id: string, code: string) => Promise<CheckoutActionResult>>();
 
 vi.mock("@/app/checkout/actions", () => ({
   setContactEmail: (id: string, email: string) => setContactEmail(id, email),
@@ -38,6 +41,8 @@ vi.mock("@/app/checkout/actions", () => ({
   requestTax: (id: string) => requestTax(id),
   completeCheckout: (id: string) => completeCheckout(id),
   initiatePayment: (id: string) => initiatePayment(id),
+  applyDiscountCode: (id: string, code: string) => applyDiscountCode(id, code),
+  removeDiscountCode: (id: string, code: string) => removeDiscountCode(id, code),
 }));
 
 const push = vi.fn();
@@ -74,12 +79,14 @@ beforeEach(() => {
     recalculate,
     requestTax,
     completeCheckout,
+    removeDiscountCode,
   })) {
     mock.mockImplementation(async () => {
       calls.push(name);
       return OK;
     });
   }
+  applyDiscountCode.mockResolvedValue({ ok: true, checkoutSessionId: "checkout-1" });
   requestShippingQuote.mockImplementation(async () => {
     calls.push("requestShippingQuote");
     return { ok: true, checkoutSessionId: "checkout-1", quotes: QUOTES };
@@ -1002,6 +1009,200 @@ describe("CheckoutView — taxes in the summary (Plan 3C)", () => {
     const summary = screen.getByRole("complementary");
     expect(within(summary).queryByText(en.checkout.summary.taxes)).toBeNull();
     expect(within(summary).queryByText(/Including/)).toBeNull();
+  });
+});
+
+describe("CheckoutView — discount code field, chips and totals (Discounts Part 3)", () => {
+  const inSummary = () => within(screen.getByRole("complementary"));
+  const codeField = () =>
+    inSummary().getByLabelText(en.checkout.discount.label) as HTMLInputElement;
+  const applyButton = () => inSummary().getByRole("button", { name: en.checkout.discount.apply });
+
+  function discounted(
+    discount: NonNullable<CheckoutSessionSummary["discount"]>,
+    totals: CheckoutSessionSummary["totals"] = null,
+  ): CheckoutSessionSummary {
+    return session({ discount, totals, selectedShippingMethod: totals ? "rate-standard" : null });
+  }
+
+  it("applies the trimmed code, then clears the field", async () => {
+    renderView();
+    expect(applyButton()).toBeDisabled();
+
+    fireEvent.change(codeField(), { target: { value: "  SAVE10 " } });
+    expect(applyButton()).toBeEnabled();
+    fireEvent.click(applyButton());
+
+    await waitFor(() => expect(applyDiscountCode).toHaveBeenCalledWith("checkout-1", "SAVE10"));
+    await waitFor(() => expect(codeField().value).toBe(""));
+    expect(inSummary().queryByRole("alert")).toBeNull();
+  });
+
+  it("applies the code on Enter without submitting the checkout", async () => {
+    renderView();
+
+    fireEvent.change(codeField(), { target: { value: "SAVE10" } });
+    fireEvent.keyDown(codeField(), { key: "Enter" });
+
+    await waitFor(() => expect(applyDiscountCode).toHaveBeenCalledWith("checkout-1", "SAVE10"));
+    expect(completeCheckout).not.toHaveBeenCalled();
+  });
+
+  it("shows the reason's message under the field on a rejection and keeps the typed code", async () => {
+    applyDiscountCode.mockResolvedValue({
+      ok: false,
+      reason: "rejected",
+      rejection: "minimum_not_met",
+    });
+    renderView();
+
+    fireEvent.change(codeField(), { target: { value: "BIG" } });
+    fireEvent.click(applyButton());
+
+    const alert = await inSummary().findByRole("alert");
+    expect(alert).toHaveTextContent(en.checkout.discount.reasons.minimum_not_met);
+    expect(codeField().value).toBe("BIG");
+  });
+
+  it("shows the generic message for a reason token it has no copy for", async () => {
+    applyDiscountCode.mockResolvedValue({ ok: false, reason: "rejected", rejection: "brand_new" });
+    renderView();
+
+    fireEvent.change(codeField(), { target: { value: "X" } });
+    fireEvent.click(applyButton());
+
+    expect(await inSummary().findByRole("alert")).toHaveTextContent(
+      en.checkout.discount.genericReason,
+    );
+  });
+
+  it("falls back to the existing error banner on any other failure", async () => {
+    applyDiscountCode.mockResolvedValue({ ok: false, reason: "network" });
+    renderView();
+
+    fireEvent.change(codeField(), { target: { value: "X" } });
+    fireEvent.click(applyButton());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.networkErrorBody);
+    expect(codeField().value).toBe("X");
+  });
+
+  it("lists the entered codes as chips and removes one with its x button", async () => {
+    renderView({
+      session: discounted({
+        codes: [
+          { code: "SAVE10", applicable: true, reason: null },
+          { code: "FREESHIP", applicable: true, reason: null },
+        ],
+        applied: [],
+      }),
+    });
+
+    expect(inSummary().getByText("SAVE10")).toBeInTheDocument();
+    expect(inSummary().getByText("FREESHIP")).toBeInTheDocument();
+    fireEvent.click(inSummary().getByRole("button", { name: "Remove code SAVE10" }));
+
+    await waitFor(() => expect(removeDiscountCode).toHaveBeenCalledWith("checkout-1", "SAVE10"));
+  });
+
+  it("shows a code that does not apply muted with its reason, and no discount line for it", () => {
+    renderView({
+      session: discounted({
+        codes: [{ code: "BIG", applicable: false, reason: "minimum_not_met" }],
+        applied: [],
+      }),
+    });
+
+    expect(inSummary().getByText("BIG")).toBeInTheDocument();
+    expect(
+      inSummary().getByText(`Not applicable: ${en.checkout.discount.reasons.minimum_not_met}`),
+    ).toBeInTheDocument();
+    expect(inSummary().queryByText(/^−/)).toBeNull();
+  });
+
+  it("shows one minus row per product/order discount, a free shipping row and the server's total", () => {
+    renderView({
+      session: discounted(
+        {
+          codes: [{ code: "SAVE10", applicable: true, reason: null }],
+          applied: [
+            { title: "Ten off", code: "SAVE10", discountClass: "order", amountMinor: 2400 },
+            { title: "Summer sale", code: null, discountClass: "product", amountMinor: 1000 },
+            { title: "Free shipping", code: "SHIP", discountClass: "shipping", amountMinor: 500 },
+          ],
+        },
+        {
+          subtotalMinor: 24000,
+          shippingMinor: 500,
+          taxMinor: 0,
+          grandTotalMinor: 20600,
+          discountMinor: 3400,
+          shippingDiscountMinor: 500,
+        },
+      ),
+    });
+
+    const summary = inSummary();
+    const rows = summary.getAllByRole("term").map((term) => term.textContent);
+    expect(rows).toEqual(["Subtotal", "SAVE10", "Summer sale", "Shipping", "Total"]);
+    expect(summary.getByText("−EGP 24.00", { exact: false })).toBeInTheDocument();
+    expect(summary.getByText("−EGP 10.00", { exact: false })).toBeInTheDocument();
+    expect(summary.getByText(en.checkout.summary.free)).toBeInTheDocument();
+    expect(summary.getByText("EGP 206.00", { exact: false })).toBeInTheDocument();
+  });
+
+  it("shows the shipping minus a partial shipping discount", () => {
+    renderView({
+      session: discounted(
+        { codes: [], applied: [] },
+        {
+          subtotalMinor: 24000,
+          shippingMinor: 1500,
+          taxMinor: 0,
+          grandTotalMinor: 24500,
+          discountMinor: 0,
+          shippingDiscountMinor: 1000,
+        },
+      ),
+    });
+
+    expect(inSummary().queryByText(en.checkout.summary.free)).toBeNull();
+    expect(inSummary().getByText("EGP 5.00", { exact: false })).toBeInTheDocument();
+  });
+
+  it("shows a status notice, does not navigate and keeps Place order usable when the discounts changed", async () => {
+    completeCheckout.mockResolvedValue({ ok: false, reason: "discounts-changed" });
+    renderView();
+    fillEverything();
+
+    fireEvent.click(submit());
+
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent(en.checkout.discountsChanged);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+    expect(initiatePayment).not.toHaveBeenCalled();
+    await waitFor(() => expect(submit()).toBeEnabled());
+  });
+
+  it("renders the field and a chip in Arabic", () => {
+    renderView({
+      locale: "ar",
+      session: discounted({
+        codes: [{ code: "SAVE10", applicable: true, reason: null }],
+        applied: [],
+      }),
+    });
+
+    const summary = within(screen.getByRole("complementary"));
+    expect(summary.getByLabelText(ar.checkout.discount.label)).toBeInTheDocument();
+    expect(summary.getByRole("button", { name: ar.checkout.discount.apply })).toBeDisabled();
+    expect(summary.getByText("SAVE10")).toBeInTheDocument();
+    expect(
+      summary.getByRole("button", {
+        name: ar.checkout.discount.removeLabel.replace("{code}", "SAVE10"),
+      }),
+    ).toBeInTheDocument();
   });
 });
 
