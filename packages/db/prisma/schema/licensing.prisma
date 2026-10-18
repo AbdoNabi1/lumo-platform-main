@@ -169,7 +169,7 @@ model BillingPaymentMethod {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  @@unique([tenantId, provider, providerOrderId])
+  @@unique([tenantId, provider, providerOrderId], map: "billing_payment_methods_tenant_id_provider_provider_order_id_ke")
   @@index([tenantId, tenantRef, status])
   @@map("billing_payment_methods")
   @@schema("licensing")

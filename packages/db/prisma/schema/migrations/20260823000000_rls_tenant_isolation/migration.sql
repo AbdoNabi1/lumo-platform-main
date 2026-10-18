@@ -80,8 +80,10 @@ BEGIN
     EXECUTE format('ALTER TABLE %I.%I FORCE ROW LEVEL SECURITY', r.s, r.t);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I.%I', r.s, r.t);
     -- Deliberately a single-quoted format string, not a nested dollar-quoted one: this file is
-    -- already the first `DO` block in the migration history, and nested `$f$...$f$` inside `$$`
-    -- would add a second untested dependency on how the migration runner hands SQL to Postgres.
+    -- already the first `DO` block in the migration history, and a tagged dollar quote nested
+    -- inside this block's own would add a second untested dependency on how the migration runner
+    -- hands SQL to Postgres. (Never write a dollar-quote delimiter in a comment inside the block:
+    -- Postgres ends the block at the first matching delimiter, comment or not.)
     EXECUTE format(
       'CREATE POLICY tenant_isolation ON %I.%I FOR ALL'
       || ' USING (tenant_id = current_setting(''app.tenant_id'', true))'

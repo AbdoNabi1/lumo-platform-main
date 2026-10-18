@@ -11,11 +11,17 @@ export default defineConfig({
       // under that measured baseline (a regression floor, not the target) so this gate blocks a coverage
       // DROP today without demanding an immediate backfill sprint — raise them as real tests are added;
       // never lower them to make a red run green.
+      // 2026-10-18 re-baseline (CI): this gate never ran in CI from August to October (earlier steps
+      // failed first), so coverage fell unseen. Lowered to 1pt under the CI-measured value: lines 63->59 (CI 60.15%), statements 63->59 (CI 60.15%).
+      // A floor to raise again as tests are backfilled, not a new target.
+      // 2026-10-18 backfill: unit tests for the Prisma repositories over createFakePrisma
+      // (prisma-repositories.test.ts) cover what the DATABASE_URL_TEST-gated suite skips in CI.
+      // Measured locally (Windows, a lower bound for CI): lines 90.59%, statements 90.59%, functions 93.6%, branches 93.17%. Ratcheted to 1pt under.
       thresholds: {
-        lines: 63,
-        statements: 63,
-        functions: 64,
-        branches: 80,
+        lines: 89,
+        statements: 89,
+        functions: 92,
+        branches: 92,
       },
     },
 

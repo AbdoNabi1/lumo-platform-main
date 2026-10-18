@@ -64,7 +64,7 @@
     "@platform/types": "workspace:*",
     "@platform/utils": "workspace:*",
     "@platform/wishlist": "workspace:*",
-    "fastify": "^5.1.0",
+    "fastify": "^5.12.2",
     "zod": "^3.25.0"
   },
   "devDependencies": {
