@@ -32,16 +32,17 @@ export class PrismaOrderAnnotationRepository implements OrderAnnotationRepositor
     const client = tx as TransactionClient;
     const ids = uuidsOf(orderIds);
     if (ids.length === 0) return [];
-    const pending = await client.order.findMany({
-      where: { tenantId, id: { in: ids }, archivedAt: archivedAt === null ? { not: null } : null },
-      select: { id: true },
-    });
-    const changed = pending.map((row) => row.id);
-    if (changed.length > 0) {
-      await client.order.updateMany({
-        where: { tenantId, id: { in: changed } },
+    // The target-state condition lives IN the UPDATE, so under concurrency exactly one writer's guarded
+    // update matches a row: the loser affects 0 rows, reports it unchanged and cannot overwrite the
+    // winner's timestamp. One guarded update per id because `updateMany` only returns a count.
+    const targetState = archivedAt === null ? { not: null } : null;
+    const changed: string[] = [];
+    for (const id of ids) {
+      const { count } = await client.order.updateMany({
+        where: { tenantId, id, archivedAt: targetState },
         data: { archivedAt },
       });
+      if (count > 0) changed.push(id);
     }
     return changed;
   }
