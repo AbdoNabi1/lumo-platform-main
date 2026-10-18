@@ -86,7 +86,7 @@ export function OrdersTable({
   /** Admins only (payments stay admin-only): shows "Mark cash as received". */
   readonly canMarkCashReceived?: boolean;
   /** What the list is showing; when given, "Export selected" opens the export dialog on the selection. */
-  readonly exportContext?: OrdersExportContext;
+  readonly exportContext?: OrdersExportContext | undefined;
 }) {
   const reference = now ?? new Date();
   const pageKey = orders.map((order) => order.id).join(",");

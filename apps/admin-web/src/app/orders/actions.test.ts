@@ -5,7 +5,11 @@ const payments = vi.hoisted(() => ({
   fetchPaymentIntent: vi.fn(),
   confirmCodCollection: vi.fn(),
 }));
-const orders = vi.hoisted(() => ({ bulkOrders: vi.fn() }));
+const orders = vi.hoisted(() => ({
+  bulkOrders: vi.fn(),
+  archiveOrder: vi.fn(),
+  unarchiveOrder: vi.fn(),
+}));
 const revalidatePath = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/api/payments", () => ({
@@ -21,6 +25,8 @@ vi.mock("@/lib/api/orders", () => ({
   requestFulfillment: vi.fn(),
   requestPaymentCapture: vi.fn(),
   bulkOrders: orders.bulkOrders,
+  archiveOrder: orders.archiveOrder,
+  unarchiveOrder: orders.unarchiveOrder,
   BULK_ORDER_ACTIONS: ["archive", "unarchive", "fulfill", "capture_payments", "mark_cod_collected"],
 }));
 vi.mock("next/cache", () => ({ revalidatePath }));
@@ -29,7 +35,8 @@ vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined }),
 }));
 
-const { confirmCodCollectionAction, runBulkOrderAction } = await import("./actions");
+const { archiveOrderAction, confirmCodCollectionAction, runBulkOrderAction, unarchiveOrderAction } =
+  await import("./actions");
 
 const idle: FormState = { status: "idle" };
 
@@ -199,5 +206,28 @@ describe("runBulkOrderAction (order operations Part 1)", () => {
     const state = await runBulkOrderAction("mark_cod_collected", ["o-1"]);
     expect(state.status).toBe("error");
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("archiveOrderAction / unarchiveOrderAction", () => {
+  beforeEach(() => {
+    orders.archiveOrder.mockReset().mockResolvedValue({ outcome: "ok", data: {} });
+    orders.unarchiveOrder.mockReset().mockResolvedValue({ outcome: "ok", data: {} });
+  });
+
+  it("archives the order named in the form and refreshes the list and the page", async () => {
+    expect(await archiveOrderAction(idle, form({ orderId: "order-1" }))).toEqual({
+      status: "success",
+    });
+    expect(orders.archiveOrder).toHaveBeenCalledWith("order-1", expect.any(String));
+    expect(revalidatePath).toHaveBeenCalledWith("/orders");
+    expect(revalidatePath).toHaveBeenCalledWith("/orders/order-1");
+  });
+
+  it("unarchives, and refuses a form without an order id", async () => {
+    expect(await unarchiveOrderAction(idle, form({ orderId: "order-1" }))).toEqual({
+      status: "success",
+    });
+    expect((await archiveOrderAction(idle, form({}))).status).toBe("error");
   });
 });

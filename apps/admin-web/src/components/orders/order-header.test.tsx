@@ -8,6 +8,8 @@ import { OrderHeader } from "./order-header";
 vi.mock("@/app/orders/actions", () => ({
   advanceOrderAction: vi.fn(),
   refundOrderAction: vi.fn(),
+  archiveOrderAction: vi.fn(),
+  unarchiveOrderAction: vi.fn(),
 }));
 
 function order(overrides: Partial<OrderDetailDto> = {}): OrderDetailDto {
@@ -137,12 +139,12 @@ describe("OrderHeader (Plan 3B)", () => {
     // G-126: an unpaid cash-on-delivery order waits at payment_requested and can be cancelled.
     rerender(<OrderHeader order={order({ status: "payment_requested" })} t={en} locale="en" />);
     expect(screen.getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Print packing slip" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Print packing slip" })).toBeInTheDocument();
 
     // Once the payment is received the order is refunded, never cancelled.
     rerender(<OrderHeader order={order({ status: "payment_received" })} t={en} locale="en" />);
     expect(screen.queryByRole("button", { name: "Cancel order" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Print packing slip" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Print packing slip" })).toBeInTheDocument();
   });
 
   it("renders in Arabic", () => {
@@ -151,5 +153,16 @@ describe("OrderHeader (Plan 3B)", () => {
     expect(screen.getByText("في انتظار الدفع")).toBeInTheDocument();
     expect(screen.getByText("لم يتم التجهيز")).toBeInTheDocument();
     expect(screen.getByText(/من المتجر الإلكتروني/)).toBeInTheDocument();
+  });
+
+  it("shows an Archived badge on an archived order", () => {
+    render(
+      <OrderHeader order={order({ archivedAt: "2026-10-18T09:00:00.000Z" })} t={en} locale="en" />,
+    );
+    expect(screen.getByText("Archived")).toBeInTheDocument();
+    render(
+      <OrderHeader order={order({ id: "order-2", orderNumber: "1002" })} t={en} locale="en" />,
+    );
+    expect(screen.getAllByText("Archived")).toHaveLength(1);
   });
 });

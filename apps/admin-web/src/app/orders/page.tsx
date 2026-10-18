@@ -24,7 +24,7 @@ import { fetchOrdersPage, type OrderView } from "@/lib/api/orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
-import { ORDERS_PAGE_SIZE, parseOrderView } from "@/lib/orders/order-views";
+import { ORDERS_PAGE_SIZE, ordersExportContextFor, parseOrderView } from "@/lib/orders/order-views";
 import { showPlatformTools } from "@/lib/platform-tools";
 import type { Dictionary } from "@/messages/en";
 
@@ -60,14 +60,10 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const params = await searchParams;
   const view = parseOrderView(params);
   const session = await readSession();
-  const canMarkCashReceived = highestRole(session?.roles ?? []) === "admin";
-  const exportContext: OrdersExportContext = {
-    view,
-    ...(params.q === undefined ? {} : { q: params.q }),
-    ...(params.status === undefined ? {} : { status: params.status }),
-    ...(params.after === undefined ? {} : { after: params.after }),
-    hasFilters: Boolean(params.q) || Boolean(params.status) || view !== "all",
-  };
+  const role = highestRole(session?.roles ?? []);
+  const canMarkCashReceived = role === "admin";
+  // `undefined` for a viewer (no `orders:export`): no Export button, no "Export selected".
+  const exportContext = ordersExportContextFor(role, view, params);
   const exportError = (["too_many", "failed", "invalid"] as const).find(
     (error) => error === params.exportError,
   );
@@ -87,7 +83,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
                 </Link>
               </Button>
             )}
-            <OrdersExportButton context={exportContext} t={t} />
+            {exportContext !== undefined && <OrdersExportButton context={exportContext} t={t} />}
             <Button asChild>
               <Link href="/orders/new">
                 <PlusIcon aria-hidden="true" />
@@ -148,7 +144,7 @@ async function OrdersResults({
   readonly search: string | undefined;
   readonly view: OrderView;
   readonly canMarkCashReceived: boolean;
-  readonly exportContext: OrdersExportContext;
+  readonly exportContext: OrdersExportContext | undefined;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {

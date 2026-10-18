@@ -3,7 +3,12 @@
 import { useActionState } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { Button } from "@platform/ui";
-import { advanceOrderAction, refundOrderAction } from "@/app/orders/actions";
+import {
+  advanceOrderAction,
+  archiveOrderAction,
+  refundOrderAction,
+  unarchiveOrderAction,
+} from "@/app/orders/actions";
 import type { FormState } from "@/lib/api/mutation";
 import type { Dictionary } from "@/messages/en";
 
@@ -58,17 +63,20 @@ export function OrderRefundButton({
 
 /**
  * "More actions ▾": Cancel order (behind a confirm, offered only when the lifecycle's transition table
- * allows it — `canCancel` — through the same `advanceOrderAction` the Advanced section uses) and Print
- * packing slip (`window.print()`). A native `<details>` menu: it needs no script to open and every
+ * allows it — `canCancel` — through the same `advanceOrderAction` the Advanced section uses), Archive /
+ * Unarchive (order operations Part 1) and Print packing slip (a link to the print page, in a new tab). A native `<details>` menu: it needs no script to open and every
  * item is reachable by keyboard.
  */
 export function OrderMoreActions({
   orderId,
   canCancel,
+  archived,
   t,
 }: {
   readonly orderId: string;
   readonly canCancel: boolean;
+  /** Whether the order is archived: offers Unarchive instead of Archive. */
+  readonly archived: boolean;
   readonly t: Dictionary;
 }) {
   const [state, formAction, isPending] = useActionState(advanceOrderAction, INITIAL_STATE);
@@ -105,15 +113,65 @@ export function OrderMoreActions({
             )}
           </form>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-full justify-start"
-          onClick={() => window.print()}
-        >
-          {t.orderPage.printPackingSlip}
+        {archived ? (
+          <OrderArchiveForm
+            orderId={orderId}
+            action={unarchiveOrderAction}
+            label={t.orderPage.unarchive}
+            t={t}
+          />
+        ) : (
+          <OrderArchiveForm
+            orderId={orderId}
+            action={archiveOrderAction}
+            label={t.orderPage.archive}
+            t={t}
+          />
+        )}
+        <Button asChild variant="ghost" className="w-full justify-start">
+          <a
+            href={`/orders/packing-slips?ids=${encodeURIComponent(orderId)}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {t.orderPage.printPackingSlip}
+          </a>
         </Button>
       </div>
     </details>
+  );
+}
+
+/** Archive / Unarchive (order operations Part 1): one form per action, each with its own pending state. */
+function OrderArchiveForm({
+  orderId,
+  action,
+  label,
+  t,
+}: {
+  readonly orderId: string;
+  readonly action: (previous: FormState, formData: FormData) => Promise<FormState>;
+  readonly label: string;
+  readonly t: Dictionary;
+}) {
+  const [state, formAction, isPending] = useActionState(action, INITIAL_STATE);
+  return (
+    <form action={formAction} className="flex flex-col items-start gap-1">
+      <input type="hidden" name="orderId" value={orderId} />
+      <Button
+        type="submit"
+        variant="ghost"
+        className="w-full justify-start"
+        loading={isPending}
+        disabled={isPending}
+      >
+        {isPending ? t.orderPage.archiving : label}
+      </Button>
+      {state.status === "error" && (
+        <p role="alert" className="text-destructive px-3 text-xs">
+          {state.message}
+        </p>
+      )}
+    </form>
   );
 }

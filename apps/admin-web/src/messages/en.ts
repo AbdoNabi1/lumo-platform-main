@@ -244,6 +244,20 @@ export const en = {
       notes: "Notes",
     },
   },
+  /** Order operations Part 1 — the printable packing slips. */
+  packingSlips: {
+    title: "Packing slips",
+    orderLabel: "Order #{orderNumber}",
+    shipTo: "Ship to",
+    items: "Items",
+    quantity: "Qty",
+    sku: "SKU {sku}",
+    note: "Note",
+    collect: "Collect: {amount}",
+    empty: "No orders to print.",
+    tooMany: "Print up to 50 orders at a time.",
+    error: "Couldn't load the packing slips. Try again.",
+  },
   /**
    * Plan 3B — the order page, laid out like Shopify's. Everything here is new copy for that page; the
    * older `orderDetail` keys it still reuses (customer, addresses, payment reference, confirmations)
@@ -263,6 +277,9 @@ export const en = {
     cancellingOrder: "Cancelling…",
     confirmCancelOrder: "Cancel this order? This can't be undone.",
     printPackingSlip: "Print packing slip",
+    archive: "Archive",
+    unarchive: "Unarchive",
+    archiving: "Archiving…",
     fulfillmentTitle: "{status} ({count})",
     deliveryMethodLine: "Delivery method: {method}",
     noDeliveryMethod: "Delivery method: not recorded",

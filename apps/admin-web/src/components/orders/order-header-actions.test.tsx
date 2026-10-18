@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { OrderMoreActions, OrderRefundButton } from "./order-header-actions";
@@ -7,12 +7,16 @@ import { OrderMoreActions, OrderRefundButton } from "./order-header-actions";
 const actions = vi.hoisted(() => ({
   advanceOrderAction: vi.fn(),
   refundOrderAction: vi.fn(),
+  archiveOrderAction: vi.fn(),
+  unarchiveOrderAction: vi.fn(),
 }));
 vi.mock("@/app/orders/actions", () => actions);
 
 beforeEach(() => {
   actions.advanceOrderAction.mockReset().mockResolvedValue({ status: "success" });
   actions.refundOrderAction.mockReset().mockResolvedValue({ status: "success" });
+  actions.archiveOrderAction.mockReset().mockResolvedValue({ status: "success" });
+  actions.unarchiveOrderAction.mockReset().mockResolvedValue({ status: "success" });
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -20,23 +24,23 @@ afterEach(() => {
 
 describe("OrderMoreActions", () => {
   it("offers Cancel order and Print packing slip", () => {
-    render(<OrderMoreActions orderId="order-1" canCancel t={en} />);
+    render(<OrderMoreActions orderId="order-1" canCancel archived={false} t={en} />);
 
     expect(screen.getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Print packing slip" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Print packing slip" })).toBeInTheDocument();
     expect(screen.getByText("More actions")).toBeInTheDocument();
   });
 
   it("offers no Cancel order when the lifecycle does not allow cancelling", () => {
-    render(<OrderMoreActions orderId="order-1" canCancel={false} t={en} />);
+    render(<OrderMoreActions orderId="order-1" canCancel={false} archived={false} t={en} />);
 
     expect(screen.queryByRole("button", { name: "Cancel order" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Print packing slip" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Print packing slip" })).toBeInTheDocument();
   });
 
   it("asks before cancelling, and does nothing if the answer is no", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<OrderMoreActions orderId="order-1" canCancel t={en} />);
+    render(<OrderMoreActions orderId="order-1" canCancel archived={false} t={en} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel order" }));
 
@@ -46,7 +50,7 @@ describe("OrderMoreActions", () => {
 
   it("cancels through the existing advance action once confirmed", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<OrderMoreActions orderId="order-1" canCancel t={en} />);
+    render(<OrderMoreActions orderId="order-1" canCancel archived={false} t={en} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel order" }));
 
@@ -56,17 +60,26 @@ describe("OrderMoreActions", () => {
     expect(form.get("toStatus")).toBe("cancelled");
   });
 
-  it("prints the packing slip with the browser's print dialog", () => {
-    const print = vi.spyOn(window, "print").mockImplementation(() => undefined);
-    render(<OrderMoreActions orderId="order-1" canCancel t={en} />);
+  it("links Print packing slip to the print page for this order, in a new tab", () => {
+    render(<OrderMoreActions orderId="order-1" canCancel archived={false} t={en} />);
+    const link = screen.getByRole("link", { name: "Print packing slip" });
+    expect(link).toHaveAttribute("href", "/orders/packing-slips?ids=order-1");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Print packing slip" }));
-
-    expect(print).toHaveBeenCalledTimes(1);
+  it("offers Archive for an order that is not archived, and Unarchive for one that is", async () => {
+    const { rerender } = render(
+      <OrderMoreActions orderId="order-1" canCancel={false} archived={false} t={en} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(actions.archiveOrderAction).toHaveBeenCalledTimes(1));
+    rerender(<OrderMoreActions orderId="order-1" canCancel={false} archived t={en} />);
+    expect(screen.getByRole("button", { name: "Unarchive" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
   });
 
   it("is available in Arabic", () => {
-    render(<OrderMoreActions orderId="order-1" canCancel t={ar} />);
+    render(<OrderMoreActions orderId="order-1" canCancel archived={false} t={ar} />);
 
     expect(screen.getByText(ar.orderPage.moreActions)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: ar.orderPage.cancelOrder })).toBeInTheDocument();

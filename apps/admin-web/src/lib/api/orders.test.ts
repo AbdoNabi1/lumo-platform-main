@@ -22,6 +22,8 @@ const {
   requestFulfillment,
   bulkOrders,
   fetchOrderExportRows,
+  fetchPackingSlips,
+  archiveOrder,
 } = await import("./orders");
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -410,5 +412,27 @@ describe("fetchOrderExportRows", () => {
       ids: "a,b",
       first: "250",
     });
+  });
+});
+
+describe("fetchPackingSlips / archiveOrder (order operations Part 1)", () => {
+  it("asks for the slips of the ids as one comma list", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { slips: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchPackingSlips(["a", "b"])).toEqual({ outcome: "ok", slips: [] });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(
+      /\/api\/v1\/orders\/packing-slips\?ids=a,b$/,
+    );
+  });
+
+  it("archives through POST /orders/:id/archive with the idempotency key", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { orderId: "o-1", archivedAt: "x" }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect((await archiveOrder("o-1", "key-1")).outcome).toBe("ok");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/v1\/orders\/o-1\/archive$/);
+    expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-1");
   });
 });

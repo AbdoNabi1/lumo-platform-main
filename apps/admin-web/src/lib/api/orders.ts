@@ -278,6 +278,8 @@ export interface OrderDetailDto {
   readonly shippingMethod: string | null;
   /** G-127: whether Refund can succeed right now — decided by the backend, never guessed from the status. */
   readonly refundable: boolean;
+  /** Order operations Part 1: when the order was archived; null/absent when not (an older API omits it). */
+  readonly archivedAt?: string | null;
 }
 
 function isOrderDetailDto(value: unknown): value is OrderDetailDto {
@@ -526,5 +528,77 @@ export function bulkOrders(
     "/api/v1/orders/bulk",
     { method: "POST", body: { action, orderIds }, idempotencyKey },
     isBulkResults,
+  );
+}
+
+/** A printable packing slip (`GET /orders/packing-slips`). */
+export interface PackingSlipDto {
+  readonly orderId: string;
+  readonly orderNumber: string;
+  readonly createdAt: string;
+  readonly shipTo: {
+    readonly name: string | null;
+    readonly phone: string | null;
+    readonly line1: string;
+    readonly line2: string | null;
+    readonly city: string;
+    readonly province: string | null;
+    readonly postalCode: string;
+    readonly country: string;
+  };
+  readonly lines: readonly OrderExportLineDto[];
+  readonly note: string | null;
+  readonly codAmountMinor: number;
+  readonly currency: string;
+}
+
+function isPackingSlips(value: unknown): value is { readonly slips: readonly PackingSlipDto[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { slips?: unknown }).slips)
+  );
+}
+
+export async function fetchPackingSlips(
+  ids: readonly string[],
+): Promise<
+  | { readonly outcome: "ok"; readonly slips: readonly PackingSlipDto[] }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "error"; readonly message: string }
+> {
+  const result = await getAdminApi(
+    `/api/v1/orders/packing-slips?ids=${ids.map(encodeURIComponent).join(",")}`,
+    isPackingSlips,
+  );
+  if (result.outcome === "ok") return { outcome: "ok", slips: result.data.slips };
+  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
+  return {
+    outcome: "error",
+    message: result.outcome === "not_found" ? "Not found" : result.message,
+  };
+}
+
+/** `POST /orders/:orderId/archive` (`idempotent: true`, `orders:archive`). */
+export function archiveOrder(
+  orderId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/archive"),
+    { method: "POST", idempotencyKey },
+    isUnknown,
+  );
+}
+
+/** `POST /orders/:orderId/unarchive` (`idempotent: true`, `orders:archive`). */
+export function unarchiveOrder(
+  orderId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/unarchive"),
+    { method: "POST", idempotencyKey },
+    isUnknown,
   );
 }

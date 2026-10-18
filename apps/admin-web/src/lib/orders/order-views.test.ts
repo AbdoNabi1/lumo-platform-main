@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ORDER_VIEWS, ordersViewHref, parseOrderIds, parseOrderView } from "./order-views";
+import {
+  ORDER_VIEWS,
+  ordersExportContextFor,
+  ordersViewHref,
+  parseOrderIds,
+  parseOrderView,
+} from "./order-views";
 
 describe("parseOrderView", () => {
   it("reads a known view, maps Home's legacy fulfillment link, and defaults to all", () => {
@@ -34,5 +40,27 @@ describe("parseOrderIds", () => {
     expect(parseOrderIds(undefined, 50)).toBeNull();
     expect(parseOrderIds(" , ", 50)).toBeNull();
     expect(parseOrderIds(Array.from({ length: 51 }, (_, i) => `o-${i}`).join(","), 50)).toBeNull();
+  });
+});
+
+describe("ordersExportContextFor", () => {
+  const params = { q: "mona", status: "placed", after: "cur-1" };
+
+  it("builds the export context for operators and admins, carrying what the list shows", () => {
+    for (const role of ["operator", "admin"]) {
+      expect(ordersExportContextFor(role, "unpaid", params)).toEqual({
+        view: "unpaid",
+        q: "mona",
+        status: "placed",
+        after: "cur-1",
+        hasFilters: true,
+      });
+    }
+    expect(ordersExportContextFor("admin", "all", {})).toEqual({ view: "all", hasFilters: false });
+  });
+
+  it("gives viewers (no orders:export) and unknown roles no export at all", () => {
+    expect(ordersExportContextFor("viewer", "all", {})).toBeUndefined();
+    expect(ordersExportContextFor(undefined, "all", {})).toBeUndefined();
   });
 });

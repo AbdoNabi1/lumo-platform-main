@@ -4,8 +4,10 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { newIdempotencyKey, toFormState, type FormState } from "@/lib/api/mutation";
+import type { MutationResult } from "@/lib/api/client";
 import {
   advanceOrder,
+  archiveOrder,
   bulkOrders,
   BULK_ORDER_ACTIONS,
   createOrderFromCheckout,
@@ -14,6 +16,7 @@ import {
   refundOrder,
   requestFulfillment,
   requestPaymentCapture,
+  unarchiveOrder,
   type BulkOrderAction,
   type BulkOrderResultDto,
   type OrderAddressInput,
@@ -351,4 +354,35 @@ export async function runBulkOrderAction(
   }
   revalidatePath("/orders");
   return { status: "done", results: result.data.results };
+}
+
+async function setArchived(
+  formData: FormData,
+  call: (orderId: string, idempotencyKey: string) => Promise<MutationResult<unknown>>,
+): Promise<FormState> {
+  const t = await formErrorDictionary();
+  const orderId = stringField(formData, "orderId");
+  if (orderId.length === 0) return { status: "error", message: t.invalid, fieldErrors: {} };
+  const result = await call(orderId, newIdempotencyKey());
+  if (result.outcome === "ok") {
+    revalidatePath("/orders");
+    revalidatePath(`/orders/${orderId}`);
+    return { status: "success" };
+  }
+  return toFormState(result, t);
+}
+
+/** "More actions → Archive" on the order page (order operations Part 1). */
+export async function archiveOrderAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  return setArchived(formData, archiveOrder);
+}
+
+export async function unarchiveOrderAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  return setArchived(formData, unarchiveOrder);
 }
