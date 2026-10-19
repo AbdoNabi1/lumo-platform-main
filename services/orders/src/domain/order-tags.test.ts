@@ -36,6 +36,19 @@ describe("parseTags", () => {
     });
   });
 
+  it("also splits on the Arabic comma (U+060C), as admin-web's tag input does", () => {
+    expect(parseTags(["VIP،عاجل", "a, b،c"])).toEqual({
+      ok: true,
+      value: [
+        { tag: "VIP", tagKey: "vip" },
+        { tag: "عاجل", tagKey: "عاجل" },
+        { tag: "a", tagKey: "a" },
+        { tag: "b", tagKey: "b" },
+        { tag: "c", tagKey: "c" },
+      ],
+    });
+  });
+
   it("counts characters, not UTF-16 units: 40 emoji or Arabic letters fit, 41 letters do not", () => {
     expect(parseTags(["😀".repeat(40)]).ok).toBe(true);
     expect(parseTags(["ب".repeat(40)]).ok).toBe(true);

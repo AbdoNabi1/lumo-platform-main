@@ -36,14 +36,14 @@ export function tagKeyOf(raw: string): string {
 }
 
 /**
- * Typed tags → the distinct tags to store. A comma splits one entry into two (Shopify's input rule),
+ * Typed tags → the distinct tags to store. A comma (Latin or Arabic, U+060C) splits one entry into two (Shopify's input rule),
  * blanks are dropped, and tags that differ only in case or spacing collapse to the FIRST spelling.
  * A tag longer than {@link MAX_TAG_LENGTH} characters refuses the whole list (nothing half-applied).
  */
 export function parseTags(raw: readonly string[]): Result<readonly OrderTag[], ValidationError> {
   const seen = new Map<string, OrderTag>();
   for (const entry of raw) {
-    for (const part of entry.split(",")) {
+    for (const part of entry.split(/[,،]/u)) {
       const tag = normalizeTag(part);
       if (tag.length === 0) continue;
       if (characterCount(tag) > MAX_TAG_LENGTH) {
