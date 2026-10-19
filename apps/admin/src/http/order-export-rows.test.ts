@@ -211,3 +211,27 @@ describe("toPackingSlipDto", () => {
     });
   });
 });
+
+describe("tags and note (order operations Part 2)", () => {
+  const annotations = { archivedAt: null, note: "Ring twice", tags: ["Gift", "VIP"] };
+
+  it("fill the export row", () => {
+    const row = toOrderExportRowDto(stubOrder(), {
+      fulfillmentStatus: "unfulfilled",
+      contact,
+      customerLabels: new Map(),
+      intent: cod,
+      annotations,
+    });
+    expect(row).toMatchObject({ tags: ["Gift", "VIP"], note: "Ring twice" });
+  });
+
+  it("fill the packing slip's note", () => {
+    const slip = toPackingSlipDto(stubOrder(), {
+      customerLabels: new Map(),
+      intent: cod,
+      annotations,
+    });
+    expect(slip.note).toBe("Ring twice");
+  });
+});

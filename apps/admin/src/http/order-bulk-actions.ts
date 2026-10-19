@@ -3,6 +3,7 @@ import {
   derivePaymentStatus,
   isOpenOrder,
   type ArchiveOrdersOutput,
+  type ChangeOrderTagsOutput,
   type Order,
 } from "@platform/orders";
 import type { Paginated } from "@platform/types";
@@ -22,7 +23,9 @@ export type BulkSkipReason =
   | "fulfillment_already_open"
   | "payment_not_pending"
   | "payment_already_requested"
-  | "not_cash_on_delivery";
+  | "not_cash_on_delivery"
+  | "already_tagged"
+  | "not_tagged";
 
 /** One order's result: ok, skipped (with why) or failed (with the refusing call's message). */
 export interface BulkOrderResultDto {
@@ -39,6 +42,8 @@ export interface BulkContext {
   readonly tenantId: string;
   /** Deduped, 1..50. */
   readonly orderIds: readonly string[];
+  /** add_tags / remove_tags only: 1..20 tags as typed (the use case normalizes them). */
+  readonly tags?: readonly string[];
 }
 
 export type BulkOutcome =
@@ -125,6 +130,33 @@ function archiveRunner(archive: boolean): BulkRunner {
         if (result.outcome === "unchanged") {
           return skipped(result.orderId, archive ? "already_archived" : "not_archived");
         }
+        return failed(result.orderId, "not_found");
+      }),
+    };
+  };
+}
+
+/**
+ * "Add tags" / "Remove tags" (spec §2.3): one batch call to the same use case the Tags card uses — a
+ * tag change per order, one transaction, one activity line per changed order. An order that would
+ * pass 250 tags fails alone; the others are tagged — also when it is the only order selected, which
+ * is why the call asks for per-order outcomes instead of the single-order 422.
+ */
+function tagsRunner(add: boolean): BulkRunner {
+  return async ({ admin, principal, tenantId, orderIds, tags }) => {
+    const input = { tenantId, orderIds, tags: tags ?? [], perOrderOutcomes: true };
+    const response = add
+      ? await admin.orders.addOrderTags(principal, input)
+      : await admin.orders.removeOrderTags(principal, input);
+    if (response.status !== 200) return { ok: false, response };
+    return {
+      ok: true,
+      results: (response.body as ChangeOrderTagsOutput).results.map((result) => {
+        if (result.outcome === "changed") return done(result.orderId);
+        if (result.outcome === "unchanged") {
+          return skipped(result.orderId, add ? "already_tagged" : "not_tagged");
+        }
+        if (result.outcome === "too_many_tags") return failed(result.orderId, "too_many_tags");
         return failed(result.orderId, "not_found");
       }),
     };
@@ -231,11 +263,13 @@ const markCodCollectedRunner: BulkRunner = async (context) => {
   return { ok: true, results };
 };
 
-/** Each bulk action's runner. Part 2 adds add_tags / remove_tags here. */
+/** Each bulk action's runner. */
 export const BULK_RUNNERS: Readonly<Record<BulkOrderAction, BulkRunner>> = {
   archive: archiveRunner(true),
   unarchive: archiveRunner(false),
   fulfill: fulfillRunner,
   capture_payments: capturePaymentsRunner,
   mark_cod_collected: markCodCollectedRunner,
+  add_tags: tagsRunner(true),
+  remove_tags: tagsRunner(false),
 };

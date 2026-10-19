@@ -290,6 +290,7 @@ describe("GET /orders (list)", () => {
         paymentStatus: "pending",
         fulfillmentStatus: "unfulfilled",
         archivedAt: null,
+        tags: [],
       });
     }
 

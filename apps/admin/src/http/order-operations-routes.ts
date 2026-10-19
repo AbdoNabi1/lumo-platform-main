@@ -13,6 +13,7 @@ import { toOrderExportRowDto, toPackingSlipDto } from "./order-export-rows";
 import { paymentIntentsOfOrders } from "./order-payment-intents";
 import {
   listOrdersForView,
+  tagFilterParam,
   ORDER_STATUS_VALUES,
   ORDER_VIEWS,
   orderAnnotationsFor,
@@ -26,13 +27,21 @@ function bulkAction<A extends BulkOrderAction>(action: A) {
   return z.object({ action: z.literal(action), orderIds: bulkOrderIds }).strict();
 }
 
-/** One strict member per action, so Part 2 can add `tags` to its own two members only. */
+const bulkTags = z.array(z.string().min(1).max(400)).min(1).max(20);
+
+function bulkTagsAction<A extends "add_tags" | "remove_tags">(action: A) {
+  return z.object({ action: z.literal(action), orderIds: bulkOrderIds, tags: bulkTags }).strict();
+}
+
+/** One strict member per action; only add_tags / remove_tags carry `tags` (1..20). */
 export const bulkOrdersBody = z.discriminatedUnion("action", [
   bulkAction("archive"),
   bulkAction("unarchive"),
   bulkAction("fulfill"),
   bulkAction("capture_payments"),
   bulkAction("mark_cod_collected"),
+  bulkTagsAction("add_tags"),
+  bulkTagsAction("remove_tags"),
 ]);
 
 /**
@@ -66,6 +75,7 @@ const exportRowsQuery = z
     search: z.string().min(1).optional(),
     status: z.enum(ORDER_STATUS_VALUES).optional(),
     ids: commaIds(50).optional(),
+    tag: tagFilterParam().optional(),
     /** ISO instants; admin-web turns the shop-local days into them. createdFrom inclusive, createdTo exclusive. */
     createdFrom: z.coerce.date().optional(),
     createdTo: z.coerce.date().optional(),
@@ -152,6 +162,7 @@ export function orderOperationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
           principal: context.principal,
           tenantId: context.tenantId,
           orderIds: [...new Set(body.orderIds)],
+          ...("tags" in body ? { tags: body.tags } : {}),
         });
         if (!outcome.ok) return outcome.response;
         return { status: 200, body: { results: outcome.results } };
@@ -166,10 +177,11 @@ export function orderOperationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       schema: { querystring: exportRowsQuery },
       handle: async ({ query, context }): Promise<AdminResponse> => {
         const { principal, tenantId } = context;
-        const { view, ids, first, ...filters } = query;
+        const { view, ids, first, tag, ...filters } = query;
         const found = await listOrdersForView(admin, principal, tenantId, view ?? "all", {
           ...filters,
           ...(ids === undefined ? {} : { ids }),
+          ...(tag === undefined ? {} : { tags: tag }),
           first: first ?? EXPORT_ROWS_PAGE_SIZE,
         });
         if (!found.ok) return found.response;

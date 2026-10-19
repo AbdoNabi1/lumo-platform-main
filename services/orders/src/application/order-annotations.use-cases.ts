@@ -317,6 +317,12 @@ export interface ChangeOrderTagsInput {
   /** As typed — commas split, case-insensitive duplicates collapse; 1..250 tags of ≤ 40 characters. */
   readonly tags: readonly string[];
   readonly actorRef: string;
+  /**
+   * The bulk path sets this: an order that would pass 250 tags is then a `too_many_tags` RESULT even
+   * when it is the only order selected, never the request's VALIDATION error (one selected order is
+   * still a bulk call). The Tags card leaves it off and gets the 422.
+   */
+  readonly perOrderOutcomes?: boolean;
 }
 
 export interface OrderTagsResult {
@@ -324,7 +330,7 @@ export interface OrderTagsResult {
   /**
    * changed: tags were added/removed · unchanged: it already had / never had them · not_found: no such
    * order in this shop · too_many_tags: adding would pass 250 tags, so nothing was added to it (bulk
-   * only — a one-order add past the cap is a VALIDATION error instead).
+   * only — a one-order add past the cap is a VALIDATION error instead, unless `perOrderOutcomes`).
    */
   readonly outcome: "changed" | "unchanged" | "not_found" | "too_many_tags";
   /** The order's tags after the call ([] when not found). */
@@ -398,8 +404,11 @@ async function changeTags(
     const known = ids.filter((orderId) => before.has(orderId));
     const tooMany = add ? overTheCap(known, before, tags) : new Set<string>();
     // One order (the Tags card): past the cap is the request's own error, nothing written. Bulk: that
-    // order is skipped as `too_many_tags` and the others are still tagged (per-order outcomes, §1.4).
-    if (ids.length === 1 && tooMany.size > 0) return err(tooManyTagsError());
+    // order is skipped as `too_many_tags` and the others are still tagged (per-order outcomes, §1.4) —
+    // also when a bulk call selected just that one order (`perOrderOutcomes`).
+    if (input.perOrderOutcomes !== true && ids.length === 1 && tooMany.size > 0) {
+      return err(tooManyTagsError());
+    }
     let changed: ReadonlyMap<string, readonly string[]> = new Map();
     if (add) {
       const accepted = known.filter((orderId) => !tooMany.has(orderId));

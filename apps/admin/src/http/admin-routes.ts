@@ -26,6 +26,7 @@ import {
   listOrdersForView,
   orderAnnotationsFor,
   resolveOrderView,
+  tagFilterParam,
 } from "./order-views";
 import { orderOperationsRoutes } from "./order-operations-routes";
 import { orderAnnotationRoutes } from "./order-annotation-routes";
@@ -165,6 +166,8 @@ const listOrdersQuery = z.object({
   fulfillment: z.enum(["unfulfilled"]).optional(),
   /** Order operations Part 1: Shopify's tab (all/unfulfilled/unpaid/open/archived); wins over `fulfillment`. */
   view: z.enum(ORDER_VIEWS).optional(),
+  /** Order operations Part 2: only orders carrying every tag given (`?tag=a&tag=b`, case-insensitive). */
+  tag: tagFilterParam().optional(),
 });
 const customerIdParams = z.object({ customerId: z.string().min(1) });
 const listCustomersQuery = z.object({
@@ -203,6 +206,8 @@ export interface OrderListItemDto {
   readonly fulfillmentStatus: OrderFulfillmentStatus;
   /** Order operations Part 1: when the order was archived (Shopify's badge); null when not. */
   readonly archivedAt: string | null;
+  /** Order operations Part 2: the order's tags, sorted (the list's Tags column). */
+  readonly tags: readonly string[];
 }
 
 function toOrderListItemDto(
@@ -229,6 +234,7 @@ function toOrderListItemDto(
     paymentStatus: derivePaymentStatus(order.history),
     fulfillmentStatus,
     archivedAt: annotations?.archivedAt?.toISOString() ?? null,
+    tags: annotations?.tags ?? [],
   };
 }
 
@@ -1536,13 +1542,13 @@ export function adminRoutes(
         "List orders by Shopify view (all/unfulfilled/unpaid/open/archived), most recent first",
       schema: { querystring: listOrdersQuery },
       handle: async ({ query, context }): Promise<AdminResponse> => {
-        const { view, fulfillment, ...filters } = query;
+        const { view, fulfillment, tag, ...filters } = query;
         const found = await listOrdersForView(
           admin,
           context.principal,
           context.tenantId,
           resolveOrderView(view, fulfillment),
-          filters,
+          { ...filters, ...(tag === undefined ? {} : { tags: tag }) },
         );
         if (!found.ok) return found.response;
         const orders = found.page.items;

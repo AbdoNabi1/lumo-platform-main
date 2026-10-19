@@ -287,3 +287,150 @@ describe("GET /orders/packing-slips", () => {
     expect(admin.orders.fulfillmentsOfOrders).not.toHaveBeenCalled();
   });
 });
+
+describe("Part 2: tags on the list, in bulk and in the export", () => {
+  const listOf = async (admin: WiredAdmin, query: Record<string, unknown>) => {
+    const routes = adminRoutes(admin);
+    const route = routes.find((r) => r.method === "GET" && r.path === "/orders");
+    const response = await callRoute(routes, "GET", "/orders", {
+      query: route?.schema.querystring?.parse(query),
+    });
+    expect(response.status).toBe(200);
+    return (response.body as { items: { id: string; tags: string[] }[] }).items;
+  };
+
+  it("accepts add_tags / remove_tags with 1..20 tags only", () => {
+    const tags = (count: number) => Array.from({ length: count }, (_, i) => `t${i}`);
+    expect(
+      bulkOrdersBody.safeParse({ action: "add_tags", orderIds: ["o-1"], tags: tags(20) }).success,
+    ).toBe(true);
+    expect(
+      bulkOrdersBody.safeParse({ action: "remove_tags", orderIds: ["o-1"], tags: tags(21) })
+        .success,
+    ).toBe(false);
+    expect(
+      bulkOrdersBody.safeParse({ action: "add_tags", orderIds: ["o-1"], tags: [] }).success,
+    ).toBe(false);
+    expect(bulkOrdersBody.safeParse({ action: "add_tags", orderIds: ["o-1"] }).success).toBe(false);
+  });
+
+  it("tags in bulk as an operator; refuses a viewer before touching any order", async () => {
+    const admin = buildOrdersAdmin();
+    const a = await placeTestOrder(admin);
+    const b = await placeTestOrder(admin);
+    const denied = await bulk(
+      admin,
+      { action: "add_tags", orderIds: [a], tags: ["vip"] },
+      viewerStaff,
+    );
+    expect(denied.status).toBe(403);
+    expect((await listOf(admin, {})).every((item) => item.tags.length === 0)).toBe(true);
+
+    await bulk(admin, { action: "add_tags", orderIds: [a], tags: ["VIP"] }, operatorStaff);
+    const both = await bulk(
+      admin,
+      { action: "add_tags", orderIds: [a, b], tags: ["vip"] },
+      operatorStaff,
+    );
+    expect((both.body as BulkBody).results).toEqual([
+      { orderId: a, outcome: "skipped", reason: "already_tagged" },
+      { orderId: b, outcome: "ok" },
+    ]);
+    const removed = await bulk(
+      admin,
+      { action: "remove_tags", orderIds: [a, b], tags: ["Vip"] },
+      operatorStaff,
+    );
+    expect((removed.body as BulkBody).results.map((result) => result.outcome)).toEqual([
+      "ok",
+      "ok",
+    ]);
+  });
+
+  it("fails only the order that would pass 250 tags (Review Focus 3)", async () => {
+    const admin = buildOrdersAdmin();
+    const full = await placeTestOrder(admin);
+    const other = await placeTestOrder(admin);
+    for (let start = 0; start < 249; start += 20) {
+      const size = Math.min(20, 249 - start);
+      await bulk(admin, {
+        action: "add_tags",
+        orderIds: [full],
+        tags: Array.from({ length: size }, (_, i) => `t${start + i}`),
+      });
+    }
+    const response = await bulk(admin, {
+      action: "add_tags",
+      orderIds: [full, other],
+      tags: ["new-a", "new-b"],
+    });
+    expect((response.body as BulkBody).results).toEqual([
+      { orderId: full, outcome: "failed", reason: "too_many_tags" },
+      { orderId: other, outcome: "ok" },
+    ]);
+  });
+
+  it("answers a per-order too_many_tags result, not a 422, when the one selected order is over the cap (carried 1)", async () => {
+    const admin = buildOrdersAdmin();
+    const full = await placeTestOrder(admin);
+    for (let start = 0; start < 250; start += 20) {
+      const size = Math.min(20, 250 - start);
+      await bulk(admin, {
+        action: "add_tags",
+        orderIds: [full],
+        tags: Array.from({ length: size }, (_, i) => `t${start + i}`),
+      });
+    }
+    const response = await bulk(admin, {
+      action: "add_tags",
+      orderIds: [full],
+      tags: ["one-more"],
+    });
+    expect(response.status).toBe(200);
+    expect((response.body as BulkBody).results).toEqual([
+      { orderId: full, outcome: "failed", reason: "too_many_tags" },
+    ]);
+    expect((await listOf(admin, {}))[0]?.tags).toHaveLength(250);
+  });
+
+  it("GET /orders filters by every tag given (AND) and lists each order's tags", async () => {
+    const admin = buildOrdersAdmin();
+    const a = await placeTestOrder(admin);
+    const b = await placeTestOrder(admin);
+    const c = await placeTestOrder(admin);
+    await bulk(admin, { action: "add_tags", orderIds: [a, b], tags: ["VIP"] });
+    await bulk(admin, { action: "add_tags", orderIds: [a], tags: ["urgent"] });
+
+    expect((await listOf(admin, { tag: "vip" })).map((item) => item.id).sort()).toEqual(
+      [a, b].sort(),
+    );
+    expect((await listOf(admin, { tag: ["vip", "URGENT"] })).map((item) => item.id)).toEqual([a]);
+    const all = await listOf(admin, {});
+    expect(all.find((item) => item.id === a)?.tags).toEqual(["urgent", "VIP"]);
+    expect(all.find((item) => item.id === c)?.tags).toEqual([]);
+  });
+
+  it("export rows (filtered by tag) and packing slips carry the tags and the note", async () => {
+    const admin = buildOrdersAdmin();
+    const a = await placeTestOrder(admin);
+    await placeTestOrder(admin);
+    const routes = adminRoutes(admin);
+    await bulk(admin, { action: "add_tags", orderIds: [a], tags: ["VIP"] });
+    await callRoute(routes, "PUT", "/orders/:orderId/note", {
+      params: { orderId: a },
+      body: { note: "Ring twice" },
+    });
+    const exportRoute = routes.find((r) => r.method === "GET" && r.path === "/orders/export-rows");
+    const rows = await callRoute(routes, "GET", "/orders/export-rows", {
+      query: exportRoute?.schema.querystring?.parse({ tag: "vip" }),
+    });
+    expect((rows.body as { items: unknown[] }).items).toEqual([
+      expect.objectContaining({ orderId: a, tags: ["VIP"], note: "Ring twice" }),
+    ]);
+    const slipsRoute = routes.find((r) => r.method === "GET" && r.path === "/orders/packing-slips");
+    const slips = await callRoute(routes, "GET", "/orders/packing-slips", {
+      query: slipsRoute?.schema.querystring?.parse({ ids: a }),
+    });
+    expect((slips.body as { slips: { note: string | null }[] }).slips[0]?.note).toBe("Ring twice");
+  });
+});

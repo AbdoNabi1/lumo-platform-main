@@ -131,6 +131,12 @@ describe("POST /orders/:orderId/tags", () => {
       body: { add: ["one-more"] },
     });
     expect(tooMany.status).toBe(422);
+    // The 422 names the cap and the offending field (carried 3).
+    expect(tooMany.body).toMatchObject({
+      code: "VALIDATION",
+      message: expect.stringContaining("250"),
+      fields: [expect.objectContaining({ field: "tags" })],
+    });
   });
 });
 
@@ -321,5 +327,87 @@ describe("a deleted comment's text is never served again (global constraints, re
       body: { id: posted.id, body: "A, then B", deleted: false, canEdit: true, canDelete: true },
     });
     expect((edited.body as TimelineEntryDto).editedAt).not.toBeNull();
+  });
+});
+
+describe("another shop's order is 404 on every annotation route (carried 2)", () => {
+  it("note, tags and comments answer 404 and write nothing", async () => {
+    const { admin, orderId, call, detail } = await setup();
+    const foreign = await placeTestOrder(admin, "shop-b");
+    const mine = (
+      await call("POST", "/orders/:orderId/comments", {
+        params: { orderId },
+        body: { body: "mine" },
+      })
+    ).body as TimelineEntryDto;
+    const theirs = (
+      await callRoute(
+        adminRoutes(admin),
+        "POST",
+        "/orders/:orderId/comments",
+        { params: { orderId: foreign }, body: { body: "theirs" } },
+        { ...adminStaff, tenantId: "shop-b" },
+      )
+    ).body as TimelineEntryDto;
+    expect(theirs.id).toBeDefined();
+
+    const attempts = [
+      await call("PUT", "/orders/:orderId/note", {
+        params: { orderId: foreign },
+        body: { note: "x" },
+      }),
+      await call("POST", "/orders/:orderId/tags", {
+        params: { orderId: foreign },
+        body: { add: ["vip"] },
+      }),
+      await call("POST", "/orders/:orderId/tags", {
+        params: { orderId: foreign },
+        body: { remove: ["vip"] },
+      }),
+      await call("POST", "/orders/:orderId/comments", {
+        params: { orderId: foreign },
+        body: { body: "x" },
+      }),
+      // The foreign order's own comment, addressed through its real id from the wrong shop.
+      await call("PATCH", "/orders/:orderId/comments/:entryId", {
+        params: { orderId: foreign, entryId: theirs.id },
+        body: { body: "hijacked" },
+      }),
+      await call("DELETE", "/orders/:orderId/comments/:entryId", {
+        params: { orderId: foreign, entryId: theirs.id },
+      }),
+      // A foreign comment id under my own order.
+      await call("PATCH", "/orders/:orderId/comments/:entryId", {
+        params: { orderId, entryId: theirs.id },
+        body: { body: "hijacked" },
+      }),
+      await call("DELETE", "/orders/:orderId/comments/:entryId", {
+        params: { orderId, entryId: theirs.id },
+      }),
+      // My comment id under the foreign order.
+      await call("PATCH", "/orders/:orderId/comments/:entryId", {
+        params: { orderId: foreign, entryId: mine.id },
+        body: { body: "hijacked" },
+      }),
+    ];
+    expect(attempts.map((response) => response.status)).toEqual(attempts.map(() => 404));
+
+    // Nothing of mine changed, and the foreign order was never touched.
+    const page = await detail();
+    expect(page.note).toBeNull();
+    expect(page.tags).toEqual([]);
+    expect(page.timelineEntries.map((line) => line.body)).toEqual(["mine"]);
+    const theirPage = (
+      await callRoute(
+        adminRoutes(admin),
+        "GET",
+        "/orders/:orderId",
+        { params: { orderId: foreign } },
+        { ...adminStaff, tenantId: "shop-b" },
+      )
+    ).body as Detail;
+    expect(theirPage.note).toBeNull();
+    expect(theirPage.tags).toEqual([]);
+    expect(theirPage.timelineEntries.map((line) => line.body)).toEqual(["theirs"]);
   });
 });

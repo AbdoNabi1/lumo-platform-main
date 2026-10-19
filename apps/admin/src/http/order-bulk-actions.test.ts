@@ -308,3 +308,85 @@ describe("bulk archive / unarchive", () => {
     });
   });
 });
+
+describe("bulk add_tags / remove_tags (order operations Part 2)", () => {
+  const results = (rows: readonly [string, string][]) => ({
+    status: 200,
+    body: {
+      results: rows.map(([orderId, outcome]) => ({ orderId, outcome, tags: [], changedTags: [] })),
+    },
+  });
+
+  function tagAdmin() {
+    const base = stubAdmin([]);
+    return {
+      ...base,
+      orders: {
+        ...base.orders,
+        addOrderTags: vi.fn().mockResolvedValue(
+          results([
+            ["o-1", "changed"],
+            ["o-2", "unchanged"],
+            ["o-3", "too_many_tags"],
+            ["o-4", "not_found"],
+          ]),
+        ),
+        removeOrderTags: vi.fn().mockResolvedValue(results([["o-1", "unchanged"]])),
+      },
+    };
+  }
+
+  it("passes the tags in one call and maps each order's outcome", async () => {
+    const admin = tagAdmin();
+    const added = await BULK_RUNNERS.add_tags({
+      admin: admin as never,
+      principal,
+      tenantId: "t-1",
+      orderIds: ["o-1", "o-2", "o-3", "o-4"],
+      tags: ["VIP"],
+    });
+    // perOrderOutcomes: a bulk call never answers a whole-request 422 for one order past the cap.
+    expect(admin.orders.addOrderTags).toHaveBeenCalledWith(principal, {
+      tenantId: "t-1",
+      orderIds: ["o-1", "o-2", "o-3", "o-4"],
+      tags: ["VIP"],
+      perOrderOutcomes: true,
+    });
+    expect(added).toEqual({
+      ok: true,
+      results: [
+        { orderId: "o-1", outcome: "ok" },
+        { orderId: "o-2", outcome: "skipped", reason: "already_tagged" },
+        { orderId: "o-3", outcome: "failed", reason: "too_many_tags" },
+        { orderId: "o-4", outcome: "failed", reason: "not_found" },
+      ],
+    });
+    const removed = await BULK_RUNNERS.remove_tags({
+      admin: admin as never,
+      principal,
+      tenantId: "t-1",
+      orderIds: ["o-1"],
+      tags: ["VIP"],
+    });
+    expect(removed).toEqual({
+      ok: true,
+      results: [{ orderId: "o-1", outcome: "skipped", reason: "not_tagged" }],
+    });
+  });
+
+  it("answers the use case's refusal (a tag over 40 characters) as the response", async () => {
+    const admin = tagAdmin();
+    admin.orders.addOrderTags.mockResolvedValue({ status: 422, body: { message: "too long" } });
+    const outcome = await BULK_RUNNERS.add_tags({
+      admin: admin as never,
+      principal,
+      tenantId: "t-1",
+      orderIds: ["o-1"],
+      tags: ["x".repeat(41)],
+    });
+    expect(outcome).toEqual({
+      ok: false,
+      response: { status: 422, body: { message: "too long" } },
+    });
+  });
+});

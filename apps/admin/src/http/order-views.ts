@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Principal } from "@platform/contracts";
 import type { Order, OrderAnnotations, OrderFulfillmentStatus } from "@platform/orders";
 import type { Paginated } from "@platform/types";
@@ -115,4 +116,22 @@ export async function orderAnnotationsFor(
   const response = await admin.orders.orderAnnotations(principal, { tenantId, orderIds });
   if (response.status !== 200) return { ok: false, response };
   return { ok: true, byOrder: response.body as ReadonlyMap<string, OrderAnnotations> };
+}
+
+/**
+ * Spec §2.3: `tag` may repeat (`?tag=vip&tag=urgent` — AND). Fastify hands one value as a string and
+ * several as an array; both become a trimmed list of 1..10 tags. Typed input-as-output like
+ * `commaIds` in order-operations-routes.ts, because `RouteDefinition` types a schema by its output.
+ */
+export function tagFilterParam(): z.ZodType<string[], z.ZodTypeDef, string[]> {
+  return z
+    .union([z.string(), z.array(z.string())])
+    .transform((raw) =>
+      (Array.isArray(raw) ? raw : [raw]).map((tag) => tag.trim()).filter((tag) => tag.length > 0),
+    )
+    .pipe(z.array(z.string().max(200)).min(1).max(10)) as unknown as z.ZodType<
+    string[],
+    z.ZodTypeDef,
+    string[]
+  >;
 }

@@ -279,6 +279,23 @@ describe("AddOrderTags / RemoveOrderTags (order operations Part 2)", () => {
     expect(await linesOf("o-1")).toHaveLength(1);
   });
 
+  it("with perOrderOutcomes a single over-cap order answers a too_many_tags result, not an error", async () => {
+    const { addTags, annotations, linesOf } = await wire();
+    const full = Array.from({ length: MAX_TAGS_PER_ORDER }, (_, i) => `tag-${i}`);
+    await addTags.execute(tagInput(["o-1"], full));
+    const result = await addTags.execute({
+      ...tagInput(["o-1"], ["one-more"]),
+      perOrderOutcomes: true,
+    });
+    expect(result.ok && result.value.results.map((r) => [r.orderId, r.outcome])).toEqual([
+      ["o-1", "too_many_tags"],
+    ]);
+    expect((await annotations.annotationsOf(["o-1"], TENANT)).get("o-1")?.tags).toHaveLength(
+      MAX_TAGS_PER_ORDER,
+    );
+    expect(await linesOf("o-1")).toHaveLength(1);
+  });
+
   it("refuses more than 250 distinct tags in one request", async () => {
     const { addTags } = await wire();
     const tooMany = Array.from({ length: MAX_TAGS_PER_ORDER + 1 }, (_, i) => `t${i}`);

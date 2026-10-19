@@ -45,7 +45,7 @@ export interface OrderExportRowDto {
   readonly paymentProvider: string | null;
   readonly fulfillmentStatus: OrderFulfillmentStatus;
   readonly shippingMethod: string | null;
-  /** Part 2 fills these; [] / null before it. */
+  /** Order operations Part 2: the order's tags and staff note. */
   readonly tags: readonly string[];
   readonly note: string | null;
 }
@@ -65,7 +65,7 @@ export interface PackingSlipDto {
     readonly country: string;
   };
   readonly lines: readonly OrderExportLineDto[];
-  /** Part 2 fills it; null before it. */
+  /** Order operations Part 2: the staff note, printed on the slip. */
   readonly note: string | null;
   readonly codAmountMinor: number;
   readonly currency: string;
@@ -76,7 +76,7 @@ export interface OrderExportFacts {
   readonly contact: CustomerContact | undefined;
   readonly customerLabels: ReadonlyMap<string, string>;
   readonly intent: PaymentIntentSummary | undefined;
-  /** Part 2 reads note and tags from here. */
+  /** Archive time, note and tags. */
   readonly annotations: OrderAnnotations | undefined;
 }
 
@@ -137,8 +137,8 @@ export function toOrderExportRowDto(order: Order, facts: OrderExportFacts): Orde
     paymentProvider: facts.intent?.provider ?? null,
     fulfillmentStatus: facts.fulfillmentStatus,
     shippingMethod: totals?.shippingMethod ?? null,
-    tags: [],
-    note: null,
+    tags: facts.annotations?.tags ?? [],
+    note: facts.annotations?.note ?? null,
   };
 }
 
@@ -159,7 +159,7 @@ export function toPackingSlipDto(order: Order, facts: PackingSlipFacts): Packing
       country: address.country,
     },
     lines: linesOf(order),
-    note: null,
+    note: facts.annotations?.note ?? null,
     codAmountMinor: codAmountOf(order, facts.intent),
     currency: order.currency,
   };

@@ -462,6 +462,8 @@ describe("OrdersAdminController", () => {
       ["fulfill", "fulfillment:create"],
       ["capture_payments", "orders:request_payment_capture"],
       ["mark_cod_collected", "payments:confirm_cod_collection"],
+      ["add_tags", "orders:tag"],
+      ["remove_tags", "orders:tag"],
     ] as const)("%s asks for %s", async (action, permission) => {
       const { guard, asked } = guardAnswering(true);
       expect(await controller(guard).authorizeBulkAction(staff, { action })).toBeNull();
