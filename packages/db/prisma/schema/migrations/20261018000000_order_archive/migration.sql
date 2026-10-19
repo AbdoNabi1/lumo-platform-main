@@ -4,3 +4,5 @@
 -- Order aggregate (OrderMapper never writes it), so archiving never bumps "version".
 ALTER TABLE "orders"."orders" ADD COLUMN "archived_at" TIMESTAMP(3);
 CREATE INDEX "orders_tenant_id_archived_at_idx" ON "orders"."orders"("tenant_id", "archived_at");
+-- The order search matches the recipient name and phone in order_shipping_addresses; index it by shop.
+CREATE INDEX "order_shipping_addresses_tenant_id_idx" ON "orders"."order_shipping_addresses"("tenant_id");

@@ -80,6 +80,7 @@ model OrderShippingAddress {
   line2         String? // Plan 3A
   province      String? // Plan 3C: ISO 3166-2 (EG-C); null before it was captured
 
+  @@index([tenantId]) // Order operations Part 1: the recipient search joins by tenant
   @@map("order_shipping_addresses")
   @@schema("orders")
 }
