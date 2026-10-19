@@ -14,8 +14,9 @@ const NOTHING: CodCollectionState = { printAmount: false, canMarkCollected: fals
 /**
  * Intent statuses meaning the cash already arrived. `ConfirmCodCollection` captures the intent at
  * once; the order only gets `payment_received` later via the outbox — so the intent decides.
- * `closed` is reached only after capture (captured → refunded/partially_refunded → closed, see
- * PaymentIntent), so it counts as settled too.
+ * `closed` is terminal and reachable both after a refund and after a cancel/expiry; nothing calls
+ * `PaymentIntent.close()` today. It is treated as settled so a courier is never asked to collect
+ * twice; revisit (e.g. using the intent's prior status) when closing intents is wired.
  */
 const SETTLED = new Set(["captured", "refunded", "partially_refunded", "closed"]);
 
