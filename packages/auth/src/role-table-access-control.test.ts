@@ -72,4 +72,18 @@ describe("RoleTableAccessControl", () => {
     expect(await acl.authorize(op, "payments:confirm_cod_collection")).toBe(false);
     expect(await acl.authorize(who(["admin"]), "payments:confirm_cod_collection")).toBe(true);
   });
+  it("operators and admins write notes, tags and comments; viewers only read; only admins moderate comments (orders Part 2)", async () => {
+    const op = who(["operator"]);
+    const viewer = who(["viewer"]);
+    const admin = who(["admin"]);
+    for (const permission of ["orders:edit_note", "orders:tag", "orders:comment"]) {
+      expect(await acl.authorize(op, permission), permission).toBe(true);
+      expect(await acl.authorize(admin, permission), permission).toBe(true);
+      expect(await acl.authorize(viewer, permission), permission).toBe(false);
+    }
+    expect(await acl.authorize(op, "comments:moderate")).toBe(false);
+    expect(await acl.authorize(viewer, "comments:moderate")).toBe(false);
+    expect(await acl.authorize(admin, "comments:moderate")).toBe(true);
+    expect(await acl.authorize(who(["platform-admin"]), "comments:moderate")).toBe(true);
+  });
 });

@@ -332,3 +332,65 @@ describe("orders schema — order archive (order operations Part 1)", () => {
     expect(columnsEverAddedTo("orders", "orders", sql).has("archived_at")).toBe(true);
   });
 });
+
+describe("orders schema — notes, tags and timeline (order operations Part 2)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("a migration adds orders.orders.note", () => {
+    expect(columnsEverAddedTo("orders", "orders", allSql).has("note")).toBe(true);
+  });
+
+  it("order_tags has the model's columns, its (order, tag_key) key, the tenant tag index and the FK", () => {
+    expect([...columnsEverAddedTo("orders", "order_tags", allSql)].sort()).toEqual([
+      "created_at",
+      "order_id",
+      "tag",
+      "tag_key",
+      "tenant_id",
+    ]);
+    expect(allSql).toContain('CONSTRAINT "order_tags_pkey" PRIMARY KEY ("order_id", "tag_key")');
+    expect(allSql).toContain(
+      'CREATE INDEX "order_tags_tenant_id_tag_key_idx" ON "orders"."order_tags"("tenant_id", "tag_key");',
+    );
+    expect(allSql).toContain(
+      'ADD CONSTRAINT "order_tags_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "orders"."orders"("id") ON DELETE RESTRICT ON UPDATE CASCADE;',
+    );
+  });
+
+  it("order_timeline_entries has the model's columns and accepts exactly the seven kinds", () => {
+    expect([...columnsEverAddedTo("orders", "order_timeline_entries", allSql)].sort()).toEqual([
+      "author_name",
+      "author_ref",
+      "body",
+      "created_at",
+      "data",
+      "deleted_at",
+      "edited_at",
+      "id",
+      "kind",
+      "order_id",
+      "tenant_id",
+    ]);
+    expect(allSql).toContain(
+      `CHECK ("kind" IN ('comment','archived','unarchived','note_changed','tags_added','tags_removed','created_from_draft'))`,
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "order_timeline_entries_order_id_created_at_idx" ON "orders"."order_timeline_entries"("order_id", "created_at");',
+    );
+  });
+
+  it.each(["order_tags", "order_timeline_entries"])(
+    "%s is RLS-forced with the tenant_isolation policy",
+    (table) => {
+      expect(allSql).toContain(`ALTER TABLE "orders"."${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(`ALTER TABLE "orders"."${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(`DROP POLICY IF EXISTS tenant_isolation ON "orders"."${table}";`);
+      expect(allSql).toContain(`CREATE POLICY tenant_isolation ON "orders"."${table}" FOR ALL`);
+    },
+  );
+});

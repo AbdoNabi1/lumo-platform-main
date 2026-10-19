@@ -18,9 +18,12 @@ model Order {
   updatedAt      DateTime @updatedAt @map("updated_at")
   /// Order operations Part 1: Shopify's Archive. Outside the aggregate — never written by OrderMapper.
   archivedAt     DateTime? @map("archived_at")
+  /// Order operations Part 2: the staff note. Outside the aggregate — never written by OrderMapper.
+  note           String?
 
   items  OrderItem[]
   events OrderEvent[]
+  tags   OrderTag[]
 
   @@unique([tenantId, orderNumber])
   @@index([tenantId, customerRef, createdAt])
@@ -82,6 +85,45 @@ model OrderShippingAddress {
 
   @@index([tenantId]) // Order operations Part 1: the recipient search joins by tenant
   @@map("order_shipping_addresses")
+  @@schema("orders")
+}
+
+/// Order operations Part 2 — one tag on one order. `tag` is the spelling as typed (trimmed, inner
+/// spaces collapsed); `tagKey` is its lower-case identity (dedupe, filter, suggestions). Outside the
+/// aggregate. The relation exists for the list's tag filter (EXISTS), not for cascading.
+model OrderTag {
+  tenantId  String   @map("tenant_id")
+  orderId   String   @map("order_id") @db.Uuid
+  tag       String
+  tagKey    String   @map("tag_key")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@id([orderId, tagKey])
+  @@index([tenantId, tagKey])
+  @@map("order_tags")
+  @@schema("orders")
+}
+
+/// Order operations Part 2 — staff comments and annotation activity on an order. `kind` is one of
+/// comment | archived | unarchived | note_changed | tags_added | tags_removed | created_from_draft
+/// (CHECK + domain-enforced). `authorName` is a snapshot. Comments are soft-deleted (`deletedAt`).
+model OrderTimelineEntry {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id")
+  orderId    String    @map("order_id") @db.Uuid // bare id — never an FK
+  kind       String
+  authorRef  String?   @map("author_ref")
+  authorName String?   @map("author_name")
+  body       String?
+  data       Json      @default("{}")
+  createdAt  DateTime  @map("created_at")
+  editedAt   DateTime? @map("edited_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  @@index([orderId, createdAt])
+  @@map("order_timeline_entries")
   @@schema("orders")
 }
 
