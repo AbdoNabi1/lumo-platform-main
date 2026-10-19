@@ -50,14 +50,14 @@ describe("codCollectionState (one COD eligibility predicate)", () => {
     expect(codCollectionState(order([...PENDING, "cancelled"]), cod())).toEqual(NONE);
   });
 
-  it.each(["captured", "refunded", "partially_refunded"])(
+  it.each(["captured", "refunded", "partially_refunded", "closed"])(
     "is nothing when the intent is already %s (cash received, order not yet updated)",
     (status) => {
       expect(codCollectionState(order(), cod({ status }))).toEqual(NONE);
     },
   );
 
-  it.each(["cancelled", "expired", "failed", "closed"])(
+  it.each(["cancelled", "expired", "failed"])(
     "still prints the amount but cannot be marked collected when the intent is %s",
     (status) => {
       expect(codCollectionState(order(), cod({ status }))).toEqual({

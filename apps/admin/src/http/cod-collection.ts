@@ -14,18 +14,19 @@ const NOTHING: CodCollectionState = { printAmount: false, canMarkCollected: fals
 /**
  * Intent statuses meaning the cash already arrived. `ConfirmCodCollection` captures the intent at
  * once; the order only gets `payment_received` later via the outbox — so the intent decides.
+ * `closed` is reached only after capture (captured → refunded/partially_refunded → closed, see
+ * PaymentIntent), so it counts as settled too.
  */
-const SETTLED = new Set(["captured", "refunded", "partially_refunded"]);
+const SETTLED = new Set(["captured", "refunded", "partially_refunded", "closed"]);
 
 /** Intent statuses after which a collection can no longer be confirmed, with no cash received. */
-const DEAD = new Set(["cancelled", "expired", "failed", "closed"]);
+const DEAD = new Set(["cancelled", "expired", "failed"]);
 
 /**
  * The ONE cash-on-delivery eligibility rule, shared by the export / packing slip amount and the bulk
  * "Mark cash as received". Eligible only when the intent is THIS order's, settled by an operator's
  * confirmation (cash on delivery — by capability, not name) and the order still waits for payment.
- * A settled intent prints nothing and cannot be marked. A dead intent (cancelled/expired/failed/
- * closed) on a still-pending order keeps PRINTING the total — a courier must never hand goods over
+ * A settled intent prints nothing and cannot be marked. A dead intent (cancelled/expired/failed) on a still-pending order keeps PRINTING the total — a courier must never hand goods over
  * without collecting — but cannot be marked collected (there is nothing to confirm).
  */
 export function codCollectionState(
