@@ -6,6 +6,7 @@ import { Badge, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } 
 import type { OrderListItemDto } from "@/lib/api/orders";
 import { formatCurrency, formatNumber, orderDateParts } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
+import { NO_ORDER_ACTIONS, type OrderActionPermissions } from "@/lib/orders/order-views";
 import type { Dictionary } from "@/messages/en";
 import { BulkResultNote, OrdersBulkBar, type BulkOutcome } from "./orders-bulk-bar";
 import { OrderFulfillmentStatusBadge, OrderPaymentStatusBadge } from "./order-status-badge";
@@ -76,15 +77,15 @@ export function OrdersTable({
   t,
   locale,
   now,
-  canMarkCashReceived = false,
+  permissions = NO_ORDER_ACTIONS,
   exportContext,
 }: {
   readonly orders: readonly OrderListItemDto[];
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly now?: Date;
-  /** Admins only (payments stay admin-only): shows "Mark cash as received". */
-  readonly canMarkCashReceived?: boolean;
+  /** The bulk actions this staff member may take (server-decided); none when omitted. */
+  readonly permissions?: OrderActionPermissions;
   /** What the list is showing; when given, "Export selected" opens the export dialog on the selection. */
   readonly exportContext?: OrdersExportContext | undefined;
 }) {
@@ -139,7 +140,7 @@ export function OrdersTable({
                   selected={selectedOrders}
                   t={t}
                   locale={locale}
-                  canMarkCashReceived={canMarkCashReceived}
+                  permissions={permissions}
                   onExportSelected={
                     exportContext === undefined ? undefined : () => setExportOpen(true)
                   }

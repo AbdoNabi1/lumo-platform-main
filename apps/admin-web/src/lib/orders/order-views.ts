@@ -60,6 +60,37 @@ export function ordersExportContextFor(
   };
 }
 
+/** Which order actions this staff member may take — so no one sees a button the API would refuse. */
+export interface OrderActionPermissions {
+  /** `orders:archive` (operator, admin): Archive / Unarchive, single and bulk. */
+  readonly canArchive: boolean;
+  /** `fulfillment:create` (operator, admin): bulk "Fulfill items". */
+  readonly canFulfill: boolean;
+  /** `orders:request_payment_capture` (operator, admin): bulk "Capture payments". */
+  readonly canCapture: boolean;
+  /** `payments:confirm_cod_collection` (admin only — money): bulk "Mark cash as received". */
+  readonly canMarkCashReceived: boolean;
+}
+
+/** A viewer's (and an unknown role's) actions: none. Print packing slips needs only `orders:read`. */
+export const NO_ORDER_ACTIONS: OrderActionPermissions = {
+  canArchive: false,
+  canFulfill: false,
+  canCapture: false,
+  canMarkCashReceived: false,
+};
+
+/** The role table (packages/auth) for the order actions, decided on the server from the session's role. */
+export function orderActionPermissionsFor(role: string | undefined): OrderActionPermissions {
+  if (role !== "admin" && role !== "operator") return NO_ORDER_ACTIONS;
+  return {
+    canArchive: true,
+    canFulfill: true,
+    canCapture: true,
+    canMarkCashReceived: role === "admin",
+  };
+}
+
 /** A `?ids=a,b` list: trimmed, deduped, 1..max ids, else null. */
 export function parseOrderIds(raw: string | undefined, max: number): readonly string[] | null {
   if (raw === undefined) return null;

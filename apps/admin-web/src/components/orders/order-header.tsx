@@ -21,10 +21,13 @@ export function OrderHeader({
   order,
   t,
   locale,
+  canArchive = false,
 }: {
   readonly order: OrderDetailDto;
   readonly t: Dictionary;
   readonly locale: Locale;
+  /** `orders:archive`, from the session's role on the server; no Archive / Unarchive when false. */
+  readonly canArchive?: boolean;
 }) {
   const placedAt = new Date(order.createdAt);
   const placed = t.orderPage.placedFromStore
@@ -63,6 +66,7 @@ export function OrderHeader({
         />
         <OrderMoreActions
           orderId={order.id}
+          canArchive={canArchive}
           canCancel={canCancelFrom(order.status)}
           archived={Boolean(order.archivedAt)}
           t={t}

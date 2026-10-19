@@ -24,7 +24,13 @@ import { fetchOrdersPage, type OrderView } from "@/lib/api/orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
-import { ORDERS_PAGE_SIZE, ordersExportContextFor, parseOrderView } from "@/lib/orders/order-views";
+import {
+  ORDERS_PAGE_SIZE,
+  orderActionPermissionsFor,
+  ordersExportContextFor,
+  parseOrderView,
+  type OrderActionPermissions,
+} from "@/lib/orders/order-views";
 import { showPlatformTools } from "@/lib/platform-tools";
 import type { Dictionary } from "@/messages/en";
 
@@ -61,7 +67,8 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const view = parseOrderView(params);
   const session = await readSession();
   const role = highestRole(session?.roles ?? []);
-  const canMarkCashReceived = role === "admin";
+  // A viewer gets no Fulfill / Capture / Archive / Mark cash as received: the API would refuse them.
+  const permissions = orderActionPermissionsFor(role);
   // `undefined` for a viewer (no `orders:export`): no Export button, no "Export selected".
   const exportContext = ordersExportContextFor(role, view, params);
   const exportError = (["too_many", "failed", "invalid"] as const).find(
@@ -116,7 +123,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
             status={params.status}
             search={params.q}
             view={view}
-            canMarkCashReceived={canMarkCashReceived}
+            permissions={permissions}
             exportContext={exportContext}
             t={t}
             locale={locale}
@@ -133,7 +140,7 @@ async function OrdersResults({
   status,
   search,
   view,
-  canMarkCashReceived,
+  permissions,
   exportContext,
   t,
   locale,
@@ -143,7 +150,7 @@ async function OrdersResults({
   readonly status: string | undefined;
   readonly search: string | undefined;
   readonly view: OrderView;
-  readonly canMarkCashReceived: boolean;
+  readonly permissions: OrderActionPermissions;
   readonly exportContext: OrdersExportContext | undefined;
   readonly t: Dictionary;
   readonly locale: Locale;
@@ -189,7 +196,7 @@ async function OrdersResults({
           orders={result.items}
           t={t}
           locale={locale}
-          canMarkCashReceived={canMarkCashReceived}
+          permissions={permissions}
           exportContext={exportContext}
         />
       </CardContent>

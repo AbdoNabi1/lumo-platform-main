@@ -3,7 +3,12 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { OrderListItemDto } from "@/lib/api/orders";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
+import { orderActionPermissionsFor } from "@/lib/orders/order-views";
 import { OrdersTable } from "./orders-table";
+
+const OPERATOR = orderActionPermissionsFor("operator");
+const ADMIN = orderActionPermissionsFor("admin");
+const VIEWER = orderActionPermissionsFor("viewer");
 
 const actions = vi.hoisted(() => ({ runBulkOrderAction: vi.fn() }));
 vi.mock("@/app/orders/actions", () => actions);
@@ -32,7 +37,15 @@ function order(overrides: Partial<OrderListItemDto> = {}): OrderListItemDto {
 }
 
 function renderTable(orders: OrderListItemDto[], locale: "en" | "ar" = "en") {
-  render(<OrdersTable orders={orders} t={locale === "en" ? en : ar} locale={locale} now={NOW} />);
+  render(
+    <OrdersTable
+      orders={orders}
+      t={locale === "en" ? en : ar}
+      locale={locale}
+      now={NOW}
+      permissions={OPERATOR}
+    />,
+  );
 }
 
 const rowOf = (name: string | RegExp) => {
@@ -287,15 +300,43 @@ describe("OrdersTable selection and bulk bar (order operations Part 1)", () => {
   });
 
   it("offers Mark cash as received only to admins", () => {
-    const { rerender } = render(<OrdersTable orders={two()} t={en} locale="en" now={NOW} />);
+    const { rerender } = render(
+      <OrdersTable orders={two()} t={en} locale="en" now={NOW} permissions={OPERATOR} />,
+    );
     fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
     expect(screen.queryByRole("button", { name: "Mark cash as received" })).toBeNull();
-    rerender(<OrdersTable orders={two()} t={en} locale="en" now={NOW} canMarkCashReceived />);
+    rerender(<OrdersTable orders={two()} t={en} locale="en" now={NOW} permissions={ADMIN} />);
     expect(screen.getByRole("button", { name: "Mark cash as received" })).toBeInTheDocument();
   });
 
+  it("offers a viewer only Print packing slips — no action the API would refuse", () => {
+    render(<OrdersTable orders={two()} t={en} locale="en" now={NOW} permissions={VIEWER} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
+    expect(screen.getByRole("button", { name: "Print packing slips" })).toBeInTheDocument();
+    for (const name of [
+      "Fulfill items",
+      "Capture payments",
+      "Archive orders",
+      "Unarchive orders",
+      "Mark cash as received",
+    ]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
+    expect(screen.queryByText("More actions")).toBeNull();
+  });
+
+  it("shows no actions without permissions (the safe default)", () => {
+    render(<OrdersTable orders={two()} t={en} locale="en" now={NOW} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
+    expect(screen.queryByRole("button", { name: "Fulfill items" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Print packing slips" })).toBeInTheDocument();
+  });
+
   it("clears the selection when the page changes (Review Focus 5)", () => {
-    const { rerender } = render(<OrdersTable orders={two()} t={en} locale="en" now={NOW} />);
+    const { rerender } = render(
+      <OrdersTable orders={two()} t={en} locale="en" now={NOW} permissions={OPERATOR} />,
+    );
     fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
     rerender(
       <OrdersTable

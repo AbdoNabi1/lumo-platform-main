@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  NO_ORDER_ACTIONS,
   ORDER_VIEWS,
+  orderActionPermissionsFor,
   ordersExportContextFor,
   ordersViewHref,
   parseOrderIds,
@@ -62,5 +64,28 @@ describe("ordersExportContextFor", () => {
   it("gives viewers (no orders:export) and unknown roles no export at all", () => {
     expect(ordersExportContextFor("viewer", "all", {})).toBeUndefined();
     expect(ordersExportContextFor(undefined, "all", {})).toBeUndefined();
+  });
+});
+
+describe("orderActionPermissionsFor (the role table, decided on the server)", () => {
+  it("lets operators archive, fulfill and capture, and only admins mark cash as received", () => {
+    expect(orderActionPermissionsFor("operator")).toEqual({
+      canArchive: true,
+      canFulfill: true,
+      canCapture: true,
+      canMarkCashReceived: false,
+    });
+    expect(orderActionPermissionsFor("admin")).toEqual({
+      canArchive: true,
+      canFulfill: true,
+      canCapture: true,
+      canMarkCashReceived: true,
+    });
+  });
+
+  it("gives viewers and unknown roles none of the actions the API would refuse", () => {
+    expect(orderActionPermissionsFor("viewer")).toEqual(NO_ORDER_ACTIONS);
+    expect(orderActionPermissionsFor(undefined)).toEqual(NO_ORDER_ACTIONS);
+    expect(Object.values(NO_ORDER_ACTIONS).every((allowed) => !allowed)).toBe(true);
   });
 });

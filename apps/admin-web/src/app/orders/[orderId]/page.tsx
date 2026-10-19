@@ -20,7 +20,9 @@ import { OrderPaymentCard, OrderPaymentCardSkeleton } from "@/components/orders/
 import { OrderTimeline } from "@/components/orders/order-timeline";
 import { fetchOrder } from "@/lib/api/orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { orderActionPermissionsFor } from "@/lib/orders/order-views";
 
 interface OrderDetailPageProps {
   readonly params: Promise<{ readonly orderId: string }>;
@@ -82,11 +84,13 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
   }
 
   const order = result.order;
+  // `orders:archive` is operator/admin: a viewer sees no Archive / Unarchive the API would refuse.
+  const { canArchive } = orderActionPermissionsFor(highestRole((await readSession())?.roles ?? []));
 
   return (
     <AppShell t={t} locale={locale} activeNavId="orders" user={user}>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-        <OrderHeader order={order} t={t} locale={locale} />
+        <OrderHeader order={order} t={t} locale={locale} canArchive={canArchive} />
 
         <div className="grid gap-6 xl:grid-cols-3 [&>*]:min-w-0">
           <div className="flex flex-col gap-6 xl:col-span-2">

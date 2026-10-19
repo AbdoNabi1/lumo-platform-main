@@ -7,6 +7,7 @@ import { runBulkOrderAction, type BulkActionState } from "@/app/orders/actions";
 import type { BulkOrderAction, OrderListItemDto } from "@/lib/api/orders";
 import { formatNumber } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
+import type { OrderActionPermissions } from "@/lib/orders/order-views";
 import type { Dictionary } from "@/messages/en";
 
 /** The result of one bulk action, with the numbers of the orders it ran on (to name them in the details). */
@@ -46,14 +47,15 @@ export function OrdersBulkBar({
   selected,
   t,
   locale,
-  canMarkCashReceived,
+  permissions,
   onFinished,
   onExportSelected,
 }: {
   readonly selected: readonly OrderListItemDto[];
   readonly t: Dictionary;
   readonly locale: Locale;
-  readonly canMarkCashReceived: boolean;
+  /** Decided on the server from the role: an action the API would refuse is not offered at all. */
+  readonly permissions: OrderActionPermissions;
   readonly onFinished: (outcome: BulkOutcome) => void;
   readonly onExportSelected?: (() => void) | undefined;
 }) {
@@ -73,6 +75,8 @@ export function OrdersBulkBar({
       }
       onFinished({ state, orderNumbers });
     });
+  const hasMenu =
+    permissions.canArchive || permissions.canMarkCashReceived || onExportSelected !== undefined;
   const printSlips = () => {
     window.open(
       `/orders/packing-slips?ids=${orderIds.map(encodeURIComponent).join(",")}`,
@@ -90,54 +94,64 @@ export function OrdersBulkBar({
       <span className="text-foreground me-2 text-sm font-semibold">
         {b.selectedCount.replace("{count}", formatNumber(locale, selected.length))}
       </span>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        disabled={isPending}
-        onClick={() => run("fulfill")}
-      >
-        {b.fulfillItems}
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        disabled={isPending}
-        onClick={() => run("capture_payments")}
-      >
-        {b.capturePayments}
-      </Button>
+      {permissions.canFulfill && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={isPending}
+          onClick={() => run("fulfill")}
+        >
+          {b.fulfillItems}
+        </Button>
+      )}
+      {permissions.canCapture && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={isPending}
+          onClick={() => run("capture_payments")}
+        >
+          {b.capturePayments}
+        </Button>
+      )}
       <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={printSlips}>
         {b.printPackingSlips}
       </Button>
-      <details className="relative">
-        <summary
-          aria-label={b.moreActions}
-          title={b.moreActions}
-          className="border-input bg-card hover:border-foreground/40 focus-visible:ring-ring inline-flex h-8 cursor-pointer list-none items-center rounded-lg border px-2 focus-visible:outline-none focus-visible:ring-2 [&::-webkit-details-marker]:hidden"
-        >
-          <MoreHorizontalIcon aria-hidden="true" className="size-4" />
-        </summary>
-        <div className="border-border bg-card absolute end-0 z-20 mt-2 flex min-w-56 flex-col gap-1 rounded-xl border p-2 shadow-lg">
-          <MenuButton disabled={isPending} onClick={() => run("archive")}>
-            {b.archive}
-          </MenuButton>
-          <MenuButton disabled={isPending} onClick={() => run("unarchive")}>
-            {b.unarchive}
-          </MenuButton>
-          {onExportSelected !== undefined && (
-            <MenuButton disabled={isPending} onClick={onExportSelected}>
-              {b.exportSelected}
-            </MenuButton>
-          )}
-          {canMarkCashReceived && (
-            <MenuButton disabled={isPending} onClick={() => run("mark_cod_collected")}>
-              {b.markCashReceived}
-            </MenuButton>
-          )}
-        </div>
-      </details>
+      {hasMenu && (
+        <details className="relative">
+          <summary
+            aria-label={b.moreActions}
+            title={b.moreActions}
+            className="border-input bg-card hover:border-foreground/40 focus-visible:ring-ring inline-flex h-8 cursor-pointer list-none items-center rounded-lg border px-2 focus-visible:outline-none focus-visible:ring-2 [&::-webkit-details-marker]:hidden"
+          >
+            <MoreHorizontalIcon aria-hidden="true" className="size-4" />
+          </summary>
+          <div className="border-border bg-card absolute end-0 z-20 mt-2 flex min-w-56 flex-col gap-1 rounded-xl border p-2 shadow-lg">
+            {permissions.canArchive && (
+              <>
+                <MenuButton disabled={isPending} onClick={() => run("archive")}>
+                  {b.archive}
+                </MenuButton>
+                <MenuButton disabled={isPending} onClick={() => run("unarchive")}>
+                  {b.unarchive}
+                </MenuButton>
+              </>
+            )}
+            {onExportSelected !== undefined && (
+              <MenuButton disabled={isPending} onClick={onExportSelected}>
+                {b.exportSelected}
+              </MenuButton>
+            )}
+            {permissions.canMarkCashReceived && (
+              <MenuButton disabled={isPending} onClick={() => run("mark_cod_collected")}>
+                {b.markCashReceived}
+              </MenuButton>
+            )}
+          </div>
+        </details>
+      )}
       {isPending && <span className="text-muted-foreground text-sm">{b.working}</span>}
     </div>
   );

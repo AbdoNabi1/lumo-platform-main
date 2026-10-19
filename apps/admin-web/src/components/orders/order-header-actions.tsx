@@ -69,11 +69,14 @@ export function OrderRefundButton({
  */
 export function OrderMoreActions({
   orderId,
+  canArchive,
   canCancel,
   archived,
   t,
 }: {
   readonly orderId: string;
+  /** `orders:archive` (operator, admin), decided on the server: a viewer gets no Archive / Unarchive. */
+  readonly canArchive: boolean;
   readonly canCancel: boolean;
   /** Whether the order is archived: offers Unarchive instead of Archive. */
   readonly archived: boolean;
@@ -113,7 +116,7 @@ export function OrderMoreActions({
             )}
           </form>
         )}
-        {archived ? (
+        {!canArchive ? null : archived ? (
           <OrderArchiveForm
             orderId={orderId}
             action={unarchiveOrderAction}

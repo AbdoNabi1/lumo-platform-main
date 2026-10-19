@@ -165,4 +165,13 @@ describe("OrderHeader (Plan 3B)", () => {
     );
     expect(screen.getAllByText("Archived")).toHaveLength(1);
   });
+
+  it("offers Archive only when the server says this staff member may archive", () => {
+    const { rerender } = render(<OrderHeader order={order()} t={en} locale="en" canArchive />);
+    expect(screen.getByRole("button", { name: "Archive" })).toBeInTheDocument();
+    rerender(<OrderHeader order={order()} t={en} locale="en" canArchive={false} />);
+    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+    rerender(<OrderHeader order={order()} t={en} locale="en" />);
+    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+  });
 });
