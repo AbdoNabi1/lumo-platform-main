@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FilterIcon, SearchIcon } from "lucide-react";
 import { Input, Label } from "@platform/ui";
 import { suggestOrderTagsAction } from "@/app/orders/annotation-actions";
-import { parseTagFilter } from "@/lib/orders/order-tags";
+import { MAX_TAG_FILTER, parseTagFilter } from "@/lib/orders/order-tags";
 import type { Dictionary } from "@/messages/en";
 import { TagInput } from "./tag-input";
 
@@ -82,7 +82,7 @@ export function OrdersToolbar({ t }: { readonly t: Dictionary }) {
   };
 
   const currentStatus = searchParams.get("status") ?? "";
-  const currentTags = parseTagFilter(searchParams.get("tag") ?? undefined);
+  const currentTags = parseTagFilter(searchParams.getAll("tag"));
   const setTags = (tags: readonly string[]) => pushParams({ tag: tags.join(",") });
 
   return (
@@ -136,6 +136,8 @@ export function OrdersToolbar({ t }: { readonly t: Dictionary }) {
             onAdd={(added) => setTags([...currentTags, ...added])}
             onRemove={(tag) => setTags(currentTags.filter((existing) => existing !== tag))}
             suggest={suggestOrderTagsAction}
+            maxTags={MAX_TAG_FILTER}
+            capHint={t.ordersPage.taggedWithLimit}
             t={t}
           />
         </div>

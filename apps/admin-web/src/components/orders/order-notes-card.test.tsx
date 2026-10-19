@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import * as format from "@/lib/format";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { OrderNotesCard } from "./order-notes-card";
@@ -17,20 +18,30 @@ beforeEach(() => {
 
 describe("OrderNotesCard (Shopify's Notes card)", () => {
   it('says "No notes" when there is none, and shows the note with its line breaks when there is', () => {
-    const { rerender } = render(<OrderNotesCard orderId="o-1" note={null} canEdit t={en} />);
+    const { rerender } = render(
+      <OrderNotesCard orderId="o-1" note={null} canEdit locale="en" t={en} />,
+    );
     expect(screen.getByText("No notes")).toBeInTheDocument();
-    rerender(<OrderNotesCard orderId="o-1" note={"Ring twice\nLeave at door"} canEdit t={en} />);
+    rerender(
+      <OrderNotesCard
+        orderId="o-1"
+        note={"Ring twice\nLeave at door"}
+        canEdit
+        locale="en"
+        t={en}
+      />,
+    );
     expect(screen.getByText(/Ring twice/).className).toContain("whitespace-pre-wrap");
     expect(screen.getByText(/Ring twice/).getAttribute("dir")).toBe("auto");
   });
 
   it("offers no pencil to someone who may not edit notes", () => {
-    render(<OrderNotesCard orderId="o-1" note={null} canEdit={false} t={en} />);
+    render(<OrderNotesCard orderId="o-1" note={null} canEdit={false} locale="en" t={en} />);
     expect(screen.queryByRole("button", { name: "Edit notes" })).toBeNull();
   });
 
   it("edits in a dialog prefilled with the note, saves through the action and closes", async () => {
-    render(<OrderNotesCard orderId="o-1" note="Ring twice" canEdit t={en} />);
+    render(<OrderNotesCard orderId="o-1" note="Ring twice" canEdit locale="en" t={en} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit notes" }));
     const textarea = screen.getByLabelText("Note") as HTMLTextAreaElement;
     expect(textarea.value).toBe("Ring twice");
@@ -50,14 +61,14 @@ describe("OrderNotesCard (Shopify's Notes card)", () => {
       message: "Check the highlighted fields.",
       fieldErrors: { note: "Notes can have at most 5,000 characters." },
     });
-    render(<OrderNotesCard orderId="o-1" note={null} canEdit t={en} />);
+    render(<OrderNotesCard orderId="o-1" note={null} canEdit locale="en" t={en} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit notes" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Notes can have at most 5,000 characters.")).toBeInTheDocument();
   });
 
   it("shows a character counter and says when the note is too long, without calling the action", async () => {
-    render(<OrderNotesCard orderId="o-1" note="abc" canEdit t={en} />);
+    render(<OrderNotesCard orderId="o-1" note="abc" canEdit locale="en" t={en} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit notes" }));
     expect(screen.getByText("3 / 5,000")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Note"), { target: { value: "a".repeat(5001) } });
@@ -68,8 +79,29 @@ describe("OrderNotesCard (Shopify's Notes card)", () => {
   });
 
   it("is in Arabic on an Arabic page", () => {
-    render(<OrderNotesCard orderId="o-1" note={null} canEdit t={ar} />);
+    render(<OrderNotesCard orderId="o-1" note={null} canEdit locale="ar" t={ar} />);
     expect(screen.getByText("ملاحظات")).toBeInTheDocument();
     expect(screen.getByText("لا توجد ملاحظات")).toBeInTheDocument();
+  });
+});
+
+describe("OrderNotesCard counter locale", () => {
+  it("formats the counter with the page locale (formatNumber), not a fixed en-US", () => {
+    const spy = vi
+      .spyOn(format, "formatNumber")
+      .mockImplementation((locale, value) => `${locale}:${value}`);
+    try {
+      render(<OrderNotesCard orderId="o-1" note="abc" canEdit locale="ar" t={ar} />);
+      fireEvent.click(screen.getByRole("button", { name: ar.orderNotes.edit }));
+      expect(screen.getByText("ar:3 من ar:5000")).toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("still reads 3 / 5,000 in English", () => {
+    render(<OrderNotesCard orderId="o-1" note="abc" canEdit locale="en" t={en} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit notes" }));
+    expect(screen.getByText("3 / 5,000")).toBeInTheDocument();
   });
 });

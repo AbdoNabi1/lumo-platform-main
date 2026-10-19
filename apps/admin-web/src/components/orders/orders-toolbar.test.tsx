@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { OrdersToolbar } from "./orders-toolbar";
 
@@ -36,5 +37,40 @@ describe("OrdersToolbar", () => {
     expect(navigation.push).toHaveBeenLastCalledWith("/orders?view=unpaid&tag=vip%2Curgent");
     fireEvent.click(screen.getByRole("button", { name: "Remove vip" }));
     expect(navigation.push).toHaveBeenLastCalledWith("/orders?view=unpaid");
+  });
+});
+
+describe("OrdersToolbar tag cap and repeated params", () => {
+  it("reads every ?tag= param, and editing keeps all of them", () => {
+    navigation.search = "tag=a&tag=b";
+    render(<OrdersToolbar t={en} />);
+    expect(screen.getByRole("button", { name: "Remove a" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove b" })).toBeInTheDocument();
+    const input = screen.getByLabelText("Tagged with");
+    fireEvent.change(input, { target: { value: "c" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(navigation.push).toHaveBeenLastCalledWith("/orders?tag=a%2Cb%2Cc");
+    fireEvent.click(screen.getByRole("button", { name: "Remove a" }));
+    expect(navigation.push).toHaveBeenLastCalledWith("/orders?tag=b");
+  });
+
+  it("at 10 tags the input is read-only and says 'Up to 10 tags'", () => {
+    navigation.search = `tag=${Array.from({ length: 10 }, (_, i) => `t${i}`).join(",")}`;
+    render(<OrdersToolbar t={en} />);
+    expect(screen.getByLabelText("Tagged with")).toHaveAttribute("readonly");
+    expect(screen.getByText("Up to 10 tags")).toBeInTheDocument();
+  });
+
+  it("below the cap there is no hint and the input is editable", () => {
+    navigation.search = "tag=a";
+    render(<OrdersToolbar t={en} />);
+    expect(screen.getByLabelText("Tagged with")).not.toHaveAttribute("readonly");
+    expect(screen.queryByText("Up to 10 tags")).toBeNull();
+  });
+
+  it("says the cap in Arabic", () => {
+    navigation.search = `tag=${Array.from({ length: 10 }, (_, i) => `t${i}`).join(",")}`;
+    render(<OrdersToolbar t={ar} />);
+    expect(screen.getByText("حتى ١٠ علامات")).toBeInTheDocument();
   });
 });

@@ -3,7 +3,7 @@ export const MAX_TAG_LENGTH = 40;
 export const MAX_NOTE_LENGTH = 5000;
 export const MAX_COMMENT_LENGTH = 5000;
 /** The list's "Tagged with" filter takes at most this many tags (the API's cap). */
-const MAX_TAG_FILTER = 10;
+export const MAX_TAG_FILTER = 10;
 
 /** Tags split on the Latin comma and the Arabic comma (U+060C), which an Arabic keyboard types. */
 export const TAG_SEPARATOR = /[,،]/u;

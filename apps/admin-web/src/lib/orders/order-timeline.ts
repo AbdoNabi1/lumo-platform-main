@@ -51,8 +51,9 @@ function fill(template: string, values: Readonly<Record<string, string>>): strin
 /** An activity line (or a deleted comment) in words: "Ahmed added tags VIP, urgent". */
 export function activityLabel(entry: TimelineEntryDto, t: Dictionary): string {
   const words = t.orderTimeline;
-  const author = entry.authorName ?? words.staff;
-  const tags = (entry.data.tags ?? []).join(words.tagSeparator);
+  // Staff-written text keeps its own direction (FSI … PDI) so it cannot reorder the sentence around it.
+  const author = isolateName(entry.authorName ?? words.staff);
+  const tags = (entry.data.tags ?? []).map(isolateName).join(words.tagSeparator);
   switch (entry.kind) {
     case "archived":
       return fill(words.archived, { author });

@@ -48,6 +48,8 @@ export function TagChips({
  * Shopify's tag input: Enter or a comma adds what was typed (a comma splits, case-insensitive
  * duplicates and tags the list already has are dropped, over-long tags are refused with a message),
  * × removes, and — when `suggest` is given — the shop's matching tags are offered while typing.
+ * With `maxTags`, the input goes read-only at that many tags and shows `capHint`; `onPendingChange`
+ * reports the raw text typed but not yet committed, so a caller can add it on submit.
  */
 export function TagInput({
   label,
@@ -55,6 +57,9 @@ export function TagInput({
   onAdd,
   onRemove,
   suggest,
+  maxTags,
+  capHint,
+  onPendingChange,
   disabled = false,
   t,
 }: {
@@ -63,11 +68,21 @@ export function TagInput({
   readonly onAdd: (tags: readonly string[]) => void;
   readonly onRemove: (tag: string) => void;
   readonly suggest?: ((prefix: string) => Promise<readonly string[]>) | undefined;
+  /** The most tags the list may hold; at that many the input is read-only and `capHint` shows. */
+  readonly maxTags?: number | undefined;
+  readonly capHint?: string | undefined;
+  /** Called with the raw text in the box each time it changes (empty once it is committed). */
+  readonly onPendingChange?: ((pending: string) => void) | undefined;
   readonly disabled?: boolean;
   readonly t: Dictionary;
 }) {
   const inputId = useId();
-  const [value, setValue] = useState("");
+  const [value, setValueState] = useState("");
+  const setValue = (next: string) => {
+    setValueState(next);
+    onPendingChange?.(next);
+  };
+  const atCap = maxTags !== undefined && tags.length >= maxTags;
   const [suggestions, setSuggestions] = useState<readonly string[]>([]);
   const [tooLong, setTooLong] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -100,7 +115,8 @@ export function TagInput({
   const commit = (raw: string): readonly string[] => {
     const split = splitTagInput(raw);
     setTooLong(split.tooLong.length > 0);
-    const fresh = split.tags.filter((tag) => !hasTag(tags, tag));
+    const room = maxTags === undefined ? Infinity : Math.max(0, maxTags - tags.length);
+    const fresh = split.tags.filter((tag) => !hasTag(tags, tag)).slice(0, room);
     if (fresh.length > 0) onAdd(fresh);
     return split.tooLong;
   };
@@ -135,13 +151,14 @@ export function TagInput({
       <Input
         id={inputId}
         value={value}
-        readOnly={disabled}
+        readOnly={disabled || atCap}
         autoComplete="off"
         placeholder={t.orderTags.placeholder}
         aria-describedby={tooLong ? `${inputId}-error` : undefined}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={onKeyDown}
       />
+      {atCap && capHint !== undefined && <p className="text-muted-foreground text-sm">{capHint}</p>}
       {tooLong && (
         <p id={`${inputId}-error`} role="alert" className="text-destructive text-sm">
           {t.orderTags.tooLong}

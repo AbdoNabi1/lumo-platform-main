@@ -124,6 +124,7 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
               orderId={order.id}
               note={order.note ?? null}
               canEdit={permissions.canEditNote}
+              locale={locale}
               t={t}
             />
 

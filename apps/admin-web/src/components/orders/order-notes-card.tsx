@@ -18,6 +18,8 @@ import {
 } from "@platform/ui";
 import { saveOrderNoteAction } from "@/app/orders/annotation-actions";
 import type { FormState } from "@/lib/api/mutation";
+import { formatNumber } from "@/lib/format";
+import type { Locale } from "@/lib/i18n";
 import { characterCount, MAX_NOTE_LENGTH } from "@/lib/orders/order-tags";
 import type { Dictionary } from "@/messages/en";
 
@@ -32,11 +34,13 @@ export function OrderNotesCard({
   orderId,
   note,
   canEdit,
+  locale,
   t,
 }: {
   readonly orderId: string;
   readonly note: string | null;
   readonly canEdit: boolean;
+  readonly locale: Locale;
   readonly t: Dictionary;
 }) {
   const n = t.orderNotes;
@@ -52,8 +56,8 @@ export function OrderNotesCard({
         ? n.tooLong
         : undefined;
   const counter = n.counter
-    .replace("{count}", () => length.toLocaleString("en-US"))
-    .replace("{max}", () => MAX_NOTE_LENGTH.toLocaleString("en-US"));
+    .replace("{count}", () => formatNumber(locale, length))
+    .replace("{max}", () => formatNumber(locale, MAX_NOTE_LENGTH));
 
   const changeOpen = (next: boolean) => {
     // The textarea restarts from the saved note each time the dialog opens.

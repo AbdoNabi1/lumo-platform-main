@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { TimelineEntryDto } from "@/lib/api/orders";
+import { isolateName } from "@/lib/orders/order-timeline";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { OrderTimeline } from "./order-timeline";
@@ -168,7 +169,7 @@ describe("OrderTimeline — staff comments and activity (order operations Part 2
     ]);
     expect(screen.getAllByRole("region")).toHaveLength(2);
     expect(screen.getAllByRole("listitem").map(firstLine)).toEqual([
-      "Ahmed added tags VIP, urgent",
+      `${isolateName("Ahmed")} added tags ${isolateName("VIP")}, ${isolateName("urgent")}`,
       "Called",
       "Order confirmed",
       "Order placed",
