@@ -27,6 +27,8 @@ export interface OrderListItemDto {
   readonly fulfillmentStatus: OrderFulfillmentStatus;
   /** Order operations Part 1: when the order was archived; null/absent when not (an older API omits it). */
   readonly archivedAt?: string | null;
+  /** Order operations Part 2: the order's tags; absent from an older API. */
+  readonly tags?: readonly string[];
 }
 
 export interface OrdersPageInfo {
@@ -254,6 +256,43 @@ export interface OrderHistoryEntryDto {
   readonly occurredAt: string;
 }
 
+/** Order operations Part 2 — what one staff-timeline line is. */
+export type OrderTimelineKind =
+  | "comment"
+  | "archived"
+  | "unarchived"
+  | "note_changed"
+  | "tags_added"
+  | "tags_removed"
+  | "created_from_draft";
+
+/** One line of the order's staff timeline (`GET /orders/:id` → `timelineEntries`). */
+export interface TimelineEntryDto {
+  readonly id: string;
+  readonly kind: OrderTimelineKind;
+  /** null → shown as "Staff". */
+  readonly authorName: string | null;
+  /** The comment text; null for activity lines and for a deleted comment. */
+  readonly body: string | null;
+  readonly data: {
+    readonly tags?: readonly string[];
+    readonly cleared?: boolean;
+    readonly draftNumber?: string;
+  };
+  readonly createdAt: string;
+  readonly editedAt: string | null;
+  readonly deleted: boolean;
+  /** Decided by the API: this viewer may edit / delete this line. */
+  readonly canEdit: boolean;
+  readonly canDelete: boolean;
+}
+
+/** A tag suggestion (`GET /order-tags`). */
+export interface OrderTagUsageDto {
+  readonly tag: string;
+  readonly count: number;
+}
+
 export interface OrderDetailDto {
   readonly id: string;
   readonly orderNumber: string;
@@ -280,6 +319,10 @@ export interface OrderDetailDto {
   readonly refundable: boolean;
   /** Order operations Part 1: when the order was archived; null/absent when not (an older API omits it). */
   readonly archivedAt?: string | null;
+  /** Order operations Part 2 — absent from an older API. */
+  readonly note?: string | null;
+  readonly tags?: readonly string[];
+  readonly timelineEntries?: readonly TimelineEntryDto[];
 }
 
 function isOrderDetailDto(value: unknown): value is OrderDetailDto {
@@ -601,4 +644,64 @@ export function unarchiveOrder(
     { method: "POST", idempotencyKey },
     isUnknown,
   );
+}
+
+function isNoteBody(value: unknown): value is { readonly note: string | null } {
+  if (typeof value !== "object" || value === null) return false;
+  const note = (value as { note?: unknown }).note;
+  return note === null || typeof note === "string";
+}
+
+function isTagsBody(value: unknown): value is { readonly tags: readonly string[] } {
+  return (
+    typeof value === "object" && value !== null && Array.isArray((value as { tags?: unknown }).tags)
+  );
+}
+
+/** `PUT /orders/:orderId/note` (`orders:edit_note`); null or blank removes the note. */
+export function updateOrderNote(
+  orderId: string,
+  note: string | null,
+  idempotencyKey: string,
+): Promise<MutationResult<{ readonly note: string | null }>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/note"),
+    { method: "PUT", body: { note }, idempotencyKey },
+    isNoteBody,
+  );
+}
+
+/** `POST /orders/:orderId/tags` (`orders:tag`): adds, then removes; answers the order's tags. */
+export function changeOrderTags(
+  orderId: string,
+  change: { readonly add?: readonly string[]; readonly remove?: readonly string[] },
+  idempotencyKey: string,
+): Promise<MutationResult<{ readonly tags: readonly string[] }>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/tags"),
+    {
+      method: "POST",
+      body: {
+        ...(change.add === undefined ? {} : { add: change.add }),
+        ...(change.remove === undefined ? {} : { remove: change.remove }),
+      },
+      idempotencyKey,
+    },
+    isTagsBody,
+  );
+}
+
+function isTagUsages(value: unknown): value is { readonly tags: readonly OrderTagUsageDto[] } {
+  return isTagsBody(value);
+}
+
+/** `GET /order-tags?q=` — the shop's tags starting with `prefix`; null when the read failed. */
+export async function fetchOrderTagSuggestions(
+  prefix: string,
+): Promise<readonly OrderTagUsageDto[] | null> {
+  const result = await getAdminApi(
+    `/api/v1/order-tags?q=${encodeURIComponent(prefix)}`,
+    isTagUsages,
+  );
+  return result.outcome === "ok" ? result.data.tags : null;
 }

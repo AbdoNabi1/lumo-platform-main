@@ -348,6 +348,29 @@ export const en = {
       closed: "Order closed",
     },
   },
+  /** Order operations Part 2 — Shopify's Notes card on the order page. */
+  orderNotes: {
+    title: "Notes",
+    empty: "No notes",
+    edit: "Edit notes",
+    dialogTitle: "Edit notes",
+    label: "Note",
+    save: "Save",
+    saving: "Saving…",
+    cancel: "Cancel",
+    tooLong: "Notes can have at most 5,000 characters.",
+  },
+  /** Order operations Part 2 — Shopify's Tags card and the tag input. */
+  orderTags: {
+    title: "Tags",
+    empty: "No tags",
+    inputLabel: "Add tags",
+    placeholder: "Find or create tags",
+    listLabel: "Tags on this order",
+    remove: "Remove {tag}",
+    suggestions: "Suggested tags",
+    tooLong: "A tag can have at most 40 characters.",
+  },
   /** Plan 3B: Shopify's two statuses, derived on the server (never stored). */
   orderPaymentStatus: {
     pending: "Payment pending",

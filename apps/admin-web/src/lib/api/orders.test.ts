@@ -24,6 +24,9 @@ const {
   fetchOrderExportRows,
   fetchPackingSlips,
   archiveOrder,
+  updateOrderNote,
+  changeOrderTags,
+  fetchOrderTagSuggestions,
 } = await import("./orders");
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -434,5 +437,44 @@ describe("fetchPackingSlips / archiveOrder (order operations Part 1)", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toMatch(/\/api\/v1\/orders\/o-1\/archive$/);
     expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-1");
+  });
+});
+
+describe("note, tags and suggestions (order operations Part 2)", () => {
+  it("puts the note with the idempotency key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { note: "Ring twice" }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await updateOrderNote("o-1", "Ring twice", "key-1")).toEqual({
+      outcome: "ok",
+      data: { note: "Ring twice" },
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/v1\/orders\/o-1\/note$/);
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(String(init.body))).toEqual({ note: "Ring twice" });
+    expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-1");
+  });
+
+  it("posts only the tag lists it was given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { tags: ["VIP"] }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await changeOrderTags("o-1", { add: ["VIP"] }, "key-2")).toEqual({
+      outcome: "ok",
+      data: { tags: ["VIP"] },
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/v1\/orders\/o-1\/tags$/);
+    expect(JSON.parse(String(init.body))).toEqual({ add: ["VIP"] });
+  });
+
+  it("asks for suggestions by prefix and answers null on failure", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { tags: [{ tag: "VIP", count: 2 }] }))
+      .mockResolvedValueOnce(jsonResponse(500, { message: "down" }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchOrderTagSuggestions("v i")).toEqual([{ tag: "VIP", count: 2 }]);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/v1\/order-tags\?q=v%20i$/);
+    expect(await fetchOrderTagSuggestions("v")).toBeNull();
   });
 });

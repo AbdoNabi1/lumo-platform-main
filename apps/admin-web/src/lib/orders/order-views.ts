@@ -70,6 +70,12 @@ export interface OrderActionPermissions {
   readonly canCapture: boolean;
   /** `payments:confirm_cod_collection` (admin only — money): bulk "Mark cash as received". */
   readonly canMarkCashReceived: boolean;
+  /** `orders:edit_note` (operator, admin): the Notes card's pencil. */
+  readonly canEditNote: boolean;
+  /** `orders:tag` (operator, admin): the Tags card's input and the bulk Add / Remove tags. */
+  readonly canTag: boolean;
+  /** `orders:comment` (operator, admin): the timeline's comment composer. */
+  readonly canComment: boolean;
 }
 
 /** A viewer's (and an unknown role's) actions: none. Print packing slips needs only `orders:read`. */
@@ -78,6 +84,9 @@ export const NO_ORDER_ACTIONS: OrderActionPermissions = {
   canFulfill: false,
   canCapture: false,
   canMarkCashReceived: false,
+  canEditNote: false,
+  canTag: false,
+  canComment: false,
 };
 
 /** The role table (packages/auth) for the order actions, decided on the server from the session's role. */
@@ -88,6 +97,9 @@ export function orderActionPermissionsFor(role: string | undefined): OrderAction
     canFulfill: true,
     canCapture: true,
     canMarkCashReceived: role === "admin",
+    canEditNote: true,
+    canTag: true,
+    canComment: true,
   };
 }
 

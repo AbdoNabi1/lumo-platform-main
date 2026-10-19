@@ -74,12 +74,18 @@ describe("orderActionPermissionsFor (the role table, decided on the server)", ()
       canFulfill: true,
       canCapture: true,
       canMarkCashReceived: false,
+      canEditNote: true,
+      canTag: true,
+      canComment: true,
     });
     expect(orderActionPermissionsFor("admin")).toEqual({
       canArchive: true,
       canFulfill: true,
       canCapture: true,
       canMarkCashReceived: true,
+      canEditNote: true,
+      canTag: true,
+      canComment: true,
     });
   });
 
