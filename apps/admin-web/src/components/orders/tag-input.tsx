@@ -25,12 +25,12 @@ export function TagChips({
       {tags.map((tag) => (
         <li key={tag}>
           <Badge variant="neutral" className="gap-1">
-            <span>{tag}</span>
+            <span dir="auto">{tag}</span>
             {onRemove !== undefined && (
               <button
                 type="button"
                 className="hover:text-foreground focus-visible:ring-ring -me-0.5 ms-0.5 rounded focus-visible:outline-none focus-visible:ring-2"
-                aria-label={t.orderTags.remove.replace("{tag}", tag)}
+                aria-label={t.orderTags.remove.replace("{tag}", () => tag)}
                 disabled={disabled}
                 onClick={() => onRemove(tag)}
               >
@@ -92,18 +92,21 @@ export function TagInput({
     }, SUGGEST_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      if (timer.current !== undefined) clearTimeout(timer.current);
     };
   }, [value, suggest, tags]);
 
-  const commit = (raw: string) => {
+  /** Adds the good tags; answers the entries that were too long, so the caller can keep them. */
+  const commit = (raw: string): readonly string[] => {
     const split = splitTagInput(raw);
     setTooLong(split.tooLong.length > 0);
     const fresh = split.tags.filter((tag) => !hasTag(tags, tag));
     if (fresh.length > 0) onAdd(fresh);
+    return split.tooLong;
   };
 
   const onChange = (next: string) => {
-    const cut = next.lastIndexOf(",");
+    const cut = Math.max(next.lastIndexOf(","), next.lastIndexOf("،"));
     if (cut >= 0) {
       commit(next.slice(0, cut));
       setValue(next.slice(cut + 1));
@@ -115,8 +118,9 @@ export function TagInput({
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
-    commit(value);
-    setValue("");
+    // An over-long tag stays in the box (with the message) so it can be shortened, not retyped.
+    const rejected = commit(value);
+    setValue(rejected.join(", "));
   };
 
   const pick = (tag: string) => {
@@ -131,7 +135,7 @@ export function TagInput({
       <Input
         id={inputId}
         value={value}
-        disabled={disabled}
+        readOnly={disabled}
         autoComplete="off"
         placeholder={t.orderTags.placeholder}
         aria-describedby={tooLong ? `${inputId}-error` : undefined}

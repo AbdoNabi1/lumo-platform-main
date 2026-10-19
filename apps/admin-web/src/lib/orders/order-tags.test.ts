@@ -9,6 +9,10 @@ describe("splitTagInput", () => {
     });
   });
 
+  it("splits on the Arabic comma as well", () => {
+    expect(splitTagInput("عاجل، هدية,VIP").tags).toEqual(["عاجل", "هدية", "VIP"]);
+  });
+
   it("sets aside a tag over 40 characters (emoji count as one)", () => {
     expect(splitTagInput(`ok, ${"x".repeat(41)}`)).toEqual({
       tags: ["ok"],

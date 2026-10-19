@@ -21,6 +21,7 @@ describe("OrderNotesCard (Shopify's Notes card)", () => {
     expect(screen.getByText("No notes")).toBeInTheDocument();
     rerender(<OrderNotesCard orderId="o-1" note={"Ring twice\nLeave at door"} canEdit t={en} />);
     expect(screen.getByText(/Ring twice/).className).toContain("whitespace-pre-wrap");
+    expect(screen.getByText(/Ring twice/).getAttribute("dir")).toBe("auto");
   });
 
   it("offers no pencil to someone who may not edit notes", () => {
@@ -53,6 +54,17 @@ describe("OrderNotesCard (Shopify's Notes card)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit notes" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Notes can have at most 5,000 characters.")).toBeInTheDocument();
+  });
+
+  it("shows a character counter and says when the note is too long, without calling the action", async () => {
+    render(<OrderNotesCard orderId="o-1" note="abc" canEdit t={en} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit notes" }));
+    expect(screen.getByText("3 / 5,000")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "a".repeat(5001) } });
+    expect(screen.getByText("5,001 / 5,000")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Notes can have at most 5,000 characters.")).toBeInTheDocument();
+    expect(actions.saveOrderNoteAction).not.toHaveBeenCalled();
   });
 
   it("is in Arabic on an Arabic page", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { TagInput } from "./tag-input";
@@ -49,6 +49,37 @@ describe("TagInput (order operations Part 2)", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onAdd).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("A tag can have at most 40 characters.");
+    expect(input.value).toBe("x".repeat(41));
+  });
+
+  it("splits on the Arabic comma too", () => {
+    const { onAdd, input } = renderInput();
+    fireEvent.change(input, { target: { value: "عاجل، هدية" } });
+    expect(onAdd).toHaveBeenCalledWith(["عاجل"]);
+    expect(input.value).toBe(" هدية");
+  });
+
+  it("puts user text in the remove label as typed, and isolates its direction", () => {
+    renderInput({ tags: ["a$&b"] });
+    expect(screen.getByRole("button", { name: "Remove a$&b" })).toBeInTheDocument();
+    expect(screen.getByText("a$&b").getAttribute("dir")).toBe("auto");
+  });
+
+  it("stays focusable while a change is saving (read-only, not disabled)", () => {
+    const { input } = renderInput({ disabled: true });
+    expect(input.disabled).toBe(false);
+    expect(input.readOnly).toBe(true);
+  });
+
+  it("does not look up suggestions after it is gone", () => {
+    vi.useFakeTimers();
+    const suggest = vi.fn().mockResolvedValue([]);
+    const { input } = renderInput({ suggest });
+    fireEvent.change(input, { target: { value: "vi" } });
+    cleanup();
+    vi.advanceTimersByTime(1000);
+    vi.useRealTimers();
+    expect(suggest).not.toHaveBeenCalled();
   });
 
   it("removes a chip with its × button", () => {

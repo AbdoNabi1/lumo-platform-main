@@ -343,6 +343,7 @@ export const ar: Dictionary = {
     saving: "جارٍ الحفظ…",
     cancel: "إلغاء",
     tooLong: "الملاحظة لا تتجاوز ٥٬٠٠٠ حرف.",
+    counter: "{count} من {max}",
   },
   orderTags: {
     title: "العلامات",
@@ -353,6 +354,7 @@ export const ar: Dictionary = {
     remove: "إزالة {tag}",
     suggestions: "علامات مقترحة",
     tooLong: "العلامة لا تتجاوز ٤٠ حرفًا.",
+    limit: "الطلب الواحد يقبل ٢٥٠ علامة كحد أقصى.",
   },
   orderPaymentStatus: {
     pending: "في انتظار الدفع",

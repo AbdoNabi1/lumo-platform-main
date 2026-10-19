@@ -5,6 +5,9 @@ export const MAX_COMMENT_LENGTH = 5000;
 /** The list's "Tagged with" filter takes at most this many tags (the API's cap). */
 const MAX_TAG_FILTER = 10;
 
+/** Tags split on the Latin comma and the Arabic comma (U+060C), which an Arabic keyboard types. */
+export const TAG_SEPARATOR = /[,،]/u;
+
 /** Characters as a person counts them: an emoji or an Arabic letter is one. */
 export function characterCount(text: string): number {
   return [...text].length;
@@ -28,13 +31,13 @@ export interface SplitTags {
 }
 
 /**
- * What the merchant typed → tags: a comma splits (Shopify's rule), blanks drop, a case-insensitive
+ * What the merchant typed → tags: a comma (Latin or Arabic) splits (Shopify's rule), blanks drop, a case-insensitive
  * duplicate keeps the first spelling, and an entry over 40 characters is set aside.
  */
 export function splitTagInput(raw: string): SplitTags {
   const tags: string[] = [];
   const tooLong: string[] = [];
-  for (const part of raw.split(",")) {
+  for (const part of raw.split(TAG_SEPARATOR)) {
     const tag = normalizeTagText(part);
     if (tag.length === 0) continue;
     if (characterCount(tag) > MAX_TAG_LENGTH) {

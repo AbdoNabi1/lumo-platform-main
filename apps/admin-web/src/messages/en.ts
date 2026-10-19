@@ -359,6 +359,7 @@ export const en = {
     saving: "Saving…",
     cancel: "Cancel",
     tooLong: "Notes can have at most 5,000 characters.",
+    counter: "{count} / {max}",
   },
   /** Order operations Part 2 — Shopify's Tags card and the tag input. */
   orderTags: {
@@ -370,6 +371,7 @@ export const en = {
     remove: "Remove {tag}",
     suggestions: "Suggested tags",
     tooLong: "A tag can have at most 40 characters.",
+    limit: "An order can have up to 250 tags.",
   },
   /** Plan 3B: Shopify's two statuses, derived on the server (never stored). */
   orderPaymentStatus: {

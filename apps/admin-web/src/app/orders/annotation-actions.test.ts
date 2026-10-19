@@ -76,6 +76,17 @@ describe("changeOrderTagsAction", () => {
     expect(orders.changeOrderTags).not.toHaveBeenCalled();
   });
 
+  it("explains the 250-tag cap in the merchant's words instead of a bare 'check the fields'", async () => {
+    orders.changeOrderTags.mockResolvedValue({
+      outcome: "invalid",
+      fields: [{ field: "tags", message: "an order can carry at most 250 tags" }],
+    });
+    expect(await changeOrderTagsAction("o-1", { add: ["x"] })).toEqual({
+      status: "error",
+      message: "An order can have up to 250 tags.",
+    });
+  });
+
   it("answers the API's refusal as a message", async () => {
     orders.changeOrderTags.mockResolvedValue({ outcome: "forbidden" });
     const state = await changeOrderTagsAction("o-1", { remove: ["VIP"] });

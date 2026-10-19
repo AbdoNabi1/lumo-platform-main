@@ -87,6 +87,11 @@ export async function changeOrderTagsAction(
     { ...(add.length > 0 ? { add } : {}), ...(remove.length > 0 ? { remove } : {}) },
     newIdempotencyKey(),
   );
+  if (result.outcome === "invalid") {
+    // The API's only 422 here is the 250-tag cap (field "tags"); say it in the merchant's words.
+    const capped = result.fields.some((issue) => issue.field === "tags");
+    return { status: "error", message: capped ? t.orderTags.limit : t.formErrors.invalid };
+  }
   if (result.outcome !== "ok") {
     const state = toFormState(result, t.formErrors);
     return {
