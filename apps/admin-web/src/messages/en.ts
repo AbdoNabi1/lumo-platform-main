@@ -187,6 +187,7 @@ export const en = {
         already_archived: "Already archived",
         not_archived: "Not archived",
         order_not_open: "Order is cancelled or closed",
+        payment_refunded: "Order was refunded",
         fulfillment_already_open: "Fulfillment already started",
         payment_not_pending: "Payment isn't pending",
         payment_already_requested: "Payment already requested",

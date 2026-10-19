@@ -183,6 +183,7 @@ export const ar: Dictionary = {
         already_archived: "مؤرشف بالفعل",
         not_archived: "غير مؤرشف",
         order_not_open: "الطلب ملغي أو مغلق",
+        payment_refunded: "تم استرداد مبلغ الطلب",
         fulfillment_already_open: "بدأ التنفيذ بالفعل",
         payment_not_pending: "الدفع ليس معلّقًا",
         payment_already_requested: "تم طلب الدفع بالفعل",

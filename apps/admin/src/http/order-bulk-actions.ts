@@ -18,6 +18,7 @@ export type BulkSkipReason =
   | "already_archived"
   | "not_archived"
   | "order_not_open"
+  | "payment_refunded"
   | "fulfillment_already_open"
   | "payment_not_pending"
   | "payment_already_requested"
@@ -142,6 +143,11 @@ const fulfillRunner: BulkRunner = async (context) => {
     const order = loaded.byId.get(orderId);
     if (order === undefined) return failed(orderId, "not_found");
     if (!isOpenOrder(order.history)) return skipped(orderId, "order_not_open");
+    // A legacy placed → paid → refunded order is still "open" by history; the order page offers no
+    // Fulfill items for it either.
+    if (derivePaymentStatus(order.history) === "refunded") {
+      return skipped(orderId, "payment_refunded");
+    }
     if ((statuses.byOrder.get(orderId) ?? "unfulfilled") !== "unfulfilled") {
       return skipped(orderId, "fulfillment_already_open");
     }

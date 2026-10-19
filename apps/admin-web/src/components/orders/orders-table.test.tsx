@@ -370,6 +370,20 @@ describe("OrdersTable selection and bulk bar (order operations Part 1)", () => {
     expect(screen.queryByRole("toolbar")).toBeNull();
   });
 
+  it("says a refunded order was skipped by Fulfill items, in English and Arabic", async () => {
+    expect(ar.ordersPage.bulk.reasons.payment_refunded).toBe("تم استرداد مبلغ الطلب");
+    actions.runBulkOrderAction.mockResolvedValue({
+      status: "done",
+      results: [{ orderId: "order-1", outcome: "skipped", reason: "payment_refunded" }],
+    });
+    renderTable(two());
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fulfill items" }));
+
+    await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
+    expect(screen.getByText("#1001 — Order was refunded")).toBeInTheDocument();
+  });
+
   it("opens the packing slips of the selection in a new tab", () => {
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
     renderTable(two());

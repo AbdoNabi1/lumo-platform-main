@@ -102,6 +102,17 @@ describe("bulk fulfill (Fulfill items)", () => {
     });
   });
 
+  it("skips a refunded order (legacy placed → paid → refunded), like the order page", async () => {
+    const admin = stubAdmin([order("o-1", ["placed", "paid", "refunded"])]);
+
+    const outcome = await run("fulfill", admin, ["o-1"]);
+
+    expect(outcome.ok && outcome.results).toEqual([
+      { orderId: "o-1", outcome: "skipped", reason: "payment_refunded" },
+    ]);
+    expect(admin.fulfillment.create).not.toHaveBeenCalled();
+  });
+
   it("answers a failed list read as the response, touching nothing", async () => {
     const admin = stubAdmin([]);
     admin.orders.listOrders.mockResolvedValue({ status: 500, body: {} });
