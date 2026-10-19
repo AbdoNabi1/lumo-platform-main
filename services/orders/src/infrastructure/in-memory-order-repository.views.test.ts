@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
+import { parseTags } from "../domain/order-tags";
+import { InMemoryOrderAnnotationRepository } from "./in-memory-order-annotation-repository";
 import { InMemoryOrderRepository } from "./in-memory-order-repository";
 import {
   ARCHIVED_FIXTURE_KEYS,
   buildListFixture,
   ORDER_LIST_CASES,
+  TAGGED_FIXTURE,
   type ListFixtureKey,
 } from "./order-list-fixture";
 import { OrderEventTranslator } from "./order-event-translator";
@@ -35,6 +38,14 @@ async function seeded() {
   for (const key of ARCHIVED_FIXTURE_KEYS) {
     repository.writeArchivedAt(idOf(key), TENANT, new Date("2026-10-18T00:00:00.000Z"));
   }
+  for (const [key, tags] of Object.entries(TAGGED_FIXTURE) as [
+    ListFixtureKey,
+    readonly string[],
+  ][]) {
+    const parsed = parseTags(tags);
+    if (!parsed.ok) throw new Error("fixture tags");
+    repository.writeTags(idOf(key), TENANT, parsed.value);
+  }
   const keyOf = (id: string) => fixture.find((entry) => entry.order.id.toString() === id)?.key;
   return { repository, idOf, keyOf };
 }
@@ -63,5 +74,25 @@ describe("InMemoryOrderRepository list views (shared cases, order operations Par
     const { repository, idOf } = await seeded();
     expect(repository.writeArchivedAt(idOf("paid"), "another-shop", new Date())).toBe(false);
     expect(repository.archivedAtOf(idOf("paid"), "another-shop")).toBeNull();
+  });
+
+  it("save() never clears a note or tags (Part 2)", async () => {
+    const { repository, idOf } = await seeded();
+    const id = idOf("openUnpaid");
+    repository.writeNote(id, TENANT, "Ring twice");
+    const order = await repository.findById(id, TENANT);
+    if (order === null) throw new Error("setup");
+    await repository.save(order, TENANT);
+    expect(repository.noteOf(id, TENANT)).toBe("Ring twice");
+    expect(repository.tagsOf(id, TENANT).map((tag) => tag.tag)).toEqual(["VIP", "Urgent"]);
+  });
+
+  it("tagsInUse matches a typed prefix literally — '%' is not a wildcard (Review Focus 1)", async () => {
+    const { repository, idOf } = await seeded();
+    const annotations = new InMemoryOrderAnnotationRepository({ orders: repository });
+    await annotations.addTags([idOf("paid")], [{ tag: "50% off", tagKey: "50% off" }], TENANT);
+    expect(await annotations.tagsInUse(TENANT, "%")).toEqual([]);
+    expect(await annotations.tagsInUse(TENANT, "50%")).toEqual([{ tag: "50% off", count: 1 }]);
+    expect(await annotations.tagsInUse(TENANT, "v")).toEqual([{ tag: "VIP", count: 2 }]);
   });
 });

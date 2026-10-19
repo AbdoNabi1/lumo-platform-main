@@ -52,6 +52,13 @@ const PLAN: readonly PlannedOrder[] = [
 
 export const ARCHIVED_FIXTURE_KEYS: readonly ListFixtureKey[] = ["archivedUnpaid"];
 
+/** Part 2: the tags each fixture order carries, as typed (the filter is case-insensitive). */
+export const TAGGED_FIXTURE: Readonly<Partial<Record<ListFixtureKey, readonly string[]>>> = {
+  openUnpaid: ["VIP", "Urgent"],
+  paid: ["vip"],
+  cancelled: ["urgent"],
+};
+
 const DAY = 86_400_000;
 /** Order N of the plan is placed N days after this instant (index 2 = "paid" on Oct 3, 10:00 UTC). */
 export const FIXTURE_START = new Date("2026-10-01T10:00:00.000Z");
@@ -178,5 +185,25 @@ export const ORDER_LIST_CASES: readonly OrderListCase[] = [
     name: "search still matches the order number",
     query: () => ({ search: "1003" }),
     expected: ["paid"],
+  },
+  {
+    name: "tags matches a tag case-insensitively (Part 2)",
+    query: () => ({ tags: ["Vip"] }),
+    expected: ["openUnpaid", "paid"],
+  },
+  {
+    name: "several tags must all match (AND)",
+    query: () => ({ tags: ["vip", "URGENT"] }),
+    expected: ["openUnpaid"],
+  },
+  {
+    name: "a tag no order carries matches nothing",
+    query: () => ({ tags: ["nobody"] }),
+    expected: [],
+  },
+  {
+    name: "the tag filter combines with a tab's predicates",
+    query: () => ({ tags: ["urgent"], open: true }),
+    expected: ["openUnpaid"],
   },
 ];

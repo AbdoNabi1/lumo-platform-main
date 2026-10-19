@@ -7,6 +7,7 @@ import {
   ORDER_ENTRY_EVENT_TYPES,
   PAYMENT_DECIDED_EVENT_TYPES,
 } from "../domain/order-statuses";
+import { tagKeyOf } from "../domain/order-tags";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INSENSITIVE = "insensitive" as const;
@@ -75,6 +76,11 @@ export function orderListWhere(
         },
       },
     });
+  }
+  // Part 2 (spec §2.3): `id IN (SELECT order_id FROM order_tags WHERE tenant_id = $t AND tag_key = $k)`
+  // per tag, as Prisma relation filters (EXISTS) — exact pages, no scan. Several tags = AND.
+  for (const tagKey of new Set((query.tags ?? []).map(tagKeyOf))) {
+    if (tagKey.length > 0) and.push({ tags: { some: { tenantId, tagKey } } });
   }
 
   const id: { lt?: string; in?: string[] } = {};

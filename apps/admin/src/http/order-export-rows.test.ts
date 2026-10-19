@@ -109,7 +109,7 @@ describe("toOrderExportRowDto", () => {
         contact,
         customerLabels: new Map([["c-1", "Mona"]]),
         intent: cod,
-        annotations: { archivedAt: null },
+        annotations: { archivedAt: null, note: null, tags: [] },
       }),
     ).toEqual({
       orderId: "o-1",

@@ -11,11 +11,13 @@ import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
+import { parseTags } from "../domain/order-tags";
 import { OrderEventTranslator } from "./order-event-translator";
 import {
   ARCHIVED_FIXTURE_KEYS,
   buildListFixture,
   ORDER_LIST_CASES,
+  TAGGED_FIXTURE,
   type ListFixtureKey,
 } from "./order-list-fixture";
 import { PrismaOrderRepository } from "./prisma-order-repository";
@@ -249,6 +251,16 @@ describe.runIf(Boolean(databaseUrl))(
         await prisma.order.updateMany({
           where: { id: idOf(key), tenantId },
           data: { archivedAt: new Date() },
+        });
+      }
+      for (const [key, tags] of Object.entries(TAGGED_FIXTURE) as [
+        ListFixtureKey,
+        readonly string[],
+      ][]) {
+        const parsed = parseTags(tags);
+        if (!parsed.ok) throw new Error("fixture tags");
+        await prisma.orderTag.createMany({
+          data: parsed.value.map((tag) => ({ tenantId, orderId: idOf(key), ...tag })),
         });
       }
     });

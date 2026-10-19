@@ -76,4 +76,20 @@ describe("archive stays outside the Order aggregate (order operations Part 1)", 
     expect(calls.some((call) => call.model === "order" && call.method === "updateMany")).toBe(true);
     expect(JSON.stringify(calls)).not.toContain("archivedAt");
   });
+
+  it("OrderMapper.toOrderRow carries no note (Part 2)", () => {
+    expect(OrderMapper.toOrderRow(order(0), "t-1")).not.toHaveProperty("note");
+  });
+
+  it("save() never writes the note and never touches order_tags or order_timeline_entries (Part 2)", async () => {
+    for (const version of [0, 1]) {
+      const { tx, calls } = recordingTx();
+      const saved = order(version);
+      if (version === 1) saved.markPaid("pay-1", "e-2", new Date(1));
+      await repository().save(saved, "t-1", tx);
+      expect(JSON.stringify(calls)).not.toContain('"note"');
+      expect(calls.map((call) => call.model)).not.toContain("orderTag");
+      expect(calls.map((call) => call.model)).not.toContain("orderTimelineEntry");
+    }
+  });
 });

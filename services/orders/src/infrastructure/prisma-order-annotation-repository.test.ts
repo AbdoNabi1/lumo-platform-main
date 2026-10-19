@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createFakePrisma } from "@platform/db/testing";
-import type { TransactionClient } from "@platform/db";
-import { PrismaOrderAnnotationRepository } from "./prisma-order-annotation-repository";
+import type { Database, TransactionClient } from "@platform/db";
+import { escapeLike, PrismaOrderAnnotationRepository } from "./prisma-order-annotation-repository";
 
 const TENANT = "tenant-a";
 const ORDER = "01900000-0000-7000-8000-00000000000a";
@@ -66,5 +66,117 @@ describe("PrismaOrderAnnotationRepository.setArchived (over fake-prisma)", () =>
 
     expect(await repository.setArchived([ORDER], SECOND, TENANT, racing)).toEqual([]);
     expect(await archivedAtNow()).toEqual(FIRST);
+  });
+});
+
+const OTHER = "01900000-0000-7000-8000-00000000000b";
+const THEIRS = "01900000-0000-7000-8000-00000000000c";
+
+async function tagged() {
+  const fake = createFakePrisma();
+  for (const [id, tenantId] of [
+    [ORDER, TENANT],
+    [OTHER, TENANT],
+    [THEIRS, "tenant-b"],
+  ] as const) {
+    await fake.database.order.create({
+      data: { id, tenantId, archivedAt: null, note: null } as never,
+    });
+  }
+  const repository = new PrismaOrderAnnotationRepository({ prisma: fake.database });
+  return { fake, repository, tx: fake.database };
+}
+
+describe("PrismaOrderAnnotationRepository note and tags (Part 2, over fake-prisma)", () => {
+  it("setNote writes the note of this shop's order and answers false for another shop's", async () => {
+    const { repository, tx } = await tagged();
+    expect(await repository.setNote(ORDER, "Ring twice", TENANT, tx)).toBe(true);
+    expect(await repository.setNote(THEIRS, "mine now", TENANT, tx)).toBe(false);
+    expect(await repository.setNote("not-a-uuid", "x", TENANT, tx)).toBe(false);
+    expect((await repository.annotationsOf([ORDER], TENANT, tx)).get(ORDER)?.note).toBe(
+      "Ring twice",
+    );
+  });
+
+  it("addTags adds only missing keys, skips other shops' orders, and answers what it added", async () => {
+    const { fake, repository, tx } = await tagged();
+    await repository.addTags([ORDER], [{ tag: "VIP", tagKey: "vip" }], TENANT, tx);
+    const added = await repository.addTags(
+      [ORDER, OTHER, THEIRS],
+      [
+        { tag: "vip", tagKey: "vip" },
+        { tag: "Urgent", tagKey: "urgent" },
+      ],
+      TENANT,
+      tx,
+    );
+    expect([...added]).toEqual([
+      [ORDER, ["Urgent"]],
+      [OTHER, ["vip", "Urgent"]],
+    ]);
+    expect(fake.rowsOf("orderTag").filter((row) => row["orderId"] === THEIRS)).toEqual([]);
+    expect((await repository.annotationsOf([ORDER], TENANT, tx)).get(ORDER)?.tags).toEqual([
+      "Urgent",
+      "VIP",
+    ]);
+  });
+
+  it("removeTags removes by key and answers the stored spellings", async () => {
+    const { repository, tx } = await tagged();
+    await repository.addTags([ORDER], [{ tag: "VIP", tagKey: "vip" }], TENANT, tx);
+    expect([...(await repository.removeTags([ORDER, OTHER], ["vip"], TENANT, tx))]).toEqual([
+      [ORDER, ["VIP"]],
+    ]);
+    expect((await repository.removeTags([ORDER], ["vip"], TENANT, tx)).size).toBe(0);
+  });
+
+  it("writes need the unit of work's transaction", async () => {
+    const { repository } = await tagged();
+    await expect(repository.setNote(ORDER, "x", TENANT)).rejects.toThrow(/transaction/);
+    await expect(repository.addTags([ORDER], [{ tag: "a", tagKey: "a" }], TENANT)).rejects.toThrow(
+      /transaction/,
+    );
+    await expect(repository.removeTags([ORDER], ["a"], TENANT)).rejects.toThrow(/transaction/);
+  });
+});
+
+describe("escapeLike", () => {
+  it("escapes the LIKE wildcards and the escape character itself", () => {
+    expect(escapeLike("50%_off\\x")).toBe("50\\%\\_off\\\\x");
+  });
+});
+
+describe("PrismaOrderAnnotationRepository.tagsInUse (raw SQL)", () => {
+  function rawDatabase(answer: readonly Record<string, unknown>[]) {
+    const calls: { sql: string; values: unknown[] }[] = [];
+    const client = {
+      $executeRaw: async () => 0,
+      $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        calls.push({ sql: strings.join("?").replace(/\s+/g, " "), values });
+        return answer;
+      },
+    };
+    const database = {
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(client),
+    } as unknown as Database;
+    return { database, calls };
+  }
+
+  it("scopes to the tenant, matches the prefix literally and caps the limit at 50 (Review Focus 1)", async () => {
+    const { database, calls } = rawDatabase([{ tag: "50% off", count: 3 }]);
+    const repository = new PrismaOrderAnnotationRepository({ prisma: database });
+    expect(await repository.tagsInUse("tenant-a", "  50%_Off\\ ", 500)).toEqual([
+      { tag: "50% off", count: 3 },
+    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.sql).toContain('"tenant_id" = ?');
+    expect(calls[0]?.sql).toContain("ESCAPE");
+    expect(calls[0]?.values).toEqual(["tenant-a", "50\\%\\_off\\\\%", 50]);
+  });
+
+  it("with no prefix asks for every tag of the shop", async () => {
+    const { database, calls } = rawDatabase([]);
+    await new PrismaOrderAnnotationRepository({ prisma: database }).tagsInUse("tenant-a");
+    expect(calls[0]?.values).toEqual(["tenant-a", "%", 50]);
   });
 });

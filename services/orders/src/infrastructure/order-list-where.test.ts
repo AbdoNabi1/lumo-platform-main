@@ -95,6 +95,22 @@ describe("orderListWhere (order operations Part 1)", () => {
   it("a blank search adds nothing", () => {
     expect(orderListWhere({ search: "   " }, "t-1", undefined, [])).toEqual({ tenantId: "t-1" });
   });
+
+  it("tags → one EXISTS over order_tags per distinct key (AND), case-insensitive, blanks ignored (Part 2)", () => {
+    expect(
+      orderListWhere({ tags: [" VIP ", "Urgent", "vip", "  "] }, "t-1", undefined, []),
+    ).toEqual({
+      tenantId: "t-1",
+      AND: [
+        { tags: { some: { tenantId: "t-1", tagKey: "vip" } } },
+        { tags: { some: { tenantId: "t-1", tagKey: "urgent" } } },
+      ],
+    });
+  });
+
+  it("an empty tags list adds nothing", () => {
+    expect(orderListWhere({ tags: [] }, "t-1", undefined, [])).toEqual({ tenantId: "t-1" });
+  });
 });
 
 describe("recipientSearchWhere", () => {

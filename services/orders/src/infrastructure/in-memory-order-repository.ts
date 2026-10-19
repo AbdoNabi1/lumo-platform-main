@@ -5,11 +5,26 @@ import type { Order } from "../domain/order";
 import type { OrderListQuery, OrderRepository } from "../domain/order-repository";
 import { matchesOrderSearch } from "../domain/order-search";
 import { derivePaymentStatus, isOpenOrder } from "../domain/order-statuses";
+import { tagKeyOf, type OrderTag } from "../domain/order-tags";
 import { orderPageSize } from "./order-list-where";
 
 export interface InMemoryOrderRepositoryDeps {
   readonly outbox: OutboxWriter;
   readonly context: EventContext;
+}
+
+interface StoredTag extends OrderTag {
+  /** Insertion order across the store — the in-memory twin of `created_at` ("first spelling wins"). */
+  readonly seq: number;
+}
+
+function bucketOf<V>(store: Map<string, Map<string, V>>, tenantId: string): Map<string, V> {
+  let bucket = store.get(tenantId);
+  if (bucket === undefined) {
+    bucket = new Map();
+    store.set(tenantId, bucket);
+  }
+  return bucket;
 }
 
 /**
@@ -21,6 +36,9 @@ export interface InMemoryOrderRepositoryDeps {
 export class InMemoryOrderRepository implements OrderRepository {
   private readonly store = new Map<string, Map<string, Order>>();
   private readonly archived = new Map<string, Map<string, Date>>();
+  private readonly notes = new Map<string, Map<string, string>>();
+  private readonly tags = new Map<string, Map<string, StoredTag[]>>();
+  private tagSeq = 0;
   private readonly outbox: OutboxWriter;
   private readonly context: EventContext;
 
@@ -65,6 +83,50 @@ export class InMemoryOrderRepository implements OrderRepository {
     return true;
   }
 
+  noteOf(orderId: string, tenantId: string): string | null {
+    return this.notes.get(tenantId)?.get(orderId) ?? null;
+  }
+
+  /** Sets or clears the note; false when this shop has no such order (an UPDATE that matched no row). */
+  writeNote(orderId: string, tenantId: string, note: string | null): boolean {
+    if (!this.hasOrder(orderId, tenantId)) return false;
+    const bucket = bucketOf(this.notes, tenantId);
+    if (note === null) bucket.delete(orderId);
+    else bucket.set(orderId, note);
+    return true;
+  }
+
+  tagsOf(orderId: string, tenantId: string): readonly OrderTag[] {
+    return (this.tags.get(tenantId)?.get(orderId) ?? []).map(({ tag, tagKey }) => ({
+      tag,
+      tagKey,
+    }));
+  }
+
+  /** Replaces the order's whole tag set; a key it already had keeps its first spelling and time. */
+  writeTags(orderId: string, tenantId: string, next: readonly OrderTag[]): boolean {
+    if (!this.hasOrder(orderId, tenantId)) return false;
+    const bucket = bucketOf(this.tags, tenantId);
+    const current = new Map((bucket.get(orderId) ?? []).map((row) => [row.tagKey, row]));
+    bucket.set(
+      orderId,
+      next.map((tag) => current.get(tag.tagKey) ?? { ...tag, seq: (this.tagSeq += 1) }),
+    );
+    return true;
+  }
+
+  /** Every tag row of one shop, with its order and write order (the source of `tagsInUse`). */
+  tagRowsOf(tenantId: string): readonly {
+    readonly orderId: string;
+    readonly tag: string;
+    readonly tagKey: string;
+    readonly seq: number;
+  }[] {
+    return [...(this.tags.get(tenantId)?.entries() ?? [])].flatMap(([orderId, rows]) =>
+      rows.map((row) => ({ orderId, ...row })),
+    );
+  }
+
   async findById(id: string, tenantId: string): Promise<Order | null> {
     return this.store.get(tenantId)?.get(id) ?? null;
   }
@@ -76,16 +138,25 @@ export class InMemoryOrderRepository implements OrderRepository {
     const sorted = this.ordersOf(tenantId)
       .slice()
       .sort((a, b) => (a.id.toString() < b.id.toString() ? 1 : -1));
-    const filtered = sorted.filter((order) =>
-      matchesQuery(order, query, this.archivedAtOf(order.id.toString(), tenantId)),
-    );
+    const filtered = sorted.filter((order) => {
+      const id = order.id.toString();
+      return matchesQuery(order, query, {
+        archivedAt: this.archivedAtOf(id, tenantId),
+        tagKeys: new Set(this.tagsOf(id, tenantId).map((tag) => tag.tagKey)),
+      });
+    });
     const remaining =
       after !== undefined ? filtered.filter((order) => order.id.toString() < after) : filtered;
     return buildPaginatedPage(remaining.slice(0, limit + 1), limit, (order) => order.id.toString());
   }
 }
 
-function matchesQuery(order: Order, query: OrderListQuery, archivedAt: Date | null): boolean {
+function matchesQuery(
+  order: Order,
+  query: OrderListQuery,
+  beside: { readonly archivedAt: Date | null; readonly tagKeys: ReadonlySet<string> },
+): boolean {
+  const archivedAt = beside.archivedAt;
   if (query.status !== undefined && order.status !== query.status) return false;
   if (query.search !== undefined && !matchesOrderSearch(order, query.search)) return false;
   if (query.archived !== undefined && (archivedAt !== null) !== query.archived) return false;
@@ -103,6 +174,10 @@ function matchesQuery(order: Order, query: OrderListQuery, archivedAt: Date | nu
   }
   if (query.createdTo !== undefined && (placedAt === undefined || placedAt >= query.createdTo)) {
     return false;
+  }
+  if (query.tags !== undefined) {
+    const wanted = query.tags.map(tagKeyOf).filter((key) => key.length > 0);
+    if (!wanted.every((key) => beside.tagKeys.has(key))) return false;
   }
   return true;
 }

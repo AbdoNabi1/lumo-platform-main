@@ -14,11 +14,14 @@ import { OrderNumber } from "../domain/value-objects/order-number";
 import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
 import { createFakePrisma } from "@platform/db/testing";
 import type { OrderAnnotationRepository } from "../domain/order-annotations";
+import type { OrderTimelineEntry, OrderTimelineRepository } from "../domain/order-timeline";
 import { InMemoryOrderAnnotationRepository } from "./in-memory-order-annotation-repository";
 import { InMemoryOrderRepository } from "./in-memory-order-repository";
+import { InMemoryOrderTimelineRepository } from "./in-memory-order-timeline-repository";
 import { InMemoryInventoryAdapter, InMemoryShippingAdapter } from "./in-memory-port-adapters";
 import { OrderEventTranslator } from "./order-event-translator";
 import { PrismaOrderAnnotationRepository } from "./prisma-order-annotation-repository";
+import { PrismaOrderTimelineRepository } from "./prisma-order-timeline-repository";
 
 /** ADR-0014 (WP-10, T10.3): one Orders repository / port stub serves every tenant. */
 function unwrap<T>(result: { ok: boolean; value?: T }): T {
@@ -142,10 +145,93 @@ describe("order annotations tenant isolation (order operations Part 1)", () => {
       expect(
         (await annotations.annotationsOf([VICTIM], "tenant-b", tx)).get(VICTIM),
         layer,
-      ).toEqual({ archivedAt: null });
+      ).toEqual({ archivedAt: null, note: null, tags: [] });
       expect(await annotations.setArchived([VICTIM], new Date(1), "tenant-b", tx), layer).toEqual([
         VICTIM,
       ]);
+    }
+  });
+});
+
+// ── order operations Part 2: note, tags and the timeline ────────────────────────────────────────
+describe("order note and tags tenant isolation (order operations Part 2)", () => {
+  it("tenant A can neither write nor read tenant B's note or tags; B can", async () => {
+    for (const [layer, annotations, tx] of await annotationLayers()) {
+      expect(await annotations.setNote(VICTIM, "mine now", "tenant-a", tx), layer).toBe(false);
+      expect(
+        (await annotations.addTags([VICTIM], [{ tag: "vip", tagKey: "vip" }], "tenant-a", tx)).size,
+        layer,
+      ).toBe(0);
+      expect(await annotations.setNote(VICTIM, "Ring twice", "tenant-b", tx), layer).toBe(true);
+      expect(
+        [...(await annotations.addTags([VICTIM], [{ tag: "VIP", tagKey: "vip" }], "tenant-b", tx))],
+        layer,
+      ).toEqual([[VICTIM, ["VIP"]]]);
+      expect((await annotations.removeTags([VICTIM], ["vip"], "tenant-a", tx)).size, layer).toBe(0);
+      expect((await annotations.annotationsOf([VICTIM], "tenant-a", tx)).size, layer).toBe(0);
+      expect(
+        (await annotations.annotationsOf([VICTIM], "tenant-b", tx)).get(VICTIM),
+        layer,
+      ).toEqual({
+        archivedAt: null,
+        note: "Ring twice",
+        tags: ["VIP"],
+      });
+    }
+  });
+
+  it("tenant A's suggestions never include tenant B's tags (in-memory; Prisma: the raw SQL filters tenant_id)", async () => {
+    const memoryOrders = repository();
+    await memoryOrders.save(placeOrder(VICTIM), "tenant-b");
+    const annotations = new InMemoryOrderAnnotationRepository({ orders: memoryOrders });
+    await annotations.addTags([VICTIM], [{ tag: "VIP", tagKey: "vip" }], "tenant-b");
+    expect(await annotations.tagsInUse("tenant-a")).toEqual([]);
+    expect(await annotations.tagsInUse("tenant-b")).toEqual([{ tag: "VIP", count: 1 }]);
+  });
+});
+
+const COMMENT_ID = "01900000-0000-7000-8000-0000000000c1";
+const victimComment = (): OrderTimelineEntry => ({
+  id: COMMENT_ID,
+  orderId: VICTIM,
+  kind: "comment",
+  authorRef: "staff-b",
+  authorName: "B",
+  body: "Call before delivery",
+  data: {},
+  createdAt: new Date(1),
+  editedAt: null,
+  deletedAt: null,
+});
+
+function timelineLayers(): readonly [string, OrderTimelineRepository, unknown][] {
+  const fake = createFakePrisma();
+  return [
+    [
+      "prisma over fake-prisma",
+      new PrismaOrderTimelineRepository({ prisma: fake.database }),
+      fake.database,
+    ],
+    ["in-memory", new InMemoryOrderTimelineRepository(), undefined],
+  ];
+}
+
+describe("order timeline tenant isolation (order operations Part 2)", () => {
+  it("tenant A can neither read nor edit tenant B's timeline", async () => {
+    for (const [layer, timeline, tx] of timelineLayers()) {
+      await timeline.append(victimComment(), "tenant-b", tx);
+      expect(await timeline.listForOrder(VICTIM, "tenant-a", { first: 200 }, tx), layer).toEqual(
+        [],
+      );
+      expect(await timeline.findById(COMMENT_ID, "tenant-a", tx), layer).toBeNull();
+      await timeline.update(
+        { ...victimComment(), body: "hijacked", editedAt: new Date(2) },
+        "tenant-a",
+        tx,
+      );
+      expect((await timeline.findById(COMMENT_ID, "tenant-b", tx))?.body, layer).toBe(
+        "Call before delivery",
+      );
     }
   });
 });

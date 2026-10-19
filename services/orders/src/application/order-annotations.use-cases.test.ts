@@ -141,15 +141,16 @@ describe("ArchiveOrders / UnarchiveOrders (order operations Part 1)", () => {
   it("answers an unchanged order's real archive time when a concurrent writer won the race", async () => {
     const { orders } = await wire();
     const CONCURRENT = new Date("2026-10-18T09:30:00.000Z");
-    const real = new InMemoryOrderAnnotationRepository({ orders });
-    // Between this call's read and its guarded update, another request archives o-1 first.
-    const racing = {
-      annotationsOf: real.annotationsOf.bind(real),
-      setArchived: async (...args: Parameters<typeof real.setArchived>) => {
+    class RacingAnnotations extends InMemoryOrderAnnotationRepository {
+      override async setArchived(
+        ...args: Parameters<InMemoryOrderAnnotationRepository["setArchived"]>
+      ): Promise<readonly string[]> {
+        // Between this call's read and its guarded update, another request archives o-1 first.
         orders.writeArchivedAt("o-1", TENANT, CONCURRENT);
-        return real.setArchived(...args);
-      },
-    };
+        return super.setArchived(...args);
+      }
+    }
+    const racing = new RacingAnnotations({ orders });
     const archive = new ArchiveOrders({
       annotations: racing,
       unitOfWork: new InMemoryUnitOfWork(),
@@ -180,8 +181,8 @@ describe("GetOrderAnnotations", () => {
     await archive.execute(input(["o-1"]));
     const result = await read.execute({ tenantId: TENANT, orderIds: ["o-1", "o-2", "missing"] });
     expect(result.ok && [...result.value]).toEqual([
-      ["o-1", { archivedAt: FIRST }],
-      ["o-2", { archivedAt: null }],
+      ["o-1", { archivedAt: FIRST, note: null, tags: [] }],
+      ["o-2", { archivedAt: null, note: null, tags: [] }],
     ]);
   });
 
