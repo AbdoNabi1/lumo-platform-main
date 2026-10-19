@@ -1,6 +1,11 @@
 import type { Principal } from "@platform/contracts";
 import type { FulfillmentController } from "@platform/fulfillment";
-import { type OrderController, previousSalesRange, RefundPolicy } from "@platform/orders";
+import {
+  type OrderController,
+  type OrderTimelineEntry,
+  previousSalesRange,
+  RefundPolicy,
+} from "@platform/orders";
 import type { PaymentController } from "@platform/payments";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
@@ -21,6 +26,26 @@ export interface OrdersAdminControllerDeps {
 }
 
 const refundPolicy = new RefundPolicy();
+
+/** Granted only by an admin's `*:*` (operators' `orders:*` does not match): delete anyone's comment (spec §2.2). */
+export const COMMENT_MODERATION_PERMISSION = "comments:moderate";
+
+/** What `orderTimeline` answers: the entries, and whether this viewer may delete others' comments. */
+export interface OrderTimelineView {
+  readonly entries: readonly OrderTimelineEntry[];
+  readonly canModerate: boolean;
+}
+
+type WithoutActor<T> = Omit<T, "actorRef">;
+
+/**
+ * A deleted comment keeps its body for the audit trail, but the admin layer never hands it on
+ * (global constraints, resolution 9). `toTimelineEntryDto` redacts too; this keeps the raw list safe
+ * for any caller that does not go through the DTO.
+ */
+function withoutDeletedText(entry: OrderTimelineEntry): OrderTimelineEntry {
+  return entry.deletedAt ? { ...entry, body: null } : entry;
+}
 
 /** What the refund needs from the entities the two contexts answer with; anything else is not read. */
 interface OrderForRefund {
@@ -324,5 +349,89 @@ export class OrdersAdminController {
     const denied = await this.guard.ensure(principal, "orders:read");
     if (denied) return denied;
     return this.payments.getPaymentIntentsByIds(input);
+  }
+
+  /** Order operations Part 2: the staff note. Written as the signed-in principal. */
+  async updateOrderNote(
+    principal: Principal,
+    input: WithoutActor<Parameters<OrderController["updateOrderNote"]>[0]>,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:edit_note");
+    if (denied) return denied;
+    return this.orders.updateOrderNote({ ...input, actorRef: principal.id });
+  }
+
+  async addOrderTags(
+    principal: Principal,
+    input: WithoutActor<Parameters<OrderController["addOrderTags"]>[0]>,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:tag");
+    if (denied) return denied;
+    return this.orders.addOrderTags({ ...input, actorRef: principal.id });
+  }
+
+  async removeOrderTags(
+    principal: Principal,
+    input: WithoutActor<Parameters<OrderController["removeOrderTags"]>[0]>,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:tag");
+    if (denied) return denied;
+    return this.orders.removeOrderTags({ ...input, actorRef: principal.id });
+  }
+
+  /** The tag input's suggestions — part of reading orders, so `orders:read`. */
+  async suggestOrderTags(
+    principal: Principal,
+    input: Parameters<OrderController["suggestOrderTags"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    return this.orders.suggestOrderTags(input);
+  }
+
+  async addOrderComment(
+    principal: Principal,
+    input: WithoutActor<Parameters<OrderController["addOrderComment"]>[0]>,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:comment");
+    if (denied) return denied;
+    return this.orders.addOrderComment({ ...input, actorRef: principal.id });
+  }
+
+  /** The use case refuses anyone but the author. */
+  async editOrderComment(
+    principal: Principal,
+    input: WithoutActor<Parameters<OrderController["editOrderComment"]>[0]>,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:comment");
+    if (denied) return denied;
+    return this.orders.editOrderComment({ ...input, actorRef: principal.id });
+  }
+
+  /** The author, or an admin (`comments:moderate`), may delete; the use case enforces which. */
+  async deleteOrderComment(
+    principal: Principal,
+    input: Omit<Parameters<OrderController["deleteOrderComment"]>[0], "actorRef" | "canModerate">,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:comment");
+    if (denied) return denied;
+    const canModerate = await this.guard.allows(principal, COMMENT_MODERATION_PERMISSION);
+    return this.orders.deleteOrderComment({ ...input, actorRef: principal.id, canModerate });
+  }
+
+  /** The order page's timeline lines plus this viewer's moderation flag (for each line's Delete button). */
+  async orderTimeline(
+    principal: Principal,
+    input: Parameters<OrderController["orderTimeline"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    const response = await this.orders.orderTimeline(input);
+    if (response.status !== 200) return response;
+    const view: OrderTimelineView = {
+      entries: (response.body as readonly OrderTimelineEntry[]).map(withoutDeletedText),
+      canModerate: await this.guard.allows(principal, COMMENT_MODERATION_PERMISSION),
+    };
+    return { status: 200, body: view };
   }
 }

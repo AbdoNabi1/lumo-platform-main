@@ -17,6 +17,7 @@ import type { Paginated } from "@platform/types";
 import { UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
+import type { OrderTimelineView } from "../interfaces/orders.admin-controller";
 import { fulfillmentStatusesOf } from "./fulfillment-statuses-of";
 import { customerNameOf, customerNamesFor } from "./order-customer-names";
 import {
@@ -27,6 +28,8 @@ import {
   resolveOrderView,
 } from "./order-views";
 import { orderOperationsRoutes } from "./order-operations-routes";
+import { orderAnnotationRoutes } from "./order-annotation-routes";
+import { toTimelineEntryDto, type TimelineEntryDto } from "./order-timeline-dto";
 import { analyticsRoutes } from "./analytics-routes";
 import { salesAnalyticsRoutes } from "./sales-analytics-routes";
 import { automationRoutes } from "./automation-routes";
@@ -320,6 +323,12 @@ export interface OrderDetailDto {
   readonly refundable: boolean;
   /** Order operations Part 1: when the order was archived; null when not. */
   readonly archivedAt: string | null;
+  /** Order operations Part 2: the staff note; null = "No notes". */
+  readonly note: string | null;
+  /** Order operations Part 2: the order's tags, sorted. */
+  readonly tags: readonly string[];
+  /** Order operations Part 2: staff comments and activity, newest first (latest 200). */
+  readonly timelineEntries: readonly TimelineEntryDto[];
 }
 
 const orderRefundPolicy = new RefundPolicy();
@@ -349,7 +358,8 @@ function toOrderDetailDto(
   paymentProvider: string | null,
   linkedPaymentStatus: string | null,
   lineImages: ReadonlyMap<string, ImageDto | null>,
-  archivedAt: Date | null,
+  annotations: OrderAnnotations | undefined,
+  timelineEntries: readonly TimelineEntryDto[],
 ): OrderDetailDto {
   const firstEvent = order.history[0];
   if (firstEvent === undefined) {
@@ -414,7 +424,10 @@ function toOrderDetailDto(
     paymentProvider,
     shippingMethod: order.totals?.shippingMethod ?? null,
     refundable: isRefundable(order, linkedPaymentStatus),
-    archivedAt: archivedAt?.toISOString() ?? null,
+    archivedAt: annotations?.archivedAt?.toISOString() ?? null,
+    note: annotations?.note ?? null,
+    tags: annotations?.tags ?? [],
+    timelineEntries,
   };
 }
 
@@ -1586,6 +1599,12 @@ export function adminRoutes(
           order.id.toString(),
         ]);
         if (!annotations.ok) return annotations.response;
+        const timeline = await admin.orders.orderTimeline(context.principal, {
+          tenantId: context.tenantId,
+          orderId: order.id.toString(),
+        });
+        if (timeline.status !== 200) return timeline;
+        const view = timeline.body as OrderTimelineView;
         // How the customer pays is cosmetic: a payment that cannot be read shows as a dash, it does
         // not fail the order page.
         let paymentProvider: string | null = null;
@@ -1617,7 +1636,13 @@ export function adminRoutes(
             paymentProvider,
             linkedPaymentStatus,
             lineImages,
-            annotations.byOrder.get(order.id.toString())?.archivedAt ?? null,
+            annotations.byOrder.get(order.id.toString()),
+            view.entries.map((entry) =>
+              toTimelineEntryDto(entry, {
+                actorRef: context.principal.id,
+                canModerate: view.canModerate,
+              }),
+            ),
           ),
         };
       },
@@ -2172,6 +2197,7 @@ export function adminRoutes(
     ...platformBillingRoutes(admin),
     ...fulfillmentRoutes(admin),
     ...orderOperationsRoutes(admin),
+    ...orderAnnotationRoutes(admin),
     ...shippingRoutes(admin),
     ...shippingZonesRoutes(admin),
     ...taxesRoutes(admin),

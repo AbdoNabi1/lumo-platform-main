@@ -2,6 +2,7 @@ import { RoleTableAccessControl } from "@platform/auth";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import type { RouteDefinition } from "@platform/http";
+import { InMemoryStaffDirectory } from "@platform/orders";
 import { wireAdmin, type WiredAdmin } from "../../composition";
 
 /** Order operations Part 1 — the real in-memory composition with the real role table. */
@@ -27,7 +28,9 @@ export const viewerStaff: Principal = {
   tenantId: HARNESS_TENANT,
 };
 
-export function buildOrdersAdmin(): WiredAdmin {
+export function buildOrdersAdmin(
+  options: { readonly staffNames?: Readonly<Record<string, string>> } = {},
+): WiredAdmin {
   let n = 0;
   const idGenerator: IdGenerator = {
     generate: () => `00000000-0000-7000-8000-${(n += 1).toString().padStart(12, "0")}`,
@@ -39,6 +42,9 @@ export function buildOrdersAdmin(): WiredAdmin {
     clock,
     tenantId: "tenant-local",
     accessControl: new RoleTableAccessControl(),
+    ...(options.staffNames === undefined
+      ? {}
+      : { staffDirectory: new InMemoryStaffDirectory(options.staffNames) }),
   });
 }
 

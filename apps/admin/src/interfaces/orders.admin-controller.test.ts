@@ -6,11 +6,11 @@ import type {
   Principal,
 } from "@platform/contracts";
 import type { FulfillmentController } from "@platform/fulfillment";
-import type { OrderController } from "@platform/orders";
+import type { OrderController, OrderTimelineEntry } from "@platform/orders";
 import type { PaymentController } from "@platform/payments";
 import { describe, expect, it, vi } from "vitest";
 import { AdminGuard } from "./admin-guard";
-import { OrdersAdminController } from "./orders.admin-controller";
+import { OrdersAdminController, type OrderTimelineView } from "./orders.admin-controller";
 
 const staff: Principal = { id: "staff-1", kind: "staff", roles: [], tenantId: "t-1" };
 
@@ -75,6 +75,9 @@ describe("OrdersAdminController", () => {
         "paymentIntentsOf",
         "salesReport",
         "authorizeBulkAction",
+        "updateOrderNote",
+        "orderTimeline",
+        "deleteOrderComment",
       ]),
     );
 
@@ -471,5 +474,120 @@ describe("OrdersAdminController", () => {
         (await controller(guard).authorizeBulkAction(staff, { action: "archive" }))?.status,
       ).toBe(403);
     });
+  });
+});
+
+describe("notes, tags and comments (order operations Part 2)", () => {
+  it.each([
+    ["updateOrderNote", "orders:edit_note"],
+    ["addOrderTags", "orders:tag"],
+    ["removeOrderTags", "orders:tag"],
+    ["suggestOrderTags", "orders:read"],
+    ["addOrderComment", "orders:comment"],
+    ["editOrderComment", "orders:comment"],
+  ] as const)(
+    "%s asks for %s and writes as the signed-in principal",
+    async (method, permission) => {
+      const { guard, asked } = guardAnswering(true);
+      const delegate = vi.fn().mockResolvedValue({ status: 200, body: {} });
+      const target = controller(guard, {
+        orders: { [method]: delegate } as unknown as OrderController,
+      });
+      const call = (
+        target[method] as unknown as (
+          principal: Principal,
+          input: Record<string, unknown>,
+        ) => Promise<{ status: number }>
+      ).bind(target);
+
+      const response = await call(staff, { tenantId: "t-1", actorRef: "someone-else" });
+
+      expect(response.status).toBe(200);
+      expect(asked).toEqual([permission]);
+      if (method !== "suggestOrderTags") {
+        expect(delegate.mock.calls[0]?.[0]).toMatchObject({ actorRef: "staff-1" });
+      }
+    },
+  );
+
+  it("deleteOrderComment asks orders:comment, then probes comments:moderate and passes the answer on", async () => {
+    for (const moderator of [true, false]) {
+      const asked: Permission[] = [];
+      const accessControl: AccessControl = {
+        authorize: async (_principal, permission) => {
+          asked.push(permission);
+          return permission === "orders:comment" || moderator;
+        },
+      };
+      const guard = new AdminGuard({
+        accessControl,
+        auditTrail: { record: async () => undefined },
+        clock: { now: () => new Date(0) },
+      });
+      const deleteOrderComment = vi.fn().mockResolvedValue({ status: 200, body: {} });
+      const target = controller(guard, {
+        orders: { deleteOrderComment } as unknown as OrderController,
+      });
+
+      await target.deleteOrderComment(staff, { tenantId: "t-1", orderId: "o-1", entryId: "e-1" });
+
+      expect(asked).toEqual(["orders:comment", "comments:moderate"]);
+      expect(deleteOrderComment).toHaveBeenCalledWith({
+        tenantId: "t-1",
+        orderId: "o-1",
+        entryId: "e-1",
+        actorRef: "staff-1",
+        canModerate: moderator,
+      });
+    }
+  });
+
+  it("orderTimeline answers the entries with this viewer's moderation flag, and records no audit row for the probe", async () => {
+    const recorded: AuditEvent[] = [];
+    const guard = new AdminGuard({
+      accessControl: { authorize: async () => true },
+      auditTrail: { record: async (entry) => void recorded.push(entry) },
+      clock: { now: () => new Date(0) },
+    });
+    const orderTimeline = vi.fn().mockResolvedValue({ status: 200, body: [{ id: "e-1" }] });
+    const target = controller(guard, { orders: { orderTimeline } as unknown as OrderController });
+
+    const response = await target.orderTimeline(staff, { tenantId: "t-1", orderId: "o-1" });
+
+    expect(response).toEqual({
+      status: 200,
+      body: { entries: [{ id: "e-1" }], canModerate: true },
+    });
+    expect(recorded.map((entry) => entry.permission)).toEqual(["orders:read"]);
+  });
+
+  it("orderTimeline never hands on a deleted comment's text (the timeline list path)", async () => {
+    const { guard } = guardAnswering(true);
+    const at = new Date("2026-10-19T09:00:00.000Z");
+    const line = (id: string, deletedAt: Date | null): OrderTimelineEntry => ({
+      id,
+      orderId: "o-1",
+      kind: "comment",
+      authorRef: "staff-2",
+      authorName: "Mona",
+      body: `secret ${id}`,
+      data: {},
+      createdAt: at,
+      editedAt: null,
+      deletedAt,
+    });
+    const orderTimeline = vi
+      .fn()
+      .mockResolvedValue({ status: 200, body: [line("e-1", at), line("e-2", null)] });
+    const target = controller(guard, { orders: { orderTimeline } as unknown as OrderController });
+
+    const response = await target.orderTimeline(staff, { tenantId: "t-1", orderId: "o-1" });
+    const view = response.body as OrderTimelineView;
+
+    expect(view.entries.map((entry) => [entry.id, entry.body])).toEqual([
+      ["e-1", null],
+      ["e-2", "secret e-2"],
+    ]);
+    expect(JSON.stringify(view)).not.toContain("secret e-1");
   });
 });

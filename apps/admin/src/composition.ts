@@ -73,6 +73,7 @@ import {
   type StockReleasePort as OrdersStockReleasePort,
   type PaymentVerificationPort,
   type ShippingPort as OrdersShippingPort,
+  type StaffDirectoryPort,
 } from "@platform/orders";
 import { wirePages } from "@platform/pages";
 import {
@@ -123,6 +124,7 @@ import { InventoryValidationAdapter } from "./infrastructure/cross-context/inven
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
+import { PrismaStaffDirectoryAdapter } from "./infrastructure/cross-context/staff-directory.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
 import { OrdersFulfillmentCancelAdapter } from "./infrastructure/cross-context/orders-fulfillment-cancel.adapter";
 import { OrdersPaymentVoidAdapter } from "./infrastructure/cross-context/orders-payment-void.adapter";
@@ -260,6 +262,12 @@ export interface AdminWiringDeps {
    * in-memory stub when absent — no behavior change for existing callers/tests.
    */
   readonly paymentVerification?: PaymentVerificationPort;
+  /**
+   * Order operations Part 2: whose name a timeline line shows. Absent ⇒ Security's
+   * `principals.display_name` when `prisma` is present (`PrismaStaffDirectoryAdapter`), else no names
+   * ("Staff"). Passed straight through to `wireOrders` like the other Orders ports.
+   */
+  readonly staffDirectory?: StaffDirectoryPort;
   /**
    * Gates Returns' `DecideResolution` staff-decided refund amount against the order's refundable
    * ceiling (Phase A.1, F-04). Passed straight through to `wireReturns(deps)` below; defaults to
@@ -890,6 +898,9 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
           ? (sessionResponse.body as CheckoutSession).paymentSelection?.provider
           : undefined;
       }),
+    ...(deps.staffDirectory === undefined && deps.prisma !== undefined
+      ? { staffDirectory: new PrismaStaffDirectoryAdapter({ prisma: deps.prisma }) }
+      : {}),
   };
   const orders = wireOrders(ordersDeps);
   ordersControllerCell.controller = orders.orders;
