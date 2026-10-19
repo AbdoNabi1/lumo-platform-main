@@ -46,6 +46,7 @@ export default async function PackingSlipsPage({
           key={slip.orderId}
           slip={slip}
           shopName={settings.storeName}
+          timeZone={settings.timezone}
           t={t}
           locale={locale}
         />

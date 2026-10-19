@@ -8,11 +8,14 @@ import type { Dictionary } from "@/messages/en";
 export function PackingSlip({
   slip,
   shopName,
+  timeZone,
   t,
   locale,
 }: {
   readonly slip: PackingSlipDto;
   readonly shopName: string;
+  /** The shop's IANA time zone (store settings): the date is the shop's day, as in the CSV. */
+  readonly timeZone: string;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
@@ -30,7 +33,7 @@ export function PackingSlip({
             {p.orderLabel.replace("{orderNumber}", slip.orderNumber)}
           </h2>
         </div>
-        <p className="text-sm">{formatLongDate(locale, slip.createdAt)}</p>
+        <p className="text-sm">{formatLongDate(locale, slip.createdAt, timeZone)}</p>
       </header>
       <section>
         <h3 className="mb-1 text-sm font-semibold">{p.shipTo}</h3>

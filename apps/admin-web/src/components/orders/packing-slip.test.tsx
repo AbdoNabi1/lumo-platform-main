@@ -33,7 +33,15 @@ function slip(overrides: Partial<PackingSlipDto> = {}): PackingSlipDto {
 
 describe("PackingSlip (order operations Part 1)", () => {
   it("prints the shop, the order, the ship-to block, the lines and the cash to collect", () => {
-    render(<PackingSlip slip={slip()} shopName="Morbeh Shop" t={en} locale="en" />);
+    render(
+      <PackingSlip
+        timeZone="Africa/Cairo"
+        slip={slip()}
+        shopName="Morbeh Shop"
+        t={en}
+        locale="en"
+      />,
+    );
     expect(screen.getByText("Morbeh Shop")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Order #1001" })).toBeInTheDocument();
     expect(screen.getByText("Mona Ali")).toBeInTheDocument();
@@ -44,19 +52,41 @@ describe("PackingSlip (order operations Part 1)", () => {
     expect(screen.getByText(/^Collect: /)).toHaveTextContent("1,250.00");
   });
 
+  it("dates the slip in the SHOP's time zone, like the CSV", () => {
+    // 23:30 UTC on Oct 18 is already Oct 19 in Cairo (UTC+3), still Oct 18 in UTC.
+    const late = slip({ createdAt: "2026-10-18T23:30:00.000Z" });
+    const { rerender } = render(
+      <PackingSlip timeZone="Africa/Cairo" slip={late} shopName="Shop" t={en} locale="en" />,
+    );
+    expect(screen.getByText("October 19, 2026")).toBeInTheDocument();
+    rerender(<PackingSlip timeZone="UTC" slip={late} shopName="Shop" t={en} locale="en" />);
+    expect(screen.getByText("October 18, 2026")).toBeInTheDocument();
+  });
+
   it("has no Collect line when nothing is due on delivery", () => {
-    render(<PackingSlip slip={slip({ codAmountMinor: 0 })} shopName="Shop" t={en} locale="en" />);
+    render(
+      <PackingSlip
+        timeZone="Africa/Cairo"
+        slip={slip({ codAmountMinor: 0 })}
+        shopName="Shop"
+        t={en}
+        locale="en"
+      />,
+    );
     expect(screen.queryByText(/^Collect: /)).toBeNull();
   });
 
   it("names the province in Arabic for an Arabic admin", () => {
-    render(<PackingSlip slip={slip()} shopName="Shop" t={ar} locale="ar" />);
+    render(
+      <PackingSlip timeZone="Africa/Cairo" slip={slip()} shopName="Shop" t={ar} locale="ar" />,
+    );
     expect(screen.getByText(/القاهرة/)).toBeInTheDocument();
   });
 
   it("prints the note when there is one", () => {
     render(
       <PackingSlip
+        timeZone="Africa/Cairo"
         slip={slip({ note: "Leave with the doorman" })}
         shopName="Shop"
         t={en}
