@@ -90,6 +90,13 @@ describe("activityLabel", () => {
     ).toBe("Ahmed أزال العلامات VIP، عاجل");
   });
 
+  it("never returns a blank line for a staff-entry kind this build does not know", () => {
+    const unknown = line({ kind: "future_kind" as TimelineEntryDto["kind"], body: null });
+    expect(activityLabel(unknown, en)).toBe("Staff activity");
+    expect(activityLabel(unknown, ar)).toBe(ar.orderTimeline.staffActivity);
+    expect(ar.orderTimeline.staffActivity.length).toBeGreaterThan(2);
+  });
+
   it("puts staff-written text in literally (no $-pattern or {placeholder} surprises)", () => {
     expect(
       activityLabel(

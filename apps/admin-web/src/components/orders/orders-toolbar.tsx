@@ -4,7 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FilterIcon, SearchIcon } from "lucide-react";
 import { Input, Label } from "@platform/ui";
+import { suggestOrderTagsAction } from "@/app/orders/annotation-actions";
+import { parseTagFilter } from "@/lib/orders/order-tags";
 import type { Dictionary } from "@/messages/en";
+import { TagInput } from "./tag-input";
 
 const ORDER_STATUS_VALUES = [
   "placed",
@@ -33,10 +36,10 @@ const ORDER_STATUS_VALUES = [
 const SEARCH_DEBOUNCE_MS = 350;
 
 /**
- * Search + status filter for the Orders list — a client component because it drives the URL
- * (`?q=&status=`), which the server-rendered `OrdersPage` reads to refetch. Changing either
- * control drops `after`/`stack` (page 1 of the new filtered result) and a stale `exportError` and pushes a new URL rather
- * than mutating local state, so the list, the URL, and the back button all stay in sync.
+ * Search + status + "Tagged with" filter for the Orders list — a client component because it drives the
+ * URL (`?q=&status=&tag=`, tags as one comma list), which the server-rendered `OrdersPage` reads to
+ * refetch. Changing any control drops `after`/`stack` (page 1 of the new filtered result) and a stale
+ * `exportError` and pushes a new URL rather than mutating local state, so the list, the URL, and the back button all stay in sync.
  */
 export function OrdersToolbar({ t }: { readonly t: Dictionary }) {
   const router = useRouter();
@@ -79,6 +82,8 @@ export function OrdersToolbar({ t }: { readonly t: Dictionary }) {
   };
 
   const currentStatus = searchParams.get("status") ?? "";
+  const currentTags = parseTagFilter(searchParams.get("tag") ?? undefined);
+  const setTags = (tags: readonly string[]) => pushParams({ tag: tags.join(",") });
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -104,7 +109,7 @@ export function OrdersToolbar({ t }: { readonly t: Dictionary }) {
         <summary className="border-input bg-card text-foreground hover:border-foreground/40 focus-visible:ring-ring inline-flex h-9 cursor-pointer list-none items-center gap-2 rounded-xl border px-3.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 [&::-webkit-details-marker]:hidden">
           <FilterIcon aria-hidden="true" className="size-4" />
           {t.ordersPage.filter}
-          {currentStatus.length > 0 && (
+          {(currentStatus.length > 0 || currentTags.length > 0) && (
             <span aria-hidden="true" className="bg-primary size-2 rounded-full" />
           )}
         </summary>
@@ -125,6 +130,14 @@ export function OrdersToolbar({ t }: { readonly t: Dictionary }) {
               </option>
             ))}
           </select>
+          <TagInput
+            label={t.ordersPage.taggedWith}
+            tags={currentTags}
+            onAdd={(added) => setTags([...currentTags, ...added])}
+            onRemove={(tag) => setTags(currentTags.filter((existing) => existing !== tag))}
+            suggest={suggestOrderTagsAction}
+            t={t}
+          />
         </div>
       </details>
     </div>

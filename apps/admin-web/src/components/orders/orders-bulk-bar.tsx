@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition, type ReactNode } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { MoreHorizontalIcon, XIcon } from "lucide-react";
 import { Button } from "@platform/ui";
 import { runBulkOrderAction, type BulkActionState } from "@/app/orders/actions";
@@ -9,6 +9,7 @@ import { formatNumber } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { OrderActionPermissions } from "@/lib/orders/order-views";
 import type { Dictionary } from "@/messages/en";
+import { OrdersBulkTagsDialog } from "./orders-bulk-tags-dialog";
 
 /** The result of one bulk action, with the numbers of the orders it ran on (to name them in the details). */
 export interface BulkOutcome {
@@ -75,8 +76,27 @@ export function OrdersBulkBar({
       }
       onFinished({ state, orderNumbers });
     });
+  const [tagMode, setTagMode] = useState<"add" | "remove" | null>(null);
+  const runTags = (mode: "add" | "remove", tags: readonly string[]) =>
+    startTransition(async () => {
+      let state: BulkActionState;
+      try {
+        state = await runBulkOrderAction(
+          mode === "add" ? "add_tags" : "remove_tags",
+          orderIds,
+          tags,
+        );
+      } catch {
+        state = { status: "error", message: t.formErrors.unexpected };
+      }
+      setTagMode(null);
+      onFinished({ state, orderNumbers });
+    });
   const hasMenu =
-    permissions.canArchive || permissions.canMarkCashReceived || onExportSelected !== undefined;
+    permissions.canArchive ||
+    permissions.canTag ||
+    permissions.canMarkCashReceived ||
+    onExportSelected !== undefined;
   const printSlips = () => {
     window.open(
       `/orders/packing-slips?ids=${orderIds.map(encodeURIComponent).join(",")}`,
@@ -139,6 +159,16 @@ export function OrdersBulkBar({
                 </MenuButton>
               </>
             )}
+            {permissions.canTag && (
+              <>
+                <MenuButton disabled={isPending} onClick={() => setTagMode("add")}>
+                  {b.addTags}
+                </MenuButton>
+                <MenuButton disabled={isPending} onClick={() => setTagMode("remove")}>
+                  {b.removeTags}
+                </MenuButton>
+              </>
+            )}
             {onExportSelected !== undefined && (
               <MenuButton disabled={isPending} onClick={onExportSelected}>
                 {b.exportSelected}
@@ -151,6 +181,22 @@ export function OrdersBulkBar({
             )}
           </div>
         </details>
+      )}
+      {tagMode !== null && (
+        <OrdersBulkTagsDialog
+          open
+          title={(tagMode === "add" ? b.tagsDialog.addTitle : b.tagsDialog.removeTitle).replace(
+            "{count}",
+            formatNumber(locale, selected.length),
+          )}
+          submitLabel={tagMode === "add" ? b.tagsDialog.add : b.tagsDialog.remove}
+          pending={isPending}
+          onOpenChange={(open) => {
+            if (!open) setTagMode(null);
+          }}
+          onSubmit={(tags) => runTags(tagMode, tags)}
+          t={t}
+        />
       )}
       {isPending && <span className="text-muted-foreground text-sm">{b.working}</span>}
     </div>

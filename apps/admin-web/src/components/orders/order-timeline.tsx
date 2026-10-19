@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import type { OrderHistoryEntryDto, TimelineEntryDto } from "@/lib/api/orders";
 import { formatCalendarDay, formatCurrency, formatDateTime } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
-import { activityLabel, mergeTimeline } from "@/lib/orders/order-timeline";
+import { activityLabel, isolateName, mergeTimeline } from "@/lib/orders/order-timeline";
 import { paymentMethodLabel } from "@/lib/payment-method-label";
 import type { Dictionary } from "@/messages/en";
 import { OrderCommentComposer } from "./order-comment-composer";
@@ -36,9 +36,12 @@ function Line({
   at,
   newest,
   locale,
+  author,
 }: {
   readonly label: string;
   readonly at: string;
+  /** A deleted comment keeps its author: "name · time" under the line. */
+  readonly author?: string;
   readonly newest: boolean;
   readonly locale: Locale;
 }) {
@@ -54,7 +57,11 @@ function Line({
       />
       <div className="min-w-0">
         <p className="text-sm font-medium">{label}</p>
-        <p className="text-muted-foreground text-xs">{formatDateTime(locale, at)}</p>
+        <p className="text-muted-foreground text-xs">
+          {author === undefined
+            ? formatDateTime(locale, at)
+            : `${isolateName(author)} · ${formatDateTime(locale, at)}`}
+        </p>
       </div>
     </li>
   );
@@ -136,6 +143,9 @@ export function OrderTimeline({
                       key={entry.id}
                       label={activityLabel(entry, t)}
                       at={item.at}
+                      {...(entry.kind === "comment" && entry.deleted
+                        ? { author: entry.authorName ?? t.orderTimeline.staff }
+                        : {})}
                       newest={item === newest}
                       locale={locale}
                     />

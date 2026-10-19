@@ -326,6 +326,7 @@ export type BulkActionState =
   | { readonly status: "error"; readonly message: string };
 
 const MAX_BULK_ORDERS = 50;
+const MAX_BULK_TAGS = 20;
 
 function isBulkOrderAction(value: string): value is BulkOrderAction {
   return (BULK_ORDER_ACTIONS as readonly string[]).includes(value);
@@ -333,21 +334,34 @@ function isBulkOrderAction(value: string): value is BulkOrderAction {
 
 /**
  * Runs one bulk action on the selected orders (`POST /orders/bulk`). Called directly by the client bar,
- * so both arguments are untrusted: the action must be a known one and the ids 1..50 strings. One fresh
- * idempotency key per click.
+ * so every argument is untrusted: the action must be a known one and the ids 1..50 strings;
+ * add_tags/remove_tags also need 1..20 tags. One fresh idempotency key per click.
  */
 export async function runBulkOrderAction(
   action: string,
   orderIds: readonly string[],
+  tags?: readonly string[],
 ): Promise<BulkActionState> {
   const t = await formErrorDictionary();
   const ids = [
     ...new Set(orderIds.filter((id): id is string => typeof id === "string" && id.length > 0)),
   ];
-  if (!isBulkOrderAction(action) || ids.length === 0 || ids.length > MAX_BULK_ORDERS) {
+  const needsTags = action === "add_tags" || action === "remove_tags";
+  const cleanTags = Array.isArray(tags)
+    ? tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+    : [];
+  if (
+    !isBulkOrderAction(action) ||
+    ids.length === 0 ||
+    ids.length > MAX_BULK_ORDERS ||
+    (needsTags && (cleanTags.length === 0 || cleanTags.length > MAX_BULK_TAGS))
+  ) {
     return { status: "error", message: t.invalid };
   }
-  const result = await bulkOrders(action, ids, newIdempotencyKey());
+  const key = newIdempotencyKey();
+  const result = needsTags
+    ? await bulkOrders(action, ids, key, cleanTags)
+    : await bulkOrders(action, ids, key);
   if (result.outcome !== "ok") {
     const state = toFormState(result, t);
     return { status: "error", message: state.status === "error" ? state.message : t.unexpected };

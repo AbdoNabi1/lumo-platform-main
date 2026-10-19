@@ -512,3 +512,37 @@ describe("comments (order operations Part 2)", () => {
     expect((calls[2]?.[1].headers as Record<string, string>)["idempotency-key"]).toBe("k-3");
   });
 });
+
+describe("tags on the list, the export and in bulk (order operations Part 2)", () => {
+  it("sends each tag as its own tag param on the list and the export", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse(200, { items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchOrdersPage({ tags: ["vip", "urgent"] });
+    await fetchOrderExportRows({ tags: ["vip"] });
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).searchParams.getAll("tag")).toEqual([
+      "vip",
+      "urgent",
+    ]);
+    expect(new URL(String(fetchMock.mock.calls[1]?.[0])).searchParams.getAll("tag")).toEqual([
+      "vip",
+    ]);
+  });
+
+  it("bulk-tags with the tags in the body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { results: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await bulkOrders("add_tags", ["o-1"], "key-1", ["VIP"]);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      action: "add_tags",
+      orderIds: ["o-1"],
+      tags: ["VIP"],
+    });
+  });
+});

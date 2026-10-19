@@ -70,6 +70,21 @@ describe("parseExportRequest (Shopify's five export scopes)", () => {
     expect(parseExportRequest(params({ scope: "everything" }), TZ)).toBeNull();
     expect(parseExportRequest(params({}), TZ)).toBeNull();
   });
+
+  it("current page and matching carry the tag filter (Part 2)", () => {
+    const params = new URLSearchParams({ scope: "matching", view: "open", tag: "vip,urgent" });
+    expect(parseExportRequest(params, "Africa/Cairo")?.query).toEqual({
+      view: "open",
+      search: undefined,
+      status: undefined,
+      tags: ["vip", "urgent"],
+    });
+    const page = parseExportRequest(
+      new URLSearchParams({ scope: "current_page", tag: "vip" }),
+      "Africa/Cairo",
+    );
+    expect(page?.query.tags).toEqual(["vip"]);
+  });
 });
 
 const rows = (count: number) =>

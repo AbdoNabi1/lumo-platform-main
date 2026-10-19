@@ -32,6 +32,34 @@ function itemCountLabel(count: number, locale: Locale, t: Dictionary): string {
   return t.ordersPage.itemCount[category].replace("{count}", formatNumber(locale, count));
 }
 
+/** The list's Tags column (spec §2.4): the first three tags as chips, then "+N more". */
+function OrderTagsCell({
+  tags,
+  t,
+  locale,
+}: {
+  readonly tags: readonly string[];
+  readonly t: Dictionary;
+  readonly locale: Locale;
+}) {
+  if (tags.length === 0) return null;
+  const rest = tags.length - 3;
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {tags.slice(0, 3).map((tag) => (
+        <Badge key={tag} variant="neutral">
+          <span dir="auto">{tag}</span>
+        </Badge>
+      ))}
+      {rest > 0 && (
+        <span className="text-muted-foreground text-xs">
+          {t.ordersPage.moreTags.replace("{count}", () => formatNumber(locale, rest))}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** The shop's own label for a shipping method; a method it has no label for shows as it was recorded. */
 function deliveryLabel(method: string | null, t: Dictionary): string {
   if (method === null) return "—";
@@ -135,7 +163,7 @@ export function OrdersTable({
           {selectedOrders.length > 0 ? (
             <TableRow>
               <TableHead className="w-10">{selectAll}</TableHead>
-              <TableHead colSpan={8}>
+              <TableHead colSpan={9}>
                 <OrdersBulkBar
                   selected={selectedOrders}
                   t={t}
@@ -162,6 +190,7 @@ export function OrdersTable({
               <TableHead className={FROM_MD}>{t.ordersPage.columns.fulfillmentStatus}</TableHead>
               <TableHead className={FROM_MD}>{t.ordersPage.columns.items}</TableHead>
               <TableHead className={FROM_MD}>{t.ordersPage.columns.deliveryMethod}</TableHead>
+              <TableHead className={FROM_MD}>{t.ordersPage.columns.tags}</TableHead>
             </TableRow>
           )}
         </TableHeader>
@@ -230,6 +259,9 @@ export function OrdersTable({
                 </TableCell>
                 <TableCell className={`text-muted-foreground ${FROM_MD}`}>
                   {deliveryLabel(order.shippingMethod, t)}
+                </TableCell>
+                <TableCell className={FROM_MD}>
+                  <OrderTagsCell tags={order.tags ?? []} t={t} locale={locale} />
                 </TableCell>
               </TableRow>
             );

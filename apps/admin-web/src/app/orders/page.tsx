@@ -24,6 +24,7 @@ import { fetchOrdersPage, type OrderView } from "@/lib/api/orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
+import { parseTagFilter } from "@/lib/orders/order-tags";
 import {
   ORDERS_PAGE_SIZE,
   orderActionPermissionsFor,
@@ -45,6 +46,8 @@ interface OrdersPageProps {
     readonly view?: string;
     /** Plan 3D: `unfulfilled` when opened from Home's "Orders to fulfill" card. */
     readonly fulfillment?: string;
+    /** Order operations Part 2: "Tagged with", one comma list. */
+    readonly tag?: string | string[];
     /** Set by the export route handler when it sends the merchant back instead of a file. */
     readonly exportError?: string;
   }>;
@@ -65,12 +68,13 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const user = await getCurrentUser();
   const params = await searchParams;
   const view = parseOrderView(params);
+  const tags = parseTagFilter(params.tag);
   const session = await readSession();
   const role = highestRole(session?.roles ?? []);
   // A viewer gets no Fulfill / Capture / Archive / Mark cash as received: the API would refuse them.
   const permissions = orderActionPermissionsFor(role);
   // `undefined` for a viewer (no `orders:export`): no Export button, no "Export selected".
-  const exportContext = ordersExportContextFor(role, view, params);
+  const exportContext = ordersExportContextFor(role, view, { ...params, tags });
   const exportError = (["too_many", "failed", "invalid"] as const).find(
     (error) => error === params.exportError,
   );
@@ -100,7 +104,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
           </div>
         </header>
 
-        <OrdersViewTabs current={view} q={params.q} status={params.status} t={t} />
+        <OrdersViewTabs current={view} q={params.q} status={params.status} tags={tags} t={t} />
 
         <OrdersToolbar t={t} />
 
@@ -114,7 +118,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
         )}
 
         <Suspense
-          key={`${view}:${params.q ?? ""}:${params.status ?? ""}:${params.after ?? ""}`}
+          key={`${view}:${params.q ?? ""}:${params.status ?? ""}:${tags.join(",")}:${params.after ?? ""}`}
           fallback={<OrdersTableSkeleton />}
         >
           <OrdersResults
@@ -123,6 +127,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
             status={params.status}
             search={params.q}
             view={view}
+            tags={tags}
             permissions={permissions}
             exportContext={exportContext}
             t={t}
@@ -140,6 +145,7 @@ async function OrdersResults({
   status,
   search,
   view,
+  tags,
   permissions,
   exportContext,
   t,
@@ -150,13 +156,14 @@ async function OrdersResults({
   readonly status: string | undefined;
   readonly search: string | undefined;
   readonly view: OrderView;
+  readonly tags: readonly string[];
   readonly permissions: OrderActionPermissions;
   readonly exportContext: OrdersExportContext | undefined;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
-  const hasFilters = Boolean(search) || Boolean(status) || view !== "all";
-  const result = await fetchOrdersPage({ first, after, status, search, view });
+  const hasFilters = Boolean(search) || Boolean(status) || tags.length > 0 || view !== "all";
+  const result = await fetchOrdersPage({ first, after, status, search, view, tags });
 
   if (result.outcome === "unauthorized") {
     return (

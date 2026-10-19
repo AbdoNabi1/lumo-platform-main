@@ -7,14 +7,10 @@ import type { FormState } from "@/lib/api/mutation";
 import type { TimelineEntryDto } from "@/lib/api/orders";
 import { formatDateTime } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
+import { isolateName } from "@/lib/orders/order-timeline";
 import type { Dictionary } from "@/messages/en";
 
 const INITIAL_STATE: FormState = { status: "idle" };
-
-/** Keeps a staff name's own direction from reordering the "name · time" line around it. */
-function isolate(text: string): string {
-  return `⁨${text}⁩`;
-}
 
 /**
  * One staff comment on the timeline: text, author · time (· Edited), and — only when the API says so
@@ -55,7 +51,7 @@ export function OrderCommentItem({
         ? deleteState.message
         : null;
   const byline = [
-    isolate(entry.authorName ?? t.orderTimeline.staff),
+    isolateName(entry.authorName ?? t.orderTimeline.staff),
     formatDateTime(locale, entry.createdAt),
     ...(entry.editedAt === null ? [] : [c.edited]),
   ].join(" · ");

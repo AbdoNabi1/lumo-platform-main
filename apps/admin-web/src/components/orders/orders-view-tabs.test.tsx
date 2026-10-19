@@ -6,7 +6,7 @@ import { OrdersViewTabs } from "./orders-view-tabs";
 
 describe("OrdersViewTabs (order operations Part 1)", () => {
   it("shows Shopify's tabs in order, marks the current one, and keeps the search in each link", () => {
-    render(<OrdersViewTabs current="unpaid" q="mona" status={undefined} t={en} />);
+    render(<OrdersViewTabs current="unpaid" q="mona" status={undefined} tags={[]} t={en} />);
 
     const links = screen.getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
@@ -26,7 +26,7 @@ describe("OrdersViewTabs (order operations Part 1)", () => {
   });
 
   it("is in Arabic", () => {
-    render(<OrdersViewTabs current="all" q={undefined} status={undefined} t={ar} />);
+    render(<OrdersViewTabs current="all" q={undefined} status={undefined} tags={[]} t={ar} />);
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
       "الكل",
       "غير منفذة",

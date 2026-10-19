@@ -3,6 +3,7 @@ import type {
   OrderExportQuery,
   OrderExportRowDto,
 } from "@/lib/api/orders";
+import { parseTagFilter } from "./order-tags";
 import { ORDERS_PAGE_SIZE, parseOrderIds, parseOrderView } from "./order-views";
 import { isCalendarDay, nextDay, startOfZonedDay } from "./zoned-time";
 
@@ -27,6 +28,8 @@ export function parseExportRequest(params: URLSearchParams, timeZone: string): E
     return value !== undefined && value.length > 0 ? value : undefined;
   };
   const view = parseOrderView({ view: text("view") });
+  const tags = parseTagFilter(text("tag"));
+  const tagged = tags.length > 0 ? { tags } : {};
   switch (params.get("scope")) {
     case "current_page":
       return {
@@ -36,6 +39,7 @@ export function parseExportRequest(params: URLSearchParams, timeZone: string): E
           search: text("q"),
           status: text("status"),
           after: text("after"),
+          ...tagged,
           first: ORDERS_PAGE_SIZE,
         },
       };
@@ -48,7 +52,10 @@ export function parseExportRequest(params: URLSearchParams, timeZone: string): E
         : { singlePage: true, query: { view: "all", ids, first: ids.length } };
     }
     case "matching":
-      return { singlePage: false, query: { view, search: text("q"), status: text("status") } };
+      return {
+        singlePage: false,
+        query: { view, search: text("q"), status: text("status"), ...tagged },
+      };
     case "dates": {
       const from = text("from") ?? "";
       const to = text("to") ?? "";

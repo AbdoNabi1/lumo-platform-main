@@ -95,3 +95,20 @@ describe("orderActionPermissionsFor (the role table, decided on the server)", ()
     expect(Object.values(NO_ORDER_ACTIONS).every((allowed) => !allowed)).toBe(true);
   });
 });
+
+describe("the tag filter in links and the export context (Part 2)", () => {
+  it("tab links keep the tag filter as one comma list", () => {
+    expect(ordersViewHref("open", { tags: ["vip", "urgent"] })).toBe(
+      "/orders?view=open&tag=vip%2Curgent",
+    );
+    expect(ordersViewHref("all", { tags: [] })).toBe("/orders");
+  });
+
+  it("the export context carries the tags and counts them as a filter", () => {
+    expect(ordersExportContextFor("operator", "all", { tags: ["vip"] })).toEqual({
+      view: "all",
+      tags: ["vip"],
+      hasFilters: true,
+    });
+  });
+});

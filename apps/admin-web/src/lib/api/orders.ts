@@ -76,6 +76,8 @@ export interface OrdersListQuery {
   readonly search?: string;
   /** Order operations Part 1: Shopify's tab; absent or "all" sends no param. */
   readonly view?: OrderView;
+  /** Order operations Part 2: only orders carrying every one of these tags. */
+  readonly tags?: readonly string[];
 }
 
 export type FetchOrdersPageResult =
@@ -95,6 +97,7 @@ export async function fetchOrdersPage(query: OrdersListQuery): Promise<FetchOrde
   if (query.status !== undefined) params.set("status", query.status);
   if (query.search !== undefined) params.set("search", query.search);
   if (query.view !== undefined && query.view !== "all") params.set("view", query.view);
+  for (const tag of query.tags ?? []) params.append("tag", tag);
 
   const result = await getAdminApi(`/api/v1/orders?${params.toString()}`, isOrdersPageDto);
   if (result.outcome === "ok") {
@@ -150,6 +153,8 @@ export interface OrderExportQuery {
   readonly search?: string | undefined;
   readonly status?: string | undefined;
   readonly ids?: readonly string[] | undefined;
+  /** Order operations Part 2: only orders carrying every one of these tags. */
+  readonly tags?: readonly string[] | undefined;
   /** ISO instants (the route handler turns shop-local days into them). */
   readonly createdFrom?: string | undefined;
   readonly createdTo?: string | undefined;
@@ -186,6 +191,7 @@ export async function fetchOrderExportRows(
   if (query.search !== undefined) params.set("search", query.search);
   if (query.status !== undefined) params.set("status", query.status);
   if (query.ids !== undefined) params.set("ids", query.ids.join(","));
+  for (const tag of query.tags ?? []) params.append("tag", tag);
   if (query.createdFrom !== undefined) params.set("createdFrom", query.createdFrom);
   if (query.createdTo !== undefined) params.set("createdTo", query.createdTo);
   if (query.first !== undefined) params.set("first", String(query.first));
@@ -542,6 +548,8 @@ export const BULK_ORDER_ACTIONS = [
   "fulfill",
   "capture_payments",
   "mark_cod_collected",
+  "add_tags",
+  "remove_tags",
 ] as const;
 export type BulkOrderAction = (typeof BULK_ORDER_ACTIONS)[number];
 
@@ -566,10 +574,15 @@ export function bulkOrders(
   action: BulkOrderAction,
   orderIds: readonly string[],
   idempotencyKey: string,
+  tags?: readonly string[],
 ): Promise<MutationResult<{ readonly results: readonly BulkOrderResultDto[] }>> {
   return mutateAdminApi(
     "/api/v1/orders/bulk",
-    { method: "POST", body: { action, orderIds }, idempotencyKey },
+    {
+      method: "POST",
+      body: { action, orderIds, ...(tags === undefined ? {} : { tags }) },
+      idempotencyKey,
+    },
     isBulkResults,
   );
 }

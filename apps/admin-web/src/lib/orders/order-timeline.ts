@@ -68,5 +68,13 @@ export function activityLabel(entry: TimelineEntryDto, t: Dictionary): string {
       return fill(words.createdFromDraft, { draft: entry.data.draftNumber ?? "" });
     case "comment":
       return entry.deleted ? words.commentDeleted : (entry.body ?? "");
+    default:
+      // A kind a newer API sends before this build has words for it: never a blank line.
+      return words.staffActivity;
   }
+}
+
+/** Keeps a staff name's own direction from reordering the "name · time" line around it (FSI … PDI). */
+export function isolateName(name: string): string {
+  return `⁨${name}⁩`;
 }

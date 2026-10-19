@@ -23,15 +23,20 @@ export function parseOrderView(params: {
   return params.fulfillment === "unfulfilled" ? "unfulfilled" : "all";
 }
 
-/** A tab's link: the search and status filter stay, the cursor does not (page 1 of the new tab). */
+/** A tab's link: the search, status and tag filters stay, the cursor does not (page 1 of the new tab). */
 export function ordersViewHref(
   view: OrderView,
-  keep: { readonly q?: string | undefined; readonly status?: string | undefined },
+  keep: {
+    readonly q?: string | undefined;
+    readonly status?: string | undefined;
+    readonly tags?: readonly string[] | undefined;
+  },
 ): string {
   const params = new URLSearchParams();
   if (view !== "all") params.set("view", view);
   if (keep.q !== undefined && keep.q.length > 0) params.set("q", keep.q);
   if (keep.status !== undefined && keep.status.length > 0) params.set("status", keep.status);
+  if (keep.tags !== undefined && keep.tags.length > 0) params.set("tag", keep.tags.join(","));
   const query = params.toString();
   return query.length > 0 ? `/orders?${query}` : "/orders";
 }
@@ -48,6 +53,7 @@ export function ordersExportContextFor(
     readonly q?: string | undefined;
     readonly status?: string | undefined;
     readonly after?: string | undefined;
+    readonly tags?: readonly string[] | undefined;
   },
 ): OrdersExportContext | undefined {
   if (role !== "admin" && role !== "operator") return undefined;
@@ -56,7 +62,12 @@ export function ordersExportContextFor(
     ...(params.q === undefined ? {} : { q: params.q }),
     ...(params.status === undefined ? {} : { status: params.status }),
     ...(params.after === undefined ? {} : { after: params.after }),
-    hasFilters: Boolean(params.q) || Boolean(params.status) || view !== "all",
+    ...(params.tags === undefined || params.tags.length === 0 ? {} : { tags: params.tags }),
+    hasFilters:
+      Boolean(params.q) ||
+      Boolean(params.status) ||
+      (params.tags?.length ?? 0) > 0 ||
+      view !== "all",
   };
 }
 

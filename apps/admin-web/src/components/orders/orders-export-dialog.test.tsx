@@ -64,4 +64,11 @@ describe("OrdersExportDialog (Shopify's Export orders)", () => {
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-01" } });
     expect(submit).toBeEnabled();
   });
+
+  it("carries the tag filter as one hidden comma list (Part 2)", () => {
+    const { container } = renderDialog({
+      context: { ...context, tags: ["vip", "urgent"] },
+    });
+    expect(container.ownerDocument.querySelector('input[name="tag"]')).toHaveValue("vip,urgent");
+  });
 });

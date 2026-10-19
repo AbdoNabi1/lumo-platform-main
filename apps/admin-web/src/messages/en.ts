@@ -122,6 +122,7 @@ export const en = {
       fulfillmentStatus: "Fulfillment status",
       items: "Items",
       deliveryMethod: "Delivery method",
+      tags: "Tags",
     },
     /** Plan 3B: a customer name is the shipping recipient; an order without one shows this, muted. */
     noCustomer: "No customer",
@@ -163,6 +164,8 @@ export const en = {
     },
     archivedBadge: "Archived",
     filter: "Filter",
+    taggedWith: "Tagged with",
+    moreTags: "+{count} more",
     export: "Export",
     selectAll: "Select all orders on this page",
     selectOrder: "Select order {orderNumber}",
@@ -177,6 +180,16 @@ export const en = {
       unarchive: "Unarchive orders",
       exportSelected: "Export selected",
       markCashReceived: "Mark cash as received",
+      addTags: "Add tags",
+      removeTags: "Remove tags",
+      tagsDialog: {
+        addTitle: "Add tags to {count} orders",
+        removeTitle: "Remove tags from {count} orders",
+        inputLabel: "Tags",
+        add: "Add",
+        remove: "Remove",
+        cancel: "Cancel",
+      },
       working: "Working…",
       summary: "{updated} orders updated · {skipped} skipped",
       failedSuffix: " · {failed} failed",
@@ -192,6 +205,9 @@ export const en = {
         payment_not_pending: "Payment isn't pending",
         payment_already_requested: "Payment already requested",
         not_cash_on_delivery: "Not an unpaid cash-on-delivery payment",
+        already_tagged: "Already has these tags",
+        not_tagged: "Has none of these tags",
+        too_many_tags: "Would have more than 250 tags",
         unexpected_error: "Something went wrong",
       },
     },
@@ -391,6 +407,8 @@ export const en = {
   /** Order operations Part 2 — staff activity lines on the order timeline. `{author}` is a staff name. */
   orderTimeline: {
     staff: "Staff",
+    /** A staff entry of a kind this build has no words for yet. */
+    staffActivity: "Staff activity",
     archived: "{author} archived this order",
     unarchived: "{author} unarchived this order",
     noteChanged: "{author} edited the note",

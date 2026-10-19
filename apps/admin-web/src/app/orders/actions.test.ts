@@ -27,7 +27,15 @@ vi.mock("@/lib/api/orders", () => ({
   bulkOrders: orders.bulkOrders,
   archiveOrder: orders.archiveOrder,
   unarchiveOrder: orders.unarchiveOrder,
-  BULK_ORDER_ACTIONS: ["archive", "unarchive", "fulfill", "capture_payments", "mark_cod_collected"],
+  BULK_ORDER_ACTIONS: [
+    "archive",
+    "unarchive",
+    "fulfill",
+    "capture_payments",
+    "mark_cod_collected",
+    "add_tags",
+    "remove_tags",
+  ],
 }));
 vi.mock("next/cache", () => ({ revalidatePath }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
@@ -229,5 +237,25 @@ describe("archiveOrderAction / unarchiveOrderAction", () => {
       status: "success",
     });
     expect((await archiveOrderAction(idle, form({}))).status).toBe("error");
+  });
+});
+
+describe("runBulkOrderAction with tags (order operations Part 2)", () => {
+  it("passes the tags for add_tags / remove_tags and nothing extra for the others", async () => {
+    orders.bulkOrders.mockResolvedValue({ outcome: "ok", data: { results: [] } });
+    await runBulkOrderAction("add_tags", ["o-1"], ["VIP", " "]);
+    expect(orders.bulkOrders).toHaveBeenLastCalledWith("add_tags", ["o-1"], expect.any(String), [
+      "VIP",
+    ]);
+    await runBulkOrderAction("archive", ["o-1"]);
+    expect(orders.bulkOrders).toHaveBeenLastCalledWith("archive", ["o-1"], expect.any(String));
+  });
+
+  it("refuses add_tags without tags, or with more than 20", async () => {
+    orders.bulkOrders.mockClear();
+    expect((await runBulkOrderAction("add_tags", ["o-1"])).status).toBe("error");
+    const many = Array.from({ length: 21 }, (_, i) => `t${i}`);
+    expect((await runBulkOrderAction("remove_tags", ["o-1"], many)).status).toBe("error");
+    expect(orders.bulkOrders).not.toHaveBeenCalled();
   });
 });

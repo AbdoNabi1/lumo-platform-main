@@ -12,6 +12,9 @@ const VIEWER = orderActionPermissionsFor("viewer");
 
 const actions = vi.hoisted(() => ({ runBulkOrderAction: vi.fn() }));
 vi.mock("@/app/orders/actions", () => actions);
+vi.mock("@/app/orders/annotation-actions", () => ({
+  suggestOrderTagsAction: vi.fn().mockResolvedValue([]),
+}));
 
 // Built from local calendar fields: "today" is the runtime's own calendar day.
 const at = (month: number, day: number, hour: number, minute: number) =>
@@ -69,6 +72,7 @@ describe("OrdersTable — like Shopify's orders list (Plan 3B)", () => {
       "Fulfillment status",
       "Items",
       "Delivery method",
+      "Tags",
     ]);
     expect(headers).not.toContain("Status");
   });
@@ -260,6 +264,7 @@ describe("OrdersTable — like Shopify's orders list (Plan 3B)", () => {
       ar.ordersPage.columns.fulfillmentStatus,
       ar.ordersPage.columns.items,
       ar.ordersPage.columns.deliveryMethod,
+      ar.ordersPage.columns.tags,
     ]);
     expect(screen.getByText("مدفوع")).toBeInTheDocument();
     expect(screen.getByText("قيد التجهيز")).toBeInTheDocument();
@@ -445,5 +450,55 @@ describe("OrdersTable selection and bulk bar (order operations Part 1)", () => {
     renderTable(two());
     fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
     expect(screen.queryByRole("button", { name: "Export selected" })).toBeNull();
+  });
+
+  it("shows the first three tags and how many more (Part 2)", () => {
+    renderTable([order({ tags: ["a", "b", "c", "d", "e"] })]);
+    const row = rowOf(/1001/);
+    for (const tag of ["a", "b", "c"]) expect(within(row).getByText(tag)).toBeInTheDocument();
+    expect(within(row).queryByText("d")).toBeNull();
+    expect(within(row).getByText("+2 more")).toBeInTheDocument();
+  });
+
+  it("adds tags to the selection through the dialog and reports the skipped ones (Part 2)", async () => {
+    actions.runBulkOrderAction.mockResolvedValue({
+      status: "done",
+      results: [
+        { orderId: "order-1", outcome: "ok" },
+        { orderId: "order-2", outcome: "skipped", reason: "already_tagged" },
+      ],
+    });
+    renderTable(two());
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all orders on this page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add tags" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Add tags to 2 orders");
+    const input = screen.getByLabelText("Tags");
+    fireEvent.change(input, { target: { value: "VIP" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() =>
+      expect(actions.runBulkOrderAction).toHaveBeenCalledWith(
+        "add_tags",
+        ["order-1", "order-2"],
+        ["VIP"],
+      ),
+    );
+    expect(await screen.findByText("#1002 — Already has these tags")).toBeInTheDocument();
+  });
+
+  it("offers no tag actions without orders:tag", () => {
+    render(
+      <OrdersTable
+        orders={two()}
+        t={en}
+        locale="en"
+        now={NOW}
+        permissions={{ ...OPERATOR, canTag: false }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all orders on this page" }));
+    expect(screen.queryByRole("button", { name: "Add tags" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove tags" })).toBeNull();
   });
 });

@@ -22,6 +22,8 @@ export interface OrdersExportContext {
   readonly q?: string;
   readonly status?: string;
   readonly after?: string;
+  /** Order operations Part 2: the list's "Tagged with" filter. */
+  readonly tags?: readonly string[];
   readonly hasFilters: boolean;
 }
 
@@ -128,6 +130,9 @@ export function OrdersExportDialog({
           {context.q !== undefined && <input type="hidden" name="q" value={context.q} />}
           {context.status !== undefined && (
             <input type="hidden" name="status" value={context.status} />
+          )}
+          {context.tags !== undefined && context.tags.length > 0 && (
+            <input type="hidden" name="tag" value={context.tags.join(",")} />
           )}
           {context.after !== undefined && (
             <input type="hidden" name="after" value={context.after} />

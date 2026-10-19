@@ -12,6 +12,9 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/orders",
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
+vi.mock("@/app/orders/annotation-actions", () => ({
+  suggestOrderTagsAction: vi.fn().mockResolvedValue([]),
+}));
 
 describe("OrdersToolbar", () => {
   it("drops the cursor and a stale export error when the filter changes, keeping the tab", () => {
@@ -22,5 +25,16 @@ describe("OrdersToolbar", () => {
     });
 
     expect(navigation.push).toHaveBeenCalledWith("/orders?view=unpaid&status=placed");
+  });
+
+  it("Tagged with adds a tag to the URL as one comma list, and removing it drops the param (Part 2)", () => {
+    navigation.search = "view=unpaid&tag=vip";
+    render(<OrdersToolbar t={en} />);
+    const input = screen.getByLabelText("Tagged with");
+    fireEvent.change(input, { target: { value: "urgent" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(navigation.push).toHaveBeenLastCalledWith("/orders?view=unpaid&tag=vip%2Curgent");
+    fireEvent.click(screen.getByRole("button", { name: "Remove vip" }));
+    expect(navigation.push).toHaveBeenLastCalledWith("/orders?view=unpaid");
   });
 });

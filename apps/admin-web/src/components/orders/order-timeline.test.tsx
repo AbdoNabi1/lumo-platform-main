@@ -181,6 +181,20 @@ describe("OrderTimeline — staff comments and activity (order operations Part 2
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 
+  it("names who wrote a deleted comment, and when, with the name isolated from the line", () => {
+    renderMerged([staffLine({ deleted: true, body: null, authorName: "أحمد" })]);
+    const item = screen.getByText("Comment deleted").closest("li") as HTMLElement;
+    expect(item.textContent).toContain("⁨أحمد⁩");
+    expect(item.textContent).toMatch(/⁩ · .*\d/);
+  });
+
+  it("shows a staff entry of an unknown kind as generic staff activity, never blank", () => {
+    renderMerged([
+      staffLine({ kind: "future_kind" as TimelineEntryDto["kind"], body: null, data: {} }),
+    ]);
+    expect(screen.getByText("Staff activity")).toBeInTheDocument();
+  });
+
   it("offers the composer only to staff who may comment", () => {
     renderMerged([], false);
     expect(screen.queryByPlaceholderText("Leave a comment...")).toBeNull();
