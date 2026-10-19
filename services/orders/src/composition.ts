@@ -17,10 +17,20 @@ import { GetSalesSummary } from "./application/get-sales-summary.use-case";
 import { ListOrders } from "./application/list-orders.use-case";
 import { MarkOrderPaid } from "./application/mark-order-paid.use-case";
 import {
+  AddOrderTags,
   ArchiveOrders,
   GetOrderAnnotations,
+  RemoveOrderTags,
+  SuggestOrderTags,
   UnarchiveOrders,
+  UpdateOrderNote,
 } from "./application/order-annotations.use-cases";
+import {
+  AddOrderComment,
+  DeleteOrderComment,
+  EditOrderComment,
+  ListOrderTimeline,
+} from "./application/order-timeline.use-cases";
 import {
   AdvanceOrder,
   RequestFulfillment,
@@ -32,6 +42,7 @@ import { RefundOrder } from "./application/refund-order.use-case";
 import type { SalesSummaryQuery } from "./application/sales-summary";
 import type { OrderAnnotationRepository } from "./domain/order-annotations";
 import type { OrderRepository } from "./domain/order-repository";
+import type { OrderTimelineRepository } from "./domain/order-timeline";
 import type {
   InventoryPort,
   NotificationPort,
@@ -42,10 +53,12 @@ import type {
   StockReleasePort,
   PaymentVerificationPort,
   ShippingPort,
+  StaffDirectoryPort,
 } from "./application/ports";
 import { InMemoryOrderAnnotationRepository } from "./infrastructure/in-memory-order-annotation-repository";
 import { InMemoryOrderNumberAllocator } from "./infrastructure/in-memory-order-number-allocator";
 import { InMemoryOrderRepository } from "./infrastructure/in-memory-order-repository";
+import { InMemoryOrderTimelineRepository } from "./infrastructure/in-memory-order-timeline-repository";
 import { InMemorySalesSummaryQuery } from "./infrastructure/in-memory-sales-summary-query";
 import {
   InMemoryInventoryAdapter,
@@ -53,6 +66,7 @@ import {
   InMemoryPaymentAdapter,
   InMemoryPaymentVerificationAdapter,
   InMemoryShippingAdapter,
+  InMemoryStaffDirectory,
 } from "./infrastructure/in-memory-port-adapters";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import {
@@ -62,6 +76,7 @@ import {
 import { PrismaOrderAnnotationRepository } from "./infrastructure/prisma-order-annotation-repository";
 import { PrismaOrderNumberAllocator } from "./infrastructure/prisma-order-number-allocator";
 import { PrismaOrderRepository } from "./infrastructure/prisma-order-repository";
+import { PrismaOrderTimelineRepository } from "./infrastructure/prisma-order-timeline-repository";
 import { PrismaSalesSummaryQuery } from "./infrastructure/prisma-sales-summary-query";
 import { OrderController } from "./interfaces/order.controller";
 
@@ -103,6 +118,11 @@ export interface OrdersWiringDeps {
    * tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
+  /**
+   * Order operations Part 2: whose name a timeline line shows. Absent ⇒ `InMemoryStaffDirectory()`
+   * (no names: "Staff"); `apps/admin` supplies the Security-backed adapter in production.
+   */
+  readonly staffDirectory?: StaffDirectoryPort;
 }
 
 export interface WiredOrders {
@@ -118,6 +138,7 @@ function buildController(
   orderNumbers: OrderNumberAllocator,
   sales: SalesSummaryQuery,
   annotations: OrderAnnotationRepository,
+  timeline: OrderTimelineRepository,
   deps: OrdersWiringDeps,
 ): OrderController {
   const paymentPort = deps.paymentPort ?? new InMemoryPaymentAdapter();
@@ -125,6 +146,21 @@ function buildController(
   const shippingPort = deps.shippingPort ?? new InMemoryShippingAdapter();
   const notifications = deps.notifications ?? new InMemoryNotificationAdapter();
   const paymentVerification = deps.paymentVerification ?? new InMemoryPaymentVerificationAdapter();
+  const staff = deps.staffDirectory ?? new InMemoryStaffDirectory();
+  const annotationDeps = {
+    annotations,
+    unitOfWork,
+    clock: deps.clock,
+    activity: { timeline, staff, idGenerator: deps.idGenerator },
+  };
+  const timelineDeps = {
+    annotations,
+    timeline,
+    staff,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+    unitOfWork,
+  };
 
   return new OrderController({
     placeOrder: new PlaceOrder({
@@ -192,9 +228,17 @@ function buildController(
     getOrder: new GetOrder({ orders }),
     listOrders: new ListOrders({ orders }),
     getSalesSummary: new GetSalesSummary({ sales }),
-    archiveOrders: new ArchiveOrders({ annotations, unitOfWork, clock: deps.clock }),
-    unarchiveOrders: new UnarchiveOrders({ annotations, unitOfWork, clock: deps.clock }),
+    archiveOrders: new ArchiveOrders(annotationDeps),
+    unarchiveOrders: new UnarchiveOrders(annotationDeps),
     getOrderAnnotations: new GetOrderAnnotations({ annotations }),
+    updateOrderNote: new UpdateOrderNote(annotationDeps),
+    addOrderTags: new AddOrderTags(annotationDeps),
+    removeOrderTags: new RemoveOrderTags(annotationDeps),
+    suggestOrderTags: new SuggestOrderTags({ annotations }),
+    addOrderComment: new AddOrderComment(timelineDeps),
+    editOrderComment: new EditOrderComment(timelineDeps),
+    deleteOrderComment: new DeleteOrderComment(timelineDeps),
+    listOrderTimeline: new ListOrderTimeline({ timeline }),
   });
 }
 
@@ -226,6 +270,7 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
         new PrismaOrderNumberAllocator(),
         new PrismaSalesSummaryQuery({ prisma: deps.prisma }),
         new PrismaOrderAnnotationRepository({ prisma: deps.prisma }),
+        new PrismaOrderTimelineRepository({ prisma: deps.prisma }),
         deps,
       ),
       drainOutbox: async () => 0,
@@ -254,6 +299,7 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
       isArchived: (orderId, tenantId) => orders.archivedAtOf(orderId, tenantId) !== null,
     }),
     new InMemoryOrderAnnotationRepository({ orders }),
+    new InMemoryOrderTimelineRepository(),
     deps,
   );
 

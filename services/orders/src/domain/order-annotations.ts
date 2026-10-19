@@ -38,7 +38,8 @@ export interface OrderAnnotationRepository {
   /**
    * Part 2: adds each tag (by `tagKey`) that each given order of this shop does not carry yet, and
    * answers, per order, the spellings it added (orders that gained nothing are absent). Other shops'
-   * and unknown ids are skipped.
+   * and unknown ids are skipped. "Added" means rows THIS call inserted: a key a concurrent writer
+   * inserted first is neither an error nor reported (the caller's `tags_added` line relies on it).
    */
   addTags(
     orderIds: readonly string[],

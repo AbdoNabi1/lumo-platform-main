@@ -137,18 +137,29 @@ export class PrismaOrderAnnotationRepository implements OrderAnnotationRepositor
       where: { tenantId, orderId: { in: ids }, tagKey: { in: tags.map((tag) => tag.tagKey) } },
       select: { orderId: true, tagKey: true },
     });
-    const present = new Set(existing.map((row) => `${row.orderId}\u0000${row.tagKey}`));
-    const added = new Map<string, string[]>();
+    const pairOf = (orderId: string, tagKey: string) => `${orderId}\u0000${tagKey}`;
+    const present = new Set(existing.map((row) => pairOf(row.orderId, row.tagKey)));
     const rows: { tenantId: string; orderId: string; tag: string; tagKey: string }[] = [];
     for (const orderId of ids) {
       for (const { tag, tagKey } of tags) {
-        if (present.has(`${orderId}\u0000${tagKey}`)) continue;
-        rows.push({ tenantId, orderId, tag, tagKey });
-        added.set(orderId, [...(added.get(orderId) ?? []), tag]);
+        if (!present.has(pairOf(orderId, tagKey))) rows.push({ tenantId, orderId, tag, tagKey });
       }
     }
-    // ON CONFLICT DO NOTHING: a concurrent add of the same tag never fails this call.
-    if (rows.length > 0) await client.orderTag.createMany({ data: rows, skipDuplicates: true });
+    if (rows.length === 0) return new Map();
+    // ON CONFLICT DO NOTHING … RETURNING: a concurrent add of the same key (committed after the read
+    // above) never fails this call, and is NOT reported as added here — only the rows this insert
+    // actually wrote are, so two racing adds never both write a `tags_added` line for one tag.
+    const inserted = await client.orderTag.createManyAndReturn({
+      data: rows,
+      skipDuplicates: true,
+      select: { orderId: true, tagKey: true },
+    });
+    const written = new Set(inserted.map((row) => pairOf(row.orderId, row.tagKey)));
+    const added = new Map<string, string[]>();
+    for (const row of rows) {
+      if (!written.has(pairOf(row.orderId, row.tagKey))) continue;
+      added.set(row.orderId, [...(added.get(row.orderId) ?? []), row.tag]);
+    }
     return added;
   }
 

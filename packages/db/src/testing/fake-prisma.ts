@@ -96,6 +96,11 @@ function delegate(rows: Row[]) {
       for (const row of data) rows.push({ ...row });
       return { count: data.length };
     },
+    // No constraints are modelled, so every row is "inserted" and returned (whole, `select` ignored).
+    createManyAndReturn: async ({ data }: { data: Row[] }): Promise<Row[]> => {
+      for (const row of data) rows.push({ ...row });
+      return data.map((row) => ({ ...row }));
+    },
     findFirst: async (args: Args = {}): Promise<Row | null> => {
       const found = rows.find((row) => matches(row, args.where));
       return found === undefined ? null : { ...found };

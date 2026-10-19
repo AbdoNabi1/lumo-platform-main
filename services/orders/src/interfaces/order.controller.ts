@@ -8,12 +8,29 @@ import type { SalesSummaryInput } from "../application/sales-summary";
 import type { ListOrders, ListOrdersInput } from "../application/list-orders.use-case";
 import type { MarkOrderPaid, MarkOrderPaidInput } from "../application/mark-order-paid.use-case";
 import type {
+  AddOrderTags,
   ArchiveOrders,
   ArchiveOrdersInput,
+  ChangeOrderTagsInput,
   GetOrderAnnotations,
   GetOrderAnnotationsInput,
+  RemoveOrderTags,
+  SuggestOrderTags,
+  SuggestOrderTagsInput,
   UnarchiveOrders,
+  UpdateOrderNote,
+  UpdateOrderNoteInput,
 } from "../application/order-annotations.use-cases";
+import type {
+  AddOrderComment,
+  AddOrderCommentInput,
+  DeleteOrderComment,
+  DeleteOrderCommentInput,
+  EditOrderComment,
+  EditOrderCommentInput,
+  ListOrderTimeline,
+  ListOrderTimelineInput,
+} from "../application/order-timeline.use-cases";
 import type {
   AdvanceOrder,
   AdvanceOrderInput,
@@ -44,6 +61,14 @@ export interface OrderControllerDeps {
   readonly archiveOrders: ArchiveOrders;
   readonly unarchiveOrders: UnarchiveOrders;
   readonly getOrderAnnotations: GetOrderAnnotations;
+  readonly updateOrderNote: UpdateOrderNote;
+  readonly addOrderTags: AddOrderTags;
+  readonly removeOrderTags: RemoveOrderTags;
+  readonly suggestOrderTags: SuggestOrderTags;
+  readonly addOrderComment: AddOrderComment;
+  readonly editOrderComment: EditOrderComment;
+  readonly deleteOrderComment: DeleteOrderComment;
+  readonly listOrderTimeline: ListOrderTimeline;
 }
 
 /** Framework-agnostic interface boundary for order use-cases (no HTTP server). */
@@ -112,5 +137,39 @@ export class OrderController {
   /** The annotations of a page of orders, in one read (body: `ReadonlyMap<string, OrderAnnotations>`). */
   async orderAnnotations(input: GetOrderAnnotationsInput): Promise<ControllerResponse> {
     return present(await this.deps.getOrderAnnotations.execute(input), 200);
+  }
+
+  /** Part 2: the order note (outside the aggregate; writes its `note_changed` line). */
+  async updateOrderNote(input: UpdateOrderNoteInput): Promise<ControllerResponse> {
+    return present(await this.deps.updateOrderNote.execute(input), 200);
+  }
+
+  async addOrderTags(input: ChangeOrderTagsInput): Promise<ControllerResponse> {
+    return present(await this.deps.addOrderTags.execute(input), 200);
+  }
+
+  async removeOrderTags(input: ChangeOrderTagsInput): Promise<ControllerResponse> {
+    return present(await this.deps.removeOrderTags.execute(input), 200);
+  }
+
+  async suggestOrderTags(input: SuggestOrderTagsInput): Promise<ControllerResponse> {
+    return present(await this.deps.suggestOrderTags.execute(input), 200);
+  }
+
+  async addOrderComment(input: AddOrderCommentInput): Promise<ControllerResponse> {
+    return present(await this.deps.addOrderComment.execute(input), 201);
+  }
+
+  async editOrderComment(input: EditOrderCommentInput): Promise<ControllerResponse> {
+    return present(await this.deps.editOrderComment.execute(input), 200);
+  }
+
+  async deleteOrderComment(input: DeleteOrderCommentInput): Promise<ControllerResponse> {
+    return present(await this.deps.deleteOrderComment.execute(input), 200);
+  }
+
+  /** The order's staff timeline (body: `readonly OrderTimelineEntry[]`, newest first, ≤ 200). */
+  async orderTimeline(input: ListOrderTimelineInput): Promise<ControllerResponse> {
+    return present(await this.deps.listOrderTimeline.execute(input), 200);
   }
 }

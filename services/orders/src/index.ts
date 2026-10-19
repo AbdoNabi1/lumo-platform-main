@@ -10,8 +10,35 @@ export {
   MAX_ARCHIVE_BATCH,
   type ArchiveOrdersInput,
   type ArchiveOrdersOutput,
+  type ChangeOrderTagsInput,
+  type ChangeOrderTagsOutput,
   type OrderArchiveResult,
+  type OrderTagsResult,
+  type SuggestOrderTagsInput,
+  type SuggestOrderTagsOutput,
+  type UpdateOrderNoteInput,
+  type UpdateOrderNoteOutput,
 } from "./application/order-annotations.use-cases";
+export type {
+  AddOrderCommentInput,
+  DeleteOrderCommentInput,
+  EditOrderCommentInput,
+  ListOrderTimelineInput,
+} from "./application/order-timeline.use-cases";
+export {
+  MAX_COMMENT_LENGTH,
+  type OrderTimelineData,
+  type OrderTimelineEntry,
+  type OrderTimelineKind,
+} from "./domain/order-timeline";
+export {
+  MAX_NOTE_LENGTH,
+  MAX_TAG_LENGTH,
+  MAX_TAGS_PER_ORDER,
+  TAG_SUGGESTION_LIMIT,
+  type TagUsage,
+} from "./domain/order-tags";
+export { InMemoryStaffDirectory } from "./infrastructure/in-memory-port-adapters";
 export {
   PrismaOrderRepository,
   type PrismaOrderRepositoryDeps,
@@ -41,6 +68,7 @@ export type {
   PaymentVerificationPort,
   PaymentVoidPort,
   ShippingPort,
+  StaffDirectoryPort,
   StockReleasePort,
 } from "./application/ports";
 export { ORDERS_PUBLISHED_EVENTS } from "./infrastructure/order-event-translator";

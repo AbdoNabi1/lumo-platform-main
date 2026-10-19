@@ -121,6 +121,42 @@ describe("PrismaOrderAnnotationRepository note and tags (Part 2, over fake-prism
     ]);
   });
 
+  it("addTags reports only the rows its insert wrote when a concurrent add commits first", async () => {
+    // Task 3 (carried from Task 2's review): our pre-insert read misses a "vip" row another
+    // transaction commits just after it; ON CONFLICT DO NOTHING then skips that row, and the answer
+    // (which becomes the `tags_added` line) must not claim it.
+    const { fake, repository } = await tagged();
+    const inserts: { data: Record<string, unknown>[]; skipDuplicates?: boolean }[] = [];
+    const racing = {
+      order: fake.database.order,
+      orderTag: {
+        findMany: async () => [],
+        createManyAndReturn: async (args: {
+          data: Record<string, unknown>[];
+          skipDuplicates?: boolean;
+        }) => {
+          inserts.push(args);
+          return args.data
+            .filter((row) => row["tagKey"] !== "vip")
+            .map((row) => ({ orderId: row["orderId"], tagKey: row["tagKey"] }));
+        },
+      },
+    } as unknown as TransactionClient;
+    const added = await repository.addTags(
+      [ORDER],
+      [
+        { tag: "VIP", tagKey: "vip" },
+        { tag: "Urgent", tagKey: "urgent" },
+      ],
+      TENANT,
+      racing,
+    );
+    expect([...added]).toEqual([[ORDER, ["Urgent"]]]);
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]?.skipDuplicates).toBe(true);
+    expect(inserts[0]?.data.map((row) => row["tagKey"])).toEqual(["vip", "urgent"]);
+  });
+
   it("removeTags removes by key and answers the stored spellings", async () => {
     const { repository, tx } = await tagged();
     await repository.addTags([ORDER], [{ tag: "VIP", tagKey: "vip" }], TENANT, tx);
