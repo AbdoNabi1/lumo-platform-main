@@ -35,7 +35,7 @@ const SEARCH_DEBOUNCE_MS = 350;
 /**
  * Search + status filter for the Orders list — a client component because it drives the URL
  * (`?q=&status=`), which the server-rendered `OrdersPage` reads to refetch. Changing either
- * control drops `after`/`stack` (page 1 of the new filtered result) and pushes a new URL rather
+ * control drops `after`/`stack` (page 1 of the new filtered result) and a stale `exportError` and pushes a new URL rather
  * than mutating local state, so the list, the URL, and the back button all stay in sync.
  */
 export function OrdersToolbar({ t }: { readonly t: Dictionary }) {
@@ -61,6 +61,8 @@ export function OrdersToolbar({ t }: { readonly t: Dictionary }) {
       }
       params.delete("after");
       params.delete("stack");
+      // The export's error belongs to the list it was asked from, not to the new filter.
+      params.delete("exportError");
       router.push(`${pathname}?${params.toString()}`);
     },
     [pathname, router, searchParams],
