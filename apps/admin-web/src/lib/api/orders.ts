@@ -705,3 +705,52 @@ export async function fetchOrderTagSuggestions(
   );
   return result.outcome === "ok" ? result.data.tags : null;
 }
+
+function isTimelineEntry(value: unknown): value is TimelineEntryDto {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { kind?: unknown }).kind === "string"
+  );
+}
+
+/** `POST /orders/:orderId/comments` (`orders:comment`); the author is the signed-in staff member. */
+export function addOrderComment(
+  orderId: string,
+  body: string,
+  idempotencyKey: string,
+): Promise<MutationResult<TimelineEntryDto>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/comments"),
+    { method: "POST", body: { body }, idempotencyKey },
+    isTimelineEntry,
+  );
+}
+
+/** `PATCH /orders/:orderId/comments/:entryId` — the API lets only the author edit. */
+export function editOrderComment(
+  orderId: string,
+  entryId: string,
+  body: string,
+  idempotencyKey: string,
+): Promise<MutationResult<TimelineEntryDto>> {
+  return mutateAdminApi(
+    orderPath(orderId, `/comments/${encodeURIComponent(entryId)}`),
+    { method: "PATCH", body: { body }, idempotencyKey },
+    isTimelineEntry,
+  );
+}
+
+/** `DELETE /orders/:orderId/comments/:entryId` — the author, or an admin. */
+export function deleteOrderComment(
+  orderId: string,
+  entryId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<TimelineEntryDto>> {
+  return mutateAdminApi(
+    orderPath(orderId, `/comments/${encodeURIComponent(entryId)}`),
+    { method: "DELETE", idempotencyKey },
+    isTimelineEntry,
+  );
+}

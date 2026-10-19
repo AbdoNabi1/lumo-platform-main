@@ -17,8 +17,14 @@ vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined }),
 }));
 
-const { changeOrderTagsAction, saveOrderNoteAction, suggestOrderTagsAction } =
-  await import("./annotation-actions");
+const {
+  changeOrderTagsAction,
+  deleteOrderCommentAction,
+  editOrderCommentAction,
+  postOrderCommentAction,
+  saveOrderNoteAction,
+  suggestOrderTagsAction,
+} = await import("./annotation-actions");
 
 const idle: FormState = { status: "idle" };
 
@@ -102,5 +108,37 @@ describe("suggestOrderTagsAction", () => {
     expect(await suggestOrderTagsAction("  ")).toEqual([]);
     orders.fetchOrderTagSuggestions.mockResolvedValueOnce(null);
     expect(await suggestOrderTagsAction("v")).toEqual([]);
+  });
+});
+
+describe("comment actions", () => {
+  it("posts the trimmed comment and refreshes the order page", async () => {
+    orders.addOrderComment.mockResolvedValue({ outcome: "ok", data: {} });
+    const state = await postOrderCommentAction(idle, form({ orderId: "o-1", body: "  Called " }));
+    expect(state).toEqual({ status: "success" });
+    expect(orders.addOrderComment).toHaveBeenCalledWith("o-1", "Called", expect.any(String));
+    expect(revalidatePath).toHaveBeenCalledWith("/orders/o-1");
+  });
+
+  it("refuses an empty or a 5,001-character comment without calling the API", async () => {
+    for (const body of ["   ", "a".repeat(5001)]) {
+      const state = await postOrderCommentAction(idle, form({ orderId: "o-1", body }));
+      expect(state.status).toBe("error");
+      if (state.status === "error") expect(state.fieldErrors["body"]).toBeDefined();
+    }
+    expect(orders.addOrderComment).not.toHaveBeenCalled();
+  });
+
+  it("edits and deletes by entry id, refusing a form without one", async () => {
+    orders.editOrderComment.mockResolvedValue({ outcome: "ok", data: {} });
+    orders.deleteOrderComment.mockResolvedValue({ outcome: "forbidden" });
+    expect(
+      await editOrderCommentAction(idle, form({ orderId: "o-1", entryId: "e-1", body: "x" })),
+    ).toEqual({ status: "success" });
+    expect(orders.editOrderComment).toHaveBeenCalledWith("o-1", "e-1", "x", expect.any(String));
+    const refused = await deleteOrderCommentAction(idle, form({ orderId: "o-1", entryId: "e-1" }));
+    expect(refused.status).toBe("error");
+    expect((await deleteOrderCommentAction(idle, form({ orderId: "o-1" }))).status).toBe("error");
+    expect(orders.deleteOrderComment).toHaveBeenCalledTimes(1);
   });
 });

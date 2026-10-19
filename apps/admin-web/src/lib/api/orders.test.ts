@@ -27,6 +27,9 @@ const {
   updateOrderNote,
   changeOrderTags,
   fetchOrderTagSuggestions,
+  addOrderComment,
+  editOrderComment,
+  deleteOrderComment,
 } = await import("./orders");
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -476,5 +479,36 @@ describe("note, tags and suggestions (order operations Part 2)", () => {
     expect(await fetchOrderTagSuggestions("v i")).toEqual([{ tag: "VIP", count: 2 }]);
     expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/v1\/order-tags\?q=v%20i$/);
     expect(await fetchOrderTagSuggestions("v")).toBeNull();
+  });
+});
+
+describe("comments (order operations Part 2)", () => {
+  const entry = {
+    id: "e-1",
+    kind: "comment",
+    authorName: "Ahmed",
+    body: "Called",
+    data: {},
+    createdAt: "2026-10-19T09:00:00.000Z",
+    editedAt: null,
+    deleted: false,
+    canEdit: true,
+    canDelete: true,
+  };
+
+  it("posts, patches and deletes under the order's comments path with the idempotency key", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(200, entry)));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await addOrderComment("o-1", "Called", "k-1")).toEqual({ outcome: "ok", data: entry });
+    await editOrderComment("o-1", "e 1", "Called again", "k-2");
+    await deleteOrderComment("o-1", "e-1", "k-3");
+    const calls = fetchMock.mock.calls as [string, RequestInit][];
+    expect(calls.map(([url, init]) => [init.method, url.replace(/^.*\/api\/v1/, "")])).toEqual([
+      ["POST", "/orders/o-1/comments"],
+      ["PATCH", "/orders/o-1/comments/e%201"],
+      ["DELETE", "/orders/o-1/comments/e-1"],
+    ]);
+    expect(JSON.parse(String(calls[1]?.[1].body))).toEqual({ body: "Called again" });
+    expect((calls[2]?.[1].headers as Record<string, string>)["idempotency-key"]).toBe("k-3");
   });
 });

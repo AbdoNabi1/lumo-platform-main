@@ -373,6 +373,34 @@ export const en = {
     tooLong: "A tag can have at most 40 characters.",
     limit: "An order can have up to 250 tags.",
   },
+  /** Order operations Part 2 — Shopify's comment composer and comments on the order timeline. */
+  orderComments: {
+    label: "Comment",
+    placeholder: "Leave a comment...",
+    post: "Post",
+    posting: "Posting…",
+    edit: "Edit",
+    delete: "Delete",
+    save: "Save",
+    cancel: "Cancel",
+    edited: "Edited",
+    confirmDelete: "Delete this comment?",
+    empty: "Write a comment first.",
+    tooLong: "Comments can have at most 5,000 characters.",
+  },
+  /** Order operations Part 2 — staff activity lines on the order timeline. `{author}` is a staff name. */
+  orderTimeline: {
+    staff: "Staff",
+    archived: "{author} archived this order",
+    unarchived: "{author} unarchived this order",
+    noteChanged: "{author} edited the note",
+    noteRemoved: "{author} removed the note",
+    tagsAdded: "{author} added tags {tags}",
+    tagsRemoved: "{author} removed tags {tags}",
+    createdFromDraft: "Order created from draft #{draft}",
+    commentDeleted: "Comment deleted",
+    tagSeparator: ", ",
+  },
   /** Plan 3B: Shopify's two statuses, derived on the server (never stored). */
   orderPaymentStatus: {
     pending: "Payment pending",

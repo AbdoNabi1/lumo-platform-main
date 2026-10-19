@@ -21,6 +21,7 @@ import { OrderPaymentCard, OrderPaymentCardSkeleton } from "@/components/orders/
 import { OrderTagsCard } from "@/components/orders/order-tags-card";
 import { OrderTimeline } from "@/components/orders/order-timeline";
 import { fetchOrder } from "@/lib/api/orders";
+import { storeSettingsOrDefaults } from "@/lib/api/store-settings";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
@@ -49,7 +50,7 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
   const user = await getCurrentUser();
   const { orderId } = await params;
 
-  const result = await fetchOrder(orderId);
+  const [result, settings] = await Promise.all([fetchOrder(orderId), storeSettingsOrDefaults()]);
 
   if (result.outcome === "unauthorized") {
     return (
@@ -109,6 +110,10 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
               paymentProvider={order.paymentProvider}
               t={t}
               locale={locale}
+              entries={order.timelineEntries ?? []}
+              timeZone={settings.timezone}
+              orderId={order.id}
+              canComment={permissions.canComment}
             />
 
             <OrderAdvancedSection order={order} t={t} locale={locale} />

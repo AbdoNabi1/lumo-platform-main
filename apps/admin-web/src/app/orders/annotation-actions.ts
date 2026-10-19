@@ -3,9 +3,16 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { newIdempotencyKey, toFormState, type FormState } from "@/lib/api/mutation";
-import { changeOrderTags, fetchOrderTagSuggestions, updateOrderNote } from "@/lib/api/orders";
+import {
+  addOrderComment,
+  changeOrderTags,
+  deleteOrderComment,
+  editOrderComment,
+  fetchOrderTagSuggestions,
+  updateOrderNote,
+} from "@/lib/api/orders";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
-import { characterCount, MAX_NOTE_LENGTH } from "@/lib/orders/order-tags";
+import { characterCount, MAX_COMMENT_LENGTH, MAX_NOTE_LENGTH } from "@/lib/orders/order-tags";
 
 /**
  * Order operations Part 2 — the order page's Notes, Tags and comment actions. Every argument is
@@ -111,4 +118,85 @@ export async function suggestOrderTagsAction(prefix: string): Promise<readonly s
   if (trimmed.length === 0 || trimmed.length > 200) return [];
   const found = await fetchOrderTagSuggestions(trimmed);
   return found === null ? [] : found.map((usage) => usage.tag);
+}
+
+type Dictionary = Awaited<ReturnType<typeof dictionary>>;
+
+/** Why a comment form cannot be sent, or null when it can. */
+function commentProblem(orderId: string, body: string, t: Dictionary): FormState | null {
+  if (orderId.length === 0)
+    return { status: "error", message: t.formErrors.invalid, fieldErrors: {} };
+  if (body.length === 0) {
+    return {
+      status: "error",
+      message: t.formErrors.invalid,
+      fieldErrors: { body: t.orderComments.empty },
+    };
+  }
+  if (characterCount(body) > MAX_COMMENT_LENGTH) {
+    return {
+      status: "error",
+      message: t.formErrors.invalid,
+      fieldErrors: { body: t.orderComments.tooLong },
+    };
+  }
+  return null;
+}
+
+/** The timeline's composer ("Leave a comment..." → Post). */
+export async function postOrderCommentAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const t = await dictionary();
+  const orderId = stringField(formData, "orderId");
+  const body = stringField(formData, "body").trim();
+  const problem = commentProblem(orderId, body, t);
+  if (problem !== null) return problem;
+  const result = await addOrderComment(orderId, body, newIdempotencyKey());
+  if (result.outcome === "ok") {
+    revalidatePath(`/orders/${orderId}`);
+    return { status: "success" };
+  }
+  return toFormState(result, t.formErrors);
+}
+
+/** A comment's Edit → Save. */
+export async function editOrderCommentAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const t = await dictionary();
+  const orderId = stringField(formData, "orderId");
+  const entryId = stringField(formData, "entryId");
+  const body = stringField(formData, "body").trim();
+  if (entryId.length === 0)
+    return { status: "error", message: t.formErrors.invalid, fieldErrors: {} };
+  const problem = commentProblem(orderId, body, t);
+  if (problem !== null) return problem;
+  const result = await editOrderComment(orderId, entryId, body, newIdempotencyKey());
+  if (result.outcome === "ok") {
+    revalidatePath(`/orders/${orderId}`);
+    return { status: "success" };
+  }
+  return toFormState(result, t.formErrors);
+}
+
+/** A comment's Delete (after the browser's confirmation). */
+export async function deleteOrderCommentAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const t = await dictionary();
+  const orderId = stringField(formData, "orderId");
+  const entryId = stringField(formData, "entryId");
+  if (orderId.length === 0 || entryId.length === 0) {
+    return { status: "error", message: t.formErrors.invalid, fieldErrors: {} };
+  }
+  const result = await deleteOrderComment(orderId, entryId, newIdempotencyKey());
+  if (result.outcome === "ok") {
+    revalidatePath(`/orders/${orderId}`);
+    return { status: "success" };
+  }
+  return toFormState(result, t.formErrors);
 }
