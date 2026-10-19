@@ -244,4 +244,46 @@ describe("GET /orders/packing-slips", () => {
       [b, a],
     );
   });
+
+  it("reads the orders with one plain tenant-scoped list — no Fulfillment read", async () => {
+    const order = {
+      id: { toString: () => "o-1" },
+      orderNumber: { value: "1001" },
+      customerRef: "c-1",
+      currency: "EGP",
+      history: [{ type: "placed", occurredAt: new Date(0) }],
+      shippingAddress: { line1: "1", city: "Cairo", postalCode: "", country: "EG" },
+      items: [],
+      totalAmount: () => ({ amountMinor: 100 }),
+    } as unknown as Order;
+    const admin = {
+      orders: {
+        listOrders: vi.fn().mockResolvedValue({
+          status: 200,
+          body: { items: [order], pageInfo: { hasNextPage: false, endCursor: null } },
+        }),
+        fulfillmentsOfOrders: vi.fn().mockResolvedValue({ status: 200, body: [] }),
+        orderAnnotations: vi.fn().mockResolvedValue({ status: 200, body: new Map() }),
+        paymentIntentsOf: vi.fn().mockResolvedValue({ status: 200, body: [] }),
+      },
+      customers: { contactsOfCustomers: vi.fn().mockResolvedValue({ status: 200, body: [] }) },
+    } as unknown as WiredAdmin;
+
+    const response = await callRoute(
+      orderOperationsRoutes(admin),
+      "GET",
+      "/orders/packing-slips",
+      { query: { ids: ["o-1", "o-2"] } },
+      viewerStaff,
+    );
+
+    expect(response.status).toBe(200);
+    expect(admin.orders.listOrders).toHaveBeenCalledTimes(1);
+    expect(admin.orders.listOrders).toHaveBeenCalledWith(viewerStaff, {
+      tenantId: expect.any(String),
+      ids: ["o-1", "o-2"],
+      first: 2,
+    });
+    expect(admin.orders.fulfillmentsOfOrders).not.toHaveBeenCalled();
+  });
 });

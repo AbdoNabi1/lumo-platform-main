@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Principal } from "@platform/contracts";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { ArchiveOrdersOutput, Order } from "@platform/orders";
+import type { Paginated } from "@platform/types";
 import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
@@ -212,12 +213,14 @@ export function orderOperationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       schema: { querystring: packingSlipsQuery },
       handle: async ({ query, context }): Promise<AdminResponse> => {
         const { principal, tenantId } = context;
-        const found = await listOrdersForView(admin, principal, tenantId, "all", {
+        // A slip needs no fulfillment status: one plain tenant-scoped list read of the ids asked.
+        const listed = await admin.orders.listOrders(principal, {
+          tenantId,
           ids: query.ids,
           first: query.ids.length,
         });
-        if (!found.ok) return found.response;
-        const orders = found.page.items;
+        if (listed.status !== 200) return listed;
+        const orders = (listed.body as Paginated<Order>).items;
         const intents = await paymentIntentsOfOrders(admin, principal, tenantId, orders);
         if (!intents.ok) return intents.response;
         const annotations = await orderAnnotationsFor(
