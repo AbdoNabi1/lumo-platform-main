@@ -47,7 +47,9 @@ export function viewFilters(
     case "all":
       return {};
     case "unfulfilled":
-      return { archived: false };
+      // `open` lets SQL drop cancelled/closed orders before the Fulfillment scan; the scan still checks
+      // `isOpenOrder`, so the results are the same — only fewer orders are examined.
+      return { archived: false, open: true };
     case "unpaid":
       return { archived: false, open: true, paymentStatus: "pending" };
     case "open":
