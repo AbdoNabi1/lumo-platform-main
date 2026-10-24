@@ -86,4 +86,11 @@ describe("RoleTableAccessControl", () => {
     expect(await acl.authorize(admin, "comments:moderate")).toBe(true);
     expect(await acl.authorize(who(["platform-admin"]), "comments:moderate")).toBe(true);
   });
+  it("operators and admins issue recovery links; viewers only read abandoned checkouts (orders Part 3)", async () => {
+    expect(await acl.authorize(who(["operator"]), "orders:recover_checkout")).toBe(true);
+    expect(await acl.authorize(who(["admin"]), "orders:recover_checkout")).toBe(true);
+    expect(await acl.authorize(who(["platform-admin"]), "orders:recover_checkout")).toBe(true);
+    expect(await acl.authorize(who(["viewer"]), "orders:recover_checkout")).toBe(false);
+    expect(await acl.authorize(who(["viewer"]), "orders:read")).toBe(true);
+  });
 });

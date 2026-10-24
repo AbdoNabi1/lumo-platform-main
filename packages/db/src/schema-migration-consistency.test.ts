@@ -394,3 +394,61 @@ describe("orders schema — notes, tags and timeline (order operations Part 2)",
     },
   );
 });
+
+describe("checkout schema — recovery links (order operations Part 3)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("checkout_sessions gains the two recovery columns and the abandoned-list index", () => {
+    const columns = columnsEverAddedTo("checkout", "checkout_sessions", allSql);
+    expect(columns.has("recovered_from_ref")).toBe(true);
+    expect(columns.has("recovered_order_ref")).toBe(true);
+    expect(allSql).toContain(
+      'CREATE INDEX "checkout_sessions_tenant_id_state_updated_at_idx" ON "checkout"."checkout_sessions"("tenant_id", "state", "updated_at");',
+    );
+  });
+
+  it("checkout_links has the model's columns, a unique token hash, the session index and both checks", () => {
+    expect([...columnsEverAddedTo("checkout", "checkout_links", allSql)].sort()).toEqual([
+      "checkout_session_id",
+      "claim_count",
+      "created_at",
+      "created_by",
+      "draft_order_ref",
+      "expires_at",
+      "id",
+      "last_claimed_at",
+      "purpose",
+      "result_checkout_ref",
+      "revoked_at",
+      "tenant_id",
+      "token_hash",
+    ]);
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "checkout_links_token_hash_key" ON "checkout"."checkout_links"("token_hash");',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "checkout_links_tenant_id_checkout_session_id_idx" ON "checkout"."checkout_links"("tenant_id", "checkout_session_id");',
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "checkout_links_purpose_check" CHECK ("purpose" IN ('recovery','invoice'))`,
+    );
+    expect(allSql).toContain(`("purpose" = 'recovery' AND "checkout_session_id" IS NOT NULL) OR`);
+    expect(allSql).toContain(`("purpose" = 'invoice'  AND "draft_order_ref" IS NOT NULL))`);
+  });
+
+  it("checkout_links is RLS-forced with the tenant_isolation policy", () => {
+    expect(allSql).toContain('ALTER TABLE "checkout"."checkout_links" ENABLE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('ALTER TABLE "checkout"."checkout_links" FORCE ROW LEVEL SECURITY;');
+    expect(allSql).toContain(
+      'DROP POLICY IF EXISTS tenant_isolation ON "checkout"."checkout_links";',
+    );
+    expect(allSql).toContain(
+      'CREATE POLICY tenant_isolation ON "checkout"."checkout_links" FOR ALL',
+    );
+  });
+});

@@ -22,6 +22,8 @@ model CheckoutSession {
   discountMinor     Int?     @map("discount_minor")
   totals            Json     @default("{}")
   discounts         Json     @default("{}") // Phase 2: { codes, snapshot, rejectedAttempts, attemptsWindowStartedAt }; {} = none
+  recoveredFromRef  String?  @map("recovered_from_ref") // Part 3: on a session a recovery link created — the abandoned session's id
+  recoveredOrderRef String?  @map("recovered_order_ref") // Part 3: on the abandoned session once its recovery became an order
   version           Int      @default(0)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
@@ -29,6 +31,30 @@ model CheckoutSession {
   @@index([tenantId, cartRef])
   @@index([tenantId, sessionRef])
   @@index([tenantId, state])
+  @@index([tenantId, state, updatedAt])
   @@map("checkout_sessions")
+  @@schema("checkout")
+}
+
+// Part 3 (order operations): a link a shopper opens to resume a checkout (recovery) or to pay a draft
+// (invoice, Part 4). Only the hex SHA-256 of the token is stored. `purpose` and the target rule are
+// CHECK constraints in the migration (recovery ⇒ checkoutSessionId, invoice ⇒ draftOrderRef).
+model CheckoutLink {
+  id                String    @id @db.Uuid
+  tenantId          String    @map("tenant_id")
+  purpose           String // recovery | invoice
+  tokenHash         String    @unique @map("token_hash")
+  checkoutSessionId String?   @map("checkout_session_id") @db.Uuid // bare id into checkout_sessions — never an FK
+  draftOrderRef     String?   @map("draft_order_ref")
+  expiresAt         DateTime  @map("expires_at")
+  revokedAt         DateTime? @map("revoked_at")
+  createdBy         String    @map("created_by")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  claimCount        Int       @default(0) @map("claim_count")
+  lastClaimedAt     DateTime? @map("last_claimed_at")
+  resultCheckoutRef String?   @map("result_checkout_ref")
+
+  @@index([tenantId, checkoutSessionId])
+  @@map("checkout_links")
   @@schema("checkout")
 }
