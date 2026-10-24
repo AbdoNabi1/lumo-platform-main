@@ -58,6 +58,8 @@ import type {
   RecordCheckoutLinkClaimInput,
   ResolveCheckoutLink,
   ResolveCheckoutLinkInput,
+  StartRecoveredCheckout,
+  StartRecoveredCheckoutInput,
 } from "../application/abandoned-checkouts.use-cases";
 import { type ControllerResponse, present } from "./presenter";
 
@@ -90,6 +92,7 @@ export interface CheckoutControllerDeps {
   readonly issueRecoveryLink: IssueRecoveryLink;
   readonly resolveCheckoutLink: ResolveCheckoutLink;
   readonly recordCheckoutLinkClaim: RecordCheckoutLinkClaim;
+  readonly startRecoveredCheckout: StartRecoveredCheckout;
 }
 
 /** Framework-agnostic interface boundary for checkout use-cases (no HTTP server). */
@@ -212,5 +215,13 @@ export class CheckoutController {
 
   async recordLinkClaim(input: RecordCheckoutLinkClaimInput): Promise<ControllerResponse> {
     return present(await this.deps.recordCheckoutLinkClaim.execute(input), 200);
+  }
+
+  /**
+   * Order operations Part 3: the recovery claim's clone — the caller's own session plus the counted
+   * claim, in one unit of work. Ownership (`sessionRef`) and pricing are the public route's.
+   */
+  async startRecovered(input: StartRecoveredCheckoutInput): Promise<ControllerResponse> {
+    return present(await this.deps.startRecoveredCheckout.execute(input), 201);
   }
 }

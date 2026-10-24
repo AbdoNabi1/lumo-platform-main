@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { Cart } from "@platform/cart";
-import { CheckoutSession, type CheckoutAddress, type DiscountCodeOutput } from "@platform/checkout";
+import {
+  CheckoutSession,
+  type CheckoutAddress,
+  type CheckoutController,
+  type DiscountCodeOutput,
+} from "@platform/checkout";
 import { NotFoundError, ValidationError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
@@ -279,6 +284,29 @@ async function requireOwnedSession(
   return session;
 }
 
+/**
+ * The item snapshot a checkout loads from a cart (Plan 2A: the variant snapshot rides along; every key
+ * is absent on a legacy line). Prices come from the cart, which priced them server-side.
+ */
+export function checkoutItemsOf(
+  cart: Cart,
+): Parameters<CheckoutController["loadItems"]>[0]["items"] {
+  return cart.items.map((item) => ({
+    productId: item.productRef.value,
+    quantity: item.quantity.value,
+    unitPriceAmountMinor: item.unitPrice.amountMinor,
+    currency: item.unitPrice.currency,
+    ...(item.variantRef === undefined
+      ? {}
+      : {
+          variantId: item.variantRef,
+          sku: item.sku,
+          title: item.title,
+          variantTitle: item.variantTitle,
+        }),
+  }));
+}
+
 export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
   return withLineImages(admin, [
     defineRoute({
@@ -365,21 +393,7 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         // The cart must also belong to the caller — otherwise a guest could load a stranger's cart
         // contents into their own checkout session. Same 404-on-mismatch rule as everywhere else.
         if (cart.sessionRef !== body.sessionRef) return notFoundResponse();
-        const items = cart.items.map((item) => ({
-          productId: item.productRef.value,
-          quantity: item.quantity.value,
-          unitPriceAmountMinor: item.unitPrice.amountMinor,
-          currency: item.unitPrice.currency,
-          // Plan 2A: carry the variant snapshot; every key is absent on a legacy line.
-          ...(item.variantRef === undefined
-            ? {}
-            : {
-                variantId: item.variantRef,
-                sku: item.sku,
-                title: item.title,
-                variantTitle: item.variantTitle,
-              }),
-        }));
+        const items = checkoutItemsOf(cart);
         const result = await admin.publicReads.checkout.loadItems({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,

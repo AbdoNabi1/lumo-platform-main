@@ -1,4 +1,4 @@
-import type { CheckoutLink } from "../domain/checkout-link";
+import { CheckoutLink, type CheckoutLinkSnapshot } from "../domain/checkout-link";
 import type { CheckoutLinkRepository } from "../domain/checkout-link-repository";
 
 export function newestFirst(links: readonly CheckoutLink[]): CheckoutLink[] {
@@ -7,9 +7,13 @@ export function newestFirst(links: readonly CheckoutLink[]): CheckoutLink[] {
   );
 }
 
-/** In-memory `CheckoutLinkRepository` keyed by `(tenantId, id)` (ADR-0014). */
+/**
+ * In-memory `CheckoutLinkRepository` keyed by `(tenantId, id)` (ADR-0014). Stores snapshots, like
+ * rows: a loaded link is a copy, and `save` of a loaded link writes only its revocation — the claim
+ * fields are written by `recordClaim` alone, exactly as the Prisma adapter does.
+ */
 export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
-  private readonly store = new Map<string, Map<string, CheckoutLink>>();
+  private readonly store = new Map<string, Map<string, CheckoutLinkSnapshot>>();
 
   async save(link: CheckoutLink, tenantId: string): Promise<void> {
     let bucket = this.store.get(tenantId);
@@ -17,7 +21,12 @@ export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
       bucket = new Map();
       this.store.set(tenantId, bucket);
     }
-    bucket.set(link.id, link);
+    if (link.isNew) {
+      bucket.set(link.id, link.snapshot());
+      return;
+    }
+    const stored = bucket.get(link.id);
+    if (stored !== undefined) bucket.set(link.id, { ...stored, revokedAt: link.revokedAt });
   }
 
   /** Check and count in one synchronous step: no await between them, so no claim is lost. */
@@ -27,21 +36,26 @@ export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
     now: Date,
     resultCheckoutRef: string,
   ): Promise<number | null> {
-    const link = this.store.get(tenantId)?.get(id);
-    if (link === undefined || !link.isUsable(now)) return null;
+    const bucket = this.store.get(tenantId);
+    const stored = bucket?.get(id);
+    if (bucket === undefined || stored === undefined) return null;
+    const link = CheckoutLink.reconstitute(stored);
+    if (!link.isUsable(now)) return null;
     link.recordClaim(now, resultCheckoutRef);
+    bucket.set(id, link.snapshot());
     return link.claimCount;
   }
 
   async findByTokenHash(tokenHash: string, tenantId: string): Promise<CheckoutLink | null> {
-    for (const link of this.store.get(tenantId)?.values() ?? []) {
-      if (link.tokenHash === tokenHash) return link;
+    for (const stored of this.store.get(tenantId)?.values() ?? []) {
+      if (stored.tokenHash === tokenHash) return CheckoutLink.reconstitute(stored);
     }
     return null;
   }
 
   async findById(id: string, tenantId: string): Promise<CheckoutLink | null> {
-    return this.store.get(tenantId)?.get(id) ?? null;
+    const stored = this.store.get(tenantId)?.get(id);
+    return stored === undefined ? null : CheckoutLink.reconstitute(stored);
   }
 
   async listForSessions(
@@ -49,9 +63,9 @@ export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
     tenantId: string,
   ): Promise<readonly CheckoutLink[]> {
     const wanted = new Set(checkoutSessionIds);
-    const links = [...(this.store.get(tenantId)?.values() ?? [])].filter(
-      (link) => link.checkoutSessionId !== null && wanted.has(link.checkoutSessionId),
-    );
+    const links = [...(this.store.get(tenantId)?.values() ?? [])]
+      .filter((stored) => stored.checkoutSessionId !== null && wanted.has(stored.checkoutSessionId))
+      .map((stored) => CheckoutLink.reconstitute(stored));
     return newestFirst(links);
   }
 }

@@ -84,6 +84,26 @@ describe("CheckoutLinkRepository.recordClaim (atomic claim count)", () => {
     }
   });
 
+  it("a save of a stale loaded link never rewrites the claim fields (recordClaim is their sole writer)", async () => {
+    for (const [layer, links, tx] of layers()) {
+      await seeded(links, tx);
+      const stale = await links.findById(LINK_ID, TENANT, tx);
+      if (stale === null) throw new Error("setup failed");
+      expect(await links.recordClaim(LINK_ID, TENANT, T0, "cs-1", tx), layer).toBe(1);
+      // A loaded instance is a snapshot: changing it in memory changes nothing stored until `save`,
+      // and `save` then writes only the revocation.
+      stale.recordClaim(new Date(T0.getTime() + 500), "cs-stale");
+      expect((await links.findById(LINK_ID, TENANT, tx))?.claimCount, layer).toBe(1);
+      stale.revoke(new Date(T0.getTime() + 1000));
+      await links.save(stale, TENANT, tx);
+      const stored = await links.findById(LINK_ID, TENANT, tx);
+      expect(stored?.revokedAt, layer).toEqual(new Date(T0.getTime() + 1000));
+      expect(stored?.claimCount, layer).toBe(1);
+      expect(stored?.lastClaimedAt, layer).toEqual(T0);
+      expect(stored?.resultCheckoutRef, layer).toBe("cs-1");
+    }
+  });
+
   it("is unknown for another shop's link and for a non-UUID id", async () => {
     for (const [layer, links, tx] of layers()) {
       await seeded(links, tx);

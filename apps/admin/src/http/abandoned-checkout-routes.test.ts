@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ResolveCheckoutLinkOutput } from "@platform/checkout";
 import type { Principal } from "@platform/contracts";
 import type {
   AbandonedCheckoutDetailDto,
@@ -170,16 +171,40 @@ describe("POST /abandoned-checkouts/:checkoutSessionId/recovery-link", () => {
     expect(second.path).not.toBe(first.path);
   });
 
-  it("is orders:recover_checkout and idempotent; a viewer is refused; a fresh checkout is 404", async () => {
+  it("is orders:recover_checkout; a viewer is refused and mints nothing; a fresh checkout is 404", async () => {
     const { world, checkoutSessionId } = await setup();
     const route = world.routes.find(
       (r) =>
         r.method === "POST" && r.path === "/abandoned-checkouts/:checkoutSessionId/recovery-link",
     );
     expect(route?.permission).toBe("orders:recover_checkout");
-    expect(route?.idempotent).toBe(true);
     expect((await issue(world, checkoutSessionId)).status).toBe(404);
     world.clock.advance(2 * HOUR_MS);
     expect((await issue(world, checkoutSessionId, viewerStaff)).status).toBe(403);
+    expect(
+      unwrap<AbandonedCheckoutDetailDto>(await detail(world, checkoutSessionId), "detail").links,
+    ).toEqual([]);
+  });
+
+  it("is NOT idempotent: the response cache would keep the plaintext token for 24h", async () => {
+    const { world } = await setup();
+    const route = world.routes.find(
+      (r) =>
+        r.method === "POST" && r.path === "/abandoned-checkouts/:checkoutSessionId/recovery-link",
+    );
+    expect(route).toBeDefined();
+    expect(route?.idempotent).not.toBe(true);
+  });
+
+  it("stores the issuing staff member as the link's creator", async () => {
+    const { world, checkoutSessionId } = await setup();
+    world.clock.advance(2 * HOUR_MS);
+    const link = unwrap<RecoveryLinkDto>(await issue(world, checkoutSessionId), "issue");
+    const resolved = await world.admin.publicReads.checkout.resolveLink({
+      tenantId: HARNESS_TENANT,
+      token: link.path.slice("/c/".length),
+    });
+    expect(resolved.status).toBe(200);
+    expect((resolved.body as ResolveCheckoutLinkOutput).link.createdBy).toBe(operatorStaff.id);
   });
 });

@@ -68,5 +68,6 @@ export {
   type IssueRecoveryLinkOutput,
   type ListAbandonedCheckoutsOutput,
   type ResolveCheckoutLinkOutput,
+  type StartRecoveredCheckoutOutput,
 } from "./application/abandoned-checkouts.use-cases";
 export { PrismaCheckoutLinkRepository } from "./infrastructure/prisma-checkout-link-repository";

@@ -5,7 +5,10 @@ import type { CheckoutLink } from "./checkout-link";
  * a token hash from another shop is simply unknown. Writes need the unit of work's `tx`.
  */
 export interface CheckoutLinkRepository {
-  /** Inserts a link issued in this request (`link.isNew`), otherwise updates its claim and revocation. */
+  /**
+   * Inserts a link issued in this request (`link.isNew`), otherwise updates its revocation ONLY: the
+   * claim fields (`claimCount`, `lastClaimedAt`, `resultCheckoutRef`) are {@link recordClaim}'s alone.
+   */
   save(link: CheckoutLink, tenantId: string, tx?: unknown): Promise<void>;
   /**
    * Counts one claim ATOMICALLY (`claim_count = claim_count + 1` in one guarded statement), so

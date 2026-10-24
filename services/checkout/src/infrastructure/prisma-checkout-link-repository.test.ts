@@ -46,16 +46,20 @@ describe("PrismaCheckoutLinkRepository (over fake-prisma)", () => {
     expect(await repository.findByTokenHash(token, TENANT, fake.database)).toBeNull();
   });
 
-  it("updates a loaded link's claim fields without touching what it was issued with", async () => {
+  it("updates only a loaded link's revocation: the claim fields are recordClaim's alone", async () => {
     const { fake, repository } = setup();
     const { link } = issue("01920000-0000-7000-8000-0000000000a1", SESSION_1, new Date(0));
     await repository.save(link, TENANT, fake.database);
     const loaded = await repository.findById(link.id, TENANT, fake.database);
     if (loaded === null) throw new Error("setup failed");
-    loaded.recordClaim(new Date(1000), "result-1");
+    // A claim lands after `loaded` was read; saving the stale instance must not undo it.
+    await repository.recordClaim(link.id, TENANT, new Date(1000), "result-1", fake.database);
+    loaded.recordClaim(new Date(1500), "result-stale");
+    loaded.revoke(new Date(2000));
     await repository.save(loaded, TENANT, fake.database);
 
     const again = await repository.findById(link.id, TENANT, fake.database);
+    expect(again?.revokedAt).toEqual(new Date(2000));
     expect(again?.claimCount).toBe(1);
     expect(again?.lastClaimedAt).toEqual(new Date(1000));
     expect(again?.resultCheckoutRef).toBe("result-1");

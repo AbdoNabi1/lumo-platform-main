@@ -67,14 +67,11 @@ export class PrismaCheckoutLinkRepository implements CheckoutLinkRepository {
       });
       return;
     }
+    // Only the revocation: `claimCount`, `lastClaimedAt` and `resultCheckoutRef` are written by
+    // `recordClaim` alone, so saving an instance loaded before a concurrent claim never undoes it.
     await client.checkoutLink.updateMany({
       where: { id: s.id, tenantId },
-      data: {
-        revokedAt: s.revokedAt,
-        claimCount: s.claimCount,
-        lastClaimedAt: s.lastClaimedAt,
-        resultCheckoutRef: s.resultCheckoutRef,
-      },
+      data: { revokedAt: s.revokedAt },
     });
   }
 

@@ -1,6 +1,6 @@
 import type { UseCase } from "@platform/application";
 import type { Clock, IdGenerator } from "@platform/contracts";
-import { isDomainError } from "@platform/domain";
+import { Guard, isDomainError, Money, UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { BusinessRuleError, type DomainError, NotFoundError } from "@platform/utils";
@@ -15,8 +15,9 @@ import {
 } from "../domain/abandoned-checkouts";
 import { CheckoutLink, hashLinkToken, RECOVERY_LINK_TTL_MS } from "../domain/checkout-link";
 import type { CheckoutLinkRepository } from "../domain/checkout-link-repository";
-import type { CheckoutSession } from "../domain/checkout-session";
+import { CheckoutSession } from "../domain/checkout-session";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
+import { checkoutItemsFrom, type LoadItemsInput } from "./checkout-details.use-cases";
 
 /**
  * The one answer for every link that cannot be used — unknown, expired, revoked, another shop's, or
@@ -241,23 +242,129 @@ export class ResolveCheckoutLink implements UseCase<
     input: ResolveCheckoutLinkInput,
   ): Promise<Result<ResolveCheckoutLinkOutput, DomainError>> {
     const link = await this.deps.links.findByTokenHash(hashLinkToken(input.token), input.tenantId);
-    if (
-      link === null ||
-      !link.isUsable(this.deps.clock.now()) ||
-      link.purpose !== "recovery" ||
-      link.checkoutSessionId === null
-    ) {
-      return err(linkInvalid());
-    }
-    const session = await this.deps.sessions.findById(link.checkoutSessionId, input.tenantId);
-    if (
-      session === null ||
-      session.state.value === "completed" ||
-      session.recoveredOrderRef !== undefined
-    ) {
-      return err(linkInvalid());
-    }
-    return ok({ link, session });
+    const session = await resumableCheckoutOf(
+      this.deps,
+      link,
+      input.tenantId,
+      this.deps.clock.now(),
+    );
+    return link === null || session === null ? err(linkInvalid()) : ok({ link, session });
+  }
+}
+
+/**
+ * The abandoned checkout a recovery link resumes — or null when the link is unknown, expired,
+ * revoked or not a recovery link, or its checkout is gone, completed or already recovered (spent).
+ */
+async function resumableCheckoutOf(
+  deps: CheckoutRecoveryDeps,
+  link: CheckoutLink | null,
+  tenantId: string,
+  now: Date,
+  tx?: unknown,
+): Promise<CheckoutSession | null> {
+  if (
+    link === null ||
+    !link.isUsable(now) ||
+    link.purpose !== "recovery" ||
+    link.checkoutSessionId === null
+  ) {
+    return null;
+  }
+  const session = await deps.sessions.findById(link.checkoutSessionId, tenantId, tx);
+  if (
+    session === null ||
+    session.state.value === "completed" ||
+    session.recoveredOrderRef !== undefined
+  ) {
+    return null;
+  }
+  return session;
+}
+
+export interface StartRecoveredCheckoutInput {
+  readonly tenantId: string;
+  /** The link being claimed (from {@link ResolveCheckoutLink}); its checkout is the one cloned. */
+  readonly linkId: string;
+  /** The CALLER's own cart and session — never the abandoned checkout's. */
+  readonly cartRef: string;
+  readonly sessionRef: string;
+  readonly currency: string;
+  /** The caller's refilled cart's lines, priced server-side from Catalog at claim time. */
+  readonly items: LoadItemsInput["items"];
+}
+
+export interface StartRecoveredCheckoutOutput {
+  readonly checkoutSessionId: string;
+  readonly claimCount: number;
+}
+
+/**
+ * Spec §3.5 steps 3–5 in ONE unit of work: opens the caller's own checkout session (marked as the
+ * abandoned one's recovery) with the given lines plus the abandoned contact email and shipping
+ * address — shipping/payment choices and discount codes are not copied — and counts the claim.
+ *
+ * The claim is recorded (the repository's atomic, usability-guarded `recordClaim`, with this unit
+ * of work's `tx`) BEFORE the clone is saved, and the clone is saved only if it applied: a link that
+ * expired or was revoked after it was resolved never leaves an orphan session, and a failure saving
+ * the clone rolls the count back with it.
+ */
+export class StartRecoveredCheckout implements UseCase<
+  StartRecoveredCheckoutInput,
+  StartRecoveredCheckoutOutput,
+  DomainError
+> {
+  private readonly deps: CheckoutRecoveryDeps;
+
+  constructor(deps: CheckoutRecoveryDeps) {
+    this.deps = deps;
+  }
+
+  async execute(
+    input: StartRecoveredCheckoutInput,
+  ): Promise<Result<StartRecoveredCheckoutOutput, DomainError>> {
+    const cartRef = Guard.againstEmpty(input.cartRef, "cartRef");
+    if (!cartRef.ok) return err(cartRef.error);
+    const sessionRef = Guard.againstEmpty(input.sessionRef, "sessionRef");
+    if (!sessionRef.ok) return err(sessionRef.error);
+    const currency = Money.create(0, input.currency);
+    if (!currency.ok) return err(currency.error);
+    const items = checkoutItemsFrom(input.items);
+    if (!items.ok) return err(items.error);
+
+    return this.deps.unitOfWork.run<Result<StartRecoveredCheckoutOutput, DomainError>>(
+      async (tx) => {
+        const now = this.deps.clock.now();
+        const link = await this.deps.links.findById(input.linkId, input.tenantId, tx);
+        const original = await resumableCheckoutOf(this.deps, link, input.tenantId, now, tx);
+        if (link === null || original === null) return err(linkInvalid());
+
+        const id = this.deps.idGenerator.generate();
+        const clone = CheckoutSession.start(
+          UniqueEntityId.from(id),
+          input.cartRef,
+          undefined,
+          input.sessionRef,
+          input.currency,
+          { recoveredFromRef: original.id.toString() },
+        );
+        try {
+          clone.loadItems(items.value);
+          if (original.contactEmail !== undefined) clone.setContactEmail(original.contactEmail);
+          if (original.shippingAddress !== undefined) {
+            clone.setShippingAddress(original.shippingAddress);
+          }
+        } catch (error) {
+          if (isDomainError(error)) return err(error);
+          throw error;
+        }
+
+        const claimCount = await this.deps.links.recordClaim(link.id, input.tenantId, now, id, tx);
+        if (claimCount === null) return err(linkInvalid());
+        await this.deps.sessions.save(clone, input.tenantId, tx);
+        return ok({ checkoutSessionId: id, claimCount });
+      },
+    );
   }
 }
 

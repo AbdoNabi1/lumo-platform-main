@@ -7,6 +7,7 @@ import type { DomainError } from "@platform/utils";
 import { createFakePrisma } from "@platform/db/testing";
 import { CheckoutLink, hashLinkToken, RECOVERY_LINK_TTL_MS } from "../domain/checkout-link";
 import { CheckoutSession } from "../domain/checkout-session";
+import { CheckoutAddress } from "../domain/value-objects/checkout-address";
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
 import { CheckoutEventTranslator } from "../infrastructure/checkout-event-translator";
@@ -21,6 +22,7 @@ import {
   ListAbandonedCheckouts,
   RecordCheckoutLinkClaim,
   ResolveCheckoutLink,
+  StartRecoveredCheckout,
 } from "./abandoned-checkouts.use-cases";
 
 const T0 = new Date("2026-10-18T09:00:00.000Z");
@@ -60,17 +62,24 @@ function world() {
   });
   const links = new InMemoryCheckoutLinkRepository();
   let n = 0;
+  const generated: string[] = [];
   const deps = {
     abandoned: sessions,
     sessions,
     links,
     unitOfWork: new InMemoryUnitOfWork(),
     idGenerator: {
-      generate: () => `01920000-0000-7000-8000-0000000a${(n += 1).toString(16).padStart(4, "0")}`,
+      generate: () => {
+        const id = `01920000-0000-7000-8000-0000000a${(n += 1).toString(16).padStart(4, "0")}`;
+        generated.push(id);
+        return id;
+      },
     },
     clock,
   };
   return {
+    deps,
+    generated,
     sessions,
     links,
     now: () => now,
@@ -82,6 +91,7 @@ function world() {
     issue: new IssueRecoveryLink(deps),
     resolve: new ResolveCheckoutLink(deps),
     recordClaim: new RecordCheckoutLinkClaim(deps),
+    startRecovered: new StartRecoveredCheckout(deps),
   };
 }
 
@@ -97,6 +107,17 @@ async function abandon(w: World, id = SESSION_ID): Promise<CheckoutSession> {
   );
   s.loadItems([must(CheckoutItem.create("p-1", 1, 1000, "EGP"))]);
   s.setContactEmail(must(ContactEmail.create("sara@example.com")));
+  s.setShippingAddress(
+    must(
+      CheckoutAddress.create({
+        name: "Mona Ali",
+        line1: "5 Nile St",
+        city: "Cairo",
+        postalCode: "11511",
+        country: "EG",
+      }),
+    ),
+  );
   await w.sessions.save(s, TENANT);
   return s;
 }
@@ -398,5 +419,189 @@ describe("RecordCheckoutLinkClaim — concurrent claims (Task 1 review carry-ove
       expect(answer.message.startsWith(LINK_INVALID)).toBe(true);
     }
     expect((await w.links.findById(link.id, TENANT))?.claimCount).toBe(0);
+  });
+});
+
+describe("StartRecoveredCheckout (spec §3.5 steps 3-5 in one unit of work)", () => {
+  const CLONE_LINES = [
+    { productId: "p-1", quantity: 2, unitPriceAmountMinor: 1200, currency: "EGP" },
+  ];
+
+  async function claimable(w: World): Promise<CheckoutLink> {
+    const token = await withLink(w);
+    return value(await w.resolve.execute({ tenantId: TENANT, token })).link;
+  }
+
+  const start = (w: World, linkId: string, tenantId = TENANT) =>
+    w.startRecovered.execute({
+      tenantId,
+      linkId,
+      cartRef: "cart-opener",
+      sessionRef: "ref-opener",
+      currency: "EGP",
+      items: CLONE_LINES,
+    });
+
+  /** No session was saved under any id minted since `before`. */
+  async function noCloneSince(w: World, before: number, label: string): Promise<void> {
+    for (const id of w.generated.slice(before)) {
+      expect(await w.sessions.findById(id, TENANT), label).toBeNull();
+    }
+  }
+
+  it("opens the caller's own session with the given lines, contact and address, and counts the claim", async () => {
+    const w = world();
+    const link = await claimable(w);
+    const started = value(await start(w, link.id));
+    expect(started.claimCount).toBe(1);
+    expect(started.checkoutSessionId).not.toBe(SESSION_ID);
+
+    const clone = await w.sessions.findById(started.checkoutSessionId, TENANT);
+    expect(clone?.sessionRef).toBe("ref-opener");
+    expect(clone?.cartRef).toBe("cart-opener");
+    expect(clone?.recoveredFromRef).toBe(SESSION_ID);
+    expect(
+      clone?.items.map((item) => [item.productRef, item.quantity, item.unitPriceAmountMinor]),
+    ).toEqual([["p-1", 2, 1200]]);
+    expect(clone?.contactEmail?.value).toBe("sara@example.com");
+    expect(clone?.shippingAddress?.city).toBe("Cairo");
+
+    const stored = await w.links.findById(link.id, TENANT);
+    expect(stored?.claimCount).toBe(1);
+    expect(stored?.resultCheckoutRef).toBe(started.checkoutSessionId);
+    expect(stored?.lastClaimedAt).toEqual(w.now());
+  });
+
+  it("a link that expired or was revoked meanwhile is LINK_INVALID and leaves NO orphan clone", async () => {
+    for (const end of ["expired", "revoked"] as const) {
+      const w = world();
+      const link = await claimable(w);
+      if (end === "expired") w.advance(8 * DAY);
+      else {
+        const loaded = await w.links.findById(link.id, TENANT);
+        if (loaded === null) throw new Error("setup failed");
+        loaded.revoke(w.now());
+        await w.links.save(loaded, TENANT);
+      }
+      const before = w.generated.length;
+      const answer = error(await start(w, link.id));
+      expect(answer.code, end).toBe("NOT_FOUND");
+      expect(answer.message.startsWith(LINK_INVALID), end).toBe(true);
+      await noCloneSince(w, before, end);
+      expect((await w.links.findById(link.id, TENANT))?.claimCount, end).toBe(0);
+    }
+  });
+
+  it("when the guarded claim itself refuses (revoked by a concurrent request), no clone is saved", async () => {
+    const w = world();
+    const link = await claimable(w);
+    // The link still reads as usable, but the atomic, guarded increment no longer applies.
+    const racing = new StartRecoveredCheckout({
+      ...w.deps,
+      links: {
+        save: (l, tenantId) => w.links.save(l, tenantId),
+        findById: (id, tenantId) => w.links.findById(id, tenantId),
+        findByTokenHash: (hash, tenantId) => w.links.findByTokenHash(hash, tenantId),
+        listForSessions: (ids, tenantId) => w.links.listForSessions(ids, tenantId),
+        recordClaim: async () => null,
+      },
+    });
+    const before = w.generated.length;
+    const answer = error(
+      await racing.execute({
+        tenantId: TENANT,
+        linkId: link.id,
+        cartRef: "cart-opener",
+        sessionRef: "ref-opener",
+        currency: "EGP",
+        items: CLONE_LINES,
+      }),
+    );
+    expect(answer.message.startsWith(LINK_INVALID)).toBe(true);
+    expect(w.generated.length).toBeGreaterThan(before);
+    await noCloneSince(w, before, "raced");
+  });
+
+  it("an original completed or recovered meanwhile is LINK_INVALID; nothing is written", async () => {
+    for (const end of ["completed", "recovered"] as const) {
+      const w = world();
+      const link = await claimable(w);
+      const s = await w.sessions.findById(SESSION_ID, TENANT);
+      if (s === null) throw new Error("setup failed");
+      if (end === "completed") s.complete("order-own", "evt", w.now());
+      else s.markRecovered("order-9", "evt", w.now());
+      await w.sessions.save(s, TENANT);
+      const before = w.generated.length;
+      expect(error(await start(w, link.id)).message.startsWith(LINK_INVALID), end).toBe(true);
+      await noCloneSince(w, before, end);
+      expect((await w.links.findById(link.id, TENANT))?.claimCount, end).toBe(0);
+    }
+  });
+
+  it("is LINK_INVALID for an unknown link and for another shop's", async () => {
+    const w = world();
+    const link = await claimable(w);
+    expect(error(await start(w, "nope")).message.startsWith(LINK_INVALID)).toBe(true);
+    expect(error(await start(w, link.id, "tenant-b")).message.startsWith(LINK_INVALID)).toBe(true);
+    expect((await w.links.findById(link.id, TENANT))?.claimCount).toBe(0);
+  });
+
+  it("refuses lines a checkout cannot hold (validated like LoadItems) without counting a claim", async () => {
+    const w = world();
+    const link = await claimable(w);
+    const answer = await w.startRecovered.execute({
+      tenantId: TENANT,
+      linkId: link.id,
+      cartRef: "cart-opener",
+      sessionRef: "ref-opener",
+      currency: "EGP",
+      items: [{ productId: "p-1", quantity: 0, unitPriceAmountMinor: 1200, currency: "EGP" }],
+    });
+    expect(answer.ok).toBe(false);
+    expect((await w.links.findById(link.id, TENANT))?.claimCount).toBe(0);
+  });
+
+  it("counts the claim in the SAME transaction the clone is saved in (Prisma links need the tx)", async () => {
+    const fake = createFakePrisma();
+    const links = new PrismaCheckoutLinkRepository({ prisma: fake.database });
+    const w = world();
+    await abandon(w);
+    w.advance(2 * HOUR);
+    const { link } = CheckoutLink.issue({
+      id: "01920000-0000-7000-8000-0000000000c1",
+      purpose: "recovery",
+      target: { checkoutSessionId: SESSION_ID },
+      createdBy: "staff-op",
+      now: w.now(),
+      ttlMs: RECOVERY_LINK_TTL_MS,
+    });
+    await links.save(link, TENANT, fake.database);
+    const savedWith: unknown[] = [];
+    const startRecovered = new StartRecoveredCheckout({
+      ...w.deps,
+      sessions: {
+        findById: (id, tenantId) => w.sessions.findById(id, tenantId),
+        save: async (session, tenantId, tx) => {
+          savedWith.push(tx);
+          await w.sessions.save(session, tenantId, tx);
+        },
+      },
+      links,
+      unitOfWork: { run: (work) => work(fake.database) },
+    });
+    const started = value(
+      await startRecovered.execute({
+        tenantId: TENANT,
+        linkId: link.id,
+        cartRef: "cart-opener",
+        sessionRef: "ref-opener",
+        currency: "EGP",
+        items: CLONE_LINES,
+      }),
+    );
+    expect(savedWith).toEqual([fake.database]);
+    const stored = await links.findById(link.id, TENANT, fake.database);
+    expect(stored?.claimCount).toBe(1);
+    expect(stored?.resultCheckoutRef).toBe(started.checkoutSessionId);
   });
 });

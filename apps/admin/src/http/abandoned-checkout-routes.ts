@@ -121,7 +121,8 @@ export function abandonedCheckoutRoutes(admin: WiredAdmin): readonly RouteDefini
       path: "/abandoned-checkouts/:checkoutSessionId/recovery-link",
       version: 1,
       permission: "orders:recover_checkout",
-      idempotent: true,
+      // NOT idempotent: every call mints a new token by design, and the idempotency response cache
+      // would otherwise keep the plaintext token (which is stored nowhere else) for 24 hours.
       summary:
         "Issue a new 7-day recovery link for an abandoned checkout (the token is shown once)",
       schema: { params: idParams },
