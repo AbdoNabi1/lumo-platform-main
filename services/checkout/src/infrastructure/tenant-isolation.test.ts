@@ -7,10 +7,13 @@ import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { CheckoutLink, hashLinkToken, RECOVERY_LINK_TTL_MS } from "../domain/checkout-link";
 import type { CheckoutLinkRepository } from "../domain/checkout-link-repository";
 import { CheckoutSession } from "../domain/checkout-session";
+import { FIXTURE_OLDER_THAN, seedAbandonedFixture } from "./abandoned-checkout-fixture";
 import { CheckoutEventTranslator } from "./checkout-event-translator";
+import { CheckoutSessionMapper } from "./checkout-session.mapper";
 import { InMemoryCheckoutLinkRepository } from "./in-memory-checkout-link-repository";
 import { InMemoryCheckoutSessionRepository } from "./in-memory-checkout-session-repository";
 import { PrismaCheckoutLinkRepository } from "./prisma-checkout-link-repository";
+import { PrismaCheckoutSessionRepository } from "./prisma-checkout-session-repository";
 
 /** ADR-0014 (WP-10, T10.3): one Checkout repository serves every tenant. */
 function newSession(id: string): CheckoutSession {
@@ -88,5 +91,67 @@ describe("checkout links tenant isolation (order operations Part 3)", () => {
         layer,
       ).not.toBeNull();
     }
+  });
+});
+
+describe("abandoned checkouts tenant isolation (order operations Part 3)", () => {
+  it("shop A never lists or reads shop B's abandoned checkout (in-memory; Prisma: SQL filters tenant_id)", async () => {
+    let now = new Date(0);
+    const writer = new OutboxWriter({
+      store: new InMemoryOutboxStore(),
+      translator: new CheckoutEventTranslator(),
+      serializer: new InMemoryEventSerializer(),
+      clock: { now: () => new Date(0) },
+      producer: "checkout",
+    });
+    const repo = new InMemoryCheckoutSessionRepository({
+      outbox: writer,
+      context: rootEventContext({ generate: () => "evt-x" }),
+      clock: { now: () => now },
+    });
+    let n = 0;
+    const ids = await seedAbandonedFixture(
+      {
+        save: async (s, t, at) => {
+          now = at;
+          await repo.save(s, t);
+        },
+      },
+      { tenantId: "tenant-a", otherTenantId: "tenant-b" },
+      () => `01920000-0000-7000-8000-${(n += 1).toString(16).padStart(12, "0")}`,
+    );
+    const listedForA = await repo.listAbandoned(
+      { olderThan: FIXTURE_OLDER_THAN, search: "sara" },
+      "tenant-a",
+    );
+    expect(listedForA.items.map((r) => r.session.id.toString())).toEqual([ids.emailOnly]);
+    expect(await repo.findRecord(ids.otherTenant, "tenant-a")).toBeNull();
+    expect(await repo.findRecord(ids.emailOnly, "tenant-b")).toBeNull();
+  });
+
+  it("PrismaCheckoutSessionRepository.findRecord filters by tenant (over fake-prisma)", async () => {
+    const fake = createFakePrisma();
+    const id = "01920000-0000-7000-8000-00000000000c";
+    const session = CheckoutSession.start(
+      UniqueEntityId.from(id),
+      "cart-1",
+      undefined,
+      "ref",
+      "EGP",
+    );
+    await fake.database.checkoutSession.create({
+      data: {
+        ...CheckoutSessionMapper.toRow(session, "tenant-b"),
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      } as never,
+    });
+    const prismaRepo = new PrismaCheckoutSessionRepository({
+      prisma: fake.database,
+      outbox: undefined as never,
+      context: rootEventContext({ generate: () => "evt-x" }),
+    });
+    expect(await prismaRepo.findRecord(id, "tenant-a")).toBeNull();
+    expect(await prismaRepo.findRecord(id, "tenant-b")).not.toBeNull();
   });
 });

@@ -92,6 +92,9 @@ export interface CheckoutSessionRow {
   readonly totals: CheckoutTotalsJson | Record<string, never>;
   /** Phase 2: `{}` = no codes and no discounts (every session saved before it existed). */
   readonly discounts: DiscountsJson | Record<string, never>;
+  /** Order operations Part 3: optional so rows read before the migration still map. */
+  readonly recoveredFromRef?: string | null;
+  readonly recoveredOrderRef?: string | null;
   readonly version: number;
 }
 
@@ -201,6 +204,8 @@ export class CheckoutSessionMapper {
           isSet(row.discounts) && row.discounts.attemptsWindowStartedAt !== undefined
             ? new Date(row.discounts.attemptsWindowStartedAt)
             : undefined,
+        recoveredFromRef: row.recoveredFromRef ?? undefined,
+        recoveredOrderRef: row.recoveredOrderRef ?? undefined,
       },
     );
   }
@@ -287,6 +292,8 @@ export class CheckoutSessionMapper {
               }),
             ) as JsonObject)
           : {},
+      recoveredFromRef: session.recoveredFromRef ?? null,
+      recoveredOrderRef: session.recoveredOrderRef ?? null,
       version: 1,
     };
   }

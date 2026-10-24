@@ -69,6 +69,10 @@ interface CheckoutSessionProps {
   discountSnapshot?: DiscountSnapshot;
   rejectedCodeAttempts: number;
   codeAttemptsWindowStartedAt?: Date;
+  /** Order operations Part 3: on a session a recovery link created — the abandoned session's id. Set at start only. */
+  readonly recoveredFromRef?: string;
+  /** Order operations Part 3: on the abandoned session, once its recovered checkout became this order. */
+  recoveredOrderRef?: string;
 }
 
 /**
@@ -87,6 +91,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     customerRef: string | undefined,
     sessionRef: string,
     currency: string,
+    options: { readonly recoveredFromRef?: string } = {},
   ): CheckoutSession {
     return new CheckoutSession(
       {
@@ -99,6 +104,9 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         items: [],
         discountCodes: [],
         rejectedCodeAttempts: 0,
+        ...(options.recoveredFromRef === undefined
+          ? {}
+          : { recoveredFromRef: options.recoveredFromRef }),
       },
       id,
     );
@@ -133,6 +141,8 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
       readonly discountSnapshot?: DiscountSnapshot;
       readonly rejectedCodeAttempts?: number;
       readonly codeAttemptsWindowStartedAt?: Date;
+      readonly recoveredFromRef?: string;
+      readonly recoveredOrderRef?: string;
     } = {},
   ): CheckoutSession {
     return new CheckoutSession(
@@ -158,6 +168,8 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         discountSnapshot: extra.discountSnapshot,
         rejectedCodeAttempts: extra.rejectedCodeAttempts ?? 0,
         codeAttemptsWindowStartedAt: extra.codeAttemptsWindowStartedAt,
+        recoveredFromRef: extra.recoveredFromRef,
+        recoveredOrderRef: extra.recoveredOrderRef,
       },
       id,
       version,
@@ -345,6 +357,21 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     );
   }
 
+  /**
+   * Order operations Part 3: this abandoned checkout was recovered — a session cloned from it through a
+   * recovery link became `orderRef`. Stamps it (it stays listed as "Recovered") and expires it while it
+   * is still open, so the original browser cannot also place it. Marking twice keeps the first order; a
+   * completed checkout was placed by its own shopper and is never marked (the caller skips it).
+   */
+  markRecovered(orderRef: string, eventId: string, occurredAt: Date): void {
+    if (this.props.recoveredOrderRef !== undefined) return;
+    if (this.props.state.value === "completed") {
+      throw new BusinessRuleError("A completed checkout cannot be marked recovered");
+    }
+    this.props.recoveredOrderRef = orderRef;
+    if (this.props.state.isOpen) this.expire(eventId, occurredAt);
+  }
+
   complete(orderRef: string, eventId: string, occurredAt: Date): void {
     this.ensureOpen();
     this.props.state = CheckoutState.completed();
@@ -495,6 +522,14 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
 
   get rejectedCodeAttempts(): number {
     return this.props.rejectedCodeAttempts;
+  }
+
+  get recoveredFromRef(): string | undefined {
+    return this.props.recoveredFromRef;
+  }
+
+  get recoveredOrderRef(): string | undefined {
+    return this.props.recoveredOrderRef;
   }
 
   get codeAttemptsWindowStartedAt(): Date | undefined {

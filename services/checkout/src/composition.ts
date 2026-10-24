@@ -269,7 +269,11 @@ export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
   });
   const context = rootEventContext(deps.idGenerator);
 
-  const sessions = new InMemoryCheckoutSessionRepository({ outbox: outboxWriter, context });
+  const sessions = new InMemoryCheckoutSessionRepository({
+    outbox: outboxWriter,
+    context,
+    clock: deps.clock,
+  });
   const unitOfWork = new InMemoryUnitOfWork();
   const controller = buildController(sessions, unitOfWork, deps);
 

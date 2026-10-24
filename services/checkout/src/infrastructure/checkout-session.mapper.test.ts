@@ -203,3 +203,44 @@ describe("CheckoutSessionMapper — province, shipping rate name and tax include
     expect(back.totals?.totalMinor).toBe(11_400 + 5000 + 1400);
   });
 });
+
+describe("CheckoutSessionMapper — recovery marks (order operations Part 3)", () => {
+  it("writes null for both when unset", () => {
+    const row = CheckoutSessionMapper.toRow(guest(), "t1");
+    expect(row.recoveredFromRef).toBeNull();
+    expect(row.recoveredOrderRef).toBeNull();
+  });
+
+  it("round-trips both marks", () => {
+    const session = CheckoutSession.start(
+      UniqueEntityId.from("00000000-0000-4000-8000-000000000002"),
+      "cart-1",
+      undefined,
+      "session-1",
+      "USD",
+      { recoveredFromRef: "00000000-0000-4000-8000-000000000001" },
+    );
+    const row = CheckoutSessionMapper.toRow(session, "t1");
+    expect(row.recoveredFromRef).toBe("00000000-0000-4000-8000-000000000001");
+    const original = guest();
+    original.markRecovered("order-9", "evt-1", new Date(0));
+    expect(
+      CheckoutSessionMapper.toDomain(asRow(CheckoutSessionMapper.toRow(original, "t1")))
+        .recoveredOrderRef,
+    ).toBe("order-9");
+    expect(CheckoutSessionMapper.toDomain(asRow(row)).recoveredFromRef).toBe(
+      "00000000-0000-4000-8000-000000000001",
+    );
+  });
+
+  it("reads a row from before the migration (no such keys) as unset", () => {
+    const legacy: CheckoutSessionRow = {
+      ...asRow(CheckoutSessionMapper.toRow(guest(), "t1")),
+      recoveredFromRef: undefined,
+      recoveredOrderRef: undefined,
+    };
+    const session = CheckoutSessionMapper.toDomain(legacy);
+    expect(session.recoveredFromRef).toBeUndefined();
+    expect(session.recoveredOrderRef).toBeUndefined();
+  });
+});
