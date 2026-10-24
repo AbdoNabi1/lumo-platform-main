@@ -112,6 +112,7 @@ import { wireSeo } from "@platform/seo";
 import { wireShipping } from "@platform/shipping";
 import { wireTenancy, type DnsVerifier, type TenantAvailability } from "@platform/tenancy";
 import { logger as adminLogger } from "@platform/utils";
+import type { ShopDomainLike } from "./http/shop-link-url";
 import { TenantProvisioner } from "./tenant-provisioning";
 import { wireTheme } from "@platform/theme";
 import { wireWishlist, type WishlistController } from "@platform/wishlist";
@@ -563,6 +564,12 @@ export interface WiredAdmin {
   readonly storeCurrency: StoreCurrencyRelabelAdapter;
   /** T10.6: a tenant's lifecycle status straight from the source of truth (the gate caches it). */
   readonly tenantAvailability: (tenantId: string) => Promise<TenantAvailability>;
+  /**
+   * Order operations Part 3: the shop's domains — what a recovery link's absolute URL is built from.
+   * Tenancy's raw controller (the tenancy exemption, ADR-0014); it authorizes nothing itself — the
+   * route that calls it does (`orders:recover_checkout`).
+   */
+  readonly shopDomains: (tenantId: string) => Promise<readonly ShopDomainLike[]>;
   /** T10.6: runs / inspects a tenant's security baseline (idempotent, resumable). */
   readonly tenantProvisioner: TenantProvisioner;
   /** Licensing screen → Licensing (Sprint 5.5/5.6 — Licensing's first admin-transport wiring). */
@@ -1286,6 +1293,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     tenancy: new TenancyAdminController({ tenancy: tenancy.tenancy, guard }),
     storeCurrency: new StoreCurrencyRelabelAdapter(catalog.products),
     tenantAvailability: tenancy.tenantAvailability,
+    shopDomains: async (tenantId) => {
+      const response = await tenancy.tenancy.listShopDomains({ shopId: tenantId });
+      return response.status === 200
+        ? (response.body as { readonly items: readonly ShopDomainLike[] }).items
+        : [];
+    },
     tenantProvisioner: new TenantProvisioner({ security: security.security, logger: adminLogger }),
     licensing: new LicensingAdminController({ licensing: licensing.licensing, guard }),
     platformConsole: new PlatformConsoleAdminController({

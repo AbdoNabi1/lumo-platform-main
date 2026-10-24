@@ -30,6 +30,7 @@ import {
 } from "./order-views";
 import { orderOperationsRoutes } from "./order-operations-routes";
 import { orderAnnotationRoutes } from "./order-annotation-routes";
+import { abandonedCheckoutRoutes } from "./abandoned-checkout-routes";
 import { toTimelineEntryDto, type TimelineEntryDto } from "./order-timeline-dto";
 import { analyticsRoutes } from "./analytics-routes";
 import { salesAnalyticsRoutes } from "./sales-analytics-routes";
@@ -2204,6 +2205,7 @@ export function adminRoutes(
     ...fulfillmentRoutes(admin),
     ...orderOperationsRoutes(admin),
     ...orderAnnotationRoutes(admin),
+    ...abandonedCheckoutRoutes(admin),
     ...shippingRoutes(admin),
     ...shippingZonesRoutes(admin),
     ...taxesRoutes(admin),

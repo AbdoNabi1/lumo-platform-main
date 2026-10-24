@@ -178,4 +178,33 @@ export class CheckoutAdminController {
     if (denied) return denied;
     return this.checkout.generatePaymentIntentRequest(input);
   }
+
+  /** Order operations Part 3: abandoned checkouts are order data — `orders:read`, like orders. */
+  async listAbandoned(
+    principal: Principal,
+    input: Parameters<CheckoutController["listAbandoned"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    return this.checkout.listAbandoned(input);
+  }
+
+  async getAbandoned(
+    principal: Principal,
+    input: Parameters<CheckoutController["getAbandoned"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:read");
+    if (denied) return denied;
+    return this.checkout.getAbandoned(input);
+  }
+
+  /** Spec Permissions: operators and admins (`orders:recover_checkout`); viewers are refused. */
+  async issueRecoveryLink(
+    principal: Principal,
+    input: Parameters<CheckoutController["issueRecoveryLink"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "orders:recover_checkout");
+    if (denied) return denied;
+    return this.checkout.issueRecoveryLink(input);
+  }
 }

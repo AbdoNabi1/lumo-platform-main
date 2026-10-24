@@ -29,13 +29,17 @@ export const viewerStaff: Principal = {
 };
 
 export function buildOrdersAdmin(
-  options: { readonly staffNames?: Readonly<Record<string, string>> } = {},
+  options: {
+    readonly staffNames?: Readonly<Record<string, string>>;
+    /** Order operations Part 3: a clock the test moves (abandoned = idle an hour). */
+    readonly clock?: Clock;
+  } = {},
 ): WiredAdmin {
   let n = 0;
   const idGenerator: IdGenerator = {
     generate: () => `00000000-0000-7000-8000-${(n += 1).toString().padStart(12, "0")}`,
   };
-  const clock: Clock = { now: () => HARNESS_NOW };
+  const clock: Clock = options.clock ?? { now: () => HARNESS_NOW };
   return wireAdmin({
     serializer: new InMemoryEventSerializer(),
     idGenerator,
