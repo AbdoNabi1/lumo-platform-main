@@ -78,6 +78,34 @@ export class PrismaCheckoutLinkRepository implements CheckoutLinkRepository {
     });
   }
 
+  /**
+   * One guarded `UPDATE … SET claim_count = claim_count + 1 WHERE … AND revoked_at IS NULL AND
+   * expires_at > now`: Postgres row-locks the link, and a concurrent claim waits and re-checks the
+   * guard on the updated row, so no increment is lost. The count is then read back in the same `tx`.
+   */
+  async recordClaim(
+    id: string,
+    tenantId: string,
+    now: Date,
+    resultCheckoutRef: string,
+    tx?: unknown,
+  ): Promise<number | null> {
+    if (tx === undefined || tx === null) {
+      throw new Error(
+        "PrismaCheckoutLinkRepository.recordClaim requires the unit of work's transaction client (ADR-0003).",
+      );
+    }
+    if (!isUuid(id)) return null;
+    const client = tx as TransactionClient;
+    const { count } = await client.checkoutLink.updateMany({
+      where: { id, tenantId, revokedAt: null, expiresAt: { gt: now } },
+      data: { claimCount: { increment: 1 }, lastClaimedAt: now, resultCheckoutRef },
+    });
+    if (count === 0) return null;
+    const row = await client.checkoutLink.findFirst({ where: { tenantId, id } });
+    return row === null ? null : row.claimCount;
+  }
+
   async findByTokenHash(
     tokenHash: string,
     tenantId: string,

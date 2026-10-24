@@ -20,6 +20,19 @@ export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
     bucket.set(link.id, link);
   }
 
+  /** Check and count in one synchronous step: no await between them, so no claim is lost. */
+  async recordClaim(
+    id: string,
+    tenantId: string,
+    now: Date,
+    resultCheckoutRef: string,
+  ): Promise<number | null> {
+    const link = this.store.get(tenantId)?.get(id);
+    if (link === undefined || !link.isUsable(now)) return null;
+    link.recordClaim(now, resultCheckoutRef);
+    return link.claimCount;
+  }
+
   async findByTokenHash(tokenHash: string, tenantId: string): Promise<CheckoutLink | null> {
     for (const link of this.store.get(tenantId)?.values() ?? []) {
       if (link.tokenHash === tokenHash) return link;

@@ -12,6 +12,17 @@ import {
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import {
+  GetAbandonedCheckout,
+  IssueRecoveryLink,
+  ListAbandonedCheckouts,
+  RecordCheckoutLinkClaim,
+  ResolveCheckoutLink,
+} from "./application/abandoned-checkouts.use-cases";
+import type { AbandonedCheckoutQueries } from "./domain/abandoned-checkouts";
+import type { CheckoutLinkRepository } from "./domain/checkout-link-repository";
+import { InMemoryCheckoutLinkRepository } from "./infrastructure/in-memory-checkout-link-repository";
+import { PrismaCheckoutLinkRepository } from "./infrastructure/prisma-checkout-link-repository";
+import {
   LoadItems,
   SelectPayment,
   SelectShipping,
@@ -128,7 +139,8 @@ export interface WiredCheckout {
 
 /** Builds the `CheckoutController` from an already-wired repo + unit of work — shared by both branches so the use-case wiring is written exactly once. */
 function buildController(
-  sessions: CheckoutSessionRepository,
+  sessions: CheckoutSessionRepository & AbandonedCheckoutQueries,
+  links: CheckoutLinkRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   deps: CheckoutWiringDeps,
 ): CheckoutController {
@@ -140,6 +152,15 @@ function buildController(
   const orderCreation = deps.orderCreation ?? new InMemoryOrderCreationAdapter();
   const paymentMethods = deps.paymentMethods ?? new InMemoryPaymentMethodAdapter();
   const paymentInitiation = deps.paymentInitiation ?? new InMemoryPaymentInitiationAdapter();
+
+  const recoveryDeps = {
+    abandoned: sessions,
+    sessions,
+    links,
+    unitOfWork,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+  };
 
   return new CheckoutController({
     startCheckout: new StartCheckout({ sessions, unitOfWork, idGenerator: deps.idGenerator }),
@@ -228,6 +249,11 @@ function buildController(
     }),
     generateOrderDraft: new GenerateOrderDraft({ sessions }),
     generatePaymentIntentRequest: new GeneratePaymentIntentRequest({ sessions }),
+    listAbandonedCheckouts: new ListAbandonedCheckouts(recoveryDeps),
+    getAbandonedCheckout: new GetAbandonedCheckout(recoveryDeps),
+    issueRecoveryLink: new IssueRecoveryLink(recoveryDeps),
+    resolveCheckoutLink: new ResolveCheckoutLink(recoveryDeps),
+    recordCheckoutLinkClaim: new RecordCheckoutLinkClaim(recoveryDeps),
   });
 }
 
@@ -253,7 +279,12 @@ export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {
-      checkout: buildController(sessions, unitOfWork, deps),
+      checkout: buildController(
+        sessions,
+        new PrismaCheckoutLinkRepository({ prisma: deps.prisma }),
+        unitOfWork,
+        deps,
+      ),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -275,7 +306,12 @@ export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
     clock: deps.clock,
   });
   const unitOfWork = new InMemoryUnitOfWork();
-  const controller = buildController(sessions, unitOfWork, deps);
+  const controller = buildController(
+    sessions,
+    new InMemoryCheckoutLinkRepository(),
+    unitOfWork,
+    deps,
+  );
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];
