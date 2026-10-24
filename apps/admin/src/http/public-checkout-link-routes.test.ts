@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AbandonedCheckoutDetailDto,
   AbandonedCheckoutListItemDto,
@@ -15,7 +15,9 @@ import {
   unwrap,
   type RecoveryWorld,
 } from "./testing/abandoned-harness";
-import { HARNESS_TENANT, operatorStaff, viewerStaff } from "./testing/orders-harness";
+import { adminStaff, HARNESS_TENANT, operatorStaff, viewerStaff } from "./testing/orders-harness";
+import { controllerDriver, seedSingleVariantProduct } from "./testing/seed-catalog";
+import { controllerStockDriver, seedStock } from "./testing/seed-stock";
 
 const ORIGINAL_REF = "guest-original-ref";
 const OPENER_REF = "guest-opener-ref";
@@ -201,6 +203,79 @@ describe("POST /public/checkout-links/claim (order operations Part 3)", () => {
     expect((reply.body as { code: string }).code).toBe("ITEMS_UNAVAILABLE");
     expect((await cartOf(world, OPENER_REF))?.items.map((i) => [i.productId, i.quantity])).toEqual([
       [mug.productId, 1],
+    ]);
+    expect((await linksOf(world, checkoutSessionId))[0]?.claimCount).toBe(0);
+  });
+
+  it("an opener's cart in another currency is left exactly as it was (409, nothing cleared)", async () => {
+    const { world, checkoutSessionId, token } = await setup();
+    const hat = await seedSingleVariantProduct(
+      controllerDriver(world.admin.publicReads.products, HARNESS_TENANT),
+      "HAT",
+      1500,
+      "USD",
+    );
+    await seedStock(controllerStockDriver(world.admin.inventory, adminStaff, HARNESS_TENANT), {
+      productId: hat.productId,
+      variantId: hat.variantId,
+      quantity: 10,
+    });
+    const cart = unwrap<{ id: string }>(
+      await world.publicCall("POST", "/public/carts", {
+        body: { sessionRef: OPENER_REF, currency: "USD" },
+      }),
+      "opener cart",
+    );
+    unwrap(
+      await world.publicCall("POST", "/public/carts/:cartId/items", {
+        params: { cartId: cart.id },
+        body: { sessionRef: OPENER_REF, productId: hat.productId, quantity: 2 },
+      }),
+      "opener item",
+    );
+    const reply = await claim(world, token, OPENER_REF);
+    expect(reply.status).toBe(409);
+    expect((reply.body as { code: string }).code).toBe("ITEMS_UNAVAILABLE");
+    expect((await cartOf(world, OPENER_REF))?.items.map((i) => [i.productId, i.quantity])).toEqual([
+      [hat.productId, 2],
+    ]);
+    expect((await linksOf(world, checkoutSessionId))[0]?.claimCount).toBe(0);
+  });
+
+  it("when every refill add fails after the clear, the opener's previous lines are put back (409)", async () => {
+    const { world, tee, cap, mug, checkoutSessionId, token } = await setup();
+    const cart = unwrap<{ id: string }>(
+      await world.publicCall("POST", "/public/carts", {
+        body: { sessionRef: OPENER_REF, currency: "EGP" },
+      }),
+      "opener cart",
+    );
+    unwrap(
+      await world.publicCall("POST", "/public/carts/:cartId/items", {
+        params: { cartId: cart.id },
+        body: { sessionRef: OPENER_REF, productId: mug.productId, quantity: 3 },
+      }),
+      "opener item",
+    );
+    const cartController = world.admin.publicReads.cart;
+    const add = cartController.add.bind(cartController);
+    const refused = new Set([tee.productId, cap.productId]);
+    const spy = vi
+      .spyOn(cartController, "add")
+      .mockImplementation(async (input) =>
+        refused.has(input.productId)
+          ? { status: 422, body: { code: "BUSINESS_RULE", message: "refused" } }
+          : add(input),
+      );
+    try {
+      const reply = await claim(world, token, OPENER_REF);
+      expect(reply.status).toBe(409);
+      expect((reply.body as { code: string }).code).toBe("ITEMS_UNAVAILABLE");
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await cartOf(world, OPENER_REF))?.items.map((i) => [i.productId, i.quantity])).toEqual([
+      [mug.productId, 3],
     ]);
     expect((await linksOf(world, checkoutSessionId))[0]?.claimCount).toBe(0);
   });

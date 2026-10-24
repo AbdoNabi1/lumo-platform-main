@@ -114,31 +114,112 @@ async function priceLines(
   return { priced, dropped };
 }
 
-/** The caller's current cart (created when there is none), emptied: Shopify's recovery replaces it. */
-async function emptiedCart(
+/** The caller's current cart, or null when they have none (an `AdminResponse` on a failed read). */
+async function currentCartOf(
+  admin: WiredAdmin,
+  tenantId: string,
+  sessionRef: string,
+): Promise<Cart | null | AdminResponse> {
+  const current = await admin.publicReads.cart.getCurrent({ tenantId, sessionRef });
+  return isOk(current) ? (current.body as Cart | null) : current;
+}
+
+/** A new cart for the caller (they had none), in the abandoned checkout's currency. */
+async function newCart(
   admin: WiredAdmin,
   tenantId: string,
   sessionRef: string,
   currency: string,
 ): Promise<Cart | AdminResponse> {
-  const current = await admin.publicReads.cart.getCurrent({ tenantId, sessionRef });
-  if (!isOk(current)) return current;
-  let cart = current.body as Cart | null;
-  if (cart === null) {
-    const created = await admin.publicReads.cart.create({ tenantId, sessionRef, currency });
-    if (!isOk(created)) return created;
-    const read = await admin.publicReads.cart.get({
-      tenantId,
-      cartId: (created.body as { readonly cartId: string }).cartId,
-    });
-    if (!isOk(read)) return read;
-    cart = read.body as Cart;
-  }
-  if (cart.items.length > 0) {
-    const cleared = await admin.publicReads.cart.clear({ tenantId, cartId: cart.id.toString() });
+  const created = await admin.publicReads.cart.create({ tenantId, sessionRef, currency });
+  if (!isOk(created)) return created;
+  const read = await admin.publicReads.cart.get({
+    tenantId,
+    cartId: (created.body as { readonly cartId: string }).cartId,
+  });
+  return isOk(read) ? (read.body as Cart) : read;
+}
+
+/** One line as it was in the caller's cart before the claim, enough to add it back verbatim. */
+interface PreviousLine {
+  readonly productId: string;
+  readonly quantity: number;
+  readonly unitPriceAmountMinor: number;
+  readonly currency: string;
+  readonly inventoryAvailable?: number;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+  readonly merchandise?: {
+    readonly variantRef: string;
+    readonly sku: string;
+    readonly title: string;
+    readonly variantTitle: string | null;
+  };
+}
+
+/** Copied BEFORE the clear: the in-memory cart is a live reference the clear empties. */
+function previousLinesOf(cart: Cart): readonly PreviousLine[] {
+  return cart.items.map((item) => ({
+    productId: item.productRef.value,
+    quantity: item.quantity.value,
+    unitPriceAmountMinor: item.unitPrice.amountMinor,
+    currency: item.unitPrice.currency,
+    ...(item.inventoryAvailable === undefined
+      ? {}
+      : { inventoryAvailable: item.inventoryAvailable }),
+    ...(item.metadata === undefined ? {} : { metadata: item.metadata }),
+    ...(item.variantRef === undefined
+      ? {}
+      : {
+          merchandise: {
+            variantRef: item.variantRef,
+            sku: item.sku ?? "",
+            title: item.title ?? "",
+            variantTitle: item.variantTitle ?? null,
+          },
+        }),
+  }));
+}
+
+/**
+ * Empties the caller's cart and adds the re-priced lines (Shopify's recovery replaces the cart),
+ * answering how many were kept. When none could be added, the previous lines are put back (at the
+ * prices the cart already held), so a 409 never leaves the shopper with an emptied cart.
+ */
+async function refill(
+  admin: WiredAdmin,
+  tenantId: string,
+  cart: Cart,
+  lines: readonly Priced[],
+): Promise<number | AdminResponse> {
+  const cartId = cart.id.toString();
+  const previous = previousLinesOf(cart);
+  if (previous.length > 0) {
+    const cleared = await admin.publicReads.cart.clear({ tenantId, cartId });
     if (!isOk(cleared)) return cleared;
   }
-  return cart;
+  let kept = 0;
+  for (const line of lines) {
+    const added = await admin.publicReads.cart.add({
+      tenantId,
+      cartId,
+      productId: line.productId,
+      quantity: line.quantity,
+      unitPriceAmountMinor: line.amountMinor,
+      currency: line.currency,
+      merchandise: {
+        variantRef: line.variantId,
+        sku: line.sku,
+        title: line.title,
+        variantTitle: line.variantTitle,
+      },
+    });
+    if (isOk(added)) kept += 1;
+  }
+  if (kept === 0) {
+    // Best effort: each line goes back exactly as it was; one that no longer fits stays out.
+    for (const line of previous) await admin.publicReads.cart.add({ tenantId, cartId, ...line });
+  }
+  return kept;
 }
 
 /**
@@ -177,41 +258,29 @@ export function publicCheckoutLinkRoutes(admin: WiredAdmin): readonly RouteDefin
           return { status: 200, body: dto };
         }
 
-        // Priced BEFORE the caller's cart is touched: nothing sellable leaves it as it was.
+        // Every keep-or-drop decision is made BEFORE the caller's cart is touched (global
+        // constraint 9): lines priced from Catalog now, kept only in the cart's own currency (the
+        // caller's existing cart, else a new one in the abandoned checkout's currency).
         const abandoned = resolved.session;
         const { priced, dropped } = await priceLines(admin, tenantId, abandoned);
-        if (priced.length === 0) return itemsUnavailableResponse();
+        const current = await currentCartOf(admin, tenantId, body.sessionRef);
+        if (current !== null && !("items" in current)) return current;
+        const cartCurrency = current?.currency ?? abandoned.currency;
+        const keepable = priced.filter((line) => line.currency === cartCurrency);
+        if (keepable.length === 0) return itemsUnavailableResponse();
 
-        const cart = await emptiedCart(admin, tenantId, body.sessionRef, abandoned.currency);
+        const cart = current ?? (await newCart(admin, tenantId, body.sessionRef, cartCurrency));
         if (!("items" in cart)) return cart;
-        const cartId = cart.id.toString();
-        let kept = 0;
-        let droppedItems = dropped;
-        for (const line of priced) {
-          const added =
-            line.currency === cart.currency
-              ? await admin.publicReads.cart.add({
-                  tenantId,
-                  cartId,
-                  productId: line.productId,
-                  quantity: line.quantity,
-                  unitPriceAmountMinor: line.amountMinor,
-                  currency: line.currency,
-                  merchandise: {
-                    variantRef: line.variantId,
-                    sku: line.sku,
-                    title: line.title,
-                    variantTitle: line.variantTitle,
-                  },
-                })
-              : null;
-          if (added !== null && isOk(added)) kept += 1;
-          else droppedItems += 1;
-        }
+        const kept = await refill(admin, tenantId, cart, keepable);
+        if (typeof kept !== "number") return kept;
         if (kept === 0) return itemsUnavailableResponse();
+        const droppedItems = dropped + (priced.length - kept);
 
+        const cartId = cart.id.toString();
         const refilled = await admin.publicReads.cart.get({ tenantId, cartId });
         if (!isOk(refilled)) return refilled;
+        // Accepted cross-service window: Cart commits on its own, so a link that dies between the
+        // refill above and the claim below leaves the refilled cart and answers 404 LINK_INVALID.
         // One unit of work: the guarded claim count first, then the clone only if it applied — a
         // link that expired or was revoked since it resolved never leaves an orphan checkout.
         // Contact and address are copied; shipping/payment and discount codes are re-chosen.

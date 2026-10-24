@@ -15,7 +15,6 @@ import {
   GetAbandonedCheckout,
   IssueRecoveryLink,
   ListAbandonedCheckouts,
-  RecordCheckoutLinkClaim,
   ResolveCheckoutLink,
   StartRecoveredCheckout,
 } from "./application/abandoned-checkouts.use-cases";
@@ -254,7 +253,6 @@ function buildController(
     getAbandonedCheckout: new GetAbandonedCheckout(recoveryDeps),
     issueRecoveryLink: new IssueRecoveryLink(recoveryDeps),
     resolveCheckoutLink: new ResolveCheckoutLink(recoveryDeps),
-    recordCheckoutLinkClaim: new RecordCheckoutLinkClaim(recoveryDeps),
     startRecoveredCheckout: new StartRecoveredCheckout(recoveryDeps),
   });
 }

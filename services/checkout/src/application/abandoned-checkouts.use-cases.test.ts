@@ -20,7 +20,6 @@ import {
   IssueRecoveryLink,
   LINK_INVALID,
   ListAbandonedCheckouts,
-  RecordCheckoutLinkClaim,
   ResolveCheckoutLink,
   StartRecoveredCheckout,
 } from "./abandoned-checkouts.use-cases";
@@ -90,7 +89,6 @@ function world() {
     get: new GetAbandonedCheckout(deps),
     issue: new IssueRecoveryLink(deps),
     resolve: new ResolveCheckoutLink(deps),
-    recordClaim: new RecordCheckoutLinkClaim(deps),
     startRecovered: new StartRecoveredCheckout(deps),
   };
 }
@@ -318,107 +316,6 @@ describe("ResolveCheckoutLink", () => {
       expect(answer.code, end).toBe("NOT_FOUND");
       expect(answer.message.startsWith(LINK_INVALID), end).toBe(true);
     }
-  });
-});
-
-describe("RecordCheckoutLinkClaim", () => {
-  it("counts the claim and remembers the session it produced", async () => {
-    const w = world();
-    const token = await withLink(w);
-    const { link } = value(await w.resolve.execute({ tenantId: TENANT, token }));
-    expect(
-      value(
-        await w.recordClaim.execute({
-          tenantId: TENANT,
-          linkId: link.id,
-          resultCheckoutRef: "cs-new",
-        }),
-      ),
-    ).toEqual({ claimCount: 1 });
-    const stored = await w.links.findById(link.id, TENANT);
-    expect(stored?.resultCheckoutRef).toBe("cs-new");
-    expect(stored?.lastClaimedAt).toEqual(w.now());
-  });
-
-  it("refuses to count a claim on a link that expired meanwhile", async () => {
-    const w = world();
-    const token = await withLink(w);
-    const { link } = value(await w.resolve.execute({ tenantId: TENANT, token }));
-    w.advance(8 * 24 * HOUR);
-    expect(
-      (
-        await w.recordClaim.execute({
-          tenantId: TENANT,
-          linkId: link.id,
-          resultCheckoutRef: "cs-new",
-        })
-      ).ok,
-    ).toBe(false);
-  });
-});
-
-describe("RecordCheckoutLinkClaim — concurrent claims (Task 1 review carry-over)", () => {
-  it("never loses an increment when two claims race (atomic claim_count = claim_count + 1)", async () => {
-    // The Prisma adapter over the fake that applies each statement as it comes: a load-modify-save
-    // claim would read 0 twice and write 1 twice; the atomic increment counts both.
-    const fake = createFakePrisma();
-    const links = new PrismaCheckoutLinkRepository({ prisma: fake.database });
-    const { link } = CheckoutLink.issue({
-      id: "01920000-0000-7000-8000-0000000000c1",
-      purpose: "recovery",
-      target: { checkoutSessionId: SESSION_ID },
-      createdBy: "staff-op",
-      now: T0,
-      ttlMs: RECOVERY_LINK_TTL_MS,
-    });
-    await links.save(link, TENANT, fake.database);
-    const w = world();
-    const recordClaim = new RecordCheckoutLinkClaim({
-      abandoned: w.sessions,
-      sessions: w.sessions,
-      links,
-      unitOfWork: { run: (work) => work(fake.database) },
-      idGenerator: { generate: () => "unused" },
-      clock: { now: () => T0 },
-    });
-
-    const counts = await Promise.all(
-      ["cs-a", "cs-b"].map(async (ref) =>
-        value(
-          await recordClaim.execute({ tenantId: TENANT, linkId: link.id, resultCheckoutRef: ref }),
-        ),
-      ),
-    );
-    // Postgres answers 1 and 2 (the second UPDATE waits for the first's row lock); the fake has no
-    // locks, so both may read back 2. What matters: neither claim was lost.
-    expect(counts.every((c) => c.claimCount >= 1)).toBe(true);
-    expect((await links.findById(link.id, TENANT, fake.database))?.claimCount).toBe(2);
-  });
-
-  it("answers LINK_INVALID for an unknown, revoked or other-shop link", async () => {
-    const w = world();
-    const token = await withLink(w);
-    const { link } = value(await w.resolve.execute({ tenantId: TENANT, token }));
-    const unknown = error(
-      await w.recordClaim.execute({ tenantId: TENANT, linkId: "nope", resultCheckoutRef: "cs" }),
-    );
-    const otherShop = error(
-      await w.recordClaim.execute({
-        tenantId: "tenant-b",
-        linkId: link.id,
-        resultCheckoutRef: "cs",
-      }),
-    );
-    link.revoke(w.now());
-    await w.links.save(link, TENANT);
-    const revoked = error(
-      await w.recordClaim.execute({ tenantId: TENANT, linkId: link.id, resultCheckoutRef: "cs" }),
-    );
-    for (const answer of [unknown, otherShop, revoked]) {
-      expect(answer.code).toBe("NOT_FOUND");
-      expect(answer.message.startsWith(LINK_INVALID)).toBe(true);
-    }
-    expect((await w.links.findById(link.id, TENANT))?.claimCount).toBe(0);
   });
 });
 

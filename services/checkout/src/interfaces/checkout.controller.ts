@@ -54,8 +54,6 @@ import type {
   IssueRecoveryLinkInput,
   ListAbandonedCheckouts,
   ListAbandonedCheckoutsInput,
-  RecordCheckoutLinkClaim,
-  RecordCheckoutLinkClaimInput,
   ResolveCheckoutLink,
   ResolveCheckoutLinkInput,
   StartRecoveredCheckout,
@@ -91,7 +89,6 @@ export interface CheckoutControllerDeps {
   readonly getAbandonedCheckout: GetAbandonedCheckout;
   readonly issueRecoveryLink: IssueRecoveryLink;
   readonly resolveCheckoutLink: ResolveCheckoutLink;
-  readonly recordCheckoutLinkClaim: RecordCheckoutLinkClaim;
   readonly startRecoveredCheckout: StartRecoveredCheckout;
 }
 
@@ -211,10 +208,6 @@ export class CheckoutController {
 
   async resolveLink(input: ResolveCheckoutLinkInput): Promise<ControllerResponse> {
     return present(await this.deps.resolveCheckoutLink.execute(input), 200);
-  }
-
-  async recordLinkClaim(input: RecordCheckoutLinkClaimInput): Promise<ControllerResponse> {
-    return present(await this.deps.recordCheckoutLinkClaim.execute(input), 200);
   }
 
   /**
