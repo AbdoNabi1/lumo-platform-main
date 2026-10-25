@@ -136,4 +136,27 @@ describe("SidebarNav (Shopify layout)", () => {
     expect(within(tools).getByRole("link", { name: en.nav.featureFlags })).toBeInTheDocument();
     expect(within(tools).getByRole("link", { name: en.nav.security })).toBeInTheDocument();
   });
+
+  it("lists Abandoned checkouts under Orders while an Orders page is current (order operations Part 3)", () => {
+    renderNav("orders");
+    expect(screen.getByRole("link", { name: en.nav.abandonedCheckouts })).toHaveAttribute(
+      "href",
+      "/abandoned-checkouts",
+    );
+  });
+
+  it("marks Abandoned checkouts current on its own pages and keeps Orders in view", () => {
+    renderNav("abandoned-checkouts");
+    expect(screen.getByRole("link", { name: en.nav.abandonedCheckouts })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: en.nav.orders })).not.toHaveAttribute("aria-current");
+  });
+
+  it("Orders' sub-pages are Part 3's list (Part 4 inserts Drafts first)", () => {
+    expect(PRIMARY_NAV.find((item) => item.id === "orders")?.children?.map((c) => c.id)).toEqual([
+      "abandoned-checkouts",
+    ]);
+  });
 });
