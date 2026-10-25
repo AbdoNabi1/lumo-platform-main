@@ -13,7 +13,12 @@ import {
   type CheckoutSessionRecord,
   type RecoveryFilter,
 } from "../domain/abandoned-checkouts";
-import { CheckoutLink, hashLinkToken, RECOVERY_LINK_TTL_MS } from "../domain/checkout-link";
+import {
+  CheckoutLink,
+  hashLinkToken,
+  isWellFormedLinkToken,
+  RECOVERY_LINK_TTL_MS,
+} from "../domain/checkout-link";
 import type { CheckoutLinkRepository } from "../domain/checkout-link-repository";
 import { CheckoutSession } from "../domain/checkout-session";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
@@ -241,6 +246,8 @@ export class ResolveCheckoutLink implements UseCase<
   async execute(
     input: ResolveCheckoutLinkInput,
   ): Promise<Result<ResolveCheckoutLinkOutput, DomainError>> {
+    // A token the platform could never have minted is refused like an unknown one, without a read.
+    if (!isWellFormedLinkToken(input.token)) return err(linkInvalid());
     const link = await this.deps.links.findByTokenHash(hashLinkToken(input.token), input.tenantId);
     const session = await resumableCheckoutOf(
       this.deps,
@@ -255,6 +262,11 @@ export class ResolveCheckoutLink implements UseCase<
 /**
  * The abandoned checkout a recovery link resumes — or null when the link is unknown, expired,
  * revoked or not a recovery link, or its checkout is gone, completed or already recovered (spent).
+ *
+ * Deliberate: an original that has since become `expired` or `failed` for another reason (the shop's
+ * own cleanup, a declined payment) is still resumed. The shopper wants the cart back, and the claim
+ * clones it into a fresh session anyway; only a checkout that became an order, or was already
+ * recovered, is spent. Issuing a link is stricter: it requires the checkout to be abandoned (open).
  */
 async function resumableCheckoutOf(
   deps: CheckoutRecoveryDeps,

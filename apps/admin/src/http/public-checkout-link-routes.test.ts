@@ -309,6 +309,26 @@ describe("POST /public/checkout-links/claim (order operations Part 3)", () => {
     expect((unknown.body as { code: string }).code).toBe("LINK_INVALID");
   });
 
+  it("a malformed token answers the same 404 LINK_INVALID on the claim and the preview", async () => {
+    const { world, token } = await setup();
+    const unknown = await claim(world, "x".repeat(43), OPENER_REF);
+    for (const malformed of [
+      "t",
+      "short",
+      `${token}A`,
+      `${token.slice(0, 42)}!`,
+      "x".repeat(128),
+    ]) {
+      const fromClaim = await claim(world, malformed, OPENER_REF);
+      const fromPreview = await preview(world, malformed);
+      for (const reply of [fromClaim, fromPreview]) {
+        expect(reply.status, malformed).toBe(404);
+        expect(reply.body, malformed).toEqual(unknown.body);
+      }
+    }
+    expect(await cartOf(world, OPENER_REF)).toBeNull();
+  });
+
   it("a link whose checkout became an order is spent; the original browser cannot place it either (Review Focus 4)", async () => {
     const { world, checkoutSessionId, token } = await setup();
     const claimed = unwrap<Claimed>(await claim(world, token, OPENER_REF), "claim");

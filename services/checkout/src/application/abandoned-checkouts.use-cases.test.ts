@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
@@ -303,6 +303,22 @@ describe("ResolveCheckoutLink", () => {
     }
   });
 
+  it("a malformed token gets the same not-found without any link read", async () => {
+    const w = world();
+    const token = await withLink(w);
+    const reads = vi.spyOn(w.links, "findByTokenHash");
+    const wellFormedUnknown = error(
+      await w.resolve.execute({ tenantId: TENANT, token: "x".repeat(43) }),
+    );
+    reads.mockClear();
+    for (const malformed of ["", "short", `${token}A`, `${token.slice(1)}/`, "x".repeat(128)]) {
+      const answer = error(await w.resolve.execute({ tenantId: TENANT, token: malformed }));
+      expect(answer.code, malformed).toBe("NOT_FOUND");
+      expect(answer.message, malformed).toBe(wellFormedUnknown.message);
+    }
+    expect(reads).not.toHaveBeenCalled();
+  });
+
   it("a link whose checkout was since completed or recovered is spent (Review Focus 4)", async () => {
     for (const end of ["completed", "recovered"] as const) {
       const w = world();
@@ -386,6 +402,22 @@ describe("StartRecoveredCheckout (spec §3.5 steps 3-5 in one unit of work)", ()
       expect(answer.message.startsWith(LINK_INVALID), end).toBe(true);
       await noCloneSince(w, before, end);
       expect((await w.links.findById(link.id, TENANT))?.claimCount, end).toBe(0);
+    }
+  });
+
+  it("a claim may still resume an original that expired or failed after the link was issued (deliberate)", async () => {
+    for (const end of ["expired", "failed"] as const) {
+      const w = world();
+      const link = await claimable(w);
+      const original = await w.sessions.findById(SESSION_ID, TENANT);
+      if (original === null) throw new Error("setup failed");
+      if (end === "expired") original.expire("evt", w.now());
+      else original.fail("payment declined", "evt", w.now());
+      await w.sessions.save(original, TENANT);
+      const started = value(await start(w, link.id));
+      expect(started.claimCount, end).toBe(1);
+      const clone = await w.sessions.findById(started.checkoutSessionId, TENANT);
+      expect(clone?.recoveredFromRef, end).toBe(SESSION_ID);
     }
   });
 
