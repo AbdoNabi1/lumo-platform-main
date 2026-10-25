@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { AvailabilityBook } from "@/lib/catalog";
 import { GUEST_SESSION_COOKIE, GUEST_SESSION_COOKIE_OPTIONS } from "@/lib/cart";
+import { currentOrNewSessionRef } from "@/lib/guest-session";
 import {
   addCartItem,
   changeCartItemQuantity,
@@ -33,17 +34,6 @@ export type CartActionResult =
        * resolve. `"network"`: the Runtime API is unreachable or returned an unexpected status. */
       readonly reason: "unavailable" | "choose-variant" | "ownership" | "network";
     };
-
-/** Reads the guest session cookie, minting and persisting a new opaque id if none exists yet. Never called from a read path — only from a mutation that is about to need one. */
-async function currentOrNewSessionRef(): Promise<string> {
-  const jar = await cookies();
-  const existing = jar.get(GUEST_SESSION_COOKIE)?.value;
-  if (existing !== undefined && existing.length > 0) return existing;
-
-  const sessionRef = crypto.randomUUID();
-  jar.set(GUEST_SESSION_COOKIE, sessionRef, GUEST_SESSION_COOKIE_OPTIONS);
-  return sessionRef;
-}
 
 /** Starts a new guest session: a fresh opaque id in the cookie. The old session's cart is left behind. */
 async function replaceSessionRef(): Promise<string> {

@@ -219,6 +219,7 @@ export const ar: Dictionary = {
     validationErrorBody: "هناك خطأ في هذه الخطوة. تحقق من البيانات وحاول مرة أخرى.",
     unavailableErrorBody: "لم يعد بالإمكان تعديل عملية الدفع هذه. ابدأ مرة أخرى من سلتك.",
     outOfStock: "في منتجات في سلتك الكمية المطلوبة منها مش متاحة دلوقتي. عدّل السلة وجرّب تاني.",
+    itemsDropped: "بعض المنتجات لم تعد متاحة",
     networkErrorBody: "تعذّر الوصول إلى خدمة الدفع. حاول مرة أخرى.",
     confirmation: {
       title: "شكراً لطلبك",
@@ -230,6 +231,24 @@ export const ar: Dictionary = {
       continueShopping: "متابعة التسوق",
       missingTitle: "لا يوجد ما يمكن تأكيده",
       missingBody: "تعذّر العثور على طلب لتأكيده هنا.",
+    },
+  },
+  recovery: {
+    metaTitle: "أكمل طلبك",
+    title: "أكمل طلبك",
+    fromShop: "طلبك من {shop}",
+    itemFallback: "منتج",
+    quantity: "الكمية {count}",
+    total: "الإجمالي",
+    pricesNote: "يتم تأكيد الأسعار والتوفر عند الدفع.",
+    continue: "أكمل الطلب",
+    invalidTitle: "انتهت صلاحية هذا الرابط أو لم يعد صالحًا",
+    invalidBody: "اطلب رابطًا جديدًا من المتجر، أو تابع التسوق.",
+    backToShop: "العودة إلى المتجر",
+    errors: {
+      invalid: "انتهت صلاحية هذا الرابط أو لم يعد صالحًا.",
+      unavailable: "لم تعد أي من هذه المنتجات متاحة.",
+      network: "تعذّر فتح صفحة الدفع. حاول مرة أخرى.",
     },
   },
   account: {

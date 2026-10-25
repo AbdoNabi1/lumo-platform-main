@@ -22,11 +22,17 @@ import { getCheckoutSession, getPaymentMethods, getShippableCountries } from "@/
  * Mutation controls (the stepper) live in `CheckoutView`, a Client Component calling the Server
  * Actions in `app/checkout/actions.ts` directly.
  */
-export default async function CheckoutPage() {
+export default async function CheckoutPage({
+  searchParams,
+}: {
+  readonly searchParams: Promise<{ readonly dropped?: string }>;
+}) {
   const jar = await cookies();
   const stored = jar.get(LOCALE_COOKIE)?.value;
   const locale: Locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
+  // Order operations Part 3: a recovery link's claim could not carry every line over.
+  const { dropped } = await searchParams;
 
   const sessionRef = jar.get(GUEST_SESSION_COOKIE)?.value;
   const checkoutSessionId = jar.get(CHECKOUT_SESSION_COOKIE)?.value;
@@ -56,6 +62,15 @@ export default async function CheckoutPage() {
         <ArrowLeftIcon aria-hidden="true" className="size-4 rtl:rotate-180" />
         {t.checkout.backToCart}
       </Link>
+
+      {dropped === "1" && (
+        <p
+          role="status"
+          className="bg-warning-subtle text-warning-foreground rounded-2xl px-4 py-3 text-sm"
+        >
+          {t.checkout.itemsDropped}
+        </p>
+      )}
 
       {session === null ||
       session.status < 200 ||

@@ -216,6 +216,7 @@ export const en = {
     unavailableErrorBody: "This checkout can no longer be changed. Start again from your cart.",
     outOfStock:
       "Some items in your cart are no longer available in the quantity you chose. Update your cart and try again.",
+    itemsDropped: "Some items are no longer available",
     networkErrorBody: "Couldn't reach the checkout service. Try again.",
     confirmation: {
       title: "Thanks for your order",
@@ -227,6 +228,25 @@ export const en = {
       continueShopping: "Continue shopping",
       missingTitle: "Nothing to confirm",
       missingBody: "We couldn't find an order to confirm here.",
+    },
+  },
+  /** Order operations Part 3 — the recovery link landing page (`/c/<token>`). */
+  recovery: {
+    metaTitle: "Complete your order",
+    title: "Complete your order",
+    fromShop: "Your order from {shop}",
+    itemFallback: "Item",
+    quantity: "Qty {count}",
+    total: "Total",
+    pricesNote: "Prices and availability are confirmed at checkout.",
+    continue: "Continue to checkout",
+    invalidTitle: "This link has expired or is no longer valid",
+    invalidBody: "Ask the store for a new link, or keep shopping.",
+    backToShop: "Back to shop",
+    errors: {
+      invalid: "This link has expired or is no longer valid.",
+      unavailable: "None of these items are available anymore.",
+      network: "Couldn't open your checkout. Try again.",
     },
   },
   account: {
