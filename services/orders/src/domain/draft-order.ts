@@ -16,6 +16,11 @@ export const MAX_DRAFT_LINES = 100;
 export const MAX_DRAFT_LINE_QUANTITY = 9999;
 /** Spec §4.8: merchant-entered amounts are ≥ 0 and ≤ 10,000,000 minor units. */
 export const MAX_DRAFT_AMOUNT_MINOR = 10_000_000;
+/**
+ * Catalog unit prices and server-quoted shipping rates are NOT merchant-entered, so the cap above
+ * does not apply to them (spec §4.8). They only have to fit Checkout's INT4 money columns.
+ */
+export const MAX_DRAFT_INT4_MINOR = 2_147_483_647;
 export const DRAFT_PAGE_SIZE_MAX = 50;
 export const DRAFT_SEARCH_MAX_LENGTH = 100;
 /** Ruling 13: the API's own fallback title; admin-web always sends a localized reason. */
@@ -26,6 +31,10 @@ const MAX_SHIPPING_TITLE_LENGTH = 100;
 const MAX_EMAIL_LENGTH = 254;
 const MAX_PHONE_LENGTH = 32;
 const MAX_ADDRESS_FIELD_LENGTH = 200;
+const MAX_POSTAL_CODE_LENGTH = 32;
+const MAX_CUSTOMER_REF_LENGTH = 64;
+const MAX_SHIPPING_METHOD_LENGTH = 200;
+const MAX_FREE_SHIPPING_TITLE_LENGTH = 200;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LIVE_STATUSES: readonly DraftOrderStatus[] = ["open", "invoice_sent"];
 
@@ -173,8 +182,20 @@ function blankToNull(value: string | null | undefined): string | null {
   return trimmed.length === 0 ? null : trimmed;
 }
 
+/** A merchant-entered amount (fixed discount, custom shipping). */
 function isAmount(value: number): boolean {
   return Number.isInteger(value) && value >= 0 && value <= MAX_DRAFT_AMOUNT_MINOR;
+}
+
+/** A catalog price or a quoted rate: any non-negative integer Checkout's INT4 columns can hold. */
+function isQuotedAmount(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= MAX_DRAFT_INT4_MINOR;
+}
+
+function checkLength(value: string | null, max: number, field: string, issues: FieldIssue[]): void {
+  if (value !== null && characterCount(value) > max) {
+    issues.push({ field, message: `at most ${max} characters` });
+  }
 }
 
 function normalizeAddress(
@@ -198,14 +219,22 @@ function normalizeAddress(
   if (phone !== null && phone.length > MAX_PHONE_LENGTH) {
     issues.push({ field: `${prefix}.phone`, message: `at most ${MAX_PHONE_LENGTH} characters` });
   }
+  const name = blankToNull(raw.name);
+  const line2 = blankToNull(raw.line2);
+  const province = blankToNull(raw.province);
+  const postalCode = raw.postalCode.trim();
+  checkLength(name, MAX_ADDRESS_FIELD_LENGTH, `${prefix}.name`, issues);
+  checkLength(line2, MAX_ADDRESS_FIELD_LENGTH, `${prefix}.line2`, issues);
+  checkLength(province, MAX_ADDRESS_FIELD_LENGTH, `${prefix}.province`, issues);
+  checkLength(postalCode, MAX_POSTAL_CODE_LENGTH, `${prefix}.postalCode`, issues);
   return {
-    name: blankToNull(raw.name),
+    name,
     phone,
     line1: required("line1", raw.line1),
-    line2: blankToNull(raw.line2),
+    line2,
     city: required("city", raw.city),
-    province: blankToNull(raw.province),
-    postalCode: raw.postalCode.trim(),
+    province,
+    postalCode,
     country,
   };
 }
@@ -219,7 +248,9 @@ function normalizeLines(raw: readonly DraftLine[], issues: FieldIssue[]): DraftL
     issues.push({ field: "lines", message: `at most ${MAX_DRAFT_LINES} products` });
     return [];
   }
-  const merged = new Map<string, DraftLine>();
+  // Keyed by variant; `index` is the FIRST input row of the variant, so an over-cap error after a
+  // merge names a row the caller actually sent.
+  const merged = new Map<string, { readonly line: DraftLine; readonly index: number }>();
   raw.forEach((line, index) => {
     const quantityOk =
       Number.isInteger(line.quantity) &&
@@ -229,7 +260,7 @@ function normalizeLines(raw: readonly DraftLine[], issues: FieldIssue[]): DraftL
       issues.push({ field: `lines.${index}.quantity`, message: `1-${MAX_DRAFT_LINE_QUANTITY}` });
       return;
     }
-    if (!isAmount(line.unitPriceMinor)) {
+    if (!isQuotedAmount(line.unitPriceMinor)) {
       issues.push({ field: `lines.${index}.unitPriceMinor`, message: "invalid price" });
       return;
     }
@@ -237,16 +268,20 @@ function normalizeLines(raw: readonly DraftLine[], issues: FieldIssue[]): DraftL
     const seen = merged.get(key);
     merged.set(
       key,
-      seen === undefined ? { ...line } : { ...seen, quantity: seen.quantity + line.quantity },
+      seen === undefined
+        ? { line: { ...line }, index }
+        : {
+            line: { ...seen.line, quantity: seen.line.quantity + line.quantity },
+            index: seen.index,
+          },
     );
   });
-  const lines = [...merged.values()];
-  lines.forEach((line, index) => {
+  for (const { line, index } of merged.values()) {
     if (line.quantity > MAX_DRAFT_LINE_QUANTITY) {
       issues.push({ field: `lines.${index}.quantity`, message: `1-${MAX_DRAFT_LINE_QUANTITY}` });
     }
-  });
-  return lines;
+  }
+  return [...merged.values()].map(({ line }) => line);
 }
 
 function normalizeDiscount(raw: DraftDiscount | null, issues: FieldIssue[]): DraftDiscount | null {
@@ -267,10 +302,16 @@ function normalizeDiscount(raw: DraftDiscount | null, issues: FieldIssue[]): Dra
 function normalizeShipping(raw: DraftShipping | null, issues: FieldIssue[]): DraftShipping | null {
   if (raw === null) return null;
   if (raw.kind === "free") {
-    return { kind: "free", title: blankToNull(raw.title) ?? FREE_SHIPPING_TITLE, amountMinor: 0 };
+    const freeTitle = blankToNull(raw.title);
+    checkLength(freeTitle, MAX_FREE_SHIPPING_TITLE_LENGTH, "shipping.title", issues);
+    return { kind: "free", title: freeTitle ?? FREE_SHIPPING_TITLE, amountMinor: 0 };
   }
-  if (!isAmount(raw.amountMinor)) {
-    issues.push({ field: "shipping.amountMinor", message: "out of range" });
+  // A custom amount is merchant-entered (capped); a rate was quoted by the server (INT4 only).
+  const amountOk =
+    raw.kind === "rate" ? isQuotedAmount(raw.amountMinor) : isAmount(raw.amountMinor);
+  if (!amountOk) issues.push({ field: "shipping.amountMinor", message: "out of range" });
+  if (raw.kind === "rate") {
+    checkLength(raw.method, MAX_SHIPPING_METHOD_LENGTH, "shipping.method", issues);
   }
   const title = raw.title.trim();
   if (title.length === 0 || characterCount(title) > MAX_SHIPPING_TITLE_LENGTH) {
@@ -289,6 +330,14 @@ export function normalizeDraftContent(
   const lines = normalizeLines(raw.lines, issues);
   const discount = normalizeDiscount(raw.discount, issues);
   const shipping = normalizeShipping(raw.shipping, issues);
+  // The sum is exact: 100 lines x 9,999 x INT4 max is about 2.1e15, below Number.MAX_SAFE_INTEGER
+  // (about 9.0e15), and merging variants keeps the sum — so this check cannot itself overflow.
+  const subtotal = lines.reduce((sum, line) => sum + line.unitPriceMinor * line.quantity, 0);
+  if (subtotal + (shipping?.amountMinor ?? 0) > MAX_DRAFT_INT4_MINOR) {
+    issues.push({ field: "lines", message: "total too large" });
+  }
+  const customerRef = blankToNull(raw.customerRef);
+  checkLength(customerRef, MAX_CUSTOMER_REF_LENGTH, "customerRef", issues);
   const contactEmail = blankToNull(raw.contactEmail);
   if (
     contactEmail !== null &&
@@ -313,7 +362,7 @@ export function normalizeDraftContent(
     return err(new ValidationError("Invalid draft order", issues));
   }
   return ok({
-    customerRef: blankToNull(raw.customerRef),
+    customerRef,
     contactEmail,
     contactPhone,
     shippingAddress,
@@ -344,12 +393,21 @@ export interface CreateDraftOrderProps {
  */
 export class DraftOrder {
   private readonly props: Props;
-  /** True until inserted: `save` inserts a new draft and updates the content of a loaded one. */
-  readonly isNew: boolean;
+  private persisted: boolean;
 
   private constructor(props: Props, isNew: boolean) {
     this.props = props;
-    this.isNew = isNew;
+    this.persisted = !isNew;
+  }
+
+  /** True until inserted: `save` inserts a new draft and updates the content of a loaded one. */
+  get isNew(): boolean {
+    return !this.persisted;
+  }
+
+  /** Called by a repository after a successful insert, so a second `save` updates, not re-inserts. */
+  markPersisted(): void {
+    this.persisted = true;
   }
 
   static create(input: CreateDraftOrderProps): Result<DraftOrder, ValidationError> {

@@ -133,9 +133,10 @@ export function draftFromRow(row: DraftOrderRow): DraftOrder {
   if (!(DRAFT_ORDER_STATUSES as readonly string[]).includes(row.status)) {
     corrupt(row.id, "status");
   }
-  const tags = Array.isArray(row.tags)
-    ? row.tags.filter((tag: unknown): tag is string => typeof tag === "string")
-    : [];
+  if (!Array.isArray(row.tags)) corrupt(row.id, "tags");
+  const tags = (row.tags as unknown[]).map((tag) =>
+    typeof tag === "string" ? tag : corrupt(row.id, "tag"),
+  );
   const snapshot: DraftOrderSnapshot = {
     id: row.id,
     draftNumber: row.draftNumber,

@@ -1,5 +1,5 @@
 import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, ConflictError } from "@platform/utils";
 import { clampDraftPageSize, type DraftOrder } from "../domain/draft-order";
 import type {
   DraftOrderPage,
@@ -16,6 +16,9 @@ export interface PrismaDraftOrderRepositoryDeps {
 
 const LIVE = ["open", "invoice_sent"];
 const EMPTY: DraftOrderPage = { items: [], pageInfo: { hasNextPage: false, endCursor: null } };
+/** Duck-typed on Prisma's error code, like the identity context does. */
+const isUniqueViolation = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002";
 const isUuid = (id: string): boolean => uuidsOf([id]).length === 1;
 
 function writeClient(tx: unknown, method: string): TransactionClient {
@@ -45,25 +48,40 @@ export class PrismaDraftOrderRepository implements DraftOrderRepository {
     const s = draft.snapshot();
     const content = contentColumns(draft);
     if (draft.isNew) {
-      await client.draftOrder.create({
-        data: {
-          id: s.id,
-          tenantId,
-          draftNumber: s.draftNumber,
-          status: s.status,
-          currency: s.currency,
-          ...content,
-          checkoutRef: null,
-          checkoutVersion: null,
-          orderRef: null,
-          invoiceSentAt: null,
-          completedAt: null,
-          deletedAt: null,
-          createdBy: s.createdBy,
-          version: 0,
-          createdAt: s.createdAt,
-        },
-      });
+      try {
+        await client.draftOrder.create({
+          data: {
+            id: s.id,
+            tenantId,
+            draftNumber: s.draftNumber,
+            status: s.status,
+            currency: s.currency,
+            ...content,
+            checkoutRef: null,
+            checkoutVersion: null,
+            orderRef: null,
+            invoiceSentAt: null,
+            completedAt: null,
+            deletedAt: null,
+            createdBy: s.createdBy,
+            version: 0,
+            createdAt: s.createdAt,
+          },
+        });
+      } catch (error) {
+        // P2002: the primary key or the shop's (draft_number) unique index. The surrounding
+        // transaction is already aborted; callers see the same ConflictError as in memory.
+        if (isUniqueViolation(error)) {
+          throw new ConflictError(
+            "DRAFT_DUPLICATE: a draft with this id or number already exists",
+            {
+              cause: error,
+            },
+          );
+        }
+        throw error;
+      }
+      draft.markPersisted();
       return;
     }
     const { count } = await client.draftOrder.updateMany({

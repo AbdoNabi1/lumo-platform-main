@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAX_TAGS_PER_ORDER } from "./order-tags";
 import {
   DraftOrder,
   draftAmounts,
@@ -6,6 +7,7 @@ import {
   MAX_DRAFT_LINES,
   normalizeDraftContent,
   normalizeDraftSearch,
+  MAX_DRAFT_INT4_MINOR,
   type DraftLine,
   type DraftOrderContent,
 } from "./draft-order";
@@ -110,6 +112,9 @@ describe("normalizeDraftContent", () => {
   const many = Array.from({ length: MAX_DRAFT_LINES + 1 }, (_, i) =>
     line({ variantRef: `v-${i}` }),
   );
+  const text = (length: number) => "x".repeat(length);
+  const lineA = line({ variantRef: "va", quantity: 1 });
+  const lineC = (quantity: number) => line({ variantRef: "vc", quantity });
   it.each([
     ["no lines", { lines: [] }, "lines"],
     ["too many lines", { lines: many }, "lines"],
@@ -135,6 +140,93 @@ describe("normalizeDraftContent", () => {
       { shipping: { kind: "custom", title: " ", amountMinor: 1 } },
       "shipping.title",
     ],
+    [
+      "a discount reason over 255 characters",
+      { discount: { valueType: "fixed", value: 1000, reason: text(256) } },
+      "discount.reason",
+    ],
+    [
+      "a custom shipping title over 100 characters",
+      { shipping: { kind: "custom", title: text(101), amountMinor: 1 } },
+      "shipping.title",
+    ],
+    ["a contact phone over 32 characters", { contactPhone: text(33) }, "phone"],
+    [
+      "an address phone over 32 characters",
+      { shippingAddress: { ...ADDRESS, phone: text(33) } },
+      "shippingAddress.phone",
+    ],
+    [
+      "a merged quantity over 9,999",
+      { lines: [line({ quantity: 9000 }), line({ quantity: 9000 })] },
+      "lines.0.quantity",
+    ],
+    [
+      "more than the maximum number of tags",
+      { tags: Array.from({ length: MAX_TAGS_PER_ORDER + 1 }, (_, i) => `t${i}`) },
+      "tags",
+    ],
+    [
+      "an address name over 200 characters",
+      { shippingAddress: { ...ADDRESS, name: text(201) } },
+      "shippingAddress.name",
+    ],
+    [
+      "an address line2 over 200 characters",
+      { billingAddress: { ...ADDRESS, line2: text(201) } },
+      "billingAddress.line2",
+    ],
+    [
+      "an address province over 200 characters",
+      { shippingAddress: { ...ADDRESS, province: text(201) } },
+      "shippingAddress.province",
+    ],
+    [
+      "a postal code over 32 characters",
+      { shippingAddress: { ...ADDRESS, postalCode: text(33) } },
+      "shippingAddress.postalCode",
+    ],
+    ["a customer ref over 64 characters", { customerRef: text(65) }, "customerRef"],
+    [
+      "a free shipping title over 200 characters",
+      { shipping: { kind: "free", title: text(201), amountMinor: 0 } },
+      "shipping.title",
+    ],
+    [
+      "a rate method over 200 characters",
+      { shipping: { kind: "rate", method: text(201), title: "Standard", amountMinor: 1 } },
+      "shipping.method",
+    ],
+    [
+      "a unit price above INT4",
+      { lines: [line({ unitPriceMinor: MAX_DRAFT_INT4_MINOR + 1, quantity: 1 })] },
+      "lines.0.unitPriceMinor",
+    ],
+    [
+      "a rate above INT4",
+      {
+        shipping: {
+          kind: "rate",
+          method: "std",
+          title: "Standard",
+          amountMinor: MAX_DRAFT_INT4_MINOR + 1,
+        },
+      },
+      "shipping.amountMinor",
+    ],
+    [
+      "a subtotal that no longer fits INT4",
+      { lines: [line({ unitPriceMinor: 1_000_000_000, quantity: 3 })] },
+      "lines",
+    ],
+    [
+      "a subtotal plus shipping that no longer fits INT4",
+      {
+        lines: [line({ unitPriceMinor: MAX_DRAFT_INT4_MINOR, quantity: 1 })],
+        shipping: { kind: "custom", title: "Courier", amountMinor: 1 },
+      },
+      "lines",
+    ],
     ["a bad email", { contactEmail: "not-an-email" }, "email"],
     [
       "an address without a city",
@@ -145,6 +237,55 @@ describe("normalizeDraftContent", () => {
     expect(fieldsOf(normalizeDraftContent(content(over as Partial<DraftOrderContent>)))).toContain(
       field,
     );
+  });
+
+  it("names the first input row of a merged variant when the merged quantity is over the cap", () => {
+    const fields = fieldsOf(
+      normalizeDraftContent(content({ lines: [lineA, lineA, lineC(9999), lineC(1)] })),
+    );
+    expect(fields).toContain("lines.2.quantity");
+    expect(fields).not.toContain("lines.1.quantity");
+  });
+
+  it("says the total is too large with a clear message", () => {
+    const result = normalizeDraftContent(
+      content({ lines: [line({ unitPriceMinor: 1_000_000_000, quantity: 3 })] }),
+    );
+    const issues = result.ok ? [] : result.error.fields;
+    expect(issues).toContainEqual({ field: "lines", message: "total too large" });
+  });
+
+  it("accepts catalog prices and quoted rates above the merchant-entered cap", () => {
+    const normalized = value(
+      normalizeDraftContent(
+        content({
+          lines: [line({ unitPriceMinor: 10_000_001, quantity: 1 })],
+          shipping: { kind: "rate", method: "std", title: "Standard", amountMinor: 10_000_001 },
+        }),
+      ),
+    );
+    expect(normalized.lines[0]?.unitPriceMinor).toBe(10_000_001);
+    expect(normalized.shipping?.amountMinor).toBe(10_000_001);
+  });
+
+  it("still caps the merchant-entered amounts at 10,000,000", () => {
+    expect(
+      fieldsOf(
+        normalizeDraftContent(
+          content({ shipping: { kind: "custom", title: "X", amountMinor: 10_000_001 } }),
+        ),
+      ),
+    ).toContain("shipping.amountMinor");
+  });
+
+  it("accepts a total of exactly INT4 max", () => {
+    const normalized = normalizeDraftContent(
+      content({
+        lines: [line({ unitPriceMinor: MAX_DRAFT_INT4_MINOR, quantity: 1 })],
+        shipping: { kind: "free", title: "", amountMinor: 0 },
+      }),
+    );
+    expect(normalized.ok).toBe(true);
   });
 
   it("gives free shipping its title and a zero amount", () => {
@@ -189,13 +330,14 @@ describe("DraftOrder", () => {
 
   it("refuses to revise a completed or a deleted draft", () => {
     const base = created().snapshot();
-    for (const snapshot of [
-      { ...base, status: "completed" as const, orderRef: "o-1", completedAt: NOW },
-      { ...base, deletedAt: NOW },
-    ]) {
+    const cases = [
+      ["DRAFT_COMPLETED", { ...base, status: "completed" as const, orderRef: "o-1" }],
+      ["DRAFT_DELETED", { ...base, deletedAt: NOW }],
+    ] as const;
+    for (const [code, snapshot] of cases) {
       const result = DraftOrder.reconstitute(snapshot).revise(content(), NOW);
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.message).toMatch(/^DRAFT_(COMPLETED|DELETED):/);
+      if (!result.ok) expect(result.error.message).toMatch(new RegExp(`^${code}:`));
     }
   });
 

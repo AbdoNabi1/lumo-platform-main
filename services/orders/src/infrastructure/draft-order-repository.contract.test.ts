@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakePrisma } from "@platform/db/testing";
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, ConflictError } from "@platform/utils";
 import { DraftOrder, type DraftOrderContent } from "../domain/draft-order";
 import type { DraftOrderRepository } from "../domain/draft-order-repository";
 import { InMemoryDraftOrderRepository } from "./in-memory-draft-order-repository";
@@ -113,6 +113,7 @@ describe.each(layers)("DraftOrderRepository (%s)", (_name, make) => {
     expect(await repo.markInvoiceSent(ID, NOW, T, tx)).toBe(true);
     expect((await repo.findById(ID, T))?.version).toBe(0);
     expect(await repo.markCompleted(ID, { orderRef: "o-1", at: NOW }, T, tx)).toBe(true);
+    expect((await repo.findById(ID, T))?.version).toBe(0);
     expect(await repo.markCompleted(ID, { orderRef: "o-2", at: NOW }, T, tx)).toBe(false);
     expect(await repo.softDelete(ID, NOW, T, tx)).toBe(false);
     expect(await repo.markInvoiceSent(ID, NOW, T, tx)).toBe(false);
@@ -125,8 +126,23 @@ describe.each(layers)("DraftOrderRepository (%s)", (_name, make) => {
     expect(await repo.softDelete(ID, NOW, T, tx)).toBe(true);
     expect(await repo.softDelete(ID, NOW, T, tx)).toBe(false);
     expect((await repo.findById(ID, T))?.deletedAt).toEqual(NOW);
+    expect((await repo.findById(ID, T))?.version).toBe(0);
     expect(await repo.markCompleted(ID, { orderRef: "o-1", at: NOW }, T, tx)).toBe(true);
     expect((await repo.findById(ID, T))?.deletedAt).toBeNull();
+    expect((await repo.findById(ID, T))?.version).toBe(0);
+  });
+
+  it("an inserted draft is no longer new, so saving it again updates instead of re-inserting", async () => {
+    const { repo, tx } = make();
+    const created = draft();
+    expect(created.isNew).toBe(true);
+    await repo.save(created, T, tx);
+    expect(created.isNew).toBe(false);
+    created.revise({ ...CONTENT, note: "second" }, NOW);
+    await repo.save(created, T, tx);
+    const stored = await repo.findById(ID, T);
+    expect(stored?.note).toBe("second");
+    expect(stored?.version).toBe(1);
   });
 
   it("setCheckout is compare-and-set on checkout_ref and keeps the version (Ruling 3)", async () => {
@@ -140,6 +156,32 @@ describe.each(layers)("DraftOrderRepository (%s)", (_name, make) => {
     expect(found?.checkoutRef).toBe("s-2");
     expect(found?.checkoutVersion).toBe(0);
     expect(found?.version).toBe(0);
+  });
+});
+
+describe("duplicate inserts (the table's primary key and per-shop number key)", () => {
+  it("in memory: a repeated id or a repeated number in a shop is a ConflictError", async () => {
+    const repo = new InMemoryDraftOrderRepository();
+    await repo.save(draft(ID, "D1"), T);
+    const otherId = "33333333-3333-7333-8333-333333333334";
+    await expect(repo.save(draft(ID, "D2"), T)).rejects.toBeInstanceOf(ConflictError);
+    await expect(repo.save(draft(ID, "D2"), "tenant-b")).rejects.toBeInstanceOf(ConflictError);
+    await expect(repo.save(draft(otherId, "D1"), T)).rejects.toBeInstanceOf(ConflictError);
+    // The same number in ANOTHER shop is fine.
+    await repo.save(draft(otherId, "D1"), "tenant-b");
+    expect((await repo.findById(ID, T))?.draftNumber).toBe("D1");
+  });
+
+  it("prisma: a unique violation (P2002) surfaces as the same ConflictError; others pass through", async () => {
+    const failing = (error: unknown) =>
+      ({ draftOrder: { create: () => Promise.reject(error) } }) as unknown;
+    const repo = new PrismaDraftOrderRepository({ prisma: createFakePrisma().database });
+    const unique = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    const created = draft();
+    await expect(repo.save(created, T, failing(unique))).rejects.toBeInstanceOf(ConflictError);
+    expect(created.isNew).toBe(true);
+    const other = new Error("connection reset");
+    await expect(repo.save(draft(), T, failing(other))).rejects.toBe(other);
   });
 });
 

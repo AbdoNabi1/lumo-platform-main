@@ -7,6 +7,7 @@ import {
   tenantRowIsolationCases,
   type TenantRowStore,
 } from "@platform/messaging/testing";
+import { ConcurrencyError } from "@platform/utils";
 import { Order } from "../domain/order";
 import { DraftOrder } from "../domain/draft-order";
 import type { DraftOrderRepository } from "../domain/draft-order-repository";
@@ -310,7 +311,15 @@ describe("draft orders tenant isolation (order operations Part 4)", () => {
           tx,
         ),
       ).toBe(false);
+      // A content save through the attacker's tenant must not land on the victim's row either.
+      const hijack = await repo.findById(VICTIM_DRAFT, "victim");
+      hijack?.revise({ ...content, note: "hijacked" }, at);
+      await expect(repo.save(hijack as DraftOrder, "attacker", tx)).rejects.toBeInstanceOf(
+        ConcurrencyError,
+      );
       const victim = await repo.findById(VICTIM_DRAFT, "victim");
+      expect(victim?.note).toBeNull();
+      expect(victim?.version).toBe(0);
       expect(victim?.status).toBe("open");
       expect(victim?.checkoutRef).toBeNull();
       expect(victim?.deletedAt).toBeNull();

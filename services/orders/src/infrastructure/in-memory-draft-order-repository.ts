@@ -1,4 +1,4 @@
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, ConflictError } from "@platform/utils";
 import {
   clampDraftPageSize,
   DraftOrder,
@@ -24,7 +24,14 @@ export class InMemoryDraftOrderRepository implements DraftOrderRepository {
     }
     const s = draft.snapshot();
     if (draft.isNew) {
+      // The primary key is global; the draft number is unique per shop — like the table's indexes.
+      const idTaken = [...this.store.values()].some((rows) => rows.has(s.id));
+      const numberTaken = [...bucket.values()].some((row) => row.draftNumber === s.draftNumber);
+      if (idTaken || numberTaken) {
+        throw new ConflictError("DRAFT_DUPLICATE: a draft with this id or number already exists");
+      }
       bucket.set(s.id, s);
+      draft.markPersisted();
       return;
     }
     const stored = bucket.get(s.id);
