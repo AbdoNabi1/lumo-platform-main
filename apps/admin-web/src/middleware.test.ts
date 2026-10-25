@@ -8,6 +8,7 @@ vi.mock("jose", () => ({
 }));
 
 const { middleware } = await import("./middleware");
+const { PRIMARY_NAV } = await import("@/components/navigation");
 
 function requestFor(path: string, sessionCookie?: string): NextRequest {
   const headers = new Headers();
@@ -117,5 +118,47 @@ describe("middleware", () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
     const response = await middleware(requestFor("/forbidden", "good.token"));
     expect(response.headers.get("location")).toBeNull();
+  });
+});
+
+describe("middleware role table for the orders screens", () => {
+  it("lets a viewer open abandoned checkouts and its detail (the API decides who may issue links)", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of [
+      "/abandoned-checkouts",
+      "/abandoned-checkouts/2f6f1c52-5c3a-4a53-8c0a-3f4f3d7a0c11",
+    ]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("lets a viewer read every orders page", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of [
+      "/orders",
+      "/orders/abc",
+      "/orders/abc/fulfillment",
+      "/orders/abc/returns",
+      "/orders/abc/shipment",
+      "/orders/packing-slips",
+    ]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("never sends an operator to /forbidden from a sidebar link, bar the admin-only sections", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    const adminOnly = ["/finance", "/settings", "/integrations", "/security", "/feature-registry"];
+    const hrefs = PRIMARY_NAV.flatMap((item) => [
+      item.href,
+      ...(item.children ?? []).map((child) => child.href),
+    ]);
+    for (const href of hrefs) {
+      if (adminOnly.some((prefix) => href === prefix || href.startsWith(`${prefix}/`))) continue;
+      const response = await middleware(requestFor(href, "good.token"));
+      expect(response.headers.get("location"), href).toBeNull();
+    }
   });
 });

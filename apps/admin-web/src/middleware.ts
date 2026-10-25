@@ -113,6 +113,8 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/orders/new", "operator"],
   ["/orders/from-checkout", "operator"],
   ["/orders", "viewer"],
+  // Abandoned checkouts read like orders (`orders:read`); the API refuses link issuance to viewers.
+  ["/abandoned-checkouts", "viewer"],
   ["/products/new", "operator"],
   ["/products", "viewer"],
   ["/categories", "viewer"],
