@@ -15,7 +15,9 @@ import { getCurrentUser } from "@/lib/auth/current-user";
 import { highestRole, readSession } from "@/lib/auth/session";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/format";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
+import { countryName } from "@/lib/order-address";
 import { canRecoverCheckout } from "@/lib/orders/abandoned-checkouts";
+import { dialableNumber } from "@/lib/whatsapp";
 import type { Dictionary } from "@/messages/en";
 
 interface AbandonedCheckoutPageProps {
@@ -109,7 +111,7 @@ export default async function AbandonedCheckoutPage({ params }: AbandonedCheckou
         </div>
         <div className="flex flex-col gap-6">
           <CustomerCard checkout={checkout} t={t} />
-          <ShippingCard checkout={checkout} t={t} />
+          <ShippingCard checkout={checkout} t={t} locale={locale} />
         </div>
       </div>
     </>,
@@ -236,11 +238,7 @@ function CustomerCard({ checkout, t }: Omit<CardProps, "locale">) {
           </a>
         )}
         {checkout.phone !== null && (
-          <a
-            href={`tel:${checkout.phone.replace(/[^\d+]/g, "")}`}
-            dir="ltr"
-            className="hover:underline"
-          >
+          <a href={`tel:${dialableNumber(checkout.phone)}`} dir="ltr" className="hover:underline">
             {checkout.phone}
           </a>
         )}
@@ -252,7 +250,7 @@ function CustomerCard({ checkout, t }: Omit<CardProps, "locale">) {
   );
 }
 
-function ShippingCard({ checkout, t }: Omit<CardProps, "locale">) {
+function ShippingCard({ checkout, t, locale }: CardProps) {
   const a = t.abandonedCheckouts.shippingAddress;
   const address = checkout.shippingAddress;
   return (
@@ -273,7 +271,7 @@ function ShippingCard({ checkout, t }: Omit<CardProps, "locale">) {
                 .filter((p) => p !== null && p !== "")
                 .join(", ")}
             </span>
-            <span dir="auto">{address.country}</span>
+            <span dir="auto">{countryName(address.country, locale)}</span>
           </address>
         )}
       </CardContent>

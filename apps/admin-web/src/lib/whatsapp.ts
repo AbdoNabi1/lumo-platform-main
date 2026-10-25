@@ -30,6 +30,11 @@ function asciiDigits(value: string): string {
 /** LRM/RLM, the embedding/override/isolate controls and the BOM that chat apps and Arabic keyboards add. */
 const FORMAT_CONTROLS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
+/** A `tel:` target: ASCII digits and `+` only, from a number typed in any digit script. */
+export function dialableNumber(phone: string): string {
+  return asciiDigits(phone.replace(FORMAT_CONTROLS, "")).replace(/[^\d+]/g, "");
+}
+
 /**
  * The digits `wa.me` wants (country code + national number, no `+`). A number written
  * internationally (`+20…`, `(+966)…`, `0020…`) is used as written, minus a trunk `0` kept after the

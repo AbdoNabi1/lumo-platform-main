@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { fillTemplate, toWhatsAppDigits, whatsAppUrl } from "./whatsapp";
+import { dialableNumber, fillTemplate, toWhatsAppDigits, whatsAppUrl } from "./whatsapp";
+
+describe("dialableNumber", () => {
+  it("keeps ASCII digits and + from any digit script, dropping marks and spaces", () => {
+    expect(dialableNumber("‎+20 100 123 4567")).toBe("+201001234567");
+    expect(dialableNumber("٠١٠٠١٢٣٤٥٦٧")).toBe("01001234567");
+    expect(dialableNumber("۰۱۰۰-۱۲۳")).toBe("0100123");
+  });
+});
 
 describe("toWhatsAppDigits (spec §3.7; Review Focus 1)", () => {
   it.each([
