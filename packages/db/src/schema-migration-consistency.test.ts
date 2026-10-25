@@ -452,3 +452,70 @@ describe("checkout schema — recovery links (order operations Part 3)", () => {
     );
   });
 });
+
+describe("orders and checkout schema — draft orders (order operations Part 4)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("draft_orders has the model's columns, the per-shop number key, the status index and the check", () => {
+    expect([...columnsEverAddedTo("orders", "draft_orders", allSql)].sort()).toEqual([
+      "billing_address",
+      "checkout_ref",
+      "checkout_version",
+      "completed_at",
+      "contact_email",
+      "contact_phone",
+      "created_at",
+      "created_by",
+      "currency",
+      "customer_ref",
+      "deleted_at",
+      "discount",
+      "draft_number",
+      "id",
+      "invoice_sent_at",
+      "lines",
+      "note",
+      "order_ref",
+      "shipping",
+      "shipping_address",
+      "status",
+      "tags",
+      "tenant_id",
+      "updated_at",
+      "version",
+    ]);
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "draft_orders_tenant_id_draft_number_key" ON "orders"."draft_orders"("tenant_id", "draft_number");',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "draft_orders_tenant_id_status_idx" ON "orders"."draft_orders"("tenant_id", "status");',
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "draft_orders_status_check" CHECK ("status" IN ('open','invoice_sent','completed'))`,
+    );
+  });
+
+  it("draft_orders is RLS-forced with the tenant_isolation policy", () => {
+    expect(allSql).toContain('ALTER TABLE "orders"."draft_orders" ENABLE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('ALTER TABLE "orders"."draft_orders" FORCE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('DROP POLICY IF EXISTS tenant_isolation ON "orders"."draft_orders";');
+    expect(allSql).toContain('CREATE POLICY tenant_isolation ON "orders"."draft_orders" FOR ALL');
+  });
+
+  it("the counter gains last_draft_number, sessions gain draft_terms, links get the draft index", () => {
+    expect(
+      columnsEverAddedTo("orders", "order_number_counters", allSql).has("last_draft_number"),
+    ).toBe(true);
+    expect(columnsEverAddedTo("checkout", "checkout_sessions", allSql).has("draft_terms")).toBe(
+      true,
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "checkout_links_tenant_id_draft_order_ref_idx" ON "checkout"."checkout_links"("tenant_id", "draft_order_ref");',
+    );
+  });
+});

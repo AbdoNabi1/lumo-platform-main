@@ -24,6 +24,7 @@ model CheckoutSession {
   discounts         Json     @default("{}") // Phase 2: { codes, snapshot, rejectedAttempts, attemptsWindowStartedAt }; {} = none
   recoveredFromRef  String?  @map("recovered_from_ref") // Part 3: on a session a recovery link created — the abandoned session's id
   recoveredOrderRef String?  @map("recovered_order_ref") // Part 3: on the abandoned session once its recovery became an order
+  draftTerms        Json     @default("{}") @map("draft_terms") // Part 4: a draft's fixed discount/shipping; {} = none
   version           Int      @default(0)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
@@ -55,6 +56,7 @@ model CheckoutLink {
   resultCheckoutRef String?   @map("result_checkout_ref")
 
   @@index([tenantId, checkoutSessionId])
+  @@index([tenantId, draftOrderRef])
   @@map("checkout_links")
   @@schema("checkout")
 }

@@ -127,11 +127,47 @@ model OrderTimelineEntry {
   @@schema("orders")
 }
 
+/// Order operations Part 4 — a draft order a merchant builds for a phone/WhatsApp customer. Content
+/// columns are saved with `version`; status/checkout/deletion columns only by guarded updates.
+model DraftOrder {
+  id              String    @id @db.Uuid
+  tenantId        String    @map("tenant_id")
+  draftNumber     String    @map("draft_number") // "D1", "D2", … per shop
+  status          String // open | invoice_sent | completed (CHECK + domain-enforced)
+  currency        String
+  customerRef     String?   @map("customer_ref") // bare id into Identity — never an FK
+  contactEmail    String?   @map("contact_email")
+  contactPhone    String?   @map("contact_phone")
+  shippingAddress Json      @default("{}") @map("shipping_address")
+  billingAddress  Json      @default("{}") @map("billing_address") // {} = same as shipping
+  lines           Json      @default("[]")
+  discount        Json      @default("{}")
+  shipping        Json      @default("{}")
+  note            String?
+  tags            Json      @default("[]")
+  checkoutRef     String?   @map("checkout_ref") // bare id into Checkout — never an FK
+  checkoutVersion Int?      @map("checkout_version")
+  orderRef        String?   @map("order_ref") // bare id into Orders — never an FK
+  invoiceSentAt   DateTime? @map("invoice_sent_at")
+  completedAt     DateTime? @map("completed_at")
+  deletedAt       DateTime? @map("deleted_at")
+  createdBy       String    @map("created_by")
+  version         Int       @default(0)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, draftNumber])
+  @@index([tenantId, status])
+  @@map("draft_orders")
+  @@schema("orders")
+}
+
 /// Plan 3B — the per-shop order number counter (1001, 1002, …). Bumped by one atomic raw upsert in
 /// `PrismaOrderNumberAllocator`, inside the order's transaction; Prisma never reads or writes it.
 model OrderNumberCounter {
-  tenantId   String @id @map("tenant_id")
-  lastNumber Int    @map("last_number")
+  tenantId        String @id @map("tenant_id")
+  lastNumber      Int    @map("last_number")
+  lastDraftNumber Int    @default(0) @map("last_draft_number") // Part 4: D1, D2, … (same atomic upsert row)
 
   @@map("order_number_counters")
   @@schema("orders")

@@ -8,6 +8,8 @@ import {
   type TenantRowStore,
 } from "@platform/messaging/testing";
 import { Order } from "../domain/order";
+import { DraftOrder } from "../domain/draft-order";
+import type { DraftOrderRepository } from "../domain/draft-order-repository";
 import { OrderItem } from "../domain/order-item";
 import { AddressSnapshot } from "../domain/value-objects/address-snapshot";
 import { OrderNumber } from "../domain/value-objects/order-number";
@@ -15,11 +17,13 @@ import { ProductSnapshot } from "../domain/value-objects/product-snapshot";
 import { createFakePrisma } from "@platform/db/testing";
 import type { OrderAnnotationRepository } from "../domain/order-annotations";
 import type { OrderTimelineEntry, OrderTimelineRepository } from "../domain/order-timeline";
+import { InMemoryDraftOrderRepository } from "./in-memory-draft-order-repository";
 import { InMemoryOrderAnnotationRepository } from "./in-memory-order-annotation-repository";
 import { InMemoryOrderRepository } from "./in-memory-order-repository";
 import { InMemoryOrderTimelineRepository } from "./in-memory-order-timeline-repository";
 import { InMemoryInventoryAdapter, InMemoryShippingAdapter } from "./in-memory-port-adapters";
 import { OrderEventTranslator } from "./order-event-translator";
+import { PrismaDraftOrderRepository } from "./prisma-draft-order-repository";
 import { PrismaOrderAnnotationRepository } from "./prisma-order-annotation-repository";
 import { PrismaOrderTimelineRepository } from "./prisma-order-timeline-repository";
 
@@ -234,4 +238,82 @@ describe("order timeline tenant isolation (order operations Part 2)", () => {
       );
     }
   });
+});
+
+describe("draft orders tenant isolation (order operations Part 4)", () => {
+  const VICTIM_DRAFT = "44444444-4444-7444-8444-444444444444";
+  const content = {
+    customerRef: null,
+    contactEmail: "victim@example.com",
+    contactPhone: null,
+    shippingAddress: null,
+    billingAddress: null,
+    lines: [
+      {
+        productRef: "p",
+        variantRef: "v",
+        sku: "S",
+        title: "T",
+        variantTitle: null,
+        quantity: 1,
+        unitPriceMinor: 100,
+      },
+    ],
+    discount: null,
+    shipping: null,
+    note: null,
+    tags: [],
+  };
+  function draftLayers(): readonly [string, DraftOrderRepository, unknown][] {
+    const fake = createFakePrisma();
+    return [
+      ["in-memory", new InMemoryDraftOrderRepository(), {}],
+      [
+        "prisma over fake-prisma",
+        new PrismaDraftOrderRepository({ prisma: fake.database }),
+        fake.database,
+      ],
+    ];
+  }
+
+  it.each(draftLayers())(
+    "%s: another shop can neither read nor move a draft",
+    async (_n, repo, tx) => {
+      const created = DraftOrder.create({
+        id: VICTIM_DRAFT,
+        draftNumber: "D1",
+        currency: "EGP",
+        createdBy: "s",
+        now: new Date(0),
+        content,
+      });
+      if (!created.ok) throw created.error;
+      await repo.save(created.value, "victim", tx);
+      const at = new Date(0);
+      expect(await repo.findById(VICTIM_DRAFT, "attacker")).toBeNull();
+      // fake-prisma has no `$queryRaw`, so the Prisma list's tenant filter (in the SQL itself) is
+      // pinned by the gated integration test instead.
+      if (repo instanceof InMemoryDraftOrderRepository) {
+        expect((await repo.list({}, "attacker")).items).toEqual([]);
+      }
+      expect(await repo.markInvoiceSent(VICTIM_DRAFT, at, "attacker", tx)).toBe(false);
+      expect(await repo.markCompleted(VICTIM_DRAFT, { orderRef: "o", at }, "attacker", tx)).toBe(
+        false,
+      );
+      expect(await repo.softDelete(VICTIM_DRAFT, at, "attacker", tx)).toBe(false);
+      expect(
+        await repo.setCheckout(
+          VICTIM_DRAFT,
+          { checkoutRef: "s", checkoutVersion: 0 },
+          null,
+          "attacker",
+          tx,
+        ),
+      ).toBe(false);
+      const victim = await repo.findById(VICTIM_DRAFT, "victim");
+      expect(victim?.status).toBe("open");
+      expect(victim?.checkoutRef).toBeNull();
+      expect(victim?.deletedAt).toBeNull();
+    },
+  );
 });

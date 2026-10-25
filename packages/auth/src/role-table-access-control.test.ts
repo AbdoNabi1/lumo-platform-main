@@ -93,4 +93,14 @@ describe("RoleTableAccessControl", () => {
     expect(await acl.authorize(who(["viewer"]), "orders:recover_checkout")).toBe(false);
     expect(await acl.authorize(who(["viewer"]), "orders:read")).toBe(true);
   });
+  it("operators and admins build and complete drafts; viewers only read them (orders Part 4)", async () => {
+    for (const permission of ["orders:draft", "orders:complete_draft"]) {
+      expect(await acl.authorize(who(["operator"]), permission), permission).toBe(true);
+      expect(await acl.authorize(who(["admin"]), permission), permission).toBe(true);
+      expect(await acl.authorize(who(["platform-admin"]), permission), permission).toBe(true);
+      expect(await acl.authorize(who(["viewer"]), permission), permission).toBe(false);
+    }
+    // "Mark as paid" also needs the money permission, which stays admin-only.
+    expect(await acl.authorize(who(["operator"]), "payments:confirm_cod_collection")).toBe(false);
+  });
 });
