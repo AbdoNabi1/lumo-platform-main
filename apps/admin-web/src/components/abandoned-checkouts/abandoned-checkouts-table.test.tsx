@@ -105,4 +105,10 @@ describe("AbandonedCheckoutsTable (Shopify's columns)", () => {
     expect(cells[2]).toHaveTextContent(en.abandonedCheckouts.unknownCustomer);
     expect(cells[3]).toHaveTextContent(en.abandonedCheckouts.noRegion);
   });
+
+  it("the region cell is bidi-isolated (dir=auto) like the placed-by cell", () => {
+    render(<AbandonedCheckoutsTable checkouts={[row({ region: "EG-C" })]} t={en} locale="en" />);
+    const cells = within(screen.getAllByRole("row")[1] as HTMLElement).getAllByRole("cell");
+    expect(cells[3]?.querySelector("[dir='auto']")).toHaveTextContent("EG-C");
+  });
 });

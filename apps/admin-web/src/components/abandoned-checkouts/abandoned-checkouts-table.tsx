@@ -45,7 +45,9 @@ export function AbandonedCheckoutsTable({
             <TableCell>
               <span dir="auto">{placedByLabel(checkout) ?? a.unknownCustomer}</span>
             </TableCell>
-            <TableCell>{checkout.region ?? a.noRegion}</TableCell>
+            <TableCell>
+              <span dir="auto">{checkout.region ?? a.noRegion}</span>
+            </TableCell>
             <TableCell>
               {checkout.lastLinkIssuedAt === null
                 ? a.notShared

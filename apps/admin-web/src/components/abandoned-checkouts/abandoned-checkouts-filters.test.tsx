@@ -16,4 +16,9 @@ describe("AbandonedCheckoutsFilters", () => {
       screen.getByRole("combobox", { name: en.abandonedCheckouts.recoveryFilterLabel }),
     ).toHaveValue("recovered");
   });
+
+  it("caps the search at the API's 200 characters", () => {
+    render(<AbandonedCheckoutsFilters q={undefined} recovery={undefined} t={en} />);
+    expect(screen.getByRole("searchbox")).toHaveAttribute("maxlength", "200");
+  });
 });

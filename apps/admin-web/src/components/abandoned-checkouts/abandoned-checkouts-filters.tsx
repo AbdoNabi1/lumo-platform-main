@@ -34,6 +34,7 @@ export function AbandonedCheckoutsFilters({
           type="search"
           name="q"
           dir="auto"
+          maxLength={200}
           defaultValue={q ?? ""}
           placeholder={a.searchPlaceholder}
           aria-label={a.searchLabel}
