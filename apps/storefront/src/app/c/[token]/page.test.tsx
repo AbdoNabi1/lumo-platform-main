@@ -1,9 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { formatCurrency } from "@/lib/format";
 import type { CheckoutLinkPreview } from "@/lib/runtime-api";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
+
+// React's per-request `cache`, stood in for by a memo the tests can clear between "requests".
+const requestMemo = vi.hoisted(() => new Map<string, unknown>());
+vi.mock("react", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  cache:
+    <A extends string[], R>(fn: (...args: A) => R) =>
+    (...args: A): R => {
+      const key = `${fn.name}:${args.join("|")}`;
+      if (!requestMemo.has(key)) requestMemo.set(key, fn(...args));
+      return requestMemo.get(key) as R;
+    },
+}));
 
 const jar = new Map<string, string>();
 vi.mock("next/headers", () => ({
@@ -44,6 +57,7 @@ async function renderPage(token = TOKEN, error?: string) {
 }
 
 beforeEach(() => {
+  requestMemo.clear();
   jar.clear();
   getCheckoutLinkPreview.mockReset();
   claimApi.mockReset();
@@ -56,7 +70,8 @@ describe("/c/[token] (order operations Part 3)", () => {
     await renderPage();
     expect(getCheckoutLinkPreview).toHaveBeenCalledWith(TOKEN);
     expect(screen.getByRole("heading", { name: en.recovery.title })).toBeInTheDocument();
-    expect(screen.getByText("Your order from Sara Shop")).toBeInTheDocument();
+    expect(screen.getByText("Sara Shop").tagName).toBe("BDI");
+    expect(screen.getByText(/Your order from/).textContent).toBe("Your order from Sara Shop");
     expect(screen.getByText("T-shirt")).toBeInTheDocument();
     expect(screen.getByText(en.recovery.itemFallback)).toBeInTheDocument();
     // Intl puts a no-break space after the code; Testing Library collapses it to a plain space.
@@ -87,6 +102,42 @@ describe("/c/[token] (order operations Part 3)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(en.recovery.errors.unavailable);
   });
 
+  it("the shop name stays isolated inside the sentence in Arabic too", async () => {
+    jar.set("morbeh-storefront-locale", "ar");
+    getCheckoutLinkPreview.mockResolvedValue({
+      status: 200,
+      body: { ...PREVIEW, shopName: "Nile Store 2" },
+    });
+    await renderPage();
+    expect(screen.getByText("Nile Store 2").tagName).toBe("BDI");
+    expect(screen.getByText(/طلبك من/).textContent).toBe("طلبك من Nile Store 2");
+  });
+
+  it("the page and its metadata share one preview GET", async () => {
+    getCheckoutLinkPreview.mockResolvedValue({ status: 200, body: PREVIEW });
+    await generateMetadata({ params: Promise.resolve({ token: TOKEN }) });
+    await renderPage();
+    expect(getCheckoutLinkPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("Continue shows a pending state while the claim runs", async () => {
+    getCheckoutLinkPreview.mockResolvedValue({ status: 200, body: PREVIEW });
+    let finish: () => void = () => undefined;
+    const running = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    claimAction.mockImplementation(() => running);
+    await renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.recovery.continue }));
+    });
+    expect(screen.getByRole("button", { name: en.recovery.continuing })).toBeDisabled();
+    await act(async () => {
+      finish();
+      await running;
+    });
+  });
+
   it("speaks Arabic", async () => {
     jar.set("morbeh-storefront-locale", "ar");
     getCheckoutLinkPreview.mockResolvedValue({ status: 200, body: PREVIEW });
@@ -100,6 +151,7 @@ describe("/c/[token] (order operations Part 3)", () => {
     expect(metadata.title).toBe(`Sara Shop — ${en.recovery.metaTitle}`);
     expect(metadata.openGraph?.title).toBe(`Sara Shop — ${en.recovery.metaTitle}`);
     getCheckoutLinkPreview.mockResolvedValue({ status: 404, body: null });
+    requestMemo.clear();
     expect((await generateMetadata({ params: Promise.resolve({ token: TOKEN }) })).title).toBe(
       en.recovery.metaTitle,
     );

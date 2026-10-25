@@ -36,6 +36,8 @@ export async function claimCheckoutLink(token: string): Promise<void> {
       result.body.checkoutSessionId,
       CHECKOUT_SESSION_COOKIE_OPTIONS,
     );
+    // The claim also replaced this browser's cart server-side.
+    revalidatePath("/cart");
     revalidatePath("/checkout");
     redirect(result.body.droppedItems > 0 ? "/checkout?dropped=1" : "/checkout");
   }

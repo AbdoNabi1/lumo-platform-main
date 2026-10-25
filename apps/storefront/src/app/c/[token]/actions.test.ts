@@ -20,6 +20,7 @@ vi.mock("next/headers", () => ({
   }),
 }));
 
+const { CHECKOUT_SESSION_COOKIE_OPTIONS } = await import("@/lib/cart");
 const { claimCheckoutLink } = await import("./actions");
 
 const TOKEN = "a".repeat(43);
@@ -45,8 +46,12 @@ describe("claimCheckoutLink (the Continue to checkout button)", () => {
     expect(set).toHaveBeenCalledWith(
       "morbeh_checkout_session",
       "cs-new",
-      expect.objectContaining({ httpOnly: true }),
+      CHECKOUT_SESSION_COOKIE_OPTIONS,
     );
+    expect(redirect).toHaveBeenCalledTimes(1);
+    expect(redirect).toHaveBeenLastCalledWith("/checkout");
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
+    expect(revalidatePath).toHaveBeenCalledWith("/cart");
   });
 
   it("mints a guest session first when the browser has none (a link opened in a fresh browser)", async () => {
@@ -67,6 +72,8 @@ describe("claimCheckoutLink (the Continue to checkout button)", () => {
       body: { checkoutSessionId: "cs-new", droppedItems: 2 },
     });
     await expect(claimCheckoutLink(TOKEN)).rejects.toThrow("NEXT_REDIRECT /checkout?dropped=1");
+    expect(redirect).toHaveBeenCalledTimes(1);
+    expect(redirect).toHaveBeenLastCalledWith("/checkout?dropped=1");
   });
 
   it.each([
@@ -81,7 +88,9 @@ describe("claimCheckoutLink (the Continue to checkout button)", () => {
       await expect(claimCheckoutLink(TOKEN)).rejects.toThrow(
         `NEXT_REDIRECT /c/${TOKEN}?error=${error}`,
       );
+      expect(redirect).toHaveBeenLastCalledWith(`/c/${TOKEN}?error=${error}`);
       expect(jar.has("morbeh_checkout_session")).toBe(false);
+      expect(revalidatePath).not.toHaveBeenCalled();
     },
   );
 

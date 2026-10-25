@@ -240,6 +240,7 @@ export const en = {
     total: "Total",
     pricesNote: "Prices and availability are confirmed at checkout.",
     continue: "Continue to checkout",
+    continuing: "Opening checkout…",
     invalidTitle: "This link has expired or is no longer valid",
     invalidBody: "Ask the store for a new link, or keep shopping.",
     backToShop: "Back to shop",

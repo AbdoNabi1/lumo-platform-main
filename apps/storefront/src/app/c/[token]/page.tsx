@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { AlertTriangleIcon } from "lucide-react";
-import { Button, Card, CardContent } from "@platform/ui";
+import { Card, CardContent } from "@platform/ui";
 import { LineThumb } from "@/components/line-thumb";
 import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
+import { SubmitButton } from "@/components/submit-button";
 import { formatCurrency } from "@/lib/format";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import { getCheckoutLinkPreview, type CheckoutLinkPreview } from "@/lib/runtime-api";
@@ -31,11 +33,27 @@ async function localized(): Promise<{
   return { locale, t: dictionaryFor(locale) };
 }
 
-/** The preview is a plain GET with no side effect — rendering this page never claims the link. */
-async function previewOf(token: string): Promise<CheckoutLinkPreview | null> {
+/**
+ * The preview is a plain GET with no side effect — rendering this page never claims the link.
+ * `cache` shares one GET between `generateMetadata` and the page within a request.
+ */
+const previewOf = cache(async (token: string): Promise<CheckoutLinkPreview | null> => {
   if (!TOKEN_PATTERN.test(token)) return null;
   const response = await getCheckoutLinkPreview(token);
   return response.status === 200 ? response.body : null;
+});
+
+/** The "Your order from {shop}" sentence with the shop name isolated, so its script cannot reorder the words around it. */
+function FromShop({ template, shop }: { readonly template: string; readonly shop: string }) {
+  const at = template.indexOf("{shop}");
+  if (at === -1) return <>{template}</>;
+  return (
+    <>
+      {template.slice(0, at)}
+      <bdi>{shop}</bdi>
+      {template.slice(at + "{shop}".length)}
+    </>
+  );
 }
 
 /**
@@ -92,7 +110,7 @@ export default async function CheckoutLinkPage({ params, searchParams }: Checkou
               <h1 className="text-2xl font-semibold">{t.recovery.title}</h1>
               {preview.shopName !== "" && (
                 <p dir="auto" className="text-muted-foreground">
-                  {t.recovery.fromShop.replace("{shop}", () => preview.shopName)}
+                  <FromShop template={t.recovery.fromShop} shop={preview.shopName} />
                 </p>
               )}
             </div>
@@ -134,9 +152,9 @@ export default async function CheckoutLinkPage({ params, searchParams }: Checkou
               </p>
             )}
             <form action={claimCheckoutLink.bind(null, token)}>
-              <Button type="submit" className="w-full">
+              <SubmitButton className="w-full" pendingLabel={t.recovery.continuing}>
                 {t.recovery.continue}
-              </Button>
+              </SubmitButton>
             </form>
           </CardContent>
         </Card>

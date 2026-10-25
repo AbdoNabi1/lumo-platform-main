@@ -242,6 +242,7 @@ export const ar: Dictionary = {
     total: "الإجمالي",
     pricesNote: "يتم تأكيد الأسعار والتوفر عند الدفع.",
     continue: "أكمل الطلب",
+    continuing: "جارٍ فتح صفحة الدفع…",
     invalidTitle: "انتهت صلاحية هذا الرابط أو لم يعد صالحًا",
     invalidBody: "اطلب رابطًا جديدًا من المتجر، أو تابع التسوق.",
     backToShop: "العودة إلى المتجر",
