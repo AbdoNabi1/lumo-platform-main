@@ -50,13 +50,12 @@ describe("issueRecoveryLinkAction (order operations Part 3)", () => {
     expect(await issueRecoveryLinkAction(ID)).toEqual({ ok: false, message: r.noStoreAddress });
   });
 
-  it("one fresh idempotency key per press", async () => {
+  it("asks the API for a new link on every press, with the id alone (no idempotency key to replay)", async () => {
     api.issueRecoveryLink.mockResolvedValue(link("https://x.shop/c/tok"));
     await issueRecoveryLinkAction(ID);
     await issueRecoveryLinkAction(ID);
-    const keys = api.issueRecoveryLink.mock.calls.map((call) => call[1] as string);
-    expect(keys[0]).not.toBe(keys[1]);
-    expect(api.issueRecoveryLink.mock.calls[0]?.[0]).toBe(ID);
+    expect(api.issueRecoveryLink).toHaveBeenCalledTimes(2);
+    expect(api.issueRecoveryLink.mock.calls).toEqual([[ID], [ID]]);
   });
 
   it("maps refusals to the merchant's words", async () => {

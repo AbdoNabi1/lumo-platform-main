@@ -3,7 +3,6 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { issueRecoveryLink } from "@/lib/api/abandoned-checkouts";
-import { newIdempotencyKey } from "@/lib/api/mutation";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { recoveryLinkHref } from "@/lib/orders/abandoned-checkouts";
 
@@ -15,7 +14,7 @@ const CHECKOUT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 
 /**
  * Order operations Part 3 — "Copy recovery link" and "Share on WhatsApp" both start here: a NEW link
- * per press (one idempotency key per press), its absolute URL (the shop's domain, else
+ * per press (never idempotent: no key is sent, the token must not be replayed), its absolute URL (the shop's domain, else
  * `STOREFRONT_URL`), and the shop name for the WhatsApp text. The API decides the permission.
  */
 export async function issueRecoveryLinkAction(
@@ -26,7 +25,7 @@ export async function issueRecoveryLinkAction(
   if (typeof checkoutId !== "string" || !CHECKOUT_ID.test(checkoutId)) {
     return { ok: false, message: r.error };
   }
-  const result = await issueRecoveryLink(checkoutId, newIdempotencyKey());
+  const result = await issueRecoveryLink(checkoutId);
   if (result.outcome !== "ok") {
     const message =
       result.outcome === "unauthorized"

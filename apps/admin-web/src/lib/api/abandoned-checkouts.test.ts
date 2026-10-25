@@ -57,7 +57,7 @@ describe("abandoned checkouts API client (order operations Part 3)", () => {
     expect(await fetchAbandonedCheckout("a b")).toEqual({ outcome: "not_found" });
   });
 
-  it("issues a link with POST and the caller's idempotency key", async () => {
+  it("issues a link with POST and sends no idempotency key (every call mints a new token)", async () => {
     const link = {
       url: null,
       path: "/c/tok",
@@ -67,15 +67,15 @@ describe("abandoned checkouts API client (order operations Part 3)", () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, link));
     vi.stubGlobal("fetch", fetchMock);
 
-    expect(await issueRecoveryLink("cs-1", "key-1")).toEqual({ outcome: "ok", data: link });
+    expect(await issueRecoveryLink("cs-1")).toEqual({ outcome: "ok", data: link });
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toMatch(/\/api\/v1\/abandoned-checkouts\/cs-1\/recovery-link$/);
     expect(init.method).toBe("POST");
-    expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-1");
+    expect(init.headers as Record<string, string>).not.toHaveProperty("idempotency-key");
   });
 
   it("an unexpected body shape is an error, never a half-read link", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(201, { path: 1 })));
-    expect((await issueRecoveryLink("cs-1", "key-1")).outcome).toBe("error");
+    expect((await issueRecoveryLink("cs-1")).outcome).toBe("error");
   });
 });

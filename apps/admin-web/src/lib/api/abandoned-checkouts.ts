@@ -134,14 +134,11 @@ export function fetchAbandonedCheckout(id: string): Promise<ApiResult<AbandonedC
   return getAdminApi(checkoutPath(id), isDetail);
 }
 
-/** `POST /abandoned-checkouts/:id/recovery-link` (`orders:recover_checkout`, idempotent). A new link every call. */
-export function issueRecoveryLink(
-  id: string,
-  idempotencyKey: string,
-): Promise<MutationResult<RecoveryLinkDto>> {
-  return mutateAdminApi(
-    checkoutPath(id, "/recovery-link"),
-    { method: "POST", idempotencyKey },
-    isRecoveryLink,
-  );
+/**
+ * `POST /abandoned-checkouts/:id/recovery-link` (`orders:recover_checkout`). NOT idempotent: every call
+ * mints a new token, and the plaintext token must never be cached or replayed, so no
+ * `Idempotency-Key` is sent (the route would not store the response under one either).
+ */
+export function issueRecoveryLink(id: string): Promise<MutationResult<RecoveryLinkDto>> {
+  return mutateAdminApi(checkoutPath(id, "/recovery-link"), { method: "POST" }, isRecoveryLink);
 }
