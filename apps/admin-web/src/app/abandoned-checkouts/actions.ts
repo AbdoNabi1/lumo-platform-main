@@ -29,11 +29,13 @@ export async function issueRecoveryLinkAction(
   const result = await issueRecoveryLink(checkoutId, newIdempotencyKey());
   if (result.outcome !== "ok") {
     const message =
-      result.outcome === "forbidden" || result.outcome === "unauthorized"
-        ? r.forbidden
-        : result.outcome === "conflict"
-          ? r.alreadyRecovered
-          : r.error;
+      result.outcome === "unauthorized"
+        ? r.sessionExpired
+        : result.outcome === "forbidden"
+          ? r.forbidden
+          : result.outcome === "conflict"
+            ? r.alreadyRecovered
+            : r.error;
     return { ok: false, message };
   }
   const url = recoveryLinkHref(result.data, process.env["STOREFRONT_URL"] ?? null);

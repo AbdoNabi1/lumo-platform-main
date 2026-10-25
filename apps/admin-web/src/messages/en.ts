@@ -480,12 +480,13 @@ export const en = {
       cancel: "Cancel",
       error: "Couldn't create the recovery link. Try again.",
       forbidden: "You don't have permission to send recovery links.",
+      sessionExpired: "Your session has expired. Sign in again and try once more.",
       alreadyRecovered: "This checkout was already recovered.",
       noStoreAddress: "Your store has no web address yet, so a link can't be made.",
       whatsappMessage:
-        "Hi {name}, we noticed you didn't finish your order from {shop}. You can complete it here: {url}",
+        "Hi {name}, we noticed you didn't finish your order from {shop}. You can complete it here:\n{url}",
       whatsappMessageNoName:
-        "Hi, we noticed you didn't finish your order from {shop}. You can complete it here: {url}",
+        "Hi, we noticed you didn't finish your order from {shop}. You can complete it here:\n{url}",
     },
     timeline: {
       title: "Timeline",

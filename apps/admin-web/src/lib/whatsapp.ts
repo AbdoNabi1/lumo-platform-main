@@ -27,20 +27,27 @@ function asciiDigits(value: string): string {
   });
 }
 
+/** LRM/RLM, the embedding/override/isolate controls and the BOM that chat apps and Arabic keyboards add. */
+const FORMAT_CONTROLS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+
 /**
  * The digits `wa.me` wants (country code + national number, no `+`). A number written
- * internationally (`+20…`, `0020…`) is used as written; a national one (`010…`, `10…`) gets the
- * shipping country's calling code, its national leading `0` dropped. Null when it cannot be made
- * usable — the caller then opens WhatsApp's chat picker instead of a wrong chat.
+ * internationally (`+20…`, `(+966)…`, `0020…`) is used as written, minus a trunk `0` kept after the
+ * country code (`+20 0100…`); a national one (`010…`, `10…`) gets the shipping country's calling code,
+ * its national leading `0` dropped. Bidi and format controls are stripped first. Null when it cannot
+ * be made usable — the caller then opens WhatsApp's chat picker instead of a wrong chat.
  */
 export function toWhatsAppDigits(phone: string | null, country: string | null): string | null {
   if (phone === null) return null;
-  const raw = asciiDigits(phone).trim();
-  let digits = raw.replace(/\D/g, "");
-  if (raw.startsWith("+")) {
-    // already international
-  } else if (digits.startsWith("00")) {
-    digits = digits.slice(2);
+  const cleaned = asciiDigits(phone.replace(FORMAT_CONTROLS, "")).trim();
+  const compact = cleaned.replace(/[^\d+]/g, "");
+  let digits = compact.replace(/\D/g, "");
+  if (compact.startsWith("+") || digits.startsWith("00")) {
+    if (!compact.startsWith("+")) digits = digits.slice(2);
+    const code = Object.values(WHATSAPP_CALLING_CODES).find((c) => digits.startsWith(c));
+    if (code !== undefined && digits[code.length] === "0") {
+      digits = `${code}${digits.slice(code.length + 1)}`;
+    }
   } else {
     const code = country === null ? undefined : WHATSAPP_CALLING_CODES[country.toUpperCase()];
     if (code === undefined) return null;

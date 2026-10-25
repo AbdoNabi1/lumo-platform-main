@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { CheckIcon, CopyIcon, MessageCircleIcon } from "lucide-react";
 import {
   Button,
@@ -19,6 +19,9 @@ import {
 import { issueRecoveryLinkAction } from "@/app/abandoned-checkouts/actions";
 import { fillTemplate, toWhatsAppDigits, whatsAppUrl } from "@/lib/whatsapp";
 import type { Dictionary } from "@/messages/en";
+
+/** How long "Copied" stays on the button. */
+const COPIED_RESET_MS = 3000;
 
 /** True only when the browser really put the text on the clipboard. */
 async function copyText(text: string): Promise<boolean> {
@@ -62,27 +65,75 @@ export function RecoveryCard({
   const [shareOpen, setShareOpen] = useState(false);
   const [message, setMessage] = useState("");
 
+  const linkField = useRef<HTMLInputElement>(null);
+  const busy = useRef(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [selectLink, setSelectLink] = useState(false);
+
+  const clearResetTimer = () => {
+    if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+    resetTimer.current = null;
+  };
+  useEffect(() => clearResetTimer, []);
+
+  // A refused clipboard leaves the link to the merchant: focus and select it, ready for Ctrl+C.
+  useEffect(() => {
+    if (selectLink && link !== null) {
+      linkField.current?.focus();
+      linkField.current?.select();
+      setSelectLink(false);
+    }
+  }, [selectLink, link]);
+
   const issue = async () => {
-    const result = await issueRecoveryLinkAction(checkoutId);
-    if (!result.ok) {
-      setError(result.message);
+    try {
+      const result = await issueRecoveryLinkAction(checkoutId);
+      if (!result.ok) {
+        setError(result.message);
+        return null;
+      }
+      setError(null);
+      setLink(result.url);
+      return result;
+    } catch {
+      // network drop, deployment skew: say so here rather than taking the page down
+      setError(r.error);
       return null;
     }
-    setError(null);
-    setLink(result.url);
-    return result;
+  };
+
+  /** One press at a time: a second press (either button) while a link is being made is ignored. */
+  const press = (work: () => Promise<void>) => {
+    if (busy.current) return;
+    busy.current = true;
+    startTransition(async () => {
+      try {
+        await work();
+      } finally {
+        busy.current = false;
+      }
+    });
   };
 
   const copy = () =>
-    startTransition(async () => {
+    press(async () => {
+      clearResetTimer();
       setCopied(false);
       const issued = await issue();
       if (issued === null) return;
-      setCopied(await copyText(issued.url));
+      const done = await copyText(issued.url);
+      setCopied(done);
+      if (done) {
+        resetTimer.current = setTimeout(() => setCopied(false), COPIED_RESET_MS);
+      } else {
+        setSelectLink(true);
+      }
     });
 
   const share = () =>
-    startTransition(async () => {
+    press(async () => {
+      clearResetTimer();
+      setCopied(false);
       const issued = await issue();
       if (issued === null) return;
       const template = customerName === null ? r.whatsappMessageNoName : r.whatsappMessage;
@@ -129,6 +180,7 @@ export function RecoveryCard({
             <Label htmlFor={`${id}-link`}>{r.linkLabel}</Label>
             <Input
               id={`${id}-link`}
+              ref={linkField}
               readOnly
               value={link}
               dir="ltr"

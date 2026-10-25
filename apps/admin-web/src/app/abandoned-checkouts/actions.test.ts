@@ -62,6 +62,8 @@ describe("issueRecoveryLinkAction (order operations Part 3)", () => {
   it("maps refusals to the merchant's words", async () => {
     api.issueRecoveryLink.mockResolvedValueOnce({ outcome: "forbidden" });
     expect(await issueRecoveryLinkAction(ID)).toEqual({ ok: false, message: r.forbidden });
+    api.issueRecoveryLink.mockResolvedValueOnce({ outcome: "unauthorized" });
+    expect(await issueRecoveryLinkAction(ID)).toEqual({ ok: false, message: r.sessionExpired });
     api.issueRecoveryLink.mockResolvedValueOnce({
       outcome: "conflict",
       message: "ALREADY_RECOVERED: x",

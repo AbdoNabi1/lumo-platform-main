@@ -464,10 +464,12 @@ export const ar: Dictionary = {
       cancel: "إلغاء",
       error: "تعذّر إنشاء رابط الاسترداد. حاول مرة أخرى.",
       forbidden: "ليست لديك صلاحية لإرسال روابط الاسترداد.",
+      sessionExpired: "الجلسة خلصت. سجّل دخولك تاني وجرّب مرة كمان.",
       alreadyRecovered: "تم استرداد عملية الدفع هذه بالفعل.",
       noStoreAddress: "متجرك ليس له عنوان على الإنترنت بعد، لذلك لا يمكن إنشاء رابط.",
-      whatsappMessage: "أهلاً {name}، لاحظنا إنك ما كملتش طلبك من {shop}. تقدر تكمله من هنا: {url}",
-      whatsappMessageNoName: "أهلاً، لاحظنا إنك ما كملتش طلبك من {shop}. تقدر تكمله من هنا: {url}",
+      whatsappMessage:
+        "أهلاً {name}، لاحظنا إنك ما كملتش طلبك من {shop}. تقدر تكمله من هنا:\n{url}",
+      whatsappMessageNoName: "أهلاً، لاحظنا إنك ما كملتش طلبك من {shop}. تقدر تكمله من هنا:\n{url}",
     },
     timeline: {
       title: "السجل",

@@ -6,6 +6,7 @@ import { Badge, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import { AbandonedCheckoutTimeline } from "@/components/abandoned-checkouts/abandoned-checkout-timeline";
 import { RecoveryCard } from "@/components/abandoned-checkouts/recovery-card";
 import { AppShell } from "@/components/app-shell";
+import { ProductThumb } from "@/components/products/product-thumb";
 import {
   fetchAbandonedCheckout,
   type AbandonedCheckoutDetailDto,
@@ -135,16 +136,12 @@ function ItemsCard({ checkout, t, locale }: CardProps) {
               key={`${item.productId}:${item.variantId ?? ""}:${index}`}
               className="flex items-center gap-3"
             >
-              {item.imageUrl !== null ? (
-                <img src={item.imageUrl} alt="" className="size-10 rounded-md object-cover" />
-              ) : (
-                <span aria-hidden="true" className="bg-muted size-10 rounded-md" />
-              )}
+              <ProductThumb url={item.imageUrl} alt="" />
               <div className="min-w-0 flex-1">
                 <p dir="auto" className="truncate font-medium">
                   {item.title ?? a.items.noTitle}
                 </p>
-                <p className="text-muted-foreground text-sm">
+                <p dir="auto" className="text-muted-foreground text-sm">
                   {[item.variantTitle, item.sku].filter((part) => part !== null).join(" · ")}
                 </p>
               </div>
@@ -182,7 +179,10 @@ function TotalsCard({ checkout, t, locale }: CardProps) {
           <>
             <Row label={a.subtotal} value={money(totals.subtotalMinor)} />
             {totals.discountMinor > 0 && (
-              <Row label={a.discount} value={`−${money(totals.discountMinor)}`} />
+              <Row
+                label={a.discount}
+                value={<bdi dir="ltr">{`−${money(totals.discountMinor)}`}</bdi>}
+              />
             )}
             <Row label={a.shipping} value={money(totals.shippingMinor)} />
             <Row label={a.tax} value={money(totals.taxMinor)} />
@@ -200,7 +200,7 @@ function Row({
   strong,
 }: {
   readonly label: string;
-  readonly value: string;
+  readonly value: ReactNode;
   readonly strong?: boolean;
 }) {
   return (
@@ -227,12 +227,20 @@ function CustomerCard({ checkout, t }: Omit<CardProps, "locale">) {
           </p>
         )}
         {checkout.email !== null && (
-          <a href={`mailto:${checkout.email}`} dir="ltr" className="hover:underline">
+          <a
+            href={`mailto:${encodeURIComponent(checkout.email)}`}
+            dir="ltr"
+            className="hover:underline"
+          >
             {checkout.email}
           </a>
         )}
         {checkout.phone !== null && (
-          <a href={`tel:${checkout.phone}`} dir="ltr" className="hover:underline">
+          <a
+            href={`tel:${checkout.phone.replace(/[^\d+]/g, "")}`}
+            dir="ltr"
+            className="hover:underline"
+          >
             {checkout.phone}
           </a>
         )}
@@ -257,15 +265,15 @@ function ShippingCard({ checkout, t }: Omit<CardProps, "locale">) {
           <p className="text-muted-foreground">{a.none}</p>
         ) : (
           <address dir="auto" className="flex flex-col not-italic">
-            {address.name !== null && <span>{address.name}</span>}
-            <span>{address.line1}</span>
-            {address.line2 !== null && <span>{address.line2}</span>}
-            <span>
+            {address.name !== null && <span dir="auto">{address.name}</span>}
+            <span dir="auto">{address.line1}</span>
+            {address.line2 !== null && <span dir="auto">{address.line2}</span>}
+            <span dir="auto">
               {[address.city, address.province, address.postalCode]
                 .filter((p) => p !== null && p !== "")
                 .join(", ")}
             </span>
-            <span>{address.country}</span>
+            <span dir="auto">{address.country}</span>
           </address>
         )}
       </CardContent>
