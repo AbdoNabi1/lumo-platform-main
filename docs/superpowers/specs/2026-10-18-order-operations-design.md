@@ -39,20 +39,20 @@ A merchant's day is mostly orders, and today the admin covers only the single or
 
 ## What already exists (and is reused)
 
-| Area | What exists | Reused for |
-| --- | --- | --- |
-| Order status | `OrderEventType` + transition table (`services/orders/src/domain/order-event.ts`); status derived from `order_events`; `derivePaymentStatus`, `isOpenOrder`, `CANCELLED_EVENT_TYPE`, `CLOSED_EVENT_TYPE`, `REFUNDED_EVENT_TYPES` (`order-statuses.ts`) | Tab predicates (part 1) |
-| Fulfillment status | `fulfillmentStatusesOf` (one batched Fulfillment read per page), `deriveFulfillmentStatus`, `listUnfulfilledOrders` (scan with `UNFULFILLED_SCAN_CAP`) in `apps/admin/src/http` | Unfulfilled tab, list/CSV fulfillment column |
-| Customer names | `customerNamesFor` / `customerNameOf` (`order-customer-names.ts`) | List, CSV, packing slips |
-| Order routes | `GET /orders` (+`fulfillment=unfulfilled`), `GET /orders/:id`, `/mark-paid`, `/request-payment-capture`, `/advance` (`admin-routes.ts` ~1400–1640); `POST /fulfillments` | Bulk actions call the same controllers |
-| COD settlement | `ConfirmCodCollection` (eligibility by provider capability, not name) behind `POST /payment-intents/:id/cod-collection` (`payments:confirm_cod_collection`, admin-only) | Bulk "Mark cash as received", draft "Mark as paid" |
-| Checkout | `CheckoutSession` (items/address/contact/totals/discount snapshots, `started`/`locked` = open), `StartCheckout`, `LoadItems`, `CompleteCheckout` (stock reservation, discount re-check, guest customer resolution via `contactEmail`, order numbering), `InitiatePayment` | Abandoned list (part 3), draft completion and invoice (part 4) |
-| Public checkout ownership | `requireOwnedSession`: `sessionRef` from the HttpOnly guest cookie (`morbeh-storefront-guest-session`) is the only proof of ownership; `sessionRef` never on the wire; 404 on mismatch | Recovery / invoice links must never reveal or require the original `sessionRef` |
-| Storefront resume | `/checkout` reads `GUEST_SESSION_COOKIE` + `CHECKOUT_SESSION_COOKIE` (`morbeh_checkout_session`), both HttpOnly; `startCheckout` sets the latter (`apps/storefront/src/app/checkout/actions.ts`) | The link landing page sets the same two cookies |
-| Server-side pricing | `resolveMerchandise` (`merchandise-resolution.ts`): variant price from Catalog, never from the caller | Recovery re-pricing, draft line pricing |
-| Numbering | `PrismaOrderNumberAllocator` on `orders.order_number_counters` (atomic upsert in the caller's tx) | Draft numbers `#D1` |
-| Roles | `ROLE_PERMISSIONS` (`packages/auth/src/role-table-access-control.ts`): operator `orders:*`, viewer `orders:read`, payments admin-only | Permission choices below |
-| Regions | `packages/regions` province names (en/ar) | CSV and slips print province names |
+| Area                      | What exists                                                                                                                                                                                                                                                               | Reused for                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Order status              | `OrderEventType` + transition table (`services/orders/src/domain/order-event.ts`); status derived from `order_events`; `derivePaymentStatus`, `isOpenOrder`, `CANCELLED_EVENT_TYPE`, `CLOSED_EVENT_TYPE`, `REFUNDED_EVENT_TYPES` (`order-statuses.ts`)                    | Tab predicates (part 1)                                                         |
+| Fulfillment status        | `fulfillmentStatusesOf` (one batched Fulfillment read per page), `deriveFulfillmentStatus`, `listUnfulfilledOrders` (scan with `UNFULFILLED_SCAN_CAP`) in `apps/admin/src/http`                                                                                           | Unfulfilled tab, list/CSV fulfillment column                                    |
+| Customer names            | `customerNamesFor` / `customerNameOf` (`order-customer-names.ts`)                                                                                                                                                                                                         | List, CSV, packing slips                                                        |
+| Order routes              | `GET /orders` (+`fulfillment=unfulfilled`), `GET /orders/:id`, `/mark-paid`, `/request-payment-capture`, `/advance` (`admin-routes.ts` ~1400–1640); `POST /fulfillments`                                                                                                  | Bulk actions call the same controllers                                          |
+| COD settlement            | `ConfirmCodCollection` (eligibility by provider capability, not name) behind `POST /payment-intents/:id/cod-collection` (`payments:confirm_cod_collection`, admin-only)                                                                                                   | Bulk "Mark cash as received", draft "Mark as paid"                              |
+| Checkout                  | `CheckoutSession` (items/address/contact/totals/discount snapshots, `started`/`locked` = open), `StartCheckout`, `LoadItems`, `CompleteCheckout` (stock reservation, discount re-check, guest customer resolution via `contactEmail`, order numbering), `InitiatePayment` | Abandoned list (part 3), draft completion and invoice (part 4)                  |
+| Public checkout ownership | `requireOwnedSession`: `sessionRef` from the HttpOnly guest cookie (`morbeh-storefront-guest-session`) is the only proof of ownership; `sessionRef` never on the wire; 404 on mismatch                                                                                    | Recovery / invoice links must never reveal or require the original `sessionRef` |
+| Storefront resume         | `/checkout` reads `GUEST_SESSION_COOKIE` + `CHECKOUT_SESSION_COOKIE` (`morbeh_checkout_session`), both HttpOnly; `startCheckout` sets the latter (`apps/storefront/src/app/checkout/actions.ts`)                                                                          | The link landing page sets the same two cookies                                 |
+| Server-side pricing       | `resolveMerchandise` (`merchandise-resolution.ts`): variant price from Catalog, never from the caller                                                                                                                                                                     | Recovery re-pricing, draft line pricing                                         |
+| Numbering                 | `PrismaOrderNumberAllocator` on `orders.order_number_counters` (atomic upsert in the caller's tx)                                                                                                                                                                         | Draft numbers `#D1`                                                             |
+| Roles                     | `ROLE_PERMISSIONS` (`packages/auth/src/role-table-access-control.ts`): operator `orders:*`, viewer `orders:read`, payments admin-only                                                                                                                                     | Permission choices below                                                        |
+| Regions                   | `packages/regions` province names (en/ar)                                                                                                                                                                                                                                 | CSV and slips print province names                                              |
 
 ## Goals
 
@@ -88,11 +88,11 @@ A merchant's day is mostly orders, and today the admin covers only the single or
 ## Global constraints (apply to every part)
 
 1. **Migrations:** hand-written, additive SQL in `packages/db/prisma/schema/migrations/<ts>_<name>/
-   migration.sql`, never run against a real DB by the agent (owner deploys from Railway's Console
+migration.sql`, never run against a real DB by the agent (owner deploys from Railway's Console
    before the release that reads them). Every new tenant table: `tenant_id TEXT NOT NULL`, `ENABLE` +
    `FORCE ROW LEVEL SECURITY`, `DROP POLICY IF EXISTS tenant_isolation …; CREATE POLICY
-   tenant_isolation … FOR ALL USING (tenant_id = current_setting('app.tenant_id', true)) WITH CHECK
-   (same)` — exactly as `20261012000000_order_numbers`. Prisma models updated in the matching
+tenant_isolation … FOR ALL USING (tenant_id = current_setting('app.tenant_id', true)) WITH CHECK
+(same)` — exactly as `20261012000000_order_numbers`. Prisma models updated in the matching
    `*.prisma` file.
 2. **Per-request tenant (ADR-0014):** new repositories take `tenantId` per call, reads go through
    `runReadScoped` (or the caller's `tx`), writes through the unit of work; nothing is pinned at
@@ -110,16 +110,16 @@ A merchant's day is mostly orders, and today the admin covers only the single or
 
 ## Permissions (all parts)
 
-| Permission | Who has it today via the role table | Used by |
-| --- | --- | --- |
-| `orders:read` | viewer, operator, admin | lists, detail, drafts list/detail, abandoned list/detail, packing slips |
-| `orders:archive` | operator, admin | archive / unarchive (single and bulk) |
-| `orders:export` | operator, admin | export rows |
-| `orders:edit_note`, `orders:tag`, `orders:comment` | operator, admin | part 2 |
-| `orders:recover_checkout` | operator, admin | issue a recovery link |
-| `orders:draft` | operator, admin | create / update / delete drafts, issue invoice link |
-| `orders:complete_draft` | operator, admin | create the order from a draft (collect on delivery) |
-| `payments:confirm_cod_collection` | admin | bulk "Mark cash as received"; draft "Mark as paid" (checked in addition to `orders:complete_draft`) |
+| Permission                                         | Who has it today via the role table | Used by                                                                                             |
+| -------------------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `orders:read`                                      | viewer, operator, admin             | lists, detail, drafts list/detail, abandoned list/detail, packing slips                             |
+| `orders:archive`                                   | operator, admin                     | archive / unarchive (single and bulk)                                                               |
+| `orders:export`                                    | operator, admin                     | export rows                                                                                         |
+| `orders:edit_note`, `orders:tag`, `orders:comment` | operator, admin                     | part 2                                                                                              |
+| `orders:recover_checkout`                          | operator, admin                     | issue a recovery link                                                                               |
+| `orders:draft`                                     | operator, admin                     | create / update / delete drafts, issue invoice link                                                 |
+| `orders:complete_draft`                            | operator, admin                     | create the order from a draft (collect on delivery)                                                 |
+| `payments:confirm_cod_collection`                  | admin                               | bulk "Mark cash as received"; draft "Mark as paid" (checked in addition to `orders:complete_draft`) |
 
 **Decision:** export is not given to viewers (`orders:export`, not `orders:read`). Reason: a bulk file
 of customer phones and addresses is a bigger exposure than reading orders one screen at a time.
@@ -136,13 +136,13 @@ money admin-only; this project does not reopen that.
 
 The list gets Shopify's tabs, in Shopify's order, driven by `?view=` in the URL (absent = `all`).
 
-| Tab (en / ar) | `view` | Meaning in this codebase |
-| --- | --- | --- |
-| All / الكل | `all` | every order, archived included (archived rows show an "Archived" badge) |
+| Tab (en / ar)           | `view`        | Meaning in this codebase                                                                                                                                             |
+| ----------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| All / الكل              | `all`         | every order, archived included (archived rows show an "Archived" badge)                                                                                              |
 | Unfulfilled / غير منفذة | `unfulfilled` | not archived, `isOpenOrder` (never cancelled, not closed) and Plan 3B fulfillment status `unfulfilled` — the exact definition Home's "Orders to fulfill" card counts |
-| Unpaid / غير مدفوعة | `unpaid` | not archived, open, `derivePaymentStatus(history) === "pending"` |
-| Open / مفتوحة | `open` | not archived, open |
-| Archived / مؤرشفة | `archived` | `archived_at IS NOT NULL` |
+| Unpaid / غير مدفوعة     | `unpaid`      | not archived, open, `derivePaymentStatus(history) === "pending"`                                                                                                     |
+| Open / مفتوحة           | `open`        | not archived, open                                                                                                                                                   |
+| Archived / مؤرشفة       | `archived`    | `archived_at IS NOT NULL`                                                                                                                                            |
 
 **Decision:** "Unfulfilled" reuses the Home card's definition (only `unfulfilled`, not `in_progress`).
 Reason: one definition for the card and the tab; `in_progress` here means a fulfillment is already
@@ -173,9 +173,9 @@ never touches the aggregate's history or `version` (no conflict with payment/ful
   resets it); covered by a test.
 - New port in `services/orders/src/domain/order-annotations.ts`:
   `OrderAnnotationRepository { setArchived(orderIds, archivedAt: Date | null, tenantId, tx?):
-  Promise<readonly string[] /* ids actually changed */>; annotationsOf(orderIds, tenantId, tx?):
-  Promise<ReadonlyMap<string, OrderAnnotations>> }` where `OrderAnnotations = { archivedAt: Date |
-  null }` (part 2 widens it with `note`, `tags`). Prisma implementation does a plain
+Promise<readonly string[] /* ids actually changed */>; annotationsOf(orderIds, tenantId, tx?):
+Promise<ReadonlyMap<string, OrderAnnotations>> }` where `OrderAnnotations = { archivedAt: Date |
+null }` (part 2 widens it with `note`, `tags`). Prisma implementation does a plain
   `updateMany({ where: { tenantId, id: { in } } })` — no version check, no history row. In-memory
   implementation for tests.
 - Use cases (`services/orders/src/application/order-annotations.use-cases.ts`): `ArchiveOrders`,
@@ -210,23 +210,23 @@ existing order-number/customer-ref match). Reason: Egyptian merchants look order
 
 ### 1.4 API (apps/admin)
 
-| Route | Permission | Shape |
-| --- | --- | --- |
-| `GET /orders` | `orders:read` | adds `view` (`all`/`unfulfilled`/`unpaid`/`open`/`archived`), `first` max stays 100; items gain `archivedAt: string \| null` |
-| `POST /orders/:orderId/archive`, `POST /orders/:orderId/unarchive` | `orders:archive` | 200 `{ orderId, archivedAt }`; idempotent |
-| `POST /orders/bulk` | per action (below) | body `{ action, orderIds: string[1..50] }` (`.strict()`; part 2 adds `tags`); 200 `{ results: [{ orderId, outcome: "ok" \| "skipped" \| "failed", reason?: string }] }`; `idempotent: true` |
-| `GET /orders/export-rows` | `orders:export` | query = list filters (`view`, `q`, `status`, `tag` from part 2) + `ids` (comma list, max 50) + `createdFrom`/`createdTo` (ISO dates) + `first` (max 250) + `after`; cursor page of `OrderExportRowDto` |
-| `GET /orders/packing-slips?ids=` | `orders:read` | max 50 ids; `{ slips: PackingSlipDto[] }` |
+| Route                                                              | Permission         | Shape                                                                                                                                                                                                  |
+| ------------------------------------------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /orders`                                                      | `orders:read`      | adds `view` (`all`/`unfulfilled`/`unpaid`/`open`/`archived`), `first` max stays 100; items gain `archivedAt: string \| null`                                                                           |
+| `POST /orders/:orderId/archive`, `POST /orders/:orderId/unarchive` | `orders:archive`   | 200 `{ orderId, archivedAt }`; idempotent                                                                                                                                                              |
+| `POST /orders/bulk`                                                | per action (below) | body `{ action, orderIds: string[1..50] }` (`.strict()`; part 2 adds `tags`); 200 `{ results: [{ orderId, outcome: "ok" \| "skipped" \| "failed", reason?: string }] }`; `idempotent: true`            |
+| `GET /orders/export-rows`                                          | `orders:export`    | query = list filters (`view`, `q`, `status`, `tag` from part 2) + `ids` (comma list, max 50) + `createdFrom`/`createdTo` (ISO dates) + `first` (max 250) + `after`; cursor page of `OrderExportRowDto` |
+| `GET /orders/packing-slips?ids=`                                   | `orders:read`      | max 50 ids; `{ slips: PackingSlipDto[] }`                                                                                                                                                              |
 
 Bulk actions (route checks the action's permission first; each order then runs through the SAME
 controller call the single-order screen uses, each in its own transaction):
 
-| `action` | Permission | Per-order behaviour | `skipped` when |
-| --- | --- | --- | --- |
-| `archive` / `unarchive` | `orders:archive` | `ArchiveOrders` / `UnarchiveOrders` | already in that state |
-| `fulfill` | `fulfillment:create` | opens a fulfillment for every item (`POST /fulfillments`'s use case, the order page's "Fulfill items") | fulfillment already open, or not open |
-| `capture_payments` | `orders:request_payment_capture` | `requestPaymentCapture` | payment not pending, or provider settles at pay time (COD/manual) |
-| `mark_cod_collected` | `payments:confirm_cod_collection` | `ConfirmCodCollection` with the amount read server-side from the intent (as `confirmCodCollectionAction` does) | not a pending COD intent of this order |
+| `action`                | Permission                        | Per-order behaviour                                                                                            | `skipped` when                                                    |
+| ----------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `archive` / `unarchive` | `orders:archive`                  | `ArchiveOrders` / `UnarchiveOrders`                                                                            | already in that state                                             |
+| `fulfill`               | `fulfillment:create`              | opens a fulfillment for every item (`POST /fulfillments`'s use case, the order page's "Fulfill items")         | fulfillment already open, or not open                             |
+| `capture_payments`      | `orders:request_payment_capture`  | `requestPaymentCapture`                                                                                        | payment not pending, or provider settles at pay time (COD/manual) |
+| `mark_cod_collected`    | `payments:confirm_cod_collection` | `ConfirmCodCollection` with the amount read server-side from the intent (as `confirmCodCollectionAction` does) | not a pending COD intent of this order                            |
 
 **Decision:** the bulk "fulfil" action opens fulfillments (Shopify wording "Fulfill items" / "تنفيذ
 المنتجات") rather than an instant "Mark as fulfilled". Reason: here "fulfilled" means handed to a
@@ -374,17 +374,17 @@ Reason: Shopify treats `VIP` and `vip` as one tag; Arabic is unaffected.
 
 - `OrderAnnotations` widens to `{ archivedAt, note: string | null, tags: readonly string[] }`;
   `OrderAnnotationRepository` gains `setNote`, `addTags(orderIds, tags)`, `removeTags(orderIds,
-  tagKeys)`, `tagsInUse(tenantId, prefix?, limit=50)` (distinct tags with counts, for suggestions)
+tagKeys)`, `tagsInUse(tenantId, prefix?, limit=50)` (distinct tags with counts, for suggestions)
   and `annotationsOf` returns tags.
 - `OrderTimelineRepository { append(entry, tenantId, tx?); listForOrder(orderId, tenantId, {first:
-  200}); findById; update(edit/delete) }`, value type `OrderTimelineEntry`.
+200}); findById; update(edit/delete) }`, value type `OrderTimelineEntry`.
 - Use cases (`order-annotations.use-cases.ts`, `order-timeline.use-cases.ts`): `UpdateOrderNote`,
   `AddOrderTags`, `RemoveOrderTags` (bulk-capable: `orderIds[]`), `AddOrderComment`,
   `EditOrderComment`, `DeleteOrderComment` (soft: `deleted_at`, the entry stays as "Comment deleted"
   for the audit trail). Each annotation change appends its activity entry in the same transaction;
   `ArchiveOrders`/`UnarchiveOrders` from part 1 start appending `archived`/`unarchived`.
 - **Author.** The route passes `principal.id`; a new port `StaffDirectoryPort.displayNameOf(principalId,
-  tenantId)` (adapter in `apps/admin/src/infrastructure/cross-context/staff-directory.adapter.ts`,
+tenantId)` (adapter in `apps/admin/src/infrastructure/cross-context/staff-directory.adapter.ts`,
   reading Security's `principals.display_name` by `external_id`) fills `author_name`; unknown →
   `null`, shown as "Staff". Never accepted from the client.
   **Decision:** author name is snapshotted at write time. Reason: the timeline is a record; renaming a
@@ -394,17 +394,17 @@ Reason: Shopify treats `VIP` and `vip` as one tag; Arabic is unaffected.
 
 ### 2.3 API
 
-| Route | Permission | Shape |
-| --- | --- | --- |
-| `PUT /orders/:orderId/note` | `orders:edit_note` | `{ note: string \| null }` → `{ note }` |
-| `POST /orders/:orderId/tags` | `orders:tag` | `{ add?: string[], remove?: string[] }` → `{ tags }` |
-| `GET /order-tags?q=` | `orders:read` | `{ tags: { tag, count }[] }` (≤ 50, prefix match on `tag_key`) |
-| `POST /orders/:orderId/comments` | `orders:comment` | `{ body }` → `TimelineEntryDto` |
-| `PATCH /orders/:orderId/comments/:entryId` | `orders:comment` | `{ body }` (author only) |
-| `DELETE /orders/:orderId/comments/:entryId` | `orders:comment` | author or admin |
-| `POST /orders/bulk` | `orders:tag` | new actions `add_tags` / `remove_tags` with `tags: string[1..20]` |
-| `GET /orders` | `orders:read` | new filter `tag` (repeatable → AND); items gain `tags` |
-| `GET /orders/:orderId` | `orders:read` | detail gains `note`, `tags`, `archivedAt`, `timelineEntries: TimelineEntryDto[]` (latest 200) |
+| Route                                       | Permission         | Shape                                                                                         |
+| ------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
+| `PUT /orders/:orderId/note`                 | `orders:edit_note` | `{ note: string \| null }` → `{ note }`                                                       |
+| `POST /orders/:orderId/tags`                | `orders:tag`       | `{ add?: string[], remove?: string[] }` → `{ tags }`                                          |
+| `GET /order-tags?q=`                        | `orders:read`      | `{ tags: { tag, count }[] }` (≤ 50, prefix match on `tag_key`)                                |
+| `POST /orders/:orderId/comments`            | `orders:comment`   | `{ body }` → `TimelineEntryDto`                                                               |
+| `PATCH /orders/:orderId/comments/:entryId`  | `orders:comment`   | `{ body }` (author only)                                                                      |
+| `DELETE /orders/:orderId/comments/:entryId` | `orders:comment`   | author or admin                                                                               |
+| `POST /orders/bulk`                         | `orders:tag`       | new actions `add_tags` / `remove_tags` with `tags: string[1..20]`                             |
+| `GET /orders`                               | `orders:read`      | new filter `tag` (repeatable → AND); items gain `tags`                                        |
+| `GET /orders/:orderId`                      | `orders:read`      | detail gains `note`, `tags`, `archivedAt`, `timelineEntries: TimelineEntryDto[]` (latest 200) |
 
 `TimelineEntryDto = { id, kind, authorName: string | null, body: string | null, data, createdAt,
 editedAt: string | null, deleted: boolean, canEdit: boolean }` (`canEdit` decided server-side).
@@ -451,6 +451,9 @@ IS NOT NULL OR shipping_address->>'phone' IS NOT NULL) AND draft_terms = '{}'` (
 from part 4; before part 4 it is omitted), **plus** every session with `recovered_order_ref IS NOT
 NULL` (so recovered ones stay listed as "Recovered", as in Shopify). Reason: no job infrastructure to
 build or monitor; the list is always current.
+
+A recovered clone that itself idles can appear as its own abandoned row. Recovery marks one hop, the
+session the link was issued for (same as Shopify); it does not walk back to the root checkout.
 
 **Decision:** the idle threshold is 60 minutes (constant `ABANDONED_AFTER_MINUTES` in
 `services/checkout`). Reason: WhatsApp follow-up works best the same day; a per-shop setting can come
@@ -511,13 +514,13 @@ The `invoice` purpose and `draft_order_ref` are created now so part 4 needs no a
 ### 3.4 Domain and use cases (services/checkout)
 
 - `CheckoutLink` aggregate (`domain/checkout-link.ts`): `issue(purpose, target, createdBy, now,
-  ttl)` → `{ link, token }`; `isUsable(now)`; `recordClaim(now, resultCheckoutRef?)`; `revoke(now)`.
+ttl)` → `{ link, token }`; `isUsable(now)`; `recordClaim(now, resultCheckoutRef?)`; `revoke(now)`.
   `CheckoutLinkRepository { save; findByTokenHash(hash, tenantId, tx?); latestFor(sessionId, tenantId) }`.
 - `CheckoutSession` gains `recoveredFromRef?`, `recoveredOrderRef?` and
   `markRecovered(orderRef, eventId, now)` (stamps `recoveredOrderRef`, then `expire()` if still open,
   so the original browser cannot also place it). Mapper/repository persist both columns.
 - `CheckoutSessionRepository.listAbandoned({ olderThan, first, after, search?, recovery?: "recovered"
-  | "not_recovered" }, tenantId)` — cursor by `id desc` (UUIDv7, time-ordered); `search` matches
+| "not_recovered" }, tenantId)` — cursor by `id desc` (UUIDv7, time-ordered); `search` matches
   contact email, shipping recipient name and phone (`shipping_address->>'name'`/`'phone'` ILIKE).
 - Use cases: `ListAbandonedCheckouts`, `GetAbandonedCheckout` (404 unless it matches the abandoned
   definition), `IssueRecoveryLink`, `ResolveCheckoutLink` (hash → usable link or not-found).
@@ -555,11 +558,11 @@ Both public routes are covered by the pipeline's existing public rate limiting.
 
 ### 3.6 Admin API
 
-| Route | Permission | Shape |
-| --- | --- | --- |
-| `GET /abandoned-checkouts?first=&after=&q=&recovery=` | `orders:read` | page of `AbandonedCheckoutListItemDto` |
-| `GET /abandoned-checkouts/:checkoutSessionId` | `orders:read` | `AbandonedCheckoutDetailDto` |
-| `POST /abandoned-checkouts/:checkoutSessionId/recovery-link` | `orders:recover_checkout` | 201 `{ url: string \| null, path, expiresAt, whatsappText }`; `idempotent: true` |
+| Route                                                        | Permission                | Shape                                                                                                                                                                                             |
+| ------------------------------------------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /abandoned-checkouts?first=&after=&q=&recovery=`        | `orders:read`             | page of `AbandonedCheckoutListItemDto`                                                                                                                                                            |
+| `GET /abandoned-checkouts/:checkoutSessionId`                | `orders:read`             | `AbandonedCheckoutDetailDto`                                                                                                                                                                      |
+| `POST /abandoned-checkouts/:checkoutSessionId/recovery-link` | `orders:recover_checkout` | 201 `{ url: string \| null, path, expiresAt, shopName }` (admin-web composes the WhatsApp text from its dictionaries); NOT idempotent: the token must never be cached, each call mints a new link |
 
 ```ts
 AbandonedCheckoutListItemDto = { id, reference /* "#" + last 8 hex of id, upper case */, createdAt,
@@ -791,7 +794,7 @@ after the customer paid, even if the best-effort call failed.
 
 `POST /draft-orders/:id/invoice-link` (`orders:draft`) validates as in 4.5, materialises, issues a
 `CheckoutLink` (`purpose: "invoice"`, `draftOrderRef`, 30 days), sets `status = invoice_sent` and
-`invoiceSentAt`, returns `{ url, path, expiresAt, whatsappText }` like the recovery link.
+`invoiceSentAt`, returns `{ url, path, expiresAt, shopName }` like the recovery link (and, like it, is not idempotent: the token must never be cached).
 
 **Decision:** the invoice link points to the draft, not to one session. Reason: editing a draft after
 sending must not break the link the customer already has — the claim re-materialises from the latest
@@ -807,16 +810,16 @@ the bearer secret by design (customer forwards it to a family member who pays); 
 
 ### 4.8 Admin API
 
-| Route | Permission | Shape |
-| --- | --- | --- |
-| `GET /draft-orders?status=&q=&first=&after=` | `orders:read` | page of `{ id, draftNumber, createdAt, customerName, status, totalMinor, currency, orderRef, orderNumber }` |
-| `POST /draft-orders` | `orders:draft` | `DraftOrderInput` → 201 `DraftOrderDto`; `idempotent: true` |
-| `GET /draft-orders/:id` | `orders:read` | `DraftOrderDto` (lines with images, computed totals, customer, links) |
-| `PUT /draft-orders/:id` | `orders:draft` | full `DraftOrderInput` + `version` (optimistic lock → 409 on stale); not allowed when completed |
-| `DELETE /draft-orders/:id` | `orders:draft` | soft delete; not when completed |
-| `POST /draft-orders/:id/shipping-rates` | `orders:draft` | `{ rates: [{ method, title, amountMinor }] }` for the draft's address |
-| `POST /draft-orders/:id/invoice-link` | `orders:draft` | as 4.7 |
-| `POST /draft-orders/:id/complete` | `orders:complete_draft` (+ `payments:confirm_cod_collection` when `payment = "paid"`) | 200 `{ orderId, orderNumber }` |
+| Route                                        | Permission                                                                            | Shape                                                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GET /draft-orders?status=&q=&first=&after=` | `orders:read`                                                                         | page of `{ id, draftNumber, createdAt, customerName, status, totalMinor, currency, orderRef, orderNumber }` |
+| `POST /draft-orders`                         | `orders:draft`                                                                        | `DraftOrderInput` → 201 `DraftOrderDto`; `idempotent: true`                                                 |
+| `GET /draft-orders/:id`                      | `orders:read`                                                                         | `DraftOrderDto` (lines with images, computed totals, customer, links)                                       |
+| `PUT /draft-orders/:id`                      | `orders:draft`                                                                        | full `DraftOrderInput` + `version` (optimistic lock → 409 on stale); not allowed when completed             |
+| `DELETE /draft-orders/:id`                   | `orders:draft`                                                                        | soft delete; not when completed                                                                             |
+| `POST /draft-orders/:id/shipping-rates`      | `orders:draft`                                                                        | `{ rates: [{ method, title, amountMinor }] }` for the draft's address                                       |
+| `POST /draft-orders/:id/invoice-link`        | `orders:draft`                                                                        | as 4.7                                                                                                      |
+| `POST /draft-orders/:id/complete`            | `orders:complete_draft` (+ `payments:confirm_cod_collection` when `payment = "paid"`) | 200 `{ orderId, orderNumber }`                                                                              |
 
 ```ts
 DraftOrderInput = { customerId?: string | null, email?: string | null, phone?: string | null,
@@ -911,12 +914,12 @@ order exists with the custom discount.
 Each part has its own implementation plan, branch commits, review and deploy (migration first, then
 the release that reads it). Later parts only add to earlier ones.
 
-| # | Plan | Migration | Depends on |
-| --- | --- | --- | --- |
-| 1 | Order list operations (tabs, archive, bulk fulfil/capture/cash/archive, packing slips, export) | `20261018000000_order_archive` | — |
-| 2 | Notes, tags, timeline comments (+ tag filter/column, bulk tags, tags/note in export and slips) | `20261018010000_order_notes_tags_timeline` | 1 (bulk endpoint, export rows) |
-| 3 | Abandoned checkouts + recovery link + storefront `/c/<token>` | `20261018020000_checkout_recovery_links` | — (nav child added here) |
-| 4 | Drafts + invoice link + `manual` provider + `/orders/new` redirect | `20261018030000_draft_orders` | 3 (links, landing page), 2 (note/tags copy, timeline entry) |
+| #   | Plan                                                                                           | Migration                                  | Depends on                                                  |
+| --- | ---------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------- |
+| 1   | Order list operations (tabs, archive, bulk fulfil/capture/cash/archive, packing slips, export) | `20261018000000_order_archive`             | —                                                           |
+| 2   | Notes, tags, timeline comments (+ tag filter/column, bulk tags, tags/note in export and slips) | `20261018010000_order_notes_tags_timeline` | 1 (bulk endpoint, export rows)                              |
+| 3   | Abandoned checkouts + recovery link + storefront `/c/<token>`                                  | `20261018020000_checkout_recovery_links`   | — (nav child added here)                                    |
+| 4   | Drafts + invoice link + `manual` provider + `/orders/new` redirect                             | `20261018030000_draft_orders`              | 3 (links, landing page), 2 (note/tags copy, timeline entry) |
 
 ## Decisions (for the owner to check)
 
