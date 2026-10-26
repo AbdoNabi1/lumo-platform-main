@@ -5,6 +5,7 @@ export const en = {
     primary: "Main",
     dashboard: "Home",
     orders: "Orders",
+    drafts: "Drafts",
     abandonedCheckouts: "Abandoned checkouts",
     products: "Products",
     categories: "Categories",
@@ -498,6 +499,32 @@ export const en = {
       recovered: "Recovered — order {order}",
     },
   },
+  /** Order operations Part 4 — Orders → Drafts (Shopify's wording). */
+  draftOrders: {
+    title: "Drafts",
+    createOrder: "Create order",
+    tabsLabel: "Draft order views",
+    tabs: { all: "All", open: "Open", invoice_sent: "Invoice sent", completed: "Completed" },
+    searchLabel: "Search draft orders",
+    searchPlaceholder: "Search by draft number, name, email or phone",
+    search: "Search",
+    columns: {
+      draft: "Draft order",
+      date: "Date",
+      customer: "Customer",
+      status: "Status",
+      total: "Total",
+    },
+    status: { open: "Open", invoice_sent: "Invoice sent", completed: "Completed" },
+    noCustomer: "No customer",
+    orderLink: "Order #{number}",
+    empty: "No draft orders yet",
+    emptyBody:
+      "Create an order for a customer who reached you on WhatsApp or by phone, then send them a payment link or mark it as paid.",
+    emptyFiltered: "No draft orders match your search",
+    error: "Couldn't load draft orders. Try again.",
+    unauthorized: "You don't have access to draft orders.",
+  },
   /** Plan 3B: Shopify's two statuses, derived on the server (never stored). */
   orderPaymentStatus: {
     pending: "Payment pending",
@@ -687,7 +714,7 @@ export const en = {
     error: "Couldn't load this order. Try refreshing the page.",
     unauthorized: "Sign in to view this order.",
   },
-  /** Shared repeated-row line-item form fields — reused by both `orderCreate` and `orderFromCheckout` (T5.2). */
+  /** Shared repeated-row line-item form fields — used by `orderFromCheckout` (T5.2). */
   orderLineItemForm: {
     items: "Items",
     productId: "Product ID",
@@ -697,21 +724,12 @@ export const en = {
     addItem: "Add item",
     removeItem: "Remove item",
   },
-  /** Shared address block fields — reused by both `orderCreate` and `orderFromCheckout` (T5.2). */
+  /** Shared address block fields — used by `orderFromCheckout` (T5.2). */
   orderAddressForm: {
     line1: "Address line 1",
     city: "City",
     postalCode: "Postal code",
     country: "Country",
-  },
-  orderCreate: {
-    title: "New order",
-    subtitle: "Create an order for a customer.",
-    customerRef: "Customer reference",
-    currency: "Currency",
-    shippingAddress: "Shipping address",
-    submit: "Place order",
-    submitting: "Placing…",
   },
   orderFromCheckout: {
     title: "Create order from checkout session",

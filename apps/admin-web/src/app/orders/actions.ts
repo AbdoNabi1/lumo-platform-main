@@ -12,7 +12,6 @@ import {
   BULK_ORDER_ACTIONS,
   createOrderFromCheckout,
   markOrderPaid,
-  placeOrder,
   refundOrder,
   requestFulfillment,
   requestPaymentCapture,
@@ -89,46 +88,6 @@ async function formErrorDictionary() {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   return dictionaryFor(locale).formErrors;
-}
-
-/** Places a backoffice order (`app/orders/new`). */
-export async function placeOrderAction(
-  _previous: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const t = await formErrorDictionary();
-
-  const customerRef = stringField(formData, "customerRef");
-  const currency = stringField(formData, "currency");
-  const items = parseLineItems(formData);
-  const shippingAddress = parseAddress(formData, "shipping");
-
-  if (
-    customerRef.length === 0 ||
-    currency.length === 0 ||
-    items === null ||
-    shippingAddress === null
-  ) {
-    const fieldErrors: Record<string, string> = {};
-    if (customerRef.length === 0) fieldErrors["customerRef"] = t.invalid;
-    if (currency.length === 0) fieldErrors["currency"] = t.invalid;
-    if (items === null) fieldErrors["items"] = t.invalid;
-    if (shippingAddress === null) fieldErrors["shippingAddress"] = t.invalid;
-    return { status: "error", message: t.invalid, fieldErrors };
-  }
-
-  const result = await placeOrder(
-    { customerRef, currency, items, shippingAddress },
-    newIdempotencyKey(),
-  );
-
-  if (result.outcome === "ok") {
-    revalidatePath("/orders");
-    const id = result.data.id;
-    redirect(id.length > 0 ? `/orders/${id}` : "/orders");
-  }
-
-  return toFormState(result, t);
 }
 
 /** Creates an order from a checkout session's snapshot (`app/orders/from-checkout`) — recovery path. */

@@ -1,8 +1,14 @@
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import type { OrderHistoryEntryDto, TimelineEntryDto } from "@/lib/api/orders";
 import { formatCalendarDay, formatCurrency, formatDateTime } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
-import { activityLabel, isolateName, mergeTimeline } from "@/lib/orders/order-timeline";
+import {
+  activityHref,
+  activityLabel,
+  isolateName,
+  mergeTimeline,
+} from "@/lib/orders/order-timeline";
 import { paymentMethodLabel } from "@/lib/payment-method-label";
 import type { Dictionary } from "@/messages/en";
 import { OrderCommentComposer } from "./order-comment-composer";
@@ -37,8 +43,11 @@ function Line({
   newest,
   locale,
   author,
+  href,
 }: {
   readonly label: string;
+  /** An activity line that opens something (the draft an order came from). */
+  readonly href?: string | null;
   readonly at: string;
   /** A deleted comment keeps its author: "name · time" under the line. */
   readonly author?: string;
@@ -56,7 +65,15 @@ function Line({
         }
       />
       <div className="min-w-0">
-        <p className="text-sm font-medium">{label}</p>
+        <p className="text-sm font-medium">
+          {href === undefined || href === null ? (
+            label
+          ) : (
+            <Link href={href} className="hover:underline">
+              {label}
+            </Link>
+          )}
+        </p>
         <p className="text-muted-foreground text-xs">
           {author === undefined
             ? formatDateTime(locale, at)
@@ -142,6 +159,7 @@ export function OrderTimeline({
                     <Line
                       key={entry.id}
                       label={activityLabel(entry, t)}
+                      href={activityHref(entry)}
                       at={item.at}
                       {...(entry.kind === "comment" && entry.deleted
                         ? { author: entry.authorName ?? t.orderTimeline.staff }

@@ -13,7 +13,6 @@ vi.mock("jose", () => ({
 const {
   fetchOrdersPage,
   fetchRecentOrders,
-  placeOrder,
   createOrderFromCheckout,
   refundOrder,
   advanceOrder,
@@ -207,58 +206,6 @@ describe("T5.2 write functions", () => {
     quantity: 1,
   };
   const address = { line1: "123 Main St", city: "Springfield", postalCode: "12345", country: "US" };
-
-  describe("placeOrder", () => {
-    it("posts to /orders with the right body and idempotency header", async () => {
-      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, { id: "order-1" }));
-      vi.stubGlobal("fetch", fetchMock);
-      vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
-
-      const input = {
-        customerRef: "customer-1",
-        currency: "USD",
-        items: [lineItem],
-        shippingAddress: address,
-      };
-      const result = await placeOrder(input, "key-1");
-
-      expect(result).toEqual({ outcome: "ok", data: { id: "order-1" } });
-      const [url, init] = requestOf(fetchMock);
-      expect(url).toBe("http://runtime.test/api/v1/orders");
-      expect(init.method).toBe("POST");
-      expect(JSON.parse(init.body as string)).toEqual(input);
-      expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-1");
-    });
-
-    it("returns an empty id, still ok, when the response has no readable id", async () => {
-      stubOk({});
-      const result = await placeOrder(
-        { customerRef: "customer-1", currency: "USD", items: [lineItem], shippingAddress: address },
-        "key-1",
-      );
-      expect(result).toEqual({ outcome: "ok", data: { id: "" } });
-    });
-
-    it("maps a 422 to invalid, preserving the fields", async () => {
-      const envelope = {
-        message: "Invalid input",
-        fields: [{ field: "customerRef", message: "must not be empty" }],
-      };
-      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(422, envelope));
-      vi.stubGlobal("fetch", fetchMock);
-
-      const result = await placeOrder(
-        { customerRef: "", currency: "USD", items: [lineItem], shippingAddress: address },
-        "key-1",
-      );
-
-      expect(result).toEqual({
-        outcome: "invalid",
-        message: "Invalid input",
-        fields: [{ field: "customerRef", message: "must not be empty" }],
-      });
-    });
-  });
 
   describe("createOrderFromCheckout", () => {
     it("posts to /orders/from-checkout with checkoutRef, billing, and shipping addresses", async () => {

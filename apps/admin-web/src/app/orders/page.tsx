@@ -96,7 +96,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
             )}
             {exportContext !== undefined && <OrdersExportButton context={exportContext} t={t} />}
             <Button asChild>
-              <Link href="/orders/new">
+              <Link href="/draft-orders/new">
                 <PlusIcon aria-hidden="true" />
                 {t.ordersPage.newOrder}
               </Link>

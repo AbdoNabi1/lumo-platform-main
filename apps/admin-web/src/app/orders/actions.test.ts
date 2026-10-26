@@ -20,7 +20,6 @@ vi.mock("@/lib/api/orders", () => ({
   advanceOrder: vi.fn(),
   createOrderFromCheckout: vi.fn(),
   markOrderPaid: vi.fn(),
-  placeOrder: vi.fn(),
   refundOrder: vi.fn(),
   requestFulfillment: vi.fn(),
   requestPaymentCapture: vi.fn(),

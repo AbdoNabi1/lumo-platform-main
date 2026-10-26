@@ -284,6 +284,8 @@ export interface TimelineEntryDto {
     readonly tags?: readonly string[];
     readonly cleared?: boolean;
     readonly draftNumber?: string;
+    /** The draft the order came from (Ruling 24): "Order created from draft #D3" links back to it. */
+    readonly draftId?: string;
   };
   readonly createdAt: string;
   readonly editedAt: string | null;
@@ -385,13 +387,6 @@ export interface OrderAddressInput {
   readonly country: string;
 }
 
-export interface PlaceOrderInput {
-  readonly customerRef: string;
-  readonly currency: string;
-  readonly items: readonly OrderLineItemInput[];
-  readonly shippingAddress: OrderAddressInput;
-}
-
 export interface CreateOrderFromCheckoutInput {
   readonly checkoutRef: string;
   readonly customerRef: string;
@@ -410,21 +405,6 @@ export interface CreateOrderFromCheckoutInput {
  */
 function isCreatedOrder(value: unknown): value is { readonly id?: unknown } {
   return typeof value === "object" && value !== null;
-}
-
-/** Places a backoffice order (`POST /orders`, `idempotent: true`, `orders:place`). */
-export async function placeOrder(
-  input: PlaceOrderInput,
-  idempotencyKey: string,
-): Promise<MutationResult<{ readonly id: string }>> {
-  const result = await mutateAdminApi(
-    "/api/v1/orders",
-    { method: "POST", body: input, idempotencyKey },
-    isCreatedOrder,
-  );
-  if (result.outcome !== "ok") return result;
-  const id = typeof result.data.id === "string" ? result.data.id : "";
-  return { outcome: "ok", data: { id } };
 }
 
 /**

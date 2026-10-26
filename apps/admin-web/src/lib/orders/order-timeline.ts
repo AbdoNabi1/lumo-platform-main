@@ -75,6 +75,13 @@ export function activityLabel(entry: TimelineEntryDto, t: Dictionary): string {
   }
 }
 
+/** Where an activity line links (Ruling 24): "Order created from draft #D3" opens the draft. */
+export function activityHref(entry: TimelineEntryDto): string | null {
+  return entry.kind === "created_from_draft" && entry.data.draftId !== undefined
+    ? `/draft-orders/${encodeURIComponent(entry.data.draftId)}`
+    : null;
+}
+
 /** Keeps a staff name's own direction from reordering the "name · time" line around it (FSI … PDI). */
 export function isolateName(name: string): string {
   return `⁨${name}⁩`;

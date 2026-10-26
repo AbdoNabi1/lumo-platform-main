@@ -70,6 +70,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
     Icon: ShoppingBagIcon,
     // Shopify's order under Orders: Drafts (order operations Part 4) then Abandoned checkouts.
     children: [
+      { id: "draft-orders", label: (t) => t.nav.drafts, href: "/draft-orders", Icon: FileTextIcon },
       {
         id: "abandoned-checkouts",
         label: (t) => t.nav.abandonedCheckouts,

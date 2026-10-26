@@ -122,6 +122,22 @@ describe("middleware", () => {
 });
 
 describe("middleware role table for the orders screens", () => {
+  it("lets a viewer open drafts and a draft, but not the new-draft screen (orders Part 4)", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/draft-orders", "/draft-orders/2f6f1c52-5c3a-4a53-8c0a-3f4f3d7a0c11"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+    const denied = await middleware(requestFor("/draft-orders/new", "good.token"));
+    expect(denied.headers.get("location")).toContain("/forbidden");
+  });
+
+  it("lets an operator create a draft", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    const response = await middleware(requestFor("/draft-orders/new", "good.token"));
+    expect(response.headers.get("location")).toBeNull();
+  });
+
   it("lets a viewer open abandoned checkouts and its detail (the API decides who may issue links)", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
     for (const path of [

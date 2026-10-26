@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TimelineEntryDto } from "@/lib/api/orders";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
-import { activityLabel, isolateName, mergeTimeline } from "./order-timeline";
+import { activityHref, activityLabel, isolateName, mergeTimeline } from "./order-timeline";
 
 /** The FSI … PDI isolation `activityLabel` puts around staff-written text. */
 const iso = (text: string): string => isolateName(text);
@@ -135,5 +135,23 @@ describe("activityLabel isolates staff-written text", () => {
     expect(activityLabel(line({ kind: "archived", body: null, authorName: "$&x" }), en)).toBe(
       `${iso("$&x")} archived this order`,
     );
+  });
+});
+
+describe("activityHref (Ruling 24)", () => {
+  it("links created_from_draft to its draft; other lines link nowhere", () => {
+    expect(
+      activityHref(
+        line({
+          kind: "created_from_draft",
+          body: null,
+          data: { draftNumber: "D3", draftId: "d-1" },
+        }),
+      ),
+    ).toBe("/draft-orders/d-1");
+    expect(
+      activityHref(line({ kind: "created_from_draft", body: null, data: { draftNumber: "D3" } })),
+    ).toBeNull();
+    expect(activityHref(line({ kind: "archived", body: null, data: {} }))).toBeNull();
   });
 });

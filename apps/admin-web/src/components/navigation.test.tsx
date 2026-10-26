@@ -154,9 +154,20 @@ describe("SidebarNav (Shopify layout)", () => {
     expect(screen.getByRole("link", { name: en.nav.orders })).not.toHaveAttribute("aria-current");
   });
 
-  it("Orders' sub-pages are Part 3's list (Part 4 inserts Drafts first)", () => {
+  it("Orders' sub-pages are Drafts, then Part 3's Abandoned checkouts", () => {
     expect(PRIMARY_NAV.find((item) => item.id === "orders")?.children?.map((c) => c.id)).toEqual([
+      "draft-orders",
       "abandoned-checkouts",
+    ]);
+  });
+});
+
+describe("Orders children (Shopify order)", () => {
+  it("lists Drafts, then Abandoned checkouts", () => {
+    const orders = PRIMARY_NAV.find((item) => item.id === "orders");
+    expect(orders?.children?.map((child) => child.href)).toEqual([
+      "/draft-orders",
+      "/abandoned-checkouts",
     ]);
   });
 });
