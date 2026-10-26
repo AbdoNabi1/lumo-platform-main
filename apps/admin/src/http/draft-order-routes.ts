@@ -1,28 +1,26 @@
 import { z } from "zod";
 import type { Principal } from "@platform/contracts";
 import { defineRoute, type RouteDefinition } from "@platform/http";
-import type { CheckoutLink, CheckoutSession, IssueInvoiceLinkOutput } from "@platform/checkout";
+import type { CheckoutLink, IssueInvoiceLinkOutput } from "@platform/checkout";
 import type { CustomerContact } from "@platform/identity";
 import {
   DRAFT_ORDER_STATUSES,
   DRAFT_PAGE_SIZE_MAX,
-  draftRequirements,
   type DraftOrder,
   type DraftOrderOutput,
   type DraftOrderPage,
   type Order,
 } from "@platform/orders";
-import type { PaymentIntent } from "@platform/payments";
 import { logger, toErrorEnvelope, UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import {
-  draftCheckoutOf,
+  expireDraftCheckout,
   healedDraft,
   materializeDraftCheckout,
-  recordDraftCompletion,
   withDraftConflictCode,
 } from "./draft-order-checkout";
+import { completeDraft } from "./draft-order-completion";
 import { toDraftListItemDto, toDraftOrderDto, type DraftOrderDto } from "./draft-order-dto";
 import {
   draftBody,
@@ -114,31 +112,6 @@ export async function draftDetailOf(
   });
 }
 
-/**
- * Rulings 4 and 17: the draft's open checkout stops; a closed or vanished one is left alone. True when
- * nothing is open any more; false when Checkout could not be read or refused to expire it.
- */
-export async function expireDraftCheckout(
-  admin: WiredAdmin,
-  tenantId: string,
-  checkoutRef: string | null,
-): Promise<boolean> {
-  if (checkoutRef === null) return true;
-  const response = await admin.publicReads.checkout.get({
-    tenantId,
-    checkoutSessionId: checkoutRef,
-  });
-  if (response.status === 404) return true;
-  if (response.status !== 200) return false;
-  const session = response.body as { readonly state: { readonly isOpen: boolean } };
-  if (!session.state.isOpen) return true;
-  const expired = await admin.publicReads.checkout.expire({
-    tenantId,
-    checkoutSessionId: checkoutRef,
-  });
-  return expired.status === 200;
-}
-
 /** DELETE stopped before the soft delete: the draft is untouched and the merchant can try again. */
 function notDeleted(what: string): AdminResponse {
   return {
@@ -152,98 +125,6 @@ function notDeleted(what: string): AdminResponse {
 /** Orders' own refusal, worded the same: a completed draft is an order now. */
 const draftCompleted = (): AdminResponse =>
   draftConflict("DRAFT_COMPLETED", "this draft order is already an order");
-
-const alreadyCompleted = (): AdminResponse =>
-  draftConflict("ALREADY_COMPLETED", "this draft order is already an order");
-
-type DraftPayment = "paid" | "collect_on_delivery";
-
-/** Spec §4.6 step 1: Mark as paid → the staff-recorded `manual` provider; Collect on delivery → `cod`. */
-const providerOf = (payment: DraftPayment): "manual" | "cod" =>
-  payment === "paid" ? "manual" : "cod";
-
-const paymentNotRecorded = (message: string): AdminResponse =>
-  draftConflict("PAYMENT_NOT_RECORDED", message);
-
-/**
- * Spec §4.6 steps 3–4, both idempotent: open the payment through Checkout's `InitiatePayment` on the
- * draft's own session (the order → payment_requested; Payments serves `manual` only because that
- * session carries draft terms), and for "paid" settle the `manual` intent through the confirmed
- * collection with the intent's OWN amount (never a client figure). A failure answers 409
- * PAYMENT_NOT_RECORDED; the same request resumes (Ruling 6).
- */
-async function finishPayment(
-  admin: WiredAdmin,
-  principal: Principal,
-  tenantId: string,
-  checkoutSessionId: string,
-  orderRef: string,
-  payment: DraftPayment,
-): Promise<AdminResponse> {
-  let initiated: AdminResponse;
-  try {
-    initiated = await admin.publicReads.checkout.initiatePayment({ tenantId, checkoutSessionId });
-  } catch (error) {
-    // Payments' refusal is thrown by the initiation adapter; the order stands and a retry resumes.
-    logger.warn("draft order payment could not be opened", {
-      tenantId,
-      orderRef,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    initiated = { status: 503, body: null };
-  }
-  if (initiated.status < 200 || initiated.status >= 300) {
-    return paymentNotRecorded("the order exists but its payment could not be opened; try again");
-  }
-  const { paymentIntentId } = initiated.body as { readonly paymentIntentId: string };
-  if (payment === "paid") {
-    const read = await admin.payments.getPaymentIntent(principal, { tenantId, paymentIntentId });
-    if (read.status !== 200) return paymentNotRecorded("the payment could not be read; try again");
-    const intent = read.body as PaymentIntent;
-    if (intent.status.value !== "captured") {
-      const settled = await admin.payments.confirmCodCollection(principal, {
-        tenantId,
-        paymentIntentId,
-        collectedAmountMinor: intent.amount.amountMinor,
-        currency: intent.amount.currency,
-      });
-      if (settled.status !== 200) {
-        return paymentNotRecorded("the order exists but the payment was not recorded; try again");
-      }
-    }
-  }
-  const order = await admin.orders.getOrder(principal, { tenantId, orderId: orderRef });
-  const orderNumber = order.status === 200 ? (order.body as Order).orderNumber.value : null;
-  return { status: 200, body: { orderId: orderRef, orderNumber } };
-}
-
-/**
- * Ruling 6: the draft's checkout already became an order — the draft completed, or (Ruling 5) its
- * session did and Orders was not told yet, which is recorded now. The same payment method finishes
- * the payment steps and answers that order; anything else is 409 ALREADY_COMPLETED. Never a second
- * order.
- */
-async function resumeCompletion(
-  admin: WiredAdmin,
-  principal: Principal,
-  tenantId: string,
-  draft: DraftOrder,
-  placed: CheckoutSession | null,
-  payment: DraftPayment,
-): Promise<AdminResponse> {
-  const orderRef = placed?.orderRef ?? null;
-  if (placed === null || orderRef === null) return alreadyCompleted();
-  if (draft.orderRef !== null && draft.orderRef !== orderRef) return alreadyCompleted();
-  if (draft.status !== "completed") {
-    const unrecorded = await recordDraftCompletion(admin, principal, tenantId, {
-      draftId: draft.id,
-      orderRef,
-    });
-    if (unrecorded !== null) return unrecorded;
-  }
-  if (placed.paymentSelection?.provider !== providerOf(payment)) return alreadyCompleted();
-  return finishPayment(admin, principal, tenantId, placed.id.toString(), orderRef, payment);
-}
 
 /** Order operations Part 4 — Orders → Drafts (spec §4.8). */
 export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
@@ -529,7 +410,7 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       permission: "orders:complete_draft",
       // Guards against a second order (Pre-flight 9): this route's idempotency cache per request key,
       // the screen's single-flight, the compare-and-set on the draft's session, and the session state
-      // (an order already placed from it is resumed below). The completion key does not dedupe.
+      // (an order already placed from it is resumed). The completion key does not dedupe.
       idempotent: true,
       summary:
         "Create the order from a draft: Mark as paid (manual payment) or Collect on delivery (COD)",
@@ -537,67 +418,8 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
         params: draftIdParams,
         body: z.object({ payment: z.enum(["paid", "collect_on_delivery"]) }).strict(),
       },
-      handle: async ({ params, body, context }) => {
-        const { tenantId, principal } = context;
-        const denied = await admin.draftOrders.authorizeCompletion(principal, body.payment);
-        if (denied !== null) return denied;
-        const found = await admin.draftOrders.get(principal, { tenantId, draftId: params.draftId });
-        if (found.status !== 200) return found;
-        const draft = found.body as DraftOrder;
-        const current = await draftCheckoutOf(admin, tenantId, draft.checkoutRef);
-        if (!current.ok) return current.response;
-        if (draft.status === "completed" || current.session?.orderRef != null) {
-          return resumeCompletion(admin, principal, tenantId, draft, current.session, body.payment);
-        }
-
-        const missing = draftRequirements(draft.content(), "complete");
-        if (missing.length > 0) {
-          return invalidResponse(
-            "This draft order is not ready",
-            missing.map((field) => ({ field, message: "required" })),
-          );
-        }
-        if (body.payment === "collect_on_delivery") {
-          // Ruling 7: refused before anything is built — the merchant's own payment settings decide.
-          const offered = await admin.publicReads.checkout.listPaymentMethods({ tenantId });
-          const methods =
-            offered.status === 200
-              ? (offered.body as { readonly methods: readonly string[] }).methods
-              : [];
-          if (!methods.includes("cod")) {
-            return draftConflict(
-              "COD_NOT_ENABLED",
-              "turn on cash on delivery in Settings → Payments",
-            );
-          }
-        }
-        // Ruling 5: always a fresh session; Checkout expires the open one (a customer's invoice
-        // checkout) in the same unit of work, only once the new one is complete.
-        const built = await materializeDraftCheckout(admin, tenantId, draft, { fresh: true });
-        if (!built.ok) return built.response;
-        const { checkoutSessionId } = built;
-        const selected = await admin.publicReads.checkout.selectDraftPayment({
-          tenantId,
-          checkoutSessionId,
-          provider: providerOf(body.payment),
-        });
-        if (selected.status !== 200) return withDraftConflictCode(selected);
-        const completed = await admin.publicReads.checkout.complete({
-          tenantId,
-          checkoutSessionId,
-          idempotencyKey: `draft:${draft.id}:${draft.version}`,
-          actorRef: principal.id,
-        });
-        if (completed.status !== 200) return withDraftConflictCode(completed);
-        const { orderRef } = completed.body as { readonly orderRef: string };
-        // Explicit and idempotent: the report inside CompleteCheckout is best effort.
-        const unrecorded = await recordDraftCompletion(admin, principal, tenantId, {
-          draftId: draft.id,
-          orderRef,
-        });
-        if (unrecorded !== null) return unrecorded;
-        return finishPayment(admin, principal, tenantId, checkoutSessionId, orderRef, body.payment);
-      },
+      handle: ({ params, body, context }) =>
+        completeDraft(admin, context.principal, context.tenantId, params.draftId, body.payment),
     }),
   ] as readonly RouteDefinition[];
 }

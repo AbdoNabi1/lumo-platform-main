@@ -1,17 +1,11 @@
 import type { CheckoutSession } from "@platform/checkout";
-import type { Principal } from "@platform/contracts";
 import {
   DEFAULT_DRAFT_DISCOUNT_TITLE,
   draftAmounts,
   draftRequirements,
   type DraftOrder,
 } from "@platform/orders";
-import { logger, NotFoundError, toErrorEnvelope, UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
-import {
-  DraftCompletionNotRecorded,
-  DraftOrderCompletionAdapter,
-} from "../infrastructure/cross-context/draft-order-completion.adapter";
 import type { AdminResponse } from "../interfaces/admin-response";
 import {
   checkoutAddressOf,
@@ -184,58 +178,26 @@ export async function materializeDraftCheckout(
 }
 
 /**
- * Spec §4.6 step 5, explicit after the merchant's completion (Checkout's own report is best effort):
- * Orders marks the draft completed by `orderRef`. Answers null once recorded (also when it already
- * was, by this order), else the response to return. Orders' answers are sorted by the completion
- * adapter (Ruling 12) — never by their wording: another order holds the draft → 409
- * ALREADY_COMPLETED; the draft is gone → 404; the order is not visible yet, or anything else → 503,
- * the draft stays open and the same request resumes this very order.
+ * Rulings 4 and 17: the draft's open checkout stops; a closed or vanished one is left alone. True when
+ * nothing is open any more; false when Checkout could not be read or refused to expire it.
  */
-export async function recordDraftCompletion(
-  admin: Pick<WiredAdmin, "publicReads" | "orders">,
-  principal: Principal,
+export async function expireDraftCheckout(
+  admin: Pick<WiredAdmin, "publicReads">,
   tenantId: string,
-  completion: { readonly draftId: string; readonly orderRef: string },
-): Promise<AdminResponse | null> {
-  const recorder = new DraftOrderCompletionAdapter({
-    completeDraftFromCheckout: (input) =>
-      admin.publicReads.draftOrders.completeDraftFromCheckout(input),
-    getDraftOrder: (input) => admin.publicReads.draftOrders.getDraftOrder(input),
-    getOrder: (input) => admin.orders.getOrder(principal, input),
+  checkoutRef: string | null,
+): Promise<boolean> {
+  if (checkoutRef === null) return true;
+  const response = await admin.publicReads.checkout.get({
+    tenantId,
+    checkoutSessionId: checkoutRef,
   });
-  try {
-    await recorder.complete({
-      tenantId,
-      draftOrderRef: completion.draftId,
-      orderRef: completion.orderRef,
-      actorRef: principal.id,
-    });
-    return null;
-  } catch (error) {
-    if (!(error instanceof DraftCompletionNotRecorded)) throw error;
-    logger.warn("the draft order's completion was not recorded", {
-      tenantId,
-      draftId: completion.draftId,
-      orderRef: completion.orderRef,
-      failure: error.failure,
-      error: error.message,
-    });
-    if (error.failure === "completed_by_another_order") {
-      return draftConflict(
-        "ALREADY_COMPLETED",
-        "another order completed this draft order meanwhile",
-      );
-    }
-    if (error.failure === "draft_missing") {
-      return { status: 404, body: toErrorEnvelope(new NotFoundError("Draft order not found")) };
-    }
-    return {
-      status: 503,
-      body: toErrorEnvelope(
-        new UnexpectedError(
-          "The order was placed but the draft order is not updated yet. Try again.",
-        ),
-      ),
-    };
-  }
+  if (response.status === 404) return true;
+  if (response.status !== 200) return false;
+  const session = response.body as { readonly state: { readonly isOpen: boolean } };
+  if (!session.state.isOpen) return true;
+  const expired = await admin.publicReads.checkout.expire({
+    tenantId,
+    checkoutSessionId: checkoutRef,
+  });
+  return expired.status === 200;
 }
