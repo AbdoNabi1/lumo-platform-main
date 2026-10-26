@@ -138,7 +138,7 @@ describe("DraftOrderCompletionAdapter", () => {
     expect(failure.message).toContain("(unknown)");
   });
 
-  it("NOT_FOUND with an order the shop cannot see: the order is the reason, the draft stays open", async () => {
+  it("NOT_FOUND with an order the shop cannot see: the draft was not completed", async () => {
     const orders = stubOrders(refusal(404, new NotFoundError("Order not found")), {
       order: refusal(404, new NotFoundError("Order not found")),
     });
@@ -150,7 +150,10 @@ describe("DraftOrderCompletionAdapter", () => {
       }),
     );
     expect(failure.failure).toBe("order_not_visible");
-    expect(failure.message).toContain("stays open");
+    expect(failure.message).toContain(
+      `order ${ORDER} is not visible to this shop; draft ${DRAFT} was not completed`,
+    );
+    expect(failure.message).not.toContain("stays open");
     expect(orders.getOrder).toHaveBeenCalledWith({ tenantId: T, orderId: ORDER });
   });
 
@@ -297,7 +300,7 @@ describe("wireAdmin hands Checkout the real adapter (Part 4 wiring)", () => {
     expect((await readDraft(world, draft.id)).order?.id).toBe(first);
     // Checkout logged the adapter's own message: the orphan is named.
     expect(warn).toHaveBeenCalledWith(
-      expect.any(String),
+      "could not record a draft order's completion",
       expect.objectContaining({ error: expect.stringContaining("is an orphan") }),
     );
     warn.mockRestore();

@@ -229,28 +229,57 @@ const isBlank = (value: string | null | undefined): boolean =>
 /**
  * Ruling 18: an existing customer must be THIS shop's — Identity's contact read is scoped by the
  * request's tenant, so another shop's customer (or an unknown id) is simply not found. Runs on create
- * AND update: `UpdateDraftOrder` stores whatever `customerRef` it is given.
+ * AND update: `UpdateDraftOrder` stores whatever `customerRef` it is given. Fails closed: when
+ * Identity cannot answer, its answer is returned and nothing is saved (never "no such customer").
  */
 async function shopCustomerOf(
   admin: Pick<WiredAdmin, "customers">,
   principal: Principal,
   tenantId: string,
   customerId: string,
-): Promise<CustomerContact | undefined> {
+): Promise<
+  | { readonly ok: true; readonly customer: CustomerContact | undefined }
+  | { readonly ok: false; readonly response: AdminResponse }
+> {
   const contacts = await admin.customers.contactsOfCustomers(principal, {
     tenantId,
     customerIds: [customerId],
   });
-  return contacts.status === 200
-    ? (contacts.body as readonly CustomerContact[]).find((c) => c.id === customerId)
-    : undefined;
+  if (contacts.status !== 200) return { ok: false, response: contacts };
+  return {
+    ok: true,
+    customer: (contacts.body as readonly CustomerContact[]).find((c) => c.id === customerId),
+  };
+}
+
+/** How many Catalog reads one save runs at a time: 100 lines are not 100 round trips in a row. */
+const PRICING_CONCURRENCY = 8;
+
+/** `fn` over `items`, at most `limit` at a time; the answers keep the items' order. */
+async function mapBounded<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await fn(items[index] as T, index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /**
  * Turns the merchant's input into draft CONTENT, server-side (spec §4.3, Ruling 12): each line priced
  * from Catalog now; a `rate` shipping re-quoted from the draft's address and lines; addresses checked
  * with Checkout's own rule (province of the country); an existing customer must be this shop's
- * (Ruling 18), and their email fills an empty contact email. Answers the content or the 422 to return.
+ * (Ruling 18), and their email fills an empty contact email. Answers the content, the 422 to return,
+ * or the upstream answer when Identity or the shipping quote could not answer.
  */
 export async function draftContentFrom(
   admin: WiredAdmin,
@@ -264,15 +293,19 @@ export async function draftContentFrom(
 > {
   const issues: FieldIssue[] = [];
   const lines: DraftLine[] = [];
-  for (const [index, line] of body.lines.entries()) {
-    const priced = await resolveMerchandise(
+  // Resolved a few at a time, then read in the merchant's order: the fields name the right line.
+  const resolutions = await mapBounded(body.lines, PRICING_CONCURRENCY, (line) =>
+    resolveMerchandise(
       admin,
       {
         productId: line.productId,
         ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
       },
       tenantId,
-    );
+    ),
+  );
+  for (const [index, line] of body.lines.entries()) {
+    const priced = resolutions[index] as (typeof resolutions)[number];
     if (priced.status === "choose_variant") {
       issues.push({ field: `lines.${index}.variantId`, message: "choose a variant" });
     } else if (priced.status !== "ok") {
@@ -304,7 +337,9 @@ export async function draftContentFrom(
 
   let customer: CustomerContact | undefined;
   if (body.customerId != null) {
-    customer = await shopCustomerOf(admin, principal, tenantId, body.customerId);
+    const found = await shopCustomerOf(admin, principal, tenantId, body.customerId);
+    if (!found.ok) return found;
+    customer = found.customer;
     if (customer === undefined) {
       issues.push({ field: "customerId", message: "no such customer in this shop" });
     }
@@ -321,6 +356,8 @@ export async function draftContentFrom(
       issues.push({ field: "shipping.method", message: "add an address and products first" });
     } else {
       const quoted = await draftRateQuotes(admin, tenantId, currency, shippingAddress, lines);
+      // Only Checkout's own 422 is about the merchant's input; an outage is answered as it is (M-3).
+      if (!quoted.ok && quoted.response.status !== 422) return quoted;
       const quote = quoted.ok ? quoted.rates.find((q) => q.method === choice.method) : undefined;
       if (quote === undefined) {
         issues.push({

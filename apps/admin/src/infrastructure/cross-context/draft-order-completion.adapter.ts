@@ -5,7 +5,7 @@ type CompletionInput = Parameters<DraftOrderCompletionPort["complete"]>[0];
 
 /** Why Orders did not record a draft's completion (each branch has its own message). */
 export type DraftCompletionFailure =
-  /** The order is not visible to the shop: the draft stays open, a later report can still close it. */
+  /** The order is not visible to the shop: the draft was not completed. */
   | "order_not_visible"
   /** No such draft in this shop. */
   | "draft_missing"
@@ -41,8 +41,8 @@ const messageOf = (body: unknown): string => {
  *
  * The two NOT_FOUND answers are told apart by asking Orders about the ORDER, not by their wording:
  * `CompleteDraftFromCheckout` checks the draft first (any row, deleted or not) and the order second,
- * so an order this shop can see means the draft was the missing one; an order it cannot see is the
- * reason the draft stays open (it is also the honest answer when both are missing).
+ * so an order this shop can see means the draft was the missing one. An order it cannot see is
+ * reported with "the draft was not completed" only, which holds whether or not the draft exists.
  */
 export class DraftOrderCompletionAdapter implements DraftOrderCompletionPort {
   private readonly orders: Pick<
@@ -80,8 +80,8 @@ export class DraftOrderCompletionAdapter implements DraftOrderCompletionPort {
       if (orderVisible === false) {
         throw new DraftCompletionNotRecorded(
           "order_not_visible",
-          `order ${input.orderRef} is not visible to this shop, so draft ` +
-            `${input.draftOrderRef} stays open`,
+          `order ${input.orderRef} is not visible to this shop; draft ` +
+            `${input.draftOrderRef} was not completed`,
         );
       }
       if (orderVisible === true) {

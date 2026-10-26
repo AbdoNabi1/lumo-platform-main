@@ -248,9 +248,9 @@ export class CompleteCheckout implements UseCase<
 
   /**
    * Part 4 (Ruling 11): a draft order's checkout became `orderRef` — tell Orders, after the commit, best
-   * effort (the draft also heals on read). The invoice links are NOT revoked: a completed draft's link
-   * must still answer "this order has already been placed". A retried completion returns early above
-   * and lands here again, so a missed report is healed.
+   * effort: a refusal is logged with the port's own reason and never fails the order. The invoice links
+   * are NOT revoked: a completed draft's link must still answer "this order has already been placed".
+   * A retried completion returns early above and lands here again, so a missed report is sent again.
    */
   private async reportDraftCompletion(
     draftOrderRef: string,
@@ -266,7 +266,7 @@ export class CompleteCheckout implements UseCase<
         ...(input.actorRef === undefined ? {} : { actorRef: input.actorRef }),
       });
     } catch (error) {
-      logger.warn("could not report a draft order's completion; the draft heals on read", {
+      logger.warn("could not record a draft order's completion", {
         tenantId: input.tenantId,
         draftOrderRef,
         error: error instanceof Error ? error.message : String(error),

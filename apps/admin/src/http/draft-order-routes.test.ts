@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Principal } from "@platform/contracts";
-import { BusinessRuleError, ConcurrencyError, toErrorEnvelope } from "@platform/utils";
+import {
+  BusinessRuleError,
+  ConcurrencyError,
+  toErrorEnvelope,
+  UnexpectedError,
+} from "@platform/utils";
 import type { DraftOrderDto, DraftOrderListItemDto } from "./draft-order-dto";
 import { withConflictCode } from "./draft-order-pricing";
 import { unwrap } from "./testing/abandoned-harness";
@@ -18,6 +23,12 @@ import {
   placeTestOrder,
   viewerStaff,
 } from "./testing/orders-harness";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const outage = { status: 503, body: toErrorEnvelope(new UnexpectedError("down")) };
 
 const fieldsOf = (body: unknown) =>
   ((body as { fields?: { field: string }[] }).fields ?? []).map((f) => f.field);
@@ -467,5 +478,284 @@ describe("withConflictCode (Ruling 19: every draft 409 carries its own code)", (
     expect(withConflictCode(plain)).toBe(plain);
     const notFound = { status: 404, body: { message: "DRAFT_COMPLETED: not a 409" } };
     expect(withConflictCode(notFound)).toBe(notFound);
+  });
+});
+
+describe("fix round 1: upstream failures are not blamed on the merchant's input", () => {
+  it("M-3: an outage quoting the shop's rates is passed through, and nothing is created", async () => {
+    const world = await draftWorld();
+    vi.spyOn(world.admin.publicReads.checkout, "quoteDraftShipping").mockResolvedValue(outage);
+    const reply = await world.staffCall(
+      "POST",
+      "/draft-orders",
+      { body: draftBody(world, { shipping: { kind: "rate", method: "express" } }) },
+      operatorStaff,
+    );
+    expect(reply.status).toBe(503);
+    expect(fieldsOf(reply.body)).not.toContain("shipping.method");
+    const page = unwrap<{ items: DraftOrderListItemDto[] }>(
+      await world.staffCall("GET", "/draft-orders", {}, viewerStaff),
+      "list",
+    );
+    expect(page.items).toEqual([]);
+  });
+
+  it("M-3: Checkout's 422 on a quote is still the shipping.method field error", async () => {
+    const world = await draftWorld();
+    vi.spyOn(world.admin.publicReads.checkout, "quoteDraftShipping").mockResolvedValue({
+      status: 422,
+      body: toErrorEnvelope(new UnexpectedError("no")),
+    });
+    const reply = await world.staffCall(
+      "POST",
+      "/draft-orders",
+      { body: draftBody(world, { shipping: { kind: "rate", method: "express" } }) },
+      operatorStaff,
+    );
+    expect(reply.status).toBe(422);
+    expect(fieldsOf(reply.body)).toContain("shipping.method");
+  });
+
+  it("M-4: an Identity outage on the customer check answers the outage and still saves nothing", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    const mine = await registerCustomer(world, HARNESS_TENANT, "Hala Adel", "hala@example.com");
+    vi.spyOn(world.admin.customers, "contactsOfCustomers").mockResolvedValue(outage);
+    const created = await world.staffCall(
+      "POST",
+      "/draft-orders",
+      { body: draftBody(world, { customerId: mine }) },
+      operatorStaff,
+    );
+    expect(created.status).toBe(503);
+    expect(fieldsOf(created.body)).not.toContain("customerId");
+    const updated = await world.staffCall(
+      "PUT",
+      "/draft-orders/:draftId",
+      {
+        params: { draftId: draft.id },
+        body: { ...draftBody(world, { customerId: mine }), version: 0 },
+      },
+      operatorStaff,
+    );
+    expect(updated.status).toBe(503);
+    vi.restoreAllMocks();
+    const page = unwrap<{ items: DraftOrderListItemDto[] }>(
+      await world.staffCall("GET", "/draft-orders", {}, viewerStaff),
+      "list",
+    );
+    expect(page.items.map((d) => d.draftNumber)).toEqual(["D1"]);
+    const read = unwrap<DraftOrderDto>(
+      await world.staffCall("GET", "/draft-orders/:draftId", { params: { draftId: draft.id } }),
+      "get",
+    );
+    expect(read.version).toBe(0);
+    expect(read.customer).toBeNull();
+  });
+
+  it("M-8: the shop's currency unreadable answers 503", async () => {
+    const world = await draftWorld();
+    vi.spyOn(world.admin.tenancy, "getPublicStore").mockResolvedValue(outage);
+    const reply = await world.staffCall(
+      "POST",
+      "/draft-orders",
+      { body: draftBody(world) },
+      operatorStaff,
+    );
+    expect(reply.status).toBe(503);
+  });
+});
+
+describe("fix round 1: DELETE stops before the soft delete when it cannot close the draft (M-6)", () => {
+  it("a failed link revocation answers 503 and the draft stays", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    vi.spyOn(world.admin.publicReads.checkout, "revokeDraftLinks").mockResolvedValue(outage);
+    const reply = await world.staffCall(
+      "DELETE",
+      "/draft-orders/:draftId",
+      { params: { draftId: draft.id } },
+      operatorStaff,
+    );
+    expect(reply.status).toBe(503);
+    expect((reply.body as { message: string }).message).toMatch(/not deleted/);
+    vi.restoreAllMocks();
+    expect(
+      (await world.staffCall("GET", "/draft-orders/:draftId", { params: { draftId: draft.id } }))
+        .status,
+    ).toBe(200);
+  });
+
+  it("a failed expiry of the open invoice checkout answers 503 and the draft stays", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    const checkout = world.admin.publicReads.checkout;
+    const started = unwrap<{ checkoutSessionId: string }>(
+      await checkout.startDraft({
+        tenantId: HARNESS_TENANT,
+        draftOrderRef: draft.id,
+        draftNumber: draft.draftNumber,
+        currency: "EGP",
+        items: draft.lines.map((line) => ({
+          productId: line.productId,
+          variantId: line.variantId,
+          sku: line.sku,
+          title: line.title,
+          variantTitle: line.variantTitle,
+          quantity: line.quantity,
+          unitPriceAmountMinor: line.unitPriceMinor,
+          currency: "EGP",
+        })),
+        shippingAddress: DRAFT_ADDRESS,
+        billingAddress: DRAFT_ADDRESS,
+        shipping: { title: "Courier", amountMinor: 4000 },
+      }),
+      "start draft checkout",
+    );
+    unwrap(
+      await world.admin.publicReads.draftOrders.setDraftCheckout({
+        tenantId: HARNESS_TENANT,
+        draftId: draft.id,
+        checkoutRef: started.checkoutSessionId,
+        checkoutVersion: 0,
+        expectedCheckoutRef: null,
+      }),
+      "set checkout",
+    );
+    vi.spyOn(checkout, "expire").mockResolvedValue(outage);
+    const reply = await world.staffCall(
+      "DELETE",
+      "/draft-orders/:draftId",
+      { params: { draftId: draft.id } },
+      operatorStaff,
+    );
+    expect(reply.status).toBe(503);
+    expect((reply.body as { message: string }).message).toMatch(/not deleted/);
+    vi.restoreAllMocks();
+    expect(
+      (await world.staffCall("GET", "/draft-orders/:draftId", { params: { draftId: draft.id } }))
+        .status,
+    ).toBe(200);
+  });
+});
+
+describe("fix round 1: lines are priced a few at a time (M-7)", () => {
+  it("prices concurrently (at most 8 in flight) and still names the right line on a refusal", async () => {
+    const world = await draftWorld();
+    const products = world.admin.publicReads.products;
+    const original = products.get.bind(products);
+    let inFlight = 0;
+    let most = 0;
+    vi.spyOn(products, "get").mockImplementation(async (input) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      try {
+        return await original(input);
+      } finally {
+        inFlight -= 1;
+      }
+    });
+    const dead = "00000000-0000-7000-8000-00000000dead";
+    const lines = Array.from({ length: 12 }, (_, index) => {
+      const product = index % 2 === 0 ? world.tee : world.cap;
+      const broken = index === 3 || index === 10;
+      return {
+        productId: product.productId,
+        variantId: broken ? dead : product.variantId,
+        quantity: 1,
+      };
+    });
+    const refused = await world.staffCall(
+      "POST",
+      "/draft-orders",
+      { body: draftBody(world, { lines }) },
+      operatorStaff,
+    );
+    expect(refused.status).toBe(422);
+    expect(fieldsOf(refused.body)).toEqual(["lines.3", "lines.10"]);
+    expect(most).toBeGreaterThan(1);
+    expect(most).toBeLessThanOrEqual(8);
+  });
+
+  it("keeps the lines in the order the merchant sent them", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world, {
+      lines: [
+        { productId: world.cap.productId, variantId: world.cap.variantId, quantity: 1 },
+        { productId: world.tee.productId, variantId: world.tee.variantId, quantity: 3 },
+      ],
+    });
+    expect(draft.lines.map((l) => [l.sku, l.quantity])).toEqual([
+      ["CAP-STD", 1],
+      ["TEE-STD", 3],
+    ]);
+  });
+});
+
+describe("fix round 1: list and read coverage (M-8)", () => {
+  it("pages with first/after, newest first", async () => {
+    const world = await draftWorld();
+    for (let i = 0; i < 3; i += 1) await createDraft(world);
+    const first = unwrap<{
+      items: DraftOrderListItemDto[];
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    }>(
+      await world.staffCall("GET", "/draft-orders", { query: { first: "2" } }, viewerStaff),
+      "page 1",
+    );
+    expect(first.items.map((d) => d.draftNumber)).toEqual(["D3", "D2"]);
+    expect(first.pageInfo.hasNextPage).toBe(true);
+    const second = unwrap<{
+      items: DraftOrderListItemDto[];
+      pageInfo: { hasNextPage: boolean };
+    }>(
+      await world.staffCall(
+        "GET",
+        "/draft-orders",
+        { query: { first: "2", after: first.pageInfo.endCursor ?? "" } },
+        viewerStaff,
+      ),
+      "page 2",
+    );
+    expect(second.items.map((d) => d.draftNumber)).toEqual(["D1"]);
+    expect(second.pageInfo.hasNextPage).toBe(false);
+  });
+
+  it("filters by status", async () => {
+    const world = await draftWorld();
+    const d1 = await createDraft(world);
+    await createDraft(world);
+    unwrap(
+      await world.admin.draftOrders.markInvoiceSent(operatorStaff, {
+        tenantId: HARNESS_TENANT,
+        draftId: d1.id,
+      }),
+      "mark invoice sent",
+    );
+    const byStatus = async (status: string) =>
+      unwrap<{ items: DraftOrderListItemDto[] }>(
+        await world.staffCall("GET", "/draft-orders", { query: { status } }, viewerStaff),
+        status,
+      ).items.map((d) => [d.draftNumber, d.status]);
+    expect(await byStatus("invoice_sent")).toEqual([["D1", "invoice_sent"]]);
+    expect(await byStatus("open")).toEqual([["D2", "open"]]);
+    expect(await byStatus("completed")).toEqual([]);
+  });
+
+  it("an operator may read the list and a draft", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    expect((await world.staffCall("GET", "/draft-orders", {}, operatorStaff)).status).toBe(200);
+    expect(
+      (
+        await world.staffCall(
+          "GET",
+          "/draft-orders/:draftId",
+          { params: { draftId: draft.id } },
+          operatorStaff,
+        )
+      ).status,
+    ).toBe(200);
   });
 });

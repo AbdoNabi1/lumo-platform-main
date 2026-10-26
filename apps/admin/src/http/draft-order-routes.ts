@@ -11,7 +11,7 @@ import {
   type DraftOrderPage,
   type Order,
 } from "@platform/orders";
-import { toErrorEnvelope, UnexpectedError } from "@platform/utils";
+import { logger, toErrorEnvelope, UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { toDraftListItemDto, toDraftOrderDto, type DraftOrderDto } from "./draft-order-dto";
@@ -104,22 +104,39 @@ export async function draftDetailOf(
   });
 }
 
-/** Best effort (Rulings 4 and 17): the draft's open checkout stops; a closed one is left alone. */
+/**
+ * Rulings 4 and 17: the draft's open checkout stops; a closed or vanished one is left alone. True when
+ * nothing is open any more; false when Checkout could not be read or refused to expire it.
+ */
 export async function expireDraftCheckout(
   admin: WiredAdmin,
   tenantId: string,
   checkoutRef: string | null,
-): Promise<void> {
-  if (checkoutRef === null) return;
+): Promise<boolean> {
+  if (checkoutRef === null) return true;
   const response = await admin.publicReads.checkout.get({
     tenantId,
     checkoutSessionId: checkoutRef,
   });
-  if (response.status !== 200) return;
+  if (response.status === 404) return true;
+  if (response.status !== 200) return false;
   const session = response.body as { readonly state: { readonly isOpen: boolean } };
-  if (session.state.isOpen) {
-    await admin.publicReads.checkout.expire({ tenantId, checkoutSessionId: checkoutRef });
-  }
+  if (!session.state.isOpen) return true;
+  const expired = await admin.publicReads.checkout.expire({
+    tenantId,
+    checkoutSessionId: checkoutRef,
+  });
+  return expired.status === 200;
+}
+
+/** DELETE stopped before the soft delete: the draft is untouched and the merchant can try again. */
+function notDeleted(what: string): AdminResponse {
+  return {
+    status: 503,
+    body: toErrorEnvelope(
+      new UnexpectedError(`Could not ${what}; the draft order was not deleted. Try again.`),
+    ),
+  };
 }
 
 /** Orders' own refusal, worded the same: a completed draft is an order now. */
@@ -274,8 +291,14 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
           content: content.content,
         });
         if (updated.status !== 200) return withConflictCode(updated);
-        // Ruling 4: a customer on the invoice checkout must not pay the superseded quote.
-        await expireDraftCheckout(admin, context.tenantId, draft.checkoutRef);
+        // Ruling 4: a customer on the invoice checkout must not pay the superseded quote. The edit is
+        // already saved, so a failure here is logged, not answered (Task 7 re-materialises on claim).
+        if (!(await expireDraftCheckout(admin, context.tenantId, draft.checkoutRef))) {
+          logger.warn("draft order edited but its open checkout could not be expired", {
+            tenantId: context.tenantId,
+            draftId: draft.id,
+          });
+        }
         const { draft: saved } = updated.body as DraftOrderOutput;
         return {
           status: 200,
@@ -301,12 +324,18 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
         if (before.status !== 200) return before;
         const draft = before.body as DraftOrder;
         if (draft.status === "completed") return draftCompleted();
-        // Ruling 17: links revoked and the open checkout stopped BEFORE the soft delete.
-        await admin.publicReads.checkout.revokeDraftLinks({
+        // Ruling 17: links revoked and the open checkout stopped BEFORE the soft delete; if either
+        // fails, nothing is deleted. Race (accepted): a draft completed between the read above and
+        // `remove` below keeps its order, `remove` answers 409 DRAFT_COMPLETED, but its links were
+        // revoked here, so they answer the uniform 404 instead of Ruling 11's "already placed".
+        const revoked = await admin.publicReads.checkout.revokeDraftLinks({
           tenantId: context.tenantId,
           draftOrderRef: draft.id,
         });
-        await expireDraftCheckout(admin, context.tenantId, draft.checkoutRef);
+        if (revoked.status !== 200) return notDeleted("stop the draft order's invoice links");
+        if (!(await expireDraftCheckout(admin, context.tenantId, draft.checkoutRef))) {
+          return notDeleted("close the draft order's open checkout");
+        }
         return withConflictCode(
           await admin.draftOrders.remove(context.principal, {
             tenantId: context.tenantId,

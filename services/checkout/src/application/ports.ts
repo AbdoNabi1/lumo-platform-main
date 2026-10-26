@@ -244,8 +244,8 @@ export interface PaymentInitiationPort {
 /**
  * Order operations Part 4 (spec §4.6 decision): tells Orders a draft order's checkout became an order.
  * Best effort; safe to repeat, because Orders changes nothing when the same order completes the same
- * draft again (and the draft is also healed on read). `actorRef` is the staff member when the merchant
- * completed it, absent when the shopper paid through the invoice link.
+ * draft again; a refusal is thrown with its reason, which Checkout logs. `actorRef` is the staff
+ * member when the merchant completed it, absent when the shopper paid through the invoice link.
  */
 export interface DraftOrderCompletionPort {
   complete(input: {
