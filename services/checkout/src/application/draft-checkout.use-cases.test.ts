@@ -4,6 +4,7 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
 import type { Result } from "@platform/types";
 import type { DomainError } from "@platform/utils";
+import { CheckoutLink, RECOVERY_LINK_TTL_MS } from "../domain/checkout-link";
 import { CheckoutSession } from "../domain/checkout-session";
 import { CheckoutEventTranslator } from "../infrastructure/checkout-event-translator";
 import { InMemoryCheckoutLinkRepository } from "../infrastructure/in-memory-checkout-link-repository";
@@ -167,6 +168,23 @@ describe("StartDraftCheckout (spec §4.5 step 2)", () => {
     expect(refused.message).toMatch(/^DRAFT_TOTAL_TOO_LARGE:/);
     expect(await w.sessions.findById("01920000-0000-7000-8000-0000000000ff", T)).toBeNull();
   });
+
+  it("a refused start leaves the session it would replace open (nothing is written before the refusal)", async () => {
+    const w = world();
+    const first = value(await w.start.execute(input())).checkoutSessionId;
+    const huge = new StartDraftCheckout({
+      sessions: w.sessions,
+      links: w.links,
+      unitOfWork: new InMemoryUnitOfWork(),
+      idGenerator: { generate: () => "01920000-0000-7000-8000-0000000000ff" },
+      clock: { now: () => NOW },
+      taxCalculation: { calculate: async () => ({ taxMinor: 2_147_483_647, included: false }) },
+    });
+    const refused = failure(await huge.execute(input({ replaces: first })));
+    expect(refused.message).toMatch(/^DRAFT_TOTAL_TOO_LARGE:/);
+    expect((await w.sessions.findById(first, T))?.state.value).toBe("started");
+    expect(await w.sessions.findById("01920000-0000-7000-8000-0000000000ff", T)).toBeNull();
+  });
 });
 
 describe("validCheckoutAddress / checkoutAddressProblem (the one address rule)", () => {
@@ -231,7 +249,7 @@ describe("invoice links (spec §4.7)", () => {
     expect(claimed).toEqual({ checkoutSessionId, claimCount: 1 });
     expect((await w.sessions.findById(checkoutSessionId, T))?.sessionRef).toBe("guest-1");
     // The last opener owns it (spec §4.7 decision).
-    value(
+    const again = value(
       await w.claim.execute({
         tenantId: T,
         linkId: resolved.link.id,
@@ -239,6 +257,7 @@ describe("invoice links (spec §4.7)", () => {
         sessionRef: "guest-2",
       }),
     );
+    expect(again.claimCount).toBe(2);
     expect((await w.sessions.findById(checkoutSessionId, T))?.sessionRef).toBe("guest-2");
   });
 
@@ -260,6 +279,8 @@ describe("invoice links (spec §4.7)", () => {
       }),
     );
     expect(busy.message).toMatch(/^DRAFT_BUSY:/);
+    // A refused claim never counts.
+    expect((await w.links.findById(issued.linkId, T))?.claimCount).toBe(0);
     expect(
       failure(await w.resolve.execute({ tenantId: "tenant-b", token: issued.token })).message,
     ).toMatch(/^LINK_INVALID:/);
@@ -286,6 +307,32 @@ describe("invoice links (spec §4.7)", () => {
     expect(failure(await w.resolve.execute({ tenantId: T, token: later.token })).message).toMatch(
       /^LINK_INVALID:/,
     );
+  });
+
+  it("a recovery link's id never claims an invoice checkout (LINK_INVALID, nothing counted)", async () => {
+    const w = world();
+    const { checkoutSessionId } = value(await w.start.execute(input()));
+    const recovery = CheckoutLink.issue({
+      id: "01920000-0000-7000-8000-0000000000ee",
+      purpose: "recovery",
+      target: { checkoutSessionId },
+      createdBy: "staff-op",
+      now: NOW,
+      ttlMs: RECOVERY_LINK_TTL_MS,
+    }).link;
+    await w.links.save(recovery, T);
+    const before = (await w.sessions.findById(checkoutSessionId, T))?.sessionRef;
+    const refused = failure(
+      await w.claim.execute({
+        tenantId: T,
+        linkId: recovery.id,
+        checkoutSessionId,
+        sessionRef: "g",
+      }),
+    );
+    expect(refused.message).toMatch(/^LINK_INVALID:/);
+    expect((await w.links.findById(recovery.id, T))?.claimCount).toBe(0);
+    expect((await w.sessions.findById(checkoutSessionId, T))?.sessionRef).toBe(before);
   });
 
   it("an empty opener is refused before the claim is counted", async () => {

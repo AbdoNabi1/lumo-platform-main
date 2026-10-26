@@ -34,7 +34,7 @@ export interface CheckoutLinkRepository {
     tx?: unknown,
   ): Promise<readonly CheckoutLink[]>;
   /**
-   * Part 4: revokes every still-live invoice link of a draft (completed or deleted). ONE guarded
+   * Part 4: revokes every still-live invoice link of a draft (deleted draft). ONE guarded
    * `updateMany` that writes only `revokedAt` where it is null — never a claim field (binding carry 1).
    * Answers how many it revoked. Needs the unit of work's `tx`.
    */

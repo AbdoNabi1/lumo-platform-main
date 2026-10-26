@@ -72,9 +72,11 @@ export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
     return newestFirst(links);
   }
 
-  async revokeForDraft(draftOrderRef: string, tenantId: string, now: Date): Promise<number> {
+  // Not `async` (nothing to await), in the lint-clean `Promise.resolve` form of
+  // `in-memory-payment-adapters.ts`.
+  revokeForDraft(draftOrderRef: string, tenantId: string, now: Date): Promise<number> {
     const bucket = this.store.get(tenantId);
-    if (bucket === undefined) return 0;
+    if (bucket === undefined) return Promise.resolve(0);
     let revoked = 0;
     for (const [id, stored] of bucket) {
       if (
@@ -86,14 +88,18 @@ export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
         revoked += 1;
       }
     }
-    return revoked;
+    return Promise.resolve(revoked);
   }
 
-  async listForDraft(draftOrderRef: string, tenantId: string): Promise<readonly CheckoutLink[]> {
-    return newestFirst(
-      [...(this.store.get(tenantId)?.values() ?? [])]
-        .filter((stored) => stored.purpose === "invoice" && stored.draftOrderRef === draftOrderRef)
-        .map((stored) => CheckoutLink.reconstitute(stored)),
+  listForDraft(draftOrderRef: string, tenantId: string): Promise<readonly CheckoutLink[]> {
+    return Promise.resolve(
+      newestFirst(
+        [...(this.store.get(tenantId)?.values() ?? [])]
+          .filter(
+            (stored) => stored.purpose === "invoice" && stored.draftOrderRef === draftOrderRef,
+          )
+          .map((stored) => CheckoutLink.reconstitute(stored)),
+      ),
     );
   }
 }

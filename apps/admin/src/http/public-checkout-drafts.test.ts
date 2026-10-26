@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { IssueInvoiceLinkOutput, ResolveCheckoutLinkOutput } from "@platform/checkout";
-import type { PublicCheckoutSessionDto } from "./public-checkout-routes";
+import { BusinessRuleError, toErrorEnvelope } from "@platform/utils";
+import {
+  draftLockedResponse,
+  withDraftLockedCode,
+  type PublicCheckoutSessionDto,
+} from "./public-checkout-routes";
 import { recoveryWorld, seedRecoveryProduct, unwrap } from "./testing/abandoned-harness";
 import { HARNESS_TENANT } from "./testing/orders-harness";
 
@@ -189,5 +194,33 @@ describe("public checkout routes on a draft order's checkout (spec §4.4)", () =
         })
       ).status,
     ).toBe(200);
+  });
+});
+
+describe("withDraftLockedCode (the backstop for the domain's own DRAFT_LOCKED refusal)", () => {
+  it("turns a 409 DRAFT_LOCKED: business rule into { code: DRAFT_LOCKED }", () => {
+    const domain = {
+      status: 409,
+      body: toErrorEnvelope(
+        new BusinessRuleError("DRAFT_LOCKED: the items of a draft order's checkout is fixed"),
+      ),
+    };
+    expect((domain.body as { code: string }).code).toBe("BUSINESS_RULE");
+    const mapped = withDraftLockedCode(domain);
+    expect(mapped).toEqual(draftLockedResponse());
+    expect(mapped.status).toBe(409);
+    expect((mapped.body as { code: string }).code).toBe("DRAFT_LOCKED");
+  });
+
+  it("leaves every other answer alone", () => {
+    const other = {
+      status: 409,
+      body: toErrorEnvelope(new BusinessRuleError("TOO_MANY_CODES: at most 5 discount codes")),
+    };
+    expect(withDraftLockedCode(other)).toBe(other);
+    const notFound = { status: 404, body: { code: "NOT_FOUND", message: "DRAFT_LOCKED: x" } };
+    expect(withDraftLockedCode(notFound)).toBe(notFound);
+    const noBody = { status: 409, body: null };
+    expect(withDraftLockedCode(noBody)).toBe(noBody);
   });
 });

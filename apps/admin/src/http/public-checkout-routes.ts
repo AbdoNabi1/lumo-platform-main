@@ -277,9 +277,10 @@ export function draftLockedResponse(): AdminResponse {
 
 /**
  * Part 4: the domain's own `DRAFT_LOCKED:` refusal (a 409 business rule) answers with the same
- * `{ code: "DRAFT_LOCKED" }` as the route's check, so the storefront reads one code either way.
+ * `{ code: "DRAFT_LOCKED" }` as the route's check, so the storefront reads one code either way. A
+ * backstop: the routes refuse a draft session before calling Checkout. Exported for its unit test.
  */
-function withDraftLockedCode(response: AdminResponse): AdminResponse {
+export function withDraftLockedCode(response: AdminResponse): AdminResponse {
   const message = (response.body as { message?: unknown } | null)?.message;
   return response.status === 409 &&
     typeof message === "string" &&

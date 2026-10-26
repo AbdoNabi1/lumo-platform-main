@@ -13,7 +13,7 @@ import type { CheckoutAddressInput } from "../domain/value-objects/checkout-addr
 import { ContactEmail } from "../domain/value-objects/contact-email";
 import { draftCartRef } from "../domain/value-objects/draft-terms";
 import { PaymentSelection } from "../domain/value-objects/selections";
-import { LINK_INVALID } from "./abandoned-checkouts.use-cases";
+import { linkInvalid } from "./abandoned-checkouts.use-cases";
 import { validCheckoutAddress } from "./address-province";
 import { checkoutItemsFrom, type LoadItemsInput } from "./checkout-details.use-cases";
 import { calculateAndStoreTax } from "./discount-code.use-cases";
@@ -27,10 +27,6 @@ import type {
 /** Spec §4.5: 32 random bytes, base64url — the owner of a draft session nobody holds yet. Never returned. */
 export function newDraftSessionRef(): string {
   return randomBytes(32).toString("base64url");
-}
-
-function linkInvalid(): NotFoundError {
-  return new NotFoundError(`${LINK_INVALID}: this link has expired or is no longer valid`);
 }
 
 function draftCheckoutGone(): BusinessRuleError {
@@ -65,11 +61,12 @@ export interface StartDraftCheckoutInput {
 }
 
 /**
- * Spec §4.5 step 2 in ONE unit of work: expire the draft's previous session (if open), then build the
- * new one — server-minted `sessionRef`, `cartRef` naming the draft (Ruling 1), the draft's lines,
- * contact and addresses, the merchant's terms, the tax from Finance and the totals. Always a FRESH
- * session: a draft that changed is materialised again, never re-loaded into an existing session.
- * Domain refusals (`DRAFT_TOTAL_TOO_LARGE:`, …) are answered as they are, unchanged.
+ * Spec §4.5 step 2 in ONE unit of work: build the new session — server-minted `sessionRef`, `cartRef`
+ * naming the draft (Ruling 1), the draft's lines, contact and addresses, the merchant's terms, the tax
+ * from Finance and the totals — and only once it is complete, expire the draft's previous session (if
+ * open) and save both. Always a FRESH session: a draft that changed is materialised again, never
+ * re-loaded into an existing session. Domain refusals (`DRAFT_TOTAL_TOO_LARGE:`, …) are answered as
+ * they are, unchanged, and write nothing.
  */
 export class StartDraftCheckout implements UseCase<
   StartDraftCheckoutInput,
@@ -100,17 +97,8 @@ export class StartDraftCheckout implements UseCase<
     return this.deps.unitOfWork.run<Result<{ readonly checkoutSessionId: string }, DomainError>>(
       async (tx) => {
         const now = this.deps.clock.now();
-        if (input.replaces !== undefined) {
-          const old = await this.deps.sessions.findById(input.replaces, input.tenantId, tx);
-          if (
-            old !== null &&
-            old.state.isOpen &&
-            old.draftTerms?.draftOrderRef === input.draftOrderRef
-          ) {
-            old.expire(this.deps.idGenerator.generate(), now);
-            await this.deps.sessions.save(old, input.tenantId, tx);
-          }
-        }
+        // The new session is built and checked completely BEFORE anything is written: the unit of
+        // work commits on a returned `err` too, so a refusal must leave the replaced session open.
         const id = this.deps.idGenerator.generate();
         const session = CheckoutSession.start(
           UniqueEntityId.from(id),
@@ -137,6 +125,18 @@ export class StartDraftCheckout implements UseCase<
         } catch (error) {
           if (isDomainError(error)) return err(error);
           throw error;
+        }
+        // Nothing below refuses: the previous session is expired only once its successor is ready.
+        if (input.replaces !== undefined) {
+          const old = await this.deps.sessions.findById(input.replaces, input.tenantId, tx);
+          if (
+            old !== null &&
+            old.state.isOpen &&
+            old.draftTerms?.draftOrderRef === input.draftOrderRef
+          ) {
+            old.expire(this.deps.idGenerator.generate(), now);
+            await this.deps.sessions.save(old, input.tenantId, tx);
+          }
         }
         await this.deps.sessions.save(session, input.tenantId, tx);
         return ok({ checkoutSessionId: id });
@@ -387,13 +387,12 @@ export class ClaimInvoiceCheckout implements UseCase<
         input.checkoutSessionId,
         tx,
       );
+      // A null count wrote nothing (the guarded update did not apply), so this `err` commits nothing.
       if (claimCount === null) return err(linkInvalid());
-      try {
-        session.transferOwnership(input.sessionRef);
-      } catch (error) {
-        if (isDomainError(error)) return err(error);
-        throw error;
-      }
+      // Every refusal of `transferOwnership` (not open, not a draft's, no owner) was checked above, so
+      // none is returned as an `err` after the count: the unit of work commits on a returned `err`, and
+      // a throw here rolls the count back instead.
+      session.transferOwnership(input.sessionRef);
       await this.deps.sessions.save(session, input.tenantId, tx);
       return ok({ checkoutSessionId: input.checkoutSessionId, claimCount });
     });

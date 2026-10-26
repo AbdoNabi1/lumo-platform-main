@@ -30,7 +30,8 @@ import { checkoutItemsFrom, type LoadItemsInput } from "./checkout-details.use-c
  */
 export const LINK_INVALID = "LINK_INVALID";
 
-function linkInvalid(): NotFoundError {
+/** The {@link LINK_INVALID} not-found — one copy, shared by the recovery and invoice use cases. */
+export function linkInvalid(): NotFoundError {
   return new NotFoundError(`${LINK_INVALID}: this link has expired or is no longer valid`);
 }
 
