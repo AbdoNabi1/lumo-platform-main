@@ -67,10 +67,12 @@ export class PrismaCheckoutLinkRepository implements CheckoutLinkRepository {
       });
       return;
     }
-    // Only the revocation: `claimCount`, `lastClaimedAt` and `resultCheckoutRef` are written by
-    // `recordClaim` alone, so saving an instance loaded before a concurrent claim never undoes it.
+    // Only the revocation, and only the first one: `claimCount`, `lastClaimedAt` and
+    // `resultCheckoutRef` are written by `recordClaim` alone (binding carry 1), so saving an instance
+    // loaded before a concurrent claim never undoes it, and a later save never moves `revokedAt`.
+    if (s.revokedAt === null) return;
     await client.checkoutLink.updateMany({
-      where: { id: s.id, tenantId },
+      where: { id: s.id, tenantId, revokedAt: null },
       data: { revokedAt: s.revokedAt },
     });
   }
@@ -131,6 +133,35 @@ export class PrismaCheckoutLinkRepository implements CheckoutLinkRepository {
     if (ids.length === 0) return [];
     const rows = await this.read(tenantId, tx, (client) =>
       client.checkoutLink.findMany({ where: { tenantId, checkoutSessionId: { in: ids } } }),
+    );
+    return newestFirst(rows.map(toDomain));
+  }
+
+  async revokeForDraft(
+    draftOrderRef: string,
+    tenantId: string,
+    now: Date,
+    tx?: unknown,
+  ): Promise<number> {
+    if (tx === undefined || tx === null) {
+      throw new Error(
+        "PrismaCheckoutLinkRepository.revokeForDraft requires the unit of work's transaction client (ADR-0003).",
+      );
+    }
+    const { count } = await (tx as TransactionClient).checkoutLink.updateMany({
+      where: { tenantId, draftOrderRef, purpose: "invoice", revokedAt: null },
+      data: { revokedAt: now },
+    });
+    return count;
+  }
+
+  async listForDraft(
+    draftOrderRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly CheckoutLink[]> {
+    const rows = await this.read(tenantId, tx, (client) =>
+      client.checkoutLink.findMany({ where: { tenantId, draftOrderRef, purpose: "invoice" } }),
     );
     return newestFirst(rows.map(toDomain));
   }

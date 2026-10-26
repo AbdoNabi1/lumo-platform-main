@@ -17,6 +17,7 @@ export { CHECKOUT_PUBLISHED_EVENTS } from "./infrastructure/checkout-event-trans
 export type {
   DiscountEvaluationInput,
   DiscountUsagePort,
+  DraftOrderCompletionPort,
   InventoryValidationPort,
   OrderCancellationPort,
   OrderStockReservationPort,
@@ -48,6 +49,7 @@ export type { DiscountCodeInput, DiscountCodeOutput } from "./application/discou
 export {
   CheckoutLink,
   hashLinkToken,
+  INVOICE_LINK_TTL_MS,
   isWellFormedLinkToken,
   RECOVERY_LINK_TTL_MS,
   type CheckoutLinkPurpose,
@@ -79,3 +81,13 @@ export {
   isDraftPromotionId,
   type DraftTerms,
 } from "./domain/value-objects/draft-terms";
+export { checkoutAddressProblem } from "./application/address-province";
+export type {
+  ClaimInvoiceCheckoutInput,
+  DraftLinksInput,
+  EstimateDraftTaxInput,
+  IssueInvoiceLinkOutput,
+  QuoteDraftShippingInput,
+  SelectDraftPaymentInput,
+  StartDraftCheckoutInput,
+} from "./application/draft-checkout.use-cases";

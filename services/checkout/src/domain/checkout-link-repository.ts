@@ -6,8 +6,9 @@ import type { CheckoutLink } from "./checkout-link";
  */
 export interface CheckoutLinkRepository {
   /**
-   * Inserts a link issued in this request (`link.isNew`), otherwise updates its revocation ONLY: the
-   * claim fields (`claimCount`, `lastClaimedAt`, `resultCheckoutRef`) are {@link recordClaim}'s alone.
+   * Inserts a link issued in this request (`link.isNew`), otherwise sets its revocation, once: a
+   * guarded update that writes ONLY `revokedAt` where it is still null — the claim fields
+   * (`claimCount`, `lastClaimedAt`, `resultCheckoutRef`) are {@link recordClaim}'s alone.
    */
   save(link: CheckoutLink, tenantId: string, tx?: unknown): Promise<void>;
   /**
@@ -29,6 +30,18 @@ export interface CheckoutLinkRepository {
   /** Every link of these checkouts, newest first. */
   listForSessions(
     checkoutSessionIds: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly CheckoutLink[]>;
+  /**
+   * Part 4: revokes every still-live invoice link of a draft (completed or deleted). ONE guarded
+   * `updateMany` that writes only `revokedAt` where it is null — never a claim field (binding carry 1).
+   * Answers how many it revoked. Needs the unit of work's `tx`.
+   */
+  revokeForDraft(draftOrderRef: string, tenantId: string, now: Date, tx?: unknown): Promise<number>;
+  /** Part 4: a draft's invoice links, newest first. */
+  listForDraft(
+    draftOrderRef: string,
     tenantId: string,
     tx?: unknown,
   ): Promise<readonly CheckoutLink[]>;

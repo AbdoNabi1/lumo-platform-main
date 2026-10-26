@@ -75,6 +75,12 @@ async function resolve(
   return resolved.status === 200 ? (resolved.body as ResolveCheckoutLinkOutput) : null;
 }
 
+/** Until the invoice branch lands (Part 4, Task 7), an invoice link answers like an invalid one here. */
+async function resolveRecovery(admin: WiredAdmin, tenantId: string, value: string) {
+  const resolved = await resolve(admin, tenantId, value);
+  return resolved !== null && resolved.purpose === "recovery" ? resolved : null;
+}
+
 /** Spec §3.5 step 2: the session the last claim made, if it is still open AND the caller's own. */
 async function reusableResult(
   admin: WiredAdmin,
@@ -244,7 +250,7 @@ export function publicCheckoutLinkRoutes(admin: WiredAdmin): readonly RouteDefin
       schema: { body: claimBody },
       handle: async ({ body, context }) => {
         const tenantId = context.tenantId;
-        const resolved = await resolve(admin, tenantId, body.token);
+        const resolved = await resolveRecovery(admin, tenantId, body.token);
         if (resolved === null) return linkInvalidResponse();
 
         const reused = await reusableResult(
@@ -309,7 +315,7 @@ export function publicCheckoutLinkRoutes(admin: WiredAdmin): readonly RouteDefin
         "Public: what a recovery link holds (shop, items, total) — no personal data, claims nothing",
       schema: { params: tokenParams },
       handle: async ({ params, context }) => {
-        const resolved = await resolve(admin, context.tenantId, params.token);
+        const resolved = await resolveRecovery(admin, context.tenantId, params.token);
         if (resolved === null) return linkInvalidResponse();
         const { session } = resolved;
         const images = await resolveLineImages(

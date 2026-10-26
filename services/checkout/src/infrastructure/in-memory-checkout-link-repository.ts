@@ -25,8 +25,11 @@ export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
       bucket.set(link.id, link.snapshot());
       return;
     }
+    // Only the first revocation, like the Prisma adapter's guarded update.
     const stored = bucket.get(link.id);
-    if (stored !== undefined) bucket.set(link.id, { ...stored, revokedAt: link.revokedAt });
+    if (stored !== undefined && stored.revokedAt === null && link.revokedAt !== null) {
+      bucket.set(link.id, { ...stored, revokedAt: link.revokedAt });
+    }
   }
 
   /** Check and count in one synchronous step: no await between them, so no claim is lost. */
@@ -67,5 +70,30 @@ export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
       .filter((stored) => stored.checkoutSessionId !== null && wanted.has(stored.checkoutSessionId))
       .map((stored) => CheckoutLink.reconstitute(stored));
     return newestFirst(links);
+  }
+
+  async revokeForDraft(draftOrderRef: string, tenantId: string, now: Date): Promise<number> {
+    const bucket = this.store.get(tenantId);
+    if (bucket === undefined) return 0;
+    let revoked = 0;
+    for (const [id, stored] of bucket) {
+      if (
+        stored.purpose === "invoice" &&
+        stored.draftOrderRef === draftOrderRef &&
+        stored.revokedAt === null
+      ) {
+        bucket.set(id, { ...stored, revokedAt: now });
+        revoked += 1;
+      }
+    }
+    return revoked;
+  }
+
+  async listForDraft(draftOrderRef: string, tenantId: string): Promise<readonly CheckoutLink[]> {
+    return newestFirst(
+      [...(this.store.get(tenantId)?.values() ?? [])]
+        .filter((stored) => stored.purpose === "invoice" && stored.draftOrderRef === draftOrderRef)
+        .map((stored) => CheckoutLink.reconstitute(stored)),
+    );
   }
 }

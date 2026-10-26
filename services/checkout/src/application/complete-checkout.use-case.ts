@@ -3,11 +3,12 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { Guard, isDomainError } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
-import { BusinessRuleError, type DomainError, NotFoundError } from "@platform/utils";
+import { BusinessRuleError, type DomainError, logger, NotFoundError } from "@platform/utils";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
 import { refreshDiscountsAndTax } from "./discount-code.use-cases";
 import type {
   DiscountUsagePort,
+  DraftOrderCompletionPort,
   InventoryValidationPort,
   OrderCancellationPort,
   OrderCreationPort,
@@ -22,6 +23,8 @@ export interface CompleteCheckoutInput {
   readonly tenantId: string;
   readonly checkoutSessionId: string;
   readonly idempotencyKey: string;
+  /** Part 4: the staff member completing a draft (admin route only; never a public body). */
+  readonly actorRef?: string;
 }
 
 export interface CompleteCheckoutOutput {
@@ -56,6 +59,8 @@ export interface CompleteCheckoutDeps {
   readonly taxCalculation?: TaxCalculationPort;
   /** Phase 2: when present, each discount's use is recorded after the order is placed (best effort). */
   readonly discountUsage?: DiscountUsagePort;
+  /** Part 4: when present, a draft order's checkout reports the order to Orders (best effort). */
+  readonly draftCompletion?: DraftOrderCompletionPort;
 }
 
 /**
@@ -82,9 +87,9 @@ export class CompleteCheckout implements UseCase<
     const idempotencyKey = Guard.againstEmpty(input.idempotencyKey, "idempotencyKey");
     if (!idempotencyKey.ok) return err(idempotencyKey.error);
 
-    // Part 3: set inside the unit of work, read after it commits (a property, so TypeScript does not
-    // narrow it to `undefined` across the callback).
-    const recovery: { from?: string } = {};
+    // Parts 3 and 4: set inside the unit of work, read after it commits (properties, so TypeScript
+    // does not narrow them to `undefined` across the callback).
+    const after: { from?: string; draftOrderRef?: string } = {};
     const result = await this.deps.unitOfWork.run<Result<CompleteCheckoutOutput, DomainError>>(
       async (tx) => {
         const session = await this.deps.sessions.findById(
@@ -95,7 +100,8 @@ export class CompleteCheckout implements UseCase<
         if (session === null) {
           return err(new NotFoundError("Checkout session not found"));
         }
-        recovery.from = session.recoveredFromRef;
+        after.from = session.recoveredFromRef;
+        after.draftOrderRef = session.draftTerms?.draftOrderRef;
 
         if (session.orderRef !== null) {
           return ok({
@@ -231,10 +237,41 @@ export class CompleteCheckout implements UseCase<
       },
     );
 
-    if (result.ok && recovery.from !== undefined) {
-      await this.markOriginalRecovered(recovery.from, result.value.orderRef, input.tenantId);
+    if (result.ok && after.from !== undefined) {
+      await this.markOriginalRecovered(after.from, result.value.orderRef, input.tenantId);
+    }
+    if (result.ok && after.draftOrderRef !== undefined) {
+      await this.reportDraftCompletion(after.draftOrderRef, result.value.orderRef, input);
     }
     return result;
+  }
+
+  /**
+   * Part 4 (Ruling 11): a draft order's checkout became `orderRef` — tell Orders, after the commit, best
+   * effort (the draft also heals on read). The invoice links are NOT revoked: a completed draft's link
+   * must still answer "this order has already been placed". A retried completion returns early above
+   * and lands here again, so a missed report is healed.
+   */
+  private async reportDraftCompletion(
+    draftOrderRef: string,
+    orderRef: string,
+    input: CompleteCheckoutInput,
+  ): Promise<void> {
+    if (this.deps.draftCompletion === undefined) return;
+    try {
+      await this.deps.draftCompletion.complete({
+        tenantId: input.tenantId,
+        draftOrderRef,
+        orderRef,
+        ...(input.actorRef === undefined ? {} : { actorRef: input.actorRef }),
+      });
+    } catch (error) {
+      logger.warn("could not report a draft order's completion; the draft heals on read", {
+        tenantId: input.tenantId,
+        draftOrderRef,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /** A reservation that throws is a failed reservation: the order must not stand on stock nobody holds. */

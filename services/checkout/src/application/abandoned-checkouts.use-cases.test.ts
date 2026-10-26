@@ -266,6 +266,8 @@ describe("ResolveCheckoutLink", () => {
     const w = world();
     const token = await withLink(w);
     const resolved = value(await w.resolve.execute({ tenantId: TENANT, token }));
+    expect(resolved.purpose).toBe("recovery");
+    if (resolved.purpose !== "recovery") throw new Error("unreachable");
     expect(resolved.session.id.toString()).toBe(SESSION_ID);
     expect(resolved.link.checkoutSessionId).toBe(SESSION_ID);
   });
@@ -451,6 +453,8 @@ describe("StartRecoveredCheckout (spec §3.5 steps 3-5 in one unit of work)", ()
         findByTokenHash: (hash, tenantId) => w.links.findByTokenHash(hash, tenantId),
         listForSessions: (ids, tenantId) => w.links.listForSessions(ids, tenantId),
         recordClaim: async () => null,
+        revokeForDraft: async () => 0,
+        listForDraft: async () => [],
       },
     });
     const before = w.generated.length;

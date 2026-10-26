@@ -9,6 +9,8 @@ export type CheckoutLinkPurpose = (typeof CHECKOUT_LINK_PURPOSES)[number];
 export const LINK_TOKEN_BYTES = 32;
 /** A recovery link works for 7 days (spec §3.3). */
 export const RECOVERY_LINK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** An invoice link works for 30 days (spec §3.3 / §4.7). */
+export const INVOICE_LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 

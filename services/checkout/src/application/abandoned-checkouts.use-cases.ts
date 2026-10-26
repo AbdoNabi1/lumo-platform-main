@@ -220,17 +220,26 @@ export interface ResolveCheckoutLinkInput {
   readonly token: string;
 }
 
-export interface ResolveCheckoutLinkOutput {
-  readonly link: CheckoutLink;
-  /** The abandoned checkout the link resumes. Never handed to the shopper: the claim clones it. */
-  readonly session: CheckoutSession;
-}
+export type ResolveCheckoutLinkOutput =
+  | {
+      readonly purpose: "recovery";
+      readonly link: CheckoutLink;
+      /** The abandoned checkout the link resumes. Never handed to the shopper: the claim clones it. */
+      readonly session: CheckoutSession;
+    }
+  | {
+      readonly purpose: "invoice";
+      readonly link: CheckoutLink;
+      /** The draft the invoice is for; the admin route checks it is still open (Part 4). */
+      readonly draftOrderRef: string;
+    };
 
 /**
  * Spec §3.5 step 1: token → usable link. Looked up by hash INSIDE the request's shop, so another
  * shop's token is unknown. Unknown, expired, revoked and spent links (the checkout was completed or
- * already recovered) all answer the same {@link LINK_INVALID} not-found. Part 3 resolves recovery
- * links only; Part 4 adds the invoice branch.
+ * already recovered) all answer the same {@link LINK_INVALID} not-found. Part 4 adds the invoice
+ * branch: a usable invoice link answers its draft (whether the draft is still open is the admin
+ * route's question, so a completed draft's link can still say "already placed").
  */
 export class ResolveCheckoutLink implements UseCase<
   ResolveCheckoutLinkInput,
@@ -249,13 +258,19 @@ export class ResolveCheckoutLink implements UseCase<
     // A token the platform could never have minted is refused like an unknown one, without a read.
     if (!isWellFormedLinkToken(input.token)) return err(linkInvalid());
     const link = await this.deps.links.findByTokenHash(hashLinkToken(input.token), input.tenantId);
-    const session = await resumableCheckoutOf(
-      this.deps,
-      link,
-      input.tenantId,
-      this.deps.clock.now(),
-    );
-    return link === null || session === null ? err(linkInvalid()) : ok({ link, session });
+    const now = this.deps.clock.now();
+    if (
+      link !== null &&
+      link.isUsable(now) &&
+      link.purpose === "invoice" &&
+      link.draftOrderRef !== null
+    ) {
+      return ok({ purpose: "invoice", link, draftOrderRef: link.draftOrderRef });
+    }
+    const session = await resumableCheckoutOf(this.deps, link, input.tenantId, now);
+    return link === null || session === null
+      ? err(linkInvalid())
+      : ok({ purpose: "recovery", link, session });
   }
 }
 
