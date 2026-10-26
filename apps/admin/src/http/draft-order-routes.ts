@@ -271,15 +271,20 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
           content: content.content,
         });
         if (updated.status !== 200) return withConflictCode(updated);
-        // Ruling 4: a customer on the invoice checkout must not pay the superseded quote. The edit is
-        // already saved, so a failure here is logged, not answered (Task 7 re-materialises on claim).
-        if (!(await expireDraftCheckout(admin, context.tenantId, draft.checkoutRef))) {
-          logger.warn("draft order edited but its open checkout could not be expired", {
-            tenantId: context.tenantId,
-            draftId: draft.id,
-          });
-        }
         const { draft: saved } = updated.body as DraftOrderOutput;
+        // Ruling 4: a customer on the invoice checkout must not pay the superseded quote. Both the
+        // session read before the update AND the one the draft points to after it are stopped: a claim
+        // may have recorded a session from the old version between that read and this update (Task 7
+        // I-1; one recorded after it is refused by the version guard). The edit is already saved, so
+        // a failure here is logged, not answered (the next claim re-materialises).
+        for (const checkoutRef of new Set([draft.checkoutRef, saved.checkoutRef])) {
+          if (!(await expireDraftCheckout(admin, context.tenantId, checkoutRef))) {
+            logger.warn("draft order edited but its open checkout could not be expired", {
+              tenantId: context.tenantId,
+              draftId: draft.id,
+            });
+          }
+        }
         return {
           status: 200,
           body: await draftDetailOf(admin, context.principal, context.tenantId, saved),
@@ -378,17 +383,19 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
         // The checkout first: a draft that cannot be checked out gets no link and stays as it was.
         const built = await materializeDraftCheckout(admin, tenantId, draft, { fresh: false });
         if (!built.ok) return built.response;
-        const marked = await admin.draftOrders.markInvoiceSent(principal, {
-          tenantId,
-          draftId: draft.id,
-        });
-        if (marked.status !== 200) return withDraftConflictCode(marked);
+        // M-7: the link first, then "Invoice sent" — a failed issue leaves the draft as it was. A
+        // failed mark after it leaves a link whose token was never shown, so nobody can open it.
         const issued = await admin.publicReads.checkout.issueInvoiceLink({
           tenantId,
           draftOrderRef: draft.id,
           createdBy: principal.id,
         });
         if (issued.status !== 201) return issued;
+        const marked = await admin.draftOrders.markInvoiceSent(principal, {
+          tenantId,
+          draftId: draft.id,
+        });
+        if (marked.status !== 200) return withDraftConflictCode(marked);
         const { token, expiresAt } = issued.body as IssueInvoiceLinkOutput;
         const path = `/c/${token}`;
         const hostname = primaryHostnameOf(await admin.shopDomains(tenantId));

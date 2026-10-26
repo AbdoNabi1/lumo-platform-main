@@ -43,7 +43,8 @@ export interface DraftOrderRepository {
   softDelete(id: string, at: Date, tenantId: string, tx?: unknown): Promise<boolean>;
   /**
    * Compare-and-set (Ruling 3): records the materialised session only while `checkout_ref` is still
-   * `expectedCheckoutRef` and the draft is open|invoice_sent and not deleted.
+   * `expectedCheckoutRef`, the draft is still at `next.checkoutVersion` (the version the session was
+   * built from; an edit since refuses it, Task 7 I-1) and it is open|invoice_sent and not deleted.
    */
   setCheckout(
     id: string,

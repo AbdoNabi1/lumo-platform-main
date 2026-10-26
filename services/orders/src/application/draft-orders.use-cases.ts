@@ -267,7 +267,10 @@ export interface SetDraftCheckoutInput extends DraftOrderIdInput {
   readonly expectedCheckoutRef: string | null;
 }
 
-/** Records the materialised session (spec §4.5 step 3). */
+/**
+ * Records the materialised session (spec §4.5 step 3). `applied: false` when `checkoutRef` moved, the
+ * draft was edited since `checkoutVersion` (Task 7 I-1), or there is no live draft any more.
+ */
 export class SetDraftCheckout implements UseCase<
   SetDraftCheckoutInput,
   { readonly applied: boolean },

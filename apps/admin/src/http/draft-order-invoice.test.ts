@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CheckoutSession } from "@platform/checkout";
 import type { DraftOrder } from "@platform/orders";
-import { logger } from "@platform/utils";
+import { logger, toErrorEnvelope, UnexpectedError } from "@platform/utils";
 import type { RecoveryLinkDto } from "./abandoned-checkout-dto";
 import type { DraftOrderDto } from "./draft-order-dto";
 import type { CheckoutLinkClaimDto, CheckoutLinkPreviewDto } from "./public-checkout-link-routes";
@@ -94,6 +94,23 @@ describe("POST /draft-orders/:draftId/invoice-link (spec §4.7)", () => {
     ]);
     expect((await send(world, bare.id, viewerStaff)).status).toBe(403);
     expect((await detail(world, bare.id)).links).toEqual([]);
+  });
+
+  it("a link that could not be issued leaves the draft as it was — never 'Invoice sent' without one (M-7)", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    const outage = { status: 503, body: toErrorEnvelope(new UnexpectedError("unavailable")) };
+    const issue = vi
+      .spyOn(world.admin.publicReads.checkout, "issueInvoiceLink")
+      .mockResolvedValueOnce(outage);
+    try {
+      expect((await send(world, draft.id)).status).toBe(503);
+      const after = await detail(world, draft.id);
+      expect(after.status).toBe("open");
+      expect(after.links).toEqual([]);
+    } finally {
+      issue.mockRestore();
+    }
   });
 });
 

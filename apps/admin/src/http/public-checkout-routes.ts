@@ -809,6 +809,8 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         return admin.publicReads.checkout.initiatePayment({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
+          // The shopper's own route: never a staff-recorded (`manual`) payment, whatever is selected.
+          initiatedByStaff: false,
         });
       },
     }),

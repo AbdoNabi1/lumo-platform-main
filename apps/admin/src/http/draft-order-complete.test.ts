@@ -1,13 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CheckoutSession } from "@platform/checkout";
 import type { Principal } from "@platform/contracts";
+import { mapError } from "@platform/http";
 import type { DraftOrder, Order } from "@platform/orders";
 import type { PaymentIntentSummary } from "@platform/payments";
-import { BusinessRuleError, logger, NotFoundError, toErrorEnvelope } from "@platform/utils";
+import {
+  BusinessRuleError,
+  logger,
+  NotFoundError,
+  toErrorEnvelope,
+  ValidationError,
+} from "@platform/utils";
 import { codCollectionState } from "./cod-collection";
+import { materializeDraftCheckout } from "./draft-order-checkout";
 import type { DraftOrderDto } from "./draft-order-dto";
 import { completeCheckout, unwrap } from "./testing/abandoned-harness";
 import {
   createDraft,
+  draftBody,
   draftWorld,
   enableCashOnDelivery,
   type DraftWorld,
@@ -47,6 +57,31 @@ const storedDraft = async (world: DraftWorld, draftId: string) =>
     "stored draft",
   );
 const codeOf = (reply: { body: unknown }) => (reply.body as { code?: string }).code;
+/** Checkout's own view of a session, read past the ownership check. */
+const sessionOf = async (world: DraftWorld, checkoutSessionId: string) =>
+  unwrap<CheckoutSession>(
+    await world.admin.publicReads.checkout.get({ tenantId: HARNESS_TENANT, checkoutSessionId }),
+    "session",
+  );
+const stateOf = async (world: DraftWorld, checkoutSessionId: string) =>
+  (await sessionOf(world, checkoutSessionId)).state.value;
+const sendLink = async (world: DraftWorld, draftId: string) =>
+  unwrap<{ path: string }>(
+    await world.staffCall(
+      "POST",
+      "/draft-orders/:draftId/invoice-link",
+      { params: { draftId } },
+      operatorStaff,
+    ),
+    "send",
+  ).path.slice("/c/".length);
+const claim = async (world: DraftWorld, token: string, sessionRef: string) =>
+  unwrap<{ checkoutSessionId: string }>(
+    await world.publicCall("POST", "/public/checkout-links/claim", {
+      body: { token, sessionRef },
+    }),
+    "claim",
+  ).checkoutSessionId;
 /** Checkout's report to Orders never arrives: only the admin route's own bookkeeping records it. */
 const silentPort = { complete: () => Promise.reject(new Error("Orders is unreachable")) };
 
@@ -227,6 +262,7 @@ describe("POST /draft-orders/:draftId/complete (spec §4.6)", () => {
       },
     );
     expect(customer.status).not.toBe(200);
+    expect(await stateOf(world, claimed.checkoutSessionId)).toBe("expired");
     expect(await orderCount(world)).toBe(1);
   });
 
@@ -353,5 +389,197 @@ describe("POST /draft-orders/:draftId/complete (spec §4.6)", () => {
     const world = await draftWorld();
     const draft = await createDraft(world);
     expect((await complete(world, draft.id, "collect_on_delivery", viewerStaff)).status).toBe(403);
+  });
+});
+
+describe("draft completion races and the merchant's payment (Task 7 fix round 1)", () => {
+  beforeEach(() => {
+    vi.spyOn(logger, "info").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("an edit committed while the merchant's checkout is built refuses it: DRAFT_BUSY, no order (I-1 A)", async () => {
+    const world = await draftWorld();
+    await enableCashOnDelivery(world);
+    const draft = await createDraft(world);
+    const checkout = world.admin.publicReads.checkout;
+    const startDraft = checkout.startDraft.bind(checkout);
+    let built = "";
+    vi.spyOn(checkout, "startDraft").mockImplementationOnce(async (input) => {
+      const stored = await storedDraft(world, draft.id);
+      unwrap(
+        await world.admin.draftOrders.update(operatorStaff, {
+          tenantId: HARNESS_TENANT,
+          draftId: draft.id,
+          version: stored.version,
+          content: { ...stored.content(), note: "edited meanwhile" },
+        }),
+        "concurrent edit",
+      );
+      const started = await startDraft(input);
+      built = (started.body as { checkoutSessionId: string }).checkoutSessionId;
+      return started;
+    });
+    const refused = await complete(world, draft.id, "collect_on_delivery");
+    expect(refused.status).toBe(409);
+    expect(codeOf(refused)).toBe("DRAFT_BUSY");
+    expect(await orderCount(world)).toBe(0);
+    expect(await stateOf(world, built)).toBe("expired");
+  });
+
+  it("a PUT expires the session a claim recorded after the PUT read the draft (I-1 B)", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    const update = world.admin.draftOrders.update.bind(world.admin.draftOrders);
+    let recorded = "";
+    vi.spyOn(world.admin.draftOrders, "update").mockImplementationOnce(async (principal, input) => {
+      // A shopper's claim materialises from the version the PUT is about to replace.
+      const stored = await storedDraft(world, draft.id);
+      const built = await materializeDraftCheckout(world.admin, HARNESS_TENANT, stored, {
+        fresh: false,
+      });
+      if (!built.ok) throw new Error(`materialise answered ${built.response.status}`);
+      recorded = built.checkoutSessionId;
+      return update(principal, input);
+    });
+    const edited = await world.staffCall(
+      "PUT",
+      "/draft-orders/:draftId",
+      {
+        params: { draftId: draft.id },
+        body: { ...draftBody(world, { discount: null }), version: draft.version },
+      },
+      operatorStaff,
+    );
+    expect(edited.status).toBe(200);
+    expect(recorded).not.toBe("");
+    expect(await stateOf(world, recorded)).toBe("expired");
+  });
+
+  it("a failed Mark as paid closes its session; the next claim never gets the manual selection (I-2)", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world, {
+      lines: [{ productId: world.tee.productId, variantId: world.tee.variantId, quantity: 150 }],
+    });
+    const refused = await complete(world, draft.id, "paid", adminStaff);
+    expect(codeOf(refused)).toBe("OUT_OF_STOCK");
+    const merchants = (await storedDraft(world, draft.id)).checkoutRef ?? "";
+    expect(merchants).not.toBe("");
+    expect(await stateOf(world, merchants)).toBe("expired");
+    const claimed = await claim(world, await sendLink(world, draft.id), "guest-a");
+    expect(claimed).not.toBe(merchants);
+    expect((await sessionOf(world, claimed)).paymentSelection).toBeUndefined();
+  });
+
+  it("a claim never reuses a session with the manual selection, even an open one (I-2 b)", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    const token = await sendLink(world, draft.id);
+    const first = await claim(world, token, "guest-a");
+    unwrap(
+      await world.admin.publicReads.checkout.selectDraftPayment({
+        tenantId: HARNESS_TENANT,
+        checkoutSessionId: first,
+        provider: "manual",
+      }),
+      "select manual",
+    );
+    const second = await claim(world, token, "guest-a");
+    expect(second).not.toBe(first);
+    expect(await stateOf(world, first)).toBe("expired");
+    expect((await sessionOf(world, second)).paymentSelection).toBeUndefined();
+  });
+
+  it("a shopper can never open a manual payment, even on a draft session with manual selected (I-2 c)", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    const checkoutSessionId = await claim(world, await sendLink(world, draft.id), "guest-a");
+    unwrap(
+      await world.admin.publicReads.checkout.selectDraftPayment({
+        tenantId: HARNESS_TENANT,
+        checkoutSessionId,
+        provider: "manual",
+      }),
+      "select manual",
+    );
+    const orderRef = await completeCheckout(world, checkoutSessionId, "guest-a");
+    const refused = await world
+      .publicCall("POST", "/public/checkouts/:checkoutSessionId/payment", {
+        params: { checkoutSessionId },
+        body: { sessionRef: "guest-a" },
+      })
+      .then(
+        (reply) => reply.status,
+        (error: unknown) => mapError(error).status,
+      );
+    expect(refused).toBe(422);
+    expect((await orderOf(world, orderRef)).paymentRef ?? null).toBeNull();
+  });
+
+  it("a payment Payments refused answers PAYMENT_NOT_RECORDED; a new submit resumes the same order (M-1)", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    vi.spyOn(world.admin.publicReads.checkout, "initiatePayment").mockRejectedValueOnce(
+      new ValidationError("Payment method is not available"),
+    );
+    const first = await complete(world, draft.id, "paid", adminStaff);
+    expect(first.status).toBe(409);
+    expect(codeOf(first)).toBe("PAYMENT_NOT_RECORDED");
+    expect(warn).toHaveBeenCalledWith("draft order payment could not be opened", expect.anything());
+    const stored = await storedDraft(world, draft.id);
+    expect(stored.status).toBe("completed");
+    expect(await orderCount(world)).toBe(1);
+    const retry = unwrap<{ orderId: string }>(
+      await complete(world, draft.id, "paid", adminStaff),
+      "retry",
+    );
+    expect(retry.orderId).toBe(stored.orderRef);
+    expect(await orderCount(world)).toBe(1);
+    const order = await orderOf(world, retry.orderId);
+    const [summary] = unwrap<readonly PaymentIntentSummary[]>(
+      await world.admin.orders.paymentIntentsOf(adminStaff, {
+        tenantId: HARNESS_TENANT,
+        paymentIntentIds: [order.paymentRef ?? ""],
+      }),
+      "intents",
+    );
+    expect(summary).toMatchObject({ provider: "manual", status: "captured" });
+  });
+
+  it("anything but Payments' refusal is not hidden as a retryable 409 (M-2)", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    vi.spyOn(world.admin.publicReads.checkout, "initiatePayment").mockRejectedValueOnce(
+      new TypeError("cannot read properties of undefined"),
+    );
+    await expect(complete(world, draft.id, "paid", adminStaff)).rejects.toThrow(TypeError);
+  });
+
+  it("a draft pointing at another draft's session is not healed with that order (M-4)", async () => {
+    const world = await draftWorld();
+    const mine = await createDraft(world);
+    const theirs = await createDraft(world);
+    const placed = unwrap<{ orderId: string }>(
+      await complete(world, theirs.id, "paid", adminStaff),
+      "their order",
+    );
+    const foreign = (await storedDraft(world, theirs.id)).checkoutRef ?? "";
+    unwrap(
+      await world.admin.publicReads.draftOrders.setDraftCheckout({
+        tenantId: HARNESS_TENANT,
+        draftId: mine.id,
+        checkoutRef: foreign,
+        checkoutVersion: mine.version,
+        expectedCheckoutRef: null,
+      }),
+      "point at their session",
+    );
+    const read = await draftOf(world, mine.id);
+    expect(read.status).toBe("open");
+    expect(read.order).toBeNull();
+    expect((await storedDraft(world, mine.id)).orderRef).not.toBe(placed.orderId);
   });
 });

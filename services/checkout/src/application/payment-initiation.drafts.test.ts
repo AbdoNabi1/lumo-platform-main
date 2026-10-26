@@ -140,20 +140,38 @@ async function complete(w: ReturnType<typeof world>, id: string): Promise<void> 
 }
 
 describe("InitiatePayment and staff-recorded payments (Ruling 8, deny by default)", () => {
-  it("tells the port a DRAFT session may open a staff-recorded payment", async () => {
+  it("tells the port a DRAFT session may open a staff-recorded payment when STAFF initiate it", async () => {
     const w = world();
     const id = await draftSession(w);
-    const opened = await w.initiatePayment.execute({ tenantId: T, checkoutSessionId: id });
+    const opened = await w.initiatePayment.execute({
+      tenantId: T,
+      checkoutSessionId: id,
+      initiatedByStaff: true,
+    });
     expect(opened.ok).toBe(true);
     expect(w.initiate).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "manual", allowStaffRecorded: true }),
     );
   });
 
+  it("never lets a shopper open one on a draft session, even with manual selected (Task 7 I-2)", async () => {
+    const w = world();
+    const id = await draftSession(w);
+    await w.initiatePayment.execute({
+      tenantId: T,
+      checkoutSessionId: id,
+      initiatedByStaff: false,
+    });
+    expect(w.initiate).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "manual", allowStaffRecorded: false }),
+    );
+  });
+
   it("never lets a shopper's own (non-draft) session open one, even if manual was somehow selected", async () => {
     const w = world();
     const id = await shopperSessionWithManual(w);
-    await w.initiatePayment.execute({ tenantId: T, checkoutSessionId: id });
+    // Even a staff caller: only a DRAFT session may carry a staff-recorded payment.
+    await w.initiatePayment.execute({ tenantId: T, checkoutSessionId: id, initiatedByStaff: true });
     expect(w.initiate).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "manual", allowStaffRecorded: false }),
     );

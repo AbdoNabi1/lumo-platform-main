@@ -157,6 +157,28 @@ describe.each(layers)("DraftOrderRepository (%s)", (_name, make) => {
     expect(found?.checkoutVersion).toBe(0);
     expect(found?.version).toBe(0);
   });
+
+  it("setCheckout also requires the version the session was built from (Task 7 I-1)", async () => {
+    const { repo, tx } = make();
+    await repo.save(draft(), T, tx);
+    const edited = await repo.findById(ID, T);
+    edited?.revise({ ...CONTENT, note: "edited" }, NOW);
+    await repo.save(edited as DraftOrder, T, tx); // version 0 → 1
+    // A session built from version 0 is refused, and nothing is written.
+    const stale = { checkoutRef: "s-old", checkoutVersion: 0 };
+    expect(await repo.setCheckout(ID, stale, null, T, tx)).toBe(false);
+    const untouched = await repo.findById(ID, T);
+    expect(untouched?.checkoutRef).toBeNull();
+    expect(untouched?.checkoutVersion).toBeNull();
+    // A guarded status write never bumps the version, so a session built before it still records.
+    expect(await repo.markInvoiceSent(ID, NOW, T, tx)).toBe(true);
+    const current = { checkoutRef: "s-new", checkoutVersion: 1 };
+    expect(await repo.setCheckout(ID, current, null, T, tx)).toBe(true);
+    const found = await repo.findById(ID, T);
+    expect(found?.checkoutRef).toBe("s-new");
+    expect(found?.checkoutVersion).toBe(1);
+    expect(found?.version).toBe(1);
+  });
 });
 
 describe("duplicate inserts (the table's primary key and per-shop number key)", () => {

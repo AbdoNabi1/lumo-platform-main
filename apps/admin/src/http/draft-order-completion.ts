@@ -2,7 +2,14 @@ import type { CheckoutSession } from "@platform/checkout";
 import type { Principal } from "@platform/contracts";
 import { draftRequirements, type DraftOrder, type Order } from "@platform/orders";
 import type { PaymentIntent } from "@platform/payments";
-import { logger, NotFoundError, toErrorEnvelope, UnexpectedError } from "@platform/utils";
+import {
+  BusinessRuleError,
+  logger,
+  NotFoundError,
+  toErrorEnvelope,
+  UnexpectedError,
+  ValidationError,
+} from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import {
   DraftCompletionNotRecorded,
@@ -11,6 +18,7 @@ import {
 import type { AdminResponse } from "../interfaces/admin-response";
 import {
   draftCheckoutOf,
+  expireDraftCheckout,
   materializeDraftCheckout,
   withDraftConflictCode,
 } from "./draft-order-checkout";
@@ -34,7 +42,8 @@ const paymentNotRecorded = (message: string): AdminResponse =>
  * was, by this order), else the response to return. Orders' answers are sorted by the completion
  * adapter (Ruling 12) — never by their wording: another order holds the draft → 409
  * ALREADY_COMPLETED; the draft is gone → 404; the order is not visible yet, or anything else → 503,
- * the draft stays open and the same request resumes this very order.
+ * the draft stays open and a retry (a new submit: this answer is cached under its idempotency key)
+ * resumes this very order.
  */
 export async function recordDraftCompletion(
   admin: Pick<WiredAdmin, "publicReads" | "orders">,
@@ -87,10 +96,11 @@ export async function recordDraftCompletion(
 
 /**
  * Spec §4.6 steps 3–4, both idempotent: open the payment through Checkout's `InitiatePayment` on the
- * draft's own session (the order → payment_requested; Payments serves `manual` only because that
- * session carries draft terms), and for "paid" settle the `manual` intent through the confirmed
- * collection with the intent's OWN amount (never a client figure). A failure answers 409
- * PAYMENT_NOT_RECORDED; the same request resumes (Ruling 6).
+ * draft's own session (the order → payment_requested; Payments serves `manual` only because staff
+ * initiate it on a session with draft terms), and for "paid" settle the `manual` intent through the
+ * confirmed collection with the intent's OWN amount (never a client figure). A failure answers 409
+ * PAYMENT_NOT_RECORDED; a retry — a new submit, since the route caches this answer under its
+ * idempotency key — resumes (Ruling 6).
  */
 async function finishPayment(
   admin: WiredAdmin,
@@ -102,13 +112,20 @@ async function finishPayment(
 ): Promise<AdminResponse> {
   let initiated: AdminResponse;
   try {
-    initiated = await admin.publicReads.checkout.initiatePayment({ tenantId, checkoutSessionId });
+    initiated = await admin.publicReads.checkout.initiatePayment({
+      tenantId,
+      checkoutSessionId,
+      // This route is staff-only (authorizeCompletion), so it may open the `manual` payment.
+      initiatedByStaff: true,
+    });
   } catch (error) {
-    // Payments' refusal is thrown by the initiation adapter; the order stands and a retry resumes.
+    // Only Payments' refusal, as the initiation adapter throws it (its 422 / 409), is answered: the
+    // order stands and a new submit resumes. Anything else is a fault and is not hidden.
+    if (!(error instanceof ValidationError || error instanceof BusinessRuleError)) throw error;
     logger.warn("draft order payment could not be opened", {
       tenantId,
       orderRef,
-      error: error instanceof Error ? error.message : String(error),
+      error: error.message,
     });
     initiated = { status: 503, body: null };
   }
@@ -181,7 +198,7 @@ export async function completeDraft(
   const found = await admin.draftOrders.get(principal, { tenantId, draftId });
   if (found.status !== 200) return found;
   const draft = found.body as DraftOrder;
-  const current = await draftCheckoutOf(admin, tenantId, draft.checkoutRef);
+  const current = await draftCheckoutOf(admin, tenantId, draft);
   if (!current.ok) return current.response;
   if (draft.status === "completed" || current.session?.orderRef != null) {
     return resumeCompletion(admin, principal, tenantId, draft, current.session, payment);
@@ -210,19 +227,31 @@ export async function completeDraft(
   const built = await materializeDraftCheckout(admin, tenantId, draft, { fresh: true });
   if (!built.ok) return built.response;
   const { checkoutSessionId } = built;
+  // Task 7 I-2: a session this route built and could not turn into an order is closed before the
+  // refusal is answered — it carries the merchant's payment choice (`manual` for Mark as paid) and
+  // must never be handed to a shopper by the invoice claim.
+  const refused = async (response: AdminResponse): Promise<AdminResponse> => {
+    if (!(await expireDraftCheckout(admin, tenantId, checkoutSessionId))) {
+      logger.warn("draft order completion failed and its checkout could not be closed", {
+        tenantId,
+        draftId: draft.id,
+      });
+    }
+    return withDraftConflictCode(response);
+  };
   const selected = await admin.publicReads.checkout.selectDraftPayment({
     tenantId,
     checkoutSessionId,
     provider: providerOf(payment),
   });
-  if (selected.status !== 200) return withDraftConflictCode(selected);
+  if (selected.status !== 200) return refused(selected);
   const completed = await admin.publicReads.checkout.complete({
     tenantId,
     checkoutSessionId,
     idempotencyKey: `draft:${draft.id}:${draft.version}`,
     actorRef: principal.id,
   });
-  if (completed.status !== 200) return withDraftConflictCode(completed);
+  if (completed.status !== 200) return refused(completed);
   const { orderRef } = completed.body as { readonly orderRef: string };
   // Explicit and idempotent: the report inside CompleteCheckout is best effort.
   const unrecorded = await recordDraftCompletion(admin, principal, tenantId, {

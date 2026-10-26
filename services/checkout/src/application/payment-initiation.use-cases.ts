@@ -39,6 +39,12 @@ export interface InitiatePaymentInput {
   /** ADR-0014: per-call tenant scope. */
   readonly tenantId: string;
   readonly checkoutSessionId: string;
+  /**
+   * Who is opening the payment, set IN CODE by the caller and never from a request: `true` only for
+   * the admin draft-completion route (a staff member, authorized there), `false` for the shopper's
+   * public route. A staff-recorded payment (`manual`) needs both this and a draft order's session.
+   */
+  readonly initiatedByStaff: boolean;
 }
 
 export interface InitiatePaymentOutput {
@@ -117,9 +123,9 @@ export class InitiatePayment implements UseCase<
       provider: selection.provider,
       amountMinor: session.totals.totalMinor,
       currency: session.totals.currency,
-      // From the session itself, never from a request: only a draft order's checkout may open a
-      // staff-recorded payment (Ruling 8).
-      allowStaffRecorded: session.draftTerms !== undefined,
+      // Never from a request: only STAFF, on a draft order's checkout, may open a staff-recorded
+      // payment (Ruling 8). A shopper holding a draft session with `manual` selected is refused.
+      allowStaffRecorded: input.initiatedByStaff && session.draftTerms !== undefined,
     });
 
     const recorded = await this.deps.unitOfWork.run<Result<void, DomainError>>(async (tx) => {

@@ -132,7 +132,8 @@ export class InMemoryDraftOrderRepository implements DraftOrderRepository {
       (s) =>
         isLiveDraftStatus(s.status) &&
         s.deletedAt === null &&
-        s.checkoutRef === expectedCheckoutRef,
+        s.checkoutRef === expectedCheckoutRef &&
+        s.version === next.checkoutVersion,
       (s) => ({ ...s, checkoutRef: next.checkoutRef, checkoutVersion: next.checkoutVersion }),
     );
   }

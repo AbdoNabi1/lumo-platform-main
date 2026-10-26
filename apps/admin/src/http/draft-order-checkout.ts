@@ -39,20 +39,25 @@ export function withDraftConflictCode(response: AdminResponse): AdminResponse {
   return typeof message === "string" && /^[A-Z_]+:/.test(message) ? coded : draftBusy();
 }
 
-/** The draft's current checkout session: null when it has none or Checkout no longer knows it. */
+/**
+ * The draft's current checkout session: null when it has none, Checkout no longer knows it, or it is
+ * not THIS draft's (M-4, defence in depth: only `setDraftCheckout` with paired ids writes the ref) —
+ * so another draft's order is never taken for this one's.
+ */
 export async function draftCheckoutOf(
   admin: Pick<WiredAdmin, "publicReads">,
   tenantId: string,
-  checkoutRef: string | null,
+  draft: Pick<DraftOrder, "id" | "checkoutRef">,
 ): Promise<SessionRead> {
-  if (checkoutRef === null) return { ok: true, session: null };
+  if (draft.checkoutRef === null) return { ok: true, session: null };
   const response = await admin.publicReads.checkout.get({
     tenantId,
-    checkoutSessionId: checkoutRef,
+    checkoutSessionId: draft.checkoutRef,
   });
   if (response.status === 404) return { ok: true, session: null };
   if (response.status !== 200) return { ok: false, response };
-  return { ok: true, session: response.body as CheckoutSession };
+  const session = response.body as CheckoutSession;
+  return { ok: true, session: session.draftTerms?.draftOrderRef === draft.id ? session : null };
 }
 
 /**
@@ -66,7 +71,7 @@ export async function healedDraft(
   draft: DraftOrder,
 ): Promise<DraftOrder> {
   if (draft.status === "completed" || draft.checkoutRef === null) return draft;
-  const current = await draftCheckoutOf(admin, tenantId, draft.checkoutRef);
+  const current = await draftCheckoutOf(admin, tenantId, draft);
   const orderRef = current.ok ? (current.session?.orderRef ?? null) : null;
   if (orderRef === null) return draft;
   const recorded = await admin.publicReads.draftOrders.completeDraftFromCheckout({
@@ -97,10 +102,11 @@ async function notRecorded(
 }
 
 /**
- * Spec §4.5: the draft's checkout session. Reused when it is still open and was built from this very
- * version (unless `fresh` — the merchant's completion, Ruling 5); otherwise a new one is built from the
- * draft's STORED prices (Ruling 12) — Checkout validates it completely before it expires the replaced
- * one — then recorded with compare-and-set (Ruling 3). A checkout that already became an order is
+ * Spec §4.5: the draft's checkout session. Reused when it is still open, was built from this very
+ * version and carries no `manual` selection (unless `fresh` — the merchant's completion, Ruling 5);
+ * otherwise a new one is built from the draft's STORED prices (Ruling 12) — Checkout validates it
+ * completely before it expires the replaced one — then recorded with compare-and-set on the ref AND
+ * the version it was built from (Ruling 3, Task 7 I-1). A checkout that already became an order is
  * never built past (409 DRAFT_COMPLETED; the caller heals). A lost race expires what it built.
  */
 export async function materializeDraftCheckout(
@@ -121,7 +127,7 @@ export async function materializeDraftCheckout(
       ),
     };
   }
-  const current = await draftCheckoutOf(admin, tenantId, draft.checkoutRef);
+  const current = await draftCheckoutOf(admin, tenantId, draft);
   if (!current.ok) return current;
   if (current.session !== null && current.session.orderRef !== null) {
     return {
@@ -133,7 +139,9 @@ export async function materializeDraftCheckout(
     !options.fresh &&
     draft.checkoutRef !== null &&
     draft.checkoutVersion === draft.version &&
-    current.session?.state.isOpen === true
+    current.session?.state.isOpen === true &&
+    // Task 7 I-2: a session carrying the merchant's `manual` choice is never handed to a shopper.
+    current.session.paymentSelection?.provider !== "manual"
   ) {
     return { ok: true, checkoutSessionId: draft.checkoutRef };
   }

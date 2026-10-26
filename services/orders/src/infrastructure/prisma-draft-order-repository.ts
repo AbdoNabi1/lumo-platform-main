@@ -192,6 +192,8 @@ export class PrismaDraftOrderRepository implements DraftOrderRepository {
         deletedAt: null,
         status: { in: LIVE },
         checkoutRef: expectedCheckoutRef,
+        // Task 7 I-1: a session built from an older version is never recorded on an edited draft.
+        version: next.checkoutVersion,
       },
       data: { checkoutRef: next.checkoutRef, checkoutVersion: next.checkoutVersion },
     });
