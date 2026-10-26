@@ -12,6 +12,8 @@ export interface TimelineEntryDto {
     readonly tags?: readonly string[];
     readonly cleared?: boolean;
     readonly draftNumber?: string;
+    /** `created_from_draft`: the draft's id, for the "draft #D3" back-link. */
+    readonly draftId?: string;
   };
   readonly createdAt: string;
   readonly editedAt: string | null;

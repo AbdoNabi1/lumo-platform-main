@@ -1,3 +1,4 @@
+import type { DraftOrderCompletionPort } from "@platform/checkout";
 import type { Principal } from "@platform/contracts";
 import type { DraftOrderDto } from "../draft-order-dto";
 import {
@@ -15,8 +16,11 @@ export interface DraftWorld extends RecoveryWorld {
   readonly cap: SeededProduct;
 }
 
-export async function draftWorld(): Promise<DraftWorld> {
-  const world = recoveryWorld();
+/** `draftCompletion` replaces Checkout's report to Orders (a stub that throws tests the self-heal). */
+export async function draftWorld(
+  options: { readonly draftCompletion?: DraftOrderCompletionPort } = {},
+): Promise<DraftWorld> {
+  const world = recoveryWorld(options);
   const tee = await seedRecoveryProduct(world, "TEE", 25000);
   const cap = await seedRecoveryProduct(world, "CAP", 9000);
   return Object.assign(world, { tee, cap });

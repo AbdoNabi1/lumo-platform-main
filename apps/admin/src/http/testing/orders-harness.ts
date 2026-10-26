@@ -1,4 +1,5 @@
 import { RoleTableAccessControl } from "@platform/auth";
+import type { DraftOrderCompletionPort } from "@platform/checkout";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import type { RouteDefinition } from "@platform/http";
@@ -33,6 +34,8 @@ export function buildOrdersAdmin(
     readonly staffNames?: Readonly<Record<string, string>>;
     /** Order operations Part 3: a clock the test moves (abandoned = idle an hour). */
     readonly clock?: Clock;
+    /** Order operations Part 4: replaces Checkout's report to Orders (a stub that throws, say). */
+    readonly draftCompletion?: DraftOrderCompletionPort;
   } = {},
 ): WiredAdmin {
   let n = 0;
@@ -49,6 +52,7 @@ export function buildOrdersAdmin(
     ...(options.staffNames === undefined
       ? {}
       : { staffDirectory: new InMemoryStaffDirectory(options.staffNames) }),
+    ...(options.draftCompletion === undefined ? {} : { draftCompletion: options.draftCompletion }),
   });
 }
 

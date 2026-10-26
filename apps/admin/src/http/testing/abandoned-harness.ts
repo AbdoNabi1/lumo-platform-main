@@ -1,3 +1,4 @@
+import type { DraftOrderCompletionPort } from "@platform/checkout";
 import type { Clock, Principal } from "@platform/contracts";
 import type { RouteDefinition } from "@platform/http";
 import type { WiredAdmin } from "../../composition";
@@ -58,9 +59,11 @@ export interface RecoveryWorld {
   ): Promise<Reply>;
 }
 
-export function recoveryWorld(): RecoveryWorld {
+export function recoveryWorld(
+  options: { readonly draftCompletion?: DraftOrderCompletionPort } = {},
+): RecoveryWorld {
   const clock = steppingClock();
-  const admin = buildOrdersAdmin({ clock });
+  const admin = buildOrdersAdmin({ clock, ...options });
   const routes = adminRoutes(admin);
   const find = (method: Method, path: string): RouteDefinition => {
     const route = routes.find(

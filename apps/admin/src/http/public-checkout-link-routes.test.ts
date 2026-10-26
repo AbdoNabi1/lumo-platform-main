@@ -394,7 +394,9 @@ describe("GET /public/checkout-links/:token/preview", () => {
     expect(reply.status).toBe(200);
     const dto = reply.body as CheckoutLinkPreviewDto;
     expect(Object.keys(dto).sort()).toEqual([
+      "completed",
       "currency",
+      "draftNumber",
       "itemCount",
       "items",
       "purpose",
@@ -402,6 +404,8 @@ describe("GET /public/checkout-links/:token/preview", () => {
       "totalMinor",
     ]);
     expect(dto.purpose).toBe("recovery");
+    expect(dto.draftNumber).toBeNull();
+    expect(dto.completed).toBe(false);
     expect(dto.itemCount).toBe(3);
     expect(dto.totalMinor).toBe(59000);
     expect(dto.currency).toBe("EGP");

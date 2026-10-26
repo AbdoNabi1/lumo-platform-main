@@ -7,9 +7,17 @@ import {
   type ResolveCheckoutLinkOutput,
   type StartRecoveredCheckoutOutput,
 } from "@platform/checkout";
+import type { DraftOrder } from "@platform/orders";
 import { BusinessRuleError, NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
+import {
+  healedDraft,
+  materializeDraftCheckout,
+  withDraftConflictCode,
+} from "./draft-order-checkout";
+import { draftTotalsOf } from "./draft-order-dto";
+import { draftConflict, estimatedTaxOf } from "./draft-order-pricing";
 import { resolveMerchandise, type MerchandiseResolution } from "./merchandise-resolution";
 import { lineKey, resolveLineImages } from "./product-images";
 import { checkoutItemsOf } from "./public-checkout-routes";
@@ -27,7 +35,11 @@ export interface CheckoutLinkClaimDto {
 }
 
 export interface CheckoutLinkPreviewDto {
-  readonly purpose: "recovery";
+  readonly purpose: "recovery" | "invoice";
+  /** "D3" for an invoice ("Invoice #D3 from <shop>"); null for a recovery link. */
+  readonly draftNumber: string | null;
+  /** Invoice only: the order was already placed (Ruling 23); always false for recovery. */
+  readonly completed: boolean;
   readonly shopName: string;
   readonly itemCount: number;
   readonly items: readonly {
@@ -36,7 +48,10 @@ export interface CheckoutLinkPreviewDto {
     readonly quantity: number;
     readonly imageUrl: string | null;
   }[];
-  /** The lines at the prices they were left at; the checkout re-prices them (spec §3.5). */
+  /**
+   * Recovery: the lines at the prices they were left at; the checkout re-prices them (spec §3.5).
+   * Invoice: the draft's total with its estimated tax.
+   */
   readonly totalMinor: number;
   readonly currency: string;
 }
@@ -75,10 +90,99 @@ async function resolve(
   return resolved.status === 200 ? (resolved.body as ResolveCheckoutLinkOutput) : null;
 }
 
-/** Until the invoice branch lands (Part 4, Task 7), an invoice link answers like an invalid one here. */
-async function resolveRecovery(admin: WiredAdmin, tenantId: string, value: string) {
-  const resolved = await resolve(admin, tenantId, value);
-  return resolved !== null && resolved.purpose === "recovery" ? resolved : null;
+type InvoiceLink = Extract<ResolveCheckoutLinkOutput, { purpose: "invoice" }>;
+
+const alreadyPlaced = (): AdminResponse =>
+  draftConflict("ALREADY_COMPLETED", "this order has already been placed");
+
+/** The draft an invoice link is for — or null (deleted/unknown → the uniform 404), healed first. */
+async function invoiceDraftOf(
+  admin: WiredAdmin,
+  tenantId: string,
+  link: InvoiceLink,
+): Promise<DraftOrder | null> {
+  const found = await admin.publicReads.draftOrders.getDraftOrder({
+    tenantId,
+    draftId: link.draftOrderRef,
+  });
+  return found.status === 200 ? healedDraft(admin, tenantId, found.body as DraftOrder) : null;
+}
+
+/** What the shopper is told when the draft's checkout could not be built: never its field names. */
+function invoiceRefusal(response: AdminResponse): AdminResponse {
+  if (response.status === 422) {
+    return draftConflict("DRAFT_NOT_READY", "this invoice cannot be paid right now");
+  }
+  if (response.status === 404) return linkInvalidResponse();
+  const code = (response.body as { readonly code?: unknown } | null)?.code;
+  return code === "DRAFT_COMPLETED" ? alreadyPlaced() : response;
+}
+
+/**
+ * Spec §4.7 claim, invoice branch: deleted → 404; completed → 409 ALREADY_COMPLETED (Ruling 11);
+ * otherwise materialise from the LATEST draft (reused when unchanged) and hand that session to the
+ * caller's own `sessionRef` — the last opener owns it (Ruling 22). The server-minted owner is never
+ * exposed, and no cart of the caller's is touched.
+ */
+async function claimInvoice(
+  admin: WiredAdmin,
+  tenantId: string,
+  link: InvoiceLink,
+  sessionRef: string,
+): Promise<AdminResponse> {
+  const draft = await invoiceDraftOf(admin, tenantId, link);
+  if (draft === null) return linkInvalidResponse();
+  if (draft.status === "completed") return alreadyPlaced();
+  const built = await materializeDraftCheckout(admin, tenantId, draft, { fresh: false });
+  if (!built.ok) return invoiceRefusal(built.response);
+  const claimed = await admin.publicReads.checkout.claimInvoice({
+    tenantId,
+    linkId: link.link.id,
+    checkoutSessionId: built.checkoutSessionId,
+    sessionRef,
+  });
+  if (claimed.status === 404) return linkInvalidResponse();
+  if (claimed.status !== 200) return withDraftConflictCode(claimed);
+  const dto: CheckoutLinkClaimDto = { checkoutSessionId: built.checkoutSessionId, droppedItems: 0 };
+  return { status: 200, body: dto };
+}
+
+/**
+ * Spec §4.7 preview: "Invoice #D3 from <shop>", the items and the total — no email, phone, address,
+ * customer or draft id; no write beyond the self-heal. A completed draft says so (Ruling 23).
+ */
+async function previewInvoice(
+  admin: WiredAdmin,
+  tenantId: string,
+  link: InvoiceLink,
+): Promise<AdminResponse> {
+  const draft = await invoiceDraftOf(admin, tenantId, link);
+  if (draft === null) return linkInvalidResponse();
+  const [images, tax, shopName] = await Promise.all([
+    resolveLineImages(
+      admin,
+      tenantId,
+      draft.lines.map((line) => ({ productId: line.productRef, variantId: line.variantRef })),
+    ),
+    estimatedTaxOf(admin, tenantId, draft),
+    shopNameOf(admin),
+  ]);
+  const dto: CheckoutLinkPreviewDto = {
+    purpose: "invoice",
+    draftNumber: draft.draftNumber,
+    completed: draft.status === "completed",
+    shopName,
+    itemCount: draft.lines.reduce((count, line) => count + line.quantity, 0),
+    items: draft.lines.map((line) => ({
+      title: line.title,
+      variantTitle: line.variantTitle,
+      quantity: line.quantity,
+      imageUrl: images.get(lineKey(line.productRef, line.variantRef))?.url ?? null,
+    })),
+    totalMinor: draftTotalsOf(draft, tax).totalMinor,
+    currency: draft.currency,
+  };
+  return { status: 200, body: dto };
 }
 
 /** Spec §3.5 step 2: the session the last claim made, if it is still open AND the caller's own. */
@@ -236,6 +340,9 @@ async function refill(
  * The claim CLONES: the abandoned session — and its owner's `sessionRef` — is never handed over or
  * echoed. Lines are re-priced from Catalog; the claim happens only on this POST (the storefront's
  * button), never on the preview GET that link-preview bots fetch.
+ *
+ * Part 4 (spec §4.7): an invoice link opens its draft order's checkout instead — handed to the
+ * caller's `sessionRef`, never cloned — or says the order was already placed.
  */
 export function publicCheckoutLinkRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
   return [
@@ -246,12 +353,17 @@ export function publicCheckoutLinkRoutes(admin: WiredAdmin): readonly RouteDefin
       permission: "checkout:start",
       public: true,
       summary:
-        "Public: open a recovery link — clones its checkout into the caller's own, at today's prices",
+        "Public: open a recovery link (a clone at today's prices) or an invoice link (the draft's checkout)",
       schema: { body: claimBody },
       handle: async ({ body, context }) => {
         const tenantId = context.tenantId;
-        const resolved = await resolveRecovery(admin, tenantId, body.token);
+        const resolved = await resolve(admin, tenantId, body.token);
         if (resolved === null) return linkInvalidResponse();
+        // The link's OWN purpose decides: an invoice token never clones a cart, and a recovery token
+        // never reaches a draft (Checkout refuses either claim for the other kind of link).
+        if (resolved.purpose === "invoice") {
+          return claimInvoice(admin, tenantId, resolved, body.sessionRef);
+        }
 
         const reused = await reusableResult(
           admin,
@@ -312,11 +424,14 @@ export function publicCheckoutLinkRoutes(admin: WiredAdmin): readonly RouteDefin
       permission: "checkout:read",
       public: true,
       summary:
-        "Public: what a recovery link holds (shop, items, total) — no personal data, claims nothing",
+        "Public: what a recovery or invoice link holds (shop, items, total) — no personal data, claims nothing",
       schema: { params: tokenParams },
       handle: async ({ params, context }) => {
-        const resolved = await resolveRecovery(admin, context.tenantId, params.token);
+        const resolved = await resolve(admin, context.tenantId, params.token);
         if (resolved === null) return linkInvalidResponse();
+        if (resolved.purpose === "invoice") {
+          return previewInvoice(admin, context.tenantId, resolved);
+        }
         const { session } = resolved;
         const images = await resolveLineImages(
           admin,
@@ -328,6 +443,8 @@ export function publicCheckoutLinkRoutes(admin: WiredAdmin): readonly RouteDefin
         );
         const dto: CheckoutLinkPreviewDto = {
           purpose: "recovery",
+          draftNumber: null,
+          completed: false,
           shopName: await shopNameOf(admin),
           itemCount: session.items.reduce((count, item) => count + item.quantity, 0),
           items: session.items.map((item) => ({
