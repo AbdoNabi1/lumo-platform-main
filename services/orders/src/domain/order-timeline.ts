@@ -28,6 +28,8 @@ export interface OrderTimelineData {
   readonly cleared?: boolean;
   /** created_from_draft (Part 4): "D3". */
   readonly draftNumber?: string;
+  /** created_from_draft (Part 4, Ruling 24): the draft's id, for the order page's back-link. */
+  readonly draftId?: string;
 }
 
 /**

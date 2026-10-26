@@ -12,6 +12,16 @@ import {
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { CreateOrderFromCheckout } from "./application/create-order-from-checkout.use-case";
+import {
+  CompleteDraftFromCheckout,
+  CreateDraftOrder,
+  DeleteDraftOrder,
+  GetDraftOrder,
+  ListDraftOrders,
+  MarkDraftInvoiceSent,
+  SetDraftCheckout,
+  UpdateDraftOrder,
+} from "./application/draft-orders.use-cases";
 import { GetOrder } from "./application/get-order.use-case";
 import { GetSalesSummary } from "./application/get-sales-summary.use-case";
 import { ListOrders } from "./application/list-orders.use-case";
@@ -40,6 +50,7 @@ import { PlaceOrder } from "./application/place-order.use-case";
 import { RecordCheckoutPayment } from "./application/record-checkout-payment.use-case";
 import { RefundOrder } from "./application/refund-order.use-case";
 import type { SalesSummaryQuery } from "./application/sales-summary";
+import type { DraftNumberAllocator, DraftOrderRepository } from "./domain/draft-order-repository";
 import type { OrderAnnotationRepository } from "./domain/order-annotations";
 import type { OrderRepository } from "./domain/order-repository";
 import type { OrderTimelineRepository } from "./domain/order-timeline";
@@ -55,6 +66,8 @@ import type {
   ShippingPort,
   StaffDirectoryPort,
 } from "./application/ports";
+import { InMemoryDraftNumberAllocator } from "./infrastructure/in-memory-draft-number-allocator";
+import { InMemoryDraftOrderRepository } from "./infrastructure/in-memory-draft-order-repository";
 import { InMemoryOrderAnnotationRepository } from "./infrastructure/in-memory-order-annotation-repository";
 import { InMemoryOrderNumberAllocator } from "./infrastructure/in-memory-order-number-allocator";
 import { InMemoryOrderRepository } from "./infrastructure/in-memory-order-repository";
@@ -73,6 +86,8 @@ import {
   ORDERS_PUBLISHED_EVENTS,
   OrderEventTranslator,
 } from "./infrastructure/order-event-translator";
+import { PrismaDraftNumberAllocator } from "./infrastructure/prisma-draft-number-allocator";
+import { PrismaDraftOrderRepository } from "./infrastructure/prisma-draft-order-repository";
 import { PrismaOrderAnnotationRepository } from "./infrastructure/prisma-order-annotation-repository";
 import { PrismaOrderNumberAllocator } from "./infrastructure/prisma-order-number-allocator";
 import { PrismaOrderRepository } from "./infrastructure/prisma-order-repository";
@@ -139,6 +154,8 @@ function buildController(
   sales: SalesSummaryQuery,
   annotations: OrderAnnotationRepository,
   timeline: OrderTimelineRepository,
+  drafts: DraftOrderRepository,
+  draftNumbers: DraftNumberAllocator,
   deps: OrdersWiringDeps,
 ): OrderController {
   const paymentPort = deps.paymentPort ?? new InMemoryPaymentAdapter();
@@ -160,6 +177,15 @@ function buildController(
     idGenerator: deps.idGenerator,
     clock: deps.clock,
     unitOfWork,
+  };
+  const draftDeps = {
+    drafts,
+    draftNumbers,
+    unitOfWork,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+    annotations,
+    activity: { timeline, staff, idGenerator: deps.idGenerator },
   };
 
   return new OrderController({
@@ -239,6 +265,14 @@ function buildController(
     editOrderComment: new EditOrderComment(timelineDeps),
     deleteOrderComment: new DeleteOrderComment(timelineDeps),
     listOrderTimeline: new ListOrderTimeline({ timeline }),
+    createDraftOrder: new CreateDraftOrder(draftDeps),
+    updateDraftOrder: new UpdateDraftOrder(draftDeps),
+    deleteDraftOrder: new DeleteDraftOrder(draftDeps),
+    getDraftOrder: new GetDraftOrder({ drafts }),
+    listDraftOrders: new ListDraftOrders({ drafts }),
+    markDraftInvoiceSent: new MarkDraftInvoiceSent(draftDeps),
+    setDraftCheckout: new SetDraftCheckout(draftDeps),
+    completeDraftFromCheckout: new CompleteDraftFromCheckout(draftDeps),
   });
 }
 
@@ -271,6 +305,8 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
         new PrismaSalesSummaryQuery({ prisma: deps.prisma }),
         new PrismaOrderAnnotationRepository({ prisma: deps.prisma }),
         new PrismaOrderTimelineRepository({ prisma: deps.prisma }),
+        new PrismaDraftOrderRepository({ prisma: deps.prisma }),
+        new PrismaDraftNumberAllocator(),
         deps,
       ),
       drainOutbox: async () => 0,
@@ -300,6 +336,8 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
     }),
     new InMemoryOrderAnnotationRepository({ orders }),
     new InMemoryOrderTimelineRepository(),
+    new InMemoryDraftOrderRepository(),
+    new InMemoryDraftNumberAllocator(),
     deps,
   );
 

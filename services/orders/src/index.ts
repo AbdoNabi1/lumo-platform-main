@@ -92,3 +92,35 @@ export type {
 } from "./application/sales-summary";
 export { RefundPolicy } from "./domain/refund-policy";
 export type { OrderFulfillmentStatus, OrderPaymentStatus } from "./domain/order-statuses";
+export {
+  DEFAULT_DRAFT_DISCOUNT_TITLE,
+  DRAFT_ORDER_STATUSES,
+  DRAFT_PAGE_SIZE_MAX,
+  DraftOrder,
+  draftAmounts,
+  draftRequirements,
+  FREE_SHIPPING_TITLE,
+  MAX_DRAFT_AMOUNT_MINOR,
+  MAX_DRAFT_LINE_QUANTITY,
+  MAX_DRAFT_LINES,
+  type DraftAddress,
+  type DraftAmounts,
+  type DraftDiscount,
+  type DraftLine,
+  type DraftOrderContent,
+  type DraftOrderSnapshot,
+  type DraftOrderStatus,
+  type DraftRequirement,
+  type DraftShipping,
+} from "./domain/draft-order";
+export type { DraftOrderPage } from "./domain/draft-order-repository";
+export type {
+  CompleteDraftFromCheckoutInput,
+  CompleteDraftFromCheckoutOutput,
+  CreateDraftOrderInput,
+  DraftOrderIdInput,
+  DraftOrderOutput,
+  ListDraftOrdersInput,
+  SetDraftCheckoutInput,
+  UpdateDraftOrderInput,
+} from "./application/draft-orders.use-cases";

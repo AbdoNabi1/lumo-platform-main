@@ -43,12 +43,14 @@ function readData(value: unknown): OrderTimelineData {
   const tags = raw["tags"];
   const cleared = raw["cleared"];
   const draftNumber = raw["draftNumber"];
+  const draftId = raw["draftId"];
   return {
     ...(Array.isArray(tags)
       ? { tags: tags.filter((tag): tag is string => typeof tag === "string") }
       : {}),
     ...(typeof cleared === "boolean" ? { cleared } : {}),
     ...(typeof draftNumber === "string" ? { draftNumber } : {}),
+    ...(typeof draftId === "string" ? { draftId } : {}),
   };
 }
 

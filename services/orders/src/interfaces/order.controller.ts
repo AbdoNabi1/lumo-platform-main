@@ -2,6 +2,22 @@ import type {
   CreateOrderFromCheckout,
   CreateOrderFromCheckoutInput,
 } from "../application/create-order-from-checkout.use-case";
+import type {
+  CompleteDraftFromCheckout,
+  CompleteDraftFromCheckoutInput,
+  CreateDraftOrder,
+  CreateDraftOrderInput,
+  DeleteDraftOrder,
+  DraftOrderIdInput,
+  GetDraftOrder,
+  ListDraftOrders,
+  ListDraftOrdersInput,
+  MarkDraftInvoiceSent,
+  SetDraftCheckout,
+  SetDraftCheckoutInput,
+  UpdateDraftOrder,
+  UpdateDraftOrderInput,
+} from "../application/draft-orders.use-cases";
 import type { GetOrder, GetOrderInput } from "../application/get-order.use-case";
 import type { GetSalesSummary } from "../application/get-sales-summary.use-case";
 import type { SalesSummaryInput } from "../application/sales-summary";
@@ -69,6 +85,14 @@ export interface OrderControllerDeps {
   readonly editOrderComment: EditOrderComment;
   readonly deleteOrderComment: DeleteOrderComment;
   readonly listOrderTimeline: ListOrderTimeline;
+  readonly createDraftOrder: CreateDraftOrder;
+  readonly updateDraftOrder: UpdateDraftOrder;
+  readonly deleteDraftOrder: DeleteDraftOrder;
+  readonly getDraftOrder: GetDraftOrder;
+  readonly listDraftOrders: ListDraftOrders;
+  readonly markDraftInvoiceSent: MarkDraftInvoiceSent;
+  readonly setDraftCheckout: SetDraftCheckout;
+  readonly completeDraftFromCheckout: CompleteDraftFromCheckout;
 }
 
 /** Framework-agnostic interface boundary for order use-cases (no HTTP server). */
@@ -171,5 +195,40 @@ export class OrderController {
   /** The order's staff timeline (body: `readonly OrderTimelineEntry[]`, newest first, ≤ 200). */
   async orderTimeline(input: ListOrderTimelineInput): Promise<ControllerResponse> {
     return present(await this.deps.listOrderTimeline.execute(input), 200);
+  }
+
+  /** Order operations Part 4: drafts (authorization is the caller's — `DraftOrdersAdminController`). */
+  async createDraftOrder(input: CreateDraftOrderInput): Promise<ControllerResponse> {
+    return present(await this.deps.createDraftOrder.execute(input), 201);
+  }
+
+  async updateDraftOrder(input: UpdateDraftOrderInput): Promise<ControllerResponse> {
+    return present(await this.deps.updateDraftOrder.execute(input), 200);
+  }
+
+  async deleteDraftOrder(input: DraftOrderIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.deleteDraftOrder.execute(input), 200);
+  }
+
+  async getDraftOrder(input: DraftOrderIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.getDraftOrder.execute(input), 200);
+  }
+
+  async listDraftOrders(input: ListDraftOrdersInput): Promise<ControllerResponse> {
+    return present(await this.deps.listDraftOrders.execute(input), 200);
+  }
+
+  async markDraftInvoiceSent(input: DraftOrderIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.markDraftInvoiceSent.execute(input), 200);
+  }
+
+  async setDraftCheckout(input: SetDraftCheckoutInput): Promise<ControllerResponse> {
+    return present(await this.deps.setDraftCheckout.execute(input), 200);
+  }
+
+  async completeDraftFromCheckout(
+    input: CompleteDraftFromCheckoutInput,
+  ): Promise<ControllerResponse> {
+    return present(await this.deps.completeDraftFromCheckout.execute(input), 200);
   }
 }
