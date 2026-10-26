@@ -85,8 +85,9 @@ export async function healedDraft(
 }
 
 /**
- * Why `SetDraftCheckout` did not apply. `applied: false` means the recorded session moved OR there is
- * no live draft any more (completed or deleted) — so the draft is read again rather than assumed.
+ * Why `SetDraftCheckout` did not apply. `applied: false` means the recorded session moved, the draft
+ * was edited since it was read (its version changed), OR there is no live draft any more (completed
+ * or deleted) — so the draft is read again rather than assumed.
  */
 async function notRecorded(
   admin: Pick<WiredAdmin, "publicReads">,
