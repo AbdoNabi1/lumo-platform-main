@@ -29,7 +29,8 @@ export interface ProviderCapabilities {
    * Order operations Part 4: staff RECORD a payment received outside the platform (bank transfer,
    * InstaPay, a wallet) — the draft order's "Mark as paid". Never offered to shoppers, never enabled in
    * settings, accepted for a new payment without enablement (only a staff action selects it). Optional:
-   * absent means false, so existing registrations are unchanged.
+   * absent means false, so existing registrations are unchanged. Reserved for the built-in `manual`
+   * provider: `composePaymentProviderRegistrations` refuses an external registration that declares it.
    */
   readonly recordedByStaff?: boolean;
 }

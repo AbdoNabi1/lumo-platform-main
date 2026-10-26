@@ -229,6 +229,21 @@ describe("bulk mark_cod_collected (Mark cash as received)", () => {
     });
   });
 
+  it("never marks a draft completed as paid (manual) as cash received, even while its intent is pending (Ruling 9)", async () => {
+    const admin = stubAdmin([order("o-1", PENDING_COD, "i-1")]);
+    admin.orders.paymentIntentsOf.mockResolvedValue({
+      status: 200,
+      body: [cod({ provider: "manual", collectedOnDelivery: false })],
+    });
+
+    const outcome = await run("mark_cod_collected", admin, ["o-1"]);
+
+    expect(outcome.ok && outcome.results).toEqual([
+      { orderId: "o-1", outcome: "skipped", reason: "not_cash_on_delivery" },
+    ]);
+    expect(admin.payments.confirmCodCollection).not.toHaveBeenCalled();
+  });
+
   it("skips a cancelled order whose cash-on-delivery payment is still pending, confirming nothing", async () => {
     const admin = stubAdmin([order("o-1", [...PENDING_COD, "cancelled"], "i-1")]);
     admin.orders.paymentIntentsOf.mockResolvedValue({ status: 200, body: [cod()] });

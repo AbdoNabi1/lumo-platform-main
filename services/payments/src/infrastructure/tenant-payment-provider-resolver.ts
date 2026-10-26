@@ -107,6 +107,7 @@ export class TenantPaymentProviderResolver implements PaymentProviderResolver {
     return this.deps.registry.get(provider)?.capabilities;
   }
 
+  /** Internal only: lists every registration, `manual` included. Never list it to merchants or shoppers. */
   describe(): ProviderAvailability {
     return {
       providers: this.deps.registry.list().map((registration) => ({

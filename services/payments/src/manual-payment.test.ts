@@ -37,13 +37,37 @@ describe("the manual payment provider (order operations Part 4, Ruling 8)", () =
     expect(refused.status).toBe(422);
   });
 
-  it("cannot be configured by a merchant through providerSettings", async () => {
+  it("cannot be configured by a merchant through providerSettings, and the refusal echoes nothing submitted", async () => {
     const { payments } = wired();
+    const sentinel = "SENTINEL-MANUAL-SECRET-0123456789";
     const refused = await payments.updateMerchantPaymentSettings({
       tenantId: "t",
-      providerSettings: { manual: { credentials: {} } },
+      providerSettings: { manual: { credentials: { apiKey: sentinel } } },
     });
     expect(refused.status).toBe(422);
+    expect(JSON.stringify(refused.body)).not.toContain(sentinel);
+  });
+
+  it("a merchant-facing caller (refuseStaffRecorded) cannot open a manual intent; ordinary methods still open", async () => {
+    const { payments } = wired();
+    const refused = await payments.createIntentLifecycle({
+      tenantId: "t",
+      orderRef: "o-9",
+      provider: "manual",
+      amountMinor: 100,
+      currency: "EGP",
+      refuseStaffRecorded: true,
+    });
+    expect(refused.status).toBe(422);
+    const ordinary = await payments.createIntentLifecycle({
+      tenantId: "t",
+      orderRef: "o-9",
+      provider: "stripe",
+      amountMinor: 100,
+      currency: "EGP",
+      refuseStaffRecorded: true,
+    });
+    expect(ordinary.status).toBe(201);
   });
 
   it("opens an intent without being enabled, and only a confirmed collection settles it", async () => {

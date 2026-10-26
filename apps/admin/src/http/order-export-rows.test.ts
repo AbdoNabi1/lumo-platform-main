@@ -90,6 +90,13 @@ describe("codAmountOf (spec §1.4)", () => {
     ).toBe(0);
   });
 
+  it("is 0 for a draft completed as paid (manual), even while its intent is still pending (Ruling 9)", () => {
+    const manual = { ...cod, provider: "manual", collectedOnDelivery: false };
+    for (const status of ["created", "captured", "cancelled"]) {
+      expect(codAmountOf(stubOrder(), { ...manual, status })).toBe(0);
+    }
+  });
+
   it("is 0 when the cash was already received but the order is not yet marked paid", () => {
     expect(codAmountOf(stubOrder(), { ...cod, status: "captured" })).toBe(0);
   });

@@ -98,6 +98,15 @@ export interface PaymentProviderRegistrationInputs {
 export function composePaymentProviderRegistrations(
   inputs: PaymentProviderRegistrationInputs,
 ): readonly ProviderRegistration[] {
+  // `recordedByStaff` is reserved for the built-in `manual` provider: it skips merchant enablement and
+  // hides the method from merchants, so no externally registered provider may declare it (Ruling 8).
+  for (const registration of inputs.providerRegistrations ?? []) {
+    if (registration.capabilities.recordedByStaff === true) {
+      throw new Error(
+        `Payment provider "${registration.key}" declares recordedByStaff, which only the built-in manual provider may`,
+      );
+    }
+  }
   return [
     stripeRegistration(inputs.paymentProvider),
     cashOnDeliveryRegistration(),
