@@ -309,6 +309,7 @@ export const ar: Dictionary = {
       cod: "الدفع عند الاستلام",
       stripe: "بطاقة (Stripe)",
       paymob: "بطاقة (Paymob)",
+      manual: "مدفوع يدويًا",
     },
     markAsPaid: "تحديد كمدفوع",
     markingAsPaid: "جارٍ الحفظ…",

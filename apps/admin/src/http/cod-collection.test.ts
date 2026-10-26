@@ -23,6 +23,7 @@ function cod(overrides: Partial<PaymentIntentSummary> = {}): PaymentIntentSummar
     currency: "EGP",
     settlesAtPayTime: true,
     settledByOperatorConfirmation: true,
+    collectedOnDelivery: true,
     ...overrides,
   };
 }
@@ -39,9 +40,12 @@ describe("codCollectionState (one COD eligibility predicate)", () => {
 
   it("is nothing without an intent, for a card intent, or for another order's intent", () => {
     expect(codCollectionState(order(), undefined)).toEqual(NONE);
-    expect(codCollectionState(order(), cod({ settledByOperatorConfirmation: false }))).toEqual(
-      NONE,
-    );
+    expect(
+      codCollectionState(
+        order(),
+        cod({ settledByOperatorConfirmation: false, collectedOnDelivery: false }),
+      ),
+    ).toEqual(NONE);
     expect(codCollectionState(order(), cod({ orderRef: "o-2" }))).toEqual(NONE);
   });
 
@@ -66,4 +70,36 @@ describe("codCollectionState (one COD eligibility predicate)", () => {
       });
     },
   );
+});
+
+describe("a draft completed as paid (order operations Part 4, Ruling 9)", () => {
+  const manual = (status: string) =>
+    cod({
+      provider: "manual",
+      status,
+      collectedOnDelivery: false,
+      settledByOperatorConfirmation: true,
+    });
+
+  it("a manual intent on a still-pending order is not cash to collect and not markable", () => {
+    expect(codCollectionState(order(), manual("created"))).toEqual({
+      printAmount: false,
+      canMarkCollected: false,
+    });
+  });
+
+  it("is NEVER cash to collect — pending, settled or dead", () => {
+    for (const status of ["created", "capture_requested", "captured", "cancelled"]) {
+      expect(codCollectionState(order(), manual(status)), status).toEqual(NONE);
+    }
+  });
+
+  it("a cash-on-delivery intent is still collected, keyed on the capability, not the name", () => {
+    expect(
+      codCollectionState(order(), cod({ provider: "courier-cash", collectedOnDelivery: true })),
+    ).toEqual({
+      printAmount: true,
+      canMarkCollected: true,
+    });
+  });
 });

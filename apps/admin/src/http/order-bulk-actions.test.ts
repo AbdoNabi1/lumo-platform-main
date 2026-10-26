@@ -30,6 +30,7 @@ function cod(overrides: Partial<PaymentIntentSummary> = {}): PaymentIntentSummar
     currency: "EGP",
     settlesAtPayTime: true,
     settledByOperatorConfirmation: true,
+    collectedOnDelivery: true,
     ...overrides,
   };
 }
@@ -201,6 +202,7 @@ describe("bulk mark_cod_collected (Mark cash as received)", () => {
           provider: "stripe",
           settlesAtPayTime: false,
           settledByOperatorConfirmation: false,
+          collectedOnDelivery: false,
         }),
         cod({ id: "i-3", orderRef: "o-3", status: "captured" }),
         cod({ id: "i-4", orderRef: "someone-else" }),

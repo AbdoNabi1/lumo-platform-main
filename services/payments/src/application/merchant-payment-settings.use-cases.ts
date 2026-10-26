@@ -52,6 +52,8 @@ function toDto(
 ): MerchantPaymentSettingsDto {
   const methods: Record<PaymentProviderKey, ProviderMethodDto> = {};
   for (const registration of deps.registry.list()) {
+    // A staff-recorded payment (`manual`) is never offered or configured by a merchant (Ruling 8).
+    if (registration.capabilities.recordedByStaff === true) continue;
     const stored = settings.providerSettings(registration.key);
     methods[registration.key] = {
       available: isAvailable(registration, deps.vault),
@@ -152,7 +154,13 @@ export class UpdateMerchantPaymentSettings implements UseCase<
       if (requested.length === 0) {
         return err(new BusinessRuleError("A merchant must offer at least one payment method"));
       }
-      if (!requested.every((key) => isWellFormedProviderKey(key) && registry.has(key))) {
+      if (
+        !requested.every((key) => {
+          if (!isWellFormedProviderKey(key)) return false;
+          const registration = registry.get(key);
+          return registration !== undefined && registration.capabilities.recordedByStaff !== true;
+        })
+      ) {
         return err(new ValidationError("Unknown payment method", []));
       }
       for (const key of requested) {
@@ -168,7 +176,7 @@ export class UpdateMerchantPaymentSettings implements UseCase<
     const prepared: Prepared[] = [];
     for (const [key, entry] of Object.entries(input.providerSettings ?? {})) {
       const registration = isWellFormedProviderKey(key) ? registry.get(key) : undefined;
-      if (registration === undefined) {
+      if (registration === undefined || registration.capabilities.recordedByStaff === true) {
         return err(new ValidationError("Unknown payment method", []));
       }
       if (!isAvailable(registration, vault) || vault === undefined) {

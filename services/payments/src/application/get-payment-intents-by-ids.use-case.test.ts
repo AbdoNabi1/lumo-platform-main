@@ -77,6 +77,7 @@ describe("GetPaymentIntentsByIds (order operations Part 1)", () => {
         currency: "EGP",
         settlesAtPayTime: true,
         settledByOperatorConfirmation: true,
+        collectedOnDelivery: true,
       },
       {
         id: "i-card",
@@ -87,6 +88,7 @@ describe("GetPaymentIntentsByIds (order operations Part 1)", () => {
         currency: "EGP",
         settlesAtPayTime: false,
         settledByOperatorConfirmation: false,
+        collectedOnDelivery: false,
       },
       {
         id: "i-gone",
@@ -97,6 +99,7 @@ describe("GetPaymentIntentsByIds (order operations Part 1)", () => {
         currency: "EGP",
         settlesAtPayTime: false,
         settledByOperatorConfirmation: false,
+        collectedOnDelivery: false,
       },
     ]);
   });

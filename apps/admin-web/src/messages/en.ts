@@ -323,6 +323,7 @@ export const en = {
       cod: "Cash on delivery",
       stripe: "Card (Stripe)",
       paymob: "Card (Paymob)",
+      manual: "Manual payment",
     },
     markAsPaid: "Mark as paid",
     markingAsPaid: "Saving…",

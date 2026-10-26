@@ -61,12 +61,14 @@ const cod: PaymentIntentSummary = {
   currency: "EGP",
   settlesAtPayTime: true,
   settledByOperatorConfirmation: true,
+  collectedOnDelivery: true,
 };
 const card: PaymentIntentSummary = {
   ...cod,
   provider: "stripe",
   settlesAtPayTime: false,
   settledByOperatorConfirmation: false,
+  collectedOnDelivery: false,
 };
 const contact: CustomerContact = {
   id: "c-1",

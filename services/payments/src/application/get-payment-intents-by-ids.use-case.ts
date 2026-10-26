@@ -2,7 +2,10 @@ import type { UseCase } from "@platform/application";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, ValidationError } from "@platform/utils";
 import type { PaymentIntentBatchReader } from "../domain/payment-intent-repository";
-import { isSettledByOperatorConfirmation } from "../domain/value-objects/provider-capabilities";
+import {
+  isCollectedOnDelivery,
+  isSettledByOperatorConfirmation,
+} from "../domain/value-objects/provider-capabilities";
 import type { ProviderCapabilityLookup } from "./ports";
 
 /** One export page of orders (spec §1.4). */
@@ -26,6 +29,8 @@ export interface PaymentIntentSummary {
   readonly settlesAtPayTime: boolean;
   /** Only an operator confirming the money arrived settles it (cash on delivery) — by capability, not name. */
   readonly settledByOperatorConfirmation: boolean;
+  /** Cash a courier collects on delivery — by capability (Ruling 9); false for a staff-recorded payment. */
+  readonly collectedOnDelivery: boolean;
 }
 
 export interface GetPaymentIntentsByIdsDeps {
@@ -74,6 +79,7 @@ export class GetPaymentIntentsByIds implements UseCase<
           settlesAtPayTime: capabilities?.settlesAtPayTime ?? false,
           settledByOperatorConfirmation:
             capabilities !== undefined && isSettledByOperatorConfirmation(capabilities),
+          collectedOnDelivery: capabilities !== undefined && isCollectedOnDelivery(capabilities),
         };
       }),
     );
