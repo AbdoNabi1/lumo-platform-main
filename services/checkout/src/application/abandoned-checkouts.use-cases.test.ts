@@ -335,6 +335,24 @@ describe("ResolveCheckoutLink", () => {
   });
 });
 
+describe("a recovery link never resumes a draft order's checkout (defence in depth)", () => {
+  it("resolves to the same not-found as a spent link", async () => {
+    const w = world();
+    const token = await withLink(w);
+    const s = await w.sessions.findById(SESSION_ID, TENANT);
+    if (s === null) throw new Error("setup failed");
+    s.applyDraftTerms({
+      draftOrderRef: "d-1",
+      draftNumber: "D1",
+      shipping: { title: "Courier", amountMinor: 0 },
+    });
+    await w.sessions.save(s, TENANT);
+    const answer = error(await w.resolve.execute({ tenantId: TENANT, token }));
+    expect(answer.code).toBe("NOT_FOUND");
+    expect(answer.message.startsWith(LINK_INVALID)).toBe(true);
+  });
+});
+
 describe("StartRecoveredCheckout (spec §3.5 steps 3-5 in one unit of work)", () => {
   const CLONE_LINES = [
     { productId: "p-1", quantity: 2, unitPriceAmountMinor: 1200, currency: "EGP" },

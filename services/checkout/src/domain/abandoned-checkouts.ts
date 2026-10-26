@@ -53,9 +53,10 @@ export function isRecovered(session: CheckoutSession): boolean {
 
 /**
  * Spec §3.1, derived at read time (no job): open (`started`/`locked`), last changed before
- * `olderThan`, at least one item, and an email or a shipping phone to reach the shopper, and not a draft
- * order's checkout (the draft list owns it) — plus every recovered checkout, so it stays listed as "Recovered". `PrismaCheckoutSessionRepository.listAbandoned`
- * is the same rule in SQL; the shared fixture keeps them equal.
+ * `olderThan`, at least one item, an email or a shipping phone to reach the shopper, and not a draft
+ * order's checkout (the draft list owns it) — plus every recovered checkout, so it stays listed as
+ * "Recovered". `PrismaCheckoutSessionRepository.listAbandoned` is the same rule in SQL; the shared
+ * fixture keeps them equal.
  */
 export function isAbandonedCheckout(record: CheckoutSessionRecord, olderThan: Date): boolean {
   const { session } = record;

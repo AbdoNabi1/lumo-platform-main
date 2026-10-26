@@ -24,7 +24,11 @@ import {
 } from "./value-objects/draft-terms";
 import { ShippingSelection, type PaymentSelection } from "./value-objects/selections";
 
-/** Checkout stores `discount_minor`, `tax_minor` and the totals as INT4 columns. */
+/**
+ * The largest amount a 32-bit column holds. Checkout's `tax_minor` and `discount_minor` are INT4, and the
+ * session's total becomes the payment intent's amount, which Payments stores as INT4 (`amount_minor`).
+ * (`totals` itself is JSONB, so the ceiling is not about that column.)
+ */
 const MAX_STORED_MINOR = 2_147_483_647;
 
 export interface OrderDraft {
@@ -254,7 +258,9 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
   applyTaxSnapshot(taxMinor: number, included = false): void {
     this.ensureOpen();
     if (this.props.draftTerms !== undefined && taxMinor > MAX_STORED_MINOR) {
-      throw new BusinessRuleError("The tax on this draft order's checkout is too large");
+      throw new BusinessRuleError(
+        "DRAFT_TOTAL_TOO_LARGE: the tax on this draft order's checkout is too large",
+      );
     }
     this.props.taxMinor = taxMinor;
     this.props.taxIncluded = included;
@@ -335,12 +341,15 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
       },
     );
     // A draft's subtotal plus shipping is already bounded by Orders; the tax added here can still push the
-    // total past what the INT4 columns hold, so it is refused before it can reach the database.
+    // total past what a 32-bit column holds (see MAX_STORED_MINOR), so it is refused before it can be stored
+    // or become a payment amount.
     if (
       this.props.draftTerms !== undefined &&
       (totals.totalMinor > MAX_STORED_MINOR || totals.taxMinor > MAX_STORED_MINOR)
     ) {
-      throw new BusinessRuleError("The total of this draft order's checkout is too large");
+      throw new BusinessRuleError(
+        "DRAFT_TOTAL_TOO_LARGE: the total of this draft order's checkout is too large",
+      );
     }
     this.props.totals = totals;
     this.addDomainEvent(

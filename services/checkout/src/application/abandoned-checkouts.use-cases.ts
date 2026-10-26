@@ -287,7 +287,9 @@ async function resumableCheckoutOf(
   if (
     session === null ||
     session.state.value === "completed" ||
-    session.recoveredOrderRef !== undefined
+    session.recoveredOrderRef !== undefined ||
+    // Part 4: a draft order's checkout is never resumed by a recovery link (issuance already refuses it).
+    session.draftTerms !== undefined
   ) {
     return null;
   }

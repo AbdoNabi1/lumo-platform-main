@@ -71,7 +71,7 @@ describe("CheckoutSession draft terms (spec §4.4)", () => {
     ).toThrow(/subtotal/);
     expect(() =>
       draftSession().applyDraftTerms({ ...TERMS, shipping: { title: "x", amountMinor: -1 } }),
-    ).toThrow();
+    ).toThrow(/Invalid shipping selection/);
     const empty = CheckoutSession.start(
       UniqueEntityId.from("01920000-0000-7000-8000-000000000002"),
       "c",
@@ -85,7 +85,26 @@ describe("CheckoutSession draft terms (spec §4.4)", () => {
   it("refuses another draft's terms on the same session", () => {
     const session = draftSession();
     session.applyDraftTerms(TERMS);
-    expect(() => session.applyDraftTerms({ ...TERMS, draftOrderRef: "other" })).toThrow();
+    expect(() => session.applyDraftTerms({ ...TERMS, draftOrderRef: "other" })).toThrow(
+      /another draft/,
+    );
+  });
+
+  it("accepts the same draft's terms again, replacing them (the merchant edited the draft)", () => {
+    const session = draftSession();
+    session.applyDraftTerms(TERMS);
+    const edited: DraftTerms = {
+      ...TERMS,
+      discount: { title: "Bigger", amountMinor: 7000 },
+      shipping: { title: "Express", amountMinor: 9000 },
+    };
+    session.applyDraftTerms(edited);
+    expect(session.draftTerms).toEqual(edited);
+    expect(session.discountMinor).toBe(7000);
+    expect(session.discountSnapshot?.applied).toHaveLength(1);
+    expect(session.shippingSelection?.rateAmountMinor).toBe(9000);
+    session.recalculateTotals("evt-1", new Date(0));
+    expect(session.totals?.totalMinor).toBe(50000 - 7000 + 9000);
   });
 
   it("locks what the merchant fixed: items, shipping, codes, promotion snapshots (DRAFT_LOCKED)", () => {
@@ -120,13 +139,13 @@ describe("CheckoutSession draft terms (spec §4.4)", () => {
 
   it("transfers ownership only for an open draft session (Ruling 22)", () => {
     const session = draftSession();
-    expect(() => session.transferOwnership("guest-2")).toThrow();
+    expect(() => session.transferOwnership("guest-2")).toThrow(/Only a draft/);
     session.applyDraftTerms(TERMS);
     session.transferOwnership("guest-2");
     expect(session.sessionRef).toBe("guest-2");
-    expect(() => session.transferOwnership(" ")).toThrow();
+    expect(() => session.transferOwnership(" ")).toThrow(/needs an owner/);
     session.expire("evt-x", new Date(0));
-    expect(() => session.transferOwnership("guest-3")).toThrow();
+    expect(() => session.transferOwnership("guest-3")).toThrow(/no longer be modified/);
   });
 
   describe("INT4 ceiling (checkout stores totals as 32-bit integers)", () => {
@@ -155,7 +174,9 @@ describe("CheckoutSession draft terms (spec §4.4)", () => {
     it("refuses tax that pushes the total over the ceiling, leaving the totals unset", () => {
       const session = maxedDraft();
       session.applyTaxSnapshot(1, false);
-      expect(() => session.recalculateTotals("evt-1", new Date(0))).toThrow(/too large/);
+      expect(() => session.recalculateTotals("evt-1", new Date(0))).toThrow(
+        /^DRAFT_TOTAL_TOO_LARGE:/,
+      );
       expect(session.totals).toBeUndefined();
       expect(session.domainEvents).toHaveLength(0);
     });
@@ -170,7 +191,7 @@ describe("CheckoutSession draft terms (spec §4.4)", () => {
     it("refuses a tax figure that alone exceeds the ceiling", () => {
       const session = draftSession();
       session.applyDraftTerms(TERMS);
-      expect(() => session.applyTaxSnapshot(INT4_MAX + 1, true)).toThrow(/too large/);
+      expect(() => session.applyTaxSnapshot(INT4_MAX + 1, true)).toThrow(/^DRAFT_TOTAL_TOO_LARGE:/);
     });
   });
 });
