@@ -244,3 +244,44 @@ describe("CheckoutSessionMapper — recovery marks (order operations Part 3)", (
     expect(session.recoveredOrderRef).toBeUndefined();
   });
 });
+
+describe("CheckoutSessionMapper — draft terms (order operations Part 4)", () => {
+  it("round-trips draft terms and a transferred owner; {} means none", () => {
+    const session = CheckoutSession.start(
+      UniqueEntityId.from("01920000-0000-7000-8000-000000000009"),
+      "draft:d-1",
+      undefined,
+      "server-ref",
+      "EGP",
+    );
+    const line = CheckoutItem.create("p-1", 1, 1000, "EGP");
+    if (!line.ok) throw new Error("invalid fixture");
+    session.loadItems([line.value]);
+    session.applyDraftTerms({
+      draftOrderRef: "d-1",
+      draftNumber: "D1",
+      shipping: { title: "Courier", amountMinor: 500 },
+    });
+    session.transferOwnership("guest-2");
+    const row = CheckoutSessionMapper.toRow(session, "t");
+    expect(row.draftTerms).toEqual({
+      draftOrderRef: "d-1",
+      draftNumber: "D1",
+      shipping: { title: "Courier", amountMinor: 500 },
+    });
+    expect(row.sessionRef).toBe("guest-2");
+    const back = CheckoutSessionMapper.toDomain({ ...asRow(row), version: 1 });
+    expect(back.draftTerms).toEqual(row.draftTerms);
+    expect(back.sessionRef).toBe("guest-2");
+    const plain = CheckoutSessionMapper.toDomain({ ...asRow(row), draftTerms: {}, version: 1 });
+    expect(plain.draftTerms).toBeUndefined();
+    // A row read before the column existed has no key at all.
+    const legacy = CheckoutSessionMapper.toDomain({
+      ...asRow(row),
+      draftTerms: undefined,
+      version: 1,
+    });
+    expect(legacy.draftTerms).toBeUndefined();
+    expect(CheckoutSessionMapper.toRow(guest(), "t").draftTerms).toEqual({});
+  });
+});

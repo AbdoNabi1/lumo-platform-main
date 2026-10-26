@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { CheckoutItem } from "@platform/checkout";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
@@ -160,5 +160,20 @@ describe("DiscountUsageAdapter (Phase 2)", () => {
     const automatic = (await c.promotions.get({ tenantId: TENANT, promotionId: autoId }))
       .body as Promotion;
     expect(automatic.usageCount).toBe(2); // automatic uses are not deduplicated; CompleteCheckout calls this once per order
+  });
+
+  it("skips a draft order's discount — no promotion and no coupon is counted (spec §4.4)", async () => {
+    const recordUsage = vi.fn();
+    const redeem = vi.fn();
+    const adapter = new DiscountUsageAdapter({ recordUsage } as never, { redeem } as never);
+    await adapter.record({
+      tenantId: "t",
+      orderRef: "o-1",
+      applied: [
+        { promotionId: "draft:d-1", title: "Loyal", discountClass: "order", amountMinor: 500 },
+      ],
+    });
+    expect(recordUsage).not.toHaveBeenCalled();
+    expect(redeem).not.toHaveBeenCalled();
   });
 });

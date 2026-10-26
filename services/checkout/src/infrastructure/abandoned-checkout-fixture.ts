@@ -27,6 +27,7 @@ export const FIXTURE_NAMES = [
   "fresh",
   "noContact",
   "noItems",
+  "draft",
   "otherTenant",
 ] as const;
 export type FixtureName = (typeof FIXTURE_NAMES)[number];
@@ -104,6 +105,13 @@ export async function seedAbandonedFixture(
   const fresh = open(ids.fresh, "fresh", { email: "fresh@example.com" });
   const noContact = open(ids.noContact, "noContact", { recipient: "No Phone" });
   const noItems = open(ids.noItems, "noItems", { email: "empty@example.com", items: false });
+  // Part 4 (spec §3.1, draft_terms = '{}'): a draft order's checkout is the draft list's, never listed here.
+  const draft = open(ids.draft, "draft", { email: "draft@example.com" });
+  draft.applyDraftTerms({
+    draftOrderRef: "draft-fixture",
+    draftNumber: "D1",
+    shipping: { title: "Courier", amountMinor: 0 },
+  });
   const otherTenant = open(ids.otherTenant, "otherTenant", { email: "sara@example.com" });
 
   const own: readonly (readonly [CheckoutSession, Date])[] = [
@@ -117,6 +125,7 @@ export async function seedAbandonedFixture(
     [fresh, FRESH],
     [noContact, IDLE],
     [noItems, IDLE],
+    [draft, IDLE],
   ];
   for (const [session, updatedAt] of own) await store.save(session, tenants.tenantId, updatedAt);
   await store.save(otherTenant, tenants.otherTenantId, IDLE);

@@ -43,6 +43,7 @@ function toDomain(row: SessionRow): CheckoutSession {
     paymentSelection: row.paymentSelection as Record<string, never>,
     totals: row.totals as Record<string, never>,
     discounts: row.discounts as Record<string, never>,
+    draftTerms: row.draftTerms as Record<string, never>,
   });
 }
 
@@ -98,6 +99,9 @@ export class PrismaCheckoutSessionRepository
           totals: row.totals,
           discounts: row.discounts,
           recoveredOrderRef: row.recoveredOrderRef,
+          // Part 4 (Ruling 22): the owner changes only through `transferOwnership`, which this persists.
+          sessionRef: row.sessionRef,
+          draftTerms: row.draftTerms,
           version: { increment: 1 },
         },
       });
@@ -158,6 +162,7 @@ export class PrismaCheckoutSessionRepository
               "state" IN ('started', 'locked')
               AND "updated_at" < (${olderThan}::timestamptz AT TIME ZONE 'UTC')
               AND "items" <> '[]'::jsonb
+              AND "draft_terms" = '{}'::jsonb
               AND ("contact_email" IS NOT NULL OR "shipping_address"->>'phone' IS NOT NULL)
             )
           )

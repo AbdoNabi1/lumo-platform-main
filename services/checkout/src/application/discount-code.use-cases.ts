@@ -24,6 +24,9 @@ export async function refreshDiscounts(
   port: PromotionValidationPort,
   tenantId: string,
 ): Promise<void> {
+  // Part 4 (spec §4.4 decision): a draft's price is final — no automatic discount and no code is ever
+  // evaluated for it; its snapshot was written by `applyDraftTerms`.
+  if (session.draftTerms !== undefined) return;
   const address = session.shippingAddress;
   const selection = session.shippingSelection;
   const snapshot = await port.evaluate({

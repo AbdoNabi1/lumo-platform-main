@@ -71,3 +71,11 @@ export {
   type StartRecoveredCheckoutOutput,
 } from "./application/abandoned-checkouts.use-cases";
 export { PrismaCheckoutLinkRepository } from "./infrastructure/prisma-checkout-link-repository";
+export {
+  DRAFT_LOCKED,
+  DRAFT_SHIPPING_METHOD,
+  draftCartRef,
+  draftPromotionId,
+  isDraftPromotionId,
+  type DraftTerms,
+} from "./domain/value-objects/draft-terms";

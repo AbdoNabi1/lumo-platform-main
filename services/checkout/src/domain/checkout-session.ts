@@ -17,7 +17,15 @@ import {
   type AppliedDiscountSnapshot,
   type DiscountSnapshot,
 } from "./value-objects/discount-snapshot";
-import type { PaymentSelection, ShippingSelection } from "./value-objects/selections";
+import {
+  DRAFT_SHIPPING_METHOD,
+  draftPromotionId,
+  type DraftTerms,
+} from "./value-objects/draft-terms";
+import { ShippingSelection, type PaymentSelection } from "./value-objects/selections";
+
+/** Checkout stores `discount_minor`, `tax_minor` and the totals as INT4 columns. */
+const MAX_STORED_MINOR = 2_147_483_647;
 
 export interface OrderDraft {
   readonly cartRef: string;
@@ -45,7 +53,8 @@ export interface PaymentIntentRequest {
 interface CheckoutSessionProps {
   readonly cartRef: string;
   customerRef?: string;
-  readonly sessionRef: string;
+  /** Part 4: replaced only by `transferOwnership`. */
+  sessionRef: string;
   readonly currency: string;
   state: CheckoutState;
   orderRef: string | null;
@@ -73,6 +82,8 @@ interface CheckoutSessionProps {
   readonly recoveredFromRef?: string;
   /** Order operations Part 3: on the abandoned session, once its recovered checkout became this order. */
   recoveredOrderRef?: string;
+  /** Order operations Part 4: the merchant's fixed terms on a draft order's checkout; absent otherwise. */
+  draftTerms?: DraftTerms;
 }
 
 /**
@@ -143,6 +154,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
       readonly codeAttemptsWindowStartedAt?: Date;
       readonly recoveredFromRef?: string;
       readonly recoveredOrderRef?: string;
+      readonly draftTerms?: DraftTerms;
     } = {},
   ): CheckoutSession {
     return new CheckoutSession(
@@ -170,6 +182,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         codeAttemptsWindowStartedAt: extra.codeAttemptsWindowStartedAt,
         recoveredFromRef: extra.recoveredFromRef,
         recoveredOrderRef: extra.recoveredOrderRef,
+        draftTerms: extra.draftTerms,
       },
       id,
       version,
@@ -178,6 +191,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
 
   loadItems(items: readonly CheckoutItem[]): void {
     this.ensureOpen();
+    this.ensureNotDraftLocked("items");
     this.props.items = items;
   }
 
@@ -198,6 +212,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
 
   selectShipping(selection: ShippingSelection): void {
     this.ensureOpen();
+    this.ensureNotDraftLocked("shipping");
     this.props.shippingSelection = selection;
   }
 
@@ -238,6 +253,9 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
    */
   applyTaxSnapshot(taxMinor: number, included = false): void {
     this.ensureOpen();
+    if (this.props.draftTerms !== undefined && taxMinor > MAX_STORED_MINOR) {
+      throw new BusinessRuleError("The tax on this draft order's checkout is too large");
+    }
     this.props.taxMinor = taxMinor;
     this.props.taxIncluded = included;
   }
@@ -245,12 +263,14 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
   /** Stores the discount snapshot requested from Promotions via `PromotionValidationPort` — never computed here. */
   applyPromotionSnapshot(discountMinor: number): void {
     this.ensureOpen();
+    this.ensureNotDraftLocked("discount");
     this.props.discountMinor = discountMinor;
   }
 
   /** Adds a code the shopper typed (Phase 2). Already entered: nothing changes. A sixth code: refused. */
   enterDiscountCode(code: string): void {
     this.ensureOpen();
+    this.ensureNotDraftLocked("discount");
     const normalized = normalizeDiscountCode(code);
     if (this.props.discountCodes.includes(normalized)) return;
     if (this.props.discountCodes.length >= MAX_DISCOUNT_CODES) {
@@ -261,6 +281,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
 
   removeDiscountCode(code: string): void {
     this.ensureOpen();
+    this.ensureNotDraftLocked("discount");
     const normalized = normalizeDiscountCode(code);
     this.props.discountCodes = this.props.discountCodes.filter((c) => c !== normalized);
   }
@@ -268,6 +289,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
   /** Stores what Promotions decided (Phase 2); the order discount becomes `discountMinor`. Never computed here. */
   applyDiscountSnapshot(snapshot: DiscountSnapshot): void {
     this.ensureOpen();
+    this.ensureNotDraftLocked("discount");
     this.props.discountSnapshot = snapshot;
     this.props.discountMinor = snapshot.orderDiscountMinor;
   }
@@ -312,6 +334,14 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         shippingDiscountMinor: this.props.discountSnapshot?.shippingDiscountMinor ?? 0,
       },
     );
+    // A draft's subtotal plus shipping is already bounded by Orders; the tax added here can still push the
+    // total past what the INT4 columns hold, so it is refused before it can reach the database.
+    if (
+      this.props.draftTerms !== undefined &&
+      (totals.totalMinor > MAX_STORED_MINOR || totals.taxMinor > MAX_STORED_MINOR)
+    ) {
+      throw new BusinessRuleError("The total of this draft order's checkout is too large");
+    }
     this.props.totals = totals;
     this.addDomainEvent(
       new CheckoutRecalculated(
@@ -370,6 +400,72 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     }
     this.props.recoveredOrderRef = orderRef;
     if (this.props.state.isOpen) this.expire(eventId, occurredAt);
+  }
+
+  /**
+   * Order operations Part 4 (spec §4.4): fixes the merchant's discount and shipping on a draft order's
+   * checkout. Items must be loaded first (the discount is checked against their subtotal and can never
+   * exceed it). One `draft:<id>` order discount entry, or none; no codes; the shipping selection is the
+   * fixed `draft` method. Never computed elsewhere: `refreshDiscounts` leaves a draft session alone.
+   */
+  applyDraftTerms(terms: DraftTerms): void {
+    this.ensureOpen();
+    const current = this.props.draftTerms;
+    if (current !== undefined && current.draftOrderRef !== terms.draftOrderRef) {
+      throw new BusinessRuleError("This checkout belongs to another draft order");
+    }
+    if (this.props.items.length === 0) {
+      throw new BusinessRuleError("A draft order's checkout needs its items before its terms");
+    }
+    const subtotal = this.props.items.reduce((sum, item) => sum + item.lineTotalMinor, 0);
+    const discountMinor = terms.discount?.amountMinor ?? 0;
+    if (!Number.isInteger(discountMinor) || discountMinor < 0 || discountMinor > subtotal) {
+      throw new BusinessRuleError("A draft discount must be between zero and the subtotal");
+    }
+    const shipping = ShippingSelection.create(
+      DRAFT_SHIPPING_METHOD,
+      terms.shipping.amountMinor,
+      this.props.currency,
+      { name: terms.shipping.title },
+    );
+    if (!shipping.ok) throw new BusinessRuleError(shipping.error.message);
+    this.props.draftTerms = terms;
+    this.props.shippingSelection = shipping.value;
+    this.props.discountCodes = [];
+    this.props.discountSnapshot = {
+      applied:
+        terms.discount === undefined || discountMinor === 0
+          ? []
+          : [
+              {
+                promotionId: draftPromotionId(terms.draftOrderRef),
+                title: terms.discount.title,
+                discountClass: "order",
+                amountMinor: discountMinor,
+              },
+            ],
+      orderDiscountMinor: discountMinor,
+      shippingDiscountMinor: 0,
+      codeStatuses: [],
+      lineAllocations: [],
+    };
+    this.props.discountMinor = discountMinor;
+  }
+
+  /**
+   * Order operations Part 4 (spec §4.7): the invoice link's opener takes over this draft checkout — the
+   * server-minted `sessionRef` is replaced by the claimer's own guest cookie value. Draft sessions only
+   * (Ruling 22), and only while open.
+   */
+  transferOwnership(sessionRef: string): void {
+    this.ensureOpen();
+    if (this.props.draftTerms === undefined) {
+      throw new BusinessRuleError("Only a draft order's checkout can change hands");
+    }
+    if (sessionRef.trim().length === 0) {
+      throw new BusinessRuleError("A checkout needs an owner");
+    }
+    this.props.sessionRef = sessionRef;
   }
 
   complete(orderRef: string, eventId: string, occurredAt: Date): void {
@@ -532,6 +628,10 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
     return this.props.recoveredOrderRef;
   }
 
+  get draftTerms(): DraftTerms | undefined {
+    return this.props.draftTerms;
+  }
+
   get codeAttemptsWindowStartedAt(): Date | undefined {
     return this.props.codeAttemptsWindowStartedAt;
   }
@@ -539,6 +639,13 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
   /** Whether Phase 2 discounts have touched this session (a legacy `applyPromotionSnapshot` session has not). */
   get hasDiscountState(): boolean {
     return this.props.discountCodes.length > 0 || this.props.discountSnapshot !== undefined;
+  }
+
+  /** Part 4: what the merchant fixed on a draft order's checkout cannot be changed by the shopper. */
+  private ensureNotDraftLocked(what: string): void {
+    if (this.props.draftTerms !== undefined) {
+      throw new BusinessRuleError(`DRAFT_LOCKED: the ${what} of a draft order's checkout is fixed`);
+    }
   }
 
   private ensureOpen(): void {

@@ -65,6 +65,16 @@ describe("isAbandonedCheckout (spec §3.1)", () => {
     expect(isAbandonedCheckout(record(locked), OLDER_THAN)).toBe(true);
   });
 
+  it("not a draft order's checkout — the draft list owns it (spec §3.1, draft_terms = '{}')", () => {
+    const draft = session({ email: "draft@example.com" });
+    draft.applyDraftTerms({
+      draftOrderRef: "d-1",
+      draftNumber: "D1",
+      shipping: { title: "Courier", amountMinor: 0 },
+    });
+    expect(isAbandonedCheckout(record(draft), OLDER_THAN)).toBe(false);
+  });
+
   it("not while the shopper may still be typing (idle exactly 60 minutes is not yet)", () => {
     expect(isAbandonedCheckout(record(session({ email: "a@b.co" }), JUST_NOW), OLDER_THAN)).toBe(
       false,
