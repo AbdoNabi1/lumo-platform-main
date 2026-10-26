@@ -20,6 +20,7 @@ import {
   type PaymentMethodPort,
   type PricingValidationPort,
   type DiscountUsagePort,
+  type DraftOrderCompletionPort,
   type PromotionValidationPort,
   type ShippingCalculationPort,
   type TaxCalculationPort,
@@ -143,6 +144,7 @@ import { PaymentsNotificationAdapter } from "./infrastructure/cross-context/paym
 import { StoreCurrencyRelabelAdapter } from "./infrastructure/cross-context/store-currency-relabel.adapter";
 import { PaymentsOrdersAdapter } from "./infrastructure/cross-context/payments-orders.adapter";
 import { DiscountUsageAdapter } from "./infrastructure/cross-context/discount-usage.adapter";
+import { DraftOrderCompletionAdapter } from "./infrastructure/cross-context/draft-order-completion.adapter";
 import { PromotionValidationAdapter } from "./infrastructure/cross-context/promotion-validation.adapter";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
 import { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email-adapter";
@@ -178,6 +180,7 @@ import { LoyaltyAdminController } from "./interfaces/loyalty.admin-controller";
 import { MediaLibraryAdminController } from "./interfaces/media-library.admin-controller";
 import { NotificationsAdminController } from "./interfaces/notifications.admin-controller";
 import { OrdersAdminController } from "./interfaces/orders.admin-controller";
+import { DraftOrdersAdminController } from "./interfaces/draft-orders.admin-controller";
 import { PagesAdminController } from "./interfaces/pages.admin-controller";
 import { PaymentsAdminController } from "./interfaces/payments.admin-controller";
 import { PlatformConsoleAdminController } from "./interfaces/platform-console.admin-controller";
@@ -412,6 +415,11 @@ export interface AdminWiringDeps {
    */
   readonly discountUsage?: DiscountUsagePort;
   /**
+   * Order operations Part 4: tells Orders a draft order's checkout became an order. Absent ⇒ the real
+   * `DraftOrderCompletionAdapter` over Orders.
+   */
+  readonly draftCompletion?: DraftOrderCompletionPort;
+  /**
    * C-2: the outbound seam `CompleteCheckout` uses to materialize an order from a completed
    * session. Passed straight through to `wireCheckout(deps)` below; absent ⇒ Checkout's own
    * `InMemoryOrderCreationAdapter` (fabricates a deterministic `orderRef`, never persists
@@ -457,6 +465,8 @@ export interface WiredAdmin {
   readonly inventory: InventoryAdminController;
   /** Orders screen → Orders. */
   readonly orders: OrdersAdminController;
+  /** Order operations Part 4: Orders → Drafts. */
+  readonly draftOrders: DraftOrdersAdminController;
   /** Customers screen → Identity. */
   readonly customers: CustomersAdminController;
   /**
@@ -692,6 +702,16 @@ export interface WiredAdmin {
      * an admin/system-triggered action, so a customer with none yet gets an honest 404.
      */
     readonly loyalty: LoyaltyController;
+    /**
+     * Order operations Part 4: the three draft operations the invoice link and the post-completion
+     * bookkeeping need with no staff principal (the shopper opening an invoice, Checkout reporting a
+     * paid draft). Nothing else of Orders is reachable here; the guarded `draftOrders` facade stays the
+     * only staff path.
+     */
+    readonly draftOrders: Pick<
+      OrderController,
+      "getDraftOrder" | "setDraftCheckout" | "completeDraftFromCheckout"
+    >;
   };
   /**
    * The PSP webhook ingress seam (C2-2/C2-6). A webhook has no admin Bearer token — its
@@ -978,6 +998,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       ),
     discountUsage:
       deps.discountUsage ?? new DiscountUsageAdapter(promotions.promotions, coupons.coupons),
+    // Part 4: `orders` is wired above, so the real adapter needs no lazy cell.
+    draftCompletion: deps.draftCompletion ?? new DraftOrderCompletionAdapter(orders.orders),
     orderCreation:
       deps.orderCreation ?? new OrderCreationAdapter(orders.orders, identity.customers),
     // Plan 3C (G-114): the stock is held the moment the order is placed — the same Inventory logic
@@ -1193,6 +1215,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       payments: payments.payments,
       guard,
     }),
+    draftOrders: new DraftOrdersAdminController({ orders: orders.orders, guard }),
     customers: new CustomersAdminController({ customers: identity.customers, guard }),
     customer360: new Customer360AdminController({
       customer360: customer360.customer360,
@@ -1355,6 +1378,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       customers: identity.customers,
       wishlist: wishlist.wishlist,
       loyalty: loyalty.loyalty,
+      // Closures, not the controller: nothing else of Orders is reachable through this key.
+      draftOrders: {
+        getDraftOrder: (input) => orders.orders.getDraftOrder(input),
+        setDraftCheckout: (input) => orders.orders.setDraftCheckout(input),
+        completeDraftFromCheckout: (input) => orders.orders.completeDraftFromCheckout(input),
+      },
     },
     paymentsWebhook: {
       recordWebhook: (input) => payments.payments.recordWebhook(input),
