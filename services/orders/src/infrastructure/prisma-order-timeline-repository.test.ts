@@ -56,6 +56,24 @@ describe("order timeline repositories (Part 2)", () => {
     }
   });
 
+  it("keeps the draft number and id of a created_from_draft line", async () => {
+    for (const [layer, timeline, tx] of layers()) {
+      const data = { draftNumber: "D3", draftId: "01900000-0000-7000-8000-0000000002aa" };
+      await timeline.append(
+        comment(1, {
+          kind: "created_from_draft",
+          authorRef: null,
+          authorName: null,
+          body: null,
+          data,
+        }),
+        TENANT,
+        tx,
+      );
+      expect((await timeline.findById(id(1), TENANT, tx))?.data, layer).toEqual(data);
+    }
+  });
+
   it("update writes only body, editedAt and deletedAt", async () => {
     for (const [layer, timeline, tx] of layers()) {
       await timeline.append(comment(1), TENANT, tx);

@@ -175,7 +175,12 @@ export class DeleteDraftOrder implements UseCase<
           input.tenantId,
           tx,
         );
-        return deleted ? ok({ draftId: input.draftId }) : err(completedRefusal());
+        if (deleted) return ok({ draftId: input.draftId });
+        // Lost a race: deleted meanwhile is "not found", completed meanwhile is the refusal.
+        const current = await this.deps.drafts.findById(input.draftId, input.tenantId, tx);
+        return current === null || current.deletedAt !== null
+          ? err(draftNotFound())
+          : err(completedRefusal());
       },
     );
   }
@@ -340,6 +345,21 @@ export class CompleteDraftFromCheckout implements UseCase<
             ? ok({ ...same, changed: false })
             : err(completedRefusal());
         }
+        // Verified BEFORE the guarded write: the order is another context's commit, and a ref this
+        // shop cannot see must not close the draft for good (every retry would take the completed
+        // branch above and skip the note, tags and timeline line).
+        const verified = await this.deps.annotations.annotationsOf(
+          [input.orderRef],
+          input.tenantId,
+          tx,
+        );
+        if (!verified.has(input.orderRef)) {
+          logger.warn("draft completion refused: the order is not visible to this shop", {
+            tenantId: input.tenantId,
+            draftId: draft.id,
+          });
+          return err(new NotFoundError("Order not found"));
+        }
         const at = this.deps.clock.now();
         const changed = await this.deps.drafts.markCompleted(
           draft.id,
@@ -347,20 +367,14 @@ export class CompleteDraftFromCheckout implements UseCase<
           input.tenantId,
           tx,
         );
-        if (!changed) return ok({ ...same, changed: false });
-
-        const verified = await this.deps.annotations.annotationsOf(
-          [input.orderRef],
-          input.tenantId,
-          tx,
-        );
-        if (!verified.has(input.orderRef)) {
-          // The order is another context's commit; never write lines for an id this shop cannot see.
-          logger.warn("draft completed by an order the annotations cannot see", {
-            tenantId: input.tenantId,
-            draftId: draft.id,
-          });
-          return ok({ ...same, changed: true });
+        if (!changed) {
+          // Lost a race (Postgres READ COMMITTED): whoever won decides. The same order is an
+          // idempotent repeat; another order must not be reported as this caller's success.
+          const current = await this.deps.drafts.findById(input.draftId, input.tenantId, tx);
+          if (current === null) return err(draftNotFound());
+          return current.status === "completed" && current.orderRef === input.orderRef
+            ? ok({ ...same, changed: false })
+            : err(completedRefusal());
         }
         if (draft.note !== null) {
           await this.deps.annotations.setNote(input.orderRef, draft.note, input.tenantId, tx);

@@ -68,7 +68,7 @@ function must<T>(r: { ok: boolean; value?: T }): T {
   return r.value;
 }
 
-async function world() {
+async function world(drafts: InMemoryDraftOrderRepository = new InMemoryDraftOrderRepository()) {
   const orders = new InMemoryOrderRepository({
     outbox: new OutboxWriter({
       store: new InMemoryOutboxStore(),
@@ -98,7 +98,6 @@ async function world() {
     ),
     T,
   );
-  const drafts = new InMemoryDraftOrderRepository();
   const annotations = new InMemoryOrderAnnotationRepository({ orders });
   const timeline = new InMemoryOrderTimelineRepository();
   let n = 0;
@@ -132,6 +131,44 @@ async function world() {
     setCheckout: new SetDraftCheckout(deps),
     complete: new CompleteDraftFromCheckout(deps),
   };
+}
+
+/** A repository whose guarded writes can lose a race: the other writer wins, then ours answers false. */
+class RacyDraftRepository extends InMemoryDraftOrderRepository {
+  loseCompletion: ((id: string, tenantId: string) => Promise<void>) | undefined;
+  loseDelete: ((id: string, tenantId: string) => Promise<void>) | undefined;
+  beforeContentSave: ((id: string, tenantId: string) => Promise<void>) | undefined;
+  readonly hidden = new Set<string>();
+  readonly realMarkCompleted = (
+    ...args: Parameters<InMemoryDraftOrderRepository["markCompleted"]>
+  ) => super.markCompleted(...args);
+  readonly realSoftDelete = (...args: Parameters<InMemoryDraftOrderRepository["softDelete"]>) =>
+    super.softDelete(...args);
+
+  override async findById(...args: Parameters<InMemoryDraftOrderRepository["findById"]>) {
+    return this.hidden.has(args[0]) ? null : super.findById(...args);
+  }
+
+  override async markCompleted(
+    ...args: Parameters<InMemoryDraftOrderRepository["markCompleted"]>
+  ): Promise<boolean> {
+    if (this.loseCompletion === undefined) return super.markCompleted(...args);
+    await this.loseCompletion(args[0], args[2]);
+    return false;
+  }
+
+  override async softDelete(
+    ...args: Parameters<InMemoryDraftOrderRepository["softDelete"]>
+  ): Promise<boolean> {
+    if (this.loseDelete === undefined) return super.softDelete(...args);
+    await this.loseDelete(args[0], args[2]);
+    return false;
+  }
+
+  override async save(...args: Parameters<InMemoryDraftOrderRepository["save"]>): Promise<void> {
+    if (!args[0].isNew) await this.beforeContentSave?.(args[0].id, args[1]);
+    return super.save(...args);
+  }
 }
 
 const value = <T>(r: { ok: true; value: T } | { ok: false; error: DomainError }): T => {
@@ -376,5 +413,101 @@ describe("CompleteDraftFromCheckout", () => {
         await w.complete.execute({ tenantId: "tenant-b", draftId: draft.id, orderRef: ORDER_ID }),
       ).code,
     ).toBe("NOT_FOUND");
+  });
+});
+
+describe("lost races (guarded writes that answer false)", () => {
+  const OTHER_ORDER = "77777777-7777-7777-8777-777777777777";
+  const make = async () => {
+    const repo = new RacyDraftRepository();
+    const w = await world(repo);
+    const { draft } = value(
+      await w.create.execute({ tenantId: T, createdBy: "s", currency: "EGP", content: CONTENT }),
+    );
+    return { repo, w, draft };
+  };
+
+  it("completion: a draft another order completed meanwhile answers DRAFT_COMPLETED", async () => {
+    const { repo, w, draft } = await make();
+    repo.loseCompletion = async (id, tenantId) => {
+      await repo.realMarkCompleted(id, { orderRef: OTHER_ORDER, at: NOW }, tenantId);
+    };
+    const refused = failure(
+      await w.complete.execute({ tenantId: T, draftId: draft.id, orderRef: ORDER_ID }),
+    );
+    expect(refused.message).toMatch(/^DRAFT_COMPLETED:/);
+    expect((await repo.findById(draft.id, T))?.orderRef).toBe(OTHER_ORDER);
+    expect(await w.timeline.listForOrder(ORDER_ID, T, { first: 200 })).toHaveLength(0);
+  });
+
+  it("completion: the same order completing it meanwhile is an idempotent repeat", async () => {
+    const { repo, w, draft } = await make();
+    repo.loseCompletion = async (id, tenantId) => {
+      await repo.realMarkCompleted(id, { orderRef: ORDER_ID, at: NOW }, tenantId);
+    };
+    expect(
+      value(await w.complete.execute({ tenantId: T, draftId: draft.id, orderRef: ORDER_ID })),
+    ).toEqual({ draftId: draft.id, orderRef: ORDER_ID, changed: false });
+  });
+
+  it("completion: a draft that vanished meanwhile answers NOT_FOUND", async () => {
+    const { repo, w, draft } = await make();
+    repo.loseCompletion = async (id) => {
+      repo.hidden.add(id);
+    };
+    expect(
+      failure(await w.complete.execute({ tenantId: T, draftId: draft.id, orderRef: ORDER_ID }))
+        .code,
+    ).toBe("NOT_FOUND");
+  });
+
+  it("delete: a draft deleted meanwhile answers 404, a completed one DRAFT_COMPLETED", async () => {
+    const { repo, w, draft } = await make();
+    repo.loseDelete = async (id, tenantId) => {
+      await repo.realSoftDelete(id, NOW, tenantId);
+    };
+    expect(failure(await w.remove.execute({ tenantId: T, draftId: draft.id })).code).toBe(
+      "NOT_FOUND",
+    );
+    const second = await make();
+    second.repo.loseDelete = async (id, tenantId) => {
+      await second.repo.realMarkCompleted(id, { orderRef: ORDER_ID, at: NOW }, tenantId);
+    };
+    expect(
+      failure(await second.w.remove.execute({ tenantId: T, draftId: second.draft.id })).message,
+    ).toMatch(/^DRAFT_COMPLETED:/);
+  });
+
+  it("update: a completion between the version check and the save answers VERSION_CONFLICT", async () => {
+    const { repo, w, draft } = await make();
+    repo.beforeContentSave = async (id, tenantId) => {
+      await repo.realMarkCompleted(id, { orderRef: ORDER_ID, at: NOW }, tenantId);
+    };
+    const refused = failure(
+      await w.update.execute({ tenantId: T, draftId: draft.id, version: 0, content: CONTENT }),
+    );
+    expect(refused.code).toBe("CONCURRENCY");
+    expect(refused.message).toMatch(/^VERSION_CONFLICT:/);
+  });
+});
+
+describe("CompleteDraftFromCheckout verifies the order first", () => {
+  it("another shop's order is NOT_FOUND and leaves the draft open", async () => {
+    const repo = new InMemoryDraftOrderRepository();
+    const w = await world(repo);
+    const { draft } = value(
+      await w.create.execute({
+        tenantId: "tenant-b",
+        createdBy: "s",
+        currency: "EGP",
+        content: CONTENT,
+      }),
+    );
+    const refused = failure(
+      await w.complete.execute({ tenantId: "tenant-b", draftId: draft.id, orderRef: ORDER_ID }),
+    );
+    expect(refused.code).toBe("NOT_FOUND");
+    expect((await repo.findById(draft.id, "tenant-b"))?.status).toBe("open");
+    expect(await w.timeline.listForOrder(ORDER_ID, "tenant-b", { first: 200 })).toHaveLength(0);
   });
 });

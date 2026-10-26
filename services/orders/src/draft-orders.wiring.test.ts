@@ -73,5 +73,6 @@ describe("wireOrders — draft orders (order operations Part 4)", () => {
       content: CONTENT,
     });
     expect(stale.status).toBe(409);
+    expect((stale.body as { message: string }).message).toMatch(/^VERSION_CONFLICT:/);
   });
 });
