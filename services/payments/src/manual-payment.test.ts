@@ -48,7 +48,7 @@ describe("the manual payment provider (order operations Part 4, Ruling 8)", () =
     expect(JSON.stringify(refused.body)).not.toContain(sentinel);
   });
 
-  it("a merchant-facing caller (refuseStaffRecorded) cannot open a manual intent; ordinary methods still open", async () => {
+  it("is refused by default: only a caller that explicitly allows a staff-recorded payment can open one", async () => {
     const { payments } = wired();
     const refused = await payments.createIntentLifecycle({
       tenantId: "t",
@@ -56,17 +56,24 @@ describe("the manual payment provider (order operations Part 4, Ruling 8)", () =
       provider: "manual",
       amountMinor: 100,
       currency: "EGP",
-      refuseStaffRecorded: true,
     });
-    expect(refused.status).toBe(422);
+    const explicitlyDenied = await payments.createIntentLifecycle({
+      tenantId: "t",
+      orderRef: "o-9",
+      provider: "manual",
+      amountMinor: 100,
+      currency: "EGP",
+      allowStaffRecorded: false,
+    });
     const ordinary = await payments.createIntentLifecycle({
       tenantId: "t",
       orderRef: "o-9",
       provider: "stripe",
       amountMinor: 100,
       currency: "EGP",
-      refuseStaffRecorded: true,
     });
+    expect(refused.status).toBe(422);
+    expect(explicitlyDenied.status).toBe(422);
     expect(ordinary.status).toBe(201);
   });
 
@@ -78,6 +85,7 @@ describe("the manual payment provider (order operations Part 4, Ruling 8)", () =
       provider: "manual",
       amountMinor: 49000,
       currency: "EGP",
+      allowStaffRecorded: true,
     });
     expect(opened.status).toBe(201);
     const { paymentIntentId } = opened.body as { paymentIntentId: string };
@@ -112,6 +120,7 @@ describe("the manual payment provider (order operations Part 4, Ruling 8)", () =
         provider: "manual",
         amountMinor: 100,
         currency: "EGP",
+        allowStaffRecorded: true,
       })
     ).body as { paymentIntentId: string };
     await payments.updateMerchantPaymentSettings({ tenantId: "t", enabledMethods: ["cod"] });

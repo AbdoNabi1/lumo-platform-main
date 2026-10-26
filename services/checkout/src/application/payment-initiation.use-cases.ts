@@ -117,6 +117,9 @@ export class InitiatePayment implements UseCase<
       provider: selection.provider,
       amountMinor: session.totals.totalMinor,
       currency: session.totals.currency,
+      // From the session itself, never from a request: only a draft order's checkout may open a
+      // staff-recorded payment (Ruling 8).
+      allowStaffRecorded: session.draftTerms !== undefined,
     });
 
     const recorded = await this.deps.unitOfWork.run<Result<void, DomainError>>(async (tx) => {

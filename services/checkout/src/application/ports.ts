@@ -226,6 +226,12 @@ export interface PaymentInitiationPort {
     readonly provider: string;
     readonly amountMinor: number;
     readonly currency: string;
+    /**
+     * True only when the session being paid is a DRAFT order's (`draftTerms` present), read from the
+     * session by `InitiatePayment` — it lets Payments open a staff-recorded (`manual`) payment. Absent
+     * or false for every shopper checkout (order operations Part 4, Ruling 8).
+     */
+    readonly allowStaffRecorded?: boolean;
   }): Promise<{
     readonly paymentIntentId: string;
     readonly status: string;

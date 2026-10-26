@@ -47,12 +47,12 @@ export interface CreatePaymentIntentLifecycleInput {
    */
   readonly provider: string;
   /**
-   * Set by a MERCHANT-FACING caller (the admin `POST /payment-intents` route): refuse a provider that
-   * is `recordedByStaff` (`manual`) as an unknown method. Only a draft order's checkout opens a
-   * staff-recorded payment, through the internal payment-initiation port, which leaves this unset
-   * (order operations Part 4, Ruling 8).
+   * Deny by default (order operations Part 4, Ruling 8): a `recordedByStaff` provider (`manual`) is
+   * refused as an unknown method unless the caller says `true`. Only Checkout's payment initiation
+   * sets it, and only for a draft order's session — a fact it reads from the session, never from a
+   * request. The admin `POST /payment-intents` route can never set it.
    */
-  readonly refuseStaffRecorded?: boolean;
+  readonly allowStaffRecorded?: boolean;
 }
 
 export interface CreatePaymentIntentLifecycleOutput extends PaymentIntentStatusOutput {
@@ -161,7 +161,7 @@ export class CreatePaymentIntentLifecycle implements UseCase<
     const providerKey = input.provider;
 
     if (
-      input.refuseStaffRecorded === true &&
+      input.allowStaffRecorded !== true &&
       this.deps.providers.capabilitiesOf(providerKey)?.recordedByStaff === true
     ) {
       return err(new ValidationError("Unknown payment method", []));
