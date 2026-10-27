@@ -946,6 +946,8 @@ export interface CheckoutLinkPreview {
     readonly imageUrl: string | null;
   }[];
   readonly totalMinor: number;
+  /** Invoice only: the tax could not be estimated, so `totalMinor` is the total BEFORE tax. */
+  readonly taxPending: boolean;
   readonly currency: string;
 }
 

@@ -61,3 +61,41 @@ describe("/checkout for an invoice (order operations Part 4)", () => {
     expect(screen.queryByRole("link", { name: en.checkout.backToCart })).toBeNull();
   });
 });
+
+describe("/checkout when an invoice's checkout was taken over (task 10 review M4)", () => {
+  const lost = () =>
+    vi.mocked(getCheckoutSession).mockResolvedValueOnce({ status: 404, body: null } as never);
+
+  it("tells the invoice shopper to open their link again — never to start from a cart", async () => {
+    jar.set("morbeh_invoice_checkout", "cs-1");
+    lost();
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
+    expect(
+      screen.getByRole("heading", { name: en.checkout.invoiceOwnershipErrorTitle }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(en.checkout.invoiceOwnershipErrorBody)).toBeInTheDocument();
+    expect(screen.queryByText(en.checkout.ownershipErrorBody)).toBeNull();
+    expect(screen.queryByRole("link", { name: en.checkout.backToCart })).toBeNull();
+    expect(screen.getByRole("link", { name: en.recovery.backToShop })).toHaveAttribute("href", "/");
+  });
+
+  it("an ordinary checkout started since keeps the cart wording", async () => {
+    jar.set("morbeh_invoice_checkout", "cs-old-invoice");
+    lost();
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
+    expect(
+      screen.getByRole("heading", { name: en.checkout.ownershipErrorTitle }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(en.checkout.invoiceOwnershipErrorBody)).toBeNull();
+  });
+
+  it("speaks Modern Standard Arabic", async () => {
+    jar.set("morbeh-storefront-locale", "ar");
+    jar.set("morbeh_invoice_checkout", "cs-1");
+    lost();
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
+    expect(
+      screen.getByRole("heading", { name: "تم فتح هذه الفاتورة في مكان آخر" }),
+    ).toBeInTheDocument();
+  });
+});

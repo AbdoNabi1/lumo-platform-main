@@ -735,7 +735,7 @@ function CheckoutForm({
               <>
                 <p className="bg-muted/50 flex items-center justify-between gap-3 rounded-md px-3 py-3 text-sm">
                   <span dir="auto">
-                    <bdi>{session.totals?.shippingName ?? t.checkout.summary.shipping}</bdi>
+                    <bdi>{draftShippingLabel(session, t)}</bdi>
                   </span>
                   <span className="font-medium tabular-nums">
                     {priceLabel(session.totals?.shippingMinor ?? 0, session.currency, locale, t)}
@@ -1121,8 +1121,9 @@ function totalAmount(
   selected: string | null,
 ): number {
   const subtotal = session.totals?.subtotalMinor ?? linesTotal(session);
-  if (session.draftInvoice != null && session.totals !== null)
+  if (session.draftInvoice != null && session.totals !== null) {
     return session.totals.grandTotalMinor;
+  }
   if (selected === null) return subtotal;
   if (session.totals !== null) return session.totals.grandTotalMinor;
   return subtotal + (shippingAmount(session, quotes, selected) ?? 0);
@@ -1254,6 +1255,22 @@ function discountLabel(session: CheckoutSessionSummary, t: Dictionary): string {
   return title === undefined || title === "" || title === DEFAULT_DISCOUNT_TITLE
     ? t.checkout.summary.discount
     : title;
+}
+
+/** The server's English name for free shipping a merchant did not name in their own words. */
+const DEFAULT_FREE_SHIPPING_TITLE = "Free shipping";
+
+/**
+ * The name of an invoice's fixed shipping (final review M-2): the merchant's own, or — for the
+ * server's English "Free shipping" at no cost — the plain localized "Shipping", priced "Free".
+ */
+function draftShippingLabel(session: CheckoutSessionSummary, t: Dictionary): string {
+  const name = session.totals?.shippingName;
+  const freeByDefault =
+    name === DEFAULT_FREE_SHIPPING_TITLE && (session.totals?.shippingMinor ?? 0) === 0;
+  return name === undefined || name === null || name === "" || freeByDefault
+    ? t.checkout.summary.shipping
+    : name;
 }
 
 function SummaryRow({

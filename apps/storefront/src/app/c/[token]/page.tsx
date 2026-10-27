@@ -43,14 +43,25 @@ async function localized(): Promise<{
   return { locale, t: dictionaryFor(locale) };
 }
 
+/** What the preview GET found: the link, a link that cannot be used, or no answer at all. */
+type PreviewRead =
+  | { readonly kind: "ok"; readonly preview: CheckoutLinkPreview }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "failed" };
+
 /**
  * The preview is a plain GET with no side effect — rendering this page never claims the link.
- * `cache` shares one GET between `generateMetadata` and the page within a request.
+ * `cache` shares one GET between `generateMetadata` and the page within a request. Only an answer
+ * from the API makes a link invalid (404 `LINK_INVALID`); no answer or a server error is "try
+ * again", never "expired": the link in the shopper's chat may be perfectly good.
  */
-const previewOf = cache(async (token: string): Promise<CheckoutLinkPreview | null> => {
-  if (!TOKEN_PATTERN.test(token)) return null;
+const previewOf = cache(async (token: string): Promise<PreviewRead> => {
+  if (!TOKEN_PATTERN.test(token)) return { kind: "invalid" };
   const response = await getCheckoutLinkPreview(token);
-  return response.status === 200 ? response.body : null;
+  if (response.status === 200 && response.body !== null) {
+    return { kind: "ok", preview: response.body };
+  }
+  return response.status === 0 || response.status >= 500 ? { kind: "failed" } : { kind: "invalid" };
 });
 
 /**
@@ -65,7 +76,8 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { token } = await params;
   const { t } = await localized();
-  const preview = await previewOf(token);
+  const read = await previewOf(token);
+  const preview = read.kind === "ok" ? read.preview : null;
   const label = preview?.purpose === "invoice" ? t.invoice.metaTitle : t.recovery.metaTitle;
   const title =
     preview === null || preview.shopName === "" ? label : `${preview.shopName} — ${label}`;
@@ -88,7 +100,8 @@ export default async function CheckoutLinkPage({ params, searchParams }: Checkou
   const { token } = await params;
   const { error } = await searchParams;
   const { locale, t } = await localized();
-  const preview = await previewOf(token);
+  const read = await previewOf(token);
+  const preview = read.kind === "ok" ? read.preview : null;
   const claimError = CLAIM_ERRORS.find((key) => key === error);
   const isInvoice = preview?.purpose === "invoice";
   // The order exists already: the preview says so, or the claim just found it (placed meanwhile).
@@ -97,7 +110,14 @@ export default async function CheckoutLinkPage({ params, searchParams }: Checkou
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 p-8">
       <SiteHeader t={t} locale={locale} />
-      {preview === null ? (
+      {read.kind === "failed" ? (
+        <StatePanel
+          icon={<AlertTriangleIcon className="size-6" />}
+          title={t.recovery.loadFailedTitle}
+          body={t.recovery.loadFailedBody}
+          action={{ href: `/c/${token}`, label: t.recovery.tryAgain }}
+        />
+      ) : preview === null ? (
         <StatePanel
           icon={<AlertTriangleIcon className="size-6" />}
           title={t.recovery.invalidTitle}
@@ -162,20 +182,26 @@ export default async function CheckoutLinkPage({ params, searchParams }: Checkou
               ))}
             </ul>
             <div className="border-border flex items-center justify-between border-t pt-4 font-medium">
-              <span>{t.recovery.total}</span>
+              <span>
+                {isInvoice && preview.taxPending ? t.invoice.totalBeforeTax : t.recovery.total}
+              </span>
               <span className="tabular-nums">
                 {formatCurrency(locale, preview.totalMinor, preview.currency)}
               </span>
             </div>
             <p className="text-muted-foreground text-sm">
-              {isInvoice ? t.invoice.totalNote : t.recovery.pricesNote}
+              {isInvoice
+                ? preview.taxPending
+                  ? t.invoice.taxPendingNote
+                  : t.invoice.totalNote
+                : t.recovery.pricesNote}
             </p>
             {claimError !== undefined && (
               <p role="alert" className="text-destructive text-sm">
                 {t.recovery.errors[claimError]}
               </p>
             )}
-            <form action={claimCheckoutLink.bind(null, token)}>
+            <form action={claimCheckoutLink.bind(null, token, preview.purpose)}>
               <SubmitButton
                 className="w-full"
                 pendingLabel={isInvoice ? t.invoice.paying : t.recovery.continuing}

@@ -103,6 +103,34 @@ describe("claimCheckoutLink (the Continue to checkout button)", () => {
 });
 
 describe("claimCheckoutLink — invoice links (order operations Part 4)", () => {
+  it("remembers that this checkout came from an invoice, so a lost one says 'open your link again'", async () => {
+    jar.set("morbeh-storefront-guest-session", "guest-1");
+    claimApi.mockResolvedValue({
+      status: 200,
+      body: { checkoutSessionId: "cs-invoice", droppedItems: 0 },
+    });
+    await expect(claimCheckoutLink(TOKEN, "invoice")).rejects.toThrow("NEXT_REDIRECT /checkout");
+    expect(set).toHaveBeenCalledWith(
+      "morbeh_invoice_checkout",
+      "cs-invoice",
+      CHECKOUT_SESSION_COOKIE_OPTIONS,
+    );
+  });
+
+  it("a recovery claim leaves no invoice marker", async () => {
+    jar.set("morbeh-storefront-guest-session", "guest-1");
+    claimApi.mockResolvedValue({
+      status: 200,
+      body: { checkoutSessionId: "cs-new", droppedItems: 0 },
+    });
+    await expect(claimCheckoutLink(TOKEN, "recovery")).rejects.toThrow("NEXT_REDIRECT /checkout");
+    expect(set).not.toHaveBeenCalledWith(
+      "morbeh_invoice_checkout",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it("a completed draft goes back to the page with error=completed", async () => {
     jar.set("morbeh-storefront-guest-session", "guest-1");
     claimApi.mockResolvedValue({
@@ -120,6 +148,7 @@ describe("claimCheckoutLink — invoice links (order operations Part 4)", () => 
   });
 
   it.each([
+    ["DRAFT_COMPLETED", "completed"],
     ["DRAFT_NOT_READY", "notReady"],
     ["DRAFT_BUSY", "busy"],
     ["DRAFT_TOTAL_TOO_LARGE", "tooLarge"],

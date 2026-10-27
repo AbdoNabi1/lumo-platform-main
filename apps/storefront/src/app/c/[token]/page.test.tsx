@@ -46,6 +46,7 @@ const PREVIEW: CheckoutLinkPreview = {
     { title: null, variantTitle: null, quantity: 1, imageUrl: null },
   ],
   totalMinor: 59000,
+  taxPending: false,
   currency: "EGP",
 };
 
@@ -90,6 +91,30 @@ describe("/c/[token] (order operations Part 3)", () => {
     expect(screen.getByRole("heading", { name: en.recovery.invalidTitle })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: en.recovery.backToShop })).toHaveAttribute("href", "/");
     expect(screen.queryByRole("button", { name: en.recovery.continue })).toBeNull();
+  });
+
+  it.each([
+    ["the API is unreachable", 0],
+    ["the API failed", 503],
+  ])("%s: a 'try again' state, never the expired-link view", async (_case, status) => {
+    getCheckoutLinkPreview.mockResolvedValue({ status, body: null });
+    await renderPage();
+    expect(screen.getByRole("heading", { name: en.recovery.loadFailedTitle })).toBeInTheDocument();
+    expect(screen.getByText(en.recovery.loadFailedBody)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: en.recovery.tryAgain })).toHaveAttribute(
+      "href",
+      `/c/${TOKEN}`,
+    );
+    expect(screen.queryByRole("heading", { name: en.recovery.invalidTitle })).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("says it could not load in Modern Standard Arabic too", async () => {
+    jar.set("morbeh-storefront-locale", "ar");
+    getCheckoutLinkPreview.mockResolvedValue({ status: 502, body: null });
+    await renderPage();
+    expect(screen.getByRole("heading", { name: "تعذّر تحميل هذا الرابط" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: ar.recovery.tryAgain })).toBeInTheDocument();
   });
 
   it("a malformed token is invalid without asking the API", async () => {
@@ -177,6 +202,7 @@ describe("invoice links (order operations Part 4)", () => {
     itemCount: 2,
     items: [{ title: "Tee", variantTitle: "M", quantity: 2, imageUrl: null }],
     totalMinor: 49000,
+    taxPending: false,
     currency: "EGP",
   };
 
@@ -190,6 +216,37 @@ describe("invoice links (order operations Part 4)", () => {
     expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
     expect(claimApi).not.toHaveBeenCalled();
     expect(claimAction).not.toHaveBeenCalled();
+  });
+
+  it("a total Finance could not tax yet is 'Total before tax', never a lower 'Total' (M-4)", async () => {
+    getCheckoutLinkPreview.mockResolvedValue({
+      status: 200,
+      body: { ...invoice, taxPending: true },
+    });
+    await renderPage();
+    expect(screen.getByText(en.invoice.totalBeforeTax)).toBeInTheDocument();
+    expect(screen.queryByText(en.recovery.total)).toBeNull();
+    expect(screen.getByText(en.invoice.taxPendingNote)).toBeInTheDocument();
+    const total = formatCurrency("en", 49000, "EGP").replace(/\s+/g, " ");
+    expect(screen.getByText(total)).toBeInTheDocument();
+  });
+
+  it("says 'Total before tax' in Modern Standard Arabic", async () => {
+    jar.set("morbeh-storefront-locale", "ar");
+    getCheckoutLinkPreview.mockResolvedValue({
+      status: 200,
+      body: { ...invoice, taxPending: true },
+    });
+    await renderPage();
+    expect(screen.getByText("الإجمالي قبل الضريبة")).toBeInTheDocument();
+    expect(screen.queryByText(ar.recovery.total)).toBeNull();
+  });
+
+  it("a taxed total keeps the plain 'Total' label", async () => {
+    getCheckoutLinkPreview.mockResolvedValue({ status: 200, body: invoice });
+    await renderPage();
+    expect(screen.getByText(en.recovery.total)).toBeInTheDocument();
+    expect(screen.queryByText(en.invoice.totalBeforeTax)).toBeNull();
   });
 
   it("a completed invoice says the order was already placed, with no button", async () => {

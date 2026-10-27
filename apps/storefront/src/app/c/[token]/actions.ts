@@ -3,7 +3,11 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { CHECKOUT_SESSION_COOKIE, CHECKOUT_SESSION_COOKIE_OPTIONS } from "@/lib/cart";
+import {
+  CHECKOUT_SESSION_COOKIE,
+  CHECKOUT_SESSION_COOKIE_OPTIONS,
+  INVOICE_CHECKOUT_COOKIE,
+} from "@/lib/cart";
 import { currentOrNewSessionRef } from "@/lib/guest-session";
 import { claimCheckoutLink as claimCheckoutLinkApi } from "@/lib/runtime-api";
 
@@ -23,6 +27,8 @@ type ClaimFailure =
 /** 409 codes the API gives a claim → the fixed key the page words. Server message text is never used. */
 const CONFLICT_FAILURES: ReadonlyMap<string, ClaimFailure> = new Map([
   ["ALREADY_COMPLETED", "completed"],
+  // The same state reached another way (task 10 review M5): the draft is already an order.
+  ["DRAFT_COMPLETED", "completed"],
   ["DRAFT_NOT_READY", "notReady"],
   ["DRAFT_BUSY", "busy"],
   ["DRAFT_TOTAL_TOO_LARGE", "tooLarge"],
@@ -49,8 +55,13 @@ function failureOf(status: number, body: unknown): ClaimFailure {
  *
  * The token is never logged, never set in a cookie and never sent anywhere but the Runtime API; the
  * only URL it appears in is the link's own `/c/<token>` path (a failed claim goes back to it).
+ * `purpose` (bound by the page from the preview) only chooses `/checkout`'s wording should this
+ * browser lose the session later; it grants nothing.
  */
-export async function claimCheckoutLink(token: string): Promise<void> {
+export async function claimCheckoutLink(
+  token: string,
+  purpose?: "recovery" | "invoice",
+): Promise<void> {
   if (typeof token !== "string" || !TOKEN_PATTERN.test(token)) redirect("/");
   const sessionRef = await currentOrNewSessionRef();
   const result = await claimCheckoutLinkApi(token, sessionRef);
@@ -61,6 +72,10 @@ export async function claimCheckoutLink(token: string): Promise<void> {
       result.body.checkoutSessionId,
       CHECKOUT_SESSION_COOKIE_OPTIONS,
     );
+    if (purpose === "invoice") {
+      const id = result.body.checkoutSessionId;
+      jar.set(INVOICE_CHECKOUT_COOKIE, id, CHECKOUT_SESSION_COOKIE_OPTIONS);
+    }
     // The claim also replaced this browser's cart server-side.
     revalidatePath("/cart");
     revalidatePath("/checkout");

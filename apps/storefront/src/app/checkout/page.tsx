@@ -4,7 +4,7 @@ import { AlertTriangleIcon, ArrowLeftIcon } from "lucide-react";
 import { CheckoutView } from "@/components/checkout-view";
 import { SiteHeader } from "@/components/site-header";
 import { StatePanel } from "@/components/state-panel";
-import { CHECKOUT_SESSION_COOKIE, GUEST_SESSION_COOKIE } from "@/lib/cart";
+import { CHECKOUT_SESSION_COOKIE, GUEST_SESSION_COOKIE, INVOICE_CHECKOUT_COOKIE } from "@/lib/cart";
 import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import { getCheckoutSession, getPaymentMethods, getShippableCountries } from "@/lib/runtime-api";
@@ -41,6 +41,14 @@ export default async function CheckoutPage({
     sessionRef !== undefined && checkoutSessionId !== undefined
       ? await getCheckoutSession(checkoutSessionId, sessionRef)
       : null;
+  const found =
+    session !== null && session.status >= 200 && session.status < 300 && session.body !== null;
+  // Part 4 (task 10 review M4): this browser's checkout came from an invoice link, so a lost one was
+  // most likely opened by someone else since (the last opener owns it); the cart is not involved.
+  const lostInvoice =
+    !found &&
+    checkoutSessionId !== undefined &&
+    jar.get(INVOICE_CHECKOUT_COOKIE)?.value === checkoutSessionId;
 
   // A signed-in customer's contact email is pre-filled and applied without re-entry. Resolved
   // server-side from their opaque session cookie (a real round trip) — "error"/"signed-out" both
@@ -59,7 +67,7 @@ export default async function CheckoutPage({
       <SiteHeader t={t} locale={locale} />
 
       {/* Part 4: an invoice checkout is the merchant's draft order — the shopper's cart is not involved. */}
-      {session?.body?.draftInvoice == null && (
+      {session?.body?.draftInvoice == null && !lostInvoice && (
         <Link
           href="/cart"
           className="text-muted-foreground inline-flex items-center gap-1.5 text-sm"
@@ -78,10 +86,14 @@ export default async function CheckoutPage({
         </p>
       )}
 
-      {session === null ||
-      session.status < 200 ||
-      session.status >= 300 ||
-      session.body === null ? (
+      {lostInvoice ? (
+        <StatePanel
+          icon={<AlertTriangleIcon className="size-6" />}
+          title={t.checkout.invoiceOwnershipErrorTitle}
+          body={t.checkout.invoiceOwnershipErrorBody}
+          action={{ href: "/", label: t.recovery.backToShop }}
+        />
+      ) : !found ? (
         <StatePanel
           icon={<AlertTriangleIcon className="size-6" />}
           title={t.checkout.ownershipErrorTitle}

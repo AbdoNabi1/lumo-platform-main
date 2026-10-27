@@ -213,6 +213,10 @@ export const en = {
       "Your order was placed, but this payment method can't be completed online from here. Please contact the store to arrange payment.",
     ownershipErrorTitle: "We couldn't find your checkout",
     ownershipErrorBody: "Your checkout session may have expired. Start again from your cart.",
+    /** Part 4: an invoice checkout someone else opened since (the last opener owns it), or expired. */
+    invoiceOwnershipErrorTitle: "This invoice was opened elsewhere",
+    invoiceOwnershipErrorBody:
+      "This invoice's checkout was opened in another browser or has expired. Open your invoice link again to continue.",
     validationErrorBody: "Something about that step wasn't valid. Check the details and try again.",
     unavailableErrorBody: "This checkout can no longer be changed. Start again from your cart.",
     outOfStock:
@@ -253,6 +257,10 @@ export const en = {
     continuing: "Opening checkout…",
     invalidTitle: "This link has expired or is no longer valid",
     invalidBody: "Ask the store for a new link, or keep shopping.",
+    /** The preview could not be loaded (network or server error) — the link itself may be fine. */
+    loadFailedTitle: "We couldn't load this link",
+    loadFailedBody: "Something went wrong on our side. Try again in a moment.",
+    tryAgain: "Try again",
     backToShop: "Back to shop",
     errors: {
       invalid: "This link has expired or is no longer valid.",
@@ -273,6 +281,10 @@ export const en = {
     fromShop: "From {shop}",
     totalNote:
       "This is the total the store quoted, shipping included. Taxes are confirmed at checkout.",
+    /** The tax could not be estimated yet: the figure shown is the total before tax. */
+    totalBeforeTax: "Total before tax",
+    taxPendingNote:
+      "This is the total the store quoted, shipping included, before tax. Taxes are added at checkout.",
     pay: "Pay now",
     paying: "Opening checkout…",
     completedTitle: "This order has already been placed",

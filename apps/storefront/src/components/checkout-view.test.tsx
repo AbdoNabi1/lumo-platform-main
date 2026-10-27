@@ -4,7 +4,7 @@ import { formatCurrency } from "@/lib/format";
 import { en } from "@/messages/en";
 import { ar } from "@/messages/ar";
 import { COUNTRY_CODES } from "@platform/regions";
-import type { ShippableCountries } from "@/lib/checkout-address";
+import { countryName, type ShippableCountries } from "@/lib/checkout-address";
 import type { CheckoutSessionSummary } from "@/lib/runtime-api";
 import type {
   CheckoutActionResult,
@@ -1113,6 +1113,72 @@ describe("CheckoutView on an invoice checkout (order operations Part 4, spec §4
     ]);
   });
 
+  it("shows the merchant's fixed shipping price in the shipping section and the summary (T10 M2)", async () => {
+    renderView({ session: draftSession, paymentMethods: ["cod"] });
+    await settled();
+    const hint = screen.getByText(en.checkout.fixedShippingHint);
+    const fixedRow = hint.previousElementSibling;
+    expect(fixedRow?.textContent?.replace(/\s+/g, " ")).toContain("Courier");
+    expect(fixedRow?.textContent?.replace(/\s+/g, " ")).toContain(money(4000));
+    const summaryRows = Array.from(document.querySelectorAll("dl > div")).filter(
+      (row) => row.querySelector("dt")?.textContent === en.checkout.summary.shipping,
+    );
+    expect(summaryRows.length).toBeGreaterThan(0);
+    for (const row of summaryRows) {
+      expect(row.querySelector("dd")?.textContent?.replace(/\s+/g, " ")).toBe(money(4000));
+    }
+  });
+
+  it("free shipping the server named in English reads 'Shipping — Free' in the shopper's language (M-2)", async () => {
+    const free = {
+      ...draftSession,
+      totals: { ...draftSession.totals!, shippingMinor: 0, shippingName: "Free shipping" },
+    };
+    renderView({ session: free, paymentMethods: ["cod"], locale: "ar" });
+    await settled();
+    expect(screen.queryByText("Free shipping")).toBeNull();
+    const fixedRow = screen.getByText(ar.checkout.fixedShippingHint).previousElementSibling;
+    expect(fixedRow?.textContent).toContain(ar.checkout.summary.shipping);
+    expect(fixedRow?.textContent).toContain(ar.checkout.summary.free);
+  });
+
+  it("keeps a free shipping name the merchant gave in their own words (M-2)", async () => {
+    const named = {
+      ...draftSession,
+      totals: { ...draftSession.totals!, shippingMinor: 0, shippingName: "شحن مجاني" },
+    };
+    renderView({ session: named, paymentMethods: ["cod"], locale: "ar" });
+    await settled();
+    expect(screen.getAllByText("شحن مجاني").length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["the shop's zones name another country", { countries: ["SA"], restOfWorld: false }],
+    ["the shop's zones name no destination", { countries: [], restOfWorld: false }],
+  ])(
+    "shows the draft's own country when %s (T10 M1)",
+    async (_case, shippable: ShippableCountries) => {
+      renderView({ session: draftSession, paymentMethods: ["cod"], shippable });
+      await settled();
+      const select = field(en.checkout.address.country) as unknown as HTMLSelectElement;
+      expect(select.value).toBe("EG");
+      expect(select.selectedOptions[0]?.textContent).toBe(countryName("EG", "en"));
+    },
+  );
+
+  it("names the draft's out-of-zone country in Arabic too (T10 M1)", async () => {
+    renderView({
+      session: draftSession,
+      paymentMethods: ["cod"],
+      shippable: { countries: ["SA"], restOfWorld: false },
+      locale: "ar",
+    });
+    await settled();
+    const select = field(ar.checkout.address.country) as unknown as HTMLSelectElement;
+    expect(select.value).toBe("EG");
+    expect(select.selectedOptions[0]?.textContent).toBe(countryName("EG", "ar"));
+  });
+
   it("a corrected address is saved (tax follows it) but still never quoted", async () => {
     renderView({ session: draftSession, paymentMethods: ["cod"] });
     type(en.checkout.address.line1, "7 Corniche Rd");
@@ -1186,6 +1252,15 @@ describe("CheckoutView — messages", () => {
     };
     walk(en.checkout, ar.checkout, "checkout");
     expect(missing).toEqual([]);
+  });
+
+  it("keeps the invoice placeholders in both languages (T10 M6: IsolatedText drops a missing one)", () => {
+    for (const dictionary of [en, ar]) {
+      expect(dictionary.invoice.title).toContain("#{draft}");
+      expect(dictionary.checkout.invoiceBadge).toContain("#{draft}");
+      expect(dictionary.invoice.fromShop).toContain("{shop}");
+      expect(dictionary.recovery.fromShop).toContain("{shop}");
+    }
   });
 
   it("names the province field, the rates and the tax lines in Arabic", () => {
