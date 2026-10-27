@@ -529,7 +529,7 @@ export const en = {
       back: "Drafts",
       moreActions: "More actions",
       deleteDraft: "Delete draft",
-      confirmDelete: "Delete draft #{draft}? Its invoice links will stop working.",
+      confirmDelete: "Delete draft {draft}? Its invoice links will stop working.",
       unsaved: "Unsaved changes",
       discard: "Discard",
       save: "Save",
@@ -537,7 +537,8 @@ export const en = {
       retry: "Try again",
       reload: "Reload",
       completedBanner: "This draft order was completed.",
-      viewOrder: "View order #{number}",
+      viewOrder: "View order {number}",
+      recordPaymentAgain: "Payment not recorded? Record it again",
       products: {
         title: "Products",
         search: "Search products",
@@ -644,9 +645,9 @@ export const en = {
         whatsapp: "Share on WhatsApp",
         messageLabel: "Message",
         message:
-          "Hi {name}, here is the invoice for your order #{draft} from {shop}, total {total}. You can pay here: {url}",
+          "Hi {name}, here is the invoice for your order {draft} from {shop}, total {total}. You can pay here: {url}",
         messageNoName:
-          "Hi, here is the invoice for your order #{draft} from {shop}, total {total}. You can pay here: {url}",
+          "Hi, here is the invoice for your order {draft} from {shop}, total {total}. You can pay here: {url}",
         openWhatsApp: "Open WhatsApp",
         email: "Email invoice — coming soon",
         expires: "This link works for 30 days.",
@@ -674,7 +675,7 @@ export const en = {
           "This order's total is too large. Lower the quantities or the shipping price.",
         busy: "This draft changed meanwhile. We reloaded it — check the total and try again.",
         paymentNotRecorded:
-          "Order #{number} was created but the payment was not recorded — try again.",
+          "Order {number} was created but the payment was not recorded — try again.",
         paymentNotRecordedNoNumber:
           "The order was created but the payment was not recorded — try again.",
         orderNotUpdated: "The order was placed; the draft is not updated yet — try again.",

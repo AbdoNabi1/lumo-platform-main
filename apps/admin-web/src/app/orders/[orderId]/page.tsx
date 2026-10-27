@@ -100,7 +100,12 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
             <OrderItemsCard order={order} t={t} locale={locale} />
 
             <Suspense fallback={<OrderPaymentCardSkeleton t={t} />}>
-              <OrderPaymentCard order={order} t={t} locale={locale} />
+              <OrderPaymentCard
+                order={order}
+                t={t}
+                locale={locale}
+                canMarkCashReceived={permissions.canMarkCashReceived}
+              />
             </Suspense>
 
             <OrderTimeline

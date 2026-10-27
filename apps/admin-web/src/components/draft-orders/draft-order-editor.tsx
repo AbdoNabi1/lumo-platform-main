@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeftIcon, MoreHorizontalIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronDownIcon, MoreHorizontalIcon } from "lucide-react";
 import {
   Badge,
   Button,
@@ -34,6 +34,7 @@ import {
   sameDraftForm,
   type DraftForm,
 } from "@/lib/orders/draft-orders";
+import { isolateName } from "@/lib/orders/order-timeline";
 import type { Dictionary } from "@/messages/en";
 import { DraftCustomerCard } from "./draft-customer-card";
 import { DraftPaymentCard, type DraftActivity } from "./draft-payment-card";
@@ -102,11 +103,11 @@ export function DraftOrderEditor({
     if (initial === null) return;
     const { saved: current, form: editing } = latest.current;
     const force = reloadRequested.current;
+    // Only a NEWER draft (M-3): a stale payload (a refresh racing a save) never replaces a newer one.
     const newer =
       current === null ||
       initial.version > current.version ||
-      initial.status !== current.status ||
-      initial.updatedAt !== current.updatedAt;
+      (initial.version === current.version && initial.status !== current.status);
     if (!force && !newer) return;
     const untouched = current === null || sameDraftForm(editing, formFromDraft(current));
     if (!force && !untouched) return;
@@ -116,10 +117,18 @@ export function DraftOrderEditor({
     setFields({});
   }, [initial]);
 
+  /**
+   * Fetches the server's draft. On `/new` the page itself has no draft to refresh, so a draft created
+   * here opens its own page instead (M-2) — no one-time link is on screen on these paths.
+   */
+  const refreshDraft = (draftId: string | null) => {
+    if (initial === null && draftId !== null) router.replace(`/draft-orders/${draftId}`);
+    else router.refresh();
+  };
   const reload = () => {
     reloadRequested.current = true;
     setError(null);
-    router.refresh();
+    refreshDraft(latest.current.saved?.id ?? null);
   };
 
   /**
@@ -129,11 +138,12 @@ export function DraftOrderEditor({
   function persist(): Promise<DraftOrderDto | null> {
     if (saving.current !== null) return saving.current;
     if (saved !== null && !dirty) return Promise.resolve(saved);
+    const submitted = form;
     const run = (async () => {
       const result = await saveDraftOrderAction(
         saved?.id ?? null,
         saved?.version ?? null,
-        inputFromForm(form, e.discountDialog.defaultReason),
+        inputFromForm(submitted, e.discountDialog.defaultReason),
       );
       if (!result.ok) {
         setError({ message: result.message, code: result.code });
@@ -144,7 +154,10 @@ export function DraftOrderEditor({
       setError(null);
       setFields({});
       setSaved(result.draft);
-      setForm(formFromDraft(result.draft));
+      // M-5: what was typed while the save ran is kept (and stays unsaved), never overwritten.
+      setForm((current) =>
+        sameDraftForm(current, submitted) ? formFromDraft(result.draft) : current,
+      );
       return result.draft;
     })().finally(() => {
       saving.current = null;
@@ -207,22 +220,37 @@ export function DraftOrderEditor({
     setError({ message: done.message, code: done.code });
     if (done.code !== null && RETRY_CODES.has(done.code)) {
       setRetry(payment);
-      router.refresh();
+      refreshDraft(draftId);
     } else if (done.code !== null && RELOAD_CODES.has(done.code)) {
       reload();
     }
+  };
+  /** "Create the order and record that you received EGP 455.00?" for this draft's own total. */
+  const confirmPayment = (payment: DraftPayment, draft: DraftOrderDto) => {
+    const total = formatCurrency(locale, draft.totals.totalMinor, draft.currency);
+    return window.confirm(
+      (payment === "paid" ? e.payment.confirmMarkAsPaid : e.payment.confirmCollect).replace(
+        "{total}",
+        () => total,
+      ),
+    );
   };
   // Pre-flight 11: the amount confirmed is the one the save just produced, never an older one.
   const collect = (payment: DraftPayment) =>
     run("complete", async () => {
       const current = await persist();
-      if (current === null) return;
-      const total = formatCurrency(locale, current.totals.totalMinor, current.currency);
-      const question = (
-        payment === "paid" ? e.payment.confirmMarkAsPaid : e.payment.confirmCollect
-      ).replace("{total}", () => total);
-      if (!window.confirm(question)) return;
+      if (current === null || !confirmPayment(payment, current)) return;
       await complete(current.id, payment);
+    });
+  /**
+   * I-1: a completed draft whose payment step never finished (a lost "Try again", another staff
+   * member, a closed tab). Nothing is saved; the route resumes the order it already placed —
+   * idempotently, never a second order — or answers ALREADY_COMPLETED for the other method.
+   */
+  const recordAgain = (payment: DraftPayment) =>
+    run("complete", async () => {
+      if (saved === null || !confirmPayment(payment, saved)) return;
+      await complete(saved.id, payment);
     });
   // The merchant already confirmed this payment; a retry is a new submit with a new key.
   const retryCompletion = () =>
@@ -234,14 +262,22 @@ export function DraftOrderEditor({
     run("save", async () => {
       if (
         saved === null ||
-        !window.confirm(e.confirmDelete.replace("{draft}", () => saved.draftNumber))
+        !window.confirm(
+          e.confirmDelete.replace("{draft}", () => isolateName(`#${saved.draftNumber}`)),
+        )
       )
         return;
       const result = await deleteDraftOrderAction(saved.id);
-      if (!result.ok) setError({ message: result.message, code: result.code });
+      if (result.ok) router.push("/draft-orders");
+      else setError({ message: result.message, code: result.code });
     });
+  /** Rates need lines and an address: without them nothing is saved — no empty draft (M-9). */
+  const saveForRates = () =>
+    form.lines.length === 0 || form.shippingAddress === null ? Promise.resolve(null) : persist();
 
-  const title = saved === null ? e.newTitle : `#${saved.draftNumber}`;
+  // M-6: only "#D3" is isolated left-to-right; the Arabic "إنشاء طلب" keeps the page's direction.
+  const title = saved === null ? e.newTitle : <bdi dir="ltr">{`#${saved.draftNumber}`}</bdi>;
+  const orderNumber = saved?.order?.orderNumber ?? null;
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -251,9 +287,7 @@ export function DraftOrderEditor({
             {e.back}
           </Link>
         </Button>
-        <h1 dir="ltr" className="text-2xl font-semibold tracking-tight">
-          {title}
-        </h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {saved !== null && (
           <Badge variant={DRAFT_BADGE[saved.status]}>{t.draftOrders.status[saved.status]}</Badge>
         )}
@@ -277,18 +311,41 @@ export function DraftOrderEditor({
       </div>
 
       {completed && saved?.order != null && (
-        <p
-          role="status"
-          className="bg-success-subtle text-success-foreground flex flex-wrap items-center gap-2 rounded-2xl px-4 py-3 text-sm"
-        >
-          {e.completedBanner}
-          <Link
-            href={`/orders/${encodeURIComponent(saved.order.id)}`}
-            className="font-medium underline"
-          >
-            {e.viewOrder.replace("{number}", () => saved.order?.orderNumber ?? "")}
-          </Link>
-        </p>
+        <div className="bg-success-subtle text-success-foreground flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3 text-sm">
+          <p role="status" className="me-auto">
+            {e.completedBanner}
+          </p>
+          <Button asChild size="sm">
+            <Link href={`/orders/${encodeURIComponent(saved.order.id)}`}>
+              {e.viewOrder.replace("{number}", () =>
+                orderNumber === null ? "" : isolateName(`#${orderNumber}`),
+              )}
+            </Link>
+          </Button>
+          {canEdit && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" size="sm" variant="outline" disabled={pending}>
+                  {e.recordPaymentAgain}
+                  <ChevronDownIcon aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem disabled={!canMarkPaid} onSelect={() => recordAgain("paid")}>
+                  {e.payment.markAsPaid}
+                </DropdownMenuItem>
+                {!canMarkPaid && (
+                  <p className="text-muted-foreground px-2 pb-1 text-xs">
+                    {e.payment.markAsPaidAdminOnly}
+                  </p>
+                )}
+                <DropdownMenuItem onSelect={() => recordAgain("collect_on_delivery")}>
+                  {e.payment.collectOnDelivery}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
       )}
 
       {dirty && (
@@ -345,7 +402,7 @@ export function DraftOrderEditor({
             activity={activity}
             onDiscount={(discount) => update({ discount })}
             onShipping={(shipping) => update({ shipping })}
-            saveFirst={persist}
+            saveFirst={saveForRates}
             onSendInvoice={sendInvoice}
             onCollect={collect}
             errors={fields}

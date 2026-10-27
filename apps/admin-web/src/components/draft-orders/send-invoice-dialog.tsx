@@ -15,6 +15,7 @@ import {
 import { formatCurrency } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import { draftWhatsAppTarget, invoiceMessage, type DraftForm } from "@/lib/orders/draft-orders";
+import { isolateName } from "@/lib/orders/order-timeline";
 import { toWhatsAppDigits, whatsAppUrl } from "@/lib/whatsapp";
 import type { Dictionary } from "@/messages/en";
 
@@ -95,7 +96,8 @@ export function SendInvoiceDialog({
     setMessage(
       invoiceMessage(name === "" ? i.messageNoName : i.message, {
         name,
-        draft: draftNumber,
+        // "#D3" keeps its own direction inside an Arabic sentence (FSI … PDI; WhatsApp honours it).
+        draft: isolateName(`#${draftNumber}`),
         shop: shopName,
         total: formatCurrency(locale, total, currency),
         url,

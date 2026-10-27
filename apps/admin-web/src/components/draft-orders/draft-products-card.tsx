@@ -7,6 +7,7 @@ import { ProductThumb } from "@/components/products/product-thumb";
 import { formatCurrency } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { DraftFormLine } from "@/lib/orders/draft-orders";
+import { normalizeDigits } from "@/lib/products/money";
 import type { Dictionary } from "@/messages/en";
 import { DraftProductPicker } from "./draft-product-picker";
 
@@ -164,7 +165,18 @@ export function DraftProductsCard({
   );
 }
 
-/** A quantity the merchant can clear and retype: only whole numbers 1–9999 reach the form. */
+/** A typed quantity ("3", "١٢") as a whole number 1–9999, else null. */
+function quantityOf(text: string): number | null {
+  const digits = normalizeDigits(text.trim());
+  if (!/^\d{1,4}$/.test(digits)) return null;
+  const quantity = Number(digits);
+  return quantity >= 1 && quantity <= MAX_QUANTITY ? quantity : null;
+}
+
+/**
+ * A quantity the merchant can clear and retype, in any digit script (a text field: a number field
+ * drops Arabic-Indic digits): only whole numbers 1–9999 reach the form.
+ */
 function QuantityInput({
   label,
   value,
@@ -180,21 +192,18 @@ function QuantityInput({
   useEffect(() => setText(String(value)), [value]);
   return (
     <Input
-      type="number"
+      type="text"
       inputMode="numeric"
       dir="ltr"
-      min={1}
-      max={MAX_QUANTITY}
+      maxLength={4}
       aria-label={label}
       readOnly={readOnly}
       value={text}
       className="w-24"
       onChange={(event) => {
         setText(event.target.value);
-        const quantity = Number(event.target.value);
-        if (Number.isInteger(quantity) && quantity >= 1 && quantity <= MAX_QUANTITY) {
-          onChange(quantity);
-        }
+        const quantity = quantityOf(event.target.value);
+        if (quantity !== null) onChange(quantity);
       }}
       onBlur={() => setText(String(value))}
     />

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EMPTY_DRAFT_ADDRESS, formFromDraft } from "@/lib/orders/draft-orders";
+import { isolateName } from "@/lib/orders/order-timeline";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { SendInvoiceDialog } from "./send-invoice-dialog";
@@ -80,12 +81,15 @@ describe("SendInvoiceDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: a.whatsapp }));
     const message = screen.getByLabelText(a.messageLabel) as HTMLTextAreaElement;
     expect(message.value).toBe(
-      `أهلاً Mona، دي فاتورة طلبك #D3 من Sara Shop بإجمالي ${new Intl.NumberFormat("ar", {
-        style: "currency",
-        currency: "EGP",
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(455)}. تقدر تدفع من هنا: ${URL}`,
+      `أهلاً Mona، دي فاتورة طلبك ${isolateName("#D3")} من Sara Shop بإجمالي ${new Intl.NumberFormat(
+        "ar",
+        {
+          style: "currency",
+          currency: "EGP",
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        },
+      ).format(455)}. تقدر تدفع من هنا: ${URL}`,
     );
     fireEvent.click(screen.getByRole("button", { name: a.openWhatsApp }));
     expect(open).toHaveBeenCalledWith(

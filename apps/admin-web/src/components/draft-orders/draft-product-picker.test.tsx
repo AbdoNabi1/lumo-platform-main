@@ -190,6 +190,10 @@ describe("DraftProductsCard", () => {
     expect(screen.getByText(en.draftOrders.editor.products.pricedOnSave)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Quantity of Tee"), { target: { value: "5" } });
     expect(onChange).toHaveBeenLastCalledWith([{ ...line, quantity: 5 }]);
+    fireEvent.change(screen.getByLabelText("Quantity of Tee"), { target: { value: "١٢" } });
+    expect(onChange).toHaveBeenLastCalledWith([{ ...line, quantity: 12 }]);
+    fireEvent.change(screen.getByLabelText("Quantity of Tee"), { target: { value: "0" } });
+    expect(onChange).toHaveBeenLastCalledWith([{ ...line, quantity: 12 }]);
     fireEvent.click(screen.getByRole("button", { name: "Remove Tee" }));
     expect(onChange).toHaveBeenLastCalledWith([]);
   });

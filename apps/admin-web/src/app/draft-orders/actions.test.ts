@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DraftOrderInput } from "@/lib/api/draft-orders";
 import { ar } from "@/messages/ar";
+import { isolateName } from "@/lib/orders/order-timeline";
 import { en } from "@/messages/en";
 
 const api = vi.hoisted(() => ({
@@ -187,7 +188,7 @@ describe("completeDraftOrderAction", () => {
     });
     expect(await completeDraftOrderAction(DRAFT_ID, "paid")).toEqual({
       ok: false,
-      message: e.paymentNotRecorded.replace("{number}", "1001"),
+      message: e.paymentNotRecorded.replace("{number}", isolateName("#1001")),
       code: "PAYMENT_NOT_RECORDED",
     });
     expect(api.fetchDraftOrder).toHaveBeenCalledWith(DRAFT_ID);
@@ -206,15 +207,28 @@ describe("completeDraftOrderAction", () => {
     });
   });
 
-  it("the 503 (order placed, draft not updated) is its own retryable answer", async () => {
+  it("the 503 (order placed, draft not updated) is its own retryable answer — read by status", async () => {
     api.completeDraftOrder.mockResolvedValue({
       outcome: "error",
-      message: "Admin API responded with status 503",
+      message: "Service Unavailable",
+      status: 503,
     });
     expect(await completeDraftOrderAction(DRAFT_ID, "collect_on_delivery")).toEqual({
       ok: false,
       message: e.orderNotUpdated,
       code: "ORDER_NOT_UPDATED",
+    });
+  });
+
+  it("an error that only mentions 503 in its text is not taken for the order-placed answer", async () => {
+    api.completeDraftOrder.mockResolvedValue({
+      outcome: "error",
+      message: "Admin API responded with status 503",
+    });
+    expect(await completeDraftOrderAction(DRAFT_ID, "paid")).toEqual({
+      ok: false,
+      message: e.generic,
+      code: null,
     });
   });
 
@@ -318,13 +332,24 @@ describe("saveDraftOrderAction", () => {
 });
 
 describe("the other draft actions", () => {
-  it("delete goes back to the Drafts list", async () => {
-    redirect.mockImplementation((to: string) => {
-      throw new Error(`REDIRECT ${to}`);
-    });
+  it("delete answers ok (the screen navigates) and never redirects from the action", async () => {
     api.deleteDraftOrder.mockResolvedValue({ outcome: "ok", data: { draftId: DRAFT_ID } });
-    await expect(deleteDraftOrderAction(DRAFT_ID)).rejects.toThrow("REDIRECT /draft-orders");
+    expect(await deleteDraftOrderAction(DRAFT_ID)).toEqual({ ok: true });
     expect(api.deleteDraftOrder).toHaveBeenCalledWith(DRAFT_ID, expect.stringMatching(UUID));
+    expect(redirect).not.toHaveBeenCalled();
+    expect(revalidatePath).toHaveBeenCalledWith("/draft-orders");
+  });
+
+  it("a refused delete says why", async () => {
+    api.deleteDraftOrder.mockResolvedValue({
+      outcome: "conflict",
+      message: "DRAFT_COMPLETED: this draft order is already an order",
+    });
+    expect(await deleteDraftOrderAction(DRAFT_ID)).toEqual({
+      ok: false,
+      message: e.draftCompleted,
+      code: "DRAFT_COMPLETED",
+    });
   });
 
   it("shipping rates send no key and answer the rates", async () => {
@@ -361,7 +386,27 @@ describe("the other draft actions", () => {
         currency: "EGP",
       },
     ]);
-    expect(api.fetchProductsPage).toHaveBeenCalledWith({ first: 20, query: "tee" });
+    expect(api.fetchProductsPage).toHaveBeenCalledWith({ first: 100, query: "tee" });
+  });
+
+  it("Browse looks past unsellable products and offers at most 20 (M-8)", async () => {
+    const sellable = (i: number) => ({
+      id: `p-${i}`,
+      name: `P${i}`,
+      status: i % 2 === 0 ? "published" : "draft",
+      variantCount: 1,
+      priceAmountMinor: 100,
+      currency: "EGP",
+    });
+    api.fetchProductsPage.mockResolvedValue({
+      outcome: "ok",
+      items: Array.from({ length: 60 }, (_, i) => sellable(i)),
+      pageInfo: { hasNextPage: false, endCursor: null },
+    });
+    const found = await searchDraftProductsAction("");
+    expect(found).toHaveLength(20);
+    expect(found.every((p) => Number(p.id.slice(2)) % 2 === 0)).toBe(true);
+    expect(api.fetchProductsPage).toHaveBeenCalledWith({ first: 100 });
   });
 
   it("a product's variants carry their option names, SKU, price and picture", async () => {

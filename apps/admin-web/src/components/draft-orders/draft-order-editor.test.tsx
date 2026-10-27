@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { DraftOrderDto } from "@/lib/api/draft-orders";
 import { formatCurrency } from "@/lib/format";
+import { isolateName } from "@/lib/orders/order-timeline";
 import { en } from "@/messages/en";
 
 const actions = vi.hoisted(() => ({
@@ -200,10 +201,9 @@ describe("DraftOrderEditor", () => {
       />,
     );
     expect(screen.getByText("This draft order was completed.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "View order #1001" })).toHaveAttribute(
-      "href",
-      "/orders/o-1",
-    );
+    expect(
+      screen.getByRole("link", { name: `View order ${isolateName("#1001")}` }),
+    ).toHaveAttribute("href", "/orders/o-1");
     expect(screen.queryByRole("button", { name: p.collectPayment })).toBeNull();
   });
 
@@ -328,5 +328,181 @@ describe("DraftOrderEditor", () => {
       p.confirmCollect.replace("{total}", formatCurrency("en", 70000, "EGP")),
     );
     expect(saveDraftOrderAction).not.toHaveBeenCalled();
+  });
+
+  it("a completed draft offers to record its payment again, without saving, for staff who edit (I-1)", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    completeDraftOrderAction.mockResolvedValue({ ok: true, orderId: "o-1" });
+    const completed = {
+      ...DTO,
+      status: "completed" as const,
+      order: { id: "o-1", orderNumber: "1001" },
+    };
+    render(<DraftOrderEditor draft={completed} canEdit canMarkPaid t={en} locale="en" />);
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: en.draftOrders.editor.recordPaymentAgain }),
+      { key: "Enter" },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: p.markAsPaid }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/orders/o-1"));
+    expect(confirm).toHaveBeenCalledWith(
+      p.confirmMarkAsPaid.replace("{total}", formatCurrency("en", 45500, "EGP")),
+    );
+    expect(completeDraftOrderAction).toHaveBeenCalledWith(DTO.id, "paid");
+    expect(saveDraftOrderAction).not.toHaveBeenCalled();
+  });
+
+  it("recording again keeps Mark as paid admin-only, and is hidden from viewers", async () => {
+    const completed = {
+      ...DTO,
+      status: "completed" as const,
+      order: { id: "o-1", orderNumber: "1001" },
+    };
+    const view = render(
+      <DraftOrderEditor draft={completed} canEdit canMarkPaid={false} t={en} locale="en" />,
+    );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: en.draftOrders.editor.recordPaymentAgain }),
+      { key: "Enter" },
+    );
+    expect(await screen.findByRole("menuitem", { name: p.markAsPaid })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("menuitem", { name: p.collectOnDelivery })).toBeInTheDocument();
+    view.unmount();
+    render(
+      <DraftOrderEditor draft={completed} canEdit={false} canMarkPaid={false} t={en} locale="en" />,
+    );
+    expect(
+      screen.queryByRole("button", { name: en.draftOrders.editor.recordPaymentAgain }),
+    ).toBeNull();
+    expect(screen.getByRole("link", { name: /View order/ })).toHaveAttribute("href", "/orders/o-1");
+  });
+
+  it("Delete confirms, then goes back to the Drafts list", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    actions.deleteDraftOrderAction.mockResolvedValue({ ok: true });
+    render(<DraftOrderEditor draft={DTO} canEdit canMarkPaid t={en} locale="en" />);
+    fireEvent.keyDown(screen.getByRole("button", { name: en.draftOrders.editor.moreActions }), {
+      key: "Enter",
+    });
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: en.draftOrders.editor.deleteDraft }),
+    );
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/draft-orders"));
+    expect(actions.deleteDraftOrderAction).toHaveBeenCalledWith(DTO.id);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("the delete question keeps #D3 in one piece in a right-to-left sentence (M-6)", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<DraftOrderEditor draft={DTO} canEdit canMarkPaid t={en} locale="en" />);
+    fireEvent.keyDown(screen.getByRole("button", { name: en.draftOrders.editor.moreActions }), {
+      key: "Enter",
+    });
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: en.draftOrders.editor.deleteDraft }),
+    );
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls[0]?.[0]).toContain(isolateName("#D3"));
+    expect(actions.deleteDraftOrderAction).not.toHaveBeenCalled();
+  });
+
+  it("the title isolates only #D3, so an Arabic page keeps its own direction (M-6)", () => {
+    render(<DraftOrderEditor draft={null} canEdit canMarkPaid t={en} locale="en" />);
+    expect(screen.getByRole("heading", { name: "Create order" })).not.toHaveAttribute("dir");
+  });
+
+  it("opening Shipping on an untouched new draft creates no draft, and says what is missing (M-9)", async () => {
+    render(<DraftOrderEditor draft={null} canEdit canMarkPaid t={en} locale="en" />);
+    fireEvent.click(screen.getByRole("button", { name: p.addShipping }));
+    expect(
+      await screen.findByText(en.draftOrders.editor.shippingDialog.needsAddress),
+    ).toBeInTheDocument();
+    expect(saveDraftOrderAction).not.toHaveBeenCalled();
+  });
+
+  it("on /new, a draft created by Shipping is then updated, and Reload opens its own page (M-2)", async () => {
+    actions.searchDraftProductsAction.mockResolvedValue([
+      {
+        id: "p-1",
+        title: "Tee",
+        imageUrl: null,
+        variantCount: 1,
+        priceMinor: 25000,
+        currency: "EGP",
+      },
+    ]);
+    actions.draftProductVariantsAction.mockResolvedValue([
+      {
+        productId: "p-1",
+        variantId: "v-1",
+        title: "Tee",
+        variantTitle: null,
+        sku: "TEE",
+        priceMinor: 25000,
+        currency: "EGP",
+        imageUrl: null,
+      },
+    ]);
+    actions.draftShippingRatesAction.mockResolvedValue({ ok: true, rates: [] });
+    saveDraftOrderAction.mockResolvedValueOnce({ ok: true, draft: DTO });
+    saveDraftOrderAction.mockResolvedValueOnce({
+      ok: false,
+      message: en.draftOrders.editor.errors.conflict,
+      code: "VERSION_CONFLICT",
+      fields: {},
+      conflict: true,
+    });
+    const c = en.draftOrders.editor.customer;
+    render(<DraftOrderEditor draft={null} canEdit canMarkPaid t={en} locale="en" />);
+    fireEvent.click(screen.getByRole("button", { name: en.draftOrders.editor.products.browse }));
+    fireEvent.click(await screen.findByRole("button", { name: /Tee/ }));
+    await screen.findByLabelText("Quantity of Tee");
+    fireEvent.click(screen.getByRole("button", { name: c.addAddress }));
+    fireEvent.change(screen.getByLabelText(c.address.line1), { target: { value: "5 Nile St" } });
+    fireEvent.change(screen.getByLabelText(c.address.city), { target: { value: "Cairo" } });
+    fireEvent.click(screen.getByRole("button", { name: p.addShipping }));
+    await waitFor(() => expect(actions.draftShippingRatesAction).toHaveBeenCalledWith(DTO.id));
+    expect(saveDraftOrderAction.mock.calls[0]?.slice(0, 2)).toEqual([null, null]);
+    expect(router.replace).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: en.draftOrders.editor.shippingDialog.cancel }),
+    );
+    typeNote("later");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const reload = await screen.findByRole("button", { name: "Reload" });
+    expect(saveDraftOrderAction.mock.calls[1]?.slice(0, 2)).toEqual([DTO.id, DTO.version]);
+    await waitFor(() => expect(reload).toBeEnabled());
+    fireEvent.click(reload);
+    expect(router.replace).toHaveBeenCalledWith(`/draft-orders/${DTO.id}`);
+    expect(router.refresh).not.toHaveBeenCalled();
+  });
+
+  it("an older draft from the server never replaces a newer saved one (M-3)", () => {
+    const view = render(<DraftOrderEditor draft={DTO} canEdit canMarkPaid t={en} locale="en" />);
+    view.rerender(
+      <DraftOrderEditor
+        draft={{ ...DTO, version: 1, note: "older", updatedAt: "2026-10-24T10:00:00.000Z" }}
+        canEdit
+        canMarkPaid
+        t={en}
+        locale="en"
+      />,
+    );
+    expect(note()).toHaveValue("call first");
+  });
+
+  it("what is typed while a save runs is kept, and stays unsaved (M-5)", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    saveDraftOrderAction.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    render(<DraftOrderEditor draft={DTO} canEdit canMarkPaid t={en} locale="en" />);
+    typeNote("a");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    typeNote("ab");
+    await act(async () => finish({ ok: true, draft: { ...DTO, version: 3, note: "a" } }));
+    expect(note()).toHaveValue("ab");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
   });
 });

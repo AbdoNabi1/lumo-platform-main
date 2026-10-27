@@ -2,7 +2,6 @@
 
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { fetchCustomersPage } from "@/lib/api/customers";
 import {
   completeDraftOrder,
@@ -22,9 +21,13 @@ import { fetchProduct, fetchProductsPage } from "@/lib/api/products";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { recoveryLinkHref } from "@/lib/orders/abandoned-checkouts";
 import { conflictCodeOf, fieldErrorsOf } from "@/lib/orders/draft-orders";
+import { isolateName } from "@/lib/orders/order-timeline";
 
 const DRAFT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PRODUCT_ID = /^[\w-]{1,64}$/;
+/** The picker shows this many, from the products endpoint's full page, so unsellable ones don't empty it. */
+const PICKER_SIZE = 20;
+const PRODUCTS_PAGE_CAP = 100;
 
 /** The completion's 503: the order was placed, Orders has not marked the draft yet; a retry resumes. */
 const ORDER_NOT_UPDATED = "ORDER_NOT_UPDATED";
@@ -112,14 +115,20 @@ export async function saveDraftOrderAction(
   };
 }
 
-export async function deleteDraftOrderAction(draftId: string): Promise<DraftActionFailure> {
+/**
+ * Delete (soft; its invoice links stop working). Answers the outcome and the screen navigates — never
+ * `redirect()` from inside an awaited action, whose client-side promise is ambiguous meanwhile.
+ */
+export async function deleteDraftOrderAction(
+  draftId: string,
+): Promise<{ readonly ok: true } | DraftActionFailure> {
   if (typeof draftId !== "string" || !DRAFT_ID.test(draftId)) {
     return { ok: false, message: (await words()).generic, code: null };
   }
   const result = await deleteDraftOrder(draftId, newIdempotencyKey());
   if (result.outcome !== "ok") return failureOf(result);
   revalidatePath("/draft-orders");
-  redirect("/draft-orders");
+  return { ok: true };
 }
 
 /** The shop's rates for the SAVED draft's address and lines. No key: it changes nothing. */
@@ -184,7 +193,8 @@ export async function completeDraftOrderAction(
     revalidatePath("/orders");
     return { ok: true, orderId: result.data.orderId };
   }
-  if (result.outcome === "error" && /\bstatus 503\b/.test(result.message)) {
+  // Read by status (M-1): the route's own 503 is "the order was placed, the draft is not updated yet".
+  if (result.outcome === "error" && result.status === 503) {
     return { ok: false, message: e.orderNotUpdated, code: ORDER_NOT_UPDATED };
   }
   const failure = await failureOf(result, e.notReady);
@@ -194,7 +204,10 @@ export async function completeDraftOrderAction(
     const draft = await fetchDraftOrder(draftId);
     const number = draft.outcome === "ok" ? (draft.data.order?.orderNumber ?? null) : null;
     if (number !== null) {
-      return { ...failure, message: e.paymentNotRecorded.replace("{number}", () => number) };
+      return {
+        ...failure,
+        message: e.paymentNotRecorded.replace("{number}", () => isolateName(`#${number}`)),
+      };
     }
   }
   return failure;
@@ -223,10 +236,14 @@ export interface DraftPickerVariant {
 /** The picker's search: only what a draft can sell (published or unlisted, Plan 2C-1). */
 export async function searchDraftProductsAction(q: string): Promise<readonly DraftPickerProduct[]> {
   const query = typeof q === "string" ? q.trim().slice(0, 100) : "";
-  const result = await fetchProductsPage({ first: 20, ...(query === "" ? {} : { query }) });
+  const result = await fetchProductsPage({
+    first: PRODUCTS_PAGE_CAP,
+    ...(query === "" ? {} : { query }),
+  });
   if (result.outcome !== "ok") return [];
   return result.items
     .filter((p) => p.status === "published" || p.status === "unlisted")
+    .slice(0, PICKER_SIZE)
     .map((p) => ({
       id: p.id,
       title: p.name,

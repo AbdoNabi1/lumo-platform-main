@@ -224,6 +224,29 @@ describe("OrderPaymentCard — the payment card like Shopify's (Plan 3B)", () =>
       expect(markAsPaid()).toBeNull();
     });
 
+    it("is offered to an admin for a pending staff-recorded (manual) payment — a draft's Mark as paid that stopped half-way", async () => {
+      fetchPaymentIntent.mockResolvedValue({
+        outcome: "ok",
+        paymentIntent: intent({ provider: "manual" }),
+      });
+      render(
+        await OrderPaymentCard({
+          order: order({ paymentProvider: "manual" }),
+          t: en,
+          locale: "en",
+          canMarkCashReceived: true,
+        }),
+      );
+
+      expect(markAsPaid()).toBeInTheDocument();
+    });
+
+    it("keeps a pending manual payment's confirmation from non-admins (the confirm permission)", async () => {
+      await renderCard(order({ paymentProvider: "manual" }), intent({ provider: "manual" }));
+
+      expect(markAsPaid()).toBeNull();
+    });
+
     it("is not offered for a card payment, which settles by itself", async () => {
       await renderCard(order({ paymentProvider: "stripe" }), intent({ provider: "stripe" }));
 
