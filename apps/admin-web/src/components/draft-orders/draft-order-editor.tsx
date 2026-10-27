@@ -143,7 +143,7 @@ export function DraftOrderEditor({
       const result = await saveDraftOrderAction(
         saved?.id ?? null,
         saved?.version ?? null,
-        inputFromForm(submitted, e.discountDialog.defaultReason),
+        inputFromForm(submitted, e.discountDialog.defaultReason, e.shippingDialog.free),
       );
       if (!result.ok) {
         setError({ message: result.message, code: result.code });

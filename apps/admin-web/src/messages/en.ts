@@ -293,6 +293,8 @@ export const en = {
     confirmRefund: "Refund {amount} to the customer?",
     /** Added under the confirmation for cash on delivery: the platform only records the cash refund. */
     confirmRefundCash: "You'll return the cash yourself; this records it.",
+    /** Added for a payment recorded with "Mark as paid" (manual): the money went back outside Morbeh. */
+    confirmRefundManual: "Return the money the way you received it; this records it.",
     moreActions: "More actions",
     cancelOrder: "Cancel order",
     cancellingOrder: "Cancelling…",

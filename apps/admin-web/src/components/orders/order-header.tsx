@@ -38,6 +38,8 @@ export function OrderHeader({
   const confirmRefund = [
     t.orderPage.confirmRefund.replace("{amount}", amount),
     ...(order.paymentProvider === "cod" ? [t.orderPage.confirmRefundCash] : []),
+    // Final review M-3: a "Mark as paid" payment is returned outside Morbeh too.
+    ...(order.paymentProvider === "manual" ? [t.orderPage.confirmRefundManual] : []),
   ].join("\n\n");
 
   return (

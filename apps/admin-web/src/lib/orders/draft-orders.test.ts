@@ -160,6 +160,16 @@ describe("draft form", () => {
     });
   });
 
+  it("names free shipping in the merchant's language (final review M-2)", () => {
+    const form = { ...formFromDraft(DTO), shipping: { kind: "free" as const } };
+    expect(inputFromForm(form, "خصم مخصص", "شحن مجاني").shipping).toEqual({
+      kind: "free",
+      title: "شحن مجاني",
+    });
+    // Comparing forms ignores the name: it is not something the merchant typed.
+    expect(inputFromForm(form, "").shipping).toEqual({ kind: "free" });
+  });
+
   it("a new draft starts empty, with billing same as shipping", () => {
     const empty = formFromDraft(null);
     expect(empty.lines).toEqual([]);

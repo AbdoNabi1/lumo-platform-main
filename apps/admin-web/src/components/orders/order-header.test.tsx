@@ -120,6 +120,24 @@ describe("OrderHeader (Plan 3B)", () => {
       );
     });
 
+    it("for a payment marked as paid (manual) says to return the money the way it came (M-3)", () => {
+      const message = confirmFor({ paymentProvider: "manual", totalMinor: 3998, currency: "USD" });
+
+      expect(message).toBe(
+        "Refund $39.98 to the customer?\n\nReturn the money the way you received it; this records it.",
+      );
+      expect(message).not.toContain(en.orderPage.confirmRefundCash);
+    });
+
+    it("says it in Egyptian Arabic for a manual payment", () => {
+      const message = confirmFor({ paymentProvider: "manual" }, ar, "ar");
+
+      expect(message).toContain(ar.orderPage.confirmRefundManual);
+      expect(ar.orderPage.confirmRefundManual).toBe(
+        "رجّع الفلوس للعميل بنفس الطريقة اللي استلمتها بيها؛ ده بيسجّل الاسترداد بس.",
+      );
+    });
+
     it("is available in Arabic, with the cash line for cash on delivery", () => {
       const message = confirmFor({ paymentProvider: "cod" }, ar, "ar");
 

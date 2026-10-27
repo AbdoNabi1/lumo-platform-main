@@ -237,8 +237,16 @@ function addressInput(a: DraftFormAddress | null): DraftAddressInput | null {
   };
 }
 
-/** The API input: ids, quantities and the merchant's own terms — never a line price (binding carry 9). */
-export function inputFromForm(form: DraftForm, defaultDiscountReason: string): DraftOrderInput {
+/**
+ * The API input: ids, quantities and the merchant's own terms — never a line price (binding carry 9).
+ * `freeShippingTitle` names free shipping in the merchant's language (final review M-2), as the
+ * default discount reason does; the API keeps its English default when it is empty.
+ */
+export function inputFromForm(
+  form: DraftForm,
+  defaultDiscountReason: string,
+  freeShippingTitle = "",
+): DraftOrderInput {
   const blank = (v: string) => (v.trim() === "" ? null : v.trim());
   return {
     customerId: form.customer?.id ?? null,
@@ -269,7 +277,9 @@ export function inputFromForm(form: DraftForm, defaultDiscountReason: string): D
           ? { kind: "rate", method: form.shipping.method }
           : form.shipping.kind === "custom"
             ? { kind: "custom", title: form.shipping.title, amountMinor: form.shipping.amountMinor }
-            : { kind: "free" },
+            : freeShippingTitle.trim() === ""
+              ? { kind: "free" }
+              : { kind: "free", title: freeShippingTitle.trim() },
     note: blank(form.note),
     tags: [...form.tags],
   };

@@ -133,7 +133,7 @@ export interface DraftOrderInput {
   readonly shipping:
     | { readonly kind: "rate"; readonly method: string }
     | { readonly kind: "custom"; readonly title: string; readonly amountMinor: number }
-    | { readonly kind: "free" }
+    | { readonly kind: "free"; readonly title?: string }
     | null;
   readonly note: string | null;
   readonly tags: readonly string[];
