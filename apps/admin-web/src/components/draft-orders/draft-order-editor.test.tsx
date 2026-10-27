@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { DraftOrderDto } from "@/lib/api/draft-orders";
 import { formatCurrency } from "@/lib/format";
 import { isolateName } from "@/lib/orders/order-timeline";
+import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 
 const actions = vi.hoisted(() => ({
@@ -346,7 +347,10 @@ describe("DraftOrderEditor", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: p.markAsPaid }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/orders/o-1"));
     expect(confirm).toHaveBeenCalledWith(
-      p.confirmMarkAsPaid.replace("{total}", formatCurrency("en", 45500, "EGP")),
+      en.draftOrders.editor.confirmRecordAgain.replace(
+        "{total}",
+        formatCurrency("en", 45500, "EGP"),
+      ),
     );
     expect(completeDraftOrderAction).toHaveBeenCalledWith(DTO.id, "paid");
     expect(saveDraftOrderAction).not.toHaveBeenCalled();
@@ -407,6 +411,17 @@ describe("DraftOrderEditor", () => {
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     expect(confirm.mock.calls[0]?.[0]).toContain(isolateName("#D3"));
     expect(actions.deleteDraftOrderAction).not.toHaveBeenCalled();
+  });
+
+  it("a saved draft's #D3 heading is isolated left-to-right inside an Arabic page", () => {
+    render(<DraftOrderEditor draft={DTO} canEdit canMarkPaid t={ar} locale="ar" />);
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).not.toHaveAttribute("dir");
+    const isolate = heading.querySelector("bdi");
+    expect(isolate).not.toBeNull();
+    expect(isolate).toHaveAttribute("dir", "ltr");
+    expect(isolate).toHaveTextContent("#D3");
+    expect(heading.textContent).toBe("#D3");
   });
 
   it("the title isolates only #D3, so an Arabic page keeps its own direction (M-6)", () => {

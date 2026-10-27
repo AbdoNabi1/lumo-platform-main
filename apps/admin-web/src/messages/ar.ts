@@ -522,6 +522,7 @@ export const ar: Dictionary = {
       completedBanner: "المسودة دي اتحولت لطلب.",
       viewOrder: "افتح الطلب {number}",
       recordPaymentAgain: "الدفع ماتسجّلش؟ سجّله تاني",
+      confirmRecordAgain: "الطلب موجود خلاص — نسجّل دفع الـ {total} بتاعه تاني؟",
       products: {
         title: "المنتجات",
         search: "دوّر على منتج",
@@ -800,6 +801,7 @@ export const ar: Dictionary = {
     markCashReceived: "تم استلام الفلوس",
     markCashReceivedPending: "جاري الحفظ…",
     confirmCashReceived: "متأكد إنك استلمت {amount} كاش؟",
+    confirmPaymentRecorded: "نسجّل إن الطلب ده اتدفع ونسجّل الـ {amount} اللي استلمتها؟",
     paymentCapturedOn: "تم التحصيل في {date}",
     paymentRefundedOn: "تم الاسترداد في {date}",
     fulfillment: "التجهيز",

@@ -163,10 +163,10 @@ export async function OrderPaymentCard({
           <CodCollectionForm
             orderId={order.id}
             paymentIntentId={payment.id}
-            confirmMessage={t.orderDetail.confirmCashReceived.replace(
-              "{amount}",
-              formatCurrency(locale, payment.amountMinor, payment.currency),
-            )}
+            confirmMessage={(payment.provider === "manual"
+              ? t.orderDetail.confirmPaymentRecorded
+              : t.orderDetail.confirmCashReceived
+            ).replace("{amount}", formatCurrency(locale, payment.amountMinor, payment.currency))}
             t={t}
           />
         )}

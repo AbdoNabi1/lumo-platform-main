@@ -249,7 +249,9 @@ export function DraftOrderEditor({
    */
   const recordAgain = (payment: DraftPayment) =>
     run("complete", async () => {
-      if (saved === null || !confirmPayment(payment, saved)) return;
+      if (saved === null) return;
+      const total = formatCurrency(locale, saved.totals.totalMinor, saved.currency);
+      if (!window.confirm(e.confirmRecordAgain.replace("{total}", () => total))) return;
       await complete(saved.id, payment);
     });
   // The merchant already confirmed this payment; a retry is a new submit with a new key.

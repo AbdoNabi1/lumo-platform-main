@@ -244,7 +244,8 @@ export async function requestFulfillmentAction(
  * Plan 3A — "Mark cash as received" on the order page. The amount and currency sent to the API are
  * read from the payment intent HERE, on the server; the form carries only the two ids, so a
  * tampered browser cannot settle for another amount. The intent must be a cash-on-delivery payment
- * of THIS order, and the API itself accepts only a full collection.
+ * — or a pending staff-recorded `manual` one, a draft's "Mark as paid" whose settling step failed
+ * (Task 9) — of THIS order, and the API itself accepts only a full collection (admin-only).
  */
 export async function confirmCodCollectionAction(
   _previous: FormState,
@@ -260,7 +261,9 @@ export async function confirmCodCollectionAction(
   const intent = await fetchPaymentIntent(paymentIntentId);
   if (intent.outcome !== "ok") return toFormState(intent, t);
   const { paymentIntent } = intent;
-  if (paymentIntent.provider !== "cod" || paymentIntent.orderRef !== orderId) {
+  const settledByCollection =
+    paymentIntent.provider === "cod" || paymentIntent.provider === "manual";
+  if (!settledByCollection || paymentIntent.orderRef !== orderId) {
     return { status: "error", message: t.invalid, fieldErrors: {} };
   }
 

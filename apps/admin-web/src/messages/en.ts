@@ -539,6 +539,7 @@ export const en = {
       completedBanner: "This draft order was completed.",
       viewOrder: "View order {number}",
       recordPaymentAgain: "Payment not recorded? Record it again",
+      confirmRecordAgain: "The order already exists — record its {total} payment again?",
       products: {
         title: "Products",
         search: "Search products",
@@ -823,6 +824,7 @@ export const en = {
     markCashReceived: "Mark cash as received",
     markCashReceivedPending: "Saving…",
     confirmCashReceived: "Confirm you received {amount} in cash?",
+    confirmPaymentRecorded: "Record the {amount} payment you received for this order as paid?",
     paymentCapturedOn: "Captured {date}",
     paymentRefundedOn: "Refunded {date}",
     fulfillment: "Fulfillment",

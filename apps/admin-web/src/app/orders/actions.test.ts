@@ -135,6 +135,41 @@ describe("confirmCodCollectionAction (Plan 3A)", () => {
     expect(payments.confirmCodCollection).not.toHaveBeenCalled();
   });
 
+  it("settles a pending staff-recorded (manual) payment of this order — a draft's Mark as paid that stopped half-way", async () => {
+    payments.fetchPaymentIntent.mockResolvedValue({
+      outcome: "ok",
+      paymentIntent: intent({ provider: "manual" }),
+    });
+
+    const state = await confirmCodCollectionAction(
+      idle,
+      form({ orderId: "order-1", paymentIntentId: "intent-1" }),
+    );
+
+    expect(state).toEqual({ status: "success" });
+    expect(payments.confirmCodCollection).toHaveBeenCalledWith(
+      "intent-1",
+      45000,
+      "EGP",
+      expect.any(String),
+    );
+  });
+
+  it("still refuses a manual payment of another order", async () => {
+    payments.fetchPaymentIntent.mockResolvedValue({
+      outcome: "ok",
+      paymentIntent: intent({ provider: "manual", orderRef: "order-2" }),
+    });
+
+    const state = await confirmCodCollectionAction(
+      idle,
+      form({ orderId: "order-1", paymentIntentId: "intent-1" }),
+    );
+
+    expect(state.status).toBe("error");
+    expect(payments.confirmCodCollection).not.toHaveBeenCalled();
+  });
+
   it("refuses a payment intent that belongs to a different order", async () => {
     payments.fetchPaymentIntent.mockResolvedValue({
       outcome: "ok",
