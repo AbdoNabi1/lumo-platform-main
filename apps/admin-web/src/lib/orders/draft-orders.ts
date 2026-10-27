@@ -7,6 +7,9 @@ import type {
 } from "@/lib/api/draft-orders";
 import { fillTemplate } from "@/lib/whatsapp";
 
+/** The bound on a merchant-entered amount (custom shipping, fixed discount): `MAX_DRAFT_AMOUNT_MINOR`. */
+export const MAX_DRAFT_AMOUNT_MINOR = 10_000_000;
+
 /** Shopify's page size; the API's maximum too. */
 export const DRAFT_PAGE_SIZE = 50;
 export const DRAFT_STATUSES: readonly DraftOrderStatus[] = ["open", "invoice_sent", "completed"];
