@@ -80,7 +80,7 @@ describe("activityLabel", () => {
         line({ kind: "created_from_draft", body: null, data: { draftNumber: "D3" } }),
         en,
       ),
-    ).toBe("Order created from draft #D3");
+    ).toBe(`Order created from draft ${iso("#D3")}`);
     expect(activityLabel(line({ deleted: true, body: null }), en)).toBe("Comment deleted");
   });
 

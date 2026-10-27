@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { en } from "@/messages/en";
 import { ar } from "@/messages/ar";
 import { DraftOrdersTable } from "./draft-orders-table";
@@ -23,6 +23,17 @@ describe("DraftOrdersTable", () => {
     expect(screen.getByRole("link", { name: "#D3" })).toHaveAttribute("href", "/draft-orders/d-1");
     expect(screen.getByText("Mona Ali")).toBeInTheDocument();
     expect(screen.getByText("Open")).toBeInTheDocument();
+    const cells = within(screen.getAllByRole("row")[1] as HTMLElement).getAllByRole("cell");
+    expect(cells[1]).toHaveTextContent("Oct 25");
+    expect(cells[4]).toHaveTextContent(/EGP\s571\.00/);
+  });
+
+  it("writes the date and total the Arabic way", () => {
+    render(<DraftOrdersTable drafts={[row()]} t={ar} locale="ar" />);
+    const cells = within(screen.getAllByRole("row")[1] as HTMLElement).getAllByRole("cell");
+    expect(cells[1]).toHaveTextContent("أكتوبر");
+    expect(cells[4]).toHaveTextContent(/571/);
+    expect(cells[4]).toHaveTextContent("ج.م.");
   });
 
   it("links a completed draft's order number", () => {

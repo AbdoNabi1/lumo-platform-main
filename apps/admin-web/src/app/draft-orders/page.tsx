@@ -18,13 +18,14 @@ import { fetchDraftOrders } from "@/lib/api/draft-orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
-import { canEditDrafts, DRAFT_PAGE_SIZE, parseDraftStatus } from "@/lib/orders/draft-orders";
+import { canEditDrafts, DRAFT_PAGE_SIZE, draftListParams } from "@/lib/orders/draft-orders";
 
 interface DraftOrdersPageProps {
+  /** Next hands a repeated parameter over as an array (`?q=a&q=b`). */
   readonly searchParams: Promise<{
-    readonly status?: string;
-    readonly q?: string;
-    readonly after?: string;
+    readonly status?: string | string[];
+    readonly q?: string | string[];
+    readonly after?: string | string[];
   }>;
 }
 
@@ -36,10 +37,9 @@ export default async function DraftOrdersPage({ searchParams }: DraftOrdersPageP
   const d = t.draftOrders;
   const user = await getCurrentUser();
   const canEdit = canEditDrafts(highestRole((await readSession())?.roles ?? []));
-  const params = await searchParams;
-  const q = params.q?.trim() || undefined;
-  const status = parseDraftStatus(params.status);
-  const result = await fetchDraftOrders({ first: DRAFT_PAGE_SIZE, after: params.after, q, status });
+  // A hand-edited URL is clamped or ignored — never a 500 or an error panel (Task 8 review).
+  const { q, status, after } = draftListParams(await searchParams);
+  const result = await fetchDraftOrders({ first: DRAFT_PAGE_SIZE, after, q, status });
 
   let content: ReactNode;
   if (result.outcome === "unauthorized") {

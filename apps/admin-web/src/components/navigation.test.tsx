@@ -154,6 +154,22 @@ describe("SidebarNav (Shopify layout)", () => {
     expect(screen.getByRole("link", { name: en.nav.orders })).not.toHaveAttribute("aria-current");
   });
 
+  it("marks Drafts current on its own pages and keeps Orders in view (order operations Part 4)", () => {
+    renderNav("draft-orders");
+    expect(screen.getByRole("link", { name: en.nav.drafts })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: en.nav.drafts })).toHaveAttribute(
+      "href",
+      "/draft-orders",
+    );
+    expect(screen.getByRole("link", { name: en.nav.orders })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: en.nav.abandonedCheckouts })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
   it("Orders' sub-pages are Drafts, then Part 3's Abandoned checkouts", () => {
     expect(PRIMARY_NAV.find((item) => item.id === "orders")?.children?.map((c) => c.id)).toEqual([
       "draft-orders",

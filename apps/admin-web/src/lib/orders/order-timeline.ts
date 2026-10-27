@@ -66,7 +66,10 @@ export function activityLabel(entry: TimelineEntryDto, t: Dictionary): string {
     case "tags_removed":
       return fill(words.tagsRemoved, { author, tags });
     case "created_from_draft":
-      return fill(words.createdFromDraft, { draft: entry.data.draftNumber ?? "" });
+      // "#D3" keeps its own direction inside the Arabic sentence (FSI … PDI), "#" included.
+      return fill(words.createdFromDraft, {
+        draft: isolateName(`#${entry.data.draftNumber ?? ""}`),
+      });
     case "comment":
       return entry.deleted ? words.commentDeleted : (entry.body ?? "");
     default:

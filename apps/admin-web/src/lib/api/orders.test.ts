@@ -181,7 +181,7 @@ describe("fetchRecentOrders", () => {
 });
 
 /**
- * T5.2's 7 order write functions. `placeOrder`/`createOrderFromCheckout` read an `id` off an
+ * T5.2's order write functions. `createOrderFromCheckout` reads an `id` off an
  * unmapped `Order` aggregate response (same discipline `createProduct`'s own tests use in
  * `products.test.ts`); the remaining 5 assert the request shape only (path, method, body,
  * idempotency header) plus the ok/error mapping, since their handlers don't map the response

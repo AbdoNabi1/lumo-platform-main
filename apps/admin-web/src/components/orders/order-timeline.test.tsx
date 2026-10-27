@@ -189,6 +189,23 @@ describe("OrderTimeline — staff comments and activity (order operations Part 2
     expect(item.textContent).toMatch(/⁩ · .*\d/);
   });
 
+  it("links 'Order created from draft #D3' to its draft, the number isolated (Ruling 24)", () => {
+    renderMerged([
+      staffLine({
+        id: "e-3",
+        kind: "created_from_draft",
+        authorName: null,
+        body: null,
+        data: { draftNumber: "D3", draftId: "d-1" },
+      }),
+      staffLine({ id: "e-4", kind: "archived", body: null, data: {} }),
+    ]);
+    const link = screen.getByRole("link", { name: /Order created from draft/ });
+    expect(link).toHaveAttribute("href", "/draft-orders/d-1");
+    expect(link.textContent).toBe(`Order created from draft ${isolateName("#D3")}`);
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+  });
+
   it("shows a staff entry of an unknown kind as generic staff activity, never blank", () => {
     renderMerged([
       staffLine({ kind: "future_kind" as TimelineEntryDto["kind"], body: null, data: {} }),

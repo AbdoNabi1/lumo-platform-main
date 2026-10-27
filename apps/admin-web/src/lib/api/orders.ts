@@ -364,13 +364,13 @@ export async function fetchOrder(orderId: string): Promise<FetchOrderResult> {
 }
 
 /**
- * T5.2 — the 7 order write routes below (`admin-routes.ts` lines ~1011-1117). One shared line-item
- * shape (`OrderLineItemInput`) and one shared address shape (`OrderAddressInput`) cover both
- * `placeOrder`'s and `createOrderFromCheckout`'s bodies — `placeOrderBody`/
- * `createOrderFromCheckoutBody` declare the same per-item and per-address fields verbatim, only
- * `createOrderFromCheckoutBody` additionally requires `checkoutRef`/`billingAddress` and is
- * `.strict()`. Manual unit prices ARE correct here (unlike the storefront): these are operator-
- * entered backoffice order-creation forms, not a re-derivation of a caller-untrusted price.
+ * T5.2 — the 6 order write routes below (`admin-routes.ts` lines ~1011-1117). One shared line-item
+ * shape (`OrderLineItemInput`) and one address shape (`OrderAddressInput`) cover
+ * `createOrderFromCheckout`'s body (`createOrderFromCheckoutBody`, which also requires
+ * `checkoutRef`/`billingAddress` and is `.strict()`). Merchant-created orders now start as
+ * draft orders (`lib/api/draft-orders.ts`), priced by the server. Manual unit prices ARE correct
+ * here (unlike the storefront): this is an operator-entered backoffice recovery form, not a
+ * re-derivation of a caller-untrusted price.
  */
 
 export interface OrderLineItemInput {
@@ -397,11 +397,11 @@ export interface CreateOrderFromCheckoutInput {
 }
 
 /**
- * `POST /orders` and `POST /orders/from-checkout` return the created `Order` **aggregate**, not a
- * DTO (`admin-routes.ts`'s handlers return `admin.orders.placeOrder(...)`/
- * `admin.orders.createFromCheckout(...)` directly — same situation `createProduct` in
- * `lib/api/products.ts` documents for `POST /products`). Never type the whole aggregate here: this
- * only validates the response is an object and reads an `id` off it, for the post-create redirect.
+ * `POST /orders/from-checkout` returns the created `Order` **aggregate**, not a
+ * DTO (`admin-routes.ts`'s handler returns `admin.orders.createFromCheckout(...)` directly —
+ * same situation `createProduct` in `lib/api/products.ts` documents for `POST /products`). Never
+ * type the whole aggregate here: this only validates the response is an object and reads an `id`
+ * off it, for the post-create redirect.
  */
 function isCreatedOrder(value: unknown): value is { readonly id?: unknown } {
   return typeof value === "object" && value !== null;
