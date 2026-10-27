@@ -96,6 +96,7 @@ describe("/c/[token] (order operations Part 3)", () => {
   it.each([
     ["the API is unreachable", 0],
     ["the API failed", 503],
+    ["the API is rate limited", 429],
   ])("%s: a 'try again' state, never the expired-link view", async (_case, status) => {
     getCheckoutLinkPreview.mockResolvedValue({ status, body: null });
     await renderPage();

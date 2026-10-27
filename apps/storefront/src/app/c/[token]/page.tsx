@@ -61,7 +61,11 @@ const previewOf = cache(async (token: string): Promise<PreviewRead> => {
   if (response.status === 200 && response.body !== null) {
     return { kind: "ok", preview: response.body };
   }
-  return response.status === 0 || response.status >= 500 ? { kind: "failed" } : { kind: "invalid" };
+  // Only the API saying the link itself is bad (404, or 400 for a malformed one) is "invalid";
+  // a rate limit (429), an outage or no answer leaves a good link worth trying again.
+  return response.status === 404 || response.status === 400
+    ? { kind: "invalid" }
+    : { kind: "failed" };
 });
 
 /**
