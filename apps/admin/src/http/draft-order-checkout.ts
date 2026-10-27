@@ -39,6 +39,13 @@ export function withDraftConflictCode(response: AdminResponse): AdminResponse {
   return typeof message === "string" && /^[A-Z_]+:/.test(message) ? coded : draftBusy();
 }
 
+/** The draft code of a 409 answer (`DRAFT_COMPLETED`, …), or undefined. */
+export function conflictCodeOf(response: AdminResponse): string | undefined {
+  if (response.status !== 409) return undefined;
+  const code = (response.body as { readonly code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
 /**
  * The draft's current checkout session: null when it has none, Checkout no longer knows it, or it is
  * not THIS draft's (M-4, defence in depth: only `setDraftCheckout` with paired ids writes the ref) —
@@ -108,7 +115,8 @@ async function notRecorded(
  * otherwise a new one is built from the draft's STORED prices (Ruling 12) — Checkout validates it
  * completely before it expires the replaced one — then recorded with compare-and-set on the ref AND
  * the version it was built from (Ruling 3, Task 7 I-1). A checkout that already became an order is
- * never built past (409 DRAFT_COMPLETED; the caller heals). A lost race expires what it built.
+ * never built past (409 DRAFT_COMPLETED): read here, or found by Checkout inside its own transaction
+ * (final review I-1), when the draft is healed here too. A lost race expires what it built.
  */
 export async function materializeDraftCheckout(
   admin: Pick<WiredAdmin, "publicReads">,
@@ -168,7 +176,14 @@ export async function materializeDraftCheckout(
     shipping: { title: shipping.title, amountMinor: amounts.shippingMinor },
     ...(draft.checkoutRef === null ? {} : { replaces: draft.checkoutRef }),
   });
-  if (started.status !== 201) return { ok: false, response: withDraftConflictCode(started) };
+  if (started.status !== 201) {
+    const refused = withDraftConflictCode(started);
+    // Final review I-1: Checkout re-read the replaced session in its own transaction and found it an
+    // order placed since the read above. Nothing was built; the draft is recorded as completed now
+    // (best effort, like every read) so the caller's next read already says so.
+    if (conflictCodeOf(refused) === "DRAFT_COMPLETED") await healedDraft(admin, tenantId, draft);
+    return { ok: false, response: refused };
+  }
   const { checkoutSessionId } = started.body as { readonly checkoutSessionId: string };
   const recorded = await admin.publicReads.draftOrders.setDraftCheckout({
     tenantId,

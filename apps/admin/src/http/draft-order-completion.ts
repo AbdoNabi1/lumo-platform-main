@@ -17,6 +17,7 @@ import {
 } from "../infrastructure/cross-context/draft-order-completion.adapter";
 import type { AdminResponse } from "../interfaces/admin-response";
 import {
+  conflictCodeOf,
   draftCheckoutOf,
   expireDraftCheckout,
   materializeDraftCheckout,
@@ -182,6 +183,22 @@ async function resumeCompletion(
   return finishPayment(admin, principal, tenantId, placed.id.toString(), orderRef, payment);
 }
 
+/** `resumeCompletion` on the draft and its session read again (both may have moved since). */
+async function resumeLatest(
+  admin: WiredAdmin,
+  principal: Principal,
+  tenantId: string,
+  stale: DraftOrder,
+  payment: DraftPayment,
+): Promise<AdminResponse> {
+  const reread = await admin.draftOrders.get(principal, { tenantId, draftId: stale.id });
+  if (reread.status === 404) return reread;
+  const draft = reread.status === 200 ? (reread.body as DraftOrder) : stale;
+  const current = await draftCheckoutOf(admin, tenantId, draft);
+  if (!current.ok) return current.response;
+  return resumeCompletion(admin, principal, tenantId, draft, current.session, payment);
+}
+
 /**
  * Spec §4.6: create the order from a draft — Mark as paid (manual payment) or Collect on delivery
  * (COD). Resumes, never places a second order, when the draft's checkout already became one.
@@ -225,7 +242,12 @@ export async function completeDraft(
   // Ruling 5: always a fresh session; Checkout expires the open one (a customer's invoice
   // checkout) in the same unit of work, only once the new one is complete.
   const built = await materializeDraftCheckout(admin, tenantId, draft, { fresh: true });
-  if (!built.ok) return built.response;
+  if (!built.ok) {
+    if (conflictCodeOf(built.response) !== "DRAFT_COMPLETED") return built.response;
+    // Final review I-1: the draft's checkout became an order after the read above (a shopper paid
+    // the invoice meanwhile). Resumed exactly as if it had been seen then — never a second order.
+    return resumeLatest(admin, principal, tenantId, draft, payment);
+  }
   const { checkoutSessionId } = built;
   // Task 7 I-2: a session this route built and could not turn into an order is closed before the
   // refusal is answered — it carries the merchant's payment choice (`manual` for Mark as paid) and

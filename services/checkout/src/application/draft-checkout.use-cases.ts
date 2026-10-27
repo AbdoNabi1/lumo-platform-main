@@ -29,6 +29,11 @@ export function newDraftSessionRef(): string {
   return randomBytes(32).toString("base64url");
 }
 
+/** The same refusal Orders gives a draft that is already an order — the admin routes map it as such. */
+function draftCompleted(): BusinessRuleError {
+  return new BusinessRuleError("DRAFT_COMPLETED: this draft order is already an order");
+}
+
 function draftCheckoutGone(): BusinessRuleError {
   return new BusinessRuleError("DRAFT_BUSY: this invoice's checkout changed; open the link again");
 }
@@ -56,7 +61,10 @@ export interface StartDraftCheckoutInput {
   readonly billingAddress: CheckoutAddressInput;
   readonly discount?: { readonly title: string; readonly amountMinor: number };
   readonly shipping: { readonly title: string; readonly amountMinor: number };
-  /** The draft's previous session: expired here when it is still open AND this draft's. */
+  /**
+   * The draft's previous session: expired here when it is still open AND this draft's. When it is
+   * this draft's and already an order, the start is refused with `DRAFT_COMPLETED:` (nothing written).
+   */
   readonly replaces?: string;
 }
 
@@ -97,6 +105,14 @@ export class StartDraftCheckout implements UseCase<
     return this.deps.unitOfWork.run<Result<{ readonly checkoutSessionId: string }, DomainError>>(
       async (tx) => {
         const now = this.deps.clock.now();
+        // Re-read INSIDE the transaction: the caller's "not an order yet" check ran outside it, and the
+        // shopper may have placed this draft's order since. Building past it would place a second one.
+        const old =
+          input.replaces === undefined
+            ? null
+            : await this.deps.sessions.findById(input.replaces, input.tenantId, tx);
+        const ownOld = old !== null && old.draftTerms?.draftOrderRef === input.draftOrderRef;
+        if (ownOld && old.orderRef !== null) return err(draftCompleted());
         // The new session is built and checked completely BEFORE anything is written: the unit of
         // work commits on a returned `err` too, so a refusal must leave the replaced session open.
         const id = this.deps.idGenerator.generate();
@@ -127,16 +143,9 @@ export class StartDraftCheckout implements UseCase<
           throw error;
         }
         // Nothing below refuses: the previous session is expired only once its successor is ready.
-        if (input.replaces !== undefined) {
-          const old = await this.deps.sessions.findById(input.replaces, input.tenantId, tx);
-          if (
-            old !== null &&
-            old.state.isOpen &&
-            old.draftTerms?.draftOrderRef === input.draftOrderRef
-          ) {
-            old.expire(this.deps.idGenerator.generate(), now);
-            await this.deps.sessions.save(old, input.tenantId, tx);
-          }
+        if (ownOld && old.state.isOpen) {
+          old.expire(this.deps.idGenerator.generate(), now);
+          await this.deps.sessions.save(old, input.tenantId, tx);
         }
         await this.deps.sessions.save(session, input.tenantId, tx);
         return ok({ checkoutSessionId: id });

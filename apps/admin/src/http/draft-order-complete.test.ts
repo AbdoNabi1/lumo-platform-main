@@ -583,3 +583,76 @@ describe("draft completion races and the merchant's payment (Task 7 fix round 1)
     expect((await storedDraft(world, mine.id)).orderRef).not.toBe(placed.orderId);
   });
 });
+
+describe("a draft the shopper paid while the merchant's checkout was built (final review I-1)", () => {
+  beforeEach(() => {
+    vi.spyOn(logger, "info").mockImplementation(() => undefined);
+    vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** The shopper's invoice checkout becomes an order just before Checkout's own transaction runs. */
+  function payBeforeStart(world: DraftWorld, checkoutSessionId: string, sessionRef: string) {
+    const checkout = world.admin.publicReads.checkout;
+    const startDraft = checkout.startDraft.bind(checkout);
+    const placed: string[] = [];
+    vi.spyOn(checkout, "startDraft").mockImplementationOnce(async (input) => {
+      placed.push(await completeCheckout(world, checkoutSessionId, sessionRef));
+      return startDraft(input);
+    });
+    return placed;
+  }
+
+  it("the merchant's completion resumes it as ALREADY_COMPLETED, heals the draft, no second order", async () => {
+    // Checkout's report to Orders fails, so the draft still reads invoice_sent: the widest window.
+    const world = await draftWorld({ draftCompletion: silentPort });
+    await enableCashOnDelivery(world);
+    const draft = await createDraft(world);
+    const shoppers = await claim(world, await sendLink(world, draft.id), "guest-a");
+    const placed = payBeforeStart(world, shoppers, "guest-a");
+
+    const refused = await complete(world, draft.id, "collect_on_delivery");
+
+    expect(placed).toHaveLength(1);
+    expect(refused.status).toBe(409);
+    expect(codeOf(refused)).toBe("ALREADY_COMPLETED");
+    expect(await orderCount(world)).toBe(1);
+    const stored = await storedDraft(world, draft.id);
+    expect(stored.status).toBe("completed");
+    expect(stored.orderRef).toBe(placed[0]);
+    expect(stored.checkoutRef).toBe(shoppers);
+  });
+
+  it("a second opener of the link is told it was already placed, the draft is healed, no second order", async () => {
+    const world = await draftWorld({ draftCompletion: silentPort });
+    const draft = await createDraft(world);
+    const token = await sendLink(world, draft.id);
+    const shoppers = await claim(world, token, "guest-a");
+    // A newer draft version (its checkout not expired) makes the next claim build a fresh session.
+    const stored = await storedDraft(world, draft.id);
+    unwrap(
+      await world.admin.draftOrders.update(operatorStaff, {
+        tenantId: HARNESS_TENANT,
+        draftId: draft.id,
+        version: stored.version,
+        content: { ...stored.content(), note: "edited meanwhile" },
+      }),
+      "edit",
+    );
+    const placed = payBeforeStart(world, shoppers, "guest-a");
+
+    const refused = await world.publicCall("POST", "/public/checkout-links/claim", {
+      body: { token, sessionRef: "guest-b" },
+    });
+
+    expect(placed).toHaveLength(1);
+    expect(refused.status).toBe(409);
+    expect(codeOf(refused)).toBe("ALREADY_COMPLETED");
+    expect(await orderCount(world)).toBe(1);
+    const healed = await storedDraft(world, draft.id);
+    expect(healed.status).toBe("completed");
+    expect(healed.orderRef).toBe(placed[0]);
+  });
+});

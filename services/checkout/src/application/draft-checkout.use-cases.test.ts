@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
@@ -144,6 +144,35 @@ describe("StartDraftCheckout (spec §4.5 step 2)", () => {
     value(await w.start.execute(input({ replaces: foreign })));
     expect((await w.sessions.findById(first, T))?.state.value).toBe("expired");
     expect((await w.sessions.findById(foreign, T))?.state.value).toBe("started");
+  });
+
+  it("refuses with DRAFT_COMPLETED when the session it replaces became this draft's order, writing nothing", async () => {
+    // Final review I-1: the caller read the session open; the shopper's order landed before this tx.
+    const w = world();
+    const first = value(await w.start.execute(input())).checkoutSessionId;
+    const paid = await w.sessions.findById(first, T);
+    paid?.complete("order-a", "evt-complete", NOW);
+    if (paid !== null) await w.sessions.save(paid, T);
+    const save = vi.spyOn(w.sessions, "save");
+
+    const refused = failure(await w.start.execute(input({ replaces: first })));
+
+    expect(refused.message).toMatch(/^DRAFT_COMPLETED:/);
+    expect(save).not.toHaveBeenCalled();
+    const kept = await w.sessions.findById(first, T);
+    expect(kept?.state.value).toBe("completed");
+    expect(kept?.orderRef).toBe("order-a");
+  });
+
+  it("still builds past a completed session that is NOT this draft's (a foreign ref is ignored)", async () => {
+    const w = world();
+    const foreign = value(
+      await w.start.execute(input({ draftOrderRef: "other-draft" })),
+    ).checkoutSessionId;
+    const placed = await w.sessions.findById(foreign, T);
+    placed?.complete("order-b", "evt-complete", NOW);
+    if (placed !== null) await w.sessions.save(placed, T);
+    value(await w.start.execute(input({ replaces: foreign })));
   });
 
   it("refuses a province that is not the country's (422 with the field)", async () => {
