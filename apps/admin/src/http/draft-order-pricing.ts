@@ -84,7 +84,8 @@ export const draftBody = z
             amountMinor: amount,
           })
           .strict(),
-        z.object({ kind: z.literal("free") }).strict(),
+        // M-2: the merchant's screen sends the name in its own language; absent → the default.
+        z.object({ kind: z.literal("free"), title: z.string().max(100).optional() }).strict(),
       ])
       .nullable()
       .optional(),
@@ -350,7 +351,9 @@ export async function draftContentFrom(
   if (choice?.kind === "custom") {
     shipping = { kind: "custom", title: choice.title, amountMinor: choice.amountMinor };
   }
-  if (choice?.kind === "free") shipping = { kind: "free", title: "", amountMinor: 0 };
+  if (choice?.kind === "free") {
+    shipping = { kind: "free", title: choice.title ?? "", amountMinor: 0 };
+  }
   if (choice?.kind === "rate") {
     if (shippingAddress === null || lines.length === 0) {
       issues.push({ field: "shipping.method", message: "add an address and products first" });

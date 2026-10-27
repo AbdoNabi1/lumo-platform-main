@@ -167,6 +167,23 @@ describe("POST /draft-orders (spec §4.8)", () => {
     expect(fieldsOf(unknown.body)).toContain("shipping.method");
   });
 
+  it("free shipping keeps the merchant's localized name; without one it is the default (M-2)", async () => {
+    const world = await draftWorld();
+    const arabic = await createDraft(world, { shipping: { kind: "free", title: "شحن مجاني" } });
+    expect(arabic.shipping).toMatchObject({ kind: "free", title: "شحن مجاني", amountMinor: 0 });
+    const plain = await createDraft(world, { shipping: { kind: "free" } });
+    expect(plain.shipping).toMatchObject({ kind: "free", title: "Free shipping", amountMinor: 0 });
+    // The body schema bounds the name (the route answers 422; this harness throws the ZodError).
+    expect(() =>
+      world.staffCall(
+        "POST",
+        "/draft-orders",
+        { body: draftBody(world, { shipping: { kind: "free", title: "x".repeat(101) } }) },
+        operatorStaff,
+      ),
+    ).toThrow(/at most 100/);
+  });
+
   it("an unknown customer is refused; viewers cannot create", async () => {
     const world = await draftWorld();
     const unknown = await world.staffCall(

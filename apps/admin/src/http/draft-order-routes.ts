@@ -15,6 +15,7 @@ import { logger, toErrorEnvelope, UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import {
+  draftCheckoutOf,
   expireDraftCheckout,
   healedDraft,
   materializeDraftCheckout,
@@ -307,8 +308,14 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
           draftId: params.draftId,
         });
         if (before.status !== 200) return before;
-        const draft = before.body as DraftOrder;
+        // M-1, Ruling 17 "the order wins": a draft whose checkout became an order (Checkout's report
+        // may have failed) is healed first, and is never soft-deleted — not even when the heal could
+        // not be recorded, since a deleted draft can never be healed by a later read.
+        const draft = await healedDraft(admin, context.tenantId, before.body as DraftOrder);
         if (draft.status === "completed") return draftCompleted();
+        const current = await draftCheckoutOf(admin, context.tenantId, draft);
+        if (!current.ok) return notDeleted("read the draft order's checkout");
+        if (current.session !== null && current.session.orderRef !== null) return draftCompleted();
         // Ruling 17: links revoked and the open checkout stopped BEFORE the soft delete; if either
         // fails, nothing is deleted. Race (accepted): a draft completed between the read above and
         // `remove` below keeps its order, `remove` answers 409 DRAFT_COMPLETED, but its links were

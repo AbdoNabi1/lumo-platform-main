@@ -401,11 +401,13 @@ describe("GET /public/checkout-links/:token/preview", () => {
       "items",
       "purpose",
       "shopName",
+      "taxPending",
       "totalMinor",
     ]);
     expect(dto.purpose).toBe("recovery");
     expect(dto.draftNumber).toBeNull();
     expect(dto.completed).toBe(false);
+    expect(dto.taxPending).toBe(false);
     expect(dto.itemCount).toBe(3);
     expect(dto.totalMinor).toBe(59000);
     expect(dto.currency).toBe("EGP");

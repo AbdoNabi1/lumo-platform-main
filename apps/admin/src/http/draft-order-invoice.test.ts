@@ -124,6 +124,7 @@ describe("the invoice landing page's API (spec §4.7, §3.5)", () => {
       purpose: "invoice",
       draftNumber: "D1",
       completed: false,
+      taxPending: false,
       itemCount: 3,
       currency: "EGP",
     });
@@ -135,12 +136,32 @@ describe("the invoice landing page's API (spec §4.7, §3.5)", () => {
       "items",
       "purpose",
       "shopName",
+      "taxPending",
       "totalMinor",
     ]);
     expect(dto.totalMinor).toBe(draft.totals.totalMinor);
     const text = JSON.stringify(dto);
     for (const secret of ["sara@example.com", "01001234567", "Nile", "Mona", "tokenHash", draft.id])
       expect(text).not.toContain(secret);
+  });
+
+  it("says the tax is still pending when Finance could not estimate it, never a lower 'Total' (M-4)", async () => {
+    const world = await draftWorld();
+    const draft = await createDraft(world);
+    const token = await sendToken(world, draft.id);
+    vi.spyOn(world.admin.publicReads.checkout, "estimateDraftTax").mockResolvedValue({
+      status: 503,
+      body: toErrorEnvelope(new UnexpectedError("Finance is unavailable")),
+    });
+    try {
+      const dto = unwrap<CheckoutLinkPreviewDto>(await preview(world, token), "preview");
+      expect(dto.taxPending).toBe(true);
+      // The figure is the total before tax, and the flag says so.
+      const { subtotalMinor, discountMinor, shippingMinor } = draft.totals;
+      expect(dto.totalMinor).toBe(subtotalMinor - discountMinor + shippingMinor);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("the claim hands the draft's checkout to the opener; the last opener owns it", async () => {
@@ -303,6 +324,76 @@ describe("the invoice landing page's API (spec §4.7, §3.5)", () => {
       expect(healed.status).toBe("completed");
       expect(healed.order?.id).toBe(orderRef);
     } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("DELETE heals first: a draft whose checkout became an order is DRAFT_COMPLETED, never deleted (M-1)", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      const world = await draftWorld({
+        draftCompletion: { complete: () => Promise.reject(new Error("Orders is unreachable")) },
+      });
+      const draft = await createDraft(world);
+      const token = await sendToken(world, draft.id);
+      const claimed = unwrap<CheckoutLinkClaimDto>(await claim(world, token, "guest-a"), "claim");
+      const orderRef = await completeCheckout(world, claimed.checkoutSessionId, "guest-a");
+      const refused = await world.staffCall(
+        "DELETE",
+        "/draft-orders/:draftId",
+        { params: { draftId: draft.id } },
+        operatorStaff,
+      );
+      expect(refused.status).toBe(409);
+      expect((refused.body as { code: string }).code).toBe("DRAFT_COMPLETED");
+      const healed = await detail(world, draft.id);
+      expect(healed.status).toBe("completed");
+      expect(healed.order?.id).toBe(orderRef);
+      // The link is not revoked: it still says the order was placed (Ruling 11), not LINK_INVALID.
+      const landing = unwrap<CheckoutLinkPreviewDto>(await preview(world, token), "preview");
+      expect(landing.completed).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("DELETE refuses a draft whose checkout is an order even when the heal cannot be recorded (M-1)", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      const world = await draftWorld({
+        draftCompletion: { complete: () => Promise.reject(new Error("Orders is unreachable")) },
+      });
+      const draft = await createDraft(world);
+      const token = await sendToken(world, draft.id);
+      const claimed = unwrap<CheckoutLinkClaimDto>(await claim(world, token, "guest-a"), "claim");
+      await completeCheckout(world, claimed.checkoutSessionId, "guest-a");
+      const unavailable = {
+        status: 503,
+        body: toErrorEnvelope(new UnexpectedError("Orders is unavailable")),
+      };
+      vi.spyOn(world.admin.publicReads.draftOrders, "completeDraftFromCheckout").mockResolvedValue(
+        unavailable,
+      );
+      const revoke = vi.spyOn(world.admin.publicReads.checkout, "revokeDraftLinks");
+      const refused = await world.staffCall(
+        "DELETE",
+        "/draft-orders/:draftId",
+        { params: { draftId: draft.id } },
+        operatorStaff,
+      );
+      expect(refused.status).toBe(409);
+      expect((refused.body as { code: string }).code).toBe("DRAFT_COMPLETED");
+      expect(revoke).not.toHaveBeenCalled();
+      const stored = unwrap<DraftOrder>(
+        await world.admin.publicReads.draftOrders.getDraftOrder({
+          tenantId: HARNESS_TENANT,
+          draftId: draft.id,
+        }),
+        "stored draft",
+      );
+      expect(stored.status).toBe("invoice_sent");
+    } finally {
+      vi.restoreAllMocks();
       warn.mockRestore();
     }
   });

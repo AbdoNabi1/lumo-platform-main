@@ -50,9 +50,14 @@ export interface CheckoutLinkPreviewDto {
   }[];
   /**
    * Recovery: the lines at the prices they were left at; the checkout re-prices them (spec §3.5).
-   * Invoice: the draft's total with its estimated tax.
+   * Invoice: the draft's total with its estimated tax — or before tax when `taxPending`.
    */
   readonly totalMinor: number;
+  /**
+   * Invoice only (M-4): Finance could not estimate the tax, so `totalMinor` is the total BEFORE tax
+   * and must not be shown as the total. Always false for recovery.
+   */
+  readonly taxPending: boolean;
   readonly currency: string;
 }
 
@@ -180,6 +185,7 @@ async function previewInvoice(
       imageUrl: images.get(lineKey(line.productRef, line.variantRef))?.url ?? null,
     })),
     totalMinor: draftTotalsOf(draft, tax).totalMinor,
+    taxPending: tax === null,
     currency: draft.currency,
   };
   return { status: 200, body: dto };
@@ -454,6 +460,7 @@ export function publicCheckoutLinkRoutes(admin: WiredAdmin): readonly RouteDefin
             imageUrl: images.get(lineKey(item.productRef, item.variantRef ?? null))?.url ?? null,
           })),
           totalMinor: session.items.reduce((sum, item) => sum + item.lineTotalMinor, 0),
+          taxPending: false,
           currency: session.currency,
         };
         return { status: 200, body: dto };
