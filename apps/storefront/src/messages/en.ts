@@ -189,6 +189,7 @@ export const en = {
       quantity: "Quantity",
       subtotal: "Subtotal",
       shipping: "Shipping",
+      discount: "Discount",
       enterShippingAddress: "Enter shipping address",
       taxes: "Taxes",
       free: "Free",
@@ -217,6 +218,15 @@ export const en = {
     outOfStock:
       "Some items in your cart are no longer available in the quantity you chose. Update your cart and try again.",
     itemsDropped: "Some items are no longer available",
+    /** Order operations Part 4 — a checkout that pays a merchant's draft order. */
+    invoiceBadge: "Invoice #{draft}",
+    fixedShippingHint: "Shipping was set by the store for this order.",
+    draftLockedBody:
+      "The store set the discount and shipping for this order, so they can't be changed here.",
+    invoiceUnavailableBody:
+      "This invoice can't be changed or paid from here right now. Open the invoice link again, or contact the store.",
+    invoiceOutOfStock:
+      "Some items on this invoice are no longer in stock. Please contact the store.",
     networkErrorBody: "Couldn't reach the checkout service. Try again.",
     confirmation: {
       title: "Thanks for your order",
@@ -247,8 +257,26 @@ export const en = {
     errors: {
       invalid: "This link has expired or is no longer valid.",
       unavailable: "None of these items are available anymore.",
+      completed: "This order has already been placed.",
+      notReady: "This invoice can't be paid right now. Please contact the store.",
+      busy: "The store is updating this invoice. Try again in a moment.",
+      tooLarge: "This invoice is too large to pay online. Please contact the store.",
+      outOfStock: "Some items on this invoice are no longer in stock. Please contact the store.",
       network: "Couldn't open your checkout. Try again.",
     },
+  },
+  /** Order operations Part 4 — an invoice link (`/c/<token>`) a merchant sent for a draft order. */
+  invoice: {
+    /** Generic on purpose: link previews (WhatsApp) show it, so no draft number or personal data. */
+    metaTitle: "Your invoice",
+    title: "Invoice #{draft}",
+    fromShop: "From {shop}",
+    totalNote:
+      "This is the total the store quoted, shipping included. Taxes are confirmed at checkout.",
+    pay: "Pay now",
+    paying: "Opening checkout…",
+    completedTitle: "This order has already been placed",
+    completedBody: "The store has received this order. Thank you!",
   },
   account: {
     title: "Your account",

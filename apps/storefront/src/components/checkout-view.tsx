@@ -37,6 +37,7 @@ import type {
   ShippingQuoteSummary,
 } from "@/lib/runtime-api";
 import type { Dictionary } from "@/messages/en";
+import { IsolatedText } from "./isolated-text";
 import { LineThumb } from "./line-thumb";
 
 /** `"paymentOpen"` / `"handoff"` only ever follow a PLACED order — see `openPaymentFor`. */
@@ -45,6 +46,7 @@ type ErrorReason =
   | "validation"
   | "unavailable"
   | "out-of-stock"
+  | "draft-locked"
   | "network"
   | "paymentOpen"
   | "handoff";
@@ -135,7 +137,13 @@ function signature(form: AddressForm): string {
   return JSON.stringify(toInput(form));
 }
 
-function errorBody(reason: ErrorReason, t: Dictionary): string {
+/** The merchant fixed an invoice checkout's terms, and there is no cart behind it to go "back" to. */
+function errorBody(reason: ErrorReason, t: Dictionary, invoice: boolean): string {
+  if (reason === "draft-locked") return t.checkout.draftLockedBody;
+  if (invoice && (reason === "ownership" || reason === "unavailable")) {
+    return t.checkout.invoiceUnavailableBody;
+  }
+  if (invoice && reason === "out-of-stock") return t.checkout.invoiceOutOfStock;
   if (reason === "ownership") return t.checkout.ownershipErrorBody;
   if (reason === "validation") return t.checkout.validationErrorBody;
   if (reason === "unavailable") return t.checkout.unavailableErrorBody;
@@ -176,10 +184,12 @@ function ErrorBanner({
   reason,
   t,
   bannerRef,
+  invoice = false,
 }: {
   readonly reason: ErrorReason;
   readonly t: Dictionary;
   readonly bannerRef: React.RefObject<HTMLDivElement | null>;
+  readonly invoice?: boolean;
 }) {
   return (
     <div
@@ -187,8 +197,8 @@ function ErrorBanner({
       role="alert"
       className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
     >
-      {errorBody(reason, t)}
-      {reason === "out-of-stock" && (
+      {errorBody(reason, t, invoice)}
+      {reason === "out-of-stock" && !invoice && (
         <>
           {" "}
           <Link href="/cart" className="font-medium underline">
@@ -339,6 +349,8 @@ function CheckoutForm({
   readonly shippableCountries: ShippableCountries | null;
 }) {
   const router = useRouter();
+  // Part 4: the merchant fixed this checkout's discount and shipping — shown, never quoted or chosen.
+  const draftMode = session.draftInvoice != null;
   const countries = useMemo(
     () => countryOptions(shippableCountries, locale),
     [shippableCountries, locale],
@@ -449,6 +461,8 @@ function CheckoutForm({
     const saved = await setShippingAddress(session.id, toInput(form));
     if (!saved.ok) return seq !== requestedRef.current ? true : fail(saved.reason);
     lastSavedRef.current = sig;
+    // Part 4: the merchant fixed the shipping — save the address (tax follows it), never quote.
+    if (draftMode) return true;
 
     const quoted = await requestShippingQuote(session.id);
     if (seq !== requestedRef.current) return true;
@@ -495,10 +509,10 @@ function CheckoutForm({
       });
   });
   useEffect(() => {
-    if (initialQuotesRequested.current || !hasSavedAddress) return;
+    if (draftMode || initialQuotesRequested.current || !hasSavedAddress) return;
     initialQuotesRequested.current = true;
     void loadQuotesRef.current();
-  }, [hasSavedAddress]);
+  }, [draftMode, hasSavedAddress]);
 
   // Signed-in customer: apply their account email once, so it never has to be typed.
   useEffect(() => {
@@ -516,16 +530,19 @@ function CheckoutForm({
     });
   }, [accountEmail, session.contactEmail, session.id]);
 
-  const offered = paymentMethods ?? [];
+  // `manual` is the merchant's own "mark as paid" provider: the public list never holds it, and no
+  // path here may choose it even if it somehow did.
+  const offered = (paymentMethods ?? []).filter((method) => method !== "manual");
   const chosenPayment =
     paymentChoice !== null && offered.includes(paymentChoice)
       ? paymentChoice
       : (offered[0] ?? null);
-  const paymentBlocked = paymentMethods === null || paymentMethods.length === 0;
+  const paymentBlocked = paymentMethods === null || offered.length === 0;
   const offline = chosenPayment !== null && OFFLINE_METHODS.has(chosenPayment);
   const addressComplete = isShippingComplete(shipping);
-  const noDestinations = countries.length === 0;
-  const noRates = addressComplete && quotesLoaded && quotes.length === 0;
+  // An invoice's shipping is the merchant's: the shop's zones and rates do not gate it.
+  const noDestinations = !draftMode && countries.length === 0;
+  const noRates = !draftMode && addressComplete && quotesLoaded && quotes.length === 0;
 
   function onSelectShippingMethod(method: string): void {
     startTransition(async () => {
@@ -558,7 +575,7 @@ function CheckoutForm({
     }
     // 2. Shipping address, its quote and a method (all skipped when the page already did them).
     if (!(await requestSync())) return;
-    if (selectedRef.current === null) {
+    if (!draftMode && selectedRef.current === null) {
       fail("validation");
       return;
     }
@@ -619,7 +636,18 @@ function CheckoutForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-semibold tracking-tight">{t.checkout.title}</h1>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">{t.checkout.title}</h1>
+        {session.draftInvoice != null && (
+          <span className="bg-muted text-muted-foreground rounded-full px-3 py-1 text-xs font-medium">
+            <IsolatedText
+              template={t.checkout.invoiceBadge}
+              token="#{draft}"
+              value={`#${session.draftInvoice.draftNumber}`}
+            />
+          </span>
+        )}
+      </div>
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
         <details className="border-border rounded-lg border lg:hidden">
@@ -646,7 +674,9 @@ function CheckoutForm({
         </details>
 
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-8">
-          {error !== null && <ErrorBanner reason={error} t={t} bannerRef={bannerRef} />}
+          {error !== null && (
+            <ErrorBanner reason={error} t={t} bannerRef={bannerRef} invoice={draftMode} />
+          )}
 
           <Section title={t.checkout.sections.contact}>
             {accountEmail !== null ? (
@@ -701,7 +731,19 @@ function CheckoutForm({
           </Section>
 
           <Section title={t.checkout.sections.shippingMethod}>
-            {noRates ? (
+            {draftMode ? (
+              <>
+                <p className="bg-muted/50 flex items-center justify-between gap-3 rounded-md px-3 py-3 text-sm">
+                  <span dir="auto">
+                    <bdi>{session.totals?.shippingName ?? t.checkout.summary.shipping}</bdi>
+                  </span>
+                  <span className="font-medium tabular-nums">
+                    {priceLabel(session.totals?.shippingMinor ?? 0, session.currency, locale, t)}
+                  </span>
+                </p>
+                <p className="text-muted-foreground text-xs">{t.checkout.fixedShippingHint}</p>
+              </>
+            ) : noRates ? (
               <div
                 role="alert"
                 className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
@@ -1066,6 +1108,8 @@ function shippingAmount(
   quotes: readonly ShippingQuoteSummary[],
   selected: string | null,
 ): number | null {
+  // An invoice's shipping is fixed on its totals whether or not a method id was recorded.
+  if (session.draftInvoice != null && session.totals !== null) return session.totals.shippingMinor;
   if (selected === null) return null;
   if (session.totals !== null) return session.totals.shippingMinor;
   return quotes.find((quote) => quote.method === selected)?.rateAmountMinor ?? null;
@@ -1077,6 +1121,8 @@ function totalAmount(
   selected: string | null,
 ): number {
   const subtotal = session.totals?.subtotalMinor ?? linesTotal(session);
+  if (session.draftInvoice != null && session.totals !== null)
+    return session.totals.grandTotalMinor;
   if (selected === null) return subtotal;
   if (session.totals !== null) return session.totals.grandTotalMinor;
   return subtotal + (shippingAmount(session, quotes, selected) ?? 0);
@@ -1155,6 +1201,12 @@ function SummaryBody({
             session.currency,
           )}
         />
+        {session.draftInvoice != null && (session.totals?.discountMinor ?? 0) > 0 && (
+          <SummaryRow
+            label={<bdi>{discountLabel(session, t)}</bdi>}
+            value={`−${formatCurrency(locale, session.totals?.discountMinor ?? 0, session.currency)}`}
+          />
+        )}
         <SummaryRow
           label={t.checkout.summary.shipping}
           value={
@@ -1193,12 +1245,23 @@ function SummaryBody({
   );
 }
 
+/** The server names a nameless merchant discount in English; the shopper sees it in their language. */
+const DEFAULT_DISCOUNT_TITLE = "Custom discount";
+
+/** The merchant's reason or title for the discount on an invoice, or the plain word "Discount". */
+function discountLabel(session: CheckoutSessionSummary, t: Dictionary): string {
+  const title = session.discount?.applied[0]?.title;
+  return title === undefined || title === "" || title === DEFAULT_DISCOUNT_TITLE
+    ? t.checkout.summary.discount
+    : title;
+}
+
 function SummaryRow({
   label,
   value,
   muted = false,
 }: {
-  readonly label: string;
+  readonly label: ReactNode;
   readonly value: string;
   readonly muted?: boolean;
 }) {

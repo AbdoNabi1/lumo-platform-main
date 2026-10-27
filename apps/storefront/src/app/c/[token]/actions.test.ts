@@ -101,3 +101,63 @@ describe("claimCheckoutLink (the Continue to checkout button)", () => {
     expect(set).not.toHaveBeenCalled();
   });
 });
+
+describe("claimCheckoutLink — invoice links (order operations Part 4)", () => {
+  it("a completed draft goes back to the page with error=completed", async () => {
+    jar.set("morbeh-storefront-guest-session", "guest-1");
+    claimApi.mockResolvedValue({
+      status: 409,
+      body: { code: "ALREADY_COMPLETED", message: "ALREADY_COMPLETED: placed" },
+    });
+    await expect(claimCheckoutLink(TOKEN)).rejects.toThrow(
+      `NEXT_REDIRECT /c/${TOKEN}?error=completed`,
+    );
+    expect(set).not.toHaveBeenCalledWith(
+      "morbeh_checkout_session",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    ["DRAFT_NOT_READY", "notReady"],
+    ["DRAFT_BUSY", "busy"],
+    ["DRAFT_TOTAL_TOO_LARGE", "tooLarge"],
+    ["OUT_OF_STOCK", "outOfStock"],
+    ["ITEMS_UNAVAILABLE", "unavailable"],
+    ["SOMETHING_ELSE_ENTIRELY", "unavailable"],
+  ])("a 409 %s goes back to the page with error=%s", async (code, error) => {
+    jar.set("morbeh-storefront-guest-session", "guest-1");
+    claimApi.mockResolvedValue({ status: 409, body: { code } });
+    await expect(claimCheckoutLink(TOKEN)).rejects.toThrow(
+      `NEXT_REDIRECT /c/${TOKEN}?error=${error}`,
+    );
+    expect(jar.has("morbeh_checkout_session")).toBe(false);
+  });
+
+  it("a 409 with no readable body is still 'unavailable'", async () => {
+    jar.set("morbeh-storefront-guest-session", "guest-1");
+    claimApi.mockResolvedValue({ status: 409, body: null });
+    await expect(claimCheckoutLink(TOKEN)).rejects.toThrow(
+      `NEXT_REDIRECT /c/${TOKEN}?error=unavailable`,
+    );
+  });
+
+  it("a 404 LINK_INVALID (revoked link, deleted draft) is 'invalid'", async () => {
+    jar.set("morbeh-storefront-guest-session", "guest-1");
+    claimApi.mockResolvedValue({ status: 404, body: { code: "LINK_INVALID" } });
+    await expect(claimCheckoutLink(TOKEN)).rejects.toThrow(
+      `NEXT_REDIRECT /c/${TOKEN}?error=invalid`,
+    );
+  });
+
+  it("never echoes the server's message text into the redirect", async () => {
+    jar.set("morbeh-storefront-guest-session", "guest-1");
+    claimApi.mockResolvedValue({
+      status: 409,
+      body: { code: "DRAFT_NOT_READY", message: "DRAFT_NOT_READY: shipping_address missing" },
+    });
+    await expect(claimCheckoutLink(TOKEN)).rejects.toThrow();
+    expect(redirect).toHaveBeenLastCalledWith(`/c/${TOKEN}?error=notReady`);
+  });
+});

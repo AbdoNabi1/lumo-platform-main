@@ -58,10 +58,16 @@ export default async function CheckoutPage({
     <main className="mx-auto flex min-h-dvh max-w-5xl flex-col gap-6 p-8">
       <SiteHeader t={t} locale={locale} />
 
-      <Link href="/cart" className="text-muted-foreground inline-flex items-center gap-1.5 text-sm">
-        <ArrowLeftIcon aria-hidden="true" className="size-4 rtl:rotate-180" />
-        {t.checkout.backToCart}
-      </Link>
+      {/* Part 4: an invoice checkout is the merchant's draft order — the shopper's cart is not involved. */}
+      {session?.body?.draftInvoice == null && (
+        <Link
+          href="/cart"
+          className="text-muted-foreground inline-flex items-center gap-1.5 text-sm"
+        >
+          <ArrowLeftIcon aria-hidden="true" className="size-4 rtl:rotate-180" />
+          {t.checkout.backToCart}
+        </Link>
+      )}
 
       {dropped === "1" && (
         <p

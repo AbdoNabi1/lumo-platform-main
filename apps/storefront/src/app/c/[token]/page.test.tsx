@@ -37,6 +37,8 @@ const { default: CheckoutLinkPage, generateMetadata, dynamic } = await import(".
 const TOKEN = "b".repeat(43);
 const PREVIEW: CheckoutLinkPreview = {
   purpose: "recovery",
+  draftNumber: null,
+  completed: false,
   shopName: "Sara Shop",
   itemCount: 3,
   items: [
@@ -163,5 +165,90 @@ describe("/c/[token] (order operations Part 3)", () => {
     expect(dynamic).toBe("force-dynamic");
     expect(metadata.referrer).toBe("no-referrer");
     expect(metadata.robots).toEqual({ index: false, follow: false });
+  });
+});
+
+describe("invoice links (order operations Part 4)", () => {
+  const invoice: CheckoutLinkPreview = {
+    purpose: "invoice",
+    draftNumber: "D3",
+    completed: false,
+    shopName: "Nile Shop",
+    itemCount: 2,
+    items: [{ title: "Tee", variantTitle: "M", quantity: 2, imageUrl: null }],
+    totalMinor: 49000,
+    currency: "EGP",
+  };
+
+  it("shows 'Invoice #D3', the shop, the total and ONE 'Pay now' button — claiming nothing on render", async () => {
+    getCheckoutLinkPreview.mockResolvedValue({ status: 200, body: invoice });
+    await renderPage();
+    expect(screen.getByRole("heading", { name: "Invoice #D3" })).toBeInTheDocument();
+    expect(screen.getByText("Nile Shop").tagName).toBe("BDI");
+    expect(screen.getByText(en.invoice.totalNote)).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    expect(claimApi).not.toHaveBeenCalled();
+    expect(claimAction).not.toHaveBeenCalled();
+  });
+
+  it("a completed invoice says the order was already placed, with no button", async () => {
+    getCheckoutLinkPreview.mockResolvedValue({
+      status: 200,
+      body: { ...invoice, completed: true },
+    });
+    await renderPage();
+    expect(screen.getByText("This order has already been placed")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByRole("link", { name: en.recovery.backToShop })).toHaveAttribute("href", "/");
+  });
+
+  it("a claim that finds the order placed meanwhile shows the already-placed page, not the card", async () => {
+    getCheckoutLinkPreview.mockResolvedValue({ status: 200, body: invoice });
+    await renderPage(TOKEN, "completed");
+    expect(screen.getByText(en.invoice.completedTitle)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it.each([
+    ["notReady", en.recovery.errors.notReady],
+    ["busy", en.recovery.errors.busy],
+    ["tooLarge", en.recovery.errors.tooLarge],
+    ["outOfStock", en.recovery.errors.outOfStock],
+    ["unavailable", en.recovery.errors.unavailable],
+    ["network", en.recovery.errors.network],
+  ])("explains a failed claim (%s) calmly and keeps the button", async (error, copy) => {
+    getCheckoutLinkPreview.mockResolvedValue({ status: 200, body: invoice });
+    await renderPage(TOKEN, error);
+    expect(screen.getByRole("alert")).toHaveTextContent(copy);
+    expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
+  });
+
+  it("a revoked link or deleted draft (LINK_INVALID) shows the invalid view", async () => {
+    getCheckoutLinkPreview.mockResolvedValue({ status: 404, body: null });
+    await renderPage();
+    expect(screen.getByRole("heading", { name: en.recovery.invalidTitle })).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("speaks Modern Standard Arabic, with the draft number isolated inside the sentence", async () => {
+    jar.set("morbeh-storefront-locale", "ar");
+    getCheckoutLinkPreview.mockResolvedValue({ status: 200, body: invoice });
+    await renderPage();
+    expect(screen.getByRole("button", { name: "ادفع الآن" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "فاتورة #D3" })).toBeInTheDocument();
+    expect(screen.getByText("#D3").tagName).toBe("BDI");
+    expect(screen.getByText("Nile Shop").tagName).toBe("BDI");
+  });
+
+  it("the preview title is generic: the shop and 'invoice', no draft number or personal data", async () => {
+    getCheckoutLinkPreview.mockResolvedValue({ status: 200, body: invoice });
+    const metadata = await generateMetadata({ params: Promise.resolve({ token: TOKEN }) });
+    expect(metadata.title).toBe(`Nile Shop — ${en.invoice.metaTitle}`);
+    expect(metadata.openGraph?.title).toBe(`Nile Shop — ${en.invoice.metaTitle}`);
+    expect(JSON.stringify(metadata)).not.toContain("D3");
+    expect(metadata.robots).toEqual({ index: false, follow: false });
+    expect(metadata.referrer).toBe("no-referrer");
+    expect(claimApi).not.toHaveBeenCalled();
   });
 });
