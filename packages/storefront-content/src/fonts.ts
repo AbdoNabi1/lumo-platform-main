@@ -23,7 +23,8 @@ const FALLBACK =
   '"IBM Plex Sans Arabic", var(--font-geist, "Geist"), ui-sans-serif, system-ui, sans-serif';
 
 export function fontStack(key: FontKey): string {
-  if (key === "ibm-plex-sans-arabic") return FALLBACK;
+  // `isFontKey` also guards callers that skipped validation: a plain lookup of "constructor" would work.
+  if (!isFontKey(key) || key === "ibm-plex-sans-arabic") return FALLBACK;
   return `"${FONT_FAMILIES[key]}", ${FALLBACK}`;
 }
 

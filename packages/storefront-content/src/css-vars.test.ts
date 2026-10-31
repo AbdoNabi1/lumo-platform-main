@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { brandStyleSheet, brandToCssVars } from "./css-vars";
-import { DEFAULT_THEME_DOCUMENT, readBrandStyle } from "./theme-document";
+import { FONT_KEYS, fontStack, type FontKey } from "./fonts";
+import {
+  COLOR_KEYS,
+  DEFAULT_THEME_DOCUMENT,
+  readBrandStyle,
+  type BrandStyle,
+} from "./theme-document";
 
 const defaults = readBrandStyle(DEFAULT_THEME_DOCUMENT.brand);
 
@@ -50,17 +56,91 @@ describe("brandToCssVars", () => {
   });
 });
 
+const HOSTILE = [
+  "red;}",
+  "#000000;}</style><script>alert(1)</script>",
+  "url(javascript:alert(1))",
+  "expression(1)",
+  "#ff0000\n",
+  "var(--x)",
+  "＃ffffff",
+  "#fff",
+  "#12345g",
+  "__proto__",
+  "constructor",
+  "x;}body{display:none",
+  "</style>",
+  42,
+  null,
+];
+const FIXED_STACKS = FONT_KEYS.map(fontStack);
+const isSafeValue = (value: string): boolean =>
+  /^#[0-9a-f]{6}$/.test(value) || /^[0-9]+px$/.test(value) || FIXED_STACKS.includes(value);
+
+/** Every declaration of the sheet must be `--name:value` with a value from the fixed grammar. */
+function assertSafeSheet(css: string): void {
+  expect(css.startsWith(":root:root:root{")).toBe(true);
+  expect(css.endsWith("}")).toBe(true);
+  const declarations = css.slice(":root:root:root{".length, -1).split(";");
+  expect(declarations.length).toBeGreaterThan(30);
+  for (const declaration of declarations) {
+    const [, name, value] = /^(--[a-z0-9-]+):(.*)$/.exec(declaration) ?? [];
+    expect(name, declaration).toBeDefined();
+    expect(isSafeValue(value ?? ""), declaration).toBe(true);
+  }
+}
+
 describe("brandStyleSheet", () => {
-  it.each([
-    { colors: { background: "#000000;}</style><script>alert(1)</script>" } },
-    { typography: { headingFont: "x;}body{display:none" } },
-    "garbage",
-    null,
-    { corners: "</style>" },
-  ])("never lets hostile input through: %j", (raw) => {
-    const css = brandStyleSheet(raw);
-    expect(css.startsWith(":root:root:root{")).toBe(true);
-    expect(css).not.toMatch(/[<]|;\}|script|display:none/);
-    expect(css).toContain("--background:#f8fafc");
+  const valid = DEFAULT_THEME_DOCUMENT.brand;
+  const rows: [string, unknown][] = [];
+  for (const key of COLOR_KEYS)
+    for (const value of HOSTILE)
+      rows.push([
+        `colors.${key}=${JSON.stringify(value)}`,
+        { ...valid, colors: { ...valid.colors, [key]: value } },
+      ]);
+  for (const key of ["headingFont", "bodyFont", "baseSize"])
+    for (const value of HOSTILE)
+      rows.push([
+        `typography.${key}=${JSON.stringify(value)}`,
+        { ...valid, typography: { ...valid.typography, [key]: value } },
+      ]);
+  for (const value of HOSTILE)
+    rows.push([`corners=${JSON.stringify(value)}`, { ...valid, corners: value }]);
+  for (const value of ["garbage", null, undefined, 7, [], {}])
+    rows.push([`brand=${JSON.stringify(value)}`, value]);
+
+  it.each(rows)(
+    "a full valid brand with one hostile field (%s) emits only fixed-grammar values",
+    (_label, raw) => {
+      const css = brandStyleSheet(raw);
+      assertSafeSheet(css);
+      for (const bad of ["<", ">", ";}", "script", "display:none", "url(", "expression"])
+        expect(css).not.toContain(bad);
+      // The hostile field's whole group falls back to the defaults.
+      expect(css).toContain("--ring:#635bff");
+      expect(css).toContain("--background:#f8fafc");
+    },
+  );
+
+  it("keeps a valid brand's own values", () => {
+    const css = brandStyleSheet({ ...valid, colors: { ...valid.colors, primary: "#AA00FF" } });
+    assertSafeSheet(css);
+    expect(css).toContain("--primary:#aa00ff");
+  });
+});
+
+describe("brandToCssVars called directly with unvalidated input", () => {
+  it("still emits only fixed-grammar values", () => {
+    const vars = brandToCssVars({
+      colors: { ...defaults.colors, primary: "red;}" },
+      typography: { headingFont: "constructor", bodyFont: "cairo", baseSize: "huge" },
+      corners: "</style>",
+    } as unknown as BrandStyle);
+    for (const [name, value] of Object.entries(vars)) expect(isSafeValue(value), name).toBe(true);
+  });
+
+  it("fontStack never reads inherited properties", () => {
+    expect(fontStack("constructor" as FontKey)).toBe(fontStack("ibm-plex-sans-arabic"));
   });
 });

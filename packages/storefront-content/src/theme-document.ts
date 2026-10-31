@@ -1,6 +1,7 @@
 import { colors as designColors } from "@platform/design";
 import { normalizeHex, type HexColor } from "./color";
 import { isFontKey, type FontKey } from "./fonts";
+import { MAX_ISSUES, pathSegment } from "./issues";
 import { normalizeLocalizedText, type ContentIssue, type LocalizedText } from "./locale";
 
 export const SOCIAL_NETWORKS = [
@@ -32,6 +33,11 @@ export const FOOTER_NOTE_MAX = 200;
 export const SOCIAL_URL_MAX = 500;
 export const MAX_DOCUMENT_BYTES = 256 * 1024;
 const IMAGE_REF = /^[A-Za-z0-9-]{1,64}$/;
+const HTTPS_PREFIX = /^https:\/\//i;
+// Whitespace, C0/C1 controls and no-break space; then zero-width, bidi and line-separator marks.
+// eslint-disable-next-line no-control-regex -- rejecting these characters is the purpose
+const URL_CONTROLS = /[\u0000-\u0020\u007F-\u00A0]/;
+const URL_INVISIBLES = /[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/;
 
 export interface ThemeBrand {
   readonly logo: { readonly imageRef: string | null; readonly widthPx: number };
@@ -69,8 +75,17 @@ const hex = (value: string): HexColor => {
   return parsed;
 };
 
+/** Freezes `value` and everything reachable from it: the default is shared by every shop. */
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
+}
+
 /** The current light palette, Plex for both fonts, medium, rounded, no logo: today's storefront. */
-export const DEFAULT_THEME_DOCUMENT: ThemeDocument = Object.freeze({
+export const DEFAULT_THEME_DOCUMENT: ThemeDocument = deepFreeze({
   schemaVersion: 1,
   brand: {
     logo: { imageRef: null, widthPx: LOGO_WIDTH.default },
@@ -94,27 +109,36 @@ export const DEFAULT_THEME_DOCUMENT: ThemeDocument = Object.freeze({
   header: { sticky: false },
   footer: { note: {}, showSocial: true },
   homepage: { sections: [] },
-}) as ThemeDocument;
+});
 
 type Raw = Record<string, unknown>;
 
-/** Reads an object with exactly `keys`; reports unknown and missing keys. `null` when not an object. */
+/**
+ * Reads an object with exactly `keys`; reports unknown and missing keys. `null` when not an object.
+ * A key whose value is `undefined` counts as missing. A nested object that is absent was already
+ * reported MISSING by its parent, so it returns `null` without a second issue.
+ */
 function objectAt(
   raw: unknown,
   path: string,
   keys: readonly string[],
   issues: ContentIssue[],
 ): Raw | null {
+  if (raw === undefined && path !== "") return null;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     issues.push({ path, code: "INVALID_VALUE" });
     return null;
   }
   const join = (key: string) => (path === "" ? key : `${path}.${key}`);
+  let unknownKeys = 0;
   for (const key of Object.keys(raw)) {
-    if (!keys.includes(key)) issues.push({ path: join(key), code: "UNKNOWN_KEY" });
+    if (keys.includes(key)) continue;
+    if (unknownKeys < MAX_ISSUES)
+      issues.push({ path: join(pathSegment(key)), code: "UNKNOWN_KEY" });
+    unknownKeys += 1;
   }
   for (const key of keys) {
-    if (!(key in raw)) issues.push({ path: join(key), code: "MISSING" });
+    if ((raw as Raw)[key] === undefined) issues.push({ path: join(key), code: "MISSING" });
   }
   return raw as Raw;
 }
@@ -153,6 +177,13 @@ function socialUrlAt(value: unknown, path: string, issues: ContentIssue[]): stri
     issues.push({ path, code: "TOO_LONG" });
     return null;
   }
+  // The URL parser silently drops whitespace, tabs and newlines and percent-encodes controls, so the
+  // raw string must be clean itself: it is what a merchant sees, not what a browser would resolve.
+  // The scheme must be written with its two slashes ("https:evil.example" is a relative reference).
+  if (URL_CONTROLS.test(value) || URL_INVISIBLES.test(value) || !HTTPS_PREFIX.test(value)) {
+    issues.push({ path, code: "INVALID_URL" });
+    return null;
+  }
   let url: URL;
   try {
     url = new URL(value);
@@ -164,7 +195,12 @@ function socialUrlAt(value: unknown, path: string, issues: ContentIssue[]): stri
     issues.push({ path, code: "INVALID_URL" });
     return null;
   }
-  return value;
+  // The normalised form is what is stored (lower-case host, encoded path), never the raw input.
+  if (url.href.length > SOCIAL_URL_MAX) {
+    issues.push({ path, code: "TOO_LONG" });
+    return null;
+  }
+  return url.href;
 }
 
 function section<T>(read: (issues: ContentIssue[]) => T, issues: ContentIssue[]): T | null {
@@ -179,7 +215,7 @@ function readColors(raw: unknown, path: string, issues: ContentIssue[]): BrandCo
     if (obj === null) return null;
     const result: Partial<Record<ColorKey, HexColor>> = {};
     for (const key of COLOR_KEYS) {
-      if (!(key in obj)) continue;
+      if (obj[key] === undefined) continue; // reported MISSING by objectAt
       const parsed = normalizeHex(obj[key]);
       if (parsed === null) found.push({ path: `${path}.${key}`, code: "INVALID_COLOR" });
       else result[key] = parsed;
@@ -224,18 +260,25 @@ function readSocialAt(
   issues: ContentIssue[],
 ): ThemeBrand["social"] | null {
   return section((found) => {
+    if (raw === undefined) return null; // reported MISSING by the parent
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
       found.push({ path, code: "INVALID_VALUE" });
       return null;
     }
+    let unknownKeys = 0;
+    for (const key of Object.keys(raw)) {
+      if ((SOCIAL_NETWORKS as readonly string[]).includes(key)) continue;
+      if (unknownKeys < MAX_ISSUES)
+        found.push({ path: `${path}.${pathSegment(key)}`, code: "UNKNOWN_KEY" });
+      unknownKeys += 1;
+    }
+    // Written in network order, whatever order the input (or JSONB) had, so equal links serialise equally.
     const result: Partial<Record<SocialNetwork, string>> = {};
-    for (const [key, value] of Object.entries(raw as Raw)) {
-      if (!(SOCIAL_NETWORKS as readonly string[]).includes(key)) {
-        found.push({ path: `${path}.${key}`, code: "UNKNOWN_KEY" });
-        continue;
-      }
-      const url = socialUrlAt(value, `${path}.${key}`, found);
-      if (url !== null) result[key as SocialNetwork] = url;
+    for (const network of SOCIAL_NETWORKS) {
+      const value = (raw as Raw)[network];
+      if (!Object.hasOwn(raw, network)) continue;
+      const url = socialUrlAt(value, `${path}.${network}`, found);
+      if (url !== null) result[network] = url;
     }
     return result;
   }, issues);
@@ -326,7 +369,7 @@ export function validateThemeDocument(raw: unknown): ValidationOutcome<ThemeDocu
   const issues: ContentIssue[] = [];
   const obj = objectAt(raw, "", ["schemaVersion", "brand", "header", "footer", "homepage"], issues);
   if (obj === null) return { ok: false, issues };
-  if (obj["schemaVersion"] !== 1 && "schemaVersion" in obj)
+  if (obj["schemaVersion"] !== undefined && obj["schemaVersion"] !== 1)
     issues.push({ path: "schemaVersion", code: "UNSUPPORTED_SCHEMA_VERSION" });
   const brand = readBrandAt(obj["brand"], "brand", issues);
   const header = readHeaderAt(obj["header"], issues);
@@ -334,14 +377,17 @@ export function validateThemeDocument(raw: unknown): ValidationOutcome<ThemeDocu
   const homepage = objectAt(obj["homepage"], "homepage", ["sections"], issues);
   if (homepage !== null) {
     const sections = homepage["sections"];
-    if (!Array.isArray(sections)) issues.push({ path: "homepage.sections", code: "INVALID_VALUE" });
+    if (sections === undefined) {
+      // reported MISSING by objectAt
+    } else if (!Array.isArray(sections))
+      issues.push({ path: "homepage.sections", code: "INVALID_VALUE" });
     else if (sections.length > 0)
       issues.push({ path: "homepage.sections", code: "SECTIONS_NOT_SUPPORTED" });
   }
   // Issues are reported in document order: top-level unknown keys first (objectAt above), then fields.
   issues.sort((a, b) => order(a.path) - order(b.path));
   if (issues.length > 0 || brand === null || header === null || footer === null)
-    return { ok: false, issues };
+    return { ok: false, issues: issues.slice(0, MAX_ISSUES) };
   return {
     ok: true,
     value: { schemaVersion: 1, brand, header, footer, homepage: { sections: [] } },

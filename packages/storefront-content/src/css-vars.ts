@@ -23,7 +23,9 @@ const BLACK: HexColor = "#000000";
  * Spec 1.3 "Derived tokens": every semantic var the storefront paints with, computed from the six
  * colours, the fonts, the size and the corners. Values are hex, px or fixed font stacks only.
  */
-export function brandToCssVars(style: BrandStyle): Readonly<Record<string, string>> {
+export function brandToCssVars(input: BrandStyle): Readonly<Record<string, string>> {
+  // Re-read, so a caller that skipped validation still only ever gets hex, px and fixed font stacks.
+  const style = readBrandStyle(input);
   const {
     background: bg,
     foreground: fg,
