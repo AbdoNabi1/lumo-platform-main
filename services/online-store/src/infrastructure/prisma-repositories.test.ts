@@ -29,6 +29,18 @@ function setup() {
   };
 }
 
+/** A transaction client whose `create` rejects, to drive the unique-violation branch without a DB. */
+function failingCreate(error: unknown): TransactionClient {
+  const model = { create: () => Promise.reject(error) };
+  return {
+    onlineStorePreferences: model,
+    onlineStoreAccess: model,
+    onlineStoreTheme: model,
+    onlineStoreThemeRelease: model,
+  } as unknown as TransactionClient;
+}
+const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+
 describe("Prisma online-store repositories (fake client)", () => {
   it("an absent row reads as the defaults; the first save inserts version 1", async () => {
     const { preferences, tx, fake } = setup();
@@ -128,5 +140,74 @@ describe("Prisma online-store repositories (fake client)", () => {
     expect(await tokens.findActive("old", "t-1", now)).toBeNull();
     expect(await tokens.deleteExpired("t-1", now, tx)).toBe(1);
     expect(fake.rowsOf("onlineStorePreviewToken").map((r) => r["id"])).toEqual(["p-1"]);
+  });
+});
+
+describe("Prisma online-store repositories: lost insert races and other failures", () => {
+  const release = {
+    id: "r-1",
+    releaseNumber: 1,
+    document: DEFAULT_THEME_DOCUMENT,
+    publishedAt: now,
+    publishedBy: "s",
+  };
+
+  it("a unique violation on the first save is a ConcurrencyError (preferences, access, theme)", async () => {
+    const { preferences, access, themes } = setup();
+    const tx = failingCreate(p2002);
+    await expect(preferences.save(await preferences.get("t-1"), "t-1", tx)).rejects.toBeInstanceOf(
+      ConcurrencyError,
+    );
+    await expect(access.save(await access.get("t-1"), "t-1", tx)).rejects.toBeInstanceOf(
+      ConcurrencyError,
+    );
+    await expect(themes.save(await themes.get("t-1"), "t-1", tx)).rejects.toBeInstanceOf(
+      ConcurrencyError,
+    );
+  });
+
+  it("appending a release whose number is taken is the same ConcurrencyError as in memory", async () => {
+    const { releases } = setup();
+    await expect(releases.append(release, "t-1", failingCreate(p2002))).rejects.toBeInstanceOf(
+      ConcurrencyError,
+    );
+  });
+
+  it("any other failure on insert is rethrown untouched", async () => {
+    const { preferences, releases } = setup();
+    const boom = new Error("connection reset");
+    await expect(
+      preferences.save(await preferences.get("t-1"), "t-1", failingCreate(boom)),
+    ).rejects.toBe(boom);
+    await expect(releases.append(release, "t-1", failingCreate(boom))).rejects.toBe(boom);
+  });
+
+  it("writes need the unit of work's transaction client", async () => {
+    const { preferences } = setup();
+    await expect(preferences.save(await preferences.get("t-1"), "t-1", undefined)).rejects.toThrow(
+      /transaction client/,
+    );
+  });
+
+  it("stores the injected clock's updatedAt, as the in-memory repositories do", async () => {
+    const { preferences, access, tx, fake } = setup();
+    const prefs = await preferences.get("t-1");
+    prefs.update(
+      { homeTitle: {}, homeMetaDescription: {}, shareImageRef: null, defaultLocale: "ar" },
+      now,
+    );
+    await preferences.save(prefs, "t-1", tx);
+    const lock = await access.get("t-1");
+    lock.apply({ locked: false, newPasswordHash: "h", message: {}, now });
+    await access.save(lock, "t-1", tx);
+    expect(fake.rowsOf("onlineStorePreferences")[0]?.["updatedAt"]).toEqual(now);
+    expect(fake.rowsOf("onlineStoreAccess")[0]?.["updatedAt"]).toEqual(now);
+
+    const later = new Date(now.getTime() + 5000);
+    const again = await access.get("t-1");
+    again.apply({ locked: true, newPasswordHash: null, message: {}, now: later });
+    await access.save(again, "t-1", tx);
+    expect(fake.rowsOf("onlineStoreAccess")[0]?.["updatedAt"]).toEqual(later);
+    expect((await access.get("t-1")).snapshot().updatedAt).toEqual(later);
   });
 });

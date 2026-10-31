@@ -4,6 +4,11 @@ export const PREVIEW_TOKEN_TTL_MS = 60 * 60 * 1000;
 export const PREVIEW_TOKEN_MAX_LENGTH = 100;
 const SHAPE = /^[A-Za-z0-9_-]{32,100}$/;
 
+/**
+ * A stored preview token: plain data, so it has no class to hide fields behind. It holds the
+ * SHA-256 of a 256-bit random token, never the token, so the hash cannot be turned back into a
+ * working link; it is still not a DTO field, and nothing here may add the raw token.
+ */
 export interface PreviewTokenRecord {
   readonly id: string;
   readonly tokenHash: string;

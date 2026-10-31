@@ -393,8 +393,11 @@ describe("online_store — migration history matches the Prisma models (Project 
       expect(allSql).toContain(
         `DROP POLICY IF EXISTS tenant_isolation ON "online_store"."${table}";`,
       );
-      expect(allSql).toContain(
-        `CREATE POLICY tenant_isolation ON "online_store"."${table}" FOR ALL`,
+      // The whole policy, predicate included: a wrong USING or WITH CHECK must not pass.
+      expect(allSql.replace(/\r\n/g, "\n")).toContain(
+        `CREATE POLICY tenant_isolation ON "online_store"."${table}" FOR ALL\n` +
+          `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+          `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
       );
     });
   }

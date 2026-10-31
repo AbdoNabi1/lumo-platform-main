@@ -32,7 +32,11 @@ export function parsePasswordInput(
   return { kind: "set", password };
 }
 
-/** The storefront password lock (spec 1.5). The hash never leaves this aggregate's snapshot. */
+/**
+ * The storefront password lock (spec 1.5). `snapshot()` holds the hash and is for the repository
+ * only. Anything that serialises or prints the aggregate itself (`JSON.stringify`, a logger,
+ * `console.log`, a reply body) gets display fields only, like `BillingPaymentMethod`.
+ */
 export class StorefrontAccess {
   private state: AccessSnapshot;
 
@@ -89,5 +93,20 @@ export class StorefrontAccess {
 
   get nextVersion(): number {
     return this.state.persisted ? this.state.version + 1 : 1;
+  }
+
+  /** Display fields only: never the hash, which is replaced by whether a password is set. */
+  toJSON(): Record<string, unknown> {
+    const { passwordHash, ...rest } = this.state;
+    return { ...rest, passwordSet: passwordHash !== null };
+  }
+
+  toString(): string {
+    return `StorefrontAccess(locked=${String(this.state.locked)}, v${this.state.accessVersion})`;
+  }
+
+  /** `console.log`/`util.inspect` would otherwise print the private state, hash included. */
+  [Symbol.for("nodejs.util.inspect.custom")](): string {
+    return this.toString();
   }
 }

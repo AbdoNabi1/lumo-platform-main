@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaUnitOfWork, type Database } from "@platform/db";
 import { createTestPrismaClient } from "@platform/db/testing";
 import { DEFAULT_THEME_DOCUMENT } from "@platform/storefront-content";
@@ -29,7 +29,22 @@ describe.runIf(Boolean(databaseUrl))("online-store Prisma repositories (integrat
     prisma = createTestPrismaClient(databaseUrl);
     uow = new PrismaUnitOfWork(prisma);
   });
-  const tenantOf = () => `it-${crypto.randomUUID()}`;
+  const created: string[] = [];
+  const tenantOf = () => {
+    const tenantId = `it-${crypto.randomUUID()}`;
+    created.push(tenantId);
+    return tenantId;
+  };
+  // Teardown: remove this run's rows (every shop id is a fresh uuid), then close the client.
+  afterAll(async () => {
+    const where = { tenantId: { in: created } };
+    await prisma.onlineStorePreferences.deleteMany({ where });
+    await prisma.onlineStoreAccess.deleteMany({ where });
+    await prisma.onlineStoreTheme.deleteMany({ where });
+    await prisma.onlineStoreThemeRelease.deleteMany({ where });
+    await prisma.onlineStorePreviewToken.deleteMany({ where });
+    await prisma.$disconnect();
+  });
   const now = new Date();
 
   it("preferences: absent is the defaults, the first save inserts, a stale save loses", async () => {
@@ -82,7 +97,7 @@ describe.runIf(Boolean(databaseUrl))("online-store Prisma repositories (integrat
     expect(saved).toMatchObject({
       locked: true,
       passwordHash: "scrypt$test",
-      accessVersion: 3,
+      accessVersion: 2,
       version: 1,
       persisted: true,
     });

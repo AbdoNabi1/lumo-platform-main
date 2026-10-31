@@ -36,6 +36,14 @@ function read<T>(
     : runReadScoped(prisma, tenantId, fn);
 }
 
+/**
+ * The injected clock's value, so a saved `updatedAt` equals the aggregate's (as in memory) instead of
+ * the wall clock `@updatedAt` would write. Absent only for an aggregate never modified.
+ */
+function stampedAt(updatedAt: Date | null): { updatedAt?: Date } {
+  return updatedAt === null ? {} : { updatedAt };
+}
+
 /** First save inserts (a lost insert race is a ConcurrencyError); later saves are version-guarded. */
 async function guardedWrite(
   persisted: boolean,
@@ -83,6 +91,7 @@ export class PrismaPreferencesRepository implements PreferencesRepository {
       homeMetaDescription: json(s.homeMetaDescription),
       shareImageRef: s.shareImageRef,
       defaultLocale: s.defaultLocale,
+      ...stampedAt(s.updatedAt),
     };
     await guardedWrite(
       s.persisted,
@@ -126,6 +135,7 @@ export class PrismaAccessRepository implements AccessRepository {
       passwordUpdatedAt: s.passwordUpdatedAt,
       message: json(s.message),
       accessVersion: s.accessVersion,
+      ...stampedAt(s.updatedAt),
     };
     await guardedWrite(
       s.persisted,
@@ -210,16 +220,22 @@ export class PrismaThemeReleaseRepository implements ThemeReleaseRepository {
 
   async append(release: ThemeRelease, tenantId: string, tx: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaThemeReleaseRepository.append");
-    await client.onlineStoreThemeRelease.create({
-      data: {
-        id: release.id,
-        tenantId,
-        releaseNumber: release.releaseNumber,
-        document: json(release.document),
-        publishedAt: release.publishedAt,
-        publishedBy: release.publishedBy,
-      },
-    });
+    try {
+      await client.onlineStoreThemeRelease.create({
+        data: {
+          id: release.id,
+          tenantId,
+          releaseNumber: release.releaseNumber,
+          document: json(release.document),
+          publishedAt: release.publishedAt,
+          publishedBy: release.publishedBy,
+        },
+      });
+    } catch (error) {
+      // (tenant_id, release_number) is unique: the in-memory repository throws the same class.
+      if (isUniqueViolation(error)) throw new ConcurrencyError("Release number already used");
+      throw error;
+    }
   }
 
   async list(tenantId: string, limit: number, tx?: unknown): Promise<readonly ThemeRelease[]> {

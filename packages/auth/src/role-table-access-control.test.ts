@@ -71,6 +71,10 @@ describe("RoleTableAccessControl", () => {
       "online_store:manage_policies",
     ];
     const adminOnly = ["online_store_admin:publish_theme", "online_store_admin:update_access"];
+    // The ninth new string (Part 2 pages): covered by `pages:*`, so operators and admins, not viewers.
+    expect(await acl.authorize(who(["viewer"]), "pages:update_page")).toBe(false);
+    expect(await acl.authorize(who(["operator"]), "pages:update_page")).toBe(true);
+    expect(await acl.authorize(who(["admin"]), "pages:update_page")).toBe(true);
     for (const role of ["viewer", "operator", "admin"]) {
       expect(await acl.authorize(who([role]), "online_store:read"), role).toBe(true);
     }
