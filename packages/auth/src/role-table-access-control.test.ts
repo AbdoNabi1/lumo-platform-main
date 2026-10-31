@@ -61,4 +61,27 @@ describe("RoleTableAccessControl", () => {
       ),
     ).toBe(false);
   });
+
+  it("online store: viewers read, operators edit, only admins publish and lock (Project 4)", async () => {
+    const writes = [
+      "online_store:update_preferences",
+      "online_store:upload_image",
+      "online_store:edit_theme",
+      "online_store:manage_menus",
+      "online_store:manage_policies",
+    ];
+    const adminOnly = ["online_store_admin:publish_theme", "online_store_admin:update_access"];
+    for (const role of ["viewer", "operator", "admin"]) {
+      expect(await acl.authorize(who([role]), "online_store:read"), role).toBe(true);
+    }
+    for (const permission of writes) {
+      expect(await acl.authorize(who(["viewer"]), permission), permission).toBe(false);
+      expect(await acl.authorize(who(["operator"]), permission), permission).toBe(true);
+    }
+    for (const permission of adminOnly) {
+      expect(await acl.authorize(who(["viewer"]), permission), permission).toBe(false);
+      expect(await acl.authorize(who(["operator"]), permission), permission).toBe(false);
+      expect(await acl.authorize(who(["admin"]), permission), permission).toBe(true);
+    }
+  });
 });

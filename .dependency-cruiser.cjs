@@ -41,6 +41,8 @@ module.exports = {
         path: "^(packages|services)/",
         pathNot: [
           "^packages/(types|utils|domain)/src/",
+          // The shared storefront validators (spec: one package validates theme documents everywhere).
+          "^packages/storefront-content/src/",
           "(^packages/domain/src/)|(^services/[^/]+/src/domain/)",
         ],
       },

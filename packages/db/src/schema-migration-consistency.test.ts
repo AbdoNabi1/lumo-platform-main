@@ -322,3 +322,103 @@ describe("inventory.inventory_items and catalog.product_variants — stock per v
     expect(actual.has("inventory_policy")).toBe(true);
   });
 });
+
+describe("online_store — migration history matches the Prisma models (Project 4 Part 1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  const tables: Record<string, readonly string[]> = {
+    storefront_preferences: [
+      "tenant_id",
+      "home_title",
+      "home_meta_description",
+      "share_image_ref",
+      "default_locale",
+      "version",
+      "updated_at",
+    ],
+    storefront_access: [
+      "tenant_id",
+      "locked",
+      "password_hash",
+      "password_updated_at",
+      "message",
+      "access_version",
+      "version",
+      "updated_at",
+    ],
+    storefront_themes: [
+      "tenant_id",
+      "draft",
+      "draft_revision",
+      "draft_saved_at",
+      "published",
+      "published_draft_revision",
+      "release_number",
+      "published_at",
+      "published_by",
+      "version",
+      "created_at",
+      "updated_at",
+    ],
+    storefront_theme_releases: [
+      "id",
+      "tenant_id",
+      "release_number",
+      "document",
+      "published_at",
+      "published_by",
+    ],
+    preview_tokens: ["id", "tenant_id", "token_hash", "expires_at", "created_by", "created_at"],
+  };
+
+  it("creates the schema before its tables", () => {
+    expect(allSql).toContain('CREATE SCHEMA IF NOT EXISTS "online_store";');
+  });
+
+  for (const [table, columns] of Object.entries(tables)) {
+    it(`${table} has exactly the model's columns`, () => {
+      expect([...columnsEverAddedTo("online_store", table, allSql)].sort()).toEqual(
+        [...columns].sort(),
+      );
+    });
+
+    it(`${table} is RLS-forced with the tenant_isolation policy`, () => {
+      expect(allSql).toContain(`ALTER TABLE "online_store"."${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(`ALTER TABLE "online_store"."${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(
+        `DROP POLICY IF EXISTS tenant_isolation ON "online_store"."${table}";`,
+      );
+      expect(allSql).toContain(
+        `CREATE POLICY tenant_isolation ON "online_store"."${table}" FOR ALL`,
+      );
+    });
+  }
+
+  it("has the checks and indexes the spec names", () => {
+    expect(allSql).toContain(
+      `CONSTRAINT "storefront_preferences_default_locale_check" CHECK ("default_locale" IN ('ar', 'en'))`,
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "storefront_access_locked_needs_password_check" CHECK (NOT "locked" OR "password_hash" IS NOT NULL)`,
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "storefront_theme_releases_tenant_id_release_number_key" ON "online_store"."storefront_theme_releases" ("tenant_id", "release_number");',
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "preview_tokens_token_hash_key" ON "online_store"."preview_tokens" ("token_hash");',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "preview_tokens_tenant_id_expires_at_idx" ON "online_store"."preview_tokens" ("tenant_id", "expires_at");',
+    );
+  });
+
+  it("is registered in the datasource schemas list", () => {
+    const main = readFileSync(join(migrationsDir, "..", "main.prisma"), "utf-8");
+    expect(main).toMatch(/schemas\s*=\s*\[[^\]]*"online_store"/);
+  });
+});

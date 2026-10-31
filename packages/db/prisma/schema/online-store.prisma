@@ -1,0 +1,75 @@
+// `online_store` schema — Online Store (services/online-store, Project 4). One row per shop for
+// preferences, access and the theme document; releases and preview tokens are per shop. Bare-id
+// refs only (share_image_ref, image refs inside the JSON documents are media asset ids).
+
+model OnlineStorePreferences {
+  tenantId            String   @id @map("tenant_id")
+  homeTitle           Json     @default("{}") @map("home_title")
+  homeMetaDescription Json     @default("{}") @map("home_meta_description")
+  shareImageRef       String?  @map("share_image_ref")
+  defaultLocale       String   @default("ar") @map("default_locale") // ar | en (CHECK + domain)
+  version             Int      @default(0)
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("storefront_preferences")
+  @@schema("online_store")
+}
+
+model OnlineStoreAccess {
+  tenantId          String    @id @map("tenant_id")
+  locked            Boolean   @default(false)
+  /// scrypt hash from the password hasher; never leaves the service.
+  passwordHash      String?   @map("password_hash")
+  passwordUpdatedAt DateTime? @map("password_updated_at")
+  message           Json      @default("{}")
+  accessVersion     Int       @default(1) @map("access_version")
+  version           Int       @default(0)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("storefront_access")
+  @@schema("online_store")
+}
+
+model OnlineStoreTheme {
+  tenantId               String    @id @map("tenant_id")
+  draft                  Json
+  draftRevision          Int       @default(1) @map("draft_revision")
+  draftSavedAt           DateTime  @default(now()) @map("draft_saved_at")
+  published              Json?
+  publishedDraftRevision Int?      @map("published_draft_revision")
+  releaseNumber          Int       @default(0) @map("release_number")
+  publishedAt            DateTime? @map("published_at")
+  publishedBy            String?   @map("published_by")
+  version                Int       @default(0)
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("storefront_themes")
+  @@schema("online_store")
+}
+
+model OnlineStoreThemeRelease {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id")
+  releaseNumber Int      @map("release_number")
+  document      Json
+  publishedAt   DateTime @map("published_at")
+  publishedBy   String   @map("published_by")
+
+  @@unique([tenantId, releaseNumber])
+  @@map("storefront_theme_releases")
+  @@schema("online_store")
+}
+
+model OnlineStorePreviewToken {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, expiresAt])
+  @@map("preview_tokens")
+  @@schema("online_store")
+}
