@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
-import {
-  AccessChanged,
-  ONLINE_STORE_PUBLISHED_EVENTS,
-  PreferencesUpdated,
-  ThemePublished,
-} from "./events";
+import { ONLINE_STORE_PUBLISHED_EVENTS } from "../infrastructure/event-translator";
+import { AccessChanged, PreferencesUpdated, ThemePublished } from "./events";
 
 const props = {
   eventId: "e-1",

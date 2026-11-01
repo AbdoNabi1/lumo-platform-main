@@ -37,6 +37,7 @@ import { licensingRoutes } from "./licensing-routes";
 import { localizationRoutes } from "./localization-routes";
 import { loyaltyRoutes } from "./loyalty-routes";
 import { mediaLibraryRoutes } from "./media-library-routes";
+import { onlineStoreRoutes } from "./online-store-routes";
 import { paymentsRoutes } from "./payments-routes";
 import { paymentsWebhookRoutes } from "./payments-webhook-routes";
 import { platformBillingRoutes } from "./platform-billing-routes";
@@ -2201,6 +2202,7 @@ export function adminRoutes(
     ...featureRegistryRoutes(admin),
     ...pagesRoutes(admin),
     ...mediaLibraryRoutes(admin),
+    ...onlineStoreRoutes(admin),
     ...(() => {
       const tenancy = tenancyRoutes(admin, {
         ...(options.onTenantLifecycleChange === undefined

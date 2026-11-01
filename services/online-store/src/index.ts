@@ -16,12 +16,8 @@ export type {
 export type { UpdateAccessInput } from "./application/access.use-cases";
 export type { UpdatePreferencesInput } from "./application/preferences.use-cases";
 export type { PublicShellView } from "./application/shell.use-case";
-export {
-  AccessChanged,
-  ONLINE_STORE_PUBLISHED_EVENTS,
-  PreferencesUpdated,
-  ThemePublished,
-} from "./domain/events";
+export { AccessChanged, PreferencesUpdated, ThemePublished } from "./domain/events";
+export { ONLINE_STORE_PUBLISHED_EVENTS } from "./infrastructure/event-translator";
 export {
   hashPreviewToken,
   isWellFormedPreviewToken,

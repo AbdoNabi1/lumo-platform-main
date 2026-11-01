@@ -27,9 +27,3 @@ export class PreferencesUpdated extends DomainEvent {
     super(props);
   }
 }
-
-export const ONLINE_STORE_PUBLISHED_EVENTS: readonly string[] = [
-  "online_store.theme.published",
-  "online_store.access.changed",
-  "online_store.preferences.updated",
-];

@@ -36,8 +36,10 @@ import {
   RestoreThemeRelease,
   SaveThemeDraft,
 } from "./application/theme.use-cases";
-import { ONLINE_STORE_PUBLISHED_EVENTS } from "./domain/events";
-import { OnlineStoreEventTranslator } from "./infrastructure/event-translator";
+import {
+  ONLINE_STORE_PUBLISHED_EVENTS,
+  OnlineStoreEventTranslator,
+} from "./infrastructure/event-translator";
 import {
   InMemoryAccessRepository,
   InMemoryPreferencesRepository,

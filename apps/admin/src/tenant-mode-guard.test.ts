@@ -176,6 +176,26 @@ describe("assertMultiTenantReady", () => {
     for (const path of paths) expect(path.startsWith("tenancy.")).toBe(true);
   });
 
+  it("the online store adds no construction-time tenant (Project 4)", () => {
+    const found = findConstructionTimeTenants(pinnedProductionShapedGraph(), []);
+    expect(
+      found.filter((path) => path.startsWith("onlineStore") || path.startsWith("publicReads")),
+    ).toEqual([]);
+  });
+
+  it("really walks the online-store graph: a pin planted under its use cases is reported", () => {
+    const graph = pinnedProductionShapedGraph() as unknown as {
+      onlineStore: { onlineStore: { deps: { getPreferences: { deps: object } } } };
+    };
+    // The object every use case shares, the one a spread of AdminWiringDeps would have reached.
+    const shared = graph.onlineStore.onlineStore.deps.getPreferences.deps;
+    expect(Object.keys(shared)).toEqual(expect.arrayContaining(["imageRefs", "passwordHasher"]));
+    Object.assign(shared, { tenantId: "tenant-local" });
+    expect(findConstructionTimeTenants(graph)).toEqual([
+      "onlineStore.onlineStore.deps.getPreferences.deps.tenantId",
+    ]);
+  });
+
   it("does not exempt a second context that pins a tenant", () => {
     const graph = {
       ...pinnedProductionShapedGraph(),

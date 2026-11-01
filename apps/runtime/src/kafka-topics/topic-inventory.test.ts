@@ -52,6 +52,16 @@ describe("the Kafka topic inventory is complete", () => {
     expect(missing).toEqual([]);
   });
 
+  it("has the three online-store topics (the relay stops on a missing one)", () => {
+    for (const topic of [
+      "online_store.access.changed.v1",
+      "online_store.preferences.updated.v1",
+      "online_store.theme.published.v1",
+    ]) {
+      expect(byName.get(topic)?.kind, topic).toBe("base");
+    }
+  });
+
   it("imports every translator's list — a translator added with a new list cannot be forgotten", () => {
     // Read the lists straight from source and require each type in the inventory: a new
     // `*_PUBLISHED_EVENTS` export that nobody added to PRODUCED_EVENT_LISTS fails here.

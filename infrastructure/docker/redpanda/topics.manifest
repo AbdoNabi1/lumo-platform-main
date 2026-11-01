@@ -228,6 +228,9 @@ notifications.notification.failed.v1 base 2592000000 single
 notifications.notification.queued.v1 base 2592000000 single
 notifications.notification.retrying.v1 base 2592000000 single
 notifications.notification.sent.v1 base 2592000000 single
+online_store.access.changed.v1 base 2592000000 single
+online_store.preferences.updated.v1 base 2592000000 single
+online_store.theme.published.v1 base 2592000000 single
 orders.order.awaiting_payment.v1 base 220752000000 single
 orders.order.cancelled.v1 base 220752000000 single
 orders.order.closed.v1 base 220752000000 single

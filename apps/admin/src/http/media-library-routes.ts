@@ -61,7 +61,7 @@ const updateAltBody = z.object({ alt: z.string().nullable() });
 /** What a browser may send as an image. The bytes are still sniffed: this only narrows the doorway. */
 const IMAGE_CONTENT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 
-function decodeFileName(value: string | string[] | undefined): string | undefined {
+export function decodeFileName(value: string | string[] | undefined): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value;
   if (raw === undefined) return undefined;
   try {
