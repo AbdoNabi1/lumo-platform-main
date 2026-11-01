@@ -78,10 +78,12 @@ export interface OnlineStoreAppOptions {
   readonly objectStorage?: ObjectStoragePort;
   /** The idempotency response cache's contents, so a test can read what could be replayed. */
   readonly responseStore?: Map<string, unknown>;
+  /** For a test that moves time, such as a preview token expiring. Fixed by default. */
+  readonly clock?: Clock;
 }
 
 export function buildOnlineStoreApp(options: OnlineStoreAppOptions): Promise<FastifyInstance> {
-  const clock: Clock = { now: () => new Date("2026-10-27T10:00:00.000Z") };
+  const clock: Clock = options.clock ?? { now: () => new Date("2026-10-27T10:00:00.000Z") };
   const claims = new Set<string>();
   const store = options.responseStore ?? new Map<string, unknown>();
   const responseCache: Cache = {

@@ -65,6 +65,7 @@ import { publicStaffAuthRoutes } from "./public-staff-auth-routes";
 import { staffAccountRoutes } from "./staff-account-routes";
 import { publicCartRoutes } from "./public-cart-routes";
 import { publicCheckoutRoutes } from "./public-checkout-routes";
+import { publicOnlineStoreRoutes } from "./public-online-store-routes";
 import { publicShippingRoutes } from "./public-shipping-routes";
 import { publicLoyaltyRoutes } from "./public-loyalty-routes";
 import { publicReviewsRoutes } from "./public-reviews-routes";
@@ -2224,6 +2225,7 @@ export function adminRoutes(
     ...publicCartRoutes(admin),
     ...publicCheckoutRoutes(admin),
     ...publicShippingRoutes(admin),
+    ...publicOnlineStoreRoutes(admin, options.rateLimiter),
     ...publicReviewsRoutes(admin),
     ...publicWishlistRoutes(admin),
     ...publicLoyaltyRoutes(admin),
