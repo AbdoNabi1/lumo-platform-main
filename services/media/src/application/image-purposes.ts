@@ -1,8 +1,5 @@
 import type { ImageType } from "./sniff-image";
 
-// The product cap is restated as 8 MB here (not imported from the product use case, which depends on
-// the upload use case that reads this table); a test pins it equal to MAX_UPLOAD_BYTES.
-
 export type ImagePurpose = "product" | "logo" | "favicon" | "share_image" | "section_image";
 export const ONLINE_STORE_IMAGE_PURPOSES = [
   "logo",
@@ -16,6 +13,8 @@ export type ImageNamespace = "product-images" | "brand-assets" | "theme-assets";
 /** Decompression-bomb guard for the online-store purposes (Ruling 3: products unchanged). */
 export const MAX_IMAGE_PIXELS = 40_000_000;
 const MB = 1024 * 1024;
+/** The largest product upload accepted, in bytes. The route enforces the same cap before the body is read. */
+export const MAX_UPLOAD_BYTES = 8 * MB;
 
 export interface ImagePolicy {
   readonly namespace: ImageNamespace;
@@ -35,7 +34,7 @@ export const IMAGE_POLICIES: Readonly<Record<ImagePurpose, ImagePolicy>> = {
   product: {
     namespace: "product-images",
     types: ["jpeg", "png", "webp", "gif"],
-    maxBytes: 8 * MB,
+    maxBytes: MAX_UPLOAD_BYTES,
     dimensions: null,
     maxPixels: null,
   },

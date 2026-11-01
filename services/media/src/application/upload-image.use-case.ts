@@ -3,15 +3,19 @@ import { UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import type { MediaAssetRepository } from "../domain/library-repositories";
 import { MediaAsset } from "../domain/media-asset";
-import { IMAGE_POLICIES, type ImageNamespace, type ImagePurpose } from "./image-purposes";
+import {
+  IMAGE_POLICIES,
+  MAX_UPLOAD_BYTES,
+  type ImageNamespace,
+  type ImagePurpose,
+} from "./image-purposes";
 import type { ObjectStoragePort } from "./object-storage.port";
 import { sniffImage, type ImageType } from "./sniff-image";
 
 // These shared exports live here (and are re-exported by upload-product-image.use-case.ts) so the two
 // modules do not import each other's values: `no-circular` forbids a runtime cycle.
 
-/** The largest product upload accepted, in bytes. The route enforces the same cap before the body is read. */
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+export { MAX_UPLOAD_BYTES };
 /** Keys are unique and never overwritten, so the object can be cached for a year and never revalidated. */
 export const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const MAX_NAME_LENGTH = 255;

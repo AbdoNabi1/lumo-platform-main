@@ -17,7 +17,10 @@ import type {
   RegisterMediaAsset,
   RegisterMediaAssetInput,
 } from "../application/media-library.use-cases";
-import type { OnlineStoreImagePurpose } from "../application/image-purposes";
+import {
+  ONLINE_STORE_IMAGE_PURPOSES,
+  type OnlineStoreImagePurpose,
+} from "../application/image-purposes";
 import type { UploadImage, UploadImageInput } from "../application/upload-image.use-case";
 import type {
   UpdateMediaAlt,
@@ -109,6 +112,13 @@ export class MediaLibraryController {
   async uploadImage(
     input: Omit<UploadImageInput, "purpose"> & { readonly purpose: OnlineStoreImagePurpose },
   ): Promise<ControllerResponse> {
+    // The type already forbids this; the check keeps "product" and unknown values out at runtime.
+    if (!(ONLINE_STORE_IMAGE_PURPOSES as readonly string[]).includes(input.purpose)) {
+      return {
+        status: 422,
+        body: envelope("INVALID_PURPOSE", "This image purpose is not supported.", false),
+      };
+    }
     const outcome = await this.deps.uploadImage.execute(input);
     switch (outcome.kind) {
       case "ok":

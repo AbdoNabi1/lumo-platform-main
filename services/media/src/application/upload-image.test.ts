@@ -9,7 +9,7 @@ import { MediaLibraryEventTranslator } from "../infrastructure/media-library-eve
 import { IMAGE_POLICIES } from "./image-purposes";
 import type { ObjectStoragePort } from "./object-storage.port";
 import { UploadImage, type UploadImageInput } from "./upload-image.use-case";
-import { MAX_UPLOAD_BYTES } from "./upload-product-image.use-case";
+import { MAX_UPLOAD_BYTES, UploadProductImage } from "./upload-product-image.use-case";
 
 const clock: Clock = { now: () => new Date("2026-10-27T09:30:00.000Z") };
 const MB = 1024 * 1024;
@@ -101,7 +101,7 @@ function harness(options: { readonly publicBaseUrl?: string | null } = {}) {
     clock,
     producer: "media",
   });
-  const upload = new UploadImage({
+  const deps = {
     mediaAssets: new InMemoryMediaAssetRepository({
       outbox,
       context: rootEventContext(idGenerator),
@@ -112,10 +112,12 @@ function harness(options: { readonly publicBaseUrl?: string | null } = {}) {
     objectStorage: storage,
     keyFactory: new StorageKeyFactory({ idGenerator, clock }),
     ...(publicBaseUrl === null ? {} : { publicBaseUrl }),
-  });
+  };
+  const upload = new UploadImage(deps);
+  const product = new UploadProductImage(deps);
   const run = (input: Omit<UploadImageInput, "tenantId">) =>
     upload.execute({ ...input, tenantId: "t-1" });
-  return { run, puts };
+  return { run, puts, product };
 }
 
 describe("UploadImage — per-purpose policy (spec 1.7, Review Focus 5)", () => {
@@ -152,7 +154,7 @@ describe("UploadImage — per-purpose policy (spec 1.7, Review Focus 5)", () => 
       "logo",
       { kind: "bad_dimensions", min: { width: 32, height: 32 }, max: 4000, square: false },
     ],
-    ["favicon that is a JPEG named .png", jpeg(64, 64), "favicon", { kind: "unsupported" }],
+    ["favicon that is a JPEG (file named .png)", jpeg(64, 64), "favicon", { kind: "unsupported" }],
     ["animated GIF favicon", gif(64, 64), "favicon", { kind: "unsupported" }],
     [
       "favicon not square",
@@ -181,14 +183,21 @@ describe("UploadImage — per-purpose policy (spec 1.7, Review Focus 5)", () => 
       { kind: "too_many_pixels" },
     ],
     [
-      "an SVG",
+      "HTML bytes (file named .png)",
+      bytes(ascii("<html><script>alert(1)</script></html>")),
+      "logo",
+      { kind: "unsupported" },
+    ],
+    [
+      "an SVG (file named .png)",
       bytes(ascii("<svg xmlns='http://www.w3.org/2000/svg'/>")),
       "logo",
       { kind: "unsupported" },
     ],
   ] as const)("refuses %s and stores nothing", async (_name, input, purpose, expected) => {
     const { run, puts } = harness();
-    expect(await run({ bytes: input, purpose })).toEqual(expected);
+    // The client's file name is hostile on purpose: only the bytes decide.
+    expect(await run({ bytes: input, purpose, fileName: "evil.png" })).toEqual(expected);
     expect(puts).toEqual([]);
   });
 
@@ -205,6 +214,72 @@ describe("UploadImage — per-purpose policy (spec 1.7, Review Focus 5)", () => 
     expect(await run({ bytes: png(10, 10, 8 * MB), purpose: "product" })).toEqual({
       kind: "too_large",
       maxBytes: 8 * MB,
+    });
+  });
+
+  it("ignores a hostile file name for the key and content type", async () => {
+    const { run, puts } = harness();
+    const out = await run({ bytes: jpeg(800, 600), purpose: "logo", fileName: "../../x.svg" });
+    expect(out).toMatchObject({ kind: "ok" });
+    expect(puts[0]).toEqual({
+      key: expect.stringMatching(/^tenants\/t-1\/brand-assets\/.+\.jpg$/),
+      contentType: "image/jpeg",
+    });
+  });
+
+  it("accepts a JPEG and a WebP logo", async () => {
+    const { run } = harness();
+    expect((await run({ bytes: jpeg(400, 120), purpose: "logo" })).kind).toBe("ok");
+    expect((await run({ bytes: webp(400, 120), purpose: "logo" })).kind).toBe("ok");
+  });
+
+  it("accepts exactly the byte cap and refuses one byte over, per purpose", async () => {
+    const { run } = harness();
+    const at = (head: Uint8Array, cap: number) => bytes([...head], cap - head.length);
+    const over = (head: Uint8Array, cap: number) => bytes([...head], cap + 1 - head.length);
+    const cases = [
+      ["logo", png(200, 200), 2 * MB],
+      ["favicon", png(64, 64), MB],
+      ["share_image", jpeg(1200, 630), 5 * MB],
+      ["section_image", png(800, 600), 8 * MB],
+    ] as const;
+    for (const [purpose, head, cap] of cases) {
+      expect((await run({ bytes: at(head, cap), purpose })).kind).toBe("ok");
+      expect(await run({ bytes: over(head, cap), purpose })).toEqual({
+        kind: "too_large",
+        maxBytes: cap,
+      });
+    }
+  });
+
+  it("accepts exactly 40 MP and refuses one pixel row more", async () => {
+    const { run, puts } = harness();
+    expect((await run({ bytes: png(8000, 5000), purpose: "section_image" })).kind).toBe("ok");
+    expect(await run({ bytes: png(8001, 5000), purpose: "section_image" })).toEqual({
+      kind: "too_many_pixels",
+    });
+    expect(puts).toHaveLength(1);
+  });
+
+  it("accepts exactly maxSide and refuses one pixel over", async () => {
+    const { run } = harness();
+    expect((await run({ bytes: png(4000, 100), purpose: "logo" })).kind).toBe("ok");
+    expect((await run({ bytes: png(4001, 100), purpose: "logo" })).kind).toBe("bad_dimensions");
+    expect((await run({ bytes: png(1024, 1024), purpose: "favicon" })).kind).toBe("ok");
+    expect((await run({ bytes: png(1025, 1025), purpose: "favicon" })).kind).toBe("bad_dimensions");
+  });
+
+  it("keeps products unchanged through the UploadProductImage wrapper (Ruling 3)", async () => {
+    const { product, puts } = harness();
+    expect((await product.execute({ bytes: gif(10, 10), tenantId: "t-1" })).kind).toBe("ok");
+    expect((await product.execute({ bytes: png(20000, 20000), tenantId: "t-1" })).kind).toBe("ok");
+    expect(puts.map((p) => p.contentType)).toEqual(["image/gif", "image/png"]);
+    expect(puts.every((p) => p.key.includes("/product-images/"))).toBe(true);
+    expect(await product.execute({ bytes: png(10, 10, 8 * MB), tenantId: "t-1" })).toEqual({
+      kind: "too_large",
+    });
+    expect(await product.execute({ bytes: bytes(ascii("<svg/>")), tenantId: "t-1" })).toEqual({
+      kind: "unsupported",
     });
   });
 

@@ -204,6 +204,22 @@ describe("MediaLibraryController.uploadImage", () => {
     });
   });
 
+  it("422 INVALID_PURPOSE for product or an unknown purpose, and nothing is written", async () => {
+    const storage = realStorage();
+    const controller = wire(storage);
+    for (const purpose of ["product", "avatar", "__proto__"]) {
+      const response = await controller.uploadImage({
+        bytes: png(400, 120),
+        // Runtime guard: the type forbids these, a careless caller might not.
+        purpose: purpose as "logo",
+        tenantId: "t-1",
+      });
+      expect(response.status).toBe(422);
+      expect(response.body).toMatchObject({ code: "INVALID_PURPOSE", retryable: false });
+    }
+    expect(storage.keys).toHaveLength(0);
+  });
+
   it("201 with the public url for a valid logo, 503 when storage is not set up", async () => {
     const storage = realStorage();
     const created = await wire(storage).uploadImage({
