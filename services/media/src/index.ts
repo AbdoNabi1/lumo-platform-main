@@ -29,6 +29,18 @@ export {
   type UploadProductImageOutcome,
 } from "./application/upload-product-image.use-case";
 export {
+  UploadImage,
+  type UploadImageInput,
+  type UploadImageOutcome,
+} from "./application/upload-image.use-case";
+export {
+  IMAGE_POLICIES,
+  MAX_IMAGE_PIXELS,
+  ONLINE_STORE_IMAGE_PURPOSES,
+  type ImagePurpose,
+  type OnlineStoreImagePurpose,
+} from "./application/image-purposes";
+export {
   ResolveMediaImages,
   type ResolvedImage,
 } from "./application/resolve-media-images.use-case";
