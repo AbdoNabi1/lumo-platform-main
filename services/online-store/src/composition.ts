@@ -170,7 +170,7 @@ export function wireOnlineStore(deps: OnlineStoreWiringDeps): WiredOnlineStore {
     return {
       controller,
       publicReads: publicReadsOf(controller),
-      drainOutbox: async () => 0,
+      drainOutbox: () => Promise.resolve(0),
       deliveredEventTypes: [],
     };
   }
@@ -200,8 +200,9 @@ export function wireOnlineStore(deps: OnlineStoreWiringDeps): WiredOnlineStore {
   );
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];
-  const sink: Subscriber = async (record) => {
+  const sink: Subscriber = (record) => {
     delivered.push(record.headers.type ?? record.topic);
+    return Promise.resolve();
   };
   for (const type of ONLINE_STORE_PUBLISHED_EVENTS) bus.subscribe(`${type}.v1`, sink);
   const relay = new OutboxRelay({

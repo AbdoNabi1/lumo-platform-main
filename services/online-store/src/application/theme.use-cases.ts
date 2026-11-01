@@ -173,9 +173,9 @@ export class DiscardThemeDraft {
     readonly expectedVersion: number;
     readonly tenantId: string;
   }): Promise<Result<DraftRevisionView, DomainError>> {
-    return rewriteDraft(this.deps, input, async (theme) => {
+    return rewriteDraft(this.deps, input, (theme) => {
       theme.discardDraft(this.deps.clock.now());
-      return ok(undefined);
+      return Promise.resolve(ok(undefined));
     });
   }
 }

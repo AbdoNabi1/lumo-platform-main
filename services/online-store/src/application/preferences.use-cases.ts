@@ -37,29 +37,42 @@ export interface UpdatePreferencesInput {
   readonly tenantId: string;
 }
 
-async function viewOf(
+/** What the view needs from other contexts. */
+interface ViewContext {
+  readonly storeName: string;
+  readonly shareImage: ImageDto | null;
+}
+
+async function readViewContext(
   deps: OnlineStoreDeps,
-  prefs: StorefrontPreferences,
+  shareImageRef: string | null,
   tenantId: string,
-  version: number,
-): Promise<PreferencesView> {
-  const s = prefs.snapshot();
+): Promise<ViewContext> {
   const [storeName, images] = await Promise.all([
     deps.storeIdentity.storeName(tenantId),
-    s.shareImageRef === null
-      ? Promise.resolve({})
-      : deps.imageRefs.resolve([s.shareImageRef], tenantId),
+    shareImageRef === null
+      ? Promise.resolve<Readonly<Record<string, ImageDto>>>({})
+      : deps.imageRefs.resolve([shareImageRef], tenantId),
   ]);
+  return {
+    storeName,
+    shareImage: shareImageRef === null ? null : (images[shareImageRef] ?? null),
+  };
+}
+
+function viewOf(
+  prefs: StorefrontPreferences,
+  context: ViewContext,
+  version: number,
+): PreferencesView {
+  const s = prefs.snapshot();
   return {
     homeTitle: s.homeTitle,
     homeMetaDescription: s.homeMetaDescription,
-    shareImage:
-      s.shareImageRef === null
-        ? null
-        : ((images as Record<string, ImageDto>)[s.shareImageRef] ?? null),
+    shareImage: context.shareImage,
     shareImageId: s.shareImageRef,
     defaultLocale: s.defaultLocale,
-    storeName,
+    storeName: context.storeName,
     version,
   };
 }
@@ -70,11 +83,16 @@ export class GetPreferences {
     readonly tenantId: string;
   }): Promise<Result<PreferencesView, DomainError>> {
     const prefs = await this.deps.preferences.get(input.tenantId);
-    return ok(await viewOf(this.deps, prefs, input.tenantId, prefs.snapshot().version));
+    const s = prefs.snapshot();
+    const context = await readViewContext(this.deps, s.shareImageRef, input.tenantId);
+    return ok(viewOf(prefs, context, s.version));
   }
 }
 
-/** Live on save (spec 1.4). Everything is validated before the unit of work writes anything. */
+/**
+ * Live on save (spec 1.4). Everything is validated, and the cross-context reads for the view are
+ * done, before the unit of work writes anything: once it commits, this use case cannot fail.
+ */
 export class UpdatePreferences {
   constructor(private readonly deps: OnlineStoreDeps) {}
   async execute(input: UpdatePreferencesInput): Promise<Result<PreferencesView, DomainError>> {
@@ -94,7 +112,8 @@ export class UpdatePreferences {
       const owned = await this.deps.imageRefs.existingIds([input.shareImageId], input.tenantId);
       if (!owned.includes(input.shareImageId)) return err(imageNotFound("shareImageId"));
     }
-    const saved = await inUnitOfWork(this.deps, async (tx) => {
+    const context = await readViewContext(this.deps, input.shareImageId, input.tenantId);
+    return inUnitOfWork(this.deps, async (tx) => {
       const prefs = await this.deps.preferences.get(input.tenantId, tx);
       if (prefs.snapshot().version !== input.expectedVersion) return err(versionConflict());
       const version = prefs.nextVersion;
@@ -113,9 +132,7 @@ export class UpdatePreferences {
         input.tenantId,
         tx,
       );
-      return ok({ prefs, version });
+      return ok(viewOf(prefs, context, version));
     });
-    if (!saved.ok) return saved;
-    return ok(await viewOf(this.deps, saved.value.prefs, input.tenantId, saved.value.version));
   }
 }

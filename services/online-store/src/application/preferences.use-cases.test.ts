@@ -43,7 +43,7 @@ describe("preferences use cases", () => {
   });
 
   it("refuses a 71-character title, a foreign share image and a stale version", async () => {
-    const { controller } = harness({ owned: { other: ["og-x"] } });
+    const { controller, repos, recorded } = harness({ owned: { other: ["og-x"] } });
     const long = await controller.updatePreferences({
       tenantId: T,
       homeTitle: { en: "x".repeat(71) },
@@ -72,14 +72,54 @@ describe("preferences use cases", () => {
     });
     const stale = await controller.updatePreferences({
       tenantId: T,
-      homeTitle: {},
+      homeTitle: { en: "From the other window" },
       homeMetaDescription: {},
       shareImageId: null,
-      defaultLocale: "ar",
+      defaultLocale: "en",
       expectedVersion: 0,
     });
     expect(stale.body).toMatchObject({ code: "VERSION_CONFLICT" });
+    expect((await repos.preferences.get(T)).snapshot()).toMatchObject({
+      homeTitle: {},
+      defaultLocale: "ar",
+      version: 1,
+    });
+    expect(recorded).toHaveLength(1);
   });
+
+  it.each(["storeNameFails", "imageResolveFails"] as const)(
+    "%s: a failing read refuses the save with nothing written, and a retry succeeds",
+    async (port) => {
+      const options = {
+        owned: { [T]: ["og-1"] },
+        storeNameFails: false,
+        imageResolveFails: false,
+      };
+      const { controller, repos, recorded } = harness(options);
+      const save = () =>
+        controller.updatePreferences({
+          tenantId: T,
+          homeTitle: { en: "Nour" },
+          homeMetaDescription: {},
+          shareImageId: "og-1",
+          defaultLocale: "en",
+          expectedVersion: 0,
+        });
+      options[port] = true;
+      await expect(save()).rejects.toThrow(/down/);
+      expect((await repos.preferences.get(T)).snapshot()).toMatchObject({
+        persisted: false,
+        version: 0,
+        shareImageRef: null,
+      });
+      expect(recorded).toEqual([]);
+      options[port] = false;
+      const retried = await save();
+      expect(retried.status).toBe(200);
+      expect(retried.body).toMatchObject({ shareImageId: "og-1", version: 1 });
+      expect(recorded).toHaveLength(1);
+    },
+  );
 
   it("keeps the stored share image id when the image can no longer be resolved", async () => {
     const owned: Record<string, string[]> = { [T]: ["og-1"] };

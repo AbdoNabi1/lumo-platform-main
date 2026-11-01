@@ -49,8 +49,27 @@ describe("access use cases", () => {
     expect((await repos.access.get(T)).snapshot().persisted).toBe(false);
   });
 
-  it("a stale version is VERSION_CONFLICT", async () => {
-    const { controller } = harness();
+  it("a first-time lock with a blank password is PASSWORD_REQUIRED, writing nothing", async () => {
+    const { controller, repos, recorded, hasher } = harness();
+    const res = await controller.updateAccess({
+      tenantId: T,
+      locked: true,
+      password: "   ",
+      message: {},
+      expectedVersion: 0,
+    });
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({
+      code: "PASSWORD_REQUIRED",
+      fields: [{ field: "password", message: "PASSWORD_REQUIRED" }],
+    });
+    expect((await repos.access.get(T)).snapshot().persisted).toBe(false);
+    expect(hasher.hashedWithOpenUnitsOfWork).toEqual([]);
+    expect(recorded).toEqual([]);
+  });
+
+  it("a stale version is VERSION_CONFLICT, writing nothing", async () => {
+    const { controller, repos, recorded } = harness();
     await controller.updateAccess({
       tenantId: T,
       locked: false,
@@ -65,6 +84,12 @@ describe("access use cases", () => {
       expectedVersion: 0,
     });
     expect(stale.body).toMatchObject({ code: "VERSION_CONFLICT" });
+    expect((await repos.access.get(T)).snapshot()).toMatchObject({
+      locked: false,
+      accessVersion: 2,
+      version: 1,
+    });
+    expect(recorded).toHaveLength(1);
   });
 
   it("the public read carries locked, accessVersion and the visitor message only", async () => {
@@ -154,6 +179,22 @@ describe("access use cases", () => {
     expect(hasher.verified).toHaveLength(2);
     expect(new Set(hasher.verified).size).toBe(1);
     expect(hasher.verified[0]).not.toMatch(/first|second/);
+    expect(hasher.hashedWithOpenUnitsOfWork).toHaveLength(1);
+  });
+
+  it("mints no dummy hash when the shop has a password", async () => {
+    const { controller, hasher } = harness();
+    await controller.updateAccess({
+      tenantId: T,
+      locked: true,
+      password: "1234",
+      message: {},
+      expectedVersion: 0,
+    });
+    await controller.unlock({ tenantId: T, password: "1234" });
+    await controller.unlock({ tenantId: T, password: "nope" });
+    expect(hasher.hashedWithOpenUnitsOfWork).toHaveLength(1); // only the saved password
+    expect(hasher.verified).toEqual(["hash:1234", "hash:1234"]);
   });
 
   it("keeps the password when it is omitted, null or blank", async () => {

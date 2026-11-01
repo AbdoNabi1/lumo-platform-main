@@ -70,6 +70,15 @@ describe("theme use cases", () => {
     expect(colour.body).toMatchObject({
       fields: [{ field: "brand.colors.primary", message: "INVALID_COLOR" }],
     });
+    const unknown = await controller.saveThemeDraft({
+      tenantId: T,
+      expectedVersion: 0,
+      document: doc((d) => (d.surprise = true)),
+    });
+    expect(unknown.status).toBe(422);
+    expect(unknown.body).toMatchObject({
+      fields: [{ field: "surprise", message: "UNKNOWN_KEY" }],
+    });
     const foreign = await controller.saveThemeDraft({
       tenantId: T,
       expectedVersion: 0,
@@ -188,7 +197,42 @@ describe("theme use cases", () => {
     expect(numbers.at(-1)?.releaseNumber).toBe(2);
   });
 
-  it("restore copies a release into the draft only; an unknown release is RELEASE_NOT_FOUND", async () => {
+  it("restore copies a release into the draft only", async () => {
+    const { controller, recorded } = harness();
+    await controller.saveThemeDraft({
+      tenantId: T,
+      expectedVersion: 0,
+      document: doc((d) => (d.header.sticky = true)),
+    });
+    await controller.publishTheme({ tenantId: T, expectedDraftRevision: 1, by: "a" });
+    await controller.saveThemeDraft({
+      tenantId: T,
+      expectedVersion: 2,
+      document: doc((d) => (d.brand.corners = "square")),
+    });
+    await controller.publishTheme({ tenantId: T, expectedDraftRevision: 2, by: "a" });
+    const restored = await controller.restoreThemeRelease({
+      tenantId: T,
+      releaseNumber: 1,
+      expectedVersion: 4,
+    });
+    expect(restored).toEqual({ status: 200, body: { draftRevision: 3, version: 5 } });
+    const state = (await controller.getTheme({ tenantId: T })).body as {
+      draft: Doc;
+      published: Doc;
+      releaseNumber: number;
+      publishedDraftRevision: number;
+      hasUnpublishedChanges: boolean;
+    };
+    expect(state.draft).toEqual(doc((d) => (d.header.sticky = true)));
+    expect(state.published).toEqual(doc((d) => (d.brand.corners = "square")));
+    expect(state.releaseNumber).toBe(2);
+    expect(state.publishedDraftRevision).toBe(2);
+    expect(state.hasUnpublishedChanges).toBe(true);
+    expect(recorded).toHaveLength(2);
+  });
+
+  it("restoring the live release leaves no unpublished changes; an unknown one is RELEASE_NOT_FOUND", async () => {
     const { controller } = harness();
     await controller.saveThemeDraft({
       tenantId: T,
@@ -223,6 +267,28 @@ describe("theme use cases", () => {
     expect(missing.body).toMatchObject({ code: "RELEASE_NOT_FOUND" });
   });
 
+  it("discard returns the draft to the published document", async () => {
+    const { controller } = harness();
+    await controller.saveThemeDraft({
+      tenantId: T,
+      expectedVersion: 0,
+      document: doc((d) => (d.header.sticky = true)),
+    });
+    await controller.publishTheme({ tenantId: T, expectedDraftRevision: 1, by: "a" });
+    await controller.saveThemeDraft({
+      tenantId: T,
+      expectedVersion: 2,
+      document: doc((d) => (d.brand.corners = "square")),
+    });
+    await controller.discardThemeDraft({ tenantId: T, expectedVersion: 3 });
+    const state = (await controller.getTheme({ tenantId: T })).body as {
+      draft: Doc;
+      hasUnpublishedChanges: boolean;
+    };
+    expect(state.draft).toEqual(doc((d) => (d.header.sticky = true)));
+    expect(state.hasUnpublishedChanges).toBe(false);
+  });
+
   it("discard returns the draft to live and resolves images for both documents in one read", async () => {
     const { controller } = harness({ owned: { [T]: ["logo-1"] } });
     await controller.saveThemeDraft({
@@ -232,6 +298,12 @@ describe("theme use cases", () => {
     });
     const discarded = await controller.discardThemeDraft({ tenantId: T, expectedVersion: 1 });
     expect(discarded).toEqual({ status: 200, body: { draftRevision: 2, version: 2 } });
+    const afterDiscard = (await controller.getTheme({ tenantId: T })).body as {
+      draft: Doc;
+      hasUnpublishedChanges: boolean;
+    };
+    expect(afterDiscard.draft).toEqual(DEFAULT_THEME_DOCUMENT); // nothing published: the default
+    expect(afterDiscard.hasUnpublishedChanges).toBe(false);
     await controller.saveThemeDraft({
       tenantId: T,
       expectedVersion: 2,

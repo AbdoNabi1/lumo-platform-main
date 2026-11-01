@@ -27,10 +27,13 @@ export function fakeImageRefs(owned: Readonly<Record<string, readonly string[]>>
     height: 64,
   });
   return {
-    existingIds: async (ids, tenantId) => ids.filter((id) => (owned[tenantId] ?? []).includes(id)),
-    resolve: async (ids, tenantId) =>
-      Object.fromEntries(
-        ids.filter((id) => (owned[tenantId] ?? []).includes(id)).map((id) => [id, image(id)]),
+    existingIds: (ids, tenantId) =>
+      Promise.resolve(ids.filter((id) => (owned[tenantId] ?? []).includes(id))),
+    resolve: (ids, tenantId) =>
+      Promise.resolve(
+        Object.fromEntries(
+          ids.filter((id) => (owned[tenantId] ?? []).includes(id)).map((id) => [id, image(id)]),
+        ),
       ),
   };
 }
@@ -48,23 +51,26 @@ export function fakeHasher(openUnitsOfWork: () => number): StorefrontPasswordHas
   return {
     verified,
     hashedWithOpenUnitsOfWork,
-    hash: async (plain) => {
+    hash: (plain) => {
       hashedWithOpenUnitsOfWork.push(openUnitsOfWork());
-      return `hash:${plain}`;
+      return Promise.resolve(`hash:${plain}`);
     },
-    verify: async (plain, hash) => {
+    verify: (plain, hash) => {
       verified.push(hash);
-      return hash === `hash:${plain}`;
+      return Promise.resolve(hash === `hash:${plain}`);
     },
   };
 }
 
+/** The `...Fails` options are read on every call, so a test can restore a port by flipping them. */
 export function harness(
   options: {
     owned?: Readonly<Record<string, readonly string[]>>;
     hosts?: Readonly<Record<string, string>>;
     names?: Readonly<Record<string, string>>;
     hostLookupFails?: boolean;
+    storeNameFails?: boolean;
+    imageResolveFails?: boolean;
   } = {},
 ) {
   let now = new Date("2026-10-27T10:00:00.000Z");
@@ -95,27 +101,41 @@ export function harness(
   const hasher = fakeHasher(() => openUnitsOfWork);
   const recorded: { tenantId: string; type: string }[] = [];
   const shopHost: ShopHostPort = {
-    primaryHostname: async (t) => {
-      if (options.hostLookupFails === true) throw new Error("tenancy down");
-      return options.hosts?.[t] ?? null;
-    },
+    primaryHostname: (t) =>
+      options.hostLookupFails === true
+        ? Promise.reject(new Error("tenancy down"))
+        : Promise.resolve(options.hosts?.[t] ?? null),
   };
-  const storeIdentity: StoreIdentityPort = { storeName: async (t) => options.names?.[t] ?? "" };
+  const storeIdentity: StoreIdentityPort = {
+    storeName: (t) =>
+      options.storeNameFails === true
+        ? Promise.reject(new Error("tenancy down"))
+        : Promise.resolve(options.names?.[t] ?? ""),
+  };
+  const ownedImages = fakeImageRefs(options.owned ?? {});
+  const imageRefs: ImageRefsPort = {
+    existingIds: (ids, tenantId) => ownedImages.existingIds(ids, tenantId),
+    resolve: (ids, tenantId) =>
+      options.imageResolveFails === true
+        ? Promise.reject(new Error("media down"))
+        : ownedImages.resolve(ids, tenantId),
+  };
   const controller = buildOnlineStoreController(
     repos,
     unitOfWork,
     {
       idGenerator,
       clock,
-      imageRefs: fakeImageRefs(options.owned ?? {}),
+      imageRefs,
       passwordHasher: hasher,
       shopHost,
       storeIdentity,
     },
     {
-      record: async (events: readonly DomainEvent[], tenantId: string) => {
+      record: (events: readonly DomainEvent[], tenantId: string) => {
         for (const event of events)
           recorded.push({ tenantId, type: (event as { eventName: string }).eventName });
+        return Promise.resolve();
       },
     },
   );
