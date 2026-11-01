@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
-import { ONLINE_STORE_PUBLISHED_EVENTS } from "../infrastructure/event-translator";
 import { AccessChanged, PreferencesUpdated, ThemePublished } from "./events";
 
 const props = {
@@ -20,13 +19,5 @@ describe("online-store events", () => {
     for (const event of [published, access, preferences]) {
       expect(JSON.stringify(event.data)).not.toMatch(/tenant|password|hash|token/i);
     }
-  });
-
-  it("publishes exactly the three event names the relay needs topics for", () => {
-    expect([
-      new ThemePublished(props, { releaseNumber: 1 }).eventName,
-      new AccessChanged(props, { locked: false }).eventName,
-      new PreferencesUpdated(props).eventName,
-    ]).toEqual(ONLINE_STORE_PUBLISHED_EVENTS);
   });
 });

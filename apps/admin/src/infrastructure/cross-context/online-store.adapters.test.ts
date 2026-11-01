@@ -59,6 +59,11 @@ describe("online-store cross-context adapters", () => {
     ).toBe("");
   });
 
+  it("reads the store name as empty when the read itself rejects", async () => {
+    const port = tenancyStoreIdentity(() => Promise.reject(new Error("tenancy is down")));
+    await expect(port.storeName("t")).resolves.toBe("");
+  });
+
   it("hashes with scrypt and verifies", async () => {
     const hasher = scryptStorefrontPasswordHasher({ log2N: 10 });
     const hash = await hasher.hash("open sesame");

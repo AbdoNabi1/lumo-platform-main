@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { RoleTableAccessControl } from "@platform/auth";
 import type {
+  AuthenticatedIdentity,
   Authenticator,
   Cache,
   Clock,
@@ -36,30 +37,33 @@ export function countingLimiter(): RateLimiter & { readonly keys: string[] } {
   const keys: string[] = [];
   return {
     keys,
-    consume: async (key, limit) => {
+    consume: (key, limit) => {
       keys.push(key);
       const n = (counts.get(key) ?? 0) + 1;
       counts.set(key, n);
-      return n > limit
-        ? { allowed: false, remaining: 0, retryAfterMs: 120_000 }
-        : { allowed: true, remaining: limit - n, retryAfterMs: 0 };
+      return Promise.resolve(
+        n > limit
+          ? { allowed: false, remaining: 0, retryAfterMs: 120_000 }
+          : { allowed: true, remaining: limit - n, retryAfterMs: 0 },
+      );
     },
   };
 }
 
 /** A fast deterministic hasher (the real scrypt is exercised in the adapters test). */
 export const fastHasher: StorefrontPasswordHasher = {
-  hash: async (plain) => `fake$${plain}`,
-  verify: async (plain, hash) => hash === `fake$${plain}`,
+  hash: (plain) => Promise.resolve(`fake$${plain}`),
+  verify: (plain, hash) => Promise.resolve(hash === `fake$${plain}`),
 };
 
 export function recordingStorage(keys: string[]): ObjectStoragePort {
   return {
     persistent: true,
-    exists: async () => true,
-    getDownloadUrl: async (key) => `https://signed.example/${key}`,
-    put: async (key) => {
+    exists: () => Promise.resolve(true),
+    getDownloadUrl: (key) => Promise.resolve(`https://signed.example/${key}`),
+    put: (key) => {
       keys.push(key);
+      return Promise.resolve();
     },
   };
 }
@@ -81,23 +85,35 @@ export function buildOnlineStoreApp(options: OnlineStoreAppOptions): Promise<Fas
   const claims = new Set<string>();
   const store = options.responseStore ?? new Map<string, unknown>();
   const responseCache: Cache = {
-    get: async <T>(k: string) => (store.get(k) as T | undefined) ?? null,
-    set: async (k, v) => void store.set(k, JSON.parse(JSON.stringify(v))),
-    delete: async (k) => void store.delete(k),
-    has: async (k) => store.has(k),
+    get: <T>(k: string) => Promise.resolve((store.get(k) as T | undefined) ?? null),
+    set: (k, v) => {
+      store.set(k, JSON.parse(JSON.stringify(v)));
+      return Promise.resolve();
+    },
+    delete: (k) => {
+      store.delete(k);
+      return Promise.resolve();
+    },
+    has: (k) => Promise.resolve(store.has(k)),
   };
   const idempotencyKeys: IdempotencyKeyStore = {
-    claim: async (key): Promise<IdempotencyClaim | null> => {
-      if (claims.has(key)) return null;
+    claim: (key): Promise<IdempotencyClaim | null> => {
+      if (claims.has(key)) return Promise.resolve(null);
       claims.add(key);
-      return { key, token: "t", release: async () => claims.delete(key) };
+      return Promise.resolve({
+        key,
+        token: "t",
+        release: () => Promise.resolve(claims.delete(key)),
+      });
     },
   };
   const authenticator: Authenticator = {
-    verify: async (token) =>
-      token === "admin" || token === "operator" || token === "viewer"
-        ? { id: `staff-${token}`, kind: "staff", roles: [token] }
-        : null,
+    verify: (token) =>
+      Promise.resolve<AuthenticatedIdentity | null>(
+        token === "admin" || token === "operator" || token === "viewer"
+          ? { id: `staff-${token}`, kind: "staff", roles: [token] }
+          : null,
+      ),
   };
   let n = 0;
   const idGenerator: IdGenerator = {
@@ -111,7 +127,7 @@ export function buildOnlineStoreApp(options: OnlineStoreAppOptions): Promise<Fas
     authenticator,
     accessControl: new RoleTableAccessControl(),
     rateLimiter: options.rateLimiter ?? {
-      consume: async () => ({ allowed: true, remaining: 99, retryAfterMs: 0 }),
+      consume: () => Promise.resolve({ allowed: true, remaining: 99, retryAfterMs: 0 }),
     },
     idempotencyKeys,
     responseCache,

@@ -31,7 +31,11 @@ const accessBody = z
 const draftBody = z.object({ document: z.unknown(), expectedVersion }).strict();
 const versionBody = z.object({ expectedVersion }).strict();
 const publishBody = z.object({ expectedDraftRevision: z.number().int().min(0) }).strict();
-const releaseParams = z.object({ releaseNumber: z.coerce.number().int().positive() });
+/** `release_number` is a Postgres INT: anything larger would fail in Prisma, as a 500. */
+const MAX_RELEASE_NUMBER = 2_147_483_647;
+const releaseParams = z.object({
+  releaseNumber: z.coerce.number().int().positive().max(MAX_RELEASE_NUMBER),
+});
 const imageQuery = z.object({ purpose: z.enum(ONLINE_STORE_IMAGE_PURPOSES) }).strict();
 const emptyBody = z.object({}).strict();
 

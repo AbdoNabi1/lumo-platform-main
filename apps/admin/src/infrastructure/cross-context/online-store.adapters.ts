@@ -73,9 +73,13 @@ export function tenancyShopHost(
 export function tenancyStoreIdentity(getPublicStore: () => Promise<Response>): StoreIdentityPort {
   return {
     storeName: async () => {
-      const res = await getPublicStore();
-      const name = res.status === 200 ? (res.body as { name?: unknown } | null)?.name : undefined;
-      return typeof name === "string" ? name.trim() : "";
+      try {
+        const res = await getPublicStore();
+        const name = res.status === 200 ? (res.body as { name?: unknown } | null)?.name : undefined;
+        return typeof name === "string" ? name.trim() : "";
+      } catch {
+        return ""; // a missing name must not fail a preferences read or the storefront shell
+      }
     },
   };
 }

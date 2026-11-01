@@ -308,20 +308,29 @@ describe("who may call each route", () => {
   const everyone: readonly StaffRole[] = ["viewer", "operator", "admin"];
   const editors: readonly StaffRole[] = ["operator", "admin"];
   const adminOnly: readonly StaffRole[] = ["admin"];
+  // The writes carry a stale version on purpose: an allowed role gets past the guard, reaches the
+  // use case and stops at 409, so no row changes the state the next row reads.
   const matrix: readonly (readonly [
     string,
     readonly StaffRole[],
+    number,
     (role: StaffRole) => Promise<LightMyRequestResponse>,
   ])[] = [
-    ["read preferences", everyone, (r) => call(r, "GET", "/online-store/preferences")],
-    ["read access", everyone, (r) => call(r, "GET", "/online-store/access")],
-    ["read theme", everyone, (r) => call(r, "GET", "/online-store/theme")],
-    ["read releases", everyone, (r) => call(r, "GET", "/online-store/theme/releases")],
-    ["mint preview", everyone, (r) => call(r, "POST", "/online-store/preview-tokens", {})],
-    ["save preferences", editors, (r) => call(r, "PUT", "/online-store/preferences", prefsBody)],
+    ["read preferences", everyone, 200, (r) => call(r, "GET", "/online-store/preferences")],
+    ["read access", everyone, 200, (r) => call(r, "GET", "/online-store/access")],
+    ["read theme", everyone, 200, (r) => call(r, "GET", "/online-store/theme")],
+    ["read releases", everyone, 200, (r) => call(r, "GET", "/online-store/theme/releases")],
+    ["mint preview", everyone, 201, (r) => call(r, "POST", "/online-store/preview-tokens", {})],
+    [
+      "save preferences",
+      editors,
+      409,
+      (r) => call(r, "PUT", "/online-store/preferences", prefsBody),
+    ],
     [
       "save draft",
       editors,
+      409,
       (r) =>
         call(r, "PUT", "/online-store/theme/draft", {
           document: DEFAULT_THEME_DOCUMENT,
@@ -331,22 +340,26 @@ describe("who may call each route", () => {
     [
       "discard draft",
       editors,
+      409,
       (r) => call(r, "POST", "/online-store/theme/discard-draft", { expectedVersion: 99 }),
     ],
-    ["upload image", editors, (r) => upload(r, "logo", PNG_64, "image/png")],
+    ["upload image", editors, 201, (r) => upload(r, "logo", PNG_64, "image/png")],
     [
       "publish",
       adminOnly,
+      409,
       (r) => call(r, "POST", "/online-store/theme/publish", { expectedDraftRevision: 99 }),
     ],
     [
       "restore",
       adminOnly,
+      409,
       (r) => call(r, "POST", "/online-store/theme/releases/1/restore", { expectedVersion: 99 }),
     ],
     [
       "lock",
       adminOnly,
+      409,
       (r) =>
         call(r, "PUT", "/online-store/access", {
           locked: false,
@@ -356,15 +369,10 @@ describe("who may call each route", () => {
     ],
   ];
 
-  it.each(matrix)("%s", async (_name, allowed, send) => {
+  it.each(matrix)("%s", async (_name, allowed, status, send) => {
     for (const role of everyone) {
       const res = await send(role);
-      if (allowed.includes(role)) {
-        expect(res.statusCode, role).not.toBe(403);
-        expect(res.statusCode, role).toBeLessThan(500);
-      } else {
-        expect(res.statusCode, role).toBe(403);
-      }
+      expect(res.statusCode, role).toBe(allowed.includes(role) ? status : 403);
     }
   });
 
@@ -399,7 +407,7 @@ describe("online-store error codes (Ruling 9)", () => {
     expect(res.json()).toMatchObject({ code: "NOTHING_TO_PUBLISH" });
   });
 
-  it("VERSION_CONFLICT: on the draft, the discard, preferences and access", async () => {
+  it("VERSION_CONFLICT: on the draft, discard, restore, preferences and access", async () => {
     const stale: readonly (readonly ["PUT" | "POST", string, unknown])[] = [
       [
         "PUT",
@@ -407,6 +415,7 @@ describe("online-store error codes (Ruling 9)", () => {
         { document: DEFAULT_THEME_DOCUMENT, expectedVersion: 7 },
       ],
       ["POST", "/online-store/theme/discard-draft", { expectedVersion: 7 }],
+      ["POST", "/online-store/theme/releases/1/restore", { expectedVersion: 7 }],
       [
         "PUT",
         "/online-store/preferences",
@@ -452,10 +461,21 @@ describe("online-store error codes (Ruling 9)", () => {
     expect(short.json()).toMatchObject({ code: "PASSWORD_LENGTH" });
 
     const document = await call("admin", "PUT", "/online-store/theme/draft", {
-      document: { nope: true },
+      document: { ...DEFAULT_THEME_DOCUMENT, header: { sticky: "yes" } },
       expectedVersion: 0,
     });
     expect(document.statusCode).toBe(422);
+    expect(document.json()).toMatchObject({
+      code: "INVALID_CONTENT",
+      fields: [{ field: "header.sticky" }],
+    });
+
+    const tooLarge = await call("admin", "PUT", "/online-store/theme/draft", {
+      document: { pad: "x".repeat(300_000) },
+      expectedVersion: 0,
+    });
+    expect(tooLarge.statusCode).toBe(422);
+    expect(tooLarge.json()).toMatchObject({ code: "DOCUMENT_TOO_LARGE" });
 
     const image = await call("admin", "PUT", "/online-store/preferences", {
       homeTitle: {},
@@ -466,6 +486,35 @@ describe("online-store error codes (Ruling 9)", () => {
     });
     expect(image.statusCode).toBe(422);
     expect(image.json()).toMatchObject({ code: "IMAGE_NOT_FOUND" });
+
+    const withLogo = structuredClone(DEFAULT_THEME_DOCUMENT) as {
+      brand: { logo: { imageRef: string | null } };
+    };
+    withLogo.brand.logo.imageRef = "0192f0aa-0000-7000-8000-000000009999";
+    const logo = await call("admin", "PUT", "/online-store/theme/draft", {
+      document: withLogo,
+      expectedVersion: 0,
+    });
+    expect(logo.statusCode).toBe(422);
+    expect(logo.json()).toMatchObject({
+      code: "IMAGE_NOT_FOUND",
+      fields: [{ field: "brand.logo.imageRef" }],
+    });
+  });
+
+  it("a release number the database column cannot hold is 422, never a 500", async () => {
+    const restore = (releaseNumber: string) =>
+      call("admin", "POST", `/online-store/theme/releases/${releaseNumber}/restore`, {
+        expectedVersion: 0,
+      });
+    const largest = await restore("2147483647");
+    expect(largest.statusCode).toBe(404);
+    expect(largest.json()).toMatchObject({ code: "RELEASE_NOT_FOUND" });
+    for (const tooLarge of ["2147483648", "3000000000"]) {
+      const res = await restore(tooLarge);
+      expect(res.statusCode, tooLarge).toBe(422);
+      expect(res.json(), tooLarge).toMatchObject({ code: "VALIDATION" });
+    }
   });
 });
 
@@ -567,6 +616,14 @@ describe("online-store images", () => {
     const overLogo = await upload("operator", "logo", padded(2 * MB + 1), "image/png");
     expect(overLogo.statusCode).toBe(413);
     expect(overLogo.json()).toMatchObject({ code: "PAYLOAD_TOO_LARGE" });
+    expect(keys.length).toBe(before);
+  });
+
+  it("an image too small for its purpose is 422 BAD_DIMENSIONS, and nothing is stored", async () => {
+    const before = keys.length;
+    const res = await upload("operator", "share_image", PNG_64, "image/png");
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toMatchObject({ code: "BAD_DIMENSIONS" });
     expect(keys.length).toBe(before);
   });
 
