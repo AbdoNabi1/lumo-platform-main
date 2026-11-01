@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import type { RequestContext } from "@platform/http";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { DEFAULT_THEME_DOCUMENT } from "@platform/storefront-content";
 import { logger } from "@platform/utils";
@@ -10,6 +11,7 @@ import {
   countingLimiter,
   fastHasher,
   headersFor,
+  recordingStorage,
 } from "./testing/online-store-harness";
 
 const anon = (tenant = "t-1", extra: Record<string, string | string[]> = {}) => ({
@@ -19,7 +21,25 @@ const anon = (tenant = "t-1", extra: Record<string, string | string[]> = {}) => 
 });
 const UNLOCK_KEY = "rl:t-1:storefront-unlock";
 const START = new Date("2026-10-27T10:00:00.000Z");
+const NOT_STORED = "private, no-store";
 let key = 0;
+
+/** A PNG header is all the upload path reads: the signature and the IHDR width and height. */
+function png(width: number, height: number): Buffer {
+  const bytes = Buffer.alloc(29);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  bytes.set([8, 6, 0, 0, 0], 24);
+  return bytes;
+}
+
+/** Every object key anywhere in a JSON value (arrays and nested objects included). */
+function keysOf(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(keysOf);
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([k, v]) => [k, ...keysOf(v)]);
+}
 
 /** Spec 1.10, one row per route. Every one is public; none may replay from the response cache. */
 describe("the public online-store route table", () => {
@@ -30,6 +50,27 @@ describe("the public online-store route table", () => {
       ["GET", "/public/online-store/access", true, null],
       ["POST", "/public/online-store/unlock", true, null],
     ]);
+  });
+
+  it("refuses unlock when it was given no limiter: the check never runs without one", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    const unlock = vi.fn();
+    const admin = { publicReads: { onlineStore: { unlock } } } as unknown as WiredAdmin;
+    const route = publicOnlineStoreRoutes(admin).find((r) => r.method === "POST");
+    const res = await route?.handle({
+      body: { password: "1234" },
+      params: undefined,
+      query: undefined,
+      context: { tenantId: "t-1", requestId: "r-1" } as RequestContext,
+    });
+    expect(res).toMatchObject({
+      status: 503,
+      body: { code: "UNAVAILABLE", retryable: true },
+      headers: { "retry-after": "5" },
+    });
+    expect(unlock).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
   });
 });
 
@@ -47,6 +88,7 @@ describe("public online-store routes (spec 1.10)", () => {
       rateLimiter: limiter,
       responseStore,
       clock: { now: () => now },
+      objectStorage: recordingStorage([]),
     });
   });
   afterEach(async () => {
@@ -87,6 +129,19 @@ describe("public online-store routes (spec 1.10)", () => {
       message: {},
       expectedVersion,
     });
+  const uploadImage = async (purpose: string, bytes: Buffer) => {
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/online-store/images?purpose=${purpose}`,
+      headers: headersFor("admin", {
+        "idempotency-key": `p-${(key += 1)}`,
+        "content-type": "image/png",
+      }),
+      payload: bytes,
+    });
+    expect(res.statusCode, purpose).toBe(201);
+    return res.json<{ id: string }>().id;
+  };
   const mintToken = async () =>
     (await admin("POST", "/online-store/preview-tokens", {})).json<{
       token: string;
@@ -163,6 +218,66 @@ describe("public online-store routes (spec 1.10)", () => {
       expect(Object.keys(body.footer).sort()).toEqual(["note", "showSocial"]);
     });
 
+    it("a real image carries only url, alt, width and height, and no key outside its url", async () => {
+      const [logo, favicon, share] = [
+        await uploadImage("logo", png(64, 64)),
+        await uploadImage("favicon", png(64, 64)),
+        await uploadImage("share_image", png(640, 320)),
+      ];
+      const document = {
+        ...DEFAULT_THEME_DOCUMENT,
+        brand: {
+          ...DEFAULT_THEME_DOCUMENT.brand,
+          logo: { ...DEFAULT_THEME_DOCUMENT.brand.logo, imageRef: logo },
+          favicon: { imageRef: favicon },
+        },
+      };
+      await admin("PUT", "/online-store/theme/draft", { document, expectedVersion: 0 });
+      await admin("POST", "/online-store/theme/publish", { expectedDraftRevision: 1 });
+      await admin("PUT", "/online-store/preferences", {
+        homeTitle: {},
+        homeMetaDescription: {},
+        shareImageId: share,
+        defaultLocale: "ar",
+        expectedVersion: 0,
+      });
+
+      const res = await shell();
+      expect(res.statusCode).toBe(200);
+      const body = res.json<{
+        preferences: { shareImage: { url: string } };
+        brand: { logo: { image: { url: string } }; favicon: { url: string } };
+      }>();
+      for (const image of [
+        body.brand.logo.image,
+        body.brand.favicon,
+        body.preferences.shareImage,
+      ]) {
+        expect(Object.keys(image).sort()).toEqual(["alt", "height", "url", "width"]);
+        expect(image.url.startsWith("https://cdn.example.test/media/tenants/t-1/")).toBe(true);
+      }
+      const keys = keysOf(body);
+      for (const internal of [/storage/i, /key$/i, /tenant/i, /ref$/i, /^id$/i]) {
+        expect(
+          keys.filter((k) => internal.test(k)),
+          String(internal),
+        ).toEqual([]);
+      }
+      // The public url is the CDN path, which holds the key, as for product images. Nothing else may.
+      const withoutUrls = JSON.stringify(body, (k, v: unknown) => (k === "url" ? undefined : v));
+      for (const leak of [
+        "t-1",
+        "tenants/",
+        "storageKey",
+        "signed.example",
+        logo,
+        favicon,
+        share,
+      ]) {
+        expect(withoutUrls, leak).not.toContain(leak);
+      }
+    });
+
     it("answers for a shop with no rows at all, on every read", async () => {
       const res = await shell("t-no-rows");
       expect(res.statusCode).toBe(200);
@@ -179,6 +294,18 @@ describe("public online-store routes (spec 1.10)", () => {
         message: {},
       });
     });
+  });
+
+  it("no anonymous read may be stored by a shared cache: live, draft, refused or access", async () => {
+    const { token } = await mintToken();
+    for (const res of [
+      await shell(),
+      await shell("t-1", { "x-preview-token": token }),
+      await shell("t-1", { "x-preview-token": "nope" }),
+      await access(),
+    ]) {
+      expect(res.headers["cache-control"]).toBe(NOT_STORED);
+    }
   });
 
   describe("preview", () => {
@@ -296,6 +423,34 @@ describe("public online-store routes (spec 1.10)", () => {
       expect(verify).toHaveBeenCalledTimes(3);
     });
 
+    it("a password change retires the old password; unlock and /access report one version", async () => {
+      const version = async () => (await access()).json<{ accessVersion: number }>().accessVersion;
+      const unlocked = async (password: string) => {
+        const res = await unlock(password);
+        expect(res.statusCode, password).toBe(200);
+        return res.json<{ accessVersion: number }>().accessVersion;
+      };
+
+      await setLock(true, "1234", 0);
+      const first = await version();
+      expect(await unlocked("1234")).toBe(first);
+
+      await setLock(true, "5678", 1);
+      const second = await version();
+      expect(second).toBeGreaterThan(first);
+      expect((await unlock("1234")).statusCode).toBe(401);
+      expect(await unlocked("5678")).toBe(second);
+
+      await setLock(false, undefined, 2);
+      expect(await version()).toBe(second);
+      expect((await unlock("5678")).statusCode).toBe(401);
+
+      await setLock(true, undefined, 3);
+      const third = await version();
+      expect(third).toBeGreaterThan(second);
+      expect(await unlocked("5678")).toBe(third);
+    });
+
     it("the limit is per shop, 20 per 10 minutes, under the spec's key", async () => {
       const consume = vi.spyOn(limiter, "consume");
       await unlock("1234");
@@ -315,18 +470,29 @@ describe("public online-store routes (spec 1.10)", () => {
       expect((await unlock("x", "t-2")).statusCode).toBe(401);
     });
 
-    it("refuses without hashing when the limiter itself is down", async () => {
+    it("answers 503 with retry-after, nothing hashed, when the limiter itself is down", async () => {
       await setLock(true, "1234", 0);
       const verify = vi.spyOn(fastHasher, "verify");
-      vi.spyOn(logger, "error").mockImplementation(() => undefined); // the expected 500
+      const error = vi.spyOn(logger, "error").mockImplementation(() => undefined);
       const { consume } = limiter;
       vi.spyOn(limiter, "consume").mockImplementation((k, limit, windowMs) =>
         k === UNLOCK_KEY ? Promise.reject(new Error("redis is down")) : consume(k, limit, windowMs),
       );
       const res = await unlock("1234");
-      expect(res.statusCode).toBeGreaterThanOrEqual(500);
-      expect(res.body).not.toContain("accessVersion");
+      expect(res.statusCode).toBe(503);
+      expect(res.json()).toEqual({
+        code: "UNAVAILABLE",
+        message: "Service temporarily unavailable",
+        retryable: true,
+        fields: [],
+        retryAfterMs: 5_000,
+      });
+      expect(res.headers["retry-after"]).toBe("5");
       expect(verify).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        "rate limiter unavailable; failing closed",
+        expect.objectContaining({ error: "redis is down" }),
+      );
     });
 
     it("refuses an over-long password before the limiter and before hashing", async () => {

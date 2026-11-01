@@ -122,12 +122,21 @@ export class VerifyStorefrontPassword {
     readonly tenantId: string;
   }): Promise<{ readonly ok: true; readonly accessVersion: number } | { readonly ok: false }> {
     const s = (await this.deps.access.get(input.tenantId)).snapshot();
-    const hash =
-      s.passwordHash ??
-      (await (this.dummyHash ??= this.deps.passwordHasher.hash("morbeh-unlock-dummy")));
+    const hash = s.passwordHash ?? (await this.dummy());
     const matches = await this.deps.passwordHasher.verify(input.password.trim(), hash);
     if (matches && s.locked && s.passwordHash !== null)
       return { ok: true, accessVersion: s.accessVersion };
     return { ok: false };
+  }
+
+  /** A rejection is not kept: one transient failure must not turn the uniform 401 into a 500. */
+  private dummy(): Promise<string> {
+    this.dummyHash ??= this.deps.passwordHasher
+      .hash("morbeh-unlock-dummy")
+      .catch((error: unknown) => {
+        this.dummyHash = undefined;
+        throw error;
+      });
+    return this.dummyHash;
   }
 }

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { RateLimiter } from "@platform/contracts";
 import type { WiredAdmin } from "../composition";
+import { rateLimited } from "./rate-limited-response";
 import {
   staffIdentifier,
   STAFF_IDENTIFIER_PREFIX,
@@ -36,14 +37,6 @@ const STAFF_LOGIN_WINDOW_MS = 15 * 60 * 1000;
  * normalisation `staffIdentifier` applies) and counts every attempt, successful or not, whether or not
  * the account exists — so a refusal reveals nothing about the account.
  */
-function rateLimited(retryAfterMs: number, message: string) {
-  return {
-    status: 429,
-    body: { code: "RATE_LIMITED", message, retryable: true, fields: [], retryAfterMs },
-    headers: { "retry-after": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
-  };
-}
-
 export function publicStaffAuthRoutes(
   admin: WiredAdmin,
   rateLimiter?: RateLimiter,

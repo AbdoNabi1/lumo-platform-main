@@ -5,11 +5,16 @@ import {
   type LocalizedText,
   type ThemeBrand,
 } from "@platform/storefront-content";
+import { logger } from "@platform/utils";
 import type { OnlineStoreDeps } from "./deps";
 import type { ImageDto } from "./ports";
 import type { ResolvePreviewToken } from "./preview.use-cases";
 
-/** Spec 1.10 `PublicShellDto` (+ `branded`, Ruling 6). No tenant, key, revision, hash or version. */
+/**
+ * Spec 1.10 `PublicShellDto` (+ `branded`, Ruling 6). No tenant, storage key, revision, hash or
+ * version field. An image `url` is the public CDN url, whose path does hold the storage key
+ * (`tenants/<id>/...`), as for product images.
+ */
 export interface PublicShellView {
   readonly mode: "live" | "preview";
   /** The preview link's expiry (ISO) for the preview banner; null when live. */
@@ -68,8 +73,7 @@ export class GetStorefrontShell {
     const ids = [doc.brand.logo.imageRef, doc.brand.favicon.imageRef, p.shareImageRef].filter(
       (id): id is string => id !== null,
     );
-    const images =
-      ids.length === 0 ? {} : await this.deps.imageRefs.resolve([...new Set(ids)], input.tenantId);
+    const images = await this.imagesOf(ids, input.tenantId);
     const image = (id: string | null): ImageDto | null =>
       id === null ? null : (images[id] ?? null);
     return {
@@ -98,5 +102,25 @@ export class GetStorefrontShell {
         locked: access.snapshot().locked,
       },
     };
+  }
+
+  /**
+   * Images are the one optional part of the shell, so a failed read blanks them and keeps the rest.
+   * Only here: the admin reads use the same port, where a blip must not look like a removed image.
+   */
+  private async imagesOf(
+    ids: readonly string[],
+    tenantId: string,
+  ): Promise<Readonly<Record<string, ImageDto>>> {
+    if (ids.length === 0) return {};
+    try {
+      return await this.deps.imageRefs.resolve([...new Set(ids)], tenantId);
+    } catch (error) {
+      logger.warn("storefront shell: images unavailable", {
+        tenantId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {};
+    }
   }
 }

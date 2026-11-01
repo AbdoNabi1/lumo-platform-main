@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { harness } from "../testing/fakes";
 
 const T = "t-1";
@@ -180,6 +180,19 @@ describe("access use cases", () => {
     expect(new Set(hasher.verified).size).toBe(1);
     expect(hasher.verified[0]).not.toMatch(/first|second/);
     expect(hasher.hashedWithOpenUnitsOfWork).toHaveLength(1);
+  });
+
+  it("a failed dummy hash is not kept: the next attempt mints one and answers the uniform 401", async () => {
+    const { controller, hasher } = harness();
+    const failure = new Error("out of memory");
+    const hash = vi.spyOn(hasher, "hash").mockRejectedValueOnce(failure);
+    await expect(controller.unlock({ tenantId: T, password: "first" })).rejects.toThrow(failure);
+    const next = await controller.unlock({ tenantId: T, password: "second" });
+    expect(next.status).toBe(401);
+    expect(next.body).toMatchObject({ code: "PASSWORD_INCORRECT" });
+    expect(hash).toHaveBeenCalledTimes(2);
+    expect((await controller.unlock({ tenantId: T, password: "third" })).status).toBe(401);
+    expect(hash).toHaveBeenCalledTimes(2); // memoised again once it succeeds
   });
 
   it("mints no dummy hash when the shop has a password", async () => {
