@@ -2,7 +2,7 @@ import { headers } from "next/headers";
 import { SHOP_ID_HEADER } from "./shop-host";
 import type { ShippableCountries } from "./checkout-address";
 
-const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
+export const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
 const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 /**
@@ -10,7 +10,7 @@ const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
  * tenant, as before. With it on, the middleware put the resolved shop id on the request; its absence
  * is a wiring bug, so this throws rather than silently serving the default shop.
  */
-async function currentTenantId(): Promise<string> {
+export async function currentShopId(): Promise<string> {
   if (process.env.STOREFRONT_HOST_ROUTING !== "on") return TENANT_ID;
   const shopId = (await headers()).get(SHOP_ID_HEADER);
   if (shopId === null || shopId === "") {
@@ -171,7 +171,7 @@ async function fetchList<T>(
           ).toString()}`
         : "";
     const response = await fetch(`${RUNTIME_API_URL}${path}${query}`, {
-      headers: { "x-tenant-id": await currentTenantId() },
+      headers: { "x-tenant-id": await currentShopId() },
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -210,7 +210,7 @@ async function fetchPage<T>(
           ).toString()}`
         : "";
     const response = await fetch(`${RUNTIME_API_URL}${path}${query}`, {
-      headers: { "x-tenant-id": await currentTenantId() },
+      headers: { "x-tenant-id": await currentShopId() },
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -239,7 +239,7 @@ async function fetchItem<T>(
 ): Promise<{ readonly status: number; readonly body: T | null }> {
   try {
     const response = await fetch(`${RUNTIME_API_URL}${path}`, {
-      headers: { "x-tenant-id": await currentTenantId(), ...extraHeaders },
+      headers: { "x-tenant-id": await currentShopId(), ...extraHeaders },
       cache: "no-store",
     });
     if (!response.ok) return { status: response.status, body: null };
@@ -264,7 +264,7 @@ async function postItem<T>(
     const response = await fetch(`${RUNTIME_API_URL}${path}`, {
       method: "POST",
       headers: {
-        "x-tenant-id": await currentTenantId(),
+        "x-tenant-id": await currentShopId(),
         "content-type": "application/json",
         ...extraHeaders,
       },

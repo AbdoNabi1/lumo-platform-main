@@ -1,0 +1,241 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as React from "react";
+
+const cacheCalls: { keyParts: string[]; tags: string[]; revalidate: number }[] = [];
+vi.mock("next/cache", () => ({
+  unstable_cache: (
+    fn: () => Promise<unknown>,
+    keyParts: string[],
+    opts: { tags: string[]; revalidate: number },
+  ) => {
+    cacheCalls.push({ keyParts, tags: opts.tags, revalidate: opts.revalidate });
+    return fn;
+  },
+}));
+const requestHeaders = new Map<string, string>();
+vi.mock("next/headers", () => ({
+  headers: async () => ({ get: (k: string) => requestHeaders.get(k) ?? null }),
+}));
+vi.mock("react", async (original) => ({
+  ...(await original<typeof React>()),
+  cache: <T>(fn: T) => fn,
+}));
+
+const { FALLBACK_SHELL, getPublicAccess, getStorefrontShell, sanitizeShell, shellTag } =
+  await import("./online-store");
+
+const liveBody = {
+  mode: "live",
+  previewExpiresAt: null,
+  branded: true,
+  storeName: "Nour",
+  defaultLocale: "en",
+  preferences: { homeTitle: { en: "Nour" }, homeMetaDescription: {}, shareImage: null },
+  brand: {
+    logo: {
+      image: { url: "https://cdn.test/l.png", alt: null, width: 400, height: 100 },
+      widthPx: 160,
+    },
+    favicon: null,
+    colors: {
+      background: "#ffffff",
+      foreground: "#111111",
+      primary: "#0055ff",
+      primaryForeground: "#ffffff",
+      accent: "#ffcc00",
+      accentForeground: "#000000",
+    },
+    typography: { headingFont: "cairo", bodyFont: "tajawal", baseSize: "large" },
+    corners: "pill",
+    social: { instagram: "https://instagram.com/nour" },
+  },
+  header: { sticky: true },
+  footer: { note: { ar: "أهلاً" }, showSocial: true },
+  locked: false,
+};
+const json = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+type Init = RequestInit & { headers: Record<string, string> };
+
+beforeEach(() => {
+  cacheCalls.length = 0;
+  requestHeaders.clear();
+  vi.stubEnv("STOREFRONT_HOST_ROUTING", "on");
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("getStorefrontShell", () => {
+  it("two shops, two cache entries: the shop id is in the key parts and the tag (Review Focus 2)", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => json(200, liveBody));
+    vi.stubGlobal("fetch", fetchMock);
+    requestHeaders.set("x-shop-id", "shop-a");
+    await getStorefrontShell(null);
+    requestHeaders.set("x-shop-id", "shop-b");
+    await getStorefrontShell(null);
+    expect(cacheCalls).toEqual([
+      { keyParts: ["online-store", "shop-a", "shell"], tags: ["os:shop-a"], revalidate: 60 },
+      { keyParts: ["online-store", "shop-b", "shell"], tags: ["os:shop-b"], revalidate: 60 },
+    ]);
+    const tenants = fetchMock.mock.calls.map((c) => (c[1] as Init).headers["x-tenant-id"]);
+    expect(tenants).toEqual(["shop-a", "shop-b"]);
+    expect(shellTag("shop-a")).toBe("os:shop-a");
+  });
+
+  it("previews are never cached and send x-preview-token", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      json(200, { ...liveBody, mode: "preview", previewExpiresAt: "2026-10-27T11:00:00.000Z" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    requestHeaders.set("x-shop-id", "shop-a");
+    const shell = await getStorefrontShell("tok");
+    expect(shell.mode).toBe("preview");
+    expect(shell.previewExpiresAt).toBe("2026-10-27T11:00:00.000Z");
+    expect(cacheCalls).toEqual([]);
+    const init = fetchMock.mock.calls[0]?.[1] as Init;
+    expect(init.headers["x-preview-token"]).toBe("tok");
+    expect(init.cache).toBe("no-store");
+  });
+
+  it("an expired preview shows the live shell with previewExpired", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) =>
+        (init.headers as Record<string, string>)["x-preview-token"] === undefined
+          ? json(200, liveBody)
+          : json(401, { code: "PREVIEW_INVALID" }),
+      ),
+    );
+    requestHeaders.set("x-shop-id", "shop-a");
+    const shell = await getStorefrontShell("old");
+    expect(shell).toMatchObject({ mode: "live", previewExpired: true, storeName: "Nour" });
+  });
+
+  it("a failing Runtime gives the fallback (never thrown, never cached)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, _init: RequestInit) => json(503, {})),
+    );
+    requestHeaders.set("x-shop-id", "shop-a");
+    expect(await getStorefrontShell(null)).toEqual(FALLBACK_SHELL);
+    expect(FALLBACK_SHELL).toMatchObject({
+      branded: false,
+      locked: false,
+      defaultLocale: "ar",
+      storeName: "",
+    });
+  });
+
+  it("every Runtime read carries a timeout signal", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => json(200, liveBody));
+    vi.stubGlobal("fetch", fetchMock);
+    requestHeaders.set("x-shop-id", "shop-a");
+    await getStorefrontShell(null);
+    await getStorefrontShell("tok");
+    expect(fetchMock.mock.calls).toHaveLength(2);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as Init).signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it("a hung Runtime falls back instead of hanging the layout (live, preview and access)", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(AbortSignal.abort());
+    const hung = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal;
+          if (signal === undefined || signal === null) return;
+          if (signal.aborted) reject(signal.reason);
+          signal.addEventListener("abort", () => reject(signal.reason));
+        }),
+    );
+    vi.stubGlobal("fetch", hung);
+    requestHeaders.set("x-shop-id", "shop-a");
+    expect(await getStorefrontShell(null)).toEqual(FALLBACK_SHELL);
+    expect(await getStorefrontShell("tok")).toEqual(FALLBACK_SHELL);
+    expect(await getPublicAccess()).toBeNull();
+    expect(timeout).toHaveBeenCalled();
+  });
+
+  it("a preview read that fails other than with 401 shows the live shell, not previewExpired", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        if ((init.headers as Record<string, string>)["x-preview-token"] !== undefined) {
+          throw new DOMException("timed out", "TimeoutError");
+        }
+        return json(200, liveBody);
+      }),
+    );
+    requestHeaders.set("x-shop-id", "shop-a");
+    const shell = await getStorefrontShell("tok");
+    expect(shell).toMatchObject({ mode: "live", previewExpired: false, storeName: "Nour" });
+  });
+});
+
+describe("getPublicAccess", () => {
+  it("reads the access state uncached and with the shop id", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      json(200, { locked: true, accessVersion: 3, message: { ar: "قريباً" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    requestHeaders.set("x-shop-id", "shop-a");
+    expect(await getPublicAccess()).toEqual({
+      locked: true,
+      accessVersion: 3,
+      message: { ar: "قريباً" },
+    });
+    const init = fetchMock.mock.calls[0]?.[1] as Init;
+    expect(init.headers["x-tenant-id"]).toBe("shop-a");
+    expect(init.cache).toBe("no-store");
+    expect(cacheCalls).toEqual([]);
+  });
+
+  it("is null when the Runtime answers badly", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, _init: RequestInit) => json(200, { locked: "yes" })),
+    );
+    requestHeaders.set("x-shop-id", "shop-a");
+    expect(await getPublicAccess()).toBeNull();
+  });
+});
+
+describe("sanitizeShell (defence in depth, spec 1.12)", () => {
+  it("keeps valid data", () => {
+    const shell = sanitizeShell(liveBody, "live");
+    expect(shell.brand.style.corners).toBe("pill");
+    expect(shell.brand.logo).toEqual({
+      image: { url: "https://cdn.test/l.png", alt: null, width: 400, height: 100 },
+      widthPx: 160,
+    });
+    expect(shell.brand.social).toEqual({ instagram: "https://instagram.com/nour" });
+  });
+
+  it("falls back on hostile or corrupt values", () => {
+    const shell = sanitizeShell(
+      {
+        ...liveBody,
+        defaultLocale: "fr",
+        brand: {
+          ...liveBody.brand,
+          logo: {
+            image: { url: "javascript:alert(1)", alt: 3, width: -1, height: "x" },
+            widthPx: 99999,
+          },
+          colors: { ...liveBody.brand.colors, background: "#000000;}</style><script>" },
+          social: { instagram: "http://insecure.example", myspace: "https://x" },
+        },
+      },
+      "live",
+    );
+    expect(shell.defaultLocale).toBe("ar");
+    expect(shell.brand.logo).toEqual({ image: null, widthPx: 140 });
+    expect(shell.brand.style.colors.background).toBe("#f8fafc");
+    expect(shell.brand.social).toEqual({});
+    expect(sanitizeShell("garbage", "live")).toEqual({ ...FALLBACK_SHELL });
+  });
+});

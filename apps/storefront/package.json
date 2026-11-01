@@ -17,6 +17,7 @@
     "@platform/config": "workspace:*",
     "@platform/design": "workspace:*",
     "@platform/regions": "workspace:*",
+    "@platform/storefront-content": "workspace:*",
     "@platform/tracking": "workspace:*",
     "@platform/types": "workspace:*",
     "@platform/ui": "workspace:*",

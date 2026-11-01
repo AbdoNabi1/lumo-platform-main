@@ -41,5 +41,5 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 
 export const config = {
   // Static assets and Caddy's TLS "ask" endpoint never need a shop.
-  matcher: ["/((?!_next/|favicon\\.ico|api/tls-allowed).*)"],
+  matcher: ["/((?!_next/|favicon\\.ico$|api/tls-allowed(?:/|$)|api/revalidate(?:/|$)).*)"],
 };

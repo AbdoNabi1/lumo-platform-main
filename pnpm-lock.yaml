@@ -644,6 +644,9 @@ importers:
       '@platform/regions':
         specifier: workspace:*
         version: link:../../packages/regions
+      '@platform/storefront-content':
+        specifier: workspace:*
+        version: link:../../packages/storefront-content
       '@platform/tracking':
         specifier: workspace:*
         version: link:../../packages/tracking

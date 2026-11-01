@@ -18,6 +18,7 @@ const config: NextConfig = {
     "@platform/config",
     "@platform/types",
     "@platform/tracking",
+    "@platform/storefront-content",
   ],
 };
 
