@@ -9,7 +9,7 @@ vi.mock("@/lib/request-locale", () => ({
   getRequestLocale: async () => "ar",
 }));
 vi.mock("geist/font/sans", () => ({ GeistSans: { variable: "geist" } }));
-const { default: RootLayout } = await import("./layout");
+const { default: RootLayout, generateMetadata } = await import("./layout");
 
 type Props = { readonly children?: ReactNode; readonly [key: string]: unknown };
 
@@ -43,5 +43,39 @@ describe("RootLayout (Ruling 6)", () => {
     expect(String(style?.props.children)).toMatch(/^:root:root:root\{--background:#/);
     const provider = tree.find((el) => el.type === ThemeProvider);
     expect(provider?.props).toHaveProperty("forcedTheme", "light");
+  });
+});
+
+describe("RootLayout metadata (preflight 18)", () => {
+  const secret: StorefrontShell = {
+    ...FALLBACK_SHELL,
+    storeName: "Nour",
+    preferences: {
+      homeTitle: { ar: "إطلاق سري" },
+      homeMetaDescription: { ar: "مصابيح لم تصدر بعد" },
+      shareImage: { url: "https://cdn.test/og.jpg", alt: null, width: 1200, height: 630 },
+    },
+  };
+
+  it("an open store shows its home title, description and share image", async () => {
+    current.shell = secret;
+    const text = JSON.stringify(await generateMetadata());
+    expect(text).toContain("إطلاق سري");
+    expect(text).toContain("og.jpg");
+  });
+
+  it("a locked store leaks none of them on any page reachable while locked (404, policies)", async () => {
+    current.shell = { ...secret, locked: true };
+    const meta = await generateMetadata();
+    const text = JSON.stringify(meta);
+    expect(text).not.toContain("إطلاق سري");
+    expect(text).not.toContain("مصابيح لم تصدر بعد");
+    expect(text).not.toContain("og.jpg");
+    expect(meta.robots).toEqual({ index: false, follow: false });
+  });
+
+  it("the owner's preview of a locked store keeps the full metadata (it is private anyway)", async () => {
+    current.shell = { ...secret, locked: true, mode: "preview" };
+    expect(JSON.stringify(await generateMetadata())).toContain("إطلاق سري");
   });
 });

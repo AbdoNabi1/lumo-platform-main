@@ -21,11 +21,18 @@ import "./globals.css";
 import { ThemeProvider } from "@platform/ui";
 import { dictionaryFor, directionFor } from "@/lib/i18n";
 import { getRequestLocale, getRequestShell } from "@/lib/request-locale";
-import { brandStyleFor, metadataFor } from "@/lib/shell-presentation";
+import { brandStyleFor, lockedMetadataFor, metadataFor } from "@/lib/shell-presentation";
 
+/**
+ * A locked store's pages that stay reachable (the gate, a 404, policies) never show its home title,
+ * description or share image (preflight 18); the owner's private preview keeps them.
+ */
 export async function generateMetadata(): Promise<Metadata> {
   const [shell, locale] = await Promise.all([getRequestShell(), getRequestLocale()]);
-  return metadataFor(shell, locale, dictionaryFor(locale));
+  const t = dictionaryFor(locale);
+  return shell.locked && shell.mode === "live"
+    ? lockedMetadataFor(shell, locale, t)
+    : metadataFor(shell, locale, t);
 }
 
 export default async function RootLayout({ children }: { readonly children: ReactNode }) {

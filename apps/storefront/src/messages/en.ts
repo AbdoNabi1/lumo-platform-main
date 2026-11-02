@@ -43,7 +43,7 @@ export const en = {
     label: "Password",
     submit: "Enter",
     incorrect: "Incorrect password",
-    tooMany: "Too many attempts, try again in {minutes} minutes",
+    tooMany: "Too many attempts on this store. Try again in {minutes} minutes.",
     unavailable: "Temporarily unavailable. Try again shortly.",
     ownerPrompt: "Are you the store owner?",
     ownerLink: "Log in to the admin",

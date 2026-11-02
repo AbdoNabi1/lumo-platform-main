@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button } from "@platform/ui";
 import { addToCart } from "@/app/(store)/cart/actions";
 import type { Dictionary } from "@/messages/en";
+import { usePreviewMode } from "./preview-mode";
 
 /**
  * The storefront's guest add-to-cart entry point (Task 9). Fixed quantity of 1 — no quantity
@@ -28,6 +29,7 @@ export function AddToCartButton({
   readonly sellableWhenOutOfStock?: boolean | undefined;
   readonly t: Dictionary;
 }) {
+  const preview = usePreviewMode();
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<"idle" | "ok" | "unavailable" | "choose-variant" | "error">(
     "idle",
@@ -54,12 +56,14 @@ export function AddToCartButton({
       <Button
         type="button"
         size="sm"
-        disabled={outOfStock || isPending}
+        disabled={outOfStock || isPending || preview.active}
         loading={isPending}
         onClick={onClick}
       >
         {isPending ? t.product.addingToCart : t.product.addToCart}
       </Button>
+      {/* Ruling 15: a preview is view-only (the middleware refuses its POSTs anyway). */}
+      {preview.active && <p className="text-muted-foreground text-xs">{t.preview.unavailable}</p>}
       {result === "ok" && (
         <p className="text-muted-foreground text-xs">
           {t.product.addedToCart}{" "}

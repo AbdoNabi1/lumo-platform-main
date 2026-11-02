@@ -97,6 +97,11 @@ spec:
 # the web edge and is unscoped here). The headers below are the subset that's safe and correct for
 # any HTML surface regardless of its script/style needs; Content-Security-Policy is intentionally
 # left unset rather than fabricated, pending that dedicated nonce-wiring work.
+#
+# No X-Frame-Options or Referrer-Policy here: the storefront middleware owns both. It sends
+# `frame-ancestors 'self'` and `strict-origin-when-cross-origin` on every page, and for an owner's
+# preview it allows the admin to frame the page and sends no referrer. An Ingress value would
+# override that and break the theme editor's preview frame (online store part 1, preflight 25).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -115,8 +120,6 @@ metadata:
     nginx.ingress.kubernetes.io/hsts-preload: "true"
     nginx.ingress.kubernetes.io/configuration-snippet: |
       more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
       more_set_headers "Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=()";
       more_clear_headers "Server";
 spec:

@@ -5,7 +5,7 @@ import { CartView } from "@/components/cart-view";
 import { StatePanel } from "@/components/state-panel";
 import { GUEST_SESSION_COOKIE, resolveCurrentCart } from "@/lib/cart";
 import { dictionaryFor } from "@/lib/i18n";
-import { getRequestLocale } from "@/lib/request-locale";
+import { getPreviewToken, getRequestLocale } from "@/lib/request-locale";
 
 /**
  * Cart page (Phase 17.1 — Guest Cart Foundation). Renders the shopper's OWN current cart, resolved
@@ -22,6 +22,17 @@ export default async function CartPage() {
   const jar = await cookies();
   const locale = await getRequestLocale();
   const t = dictionaryFor(locale);
+  // Ruling 15: a preview is view-only, and the owner's own cart is not part of it.
+  if ((await getPreviewToken()) !== null)
+    return (
+      <main className="mx-auto flex max-w-2xl flex-col gap-6 p-8">
+        <StatePanel
+          icon={<ShoppingCartIcon className="size-6" />}
+          title={t.preview.unavailable}
+          body={t.preview.banner}
+        />
+      </main>
+    );
   const sessionRef = jar.get(GUEST_SESSION_COOKIE)?.value;
 
   const result = await resolveCurrentCart(sessionRef);

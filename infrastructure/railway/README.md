@@ -39,7 +39,7 @@ not through a shell — so the `cd` needs `sh -c`. The image defaults need neith
 their `WORKDIR`.
 
 **Health check.** With no config file, set **Healthcheck Path** on the service if you want Railway to
-wait for one before switching traffic: `/healthz` for the API and the worker, `/` for the storefront.
+wait for one before switching traffic: `/healthz` for the API and the worker, `/api/healthz` for the storefront.
 
 **`preDeployCommand` never ran** on this project while a root config carried one (`prisma migrate
 deploy`), and three migrations stayed unapplied through several deploys while the API reported

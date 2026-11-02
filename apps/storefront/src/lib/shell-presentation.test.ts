@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FALLBACK_SHELL, type StorefrontShell } from "./online-store";
-import { brandStyleFor, logoSize, metadataFor } from "./shell-presentation";
+import { brandStyleFor, lockedMetadataFor, logoSize, metadataFor } from "./shell-presentation";
 import { en } from "@/messages/en";
 import { ar } from "@/messages/ar";
 
@@ -101,6 +101,50 @@ describe("metadataFor", () => {
     expect(
       metadataFor({ ...branded, locked: true, mode: "preview" }, "en", en).robots,
     ).toBeUndefined();
+  });
+});
+
+describe("lockedMetadataFor (preflight 18, Review Focus 5)", () => {
+  it("a locked store's link preview shows the store name and 'Opening soon' only", () => {
+    const meta = lockedMetadataFor({ ...branded, locked: true }, "en", en);
+    expect(meta).toEqual({
+      title: "Nour",
+      description: en.password.defaultMessage,
+      openGraph: {
+        siteName: "Nour",
+        locale: "en_US",
+        title: "Nour",
+        description: en.password.defaultMessage,
+      },
+      twitter: { card: "summary", title: "Nour", description: en.password.defaultMessage },
+      icons: {
+        icon: [{ url: "https://cdn.test/f.png" }],
+        apple: [{ url: "https://cdn.test/f.png" }],
+      },
+      robots: { index: false, follow: false },
+    });
+    const text = JSON.stringify(meta);
+    expect(text).not.toContain("متجر النور");
+    expect(text).not.toContain("Hand-made lamps");
+    expect(text).not.toContain("og.jpg");
+  });
+
+  it("without a store name: the page title, in the request locale, and no site name", () => {
+    const meta = lockedMetadataFor({ ...FALLBACK_SHELL, locked: true }, "ar", ar);
+    expect(meta.title).toBe(ar.password.title);
+    expect(meta.description).toBe(ar.password.defaultMessage);
+    expect(meta.openGraph).toEqual({
+      locale: "ar_EG",
+      title: ar.password.title,
+      description: ar.password.defaultMessage,
+    });
+    expect(meta.icons).toBeUndefined();
+  });
+
+  it("keeps a hostile store name as plain data", () => {
+    const hostile = "</title><script>alert(1)</script>%s";
+    const meta = lockedMetadataFor({ ...FALLBACK_SHELL, storeName: hostile }, "en", en);
+    expect(meta.title).toBe(hostile);
   });
 });
 

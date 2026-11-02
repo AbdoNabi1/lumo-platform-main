@@ -12,6 +12,7 @@ import {
 } from "@platform/ui";
 import { setLocale } from "@/app/actions";
 import { LOCALES, type Locale } from "@/lib/i18n";
+import { usePreviewMode } from "./preview-mode";
 
 const NATIVE_NAME: Readonly<Record<Locale, string>> = {
   en: "English",
@@ -34,6 +35,7 @@ export function LocaleSwitch({
   readonly disabled?: boolean;
 }) {
   const [pending, startTransition] = React.useTransition();
+  const preview = usePreviewMode();
 
   return (
     <DropdownMenu>
@@ -42,7 +44,7 @@ export function LocaleSwitch({
           variant="ghost"
           size="icon"
           aria-label={label}
-          disabled={pending || disabled === true}
+          disabled={pending || disabled === true || preview.active}
         >
           <LanguagesIcon aria-hidden="true" />
         </Button>

@@ -48,6 +48,32 @@ export function metadataFor(shell: StorefrontShell, locale: Locale, t: Dictionar
   };
 }
 
+/**
+ * Preflight 18 / Review Focus 5: what a locked store may tell a link preview or a crawler: its name
+ * and "Opening soon", nothing else (no home title, description or share image). Never indexed.
+ */
+export function lockedMetadataFor(shell: StorefrontShell, locale: Locale, t: Dictionary): Metadata {
+  const name = shell.storeName.trim();
+  const title = name !== "" ? name : t.password.title;
+  const description = t.password.defaultMessage;
+  const favicon = shell.brand.favicon;
+  return {
+    title,
+    description,
+    openGraph: {
+      ...(name === "" ? {} : { siteName: name }),
+      locale: locale === "ar" ? "ar_EG" : "en_US",
+      title,
+      description,
+    },
+    twitter: { card: "summary", title, description },
+    ...(favicon === null
+      ? {}
+      : { icons: { icon: [{ url: favicon.url }], apple: [{ url: favicon.url }] } }),
+    robots: { index: false, follow: false },
+  };
+}
+
 export function logoSize(
   image: ShellImage,
   widthPx: number,

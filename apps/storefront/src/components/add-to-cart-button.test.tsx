@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { en } from "@/messages/en";
 import type { CartActionResult } from "@/app/(store)/cart/actions";
 import { AddToCartButton } from "./add-to-cart-button";
+import { PreviewModeProvider } from "./preview-mode";
 
 const addToCart =
   vi.fn<
@@ -61,5 +62,27 @@ describe("AddToCartButton (Task 9 entry point)", () => {
     expect(button).toBeDisabled();
     fireEvent.click(button);
     expect(addToCart).not.toHaveBeenCalled();
+  });
+
+  it("is disabled with a note in preview (view-only)", () => {
+    render(
+      <PreviewModeProvider token="tok">
+        <AddToCartButton productId="p" outOfStock={false} t={en} />
+      </PreviewModeProvider>,
+    );
+    expect(screen.getByRole("button")).toBeDisabled();
+    expect(screen.getByText(en.preview.unavailable)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button"));
+    expect(addToCart).not.toHaveBeenCalled();
+  });
+
+  it("stays enabled outside a preview (a null token)", () => {
+    render(
+      <PreviewModeProvider token={null}>
+        <AddToCartButton productId="p" outOfStock={false} t={en} />
+      </PreviewModeProvider>,
+    );
+    expect(screen.getByRole("button")).toBeEnabled();
+    expect(screen.queryByText(en.preview.unavailable)).toBeNull();
   });
 });

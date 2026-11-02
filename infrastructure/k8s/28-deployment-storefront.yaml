@@ -4,11 +4,9 @@
 # structure (26-deployment-collector.yaml) exactly, which itself mirrors the runtime Deployments
 # (20-deployment-api.yaml): non-root, dropped capabilities, read-only rootfs, topology spread, PDB.
 #
-# Probes use `/` rather than `/healthz`/`/readyz`: apps/storefront has no API routes (Sprint 0.1
-# foundation shell — only layout.tsx + page.tsx), so no dedicated health endpoint exists yet. This
-# is not an invented shortcut — it is the SAME convention the image itself already uses (web.
-# Dockerfile's own HEALTHCHECK and docker-compose.yml's `web` service healthcheck both probe `/`).
-# Revisit once the storefront gains real routes and a dedicated health endpoint is worth adding.
+# Probes use `/api/healthz` (a static 200 outside the middleware). They used `/`, which now answers
+# 302 for a password-locked store and 503 while the Runtime is down, so a healthy pod would be
+# restarted (online store part 1, preflight 27). The image HEALTHCHECK and docker-compose match.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -82,21 +80,21 @@ spec:
                 name: morbeh-storefront-config
           startupProbe:
             httpGet:
-              path: /
+              path: /api/healthz
               port: http
             periodSeconds: 3
             timeoutSeconds: 3
             failureThreshold: 30
           livenessProbe:
             httpGet:
-              path: /
+              path: /api/healthz
               port: http
             periodSeconds: 15
             timeoutSeconds: 3
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /
+              path: /api/healthz
               port: http
             periodSeconds: 10
             timeoutSeconds: 5
