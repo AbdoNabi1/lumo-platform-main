@@ -17,14 +17,15 @@ export function metadataFor(shell: StorefrontShell, locale: Locale, t: Dictionar
   const share = shell.preferences.shareImage;
   const favicon = shell.brand.favicon;
   return {
-    title: { default: title, template: name !== "" ? `%s | ${name}` : "%s" },
+    // Next substitutes every %s in a template, so the name must not bring its own.
+    title: { default: title, template: name !== "" ? `%s | ${name.replaceAll("%", "")}` : "%s" },
     ...(description === null ? {} : { description }),
     openGraph: {
       ...(name === "" ? {} : { siteName: name }),
       locale: locale === "ar" ? "ar_EG" : "en_US",
       type: "website",
-      title,
-      ...(description === null ? {} : { description }),
+      // No title or description: Next fills og:title and og:description per page from the resolved
+      // title and description, so a child page does not repeat the home page's (review M-6).
       ...(share === null
         ? {}
         : {

@@ -7,7 +7,7 @@ import {
   priceOf,
 } from "@/lib/catalog";
 import { dictionaryFor } from "@/lib/i18n";
-import { getRequestLocale } from "@/lib/request-locale";
+import { getRequestLocale, getRequestShell } from "@/lib/request-locale";
 import { getCategories } from "@/lib/runtime-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 
@@ -17,8 +17,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
  * same as Sprint 0.1's original smoke test.
  */
 export default async function Home() {
-  const locale = await getRequestLocale();
+  const [locale, shell] = await Promise.all([getRequestLocale(), getRequestShell()]);
   const t = dictionaryFor(locale);
+  const storeName = shell.storeName.trim();
 
   const [productsResult, collectionsResult, categories, availabilityBook] = await Promise.all([
     listPublishedProducts(),
@@ -29,6 +30,10 @@ export default async function Home() {
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 p-8">
+      {/* The page's one h1 (the cards below start at h3/h2): the shop's name, for screen readers. */}
+      <h1 className="sr-only">
+        <bdi dir="auto">{storeName !== "" ? storeName : t.home.title}</bdi>
+      </h1>
       <Card>
         <CardHeader>
           <CardTitle>{t.home.title}</CardTitle>

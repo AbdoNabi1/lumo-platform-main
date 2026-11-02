@@ -98,6 +98,10 @@ const size = (value: unknown): number | null =>
     ? value
     : null;
 
+const isDevLocal = (url: URL): boolean =>
+  process.env.NODE_ENV === "development" &&
+  ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+
 function imageOf(value: unknown): ShellImage | null {
   const o = obj(value);
   const url = o["url"];
@@ -108,7 +112,9 @@ function imageOf(value: unknown): ShellImage | null {
   } catch {
     return null;
   }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+  // https only (an http image is mixed content), except local media in development.
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isDevLocal(parsed)))
+    return null;
   return {
     url: parsed.toString(),
     alt: typeof o["alt"] === "string" ? clip(o["alt"], ALT_MAX) : null,

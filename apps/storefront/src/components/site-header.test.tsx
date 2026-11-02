@@ -60,4 +60,64 @@ describe("SiteHeader (spec 1.12)", () => {
     );
     expect(document.querySelector('input[name="preview"]')).toHaveValue("tok");
   });
+
+  it("fits a 375 px screen: wraps below sm with the search on its own row, logo capped (I-1)", () => {
+    render(
+      <SiteHeader
+        t={en}
+        locale="en"
+        previewToken={null}
+        shell={{
+          ...FALLBACK_SHELL,
+          storeName: "Nour",
+          brand: { ...FALLBACK_SHELL.brand, logo: { image: logo, widthPx: 320 } },
+        }}
+      />,
+    );
+    const header = screen.getByRole("banner");
+    expect(header).toHaveClass("flex-wrap", "sm:flex-nowrap");
+    const search = screen.getByRole("search");
+    expect(search).toHaveClass("order-last", "w-full", "sm:order-none", "sm:w-auto", "sm:flex-1");
+    const home = screen.getByRole("link", { name: "Nour" });
+    expect(home).toHaveClass("max-w-[45vw]", "min-w-0", "shrink");
+    expect(home).not.toHaveClass("shrink-0");
+    // The inline width is only a preference: max-w-full scales it down inside the capped link.
+    expect(screen.getByRole("img", { name: "Nour" })).toHaveClass("max-w-full");
+  });
+
+  it("labels a logo with no store name as the shop's home, not the platform brand (M-7)", () => {
+    render(
+      <SiteHeader
+        t={en}
+        locale="en"
+        previewToken={null}
+        shell={{
+          ...FALLBACK_SHELL,
+          brand: { ...FALLBACK_SHELL.brand, logo: { image: logo, widthPx: 140 } },
+        }}
+      />,
+    );
+    expect(screen.getByRole("img", { name: en.nav.home })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: en.nav.home })).toHaveAttribute("href", "/");
+    expect(screen.queryByText(en.brand)).toBeNull();
+  });
+
+  it("renders a hostile store name as inert, bidi-isolated text (M-3)", () => {
+    const rlo = String.fromCodePoint(0x202e);
+    const hostile = `</style><script>alert(1)</script>${rlo}evil`;
+    render(
+      <SiteHeader
+        t={en}
+        locale="en"
+        previewToken={null}
+        shell={{ ...FALLBACK_SHELL, storeName: hostile }}
+      />,
+    );
+    expect(document.querySelector("script")).toBeNull();
+    expect(document.querySelector("style")).toBeNull();
+    const name = screen.getByRole("link", { name: hostile.trim() });
+    const isolate = name.querySelector("bdi");
+    expect(isolate).toHaveAttribute("dir", "auto");
+    expect(isolate?.textContent).toBe(hostile);
+  });
 });

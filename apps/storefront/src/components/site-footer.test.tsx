@@ -50,4 +50,24 @@ describe("SiteFooter (spec 1.12)", () => {
     expect(screen.getByText(/©/)).toHaveTextContent(arabicYear);
     expect(screen.getByText("بدعم من مربح")).toBeInTheDocument();
   });
+
+  it("renders a hostile store name and note as inert, bidi-isolated text (M-3)", () => {
+    const rlo = String.fromCodePoint(0x202e);
+    const hostile = `</style><script>alert(1)</script>${rlo}evil`;
+    render(
+      <SiteFooter
+        t={en}
+        locale="en"
+        shell={{
+          ...FALLBACK_SHELL,
+          storeName: hostile,
+          footer: { note: { en: hostile }, showSocial: true },
+        }}
+      />,
+    );
+    expect(document.querySelector("script")).toBeNull();
+    expect(document.querySelector("style")).toBeNull();
+    const isolated = [...document.querySelectorAll("bdi")].filter((b) => b.textContent === hostile);
+    expect(isolated).toHaveLength(3); // name, note, ©
+  });
 });

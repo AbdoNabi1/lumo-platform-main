@@ -31,20 +31,21 @@ export function SiteHeader({
   readonly previewToken: string | null;
 }) {
   const name = shell.storeName.trim();
-  const label = name !== "" ? name : t.brand;
   const logo = shell.brand.logo.image;
+  // A logo is the shop's own mark: without a name it reads as "Home", never as the platform brand.
+  const label = name !== "" ? name : logo === null ? t.brand : t.nav.home;
   const size = logo === null ? null : logoSize(logo, shell.brand.logo.widthPx);
   return (
-    <header className="flex items-center justify-between gap-3">
+    // Below sm the search takes its own full-width row and the logo is capped, so a 375 px screen
+    // never scrolls sideways (review I-1).
+    <header className="flex flex-wrap items-center justify-between gap-3 sm:flex-nowrap">
       <Link
         href={withPreview("/", previewToken)}
-        className="min-w-0 shrink-0"
+        className="min-w-0 max-w-[45vw] shrink"
         aria-label={logo === null ? undefined : label}
       >
         {logo !== null && size !== null ? (
-          // A plain <img>, not next/image: the media origin is the merchant's bucket, and the height
-          // may be unknown (next/image requires one). <picture> is the form @next/next/no-img-element
-          // accepts; a disable comment would fail the root ESLint config the pre-commit hook runs.
+          // <picture>: the lint-accepted plain <img> (no @next disable; the root hook config lacks it).
           <picture>
             <img
               src={logo.url}
@@ -61,7 +62,12 @@ export function SiteHeader({
           </bdi>
         )}
       </Link>
-      <form action="/search" method="get" role="search" className="min-w-0 flex-1">
+      <form
+        action="/search"
+        method="get"
+        role="search"
+        className="order-last w-full min-w-0 sm:order-none sm:w-auto sm:flex-1"
+      >
         <Label htmlFor="site-search" className="sr-only">
           {t.nav.searchLabel}
         </Label>

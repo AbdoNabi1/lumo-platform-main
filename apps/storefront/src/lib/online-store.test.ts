@@ -383,4 +383,26 @@ describe("sanitizeShell (defence in depth, spec 1.12)", () => {
     expect(shell.brand.social).toEqual({});
     expect(sanitizeShell("garbage", "live")).toEqual({ ...FALLBACK_SHELL });
   });
+
+  it("drops http: images (mixed content), except localhost media in development", () => {
+    const withLogo = (url: string) =>
+      sanitizeShell(
+        {
+          ...liveBody,
+          brand: { ...liveBody.brand, logo: { image: { url, alt: null }, widthPx: 160 } },
+        },
+        "live",
+      ).brand.logo.image?.url ?? null;
+    expect(withLogo("http://cdn.test/l.png")).toBeNull();
+    expect(withLogo("http://localhost:9000/l.png")).toBeNull(); // NODE_ENV is "test" here
+    vi.stubEnv("NODE_ENV", "development");
+    try {
+      expect(withLogo("http://localhost:9000/l.png")).toBe("http://localhost:9000/l.png");
+      expect(withLogo("http://127.0.0.1:9000/l.png")).toBe("http://127.0.0.1:9000/l.png");
+      expect(withLogo("http://cdn.test/l.png")).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(withLogo("https://cdn.test/l.png")).toBe("https://cdn.test/l.png");
+  });
 });

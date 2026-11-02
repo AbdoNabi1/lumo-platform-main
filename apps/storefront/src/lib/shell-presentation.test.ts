@@ -58,12 +58,12 @@ describe("metadataFor", () => {
   it("sets description, Open Graph with the share image, Twitter and icons", () => {
     const meta = metadataFor(branded, "ar", ar);
     expect(meta.description).toBe("Hand-made lamps");
+    // No og:title / og:description here: Next fills them per page from the resolved title and
+    // description, so a product page shares its own title, not the home one (review M-6).
     expect(meta.openGraph).toEqual({
       siteName: "Nour",
       locale: "ar_EG",
       type: "website",
-      title: "متجر النور",
-      description: "Hand-made lamps",
       images: [{ url: "https://cdn.test/og.jpg", width: 1200, height: 630, alt: "Lamps" }],
     });
     expect(meta.twitter).toEqual({ card: "summary_large_image" });
@@ -78,11 +78,19 @@ describe("metadataFor", () => {
     const meta = metadataFor(FALLBACK_SHELL, "ar", ar);
     expect(meta.icons).toBeUndefined();
     expect(meta.description).toBeUndefined();
-    expect(meta.openGraph).toEqual({
-      locale: "ar_EG",
-      type: "website",
-      title: "المتجر",
+    expect(meta.openGraph).toEqual({ locale: "ar_EG", type: "website" });
+  });
+
+  it("keeps a hostile or percent-bearing store name as plain data (M-3, M-6)", () => {
+    const rlo = String.fromCodePoint(0x202e);
+    const hostile = `</style><script>alert(1)</script>${rlo}100%s`;
+    const meta = metadataFor({ ...FALLBACK_SHELL, storeName: hostile }, "en", en);
+    expect(meta.title).toEqual({
+      default: hostile,
+      // Next replaces every %s in the template; the name must not add one.
+      template: `%s | </style><script>alert(1)</script>${rlo}100s`,
     });
+    expect(meta.openGraph).toMatchObject({ siteName: hostile });
   });
 
   it("noindexes a locked store, but not its preview", () => {
