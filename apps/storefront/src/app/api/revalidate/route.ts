@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { revalidateTag } from "next/cache";
+import { shellTag } from "@/lib/shell-tag";
 import { storefrontSecrets } from "@/lib/storefront-env";
 
 const SHOP_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -22,6 +23,6 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof shopId !== "string" || !SHOP_ID.test(shopId)) {
     return Response.json({ code: "INVALID_SHOP" }, { status: 400 });
   }
-  revalidateTag(`os:${shopId}`);
+  revalidateTag(shellTag(shopId));
   return Response.json({ revalidated: true });
 }
