@@ -9,7 +9,7 @@ import {
   removeFromWishlist,
   shareWishlistProduct,
   type WishlistActionResult,
-} from "@/app/account/wishlist/actions";
+} from "@/app/(store)/account/wishlist/actions";
 import type { ResolvedWishlistLine } from "@/lib/wishlist";
 import type { Dictionary } from "@/messages/en";
 
@@ -82,9 +82,7 @@ export function WishlistView({
                     {line.name}
                   </Link>
                 ) : (
-                  <span className="text-muted-foreground text-sm">
-                    {t.wishlist.unknownProduct}
-                  </span>
+                  <span className="text-muted-foreground text-sm">{t.wishlist.unknownProduct}</span>
                 )}
                 <span className="text-muted-foreground text-xs">
                   {t.wishlist.addedOn} {line.addedAt.slice(0, 10)}

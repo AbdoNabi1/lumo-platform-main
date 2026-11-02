@@ -5,9 +5,10 @@ import { en, type Dictionary } from "@/messages/en";
 export const LOCALES = ["en", "ar"] as const;
 export type Locale = (typeof LOCALES)[number];
 
-export const DEFAULT_LOCALE: Locale = "en";
+/** Decision 11: Arabic when the shop has no preference. Pages use getRequestLocale(), not this. */
+export const DEFAULT_LOCALE: Locale = "ar";
 
-/** Cookie the locale is persisted in. Read in the root layout, written by a server action. */
+/** Cookie the locale is persisted in. Read by `getRequestLocale()`, written by a server action. */
 export const LOCALE_COOKIE = "morbeh-storefront-locale";
 
 const DICTIONARIES: Readonly<Record<Locale, Dictionary>> = { en, ar };

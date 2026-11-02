@@ -13,7 +13,12 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@fontsource/almarai": "^5.3.0",
+    "@fontsource/amiri": "^5.3.0",
+    "@fontsource/cairo": "^5.3.0",
     "@fontsource/ibm-plex-sans-arabic": "^5.1.0",
+    "@fontsource/readex-pro": "^5.3.0",
+    "@fontsource/tajawal": "^5.3.0",
     "@platform/config": "workspace:*",
     "@platform/design": "workspace:*",
     "@platform/regions": "workspace:*",

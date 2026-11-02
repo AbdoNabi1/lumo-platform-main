@@ -1,0 +1,79 @@
+import { cookies } from "next/headers";
+import Link from "next/link";
+import { AlertTriangleIcon, ArrowLeftIcon } from "lucide-react";
+import { CheckoutView } from "@/components/checkout-view";
+import { StatePanel } from "@/components/state-panel";
+import { CHECKOUT_SESSION_COOKIE, GUEST_SESSION_COOKIE } from "@/lib/cart";
+import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
+import { dictionaryFor } from "@/lib/i18n";
+import { getRequestLocale } from "@/lib/request-locale";
+import { getCheckoutSession, getPaymentMethods, getShippableCountries } from "@/lib/runtime-api";
+
+/**
+ * Checkout page (Phase 2 — Public checkout). Resolves the caller's OWN active checkout session
+ * from two HttpOnly cookies — `GUEST_SESSION_COOKIE` (the ownership proof) and
+ * `CHECKOUT_SESSION_COOKIE` (which session, set by `startCheckout` in `app/checkout/actions.ts`) —
+ * the same "a Server Component only ever READS a cookie" split `app/cart/page.tsx` uses. Missing
+ * either cookie, or a 404/network failure resolving the session, all render the same recoverable
+ * "back to cart" state (Task 5's rule: an ownership failure is not an error page) — this is exactly
+ * what an expired or cleared checkout looks like, and a shopper should just start again from
+ * `/cart`.
+ *
+ * Mutation controls (the stepper) live in `CheckoutView`, a Client Component calling the Server
+ * Actions in `app/checkout/actions.ts` directly.
+ */
+export default async function CheckoutPage() {
+  const jar = await cookies();
+  const locale = await getRequestLocale();
+  const t = dictionaryFor(locale);
+
+  const sessionRef = jar.get(GUEST_SESSION_COOKIE)?.value;
+  const checkoutSessionId = jar.get(CHECKOUT_SESSION_COOKIE)?.value;
+
+  const session =
+    sessionRef !== undefined && checkoutSessionId !== undefined
+      ? await getCheckoutSession(checkoutSessionId, sessionRef)
+      : null;
+
+  // A signed-in customer's contact email is pre-filled and applied without re-entry. Resolved
+  // server-side from their opaque session cookie (a real round trip) — "error"/"signed-out" both
+  // simply mean "ask for an email", never a reason to block checkout.
+  const customer = await resolveCurrentCustomer(jar.get(CUSTOMER_SESSION_COOKIE)?.value);
+  const accountEmail = customer.status === "signed-in" ? customer.customer.email : null;
+
+  // What this merchant offers, in API order (no priority). Read on every render so a merchant who
+  // disables a method is reflected immediately; `null` (unreachable) fails closed at the payment step.
+  const paymentMethods = await getPaymentMethods();
+  // The countries the shop's shipping zones cover (Plan 3C); `null` (unreachable) fails closed in the form.
+  const shippableCountries = await getShippableCountries();
+
+  return (
+    <main className="mx-auto flex max-w-5xl flex-col gap-6 p-8">
+      <Link href="/cart" className="text-muted-foreground inline-flex items-center gap-1.5 text-sm">
+        <ArrowLeftIcon aria-hidden="true" className="size-4 rtl:rotate-180" />
+        {t.checkout.backToCart}
+      </Link>
+
+      {session === null ||
+      session.status < 200 ||
+      session.status >= 300 ||
+      session.body === null ? (
+        <StatePanel
+          icon={<AlertTriangleIcon className="size-6" />}
+          title={t.checkout.ownershipErrorTitle}
+          body={t.checkout.ownershipErrorBody}
+          action={{ href: "/cart", label: t.checkout.backToCart }}
+        />
+      ) : (
+        <CheckoutView
+          session={session.body}
+          t={t}
+          locale={locale}
+          accountEmail={accountEmail}
+          paymentMethods={paymentMethods}
+          shippableCountries={shippableCountries}
+        />
+      )}
+    </main>
+  );
+}

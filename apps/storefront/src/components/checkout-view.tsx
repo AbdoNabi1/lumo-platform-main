@@ -16,7 +16,7 @@ import {
   setContactEmail,
   setShippingAddress,
   type CheckoutActionResult,
-} from "@/app/checkout/actions";
+} from "@/app/(store)/checkout/actions";
 import { hasProvinces, PROVINCES } from "@platform/regions";
 import {
   countryName,

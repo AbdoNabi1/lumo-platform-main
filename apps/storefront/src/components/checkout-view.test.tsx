@@ -9,7 +9,7 @@ import type {
   CheckoutActionResult,
   PaymentInitiationResult,
   ShippingQuoteActionResult,
-} from "@/app/checkout/actions";
+} from "@/app/(store)/checkout/actions";
 import { CheckoutView } from "./checkout-view";
 
 /** Every action call, in order, so a test can assert the exact sequence a submit runs. */
@@ -27,7 +27,7 @@ const requestTax = vi.fn<(id: string) => Promise<CheckoutActionResult>>();
 const completeCheckout = vi.fn<(id: string) => Promise<CheckoutActionResult>>();
 const initiatePayment = vi.fn<(id: string) => Promise<PaymentInitiationResult>>();
 
-vi.mock("@/app/checkout/actions", () => ({
+vi.mock("@/app/(store)/checkout/actions", () => ({
   setContactEmail: (id: string, email: string) => setContactEmail(id, email),
   setShippingAddress: (id: string, address: unknown) => setShippingAddress(id, address),
   requestShippingQuote: (id: string) => requestShippingQuote(id),

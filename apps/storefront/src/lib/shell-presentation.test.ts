@@ -1,0 +1,110 @@
+import { describe, expect, it } from "vitest";
+import { FALLBACK_SHELL, type StorefrontShell } from "./online-store";
+import { brandStyleFor, logoSize, metadataFor } from "./shell-presentation";
+import { en } from "@/messages/en";
+import { ar } from "@/messages/ar";
+
+const branded: StorefrontShell = {
+  ...FALLBACK_SHELL,
+  branded: true,
+  storeName: "Nour",
+  preferences: {
+    homeTitle: { ar: "متجر النور" },
+    homeMetaDescription: { en: "Hand-made lamps" },
+    shareImage: { url: "https://cdn.test/og.jpg", alt: "Lamps", width: 1200, height: 630 },
+  },
+  brand: {
+    ...FALLBACK_SHELL.brand,
+    favicon: { url: "https://cdn.test/f.png", alt: null, width: 64, height: 64 },
+  },
+};
+
+describe("brandStyleFor", () => {
+  it("emits nothing for an unbranded shop (today's look, dark mode kept)", () => {
+    expect(brandStyleFor(FALLBACK_SHELL)).toBeNull();
+  });
+
+  it("emits the validated sheet for a branded shop; a corrupt brand renders the default palette (Review Focus 1)", () => {
+    const corrupt = {
+      ...branded,
+      brand: {
+        ...branded.brand,
+        style: { colors: { background: "#000000;}</style><script>" } } as never,
+      },
+    };
+    const css = brandStyleFor(corrupt);
+    expect(css).toMatch(/^:root:root:root\{/);
+    expect(css).toContain("--background:#f8fafc");
+    expect(css).not.toContain("<");
+  });
+});
+
+describe("metadataFor", () => {
+  it("titles with the home title in the request locale, else the other, with the store-name template", () => {
+    expect(metadataFor(branded, "en", en).title).toEqual({
+      default: "متجر النور",
+      template: "%s | Nour",
+    });
+    expect(metadataFor(FALLBACK_SHELL, "en", en).title).toEqual({
+      default: "Store",
+      template: "%s",
+    });
+    expect(metadataFor({ ...FALLBACK_SHELL, storeName: "Nour" }, "ar", ar).title).toEqual({
+      default: "Nour",
+      template: "%s | Nour",
+    });
+  });
+
+  it("sets description, Open Graph with the share image, Twitter and icons", () => {
+    const meta = metadataFor(branded, "ar", ar);
+    expect(meta.description).toBe("Hand-made lamps");
+    expect(meta.openGraph).toEqual({
+      siteName: "Nour",
+      locale: "ar_EG",
+      type: "website",
+      title: "متجر النور",
+      description: "Hand-made lamps",
+      images: [{ url: "https://cdn.test/og.jpg", width: 1200, height: 630, alt: "Lamps" }],
+    });
+    expect(meta.twitter).toEqual({ card: "summary_large_image" });
+    expect(meta.icons).toEqual({
+      icon: [{ url: "https://cdn.test/f.png" }],
+      apple: [{ url: "https://cdn.test/f.png" }],
+    });
+    expect(meta.robots).toBeUndefined();
+  });
+
+  it("leaves out images, icons and description when the shell has none (a media failure is null)", () => {
+    const meta = metadataFor(FALLBACK_SHELL, "ar", ar);
+    expect(meta.icons).toBeUndefined();
+    expect(meta.description).toBeUndefined();
+    expect(meta.openGraph).toEqual({
+      locale: "ar_EG",
+      type: "website",
+      title: "المتجر",
+    });
+  });
+
+  it("noindexes a locked store, but not its preview", () => {
+    expect(metadataFor({ ...branded, locked: true }, "en", en).robots).toEqual({
+      index: false,
+      follow: false,
+    });
+    expect(
+      metadataFor({ ...branded, locked: true, mode: "preview" }, "en", en).robots,
+    ).toBeUndefined();
+  });
+});
+
+describe("logoSize", () => {
+  it("keeps the aspect ratio at the chosen width, and leaves height open when unknown", () => {
+    expect(logoSize({ url: "u", alt: null, width: 800, height: 100 }, 160)).toEqual({
+      width: 160,
+      height: 20,
+    });
+    expect(logoSize({ url: "u", alt: null, width: null, height: null }, 160)).toEqual({
+      width: 160,
+      height: undefined,
+    });
+  });
+});

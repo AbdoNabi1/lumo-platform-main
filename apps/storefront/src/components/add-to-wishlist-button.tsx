@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { HeartIcon } from "lucide-react";
 import { Button } from "@platform/ui";
-import { addToWishlist } from "@/app/account/wishlist/actions";
+import { addToWishlist } from "@/app/(store)/account/wishlist/actions";
 import type { Dictionary } from "@/messages/en";
 
 /**
@@ -67,7 +67,9 @@ export function AddToWishlistButton({
           </Link>
         </p>
       )}
-      {result === "error" && <p className="text-destructive text-xs">{t.wishlist.errors.network}</p>}
+      {result === "error" && (
+        <p className="text-destructive text-xs">{t.wishlist.errors.network}</p>
+      )}
     </div>
   );
 }

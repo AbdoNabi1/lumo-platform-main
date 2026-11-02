@@ -439,7 +439,7 @@ export interface AddCartItemInput {
 /**
  * The guest Cart transport (Phase 17.1 — Guest Cart Foundation). Every call carries the caller's
  * `sessionRef` — read server-side from the storefront's own HttpOnly session cookie
- * (`apps/storefront/src/app/cart/actions.ts`), never accepted from the browser directly — which
+ * (`apps/storefront/src/app/(store)/cart/actions.ts`), never accepted from the browser directly — which
  * the Runtime API checks against `cart.sessionRef` before any read/mutation. `POST` bodies never
  * carry a `customerRef`: these routes create and operate on guest carts only.
  *

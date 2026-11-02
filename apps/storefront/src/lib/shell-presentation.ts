@@ -1,0 +1,56 @@
+import type { Metadata } from "next";
+import { brandStyleSheet, pickText } from "@platform/storefront-content";
+import type { Locale } from "./i18n";
+import type { ShellImage, StorefrontShell } from "./online-store";
+import type { Dictionary } from "@/messages/en";
+
+/** Ruling 6: only a branded shop gets a brand sheet; the package re-validates every value. */
+export function brandStyleFor(shell: StorefrontShell): string | null {
+  return shell.branded ? brandStyleSheet(shell.brand.style) : null;
+}
+
+export function metadataFor(shell: StorefrontShell, locale: Locale, t: Dictionary): Metadata {
+  const name = shell.storeName.trim();
+  const title =
+    pickText(shell.preferences.homeTitle, locale) ?? (name !== "" ? name : t.meta.fallbackTitle);
+  const description = pickText(shell.preferences.homeMetaDescription, locale);
+  const share = shell.preferences.shareImage;
+  const favicon = shell.brand.favicon;
+  return {
+    title: { default: title, template: name !== "" ? `%s | ${name}` : "%s" },
+    ...(description === null ? {} : { description }),
+    openGraph: {
+      ...(name === "" ? {} : { siteName: name }),
+      locale: locale === "ar" ? "ar_EG" : "en_US",
+      type: "website",
+      title,
+      ...(description === null ? {} : { description }),
+      ...(share === null
+        ? {}
+        : {
+            images: [
+              {
+                url: share.url,
+                ...(share.width === null ? {} : { width: share.width }),
+                ...(share.height === null ? {} : { height: share.height }),
+                ...(share.alt === null ? {} : { alt: share.alt }),
+              },
+            ],
+          }),
+    },
+    twitter: { card: "summary_large_image" },
+    ...(favicon === null
+      ? {}
+      : { icons: { icon: [{ url: favicon.url }], apple: [{ url: favicon.url }] } }),
+    // Decision 35: a locked store is noindex; its preview is not public anyway.
+    ...(shell.locked && shell.mode === "live" ? { robots: { index: false, follow: false } } : {}),
+  };
+}
+
+export function logoSize(
+  image: ShellImage,
+  widthPx: number,
+): { width: number; height: number | undefined } {
+  if (image.width === null || image.height === null) return { width: widthPx, height: undefined };
+  return { width: widthPx, height: Math.round((widthPx * image.height) / image.width) };
+}

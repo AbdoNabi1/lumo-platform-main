@@ -16,6 +16,38 @@ export const en = {
   language: {
     switch: "Language",
   },
+  footer: {
+    poweredBy: "Powered by Morbeh",
+    social: "Follow us",
+    networks: {
+      facebook: "Facebook",
+      instagram: "Instagram",
+      tiktok: "TikTok",
+      x: "X",
+      youtube: "YouTube",
+      snapchat: "Snapchat",
+    },
+  },
+  meta: {
+    fallbackTitle: "Store",
+  },
+  preview: {
+    banner: "Preview — not visible to customers",
+    expires: "Link expires at {time}",
+    expired: "Preview link expired",
+    unavailable: "Not available in preview",
+  },
+  password: {
+    title: "Password",
+    defaultMessage: "Opening soon",
+    label: "Password",
+    submit: "Enter",
+    incorrect: "Incorrect password",
+    tooMany: "Too many attempts, try again in {minutes} minutes",
+    unavailable: "Temporarily unavailable. Try again shortly.",
+    ownerPrompt: "Are you the store owner?",
+    ownerLink: "Log in to the admin",
+  },
   home: {
     title: "Shop",
     subtitle: "Browse products and collections.",
@@ -239,7 +271,7 @@ export const en = {
     errorBody: "Couldn't reach the account service. Try again.",
     signIn: {
       title: "Sign in",
-      subtitle: "Sign in to your Morbeh account.",
+      subtitle: "Sign in to your account.",
       emailLabel: "Email",
       passwordLabel: "Password",
       submit: "Sign in",
@@ -249,7 +281,7 @@ export const en = {
     },
     register: {
       title: "Create an account",
-      subtitle: "Create a Morbeh account to save your wishlist and track your orders.",
+      subtitle: "Create an account to save your wishlist and track your orders.",
       nameLabel: "Name",
       emailLabel: "Email",
       passwordLabel: "Password",

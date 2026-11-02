@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@platform/ui";
-import { addToCart } from "@/app/cart/actions";
+import { addToCart } from "@/app/(store)/cart/actions";
 import type { Dictionary } from "@/messages/en";
 
 /**

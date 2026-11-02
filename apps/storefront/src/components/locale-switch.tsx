@@ -26,16 +26,24 @@ const NATIVE_NAME: Readonly<Record<Locale, string>> = {
 export function LocaleSwitch({
   locale,
   label,
+  disabled,
 }: {
   readonly locale: Locale;
   readonly label: string;
+  /** Ruling 15: a language change is a POST, which preview refuses. */
+  readonly disabled?: boolean;
 }) {
   const [pending, startTransition] = React.useTransition();
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={label} disabled={pending}>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={label}
+          disabled={pending || disabled === true}
+        >
           <LanguagesIcon aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
