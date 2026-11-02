@@ -43,7 +43,16 @@ export const en = {
     label: "Password",
     submit: "Enter",
     incorrect: "Incorrect password",
-    tooMany: "Too many attempts on this store. Try again in {minutes} minutes.",
+    tooMany: "Too many attempts on this store. Try again in {duration}.",
+    /** Picked with `Intl.PluralRules(locale)`: every category a locale may need is present. */
+    minutes: {
+      zero: "{count} minutes",
+      one: "one minute",
+      two: "two minutes",
+      few: "{count} minutes",
+      many: "{count} minutes",
+      other: "{count} minutes",
+    },
     unavailable: "Temporarily unavailable. Try again shortly.",
     ownerPrompt: "Are you the store owner?",
     ownerLink: "Log in to the admin",

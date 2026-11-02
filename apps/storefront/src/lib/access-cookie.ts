@@ -7,6 +7,13 @@ const encoder = new TextEncoder();
 /** A non-negative integer written the one canonical way (no sign, leading zero, exponent or space). */
 const CANONICAL_INTEGER = /^(?:0|[1-9][0-9]{0,15})$/;
 
+/** Canonical text that is also a safe integer, so one text is exactly one number (review M-8). */
+function canonicalInteger(text: string): number | null {
+  if (!CANONICAL_INTEGER.test(text)) return null;
+  const value = Number(text);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
 function toBase64Url(bytes: ArrayBuffer | Uint8Array): string {
   let binary = "";
   for (const byte of bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes))
@@ -73,9 +80,9 @@ export async function verifyAccessCookie(
   const parts = value.split(".");
   if (parts.length !== 4 || parts[0] !== "v1") return false;
   const [, versionText = "", expText = "", mac = ""] = parts;
-  if (!CANONICAL_INTEGER.test(versionText) || !CANONICAL_INTEGER.test(expText)) return false;
-  const version = Number(versionText);
-  const exp = Number(expText);
+  const version = canonicalInteger(versionText);
+  const exp = canonicalInteger(expText);
+  if (version === null || exp === null) return false;
   if (version !== expected.accessVersion || exp <= expected.nowUnix) return false;
   const signature = fromBase64Url(mac);
   if (signature === null || toBase64Url(signature) !== mac) return false;

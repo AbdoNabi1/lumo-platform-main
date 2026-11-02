@@ -94,16 +94,40 @@ describe("unlockAction", () => {
     );
   });
 
-  it("an open-redirect return_to lands on the shop's home", async () => {
-    for (const raw of ["/\t/evil.example", "https://evil.example", "/\\evil.example"]) {
+  it("an open-redirect return_to lands on the shop's home (review C-1)", async () => {
+    for (const raw of [
+      "//evil.example",
+      "/\\evil.example",
+      "/\t/evil.example",
+      "https://evil.example",
+      "javascript:alert(1)",
+      "/.//evil.example",
+      "/..//evil.example",
+      "/%2e//evil.example",
+      "/%2E%2E//evil.example/x?y#z",
+      "/.\t//evil.example",
+      "/a/..//evil.example",
+      "//evil",
+      "/\t/evil",
+      "https://evil",
+      "javascript:",
+    ]) {
       vi.stubGlobal(
         "fetch",
         vi.fn(async () => json(200, { accessVersion: 1 })),
       );
-      await expect(unlockAction({ status: "idle" }, form("pw", raw))).rejects.toThrow(
-        /^REDIRECT:\/$/,
-      );
+      await expect(
+        unlockAction({ status: "idle" }, form("pw", raw)),
+        JSON.stringify(raw),
+      ).rejects.toThrow(/^REDIRECT:\/$/);
     }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(200, { accessVersion: 1 })),
+    );
+    await expect(unlockAction({ status: "idle" }, form("pw", "/%2F%2Fevil"))).rejects.toThrow(
+      /^REDIRECT:\/%2F%2Fevil$/,
+    );
   });
 
   it("maps 401 → incorrect and 429 → minutes to wait", async () => {

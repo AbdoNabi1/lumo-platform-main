@@ -2,10 +2,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ACCESS_COOKIE, verifyAccessCookie } from "./lib/access-cookie";
 import {
   createAccessReader,
+  createPreviewChecker,
   fetchAccessFromRuntime,
   fetchPreviewValidity,
 } from "./lib/access-cache";
-import { safeReturnTo } from "./lib/return-to";
+import { LOCKED_REACHABLE_ROUTES, reachWhileLocked } from "./lib/locked-routes";
+import { RETURN_PATH_HEADER, safeReturnTo, stripNextInternals } from "./lib/return-to";
 import {
   PLATFORM_TENANT_ID,
   SHOP_ID_HEADER,
@@ -32,23 +34,21 @@ const readAccess = createAccessReader({
   ttlMs: 15_000,
   staleMs: 5 * 60_000,
 });
-const previewIsValid = fetchPreviewValidity(RUNTIME_API_URL);
+/** Review M-3: one Runtime call per token per 30 s at most; errors are never remembered. */
+const previewIsValid = createPreviewChecker({
+  check: fetchPreviewValidity(RUNTIME_API_URL),
+  now: () => Date.now(),
+  validTtlMs: 30_000,
+  invalidTtlMs: 30_000,
+  maxEntries: 500,
+});
 
 const text = (status: number, body: string) =>
   new NextResponse(body, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 
-const isPasswordPage = (pathname: string) =>
-  pathname === "/password" || pathname.startsWith("/password/");
-
-/** Spec 1.12 step 4 / Decision 34: reachable while locked (the password page is handled first). */
-function isExempt(pathname: string): boolean {
-  return (
-    pathname.startsWith("/policies/") ||
-    pathname === "/robots.txt" ||
-    pathname === "/sitemap.xml" ||
-    pathname.startsWith("/_next/")
-  );
-}
+/** Exactly `/password`: `/password/<x>` has no route, so it is gated like any other path. */
+const isPasswordPage = (pathname: string) => pathname === "/password";
+const isNextAsset = (pathname: string) => pathname.startsWith("/_next/");
 
 /**
  * Framing and referrer rules. The k8s Ingress no longer sets X-Frame-Options or Referrer-Policy
@@ -71,7 +71,10 @@ function framing(response: NextResponse, preview: boolean): NextResponse {
   return response;
 }
 
-/** A refusal, a redirect to the gate, or the gate itself: never cached, never indexed (Decision 35). */
+/**
+ * A refusal, a redirect to the gate, or the gate itself: never cached, never indexed (Decision 35).
+ * Host refusals too (review M-6): a cached "Store not found" would outlive a newly connected domain.
+ */
 function gated(response: NextResponse): NextResponse {
   response.headers.set("Cache-Control", "private, no-store");
   response.headers.set("X-Robots-Tag", "noindex");
@@ -84,21 +87,27 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const headers = new Headers(request.headers);
   headers.delete(SHOP_ID_HEADER); // never trust a client-sent shop id
   headers.delete(PREVIEW_HEADER); // nor a client-sent preview token header
+  // Where the visitor was, for the layout's second gate (review M-4): no token, no Next internals.
+  const here = new URL(request.nextUrl);
+  here.searchParams.delete("preview");
+  stripNextInternals(here);
+  const returnPath = safeReturnTo(`${here.pathname}${here.search}`);
+  headers.set(RETURN_PATH_HEADER, returnPath);
 
   // 1. The shop (spec: the new steps run in both modes; routing off ⇒ the deployment shop).
   let shopId = DEFAULT_SHOP_ID;
   if (process.env.STOREFRONT_HOST_ROUTING === "on") {
     const host = normalizeHost(request.headers.get("host"));
-    if (host === null) return framing(text(400, "Bad request"), false);
+    if (host === null) return gated(text(400, "Bad request"));
     let shop;
     try {
       shop = await resolveShop(host);
     } catch {
       return unavailable();
     }
-    if (shop === null) return framing(text(404, "Store not found / المتجر غير موجود"), false);
+    if (shop === null) return gated(text(404, "Store not found / المتجر غير موجود"));
     if (shop.shopStatus !== "active")
-      return framing(text(503, "This store is unavailable / هذا المتجر غير متاح"), false);
+      return gated(text(503, "This store is unavailable / هذا المتجر غير متاح"));
     headers.set(SHOP_ID_HEADER, shop.shopId);
     shopId = shop.shopId;
   }
@@ -132,7 +141,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     }
     return gated(NextResponse.next({ request: { headers } }));
   }
-  if (isExempt(pathname)) return pass(token);
+  // Next's own assets (outside the matcher anyway): never a token, never a write.
+  if (isNextAsset(pathname) && isRead) return pass(null);
 
   // 4. The lock gate.
   let state;
@@ -153,11 +163,12 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   });
   // A cookie holder with a token the Runtime refused is an ordinary visit: the token is not forwarded.
   if (unlocked) return pass(null);
-  if (!isRead) return gated(text(403, "Forbidden / غير مسموح"));
-  const back = new URL(request.nextUrl);
-  back.searchParams.delete("preview");
+  // Decision 34: a route that exists and stays public while locked, for reads only (review M-1, M-2).
+  const reach = reachWhileLocked(pathname, request.method, LOCKED_REACHABLE_ROUTES);
+  if (reach === "reachable") return pass(null);
+  if (reach === "forbidden" || !isRead) return gated(text(403, "Forbidden / غير مسموح"));
   const target = new URL("/password", request.url);
-  target.searchParams.set("return_to", `${back.pathname}${back.search}`);
+  target.searchParams.set("return_to", returnPath);
   return gated(NextResponse.redirect(target, 302));
 }
 

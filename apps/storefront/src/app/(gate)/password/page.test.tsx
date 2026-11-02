@@ -92,6 +92,13 @@ describe("PasswordPage (spec 1.12)", () => {
     expect(document.querySelector('input[name="return_to"]')).toHaveValue("/");
   });
 
+  it("a dot-segment return_to is never echoed either (review C-1)", async () => {
+    request.shell = FALLBACK_SHELL;
+    request.access = null;
+    await page("/.//evil.example");
+    expect(document.querySelector('input[name="return_to"]')).toHaveValue("/");
+  });
+
   it("its link preview shows the store name and 'Opening soon' only (preflight 18)", async () => {
     request.shell = {
       ...FALLBACK_SHELL,

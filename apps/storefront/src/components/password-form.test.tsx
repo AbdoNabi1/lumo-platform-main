@@ -46,10 +46,51 @@ describe("PasswordFormView", () => {
         pending={false}
       />,
     );
-    // Preflight 14: the digits depend on the ICU data, so compute them the same way.
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      `بعد ${new Intl.NumberFormat("ar").format(2)} دقائق`,
+    // Arabic dual: "two minutes" is one word.
+    expect(screen.getByRole("alert")).toHaveTextContent("بعد دقيقتين.");
+  });
+
+  // Arabic counts agree with the number: 1 and 2 are words, 3–10 take the plural, 11–99 the
+  // singular accusative, 100–102 the singular. Preflight 14: digits depend on the ICU data.
+  it.each([
+    [1, "بعد دقيقة واحدة."],
+    [2, "بعد دقيقتين."],
+    [3, `بعد ${new Intl.NumberFormat("ar").format(3)} دقائق.`],
+    [10, `بعد ${new Intl.NumberFormat("ar").format(10)} دقائق.`],
+    [11, `بعد ${new Intl.NumberFormat("ar").format(11)} دقيقة.`],
+    [59, `بعد ${new Intl.NumberFormat("ar").format(59)} دقيقة.`],
+    [100, `بعد ${new Intl.NumberFormat("ar").format(100)} دقيقة.`],
+  ])("Arabic: %i minute(s) → %s", (minutes, expected) => {
+    render(
+      <PasswordFormView
+        t={ar}
+        locale="ar"
+        returnTo="/"
+        state={{ status: "rate_limited", minutes }}
+        action={() => undefined}
+        pending={false}
+      />,
     );
+    expect(screen.getByRole("alert")).toHaveTextContent(expected);
+    expect(screen.getByRole("alert").textContent).not.toContain("{");
+  });
+
+  it.each([
+    [1, "Try again in one minute."],
+    [2, "Try again in 2 minutes."],
+    [11, "Try again in 11 minutes."],
+  ])("English: %i minute(s) → %s", (minutes, expected) => {
+    render(
+      <PasswordFormView
+        t={en}
+        locale="en"
+        returnTo="/"
+        state={{ status: "rate_limited", minutes }}
+        action={() => undefined}
+        pending={false}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(expected);
   });
 
   it("words the shared rate limit neutrally: the visitor may have done nothing wrong (Ruling 5)", () => {

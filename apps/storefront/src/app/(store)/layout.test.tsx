@@ -6,11 +6,13 @@ import { FALLBACK_SHELL, type StorefrontShell } from "@/lib/online-store";
 const request = vi.hoisted(() => ({
   shell: null as StorefrontShell | null,
   token: null as string | null,
+  returnPath: null as string | null,
 }));
 vi.mock("@/lib/request-locale", () => ({
   getRequestShell: async () => request.shell,
   getRequestLocale: async () => "en",
   getPreviewToken: async () => request.token,
+  getReturnPath: async () => request.returnPath,
 }));
 const redirect = vi.hoisted(() =>
   vi.fn((to: string) => {
@@ -59,12 +61,25 @@ describe("StoreLayout preview gate", () => {
   });
 
   it("second layer (Ruling 36): a token the shell did not honour on a locked store goes to the gate", async () => {
+    request.returnPath = null;
     await expect(chromeProps({ mode: "live", locked: true }, "tok")).rejects.toThrow(
-      "REDIRECT:/password",
+      /^REDIRECT:\/password\?return_to=%2F$/,
     );
     await expect(
       chromeProps({ mode: "live", locked: true, previewExpired: true }, "tok"),
-    ).rejects.toThrow("REDIRECT:/password");
+    ).rejects.toThrow(/^REDIRECT:\/password\?/);
+  });
+
+  it("the second layer keeps where the visitor was (review M-4), never somewhere else", async () => {
+    request.returnPath = "/products/lamp?c=1";
+    await expect(chromeProps({ mode: "live", locked: true }, "tok")).rejects.toThrow(
+      /^REDIRECT:\/password\?return_to=%2Fproducts%2Flamp%3Fc%3D1$/,
+    );
+    request.returnPath = "/.//evil.example";
+    await expect(chromeProps({ mode: "live", locked: true }, "tok")).rejects.toThrow(
+      /^REDIRECT:\/password\?return_to=%2F$/,
+    );
+    request.returnPath = null;
   });
 
   it("a real preview of a locked store renders, and so does a cookie holder without a token", async () => {

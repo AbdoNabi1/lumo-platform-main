@@ -104,4 +104,28 @@ describe("unlock cookie (spec 1.5)", () => {
     expect(await verifyAccessCookie(`v1.3.${now + 60}.AAAA`, ok)).toBe(false);
     expect(await verifyAccessCookie(`v1.3.${now + 60}.${"A".repeat(43)}`, ok)).toBe(false);
   });
+
+  it("accepts numbers only up to Number.MAX_SAFE_INTEGER, where one text is one number (M-8)", async () => {
+    const ok = { secret, shopId: "s", accessVersion: 3, nowUnix: now };
+    const max = Number.MAX_SAFE_INTEGER;
+    const atMax = await signAccessCookie({ secret, shopId: "s", accessVersion: 3, expUnix: max });
+    expect(await verifyAccessCookie(atMax, ok)).toBe(true);
+    // 2^53 and 2^53 + 1 are two texts for one double: neither is accepted.
+    const pastMax = await signAccessCookie({
+      secret,
+      shopId: "s",
+      accessVersion: 3,
+      expUnix: max + 1,
+    });
+    expect(await verifyAccessCookie(pastMax, ok)).toBe(false);
+    const [, , , mac] = pastMax.split(".");
+    expect(await verifyAccessCookie(`v1.3.9007199254740993.${mac}`, ok)).toBe(false);
+    const bigVersion = await signAccessCookie({
+      secret,
+      shopId: "s",
+      accessVersion: max + 1,
+      expUnix: now + 60,
+    });
+    expect(await verifyAccessCookie(bigVersion, { ...ok, accessVersion: max + 1 })).toBe(false);
+  });
 });

@@ -8,6 +8,12 @@ import type { Dictionary } from "@/messages/en";
 
 const INITIAL: UnlockState = { status: "idle" };
 
+/** "دقيقة واحدة", "دقيقتين", "٣ دقائق", "١١ دقيقة": the count agrees with the locale's plural rules. */
+function minutesText(t: Dictionary, locale: Locale, minutes: number): string {
+  const form = t.password.minutes[new Intl.PluralRules(locale).select(minutes)];
+  return form.replace("{count}", new Intl.NumberFormat(locale).format(minutes));
+}
+
 export function PasswordFormView({
   t,
   locale,
@@ -29,10 +35,7 @@ export function PasswordFormView({
       : state.status === "unavailable"
         ? t.password.unavailable
         : state.status === "rate_limited"
-          ? t.password.tooMany.replace(
-              "{minutes}",
-              new Intl.NumberFormat(locale).format(state.minutes),
-            )
+          ? t.password.tooMany.replace("{duration}", minutesText(t, locale, state.minutes))
           : null;
   return (
     <form action={action} className="flex flex-col gap-3">

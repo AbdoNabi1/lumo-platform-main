@@ -66,16 +66,22 @@ export function fetchAccessFromRuntime(
   };
 }
 
+/** What the Runtime said about a preview token. Only `valid` ever opens a locked store. */
+export type PreviewCheck =
+  | { readonly kind: "valid"; readonly expiresAtMs: number | null }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "error" };
+
 /**
- * Ruling 36: is this token a live preview of this shop? Asked of the Runtime on every request (never
- * cached). Only `200` with a body that says `mode: "preview"` counts: a proxy that drops the token
- * header gets the LIVE shell with a 200, which must not open a locked store. Any other answer, a
- * throw or a timeout is `false` (fail closed).
+ * Ruling 36: is this token a live preview of this shop? Only `200` with a body that says
+ * `mode: "preview"` is `valid`: a proxy that drops the token header gets the LIVE shell with a 200,
+ * which must not open a locked store, so that is `invalid`, like a 401. Any other status, a garbage
+ * body, a throw or a timeout is `error`: it fails closed and is never cached.
  */
 export function fetchPreviewValidity(
   runtimeApiUrl: string,
   timeoutMs: number = PREVIEW_TIMEOUT_MS,
-): (shopId: string, token: string) => Promise<boolean> {
+): (shopId: string, token: string) => Promise<PreviewCheck> {
   return async (shopId, token) => {
     try {
       const response = await fetch(`${runtimeApiUrl}/api/v1/public/online-store`, {
@@ -83,11 +89,68 @@ export function fetchPreviewValidity(
         cache: "no-store",
         signal: AbortSignal.timeout(timeoutMs),
       });
-      if (response.status !== 200) return false;
-      const body = (await response.json()) as { mode?: unknown } | null;
-      return body?.mode === "preview";
+      if (response.status === 401) return { kind: "invalid" };
+      if (response.status !== 200) return { kind: "error" };
+      const body: unknown = await response.json();
+      if (typeof body !== "object" || body === null || Array.isArray(body))
+        return { kind: "error" };
+      const { mode, previewExpiresAt } = body as { mode?: unknown; previewExpiresAt?: unknown };
+      if (mode !== "preview") return { kind: "invalid" };
+      const expiresAtMs = typeof previewExpiresAt === "string" ? Date.parse(previewExpiresAt) : NaN;
+      return { kind: "valid", expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : null };
     } catch {
-      return false;
+      return { kind: "error" };
     }
+  };
+}
+
+/** The cache key for a token's answer: the shop and the token's SHA-256, never the token itself. */
+export async function previewCacheKey(shopId: string, token: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)),
+  );
+  let hex = "";
+  for (const byte of digest) hex += byte.toString(16).padStart(2, "0");
+  return `${shopId}:${hex}`;
+}
+
+/**
+ * Review M-3: a short memory of the Runtime's answers, so a flood of one token (valid or not) costs
+ * one Runtime call per 30 s instead of one per request. A valid answer is kept for `validTtlMs`, but
+ * never past the token's own expiry (and not at all when that is unknown); an invalid one for
+ * `invalidTtlMs`; an error or timeout never. Keyed by `previewCacheKey`, bounded (LRU).
+ */
+export function createPreviewChecker(deps: {
+  readonly check: (shopId: string, token: string) => Promise<PreviewCheck>;
+  readonly now: () => number;
+  readonly validTtlMs: number;
+  readonly invalidTtlMs: number;
+  readonly maxEntries: number;
+}): (shopId: string, token: string) => Promise<boolean> {
+  const cache = new Map<string, { valid: boolean; until: number }>();
+  const remember = (key: string, valid: boolean, until: number) => {
+    cache.delete(key);
+    cache.set(key, { valid, until });
+    if (cache.size > deps.maxEntries) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
+  };
+  return async (shopId, token) => {
+    const key = await previewCacheKey(shopId, token);
+    const hit = cache.get(key);
+    if (hit !== undefined) {
+      cache.delete(key);
+      if (deps.now() < hit.until) {
+        cache.set(key, hit); // most recently used
+        return hit.valid;
+      }
+    }
+    const answer = await deps.check(shopId, token);
+    const now = deps.now();
+    if (answer.kind === "invalid") remember(key, false, now + deps.invalidTtlMs);
+    if (answer.kind === "valid" && answer.expiresAtMs !== null && answer.expiresAtMs > now)
+      remember(key, true, Math.min(now + deps.validTtlMs, answer.expiresAtMs));
+    return answer.kind === "valid";
   };
 }

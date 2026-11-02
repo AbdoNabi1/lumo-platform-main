@@ -2,14 +2,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { signAccessCookie } from "./lib/access-cookie";
+import type * as LockedRoutes from "./lib/locked-routes";
 import { config } from "./middleware";
 
 const SECRET = "m".repeat(32);
 const TOKEN = "T".repeat(43);
 const UNKNOWN_TOKEN = "U".repeat(43);
-type Answer = { status: number; body: unknown } | "hang" | "throw";
-let access: Record<string, { locked: boolean; accessVersion: number } | "fail" | "hang">;
-let hosts: Record<string, string>;
+/** A Runtime answer; "timeout" is what `AbortSignal.timeout` makes fetch reject with. */
+type Answer = { status: number; body: unknown } | "timeout" | "throw";
+let access: Record<string, { locked: boolean; accessVersion: number } | "fail" | "timeout">;
+let hosts: Record<string, { shopId: string; shopStatus: string }>;
 /** What `GET /public/online-store` answers for a preview token (anything absent: 401). */
 let previews: Record<string, Answer>;
 let fetchMock: ReturnType<typeof vi.fn<(input: string, init?: RequestInit) => Promise<Response>>>;
@@ -21,53 +23,65 @@ function json(body: unknown, status = 200) {
   });
 }
 
-/** Never answers, but honours the abort signal like the real fetch. */
-function hang(init?: RequestInit): Promise<Response> {
-  return new Promise((_resolve, reject) => {
-    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
-  });
-}
+const timeoutError = () =>
+  new DOMException("The operation was aborted due to timeout", "TimeoutError");
+
+/** A live preview, expiring an hour from the (possibly faked) clock. */
+const livePreview = (): Answer => ({
+  status: 200,
+  body: { mode: "preview", previewExpiresAt: new Date(Date.now() + 3_600_000).toISOString() },
+});
 
 const previewCalls = () =>
   fetchMock.mock.calls.filter(([input]) => new URL(input).pathname.endsWith("/online-store"));
+const accessCalls = () =>
+  fetchMock.mock.calls.filter(([input]) => new URL(input).pathname.endsWith("/access"));
 
 beforeEach(() => {
   vi.resetModules();
   access = { "shop-a": { locked: false, accessVersion: 1 } };
-  hosts = { "a.example": "shop-a", "b.example": "shop-b" };
-  previews = { [TOKEN]: { status: 200, body: { mode: "preview" } } };
+  hosts = {
+    "a.example": { shopId: "shop-a", shopStatus: "active" },
+    "b.example": { shopId: "shop-b", shopStatus: "active" },
+    "c.example": { shopId: "shop-c", shopStatus: "suspended" },
+  };
+  previews = { [TOKEN]: livePreview() };
   vi.stubEnv("STOREFRONT_HOST_ROUTING", "off");
   vi.stubEnv("TENANT_DEFAULT_ID", "shop-a");
   vi.stubEnv("STOREFRONT_ACCESS_SECRET", SECRET);
   vi.stubEnv("ADMIN_ORIGIN", "https://admin.example");
   fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    // Every Runtime read must carry an abort signal, so a hung Runtime cannot hold the page.
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
     const url = new URL(input);
     const headers = (init?.headers ?? {}) as Record<string, string>;
     if (url.pathname.endsWith("/public/domains/resolve")) {
       const shop = hosts[url.searchParams.get("host") ?? ""];
       return shop === undefined
         ? json({}, 404)
-        : json({ shopId: shop, hostname: "h", primaryHostname: "h", shopStatus: "active" });
+        : json({ ...shop, hostname: "h", primaryHostname: "h" });
     }
     if (url.pathname.endsWith("/public/online-store")) {
       const answer = previews[headers["x-preview-token"] ?? ""] ?? {
         status: 401,
         body: { code: "PREVIEW_INVALID" },
       };
-      if (answer === "hang") return hang(init);
+      if (answer === "timeout") throw timeoutError();
       if (answer === "throw") throw new Error("down");
       return json(answer.body, answer.status);
     }
     const state = access[headers["x-tenant-id"] ?? ""];
-    if (state === "hang") return hang(init);
+    if (state === "timeout") throw timeoutError();
     if (state === "fail" || state === undefined) return json({}, 503);
     return json({ ...state, message: {} });
   });
   vi.stubGlobal("fetch", fetchMock);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.doUnmock("./lib/locked-routes");
 });
 
 async function run(
@@ -98,6 +112,27 @@ const cookieFor = (
   secret = SECRET,
 ) => signAccessCookie({ secret, shopId, accessVersion, expUnix });
 const forwarded = (res: Response, name: string) => res.headers.get(`x-middleware-request-${name}`);
+
+/** Review C-1 and preflight 17: each must land on the shop's home, never another host. */
+const REDIRECT_ATTACKS = [
+  "//evil.example",
+  "/\\evil.example",
+  "/\t/evil.example",
+  "/\n/evil.example",
+  "https://evil.example/",
+  "javascript:alert(1)",
+  "/.//evil.example",
+  "/..//evil.example",
+  "/%2e//evil.example",
+  "/%2e//evil.example/x",
+  "/%2E%2E//evil.example/x?y#z",
+  "/.\t//evil.example",
+  "/a/..//evil.example",
+  "//evil",
+  "/\t/evil",
+  "https://evil",
+  "javascript:",
+];
 
 // Next compiles the matcher with path-to-regexp; this pattern is also a plain regular expression.
 const matcher = new RegExp(`^${config.matcher[0]}$`);
@@ -147,12 +182,22 @@ describe("storefront middleware (spec 1.12)", () => {
     expect(res.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
   });
 
-  it("strips client-sent x-shop-id and x-morbeh-preview", async () => {
+  it("strips client-sent x-shop-id, x-morbeh-preview and x-morbeh-return-path", async () => {
     const res = await run("/", {
-      headers: { "x-shop-id": "shop-evil", "x-morbeh-preview": "forged" },
+      headers: {
+        "x-shop-id": "shop-evil",
+        "x-morbeh-preview": "forged",
+        "x-morbeh-return-path": "//evil.example",
+      },
     });
     expect(forwarded(res, "x-morbeh-preview")).toBeNull();
     expect(forwarded(res, "x-shop-id")).toBeNull();
+    expect(forwarded(res, "x-morbeh-return-path")).toBe("/");
+  });
+
+  it("tells the layout where the visitor was, without the token or Next internals (review M-4)", async () => {
+    const res = await run(`/products/lamp?c=1&_rsc=abc&preview=${UNKNOWN_TOKEN}`);
+    expect(forwarded(res, "x-morbeh-return-path")).toBe("/products/lamp?c=1");
   });
 
   it("an unlocked shop forwards a well-shaped preview token without asking the Runtime (the layout validates)", async () => {
@@ -176,6 +221,13 @@ describe("storefront middleware (spec 1.12)", () => {
       );
       expect(res.headers.get("x-robots-tag")).toBe("noindex");
       expect(res.headers.get("cache-control")).toBe("private, no-store");
+    });
+
+    it("return_to never carries Next's _rsc (a client navigation that hit the gate, review M-5)", async () => {
+      const res = await run("/products/lamp?_rsc=1x2y&c=1");
+      expect(res.headers.get("location")).toBe(
+        "https://a.example/password?return_to=%2Fproducts%2Flamp%3Fc%3D1",
+      );
     });
 
     it("POST without a cookie → 403", async () => {
@@ -220,13 +272,10 @@ describe("storefront middleware (spec 1.12)", () => {
       expect((await run("/", { cookie: before })).status).toBe(302);
     });
 
-    it("exempt paths stay reachable: /password, /policies/*, robots, sitemap, Next assets", async () => {
+    it("/password and Next's own assets stay reachable", async () => {
       for (const path of [
         "/password",
         "/password?return_to=%2F",
-        "/policies/refund-policy",
-        "/robots.txt",
-        "/sitemap.xml",
         "/_next/static/chunks/main.js",
         "/_next/image?url=https%3A%2F%2Fcdn.test%2Fa.jpg&w=640&q=75",
       ]) {
@@ -234,7 +283,21 @@ describe("storefront middleware (spec 1.12)", () => {
       }
     });
 
-    it("look-alikes of exempt paths are gated", async () => {
+    it("paths with no real route yet are gated, so a 404 never shows the locked shop's chrome (review M-1)", async () => {
+      for (const path of [
+        "/policies/refund-policy",
+        "/robots.txt",
+        "/sitemap.xml",
+        "/password/x",
+      ]) {
+        const res = await run(path);
+        expect(res.status, path).toBe(302);
+        expect(res.headers.get("location"), path).toMatch(/^https:\/\/a\.example\/password\?/);
+      }
+      expect((await run("/policies/refund-policy", { method: "POST" })).status).toBe(403);
+    });
+
+    it("look-alikes of reachable paths are gated", async () => {
       for (const path of [
         "/passwords",
         "/Password",
@@ -244,6 +307,26 @@ describe("storefront middleware (spec 1.12)", () => {
       ]) {
         expect((await run(path)).status, path).toBe(302);
       }
+    });
+
+    it("a route listed as reachable while locked allows only GET and HEAD (review M-2)", async () => {
+      vi.doMock("./lib/locked-routes", async (original) => ({
+        ...(await original<typeof LockedRoutes>()),
+        LOCKED_REACHABLE_ROUTES: [/^\/policies\/[a-z0-9-]+$/],
+      }));
+      for (const method of ["GET", "HEAD"]) {
+        const res = await run("/policies/refund-policy", { method });
+        expect(res.status, method).toBe(200);
+        expect(res.headers.get("location"), method).toBeNull();
+      }
+      for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+        expect((await run("/policies/refund-policy", { method })).status, method).toBe(403);
+      }
+      // Anything the pattern does not name is still gated.
+      expect((await run("/policies/a/b")).status).toBe(302);
+      // An unverified token is never forwarded on a locked store.
+      const res = await run(`/policies/refund-policy?preview=${UNKNOWN_TOKEN}`);
+      expect(forwarded(res, "x-morbeh-preview")).toBeNull();
     });
 
     it("the password page is noindex and never cached", async () => {
@@ -279,23 +362,17 @@ describe("storefront middleware (spec 1.12)", () => {
       expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
     });
 
-    it("the token check answering 429, 503, garbage or throwing → 302 (fail closed)", async () => {
+    it("the token check answering 429, 503, garbage, throwing or timing out → 302 (fail closed)", async () => {
       for (const answer of [
         { status: 429, body: { mode: "preview" } },
         { status: 503, body: {} },
         { status: 200, body: "garbage" },
         "throw" as const,
+        "timeout" as const,
       ]) {
         previews[TOKEN] = answer;
         expect((await run(`/?preview=${TOKEN}`)).status, JSON.stringify(answer)).toBe(302);
       }
-    });
-
-    it("a preview token is checked every time (never cached)", async () => {
-      await run(`/?preview=${TOKEN}`);
-      previews[TOKEN] = { status: 401, body: {} }; // revoked or expired
-      expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
-      expect(previewCalls()).toHaveLength(2);
     });
 
     it("an invalid token with a valid cookie passes as an ordinary unlocked visit", async () => {
@@ -314,24 +391,66 @@ describe("storefront middleware (spec 1.12)", () => {
       expect(previewCalls()).toHaveLength(0);
     });
 
-    it("a hung token check fails closed after its timeout → 302", { timeout: 10_000 }, async () => {
-      previews[TOKEN] = "hang";
-      expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+    it("a Runtime that times out with no known lock state → 503, not a hung page", async () => {
+      access["shop-a"] = "timeout";
+      const res = await run("/");
+      expect(res.status).toBe(503);
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
     });
-
-    it(
-      "a hung Runtime with no known lock state → 503 after the timeout, not a hung page",
-      { timeout: 10_000 },
-      async () => {
-        access["shop-a"] = "hang";
-        expect((await run("/")).status).toBe(503);
-      },
-    );
 
     it("a Runtime that fails AFTER a known state keeps the gate locked (stale for 5 min)", async () => {
       expect((await run("/")).status).toBe(302);
       access["shop-a"] = "fail";
       expect((await run("/")).status).toBe(302);
+      access["shop-a"] = "timeout";
+      expect((await run("/")).status).toBe(302);
+    });
+
+    describe("token answers are cached briefly, by hash (review M-3)", () => {
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date("2026-11-02T10:00:00.000Z"));
+        previews[TOKEN] = livePreview();
+      });
+
+      it("a valid token is asked once per 30 s", async () => {
+        expect(forwarded(await run(`/?preview=${TOKEN}`), "x-morbeh-preview")).toBe(TOKEN);
+        expect(forwarded(await run(`/a?preview=${TOKEN}`), "x-morbeh-preview")).toBe(TOKEN);
+        expect(previewCalls()).toHaveLength(1);
+        vi.setSystemTime(new Date("2026-11-02T10:00:30.000Z"));
+        previews[TOKEN] = { status: 401, body: {} }; // revoked or expired meanwhile
+        expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+        expect(previewCalls()).toHaveLength(2);
+      });
+
+      it("never past the token's own expiry", async () => {
+        previews[TOKEN] = {
+          status: 200,
+          body: { mode: "preview", previewExpiresAt: "2026-11-02T10:00:05.000Z" },
+        };
+        expect((await run(`/?preview=${TOKEN}`)).headers.get("location")).toBeNull();
+        vi.setSystemTime(new Date("2026-11-02T10:00:05.000Z"));
+        previews[TOKEN] = { status: 401, body: {} };
+        expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+        expect(previewCalls()).toHaveLength(2);
+      });
+
+      it("a refused token is asked once per 30 s, so flooding it does not reach the Runtime", async () => {
+        for (let i = 0; i < 20; i += 1) {
+          expect((await run(`/?preview=${UNKNOWN_TOKEN}`)).status).toBe(302);
+        }
+        expect(previewCalls()).toHaveLength(1);
+      });
+
+      it("a Runtime error or timeout is never cached", async () => {
+        previews[TOKEN] = { status: 429, body: {} };
+        expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+        previews[TOKEN] = "timeout";
+        expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+        previews[TOKEN] = livePreview();
+        expect((await run(`/?preview=${TOKEN}`)).headers.get("location")).toBeNull();
+        expect(previewCalls()).toHaveLength(3);
+      });
     });
   });
 
@@ -342,17 +461,13 @@ describe("storefront middleware (spec 1.12)", () => {
       expect(res.headers.get("location")).toBe("https://a.example/products/lamp?c=1");
     });
 
-    it("never redirects off the shop (open redirect attempts)", async () => {
-      for (const raw of [
-        "//evil.example",
-        "/\\evil.example",
-        "/\t/evil.example",
-        "/\n/evil.example",
-        "https://evil.example/",
-      ]) {
+    it("never redirects off the shop (open redirect attempts, review C-1)", async () => {
+      for (const raw of REDIRECT_ATTACKS) {
         const res = await run(`/password?return_to=${encodeURIComponent(raw)}`);
         expect(res.headers.get("location"), JSON.stringify(raw)).toBe("https://a.example/");
       }
+      const encoded = await run(`/password?return_to=${encodeURIComponent("/%2F%2Fevil")}`);
+      expect(encoded.headers.get("location")).toBe("https://a.example/%2F%2Fevil");
     });
 
     it("a locked store renders the page", async () => {
@@ -393,26 +508,44 @@ describe("storefront middleware (spec 1.12)", () => {
     const res = await run("/");
     expect(res.status).toBe(503);
     expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(accessCalls()).toHaveLength(1);
   });
 
-  it("host routing on: A's cookie on B's host is redirected (Review Focus 2)", async () => {
-    vi.stubEnv("STOREFRONT_HOST_ROUTING", "on");
-    access["shop-a"] = { locked: true, accessVersion: 3 };
-    access["shop-b"] = { locked: true, accessVersion: 3 };
-    const aCookie = await cookieFor("shop-a", 3);
-    expect(
-      (await run("/", { host: "a.example", cookie: aCookie })).headers.get("location"),
-    ).toBeNull();
-    expect((await run("/", { host: "b.example", cookie: aCookie })).status).toBe(302);
-    expect((await run("/", { host: "nowhere.example" })).status).toBe(404);
-  });
+  describe("host routing on", () => {
+    beforeEach(() => {
+      vi.stubEnv("STOREFRONT_HOST_ROUTING", "on");
+    });
 
-  it("host routing on: a preview token is checked against the host's shop, not the default", async () => {
-    vi.stubEnv("STOREFRONT_HOST_ROUTING", "on");
-    access["shop-b"] = { locked: true, accessVersion: 3 };
-    const res = await run(`/?preview=${TOKEN}`, { host: "b.example" });
-    const [call] = previewCalls();
-    expect((call?.[1]?.headers as Record<string, string>)["x-tenant-id"]).toBe("shop-b");
-    expect(forwarded(res, "x-shop-id")).toBe("shop-b");
+    it("A's cookie on B's host is redirected (Review Focus 2)", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      access["shop-b"] = { locked: true, accessVersion: 3 };
+      const aCookie = await cookieFor("shop-a", 3);
+      expect(
+        (await run("/", { host: "a.example", cookie: aCookie })).headers.get("location"),
+      ).toBeNull();
+      expect((await run("/", { host: "b.example", cookie: aCookie })).status).toBe(302);
+    });
+
+    it("a preview token is checked against the host's shop, and its answer is never shared", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      access["shop-b"] = { locked: true, accessVersion: 3 };
+      const res = await run(`/?preview=${TOKEN}`, { host: "b.example" });
+      await run(`/?preview=${TOKEN}`, { host: "a.example" });
+      const tenants = previewCalls().map(
+        ([, init]) => (init?.headers as Record<string, string>)["x-tenant-id"],
+      );
+      expect(tenants).toEqual(["shop-b", "shop-a"]);
+      expect(forwarded(res, "x-shop-id")).toBe("shop-b");
+    });
+
+    it("refusals for an unknown, inactive or unreadable host are never cached (review M-6)", async () => {
+      const unknown = await run("/", { host: "nowhere.example" });
+      expect(unknown.status).toBe(404);
+      const inactive = await run("/", { host: "c.example" });
+      expect(inactive.status).toBe(503);
+      for (const res of [unknown, inactive]) {
+        expect(res.headers.get("cache-control")).toBe("private, no-store");
+      }
+    });
   });
 });
