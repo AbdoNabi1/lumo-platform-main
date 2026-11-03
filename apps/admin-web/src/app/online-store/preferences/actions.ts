@@ -3,17 +3,13 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { updateAccess, updatePreferences } from "@/lib/api/online-store";
-import { newIdempotencyKey, type FormState } from "@/lib/api/mutation";
+import { newIdempotencyKey, type LiveSaveState } from "@/lib/api/mutation";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { saveErrorState } from "@/lib/online-store/save-errors";
 import { revalidateStorefront } from "@/lib/storefront-revalidate";
 
-/**
- * A save's outcome. `liveDelayed` means it was saved but the storefront could not be told to drop
- * its cached copy, so the live store may take up to a minute (its cache TTL) to show it.
- */
-export type OnlineStoreSaveState =
-  FormState | { readonly status: "success"; readonly liveDelayed: true };
+/** A save's outcome; see `LiveSaveState` for `liveDelayed`. */
+export type OnlineStoreSaveState = LiveSaveState;
 
 const text = (formData: FormData, name: string): string => {
   const value = formData.get(name);

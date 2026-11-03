@@ -126,7 +126,7 @@ describe("Arabic dictionary", () => {
   it("names the platform مربح, never the old transliteration (Global Constraint 9)", () => {
     expect(ar.brand).toBe("مربح");
     // Escaped so a repo-wide grep for the old spelling stays empty.
-    const oldSpelling = "موربيه";
+    const oldSpelling = "\u0645\u0648\u0631\u0628\u064A\u0647";
     const stale = [...arabicByPath].filter(([, value]) => value.includes(oldSpelling));
     expect(stale).toEqual([]);
   });

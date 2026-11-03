@@ -46,7 +46,13 @@ export function ImageUploadField({
         setFileName(file.name);
         onChange({ ...result.image, id: result.image.id });
       } else if (result.status === "error") {
-        setError(t.onlineStorePreferences.uploadErrors[result.reason]);
+        const copy = t.onlineStorePreferences;
+        // A wrong size says which sizes fit this purpose (the server's rule, spec 1.7).
+        setError(
+          result.reason === "bad_dimensions"
+            ? `${copy.uploadErrors.bad_dimensions} ${copy.uploadDimensionHints[purpose]}`
+            : copy.uploadErrors[result.reason],
+        );
       } else {
         setError(t.onlineStorePreferences.uploadErrors.failed);
       }
@@ -102,6 +108,7 @@ export function ImageUploadField({
             size="sm"
             onClick={() => {
               setFileName(null);
+              setError(null);
               onChange(null);
             }}
           >

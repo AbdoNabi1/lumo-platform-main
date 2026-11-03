@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { en } from "@/messages/en";
 import type { StoreSettingsDto } from "@/lib/api/store-settings";
-import type { FormState } from "@/lib/api/mutation";
+import type { LiveSaveState } from "@/lib/api/mutation";
 import { StoreSettingsForm } from "./store-settings-form";
 
 const saveStoreSettingsAction =
-  vi.fn<(previous: FormState, formData: FormData) => Promise<FormState>>();
+  vi.fn<(previous: LiveSaveState, formData: FormData) => Promise<LiveSaveState>>();
 vi.mock("@/app/settings/general/actions", () => ({
-  saveStoreSettingsAction: (previous: FormState, formData: FormData) =>
+  saveStoreSettingsAction: (previous: LiveSaveState, formData: FormData) =>
     saveStoreSettingsAction(previous, formData),
 }));
 
@@ -82,6 +82,14 @@ describe("StoreSettingsForm (Plan 3C)", () => {
       timezone: "Africa/Cairo",
       weightUnit: "kg",
     });
+  });
+
+  it("says the live store may lag when the save could not refresh it (Ruling 5)", async () => {
+    saveStoreSettingsAction.mockResolvedValue({ status: "success", liveDelayed: true });
+    renderForm();
+    fireEvent.change(screen.getByLabelText(t.storeName), { target: { value: "Lumo Store" } });
+    fireEvent.click(save());
+    expect(await screen.findByText(t.savedLiveDelayed)).toBeInTheDocument();
   });
 
   it("does not ask for confirmation when the currency is unchanged", async () => {

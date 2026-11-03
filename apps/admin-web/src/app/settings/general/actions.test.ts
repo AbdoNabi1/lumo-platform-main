@@ -57,6 +57,14 @@ describe("saveStoreSettingsAction (Plan 3C)", () => {
     expect(revalidateStorefront).toHaveBeenCalledTimes(1);
   });
 
+  it("still succeeds when the storefront could not be told, flagging the delay for the form", async () => {
+    revalidateStorefront.mockResolvedValue(false);
+    expect(await saveStoreSettingsAction(idle, form())).toEqual({
+      status: "success",
+      liveDelayed: true,
+    });
+  });
+
   it("sends no contact email when the field is blank", async () => {
     await saveStoreSettingsAction(idle, form({ contactEmail: "   " }));
 

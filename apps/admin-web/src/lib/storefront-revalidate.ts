@@ -30,7 +30,16 @@ export async function revalidateStorefront(shopId?: string): Promise<boolean> {
       });
       return false;
     }
-    const shop = shopId ?? currentTenantRef();
+    let shop: string;
+    try {
+      shop = shopId ?? currentTenantRef();
+    } catch (error) {
+      // `requireProdEnv`'s message names the missing variable; it holds no secret.
+      console.error("storefront revalidation skipped: no shop id", {
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      return false;
+    }
     const response = await fetchWithTimeout(
       `${base}/api/revalidate`,
       {
@@ -38,9 +47,14 @@ export async function revalidateStorefront(shopId?: string): Promise<boolean> {
         headers: { "content-type": "application/json", "x-revalidate-secret": secret },
         body: JSON.stringify({ shopId: shop }),
         cache: "no-store",
+        // Never follow a redirect: the secret header would travel to wherever it points, and an
+        // http→https 301 would silently turn the POST into a GET. A redirect is a config problem.
+        redirect: "error",
       },
       TIMEOUT_MS,
     );
+    // The answer is never read; release the connection.
+    await response.body?.cancel().catch(() => undefined);
     if (response.status === 400) {
       console.error(
         "storefront revalidation refused the shop id: a configuration bug (TENANT_DEFAULT_ID?)",
@@ -51,8 +65,12 @@ export async function revalidateStorefront(shopId?: string): Promise<boolean> {
     if (!response.ok) console.warn("storefront revalidation refused", { status: response.status });
     return response.ok;
   } catch (error) {
+    // A refused redirect or a network failure: the cause says which (e.g. "unexpected redirect").
+    // Neither the name nor the cause carries the request headers, so the secret never appears.
     console.warn("storefront revalidation failed", {
       reason: error instanceof Error ? error.name : "unknown",
+      cause:
+        error instanceof Error && error.cause instanceof Error ? error.cause.message : undefined,
     });
     return false;
   }

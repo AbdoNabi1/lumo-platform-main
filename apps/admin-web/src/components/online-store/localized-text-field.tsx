@@ -10,6 +10,8 @@ import type { Dictionary } from "@/messages/en";
  * ar/en tabs over ONE field (spec 1.11). Both inputs stay mounted (the hidden one too), so the form
  * always submits `<name>.ar` and `<name>.en`. Counters are formatted for the admin's locale.
  * `errors` is the form's field errors, keyed `<name>.ar` / `<name>.en` (or `<name>` for both).
+ * The language switch is a full tabs pattern (each tab controls its panel). A changed `value` from
+ * the server (a refresh after a save) replaces the text; the same text re-sent keeps what was typed.
  */
 export function LocalizedTextField({
   t,
@@ -39,6 +41,13 @@ export function LocalizedTextField({
     ar: value.ar ?? "",
     en: value.en ?? "",
   });
+  // Re-sync on a new server value, during render (React's "adjust state on a prop change").
+  const valueKey = JSON.stringify([value.ar ?? "", value.en ?? ""]);
+  const [syncedKey, setSyncedKey] = useState(valueKey);
+  if (syncedKey !== valueKey) {
+    setSyncedKey(valueKey);
+    setCurrent({ ar: value.ar ?? "", en: value.en ?? "" });
+  }
   const number = new Intl.NumberFormat(locale);
   const set = (key: "ar" | "en", text: string) => {
     const next = { ...current, [key]: text };
@@ -62,6 +71,8 @@ export function LocalizedTextField({
               key={key}
               type="button"
               role="tab"
+              id={`${name}-${key}-tab`}
+              aria-controls={`${name}-${key}-panel`}
               aria-selected={tab === key}
               onClick={() => setTab(key)}
               className={
@@ -87,15 +98,24 @@ export function LocalizedTextField({
           lang: key,
           value: current[key],
           disabled,
-          hidden: tab !== key,
           maxLength: max * 2,
           "aria-invalid": invalid || undefined,
           "aria-describedby": invalid ? errorId : undefined,
         };
-        return multiline ? (
-          <Textarea key={key} {...common} onChange={(e) => set(key, e.currentTarget.value)} />
-        ) : (
-          <Input key={key} {...common} onChange={(e) => set(key, e.currentTarget.value)} />
+        return (
+          <div
+            key={key}
+            role="tabpanel"
+            id={`${name}-${key}-panel`}
+            aria-labelledby={`${name}-${key}-tab`}
+            hidden={tab !== key}
+          >
+            {multiline ? (
+              <Textarea {...common} onChange={(e) => set(key, e.currentTarget.value)} />
+            ) : (
+              <Input {...common} onChange={(e) => set(key, e.currentTarget.value)} />
+            )}
+          </div>
         );
       })}
       <p

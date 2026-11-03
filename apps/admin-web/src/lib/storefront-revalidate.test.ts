@@ -111,4 +111,50 @@ describe("revalidateStorefront (Decision 33)", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(await pending).toBe(false);
   });
+
+  it("never follows a redirect (the secret header must not travel to another origin)", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) => new Response("{}", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await revalidateStorefront();
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).redirect).toBe("error");
+  });
+
+  it("a refused redirect is logged as a configuration problem, with its cause and never the secret", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed", { cause: new Error("unexpected redirect") });
+      }),
+    );
+    expect(await revalidateStorefront()).toBe(false);
+    expect(loggedText()).toContain("unexpected redirect");
+    expect(loggedText()).not.toContain(SECRET);
+  });
+
+  it("releases the connection: an unread answer body is cancelled", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, _init: RequestInit) => new Response(body, { status: 200 })),
+    );
+    expect(await revalidateStorefront()).toBe(true);
+    expect(cancelled).toBe(true);
+  });
+
+  it("names the missing tenant variable when the shop id cannot be resolved in production", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("TENANT_DEFAULT_ID", "");
+    expect(await revalidateStorefront()).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("TENANT_DEFAULT_ID");
+  });
 });

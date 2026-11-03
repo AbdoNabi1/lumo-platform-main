@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { AlertTriangleIcon } from "lucide-react";
 import { Button, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import { pickText, type LocalizedText } from "@platform/storefront-content";
@@ -25,18 +25,23 @@ const NO_ERRORS: Readonly<Record<string, string>> = {};
  * share image, the store language. Live on save; sends the version it was loaded at (Ruling 33).
  * The share image starts from the STORED id (F4): if that image no longer resolves (archived) the
  * merchant is told and keeps it until they replace or remove it — a save never clears it silently.
+ * A save refused for that image moves focus to Remove instead of repeating the same sentence.
+ * The store name links to Settings → General only for admins, who are the only ones allowed there.
  */
 export function PreferencesForm({
   t,
   locale,
   preferences,
   canEdit,
+  canChangeStoreName,
   storefrontUrl,
 }: {
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly preferences: PreferencesDto;
   readonly canEdit: boolean;
+  /** Settings → General is admin-only (`ROUTE_ROLE_REQUIREMENTS`). */
+  readonly canChangeStoreName: boolean;
   readonly storefrontUrl: string | null;
 }) {
   const p = t.onlineStorePreferences;
@@ -54,6 +59,12 @@ export function PreferencesForm({
   const errors = state.status === "error" ? state.fieldErrors : NO_ERRORS;
   const shareMissing = shareId !== null && share === null;
   const shareError = errors["shareImageId"];
+  // The stale-image warning already says what is wrong; point at the fix instead of repeating it.
+  const refusedForMissingShare = shareMissing && shareError !== undefined;
+  const removeStale = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (refusedForMissingShare) removeStale.current?.focus();
+  }, [state, refusedForMissingShare]);
   const shownTitle = pickText(title, locale) ?? preferences.storeName;
   const shownDescription = pickText(description, locale) ?? "";
   const changeShare = (image: (OnlineStoreImageDto & { id: string }) | null) => {
@@ -72,9 +83,13 @@ export function PreferencesForm({
           <bdi dir="auto" className="font-medium">
             {preferences.storeName}
           </bdi>
-          <Link href="/settings/general" className="text-primary text-sm underline">
-            {p.changeStoreName}
-          </Link>
+          {canChangeStoreName ? (
+            <Link href="/settings/general" className="text-primary text-sm underline">
+              {p.changeStoreName}
+            </Link>
+          ) : (
+            <p className="text-muted-foreground text-xs">{p.storeNameAdminOnly}</p>
+          )}
         </CardContent>
       </Card>
       <Card>
@@ -126,12 +141,22 @@ export function PreferencesForm({
           <p className="text-muted-foreground text-sm">{p.shareHint}</p>
           {shareMissing ? (
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <p className="text-warning-foreground flex items-center gap-2">
+              <p
+                id="share-image-missing"
+                className="text-warning-foreground flex items-center gap-2"
+              >
                 <AlertTriangleIcon className="size-4 shrink-0" aria-hidden="true" />
                 {p.imageNotFound}
               </p>
               {canEdit ? (
-                <Button type="button" variant="ghost" size="sm" onClick={() => changeShare(null)}>
+                <Button
+                  ref={removeStale}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-describedby="share-image-missing"
+                  onClick={() => changeShare(null)}
+                >
                   {p.shareRemove}
                 </Button>
               ) : null}
@@ -190,7 +215,7 @@ export function PreferencesForm({
           ))}
         </CardContent>
       </Card>
-      <SaveStatus t={t} state={state} />
+      {refusedForMissingShare ? null : <SaveStatus t={t} state={state} />}
       {canEdit ? (
         <div className="flex justify-end">
           <Button type="submit" loading={pending}>

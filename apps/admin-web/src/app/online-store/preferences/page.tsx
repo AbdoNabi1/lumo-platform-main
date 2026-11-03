@@ -34,6 +34,7 @@ export default async function OnlineStorePreferencesPage() {
   ]);
   const role = highestRole(session?.roles ?? []);
   const canEdit = role === "operator" || role === "admin";
+  const isAdmin = role === "admin";
   const storefrontUrl = process.env["STOREFRONT_URL"]?.trim() || null;
   return (
     <AppShell t={t} locale={locale} activeNavId="online-store-preferences" user={user}>
@@ -50,6 +51,7 @@ export default async function OnlineStorePreferencesPage() {
             locale={locale}
             preferences={preferences.data}
             canEdit={canEdit}
+            canChangeStoreName={isAdmin}
             storefrontUrl={storefrontUrl}
           />
         ) : (
@@ -62,12 +64,7 @@ export default async function OnlineStorePreferencesPage() {
           />
         )}
         {access.outcome === "ok" ? (
-          <PasswordProtectionCard
-            t={t}
-            locale={locale}
-            access={access.data}
-            isAdmin={role === "admin"}
-          />
+          <PasswordProtectionCard t={t} locale={locale} access={access.data} isAdmin={isAdmin} />
         ) : preferences.outcome === "ok" ? (
           <LoadError message={t.formErrors.unexpected} />
         ) : null}

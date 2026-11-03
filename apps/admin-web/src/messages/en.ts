@@ -1645,6 +1645,7 @@ export const en = {
     save: "Save",
     saving: "Saving…",
     saved: "Saved",
+    savedLiveDelayed: "Saved. Your live store may take up to a minute to show the change.",
     unsaved: "Unsaved changes",
     loadError: "Couldn't load your store settings. Try again.",
     unauthorized: "Sign in to manage store settings.",
@@ -3615,6 +3616,7 @@ export const en = {
     subtitle: "How your store appears in search results and when it is shared.",
     storeNameLabel: "Store name",
     changeStoreName: "Change in Settings → General",
+    storeNameAdminOnly: "Only admins can change the store name.",
     homeTitleCard: "Home page title and meta description",
     homeTitle: "Home page title",
     homeDescription: "Home page meta description",
@@ -3665,6 +3667,22 @@ export const en = {
       forbidden: "You don't have permission to upload images.",
       failed: "The upload failed. Try again.",
     },
+    /** Shown after `bad_dimensions`; mirrors the server's per-purpose sizes (spec 1.7). */
+    uploadDimensionHints: {
+      logo: "Use an image at least 32 × 32 px and at most 4000 px on its longest side.",
+      favicon: "Use a square PNG from 32 × 32 to 1024 × 1024 px.",
+      share_image: "Use an image at least 600 × 315 px (1200 × 630 px is best).",
+      section_image: "Use an image at least 200 × 200 px.",
+    },
+  },
+  /** Online Store codes other than the Preferences ones (theme draft, publish, theme document). */
+  onlineStoreErrors: {
+    draftChanged: "The draft changed after you previewed it. Preview it again, then publish.",
+    nothingToPublish: "There are no unpublished changes to publish.",
+    documentTooLarge: "The theme is too large to save. Remove some content and try again.",
+    invalidUrl: "Use a full link that starts with https://.",
+    invalidColor: "Use a colour like #1a2b3c.",
+    outOfRange: "This value is outside the allowed range.",
   },
   /** Generic, form-agnostic messages `toFormState` (`lib/api/mutation.ts`) renders from a `MutationResult`. Every write form shares these. */
   formErrors: {
