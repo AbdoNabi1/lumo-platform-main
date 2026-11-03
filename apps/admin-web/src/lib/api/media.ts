@@ -79,6 +79,10 @@ export type UploadProductImageResult =
   | { readonly outcome: "unavailable" }
   | { readonly outcome: "too_large" }
   | { readonly outcome: "unsupported" }
+  // The product route never answers 422 or 409 in practice; `uploadProductImageAction` maps both
+  // to "failed" through its default branch.
+  | { readonly outcome: "invalid"; readonly code: string; readonly detail: unknown }
+  | { readonly outcome: "conflict" }
   | { readonly outcome: "error"; readonly message: string };
 
 /**

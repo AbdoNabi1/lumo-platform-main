@@ -254,6 +254,9 @@ importers:
       '@platform/regions':
         specifier: workspace:*
         version: link:../../packages/regions
+      '@platform/storefront-content':
+        specifier: workspace:*
+        version: link:../../packages/storefront-content
       '@platform/ui':
         specifier: workspace:*
         version: link:../../packages/ui

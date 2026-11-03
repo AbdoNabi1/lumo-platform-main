@@ -48,6 +48,28 @@ describe("admin-web next.config (Plan 2C-3)", () => {
     expect(await imgSrc()).toBe("img-src 'self' data:");
   });
 
+  it("allows framing the storefront preview (frame-src), never framing the admin itself (Ruling 18)", async () => {
+    vi.stubEnv("STOREFRONT_URL", "http://localhost:3000/shop");
+    const config = await loadConfig();
+    const rules = await config.headers!();
+    const csp = rules[0]!.headers.find((h) => h.key === "Content-Security-Policy")!.value;
+    expect(csp.split("; ")).toContain("frame-src 'self' https: http://localhost:3000");
+    expect(csp.split("; ")).toContain("frame-ancestors 'none'");
+  });
+
+  it("frame-src adds nothing for an invalid storefront address", async () => {
+    vi.stubEnv("STOREFRONT_URL", "not a url");
+    const config = await loadConfig();
+    const rules = await config.headers!();
+    const csp = rules[0]!.headers.find((h) => h.key === "Content-Security-Policy")!.value;
+    expect(csp.split("; ")).toContain("frame-src 'self' https:");
+  });
+
+  it("compiles the shared storefront content package from source", async () => {
+    const config = await loadConfig();
+    expect(config.transpilePackages).toContain("@platform/storefront-content");
+  });
+
   it("accepts server action bodies up to 10 MB (an 8 MB picture plus the form around it)", async () => {
     const config = await loadConfig();
     expect(config.experimental?.serverActions?.bodySizeLimit).toBe("10mb");

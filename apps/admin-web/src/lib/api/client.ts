@@ -214,6 +214,10 @@ export type BinaryResult<T> =
   | { readonly outcome: "unavailable" }
   | { readonly outcome: "too_large" }
   | { readonly outcome: "unsupported" }
+  /** 422: the bytes were read and refused (for example the image's dimensions); `code` says why. */
+  | { readonly outcome: "invalid"; readonly code: string; readonly detail: unknown }
+  /** 409: the same Idempotency-Key is still in flight (a double submit), not a lost update. */
+  | { readonly outcome: "conflict" }
   | { readonly outcome: "error"; readonly message: string };
 
 /** Uploads need longer than a JSON call: up to 8 MB over a phone connection. */
@@ -260,6 +264,15 @@ export async function sendAdminBinary<T>(
   if (response.status === 503) return { outcome: "unavailable" };
   if (response.status === 413) return { outcome: "too_large" };
   if (response.status === 415) return { outcome: "unsupported" };
+  if (response.status === 409) return { outcome: "conflict" };
+  if (response.status === 422) {
+    const detail: unknown = await response.json().catch(() => null);
+    const code =
+      typeof (detail as { code?: unknown } | null)?.code === "string"
+        ? (detail as { code: string }).code
+        : "INVALID";
+    return { outcome: "invalid", code, detail };
+  }
   if (!response.ok) {
     return { outcome: "error", message: `Admin API responded with status ${response.status}` };
   }

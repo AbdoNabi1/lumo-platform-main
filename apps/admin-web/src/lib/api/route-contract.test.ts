@@ -116,7 +116,9 @@ function extractRoutesFromFile(filePath: string): RealRoute[] {
     const pathMatch = /path:\s*"([^"]+)"/.exec(block);
     const versionMatch = /version:\s*(\d+)/.exec(block);
     if (methodMatch === null || pathMatch === null || versionMatch === null) {
-      throw new Error(`${file}: defineRoute block at index ${markerIndex} is missing method/path/version`);
+      throw new Error(
+        `${file}: defineRoute block at index ${markerIndex} is missing method/path/version`,
+      );
     }
     routes.push({
       method: methodMatch[1]!,
@@ -195,22 +197,21 @@ vi.mock("./client", async (importOriginal) => {
       captures.push({ method: "GET", path: requestPath, file: currentFile, fn: currentFn });
       return Promise.resolve({ outcome: "error", message: "mocked" });
     }),
-    mutateAdminApi: vi.fn(
-      (requestPath: string, init: { readonly method: string }) => {
-        captures.push({ method: init.method, path: requestPath, file: currentFile, fn: currentFn });
-        return Promise.resolve({ outcome: "error", message: "mocked" });
-      },
-    ),
+    mutateAdminApi: vi.fn((requestPath: string, init: { readonly method: string }) => {
+      captures.push({ method: init.method, path: requestPath, file: currentFile, fn: currentFn });
+      return Promise.resolve({ outcome: "error", message: "mocked" });
+    }),
+    // Raw-byte uploads (product pictures, Online Store images) are always a POST.
+    sendAdminBinary: vi.fn((requestPath: string) => {
+      captures.push({ method: "POST", path: requestPath, file: currentFile, fn: currentFn });
+      return Promise.resolve({ outcome: "error", message: "mocked" });
+    }),
   };
 });
 
 async function callEveryExportedFunction(): Promise<void> {
   const files = readdirSync(API_DIR).filter(
-    (f) =>
-      f.endsWith(".ts") &&
-      !f.endsWith(".test.ts") &&
-      f !== "client.ts" &&
-      f !== "mutation.ts",
+    (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "client.ts" && f !== "mutation.ts",
   );
   expect(files.length).toBeGreaterThan(20); // sanity: this directory didn't move/empty out
 

@@ -92,6 +92,8 @@ const SHARED_VERBATIM = new Set([
   "productEditor.valueSuggestions.color.7",
   "productEditor.valueSuggestions.color.8",
   "productEditor.valueSuggestions.color.9",
+  // Project 4 — the character counter is only placeholders and a slash: "{count}/{max}".
+  "onlineStorePreferences.counter",
 ]);
 
 describe("locales", () => {
@@ -120,6 +122,14 @@ describe("locales", () => {
 describe("Arabic dictionary", () => {
   const englishLeaves = leaves(en);
   const arabicByPath = new Map(leaves(ar));
+
+  it("names the platform مربح, never the old transliteration (Global Constraint 9)", () => {
+    expect(ar.brand).toBe("مربح");
+    // Escaped so a repo-wide grep for the old spelling stays empty.
+    const oldSpelling = "موربيه";
+    const stale = [...arabicByPath].filter(([, value]) => value.includes(oldSpelling));
+    expect(stale).toEqual([]);
+  });
 
   it("covers every English key", () => {
     const missing = englishLeaves.filter(([path]) => !arabicByPath.has(path)).map(([p]) => p);

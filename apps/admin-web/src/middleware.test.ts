@@ -113,6 +113,26 @@ describe("middleware", () => {
     expect(response.headers.get("location")).toContain("/forbidden");
   });
 
+  it("Online Store: viewers reach every sidebar link; the editor needs an operator (Project 4)", async () => {
+    const { ONLINE_STORE_NAV } = await import("@/components/navigation");
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const href of [
+      ONLINE_STORE_NAV.href,
+      ...(ONLINE_STORE_NAV.children ?? []).map((c) => c.href),
+    ]) {
+      const response = await middleware(requestFor(href, "good.token"));
+      expect(response.headers.get("location"), href).toBeNull();
+    }
+    const denied = await middleware(requestFor("/online-store/themes/customize", "good.token"));
+    expect(denied.headers.get("location")).toContain("/forbidden");
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    expect(
+      (await middleware(requestFor("/online-store/themes/customize", "good.token"))).headers.get(
+        "location",
+      ),
+    ).toBeNull();
+  });
+
   it("/forbidden itself is reachable by any authenticated session regardless of role", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
     const response = await middleware(requestFor("/forbidden", "good.token"));

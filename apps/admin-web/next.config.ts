@@ -35,6 +35,7 @@ const hydraOrigin = authOrigin("HYDRA_PUBLIC_URL", "http://localhost:4444");
 // Plan 2C-3: product pictures are served from the public media bucket, another origin. Only that
 // origin is allowed for images (never its path, never a wildcard); unset or invalid adds nothing.
 const mediaOrigin = authOrigin("MEDIA_PUBLIC_BASE_URL", "");
+const storefrontOrigin = authOrigin("STOREFRONT_URL", "");
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -43,6 +44,9 @@ const CONTENT_SECURITY_POLICY = [
   ["img-src 'self' data:", mediaOrigin].filter((part) => part.length > 0).join(" "),
   "font-src 'self' data:",
   "connect-src 'self'",
+  // Ruling 18: the customize editor frames the storefront preview, which runs on the shop's primary
+  // hostname (any verified custom domain). The framed page's own frame-ancestors is the control.
+  ["frame-src 'self' https:", storefrontOrigin].filter((part) => part.length > 0).join(" "),
   `form-action 'self' ${kratosOrigin} ${hydraOrigin}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
@@ -63,7 +67,12 @@ const config: NextConfig = {
   // Trace from the monorepo root so workspace packages are bundled into standalone output.
   outputFileTracingRoot: fileURLToPath(new URL("../../", import.meta.url)),
   // Compile the design-system packages from source — no pre-build step needed.
-  transpilePackages: ["@platform/ui", "@platform/design", "@platform/regions"],
+  transpilePackages: [
+    "@platform/ui",
+    "@platform/design",
+    "@platform/regions",
+    "@platform/storefront-content",
+  ],
   experimental: {
     // Plan 2C-3: a product picture (8 MB at most) travels inside a Server Action's form data.
     serverActions: { bodySizeLimit: "10mb" },
