@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAutosaver,
+  createReplayingSender,
   createRequestKey,
   newClientKey,
+  type SendAnswer,
   type AutosaveState,
   type SaveOutcome,
 } from "./autosave";
@@ -76,15 +78,44 @@ describe("createAutosaver (Decision 36)", () => {
     expect(await saver.flush()).toBe("ok");
   });
 
-  it("an error never retries on its own; the next flush retries the same value (F20)", async () => {
-    const { saver, saved, states } = setup([async () => "error"]);
+  it("a 422 (invalid) never retries on its own; the next flush retries the same value (F20)", async () => {
+    const { saver, saved, states } = setup([async () => "invalid"]);
     saver.schedule("a");
     await vi.advanceTimersByTimeAsync(1000);
     expect(states.at(-1)).toBe("error");
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(saved).toEqual(["a"]); // no loop on a failing save (Ruling 3)
+    expect(saved).toEqual(["a"]); // no loop on a refused save (Ruling 3)
+    expect(saver.hasUnsaved()).toBe(true);
     expect(await saver.flush()).toBe("ok");
     expect(saved).toEqual(["a", "a"]);
+    expect(saver.hasUnsaved()).toBe(false);
+  });
+
+  it("a transient error retries with backoff, at most 3 times, then waits for flush (I-2)", async () => {
+    const error = async (): Promise<SaveOutcome> => "error";
+    const { saver, saved, states } = setup([error, error, error, error]);
+    saver.schedule("a");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(saved).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(saved).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(saved).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(saved).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(saved).toEqual(["a", "a", "a", "a"]);
+    expect(states.at(-1)).toBe("error");
+    expect(await saver.flush()).toBe("ok");
+  });
+
+  it("a retry that succeeds reports saved, and a new change restarts the retry budget", async () => {
+    const { saver, saved, states } = setup([async () => "error"]);
+    saver.schedule("a");
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(saved).toEqual(["a", "a"]);
+    expect(states.at(-1)).toBe("saved");
+    expect(saver.hasUnsaved()).toBe(false);
   });
 
   it("a thrown save counts as an error, and flush reports it", async () => {
@@ -99,6 +130,21 @@ describe("createAutosaver (Decision 36)", () => {
     await vi.advanceTimersByTimeAsync(1000);
     saver.schedule("b");
     expect(await saver.flush()).toBe("ok");
+    expect(saved).toEqual(["a", "b"]);
+  });
+
+  it("flush during a save, with a newer change waiting on its timer, saves the newer value (M-7)", async () => {
+    let release!: (o: SaveOutcome) => void;
+    const { saver, saved } = setup([() => new Promise<SaveOutcome>((r) => (release = r))]);
+    saver.schedule("a");
+    await vi.advanceTimersByTimeAsync(1000);
+    saver.schedule("b");
+    expect(saver.hasUnsaved()).toBe(true);
+    const flushed = saver.flush();
+    release("ok");
+    expect(await flushed).toBe("ok");
+    expect(saved).toEqual(["a", "b"]);
+    await vi.advanceTimersByTimeAsync(5000);
     expect(saved).toEqual(["a", "b"]);
   });
 
@@ -129,5 +175,118 @@ describe("createRequestKey (Ruling 2)", () => {
     const a = newClientKey();
     expect(a).toMatch(/^[0-9a-f]{32}$/);
     expect(newClientKey()).not.toBe(a);
+  });
+});
+
+/**
+ * A tiny Runtime: optimistic version, a response cache per Idempotency-Key, and a switch that
+ * commits a request but loses its response (the server-action blip I-1 is about).
+ */
+function fakeServer() {
+  const server = {
+    version: 1,
+    saved: [] as string[],
+    loseNext: false,
+    calls: [] as { value: string; expectedVersion: number; key: string }[],
+  };
+  const cache = new Map<string, SendAnswer>();
+  const send = (value: string, expectedVersion: number, key: string): Promise<SendAnswer> => {
+    server.calls.push({ value, expectedVersion, key });
+    const replay = cache.get(key);
+    if (replay !== undefined) return Promise.resolve(replay);
+    let answer: SendAnswer;
+    if (expectedVersion !== server.version) answer = { status: "conflict" };
+    else {
+      server.version += 1;
+      server.saved.push(value);
+      answer = { status: "ok", version: server.version };
+    }
+    cache.set(key, answer);
+    if (server.loseNext) {
+      server.loseNext = false;
+      return Promise.resolve({ status: "transient" });
+    }
+    return Promise.resolve(answer);
+  };
+  return { server, send };
+}
+
+describe("createReplayingSender (I-1)", () => {
+  it("a lost response, then a new edit: the old request is replayed first, no false conflict", async () => {
+    const { server, send } = fakeServer();
+    const sender = createReplayingSender<string>({ initialVersion: 1, send });
+    server.loseNext = true;
+    expect(await sender.save("a")).toBe("error");
+    expect(await sender.save("b")).toBe("ok");
+    expect(server.saved).toEqual(["a", "b"]);
+    expect(server.calls.map((c) => c.expectedVersion)).toEqual([1, 1, 2]);
+    expect(server.calls[1]!.key).toBe(server.calls[0]!.key);
+    expect(server.calls[2]!.key).not.toBe(server.calls[0]!.key);
+  });
+
+  it("through the autosaver with fake timers: lost response + new edit saves both, no conflict", async () => {
+    const { server, send } = fakeServer();
+    const sender = createReplayingSender<string>({ initialVersion: 1, send });
+    const states: AutosaveState[] = [];
+    const saver = createAutosaver<string>({
+      delayMs: 1000,
+      save: (v) => sender.save(v),
+      onState: (s) => states.push(s),
+    });
+    server.loseNext = true;
+    saver.schedule("a");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(states.at(-1)).toBe("error");
+    saver.schedule("b");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(states).not.toContain("conflict");
+    expect(states.at(-1)).toBe("saved");
+    expect(server.saved).toEqual(["a", "b"]);
+  });
+
+  it("re-sending the same value after a replayed 200 does not save it twice", async () => {
+    const { server, send } = fakeServer();
+    const sender = createReplayingSender<string>({ initialVersion: 1, send });
+    server.loseNext = true;
+    const value = "a";
+    expect(await sender.save(value)).toBe("error");
+    expect(await sender.save(value)).toBe("ok");
+    expect(server.calls).toHaveLength(2);
+    expect(server.saved).toEqual(["a"]);
+  });
+
+  it("an unresolved request that is still unanswered holds back the new value", async () => {
+    const answers: SendAnswer[] = [{ status: "transient" }, { status: "transient" }];
+    const calls: string[] = [];
+    const sender = createReplayingSender<string>({
+      initialVersion: 1,
+      send: (value) => {
+        calls.push(value);
+        return Promise.resolve(answers.shift() ?? { status: "ok", version: 9 });
+      },
+    });
+    expect(await sender.save("a")).toBe("error");
+    expect(await sender.save("b")).toBe("error");
+    expect(calls).toEqual(["a", "a"]);
+  });
+
+  it("a thrown send is transient; a 422 is final and not replayed; a real conflict is a conflict", async () => {
+    const answers: (SendAnswer | Error)[] = [
+      new Error("network"),
+      { status: "invalid" },
+      { status: "conflict" },
+    ];
+    const calls: string[] = [];
+    const sender = createReplayingSender<string>({
+      initialVersion: 1,
+      send: (value) => {
+        calls.push(value);
+        const next = answers.shift()!;
+        return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
+      },
+    });
+    expect(await sender.save("a")).toBe("error");
+    expect(await sender.save("b")).toBe("conflict"); // replay of "a" is a 422, then "b" conflicts
+    expect(calls).toEqual(["a", "a", "b"]);
   });
 });

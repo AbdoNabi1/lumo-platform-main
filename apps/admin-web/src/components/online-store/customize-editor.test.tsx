@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { DEFAULT_THEME_DOCUMENT, type ThemeDocument } from "@platform/storefront-content";
@@ -167,7 +168,6 @@ describe("CustomizeEditor", () => {
     });
     await tick(1000);
     expect(screen.getByText(en.onlineStoreCustomize.saveError)).toBeInTheDocument();
-    await tick(60_000);
     expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: en.onlineStoreCustomize.retry }));
@@ -297,5 +297,204 @@ describe("CustomizeEditor", () => {
     unmount();
     await tick();
     expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+  });
+  const changePrimary = (value: string) =>
+    fireEvent.change(screen.getByLabelText(en.onlineStoreCustomize.colors.primary), {
+      target: { value },
+    });
+  const confirmPublish = async () => {
+    fireEvent.click(screen.getByRole("button", { name: en.onlineStoreCustomize.publish }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.onlineStoreCustomize.confirmPublish }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+  };
+
+  it("a lost response then a new edit: replays the lost save, then saves the edit on v2 (I-1)", async () => {
+    // A fake Runtime: the first request commits but its answer is lost on the way back.
+    let version = 1;
+    const answers = new Map<string, unknown>();
+    let lose = true;
+    actions.saveThemeDraftAction.mockImplementation((arg: SaveArg) => {
+      const cached = answers.get(arg.idempotencyKey);
+      if (cached !== undefined) return Promise.resolve(cached);
+      let answer: unknown = { status: "conflict" };
+      if (arg.expectedVersion === version) {
+        version += 1;
+        answer = { status: "ok", draftRevision: version, version, warnings: [] };
+      }
+      answers.set(arg.idempotencyKey, answer);
+      if (lose) {
+        lose = false;
+        return Promise.resolve({ status: "error" });
+      }
+      return Promise.resolve(answer);
+    });
+    renderEditor();
+    changePrimary("#112233");
+    await tick(1000);
+    expect(screen.getByText(en.onlineStoreCustomize.saveError)).toBeInTheDocument();
+    changePrimary("#445566");
+    await tick(1000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(3);
+    expect(saveArg(1).idempotencyKey).toBe(saveArg(0).idempotencyKey);
+    expect(saveArg(2).expectedVersion).toBe(2);
+    expect(saveArg(2).document.brand.colors.primary).toBe("#445566");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(en.onlineStoreCustomize.saved)).toBeInTheDocument();
+    expect(version).toBe(3);
+  });
+
+  it("a transient failure retries on its own with backoff (I-2)", async () => {
+    actions.saveThemeDraftAction.mockResolvedValueOnce({ status: "error" });
+    renderEditor();
+    changePrimary("#112233");
+    await tick(1000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+    await tick(2000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(2);
+    expect(saveArg(1).idempotencyKey).toBe(saveArg(0).idempotencyKey);
+    expect(screen.getByText(en.onlineStoreCustomize.saved)).toBeInTheDocument();
+  });
+
+  it("unsaved edits block unload, and hiding or leaving the page saves them now (I-2)", async () => {
+    renderEditor();
+    const idle = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(idle);
+    expect(idle.defaultPrevented).toBe(false);
+
+    changePrimary("#112233");
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    visibility.mockRestore();
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+
+    changePrimary("#445566");
+    await act(async () => {
+      window.dispatchEvent(new Event("pagehide"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(2);
+    const after = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(after);
+    expect(after.defaultPrevented).toBe(false);
+  });
+
+  it("a refused save keeps blocking unload until it is saved (I-2)", async () => {
+    actions.saveThemeDraftAction.mockResolvedValue({
+      status: "invalid",
+      fields: [{ field: "brand.colors.primary", message: "INVALID_COLOR" }],
+    });
+    renderEditor();
+    changePrimary("#112233");
+    await tick(1000);
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+  });
+
+  it("a change made while a save is in flight is sent next on the new version (M-7)", async () => {
+    let release!: (v: unknown) => void;
+    actions.saveThemeDraftAction.mockImplementationOnce(
+      () => new Promise((resolve) => (release = resolve)),
+    );
+    renderEditor();
+    changePrimary("#112233");
+    await tick(1000);
+    changePrimary("#445566");
+    await tick(1000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release({ status: "ok", draftRevision: 2, version: 2, warnings: [] });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(2);
+    expect(saveArg(1).expectedVersion).toBe(2);
+    expect(saveArg(1).document.brand.colors.primary).toBe("#445566");
+  });
+
+  it("after a conflict the panels lock, later edits send nothing, and Reload is offered (M-2, M-7)", async () => {
+    actions.saveThemeDraftAction.mockResolvedValue({ status: "conflict" });
+    renderEditor();
+    changePrimary("#112233");
+    await tick(1000);
+    expect(screen.getByLabelText(en.onlineStoreCustomize.colors.primary)).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: en.onlineStoreCustomize.reload }),
+    ).toBeInTheDocument();
+    changePrimary("#445566");
+    await tick(5000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("publish stops when the flush ends in a conflict (M-7)", async () => {
+    actions.saveThemeDraftAction.mockResolvedValue({ status: "conflict" });
+    renderEditor("admin");
+    changePrimary("#112233");
+    await confirmPublish();
+    expect(actions.publishThemeAction).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(en.onlineStoreCustomize.conflict);
+  });
+
+  it("publish waits while a social link is invalid (M-6)", async () => {
+    renderEditor("admin");
+    const instagram = screen.getByLabelText(en.onlineStoreCustomize.networks.instagram);
+    fireEvent.change(instagram, { target: { value: "http://instagram.com/nour" } });
+    fireEvent.blur(instagram);
+    await confirmPublish();
+    expect(actions.publishThemeAction).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(en.onlineStoreCustomize.fixFieldsFirst);
+    fireEvent.change(instagram, { target: { value: "" } });
+    fireEvent.blur(instagram);
+    actions.publishThemeAction.mockResolvedValue({ status: "ok", releaseNumber: 1 });
+    await confirmPublish();
+    expect(actions.publishThemeAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("autosave still works under React Strict Mode (F19)", async () => {
+    const admin = "admin" as const; // a literal role prop reads as an ARIA role to jsx-a11y
+    render(
+      <StrictMode>
+        <CustomizeEditor t={en} locale="en" state={state} role={admin} storeName="Nour" />
+      </StrictMode>,
+    );
+    await tick();
+    changePrimary("#112233");
+    await tick(1000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(en.onlineStoreCustomize.saved)).toBeInTheDocument();
+  });
+
+  it("a skewed clock (token already expired here) does not mint a token on every focus (M-4)", async () => {
+    actions.previewUrlAction.mockResolvedValue({
+      status: "ok",
+      url: "https://shop.example/?preview=tok",
+      expiresAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+    });
+    renderEditor();
+    await tick();
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(actions.previewUrlAction).toHaveBeenCalledTimes(1);
+    expect(screen.getByTitle(en.onlineStoreCustomize.previewTitle)).toBeInTheDocument();
+  });
+
+  it("the preview frame is sandboxed without top navigation (M-1)", async () => {
+    renderEditor();
+    await tick();
+    const frame = screen.getByTitle(en.onlineStoreCustomize.previewTitle);
+    const sandbox = frame.getAttribute("sandbox") ?? "";
+    expect(sandbox).toContain("allow-scripts");
+    expect(sandbox).toContain("allow-same-origin");
+    expect(sandbox).not.toContain("allow-top-navigation");
   });
 });

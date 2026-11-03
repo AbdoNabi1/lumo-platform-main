@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge, Button, ColorField, Label, NativeSelect, Switch } from "@platform/ui";
 import {
   BASE_SIZES,
@@ -349,7 +349,18 @@ function displaySocial(network: SocialNetwork, stored: string): string {
   return "url" in check && check.url === stored ? decoded : stored;
 }
 
-export function SocialPanel({ t, doc, update, disabled, errors }: PanelProps) {
+/**
+ * `onLocalErrors` reports whether any link is invalid as typed (M-6): such text never reaches the
+ * document, which still holds the previous link, so the editor holds Publish until it is fixed.
+ */
+export function SocialPanel({
+  t,
+  doc,
+  update,
+  disabled,
+  errors,
+  onLocalErrors,
+}: PanelProps & { readonly onLocalErrors?: (hasErrors: boolean) => void }) {
   const c = t.onlineStoreCustomize;
   const [text, setText] = useState<Partial<Record<SocialNetwork, string>>>(() => {
     const shown: Partial<Record<SocialNetwork, string>> = {};
@@ -360,6 +371,8 @@ export function SocialPanel({ t, doc, update, disabled, errors }: PanelProps) {
     return shown;
   });
   const [local, setLocal] = useState<Partial<Record<SocialNetwork, string>>>({});
+  const hasLocalErrors = Object.values(local).some((message) => message !== undefined);
+  useEffect(() => onLocalErrors?.(hasLocalErrors), [hasLocalErrors, onLocalErrors]);
   const copyFor = (code: string) =>
     code === "INVALID_URL"
       ? c.socialInvalid

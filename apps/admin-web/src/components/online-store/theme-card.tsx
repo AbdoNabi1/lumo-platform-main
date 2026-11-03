@@ -33,18 +33,23 @@ export type StaffRole = "viewer" | "operator" | "admin";
 /**
  * Opens the preview in a new tab without giving it a handle back to the admin (noopener). The tab
  * opens first, inside the click, so a popup blocker allows it; `before` (the editor's save) runs
- * while it loads. The url holds the preview token: it goes only into that tab's location.
+ * while it loads. The url holds the preview token: it goes only into that tab's location. A blocked
+ * pop-up is said so (M-3) and mints no token.
  */
 export async function openPreview(
-  onError: () => void,
+  onError: (reason: "blocked" | "failed") => void,
   before: () => Promise<boolean> = () => Promise.resolve(true),
 ): Promise<void> {
   const tab = window.open("about:blank", "_blank");
+  if (tab === null) {
+    onError("blocked");
+    return;
+  }
   const proceed = await before();
   const result = proceed ? await previewUrlAction() : null;
-  if (result === null || result.status !== "ok" || tab === null) {
-    tab?.close();
-    if (proceed) onError();
+  if (result === null || result.status !== "ok") {
+    tab.close();
+    if (proceed) onError("failed");
     return;
   }
   tab.opener = null;
@@ -150,7 +155,11 @@ export function ThemeCard({
         <Button
           type="button"
           variant="secondary"
-          onClick={() => void openPreview(() => setMessage(s.previewFailed))}
+          onClick={() =>
+            void openPreview((reason) =>
+              setMessage(reason === "blocked" ? s.popupBlocked : s.previewFailed),
+            )
+          }
         >
           {s.preview}
         </Button>

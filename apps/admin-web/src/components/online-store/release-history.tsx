@@ -8,6 +8,12 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Table,
   TableBody,
   TableCell,
@@ -23,7 +29,8 @@ import type { Dictionary } from "@/messages/en";
 /**
  * The last releases, newest first. Restore copies a release into the DRAFT only (Ruling 6); the live
  * store changes when that draft is previewed and published. Admin only: disabled with the reason
- * for everyone else, and refused by the API anyway.
+ * for everyone else, and refused by the API anyway. Restoring over unpublished changes replaces
+ * them for good, so it asks first, like Discard (I-3).
  */
 export function ReleaseHistory({
   t,
@@ -31,22 +38,28 @@ export function ReleaseHistory({
   releases,
   version,
   isAdmin,
+  hasUnpublishedChanges,
+  loadFailed = false,
 }: {
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly releases: readonly ReleaseDto[];
   readonly version: number;
   readonly isAdmin: boolean;
+  readonly hasUnpublishedChanges: boolean;
+  readonly loadFailed?: boolean;
 }) {
   const s = t.onlineStoreThemes;
   const router = useRouter();
   const [message, setMessage] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<number | null>(null);
   const [pending, start] = useTransition();
   const number = new Intl.NumberFormat(locale);
   const dates = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
   const restore = (releaseNumber: number) =>
     start(async () => {
       const result = await restoreReleaseAction(releaseNumber, version);
+      setConfirming(null);
       setMessage(
         result.status === "ok"
           ? s.restored
@@ -60,13 +73,21 @@ export function ReleaseHistory({
       );
       router.refresh();
     });
+  const ask = (releaseNumber: number) => {
+    if (hasUnpublishedChanges) setConfirming(releaseNumber);
+    else restore(releaseNumber);
+  };
   return (
     <Card>
       <CardHeader>
         <CardTitle>{s.history}</CardTitle>
       </CardHeader>
       <CardContent>
-        {releases.length === 0 ? (
+        {loadFailed ? (
+          <p role="alert" className="text-destructive text-sm">
+            {s.historyError}
+          </p>
+        ) : releases.length === 0 ? (
           <p className="text-muted-foreground text-sm">{s.noReleases}</p>
         ) : (
           <Table>
@@ -97,7 +118,7 @@ export function ReleaseHistory({
                       variant="ghost"
                       disabled={!isAdmin || pending}
                       title={isAdmin ? undefined : s.adminOnlyRestore}
-                      onClick={() => restore(release.releaseNumber)}
+                      onClick={() => ask(release.releaseNumber)}
                     >
                       {s.restore}
                     </Button>
@@ -113,6 +134,34 @@ export function ReleaseHistory({
           </p>
         )}
       </CardContent>
+      <Dialog
+        open={confirming !== null}
+        onOpenChange={(open) => setConfirming(open ? confirming : null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {s.restoreTitle.replace("{number}", number.format(confirming ?? 0))}
+            </DialogTitle>
+            <DialogDescription>{s.restoreBody}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setConfirming(null)}>
+              {s.cancel}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              loading={pending}
+              onClick={() => {
+                if (confirming !== null) restore(confirming);
+              }}
+            >
+              {s.confirmRestore}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

@@ -20,7 +20,13 @@ import {
 } from "@/app/online-store/themes/actions";
 import type { FieldIssue } from "@/lib/api/client";
 import type { OnlineStoreImageDto, ThemeStateDto } from "@/lib/api/online-store";
-import { createAutosaver, createRequestKey, type AutosaveState } from "@/lib/online-store/autosave";
+import {
+  createAutosaver,
+  createReplayingSender,
+  createRequestKey,
+  type AutosaveState,
+  type SendAnswer,
+} from "@/lib/online-store/autosave";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import {
@@ -39,37 +45,37 @@ const AUTOSAVE_DELAY_MS = 1000;
 const PREVIEW_LIFETIME_MS = 60 * 60 * 1000;
 const PREVIEW_MARGIN_MS = 10 * 60 * 1000;
 const PREVIEW_MIN_REFRESH_MS = 60 * 1000;
+/**
+ * M-1: the storefront needs scripts (hydration), its own origin (cookies, fetches) and forms
+ * (search); top-level navigation of the admin is what the sandbox takes away.
+ */
+const PREVIEW_SANDBOX =
+  "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox";
 
 /**
  * The API's 422 codes as copy, keyed by document path; the path `""` is the whole document
- * (`DOCUMENT_TOO_LARGE`). Server text never reaches the page.
+ * (`DOCUMENT_TOO_LARGE`). Server text never reaches the page. Social links have their own wording
+ * for the two codes that differ there (the encoded 500-character limit, Ruling 5).
  */
 function fieldErrorsOf(t: Dictionary, fields: readonly FieldIssue[]): Record<string, string> {
-  const e = t.onlineStoreErrors;
   const c = t.onlineStoreCustomize;
+  const copyByCode: Readonly<Record<string, string>> = {
+    IMAGE_NOT_FOUND: t.onlineStorePreferences.imageNotFound,
+    INVALID_URL: t.onlineStoreErrors.invalidUrl,
+    TOO_LONG: t.onlineStorePreferences.tooLong,
+    INVALID_COLOR: t.onlineStoreErrors.invalidColor,
+    OUT_OF_RANGE: t.onlineStoreErrors.outOfRange,
+    CONTRAST_TOO_LOW: c.contrastBlocked,
+    DOCUMENT_TOO_LARGE: t.onlineStoreErrors.documentTooLarge,
+  };
+  const socialCopy: Readonly<Record<string, string>> = {
+    INVALID_URL: c.socialInvalid,
+    TOO_LONG: c.socialTooLong,
+  };
   const errors: Record<string, string> = {};
   for (const { field, message: code } of fields) {
-    const social = field.startsWith("brand.social.");
-    errors[field] =
-      code === "IMAGE_NOT_FOUND"
-        ? t.onlineStorePreferences.imageNotFound
-        : code === "INVALID_URL"
-          ? social
-            ? c.socialInvalid
-            : e.invalidUrl
-          : code === "TOO_LONG"
-            ? social
-              ? c.socialTooLong
-              : t.onlineStorePreferences.tooLong
-            : code === "INVALID_COLOR"
-              ? e.invalidColor
-              : code === "OUT_OF_RANGE"
-                ? e.outOfRange
-                : code === "CONTRAST_TOO_LOW"
-                  ? c.contrastBlocked
-                  : code === "DOCUMENT_TOO_LARGE"
-                    ? e.documentTooLarge
-                    : t.formErrors.invalid;
+    const social = field.startsWith("brand.social.") ? socialCopy[code] : undefined;
+    errors[field] = social ?? copyByCode[code] ?? t.formErrors.invalid;
   }
   return errors;
 }
@@ -105,16 +111,16 @@ export function CustomizeEditor({
   const isAdmin = role === "admin";
   const [doc, setDoc] = useState<ThemeDocument>(state.draft);
   const docRef = useRef(doc);
-  const versionRef = useRef(state.version);
   const revisionRef = useRef(state.draftRevision);
-  const saveKeys = useRef(createRequestKey());
   const publishKeys = useRef(createRequestKey());
   const [images, setImages] = useState<Record<string, OnlineStoreImageDto>>({ ...state.images });
   const [saveState, setSaveState] = useState<AutosaveState>("idle");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [socialInvalid, setSocialInvalid] = useState(false);
   const [alert, setAlert] = useState<string | null>(null);
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
-  const [preview, setPreview] = useState<{ url: string; expiresAt: number } | null>(null);
+  /** `deadline` is in this browser's clock, fixed at receipt (M-4: skew-proof). */
+  const [preview, setPreview] = useState<{ url: string; deadline: number | null } | null>(null);
   const [previewProblem, setPreviewProblem] = useState<"expired" | "failed" | null>(null);
   const hasPreview = useRef(false);
   const mounted = useRef(true);
@@ -122,6 +128,31 @@ export function CustomizeEditor({
   const [confirming, setConfirming] = useState(false);
   const [publishing, setPublishing] = useState(false);
 
+  // I-1: one draft save at the server's optimistic version; a save whose answer was lost is
+  // replayed with its own key before anything newer goes out.
+  const [sender] = useState(() =>
+    createReplayingSender<ThemeDocument>({
+      initialVersion: state.version,
+      send: async (document, expectedVersion, idempotencyKey): Promise<SendAnswer> => {
+        const result = await saveThemeDraftAction({ document, expectedVersion, idempotencyKey });
+        switch (result.status) {
+          case "ok":
+            revisionRef.current = result.draftRevision;
+            setFrameVersion(result.draftRevision);
+            setFieldErrors({});
+            return { status: "ok", version: result.version };
+          case "conflict":
+            return { status: "conflict" };
+          case "invalid":
+            // Final: never retried on a timer, so a refused save cannot loop (Ruling 3).
+            setFieldErrors(fieldErrorsOf(t, result.fields));
+            return { status: "invalid" };
+          default:
+            return { status: "transient" }; // error or in_flight: the answer may still come
+        }
+      },
+    }),
+  );
   // Created once (not in an effect), so React Strict Mode's remount keeps the same saver (F19).
   const [saver] = useState(() =>
     createAutosaver<ThemeDocument>({
@@ -130,31 +161,7 @@ export function CustomizeEditor({
         setSaveState(s);
         if (s === "conflict") setAlert(c.conflict);
       },
-      save: async (document) => {
-        const expectedVersion = versionRef.current;
-        // Ruling 2: the same payload at the same version keeps its key, so a retry after a lost
-        // response replays the first answer instead of a false VERSION_CONFLICT.
-        const idempotencyKey = saveKeys.current.keyFor(
-          `${expectedVersion}|${JSON.stringify(document)}`,
-        );
-        const result = await saveThemeDraftAction({ document, expectedVersion, idempotencyKey });
-        switch (result.status) {
-          case "ok":
-            versionRef.current = result.version;
-            revisionRef.current = result.draftRevision;
-            setFrameVersion(result.draftRevision);
-            setFieldErrors({});
-            return "ok";
-          case "conflict":
-            return "conflict";
-          case "invalid":
-            // Not retried until the merchant changes something (or retries): no loop (Ruling 3).
-            setFieldErrors(fieldErrorsOf(t, result.fields));
-            return "error";
-          default:
-            return "error";
-        }
-      },
+      save: (document) => sender.save(document),
     }),
   );
   // F19: the cleanup saves a pending change (Exit, navigation) and never switches autosave off.
@@ -165,12 +172,36 @@ export function CustomizeEditor({
     [saver],
   );
 
+  // I-2: a tab close or reload does not unmount React. Save as the page is hidden or left (best
+  // effort), and ask the browser to confirm leaving while a change is unsaved or failed.
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!saver.hasUnsaved()) return;
+      event.preventDefault();
+    };
+    const onPageHide = () => {
+      void saver.flush();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") void saver.flush();
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", onPageHide);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [saver]);
+
   const loadPreview = useCallback(async () => {
     const result = await previewUrlAction();
     if (!mounted.current) return;
     if (result.status === "ok") {
       hasPreview.current = true;
-      setPreview({ url: result.url, expiresAt: Date.parse(result.expiresAt) });
+      const left = lifetimeLeft(Date.parse(result.expiresAt));
+      setPreview({ url: result.url, deadline: left === null ? null : Date.now() + left });
       setPreviewProblem(null);
     } else if (!hasPreview.current) {
       setPreviewProblem("failed");
@@ -190,7 +221,8 @@ export function CustomizeEditor({
   // the live theme, and a cross-origin frame cannot be read, so expiry is tracked here instead.
   useEffect(() => {
     if (preview === null) return;
-    const left = lifetimeLeft(preview.expiresAt);
+    const { deadline } = preview;
+    const left = deadline === null ? null : Math.max(0, deadline - Date.now());
     const refreshIn =
       left === null
         ? PREVIEW_LIFETIME_MS - PREVIEW_MARGIN_MS
@@ -202,8 +234,7 @@ export function CustomizeEditor({
     const expire = left === null ? null : setTimeout(() => setPreviewProblem("expired"), left);
     const onReturn = () => {
       if (document.visibilityState === "hidden") return;
-      if (Number.isFinite(preview.expiresAt) && preview.expiresAt - Date.now() < PREVIEW_MARGIN_MS)
-        void loadPreview();
+      if (deadline !== null && deadline - Date.now() < PREVIEW_MARGIN_MS) void loadPreview();
     };
     window.addEventListener("focus", onReturn);
     document.addEventListener("visibilitychange", onReturn);
@@ -227,16 +258,20 @@ export function CustomizeEditor({
   /** Saves first; false (with the reason shown) when the panels differ from the saved draft. */
   const saveFirst = async (): Promise<boolean> => {
     const outcome = await saver.flush();
-    if (outcome === "conflict" || outcome === "error") {
-      setAlert(outcome === "conflict" ? c.conflict : c.saveError);
-      return false;
-    }
-    return true;
+    if (outcome === "ok" || outcome === null) return true;
+    setAlert(outcome === "conflict" ? c.conflict : c.saveError);
+    return false;
   };
 
   // F20 + Ruling 6: publish exactly the saved revision the panels show, and nothing after a failed
-  // save; the key is kept while that revision is unchanged (Ruling 2).
+  // save or while a field is invalid as typed (M-6); the key is kept while that revision is
+  // unchanged (Ruling 2).
   const publish = async () => {
+    if (socialInvalid) {
+      setConfirming(false);
+      setAlert(c.fixFieldsFirst);
+      return;
+    }
     setPublishing(true);
     if (!(await saveFirst())) {
       setPublishing(false);
@@ -314,7 +349,15 @@ export function CustomizeEditor({
             size="sm"
             variant="secondary"
             onClick={() =>
-              void openPreview(() => setAlert(t.onlineStoreThemes.previewFailed), saveFirst)
+              void openPreview(
+                (reason) =>
+                  setAlert(
+                    reason === "blocked"
+                      ? t.onlineStoreThemes.popupBlocked
+                      : t.onlineStoreThemes.previewFailed,
+                  ),
+                saveFirst,
+              )
             }
           >
             {c.preview}
@@ -331,9 +374,23 @@ export function CustomizeEditor({
         </div>
       </header>
       {alert === null ? null : (
-        <p role="alert" className="bg-warning-subtle text-warning-foreground px-4 py-2 text-sm">
-          {alert}
-        </p>
+        <div
+          role="alert"
+          className="bg-warning-subtle text-warning-foreground flex flex-wrap items-center gap-3 px-4 py-2 text-sm"
+        >
+          <p>{alert}</p>
+          {locked ? (
+            // M-2: the editor's state comes from the server once, so only a full reload recovers.
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => window.location.reload()}
+            >
+              {c.reload}
+            </Button>
+          ) : null}
+        </div>
       )}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <aside className="border-border max-h-[45dvh] w-full shrink-0 overflow-y-auto border-b p-4 md:max-h-none md:w-80 md:border-b-0 md:border-e">
@@ -362,7 +419,7 @@ export function CustomizeEditor({
           </details>
           <details className="mb-4">
             <summary className="mb-2 font-medium">{c.socialPanel}</summary>
-            <SocialPanel {...panels} />
+            <SocialPanel {...panels} onLocalErrors={setSocialInvalid} />
           </details>
           <details className="mb-4">
             <summary className="mb-2 font-medium">{c.footerPanel}</summary>
@@ -392,6 +449,7 @@ export function CustomizeEditor({
               key={frameVersion}
               title={c.previewTitle}
               src={frameSrc}
+              sandbox={PREVIEW_SANDBOX}
               referrerPolicy="no-referrer"
               className="bg-card h-full min-h-96 rounded-lg border"
               style={{ width: device === "desktop" ? "100%" : "390px" }}

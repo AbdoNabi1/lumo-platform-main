@@ -51,6 +51,8 @@ export default async function OnlineStoreThemesPage() {
               releases={releases.outcome === "ok" ? releases.data : []}
               version={theme.data.version}
               isAdmin={role === "admin"}
+              hasUnpublishedChanges={theme.data.hasUnpublishedChanges}
+              loadFailed={releases.outcome !== "ok"}
             />
           </>
         ) : (

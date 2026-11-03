@@ -14,7 +14,16 @@ const releases = [
 
 describe("ReleaseHistory (restore goes to the draft, admin only)", () => {
   it("non-admins see Restore disabled with the reason", () => {
-    render(<ReleaseHistory t={en} locale="en" releases={releases} version={4} isAdmin={false} />);
+    render(
+      <ReleaseHistory
+        t={en}
+        locale="en"
+        releases={releases}
+        version={4}
+        isAdmin={false}
+        hasUnpublishedChanges={false}
+      />,
+    );
     for (const button of screen.getAllByRole("button", { name: en.onlineStoreThemes.restore })) {
       expect(button).toBeDisabled();
       expect(button).toHaveAttribute("title", en.onlineStoreThemes.adminOnlyRestore);
@@ -23,7 +32,16 @@ describe("ReleaseHistory (restore goes to the draft, admin only)", () => {
 
   it("admins restore into the draft with the current version; a missing release says so", async () => {
     actions.restoreReleaseAction.mockResolvedValueOnce({ status: "not_found" });
-    render(<ReleaseHistory t={en} locale="en" releases={releases} version={4} isAdmin />);
+    render(
+      <ReleaseHistory
+        t={en}
+        locale="en"
+        releases={releases}
+        version={4}
+        isAdmin
+        hasUnpublishedChanges={false}
+      />,
+    );
     await act(async () => {
       fireEvent.click(screen.getAllByRole("button", { name: en.onlineStoreThemes.restore })[1]!);
     });
@@ -32,7 +50,60 @@ describe("ReleaseHistory (restore goes to the draft, admin only)", () => {
   });
 
   it("shows the empty state", () => {
-    render(<ReleaseHistory t={en} locale="en" releases={[]} version={4} isAdmin />);
+    render(
+      <ReleaseHistory
+        t={en}
+        locale="en"
+        releases={[]}
+        version={4}
+        isAdmin
+        hasUnpublishedChanges={false}
+      />,
+    );
     expect(screen.getByText(en.onlineStoreThemes.noReleases)).toBeInTheDocument();
+  });
+
+  it("with unpublished changes, Restore asks first and does nothing until confirmed (I-3)", async () => {
+    actions.restoreReleaseAction.mockReset().mockResolvedValue({
+      status: "ok",
+      draftRevision: 5,
+      version: 5,
+    });
+    render(
+      <ReleaseHistory
+        t={en}
+        locale="en"
+        releases={releases}
+        version={4}
+        isAdmin
+        hasUnpublishedChanges
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: en.onlineStoreThemes.restore })[0]!);
+    expect(actions.restoreReleaseAction).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(en.onlineStoreThemes.restoreTitle.replace("{number}", "2")),
+    ).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.onlineStoreThemes.confirmRestore }));
+    });
+    expect(actions.restoreReleaseAction).toHaveBeenCalledWith(2, 4);
+    expect(screen.getByRole("status")).toHaveTextContent(en.onlineStoreThemes.restored);
+  });
+
+  it("a failed history load says so instead of 'No releases yet' (M-5)", () => {
+    render(
+      <ReleaseHistory
+        t={en}
+        locale="en"
+        releases={[]}
+        version={4}
+        isAdmin
+        hasUnpublishedChanges={false}
+        loadFailed
+      />,
+    );
+    expect(screen.getByText(en.onlineStoreThemes.historyError)).toBeInTheDocument();
+    expect(screen.queryByText(en.onlineStoreThemes.noReleases)).toBeNull();
   });
 });

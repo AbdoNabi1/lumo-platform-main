@@ -93,4 +93,15 @@ describe("ThemeCard (spec 1.11)", () => {
     render(<ThemeCard t={en} locale="en" state={state} role={viewer} />);
     expect(screen.queryByRole("button", { name: en.onlineStoreThemes.discard })).toBeNull();
   });
+
+  it("a blocked pop-up says so and mints no token (M-3)", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(<ThemeCard t={en} locale="en" state={state} role={viewer} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.onlineStoreThemes.preview }));
+    });
+    expect(actions.previewUrlAction).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(en.onlineStoreThemes.popupBlocked);
+    open.mockRestore();
+  });
 });
