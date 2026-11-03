@@ -497,4 +497,60 @@ describe("CustomizeEditor", () => {
     expect(sandbox).toContain("allow-same-origin");
     expect(sandbox).not.toContain("allow-top-navigation");
   });
+
+  it("a save that never answers times out; a later edit saves and publish does not hang (round 2)", async () => {
+    actions.saveThemeDraftAction.mockImplementationOnce(() => new Promise(() => undefined));
+    actions.publishThemeAction.mockResolvedValue({ status: "ok", releaseNumber: 1 });
+    renderEditor("admin");
+    changePrimary("#112233");
+    await tick(1000);
+    expect(screen.getByText(en.onlineStoreCustomize.saving)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.onlineStoreCustomize.publish }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.onlineStoreCustomize.confirmPublish }));
+      await vi.advanceTimersByTimeAsync(25_000);
+    });
+    // The stuck request timed out, its key was replayed (and answered), then publish went out.
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(2);
+    expect(saveArg(1).idempotencyKey).toBe(saveArg(0).idempotencyKey);
+    expect(actions.publishThemeAction).toHaveBeenCalledWith(2, expect.any(String));
+    changePrimary("#445566");
+    await tick(1000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(3);
+    expect(saveArg(2).expectedVersion).toBe(2);
+    expect(screen.getByText(en.onlineStoreCustomize.saved)).toBeInTheDocument();
+  });
+
+  it("hiding the page never resends a draft the server refused (round 2)", async () => {
+    actions.saveThemeDraftAction.mockResolvedValue({
+      status: "invalid",
+      fields: [{ field: "brand.colors.primary", message: "INVALID_COLOR" }],
+    });
+    renderEditor();
+    changePrimary("#112233");
+    await tick(1000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("pagehide"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    visibility.mockRestore();
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("the token deadline follows the server's lifetime, not this browser's clock (M-4)", async () => {
+    actions.previewUrlAction.mockResolvedValueOnce({
+      status: "ok",
+      url: "https://shop.example/?preview=tok",
+      // This browser's clock is 3 hours behind: expiresAt alone would look valid for an hour.
+      expiresAt: new Date(Date.now() + 3 * 60 * 60_000).toISOString(),
+      expiresInMs: 30_000,
+    });
+    renderEditor();
+    await tick();
+    await tick(30_000);
+    expect(screen.getByText(en.onlineStoreCustomize.previewExpired)).toBeInTheDocument();
+  });
 });

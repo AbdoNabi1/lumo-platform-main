@@ -139,20 +139,31 @@ export async function restoreReleaseAction(
 /**
  * Spec 1.6: the API's primary-host url, else STOREFRONT_URL + ?preview=<token>. The url carries the
  * token, so it goes only to the caller (the preview frame or tab) and is never logged.
+ * `expiresInMs` is the lifetime left by this server's clock, so the browser's clock (which may be
+ * off) never decides when the token expires (M-4).
  */
 export async function previewUrlAction(): Promise<
-  | { readonly status: "ok"; readonly url: string; readonly expiresAt: string }
+  | {
+      readonly status: "ok";
+      readonly url: string;
+      readonly expiresAt: string;
+      readonly expiresInMs?: number;
+    }
   | { readonly status: "error" }
 > {
   const result = await issuePreviewToken();
   if (result.outcome !== "ok") return { status: "error" };
+  const { expiresAt } = result.data;
+  const left = Date.parse(expiresAt) - Date.now();
+  const lifetime = Number.isFinite(left) ? { expiresInMs: left } : {};
   if (result.data.url !== null)
-    return { status: "ok", url: result.data.url, expiresAt: result.data.expiresAt };
+    return { status: "ok", url: result.data.url, expiresAt, ...lifetime };
   const base = process.env["STOREFRONT_URL"]?.trim().replace(/\/+$/, "") ?? "";
   if (base === "") return { status: "error" };
   return {
     status: "ok",
     url: `${base}/?preview=${encodeURIComponent(result.data.token)}`,
-    expiresAt: result.data.expiresAt,
+    expiresAt,
+    ...lifetime,
   };
 }

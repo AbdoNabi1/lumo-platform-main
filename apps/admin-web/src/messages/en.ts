@@ -3713,7 +3713,7 @@ export const en = {
     restored: "Restored to the draft. Preview it, then publish.",
     restoreTitle: "Restore release {number} to the draft?",
     restoreBody:
-      "Your unpublished changes will be replaced. Your live store doesn't change until you publish.",
+      "Any unpublished changes in the draft will be replaced. Your live store doesn't change until you publish.",
     confirmRestore: "Restore",
     historyError: "Couldn't load the release history. Try refreshing the page.",
     releaseNotFound: "That release no longer exists.",

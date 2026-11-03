@@ -186,4 +186,24 @@ describe("theme actions", () => {
     });
     expect(await actions.previewUrlAction()).toEqual({ status: "error" });
   });
+
+  it("preview url also says how long the token lives by the server's clock (M-4)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-27T10:00:00.000Z"));
+    api.issuePreviewToken.mockResolvedValueOnce({
+      outcome: "ok",
+      data: {
+        token: "t",
+        expiresAt: "2026-10-27T11:00:00.000Z",
+        url: "https://n.example/?preview=t",
+      },
+    });
+    expect(await actions.previewUrlAction()).toEqual({
+      status: "ok",
+      url: "https://n.example/?preview=t",
+      expiresAt: "2026-10-27T11:00:00.000Z",
+      expiresInMs: 60 * 60_000,
+    });
+    vi.useRealTimers();
+  });
 });

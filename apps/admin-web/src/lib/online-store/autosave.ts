@@ -27,7 +27,8 @@ export function createAutosaver<T>(options: {
 }) {
   const retryDelays = options.retryDelaysMs ?? RETRY_DELAYS_MS;
   let pending: { readonly value: T } | null = null;
-  let failed: { readonly value: T } | null = null;
+  /** `refused`: the server answered 422, so only the merchant (a change or Retry) resends it. */
+  let failed: { readonly value: T; readonly refused: boolean } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let running: Promise<void> | null = null;
   let stopped = false;
@@ -40,11 +41,11 @@ export function createAutosaver<T>(options: {
   };
 
   /** The failed value becomes the pending one again (a retry); a newer change always wins. */
-  const requeueFailed = () => {
-    if (!stopped && pending === null && failed !== null) {
-      pending = failed;
-      failed = null;
-    }
+  const requeueFailed = (includeRefused: boolean) => {
+    if (stopped || pending !== null || failed === null) return;
+    if (failed.refused && !includeRefused) return;
+    pending = { value: failed.value };
+    failed = null;
   };
 
   const saveOne = async (value: T): Promise<void> => {
@@ -65,14 +66,14 @@ export function createAutosaver<T>(options: {
       return;
     }
     if (pending !== null) return; // a newer change replaces the failed value
-    failed = { value };
+    failed = { value, refused: outcome === "invalid" };
     options.onState("error");
     if (outcome === "error" && retries < retryDelays.length && timer === null) {
       const delay = retryDelays[retries] ?? 0;
       retries += 1;
       timer = setTimeout(() => {
         timer = null;
-        requeueFailed();
+        requeueFailed(false);
         void drain();
       }, delay);
     }
@@ -106,11 +107,15 @@ export function createAutosaver<T>(options: {
         void drain();
       }, options.delayMs);
     },
-    async flush(): Promise<SaveOutcome | null> {
+    /**
+     * `includeRefused: false` (page hide, unmount) saves pending and transient changes only, and
+     * never resends a draft the server refused with a 422.
+     */
+    async flush(options: { readonly includeRefused?: boolean } = {}): Promise<SaveOutcome | null> {
       clearTimer();
       if (running !== null) await running;
       clearTimer(); // a change made (or a retry set) while waiting is saved now too
-      requeueFailed();
+      requeueFailed(options.includeRefused ?? true);
       await drain();
       return stopped ? "conflict" : last;
     },
@@ -123,10 +128,18 @@ export function createAutosaver<T>(options: {
   };
 }
 
-/** What the server said to one draft save, reduced to what the replay logic needs. */
-export type SendAnswer =
+/**
+ * What the server said to one draft save, reduced to what the replay logic needs. `apply` holds the
+ * caller's side effects (new revision, field errors); it runs only for an answer that is accepted,
+ * never for one that arrives after its request timed out.
+ */
+export type SendAnswer = (
   | { readonly status: "ok"; readonly version: number }
-  | { readonly status: "conflict" | "invalid" | "transient" };
+  | { readonly status: "conflict" | "invalid" | "transient" }
+) & { readonly apply?: () => void };
+
+/** A server action that never settles must not hold the queue (and Publish) forever. */
+const SEND_TIMEOUT_MS = 25_000;
 
 /**
  * I-1 / Ruling 2: optimistic saves that survive a lost response. A save whose answer never arrived
@@ -134,13 +147,17 @@ export type SendAnswer =
  * unresolved with its `expectedVersion` and Idempotency-Key. Before anything else is sent, that same
  * request is replayed with the same key: a replayed 200 moves the version on, and only then does
  * the next value go out, on that version. A false `VERSION_CONFLICT` cannot follow a lost answer.
+ * A send that has not answered within `timeoutMs` counts as transient; its late answer is ignored
+ * (the replay of its key gets the same answer from the server's cache).
  */
 export function createReplayingSender<T>(options: {
   readonly initialVersion: number;
   readonly send: (value: T, expectedVersion: number, idempotencyKey: string) => Promise<SendAnswer>;
   readonly newKey?: () => string;
+  readonly timeoutMs?: number;
 }) {
   const newKey = options.newKey ?? newClientKey;
+  const timeoutMs = options.timeoutMs ?? SEND_TIMEOUT_MS;
   let version = options.initialVersion;
   let unresolved: {
     readonly value: T;
@@ -149,9 +166,16 @@ export function createReplayingSender<T>(options: {
   } | null = null;
 
   const attempt = async (value: T, expectedVersion: number, key: string): Promise<SaveOutcome> => {
-    const answer = await options
-      .send(value, expectedVersion, key)
-      .catch((): SendAnswer => ({ status: "transient" }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<SendAnswer>((resolve) => {
+      timer = setTimeout(() => resolve({ status: "transient" }), timeoutMs);
+    });
+    const answer = await Promise.race([
+      options.send(value, expectedVersion, key).catch((): SendAnswer => ({ status: "transient" })),
+      timedOut,
+    ]);
+    clearTimeout(timer);
+    answer.apply?.(); // only the winning answer; a late one is dropped with its side effects
     if (answer.status === "transient") {
       unresolved = { value, expectedVersion, key };
       return "error";

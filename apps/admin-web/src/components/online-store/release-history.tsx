@@ -29,8 +29,8 @@ import type { Dictionary } from "@/messages/en";
 /**
  * The last releases, newest first. Restore copies a release into the DRAFT only (Ruling 6); the live
  * store changes when that draft is previewed and published. Admin only: disabled with the reason
- * for everyone else, and refused by the API anyway. Restoring over unpublished changes replaces
- * them for good, so it asks first, like Discard (I-3).
+ * for everyone else, and refused by the API anyway. Restoring replaces the draft for good, so it
+ * always asks first, like Discard (I-3): the page's unpublished flag may be stale.
  */
 export function ReleaseHistory({
   t,
@@ -38,7 +38,6 @@ export function ReleaseHistory({
   releases,
   version,
   isAdmin,
-  hasUnpublishedChanges,
   loadFailed = false,
 }: {
   readonly t: Dictionary;
@@ -46,7 +45,6 @@ export function ReleaseHistory({
   readonly releases: readonly ReleaseDto[];
   readonly version: number;
   readonly isAdmin: boolean;
-  readonly hasUnpublishedChanges: boolean;
   readonly loadFailed?: boolean;
 }) {
   const s = t.onlineStoreThemes;
@@ -73,10 +71,6 @@ export function ReleaseHistory({
       );
       router.refresh();
     });
-  const ask = (releaseNumber: number) => {
-    if (hasUnpublishedChanges) setConfirming(releaseNumber);
-    else restore(releaseNumber);
-  };
   return (
     <Card>
       <CardHeader>
@@ -118,7 +112,7 @@ export function ReleaseHistory({
                       variant="ghost"
                       disabled={!isAdmin || pending}
                       title={isAdmin ? undefined : s.adminOnlyRestore}
-                      onClick={() => ask(release.releaseNumber)}
+                      onClick={() => setConfirming(release.releaseNumber)}
                     >
                       {s.restore}
                     </Button>

@@ -91,6 +91,19 @@ describe("createAutosaver (Decision 36)", () => {
     expect(saver.hasUnsaved()).toBe(false);
   });
 
+  it("a page-hide flush never resends a draft the server refused (422), only transient ones", async () => {
+    const { saver, saved } = setup([async () => "invalid", async () => "error"]);
+    saver.schedule("a");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await saver.flush({ includeRefused: false })).toBe("invalid");
+    expect(saved).toEqual(["a"]);
+    expect(saver.hasUnsaved()).toBe(true);
+    saver.schedule("b");
+    await vi.advanceTimersByTimeAsync(1000); // transient error
+    expect(await saver.flush({ includeRefused: false })).toBe("ok");
+    expect(saved).toEqual(["a", "b", "b"]);
+  });
+
   it("a transient error retries with backoff, at most 3 times, then waits for flush (I-2)", async () => {
     const error = async (): Promise<SaveOutcome> => "error";
     const { saver, saved, states } = setup([error, error, error, error]);
@@ -288,5 +301,67 @@ describe("createReplayingSender (I-1)", () => {
     expect(await sender.save("a")).toBe("error");
     expect(await sender.save("b")).toBe("conflict"); // replay of "a" is a 422, then "b" conflicts
     expect(calls).toEqual(["a", "a", "b"]);
+  });
+
+  it("a send that never settles times out as transient; the replay reconciles; a late answer is ignored", async () => {
+    let lateResolve!: (a: SendAnswer) => void;
+    const applied: string[] = [];
+    const calls: { value: string; key: string }[] = [];
+    const sender = createReplayingSender<string>({
+      initialVersion: 1,
+      timeoutMs: 25_000,
+      send: (value, _version, key) => {
+        calls.push({ value, key });
+        if (calls.length === 1)
+          return new Promise<SendAnswer>((resolve) => {
+            lateResolve = resolve;
+          });
+        return Promise.resolve({
+          status: "ok",
+          version: calls.length + 1,
+          apply: () => applied.push(value + calls.length),
+        });
+      },
+    });
+    const first = sender.save("a");
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(await first).toBe("error");
+    // The stuck call answers late: its side effects must never run.
+    lateResolve({ status: "ok", version: 2, apply: () => applied.push("late") });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await sender.save("b")).toBe("ok");
+    expect(calls.map((c) => c.value)).toEqual(["a", "a", "b"]);
+    expect(calls[1]!.key).toBe(calls[0]!.key);
+    expect(applied).toEqual(["a2", "b3"]);
+  });
+
+  it("through the autosaver: a stuck save frees the queue, and flush does not hang", async () => {
+    let n = 0;
+    const sender = createReplayingSender<string>({
+      initialVersion: 1,
+      timeoutMs: 25_000,
+      send: () => {
+        n += 1;
+        return n === 1
+          ? new Promise<SendAnswer>(() => undefined)
+          : Promise.resolve({ status: "ok", version: n + 1 });
+      },
+    });
+    const states: AutosaveState[] = [];
+    const saver = createAutosaver<string>({
+      delayMs: 1000,
+      save: (v) => sender.save(v),
+      onState: (s) => states.push(s),
+    });
+    saver.schedule("a");
+    await vi.advanceTimersByTimeAsync(1000);
+    const flushed = saver.flush();
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(await flushed).toBe("ok");
+    expect(states).toContain("error");
+    saver.schedule("b");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(states.at(-1)).toBe("saved");
+    expect(n).toBe(3);
   });
 });

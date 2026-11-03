@@ -136,17 +136,25 @@ export function CustomizeEditor({
       send: async (document, expectedVersion, idempotencyKey): Promise<SendAnswer> => {
         const result = await saveThemeDraftAction({ document, expectedVersion, idempotencyKey });
         switch (result.status) {
+          // Side effects go in `apply`: the sender drops them for an answer that came too late.
           case "ok":
-            revisionRef.current = result.draftRevision;
-            setFrameVersion(result.draftRevision);
-            setFieldErrors({});
-            return { status: "ok", version: result.version };
+            return {
+              status: "ok",
+              version: result.version,
+              apply: () => {
+                revisionRef.current = result.draftRevision;
+                setFrameVersion(result.draftRevision);
+                setFieldErrors({});
+              },
+            };
           case "conflict":
             return { status: "conflict" };
           case "invalid":
             // Final: never retried on a timer, so a refused save cannot loop (Ruling 3).
-            setFieldErrors(fieldErrorsOf(t, result.fields));
-            return { status: "invalid" };
+            return {
+              status: "invalid",
+              apply: () => setFieldErrors(fieldErrorsOf(t, result.fields)),
+            };
           default:
             return { status: "transient" }; // error or in_flight: the answer may still come
         }
@@ -165,9 +173,10 @@ export function CustomizeEditor({
     }),
   );
   // F19: the cleanup saves a pending change (Exit, navigation) and never switches autosave off.
+  // Like page hide, it never resends a draft the server refused (422).
   useEffect(
     () => () => {
-      void saver.flush();
+      void saver.flush({ includeRefused: false });
     },
     [saver],
   );
@@ -180,10 +189,10 @@ export function CustomizeEditor({
       event.preventDefault();
     };
     const onPageHide = () => {
-      void saver.flush();
+      void saver.flush({ includeRefused: false });
     };
     const onVisibility = () => {
-      if (document.visibilityState === "hidden") void saver.flush();
+      if (document.visibilityState === "hidden") void saver.flush({ includeRefused: false });
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("pagehide", onPageHide);
@@ -200,7 +209,11 @@ export function CustomizeEditor({
     if (!mounted.current) return;
     if (result.status === "ok") {
       hasPreview.current = true;
-      const left = lifetimeLeft(Date.parse(result.expiresAt));
+      // M-4: the server's own remaining lifetime when it has one, else this browser's reading.
+      const left =
+        result.expiresInMs !== undefined && Number.isFinite(result.expiresInMs)
+          ? Math.min(Math.max(result.expiresInMs, 0), PREVIEW_LIFETIME_MS)
+          : lifetimeLeft(Date.parse(result.expiresAt));
       setPreview({ url: result.url, deadline: left === null ? null : Date.now() + left });
       setPreviewProblem(null);
     } else if (!hasPreview.current) {
