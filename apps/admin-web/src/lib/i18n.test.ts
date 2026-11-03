@@ -94,6 +94,8 @@ const SHARED_VERBATIM = new Set([
   "productEditor.valueSuggestions.color.9",
   // Project 4 — the character counter is only placeholders and a slash: "{count}/{max}".
   "onlineStorePreferences.counter",
+  // Task 11 — a font specimen, deliberately the same in both: the brand name in each script.
+  "onlineStoreCustomize.fontSample",
 ]);
 
 describe("locales", () => {
