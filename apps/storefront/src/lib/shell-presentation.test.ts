@@ -93,14 +93,14 @@ describe("metadataFor", () => {
     expect(meta.openGraph).toMatchObject({ siteName: hostile });
   });
 
-  it("noindexes a locked store, but not its preview", () => {
-    expect(metadataFor({ ...branded, locked: true }, "en", en).robots).toEqual({
-      index: false,
-      follow: false,
-    });
-    expect(
-      metadataFor({ ...branded, locked: true, mode: "preview" }, "en", en).robots,
-    ).toBeUndefined();
+  it("noindexes a locked store and every preview, locked or not (final review M-1)", () => {
+    const noindex = { index: false, follow: false };
+    expect(metadataFor({ ...branded, locked: true }, "en", en).robots).toEqual(noindex);
+    expect(metadataFor({ ...branded, locked: true, mode: "preview" }, "en", en).robots).toEqual(
+      noindex,
+    );
+    expect(metadataFor({ ...branded, mode: "preview" }, "en", en).robots).toEqual(noindex);
+    expect(metadataFor({ ...branded, mode: "live" }, "en", en).robots).toBeUndefined();
   });
 });
 

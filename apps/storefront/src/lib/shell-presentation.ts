@@ -43,8 +43,11 @@ export function metadataFor(shell: StorefrontShell, locale: Locale, t: Dictionar
     ...(favicon === null
       ? {}
       : { icons: { icon: [{ url: favicon.url }], apple: [{ url: favicon.url }] } }),
-    // Decision 35: a locked store is noindex; its preview is not public anyway.
-    ...(shell.locked && shell.mode === "live" ? { robots: { index: false, follow: false } } : {}),
+    // Decision 35: a locked store is noindex, and so is every preview, locked or not (a draft must
+    // never be indexed, final review M-1).
+    ...(shell.locked || shell.mode === "preview"
+      ? { robots: { index: false, follow: false } }
+      : {}),
   };
 }
 

@@ -59,6 +59,8 @@ function framing(response: NextResponse, preview: boolean): NextResponse {
   if (preview) {
     const admin = storefrontSecrets().adminOrigin;
     response.headers.set("Cache-Control", "private, no-store");
+    // A draft must never be indexed, whether or not the store is locked (final review M-1).
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
     response.headers.set("Referrer-Policy", "no-referrer");
     response.headers.set(
       "Content-Security-Policy",
@@ -80,6 +82,15 @@ function gated(response: NextResponse): NextResponse {
   response.headers.set("X-Robots-Tag", "noindex");
   return framing(response, false);
 }
+
+/** Is the request's unlock cookie a canonical, unexpired proof for this shop and access version? */
+const hasUnlockCookie = (request: NextRequest, shopId: string, accessVersion: number) =>
+  verifyAccessCookie(request.cookies.get(ACCESS_COOKIE)?.value, {
+    secret: storefrontSecrets().accessSecret,
+    shopId,
+    accessVersion,
+    nowUnix: Math.floor(Date.now() / 1000),
+  });
 
 const unavailable = () => gated(text(503, "Temporarily unavailable / غير متاح مؤقتاً"));
 
@@ -126,12 +137,14 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   };
 
   // 3. The gate itself. Opening it while unlocked reads the SAME cache as the gate (preflight 21), so
-  // the page and the gate never disagree; an unknown state just shows the form.
+  // the page and the gate never disagree; an unknown state just shows the form. A visitor who already
+  // holds a valid unlock cookie is sent on too (final review M-3).
   const { pathname } = request.nextUrl;
   if (isPasswordPage(pathname)) {
     if (isRead) {
       try {
-        if (!(await readAccess(shopId)).locked) {
+        const state = await readAccess(shopId);
+        if (!state.locked || (await hasUnlockCookie(request, shopId, state.accessVersion))) {
           const back = safeReturnTo(request.nextUrl.searchParams.get("return_to"));
           return gated(NextResponse.redirect(new URL(back, request.url), 302));
         }
@@ -151,16 +164,16 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   } catch {
     return unavailable(); // fail closed
   }
-  if (!state.locked) return pass(token); // the layout validates the token before any draft shows
+  if (!state.locked) {
+    // The preview framing (admin may frame it, no referrer, no cache) promises a draft, so it is
+    // applied only to a token the Runtime calls a preview; anything else is an ordinary live visit
+    // (final review M-2). Same checker and cache as the locked path.
+    return pass(token !== null && (await previewIsValid(shopId, token)) ? token : null);
+  }
 
   // Ruling 36: on a locked store a token opens the door only once the Runtime calls it a preview.
   if (token !== null && (await previewIsValid(shopId, token))) return pass(token);
-  const unlocked = await verifyAccessCookie(request.cookies.get(ACCESS_COOKIE)?.value, {
-    secret: storefrontSecrets().accessSecret,
-    shopId,
-    accessVersion: state.accessVersion,
-    nowUnix: Math.floor(Date.now() / 1000),
-  });
+  const unlocked = await hasUnlockCookie(request, shopId, state.accessVersion);
   // A cookie holder with a token the Runtime refused is an ordinary visit: the token is not forwarded.
   if (unlocked) return pass(null);
   // Decision 34: a route that exists and stays public while locked, for reads only (review M-1, M-2).

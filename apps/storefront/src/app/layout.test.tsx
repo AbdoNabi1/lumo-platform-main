@@ -76,6 +76,13 @@ describe("RootLayout metadata (preflight 18)", () => {
 
   it("the owner's preview of a locked store keeps the full metadata (it is private anyway)", async () => {
     current.shell = { ...secret, locked: true, mode: "preview" };
-    expect(JSON.stringify(await generateMetadata())).toContain("إطلاق سري");
+    const meta = await generateMetadata();
+    expect(JSON.stringify(meta)).toContain("إطلاق سري");
+    expect(meta.robots).toEqual({ index: false, follow: false });
+  });
+
+  it("an unlocked store's preview is not indexed either (final review M-1)", async () => {
+    current.shell = { ...secret, mode: "preview" };
+    expect((await generateMetadata()).robots).toEqual({ index: false, follow: false });
   });
 });
