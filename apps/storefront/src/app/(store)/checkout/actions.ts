@@ -27,11 +27,11 @@ import {
 
 /**
  * Guest Checkout Server Actions (Phase 2 — Public checkout). Every action is a Next.js Server
- * Action, exactly like `app/cart/actions.ts`: it runs on the server, so it is the only place the
+ * Action, exactly like `app/(store)/cart/actions.ts`: it runs on the server, so it is the only place the
  * guest session cookie is ever read, and the only place `morbeh_checkout_session` is ever written.
  * A Client Component calls these directly; it never sees or supplies a `sessionRef`.
  *
- * **Never mints a guest session here** (unlike `addToCart` in `app/cart/actions.ts`): a checkout
+ * **Never mints a guest session here** (unlike `addToCart` in `app/(store)/cart/actions.ts`): a checkout
  * always begins from an existing cart, so a missing `GUEST_SESSION_COOKIE` is an ownership error,
  * not a reason to create one.
  */
@@ -105,7 +105,7 @@ function isOutOfStock(body: unknown): boolean {
   return typeof message === "string" && message.startsWith("OUT_OF_STOCK:");
 }
 
-/** The existing guest session, if any — mirrors `existingSessionRef()` in `app/cart/actions.ts`. */
+/** The existing guest session, if any — mirrors `existingSessionRef()` in `app/(store)/cart/actions.ts`. */
 async function existingSessionRef(): Promise<string | undefined> {
   const jar = await cookies();
   return jar.get(GUEST_SESSION_COOKIE)?.value;

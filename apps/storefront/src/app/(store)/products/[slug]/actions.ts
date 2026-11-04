@@ -6,7 +6,7 @@ import { CUSTOMER_SESSION_COOKIE } from "@/lib/customer-session";
 import { createProductReview } from "@/lib/runtime-api";
 
 /**
- * Product review authoring (T5.18-write). Same discipline as `app/account/wishlist/actions.ts`:
+ * Product review authoring (T5.18-write). Same discipline as `app/(store)/account/wishlist/actions.ts`:
  * the customer session cookie is read here, server-side, and never reaches a Client Component.
  * This action takes no `customerRef` — the route derives the author from the session, so there is
  * nothing here for a caller to supply or tamper with.

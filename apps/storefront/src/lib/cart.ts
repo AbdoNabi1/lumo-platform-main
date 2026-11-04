@@ -10,7 +10,7 @@ import {
  * Storefront-facing Cart resolution (Phase 17.1 — Guest Cart Foundation).
  *
  * Cart identity is now session-derived, not a `?cartId=` link or a `cartId`-holding cookie: the
- * guest session cookie (`GUEST_SESSION_COOKIE`, written by `app/cart/actions.ts`) is the only
+ * guest session cookie (`GUEST_SESSION_COOKIE`, written by `app/(store)/cart/actions.ts`) is the only
  * client-held reference, and the Runtime API resolves "the current cart" from it via
  * `GET /public/carts/current`. This supersedes the old `CART_COOKIE` (`morbeh-storefront-cart-id`)
  * design from Productization Phase 3, which stored a bare cart id with no ownership check at all

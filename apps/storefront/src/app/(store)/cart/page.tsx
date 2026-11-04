@@ -12,11 +12,11 @@ import { getPreviewToken, getRequestLocale } from "@/lib/request-locale";
  * entirely from the guest session cookie (`GUEST_SESSION_COOKIE`) via `GET /public/carts/current`
  * — no `?cartId=` query param, no cart-id-holding cookie. A Server Component only ever READS this
  * cookie (Next.js forbids setting one outside a Server Action/Route Handler); the cookie is minted
- * the first time a shopper adds an item (`app/cart/actions.ts`), so a session-less visit here is
+ * the first time a shopper adds an item (`app/(store)/cart/actions.ts`), so a session-less visit here is
  * simply the empty state, never an error and never a reason to create anything.
  *
  * Mutation controls (quantity/remove/clear) live in `CartView`, a Client Component calling the
- * Server Actions in `app/cart/actions.ts` directly.
+ * Server Actions in `app/(store)/cart/actions.ts` directly.
  */
 export default async function CartPage() {
   const jar = await cookies();

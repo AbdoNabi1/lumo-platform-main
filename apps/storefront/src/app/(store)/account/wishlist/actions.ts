@@ -12,7 +12,7 @@ import {
 } from "@/lib/runtime-api";
 
 /**
- * Wishlist Server Actions (T5.17 Part B). Same discipline as `app/account/actions.ts`: the customer
+ * Wishlist Server Actions (T5.17 Part B). Same discipline as `app/(store)/account/actions.ts`: the customer
  * session cookie is read here, server-side, and never reaches a Client Component. No action takes a
  * `wishlistId` or a `customerRef` — the routes address `/me` and derive the owner from the session,
  * so there is simply no identifier for a caller to supply or tamper with.

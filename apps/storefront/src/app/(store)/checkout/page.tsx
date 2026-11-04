@@ -12,15 +12,15 @@ import { getCheckoutSession, getPaymentMethods, getShippableCountries } from "@/
 /**
  * Checkout page (Phase 2 — Public checkout). Resolves the caller's OWN active checkout session
  * from two HttpOnly cookies — `GUEST_SESSION_COOKIE` (the ownership proof) and
- * `CHECKOUT_SESSION_COOKIE` (which session, set by `startCheckout` in `app/checkout/actions.ts`) —
- * the same "a Server Component only ever READS a cookie" split `app/cart/page.tsx` uses. Missing
+ * `CHECKOUT_SESSION_COOKIE` (which session, set by `startCheckout` in `app/(store)/checkout/actions.ts`) —
+ * the same "a Server Component only ever READS a cookie" split `app/(store)/cart/page.tsx` uses. Missing
  * either cookie, or a 404/network failure resolving the session, all render the same recoverable
  * "back to cart" state (Task 5's rule: an ownership failure is not an error page) — this is exactly
  * what an expired or cleared checkout looks like, and a shopper should just start again from
  * `/cart`.
  *
  * Mutation controls (the stepper) live in `CheckoutView`, a Client Component calling the Server
- * Actions in `app/checkout/actions.ts` directly.
+ * Actions in `app/(store)/checkout/actions.ts` directly.
  */
 export default async function CheckoutPage() {
   const jar = await cookies();

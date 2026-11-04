@@ -19,8 +19,8 @@ import {
 } from "@/lib/runtime-api";
 
 /**
- * Customer authentication Server Actions (T5.17 Part A). Same discipline as `app/cart/actions.ts`
- * and `app/checkout/actions.ts`: every one of these runs on the server, and this file is the ONLY
+ * Customer authentication Server Actions (T5.17 Part A). Same discipline as `app/(store)/cart/actions.ts`
+ * and `app/(store)/checkout/actions.ts`: every one of these runs on the server, and this file is the ONLY
  * place `CUSTOMER_SESSION_COOKIE` is ever written or cleared. A Client Component calls these
  * directly and never sees a session id, a `customerRef`, or anything but the small result unions
  * below — which is what lets the cookie stay `httpOnly`.
