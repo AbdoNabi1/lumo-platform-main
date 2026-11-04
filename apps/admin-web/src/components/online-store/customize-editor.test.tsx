@@ -254,6 +254,34 @@ describe("CustomizeEditor", () => {
     expect(saveArg(0).document.brand.social.facebook).toBe(stored);
   });
 
+  it("a social link typed without leaving the field is autosaved and counts as unsaved (final review M-4)", async () => {
+    renderEditor("operator");
+    const instagram = screen.getByLabelText(en.onlineStoreCustomize.networks.instagram);
+    fireEvent.change(instagram, { target: { value: "https://instagram.com/nour" } });
+    // No blur: closing the tab right now must ask for confirmation.
+    const leaving = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(leaving);
+    expect(leaving.defaultPrevented).toBe(true);
+    await tick(1000);
+    expect(saveArg(0).document.brand.social.instagram).toBe("https://instagram.com/nour");
+  });
+
+  it("an invalid social link is reported on blur only, never while typing, and never saved", async () => {
+    renderEditor("operator");
+    const instagram = screen.getByLabelText(en.onlineStoreCustomize.networks.instagram);
+    fireEvent.change(instagram, { target: { value: "http://instagram.com/nour" } });
+    expect(screen.queryByText(en.onlineStoreCustomize.socialInvalid)).not.toBeInTheDocument();
+    await tick(1000);
+    expect(actions.saveThemeDraftAction).not.toHaveBeenCalled();
+    fireEvent.blur(instagram);
+    expect(screen.getByText(en.onlineStoreCustomize.socialInvalid)).toBeInTheDocument();
+    // Fixing it clears the message as soon as the text is valid, and saves.
+    fireEvent.change(instagram, { target: { value: "https://instagram.com/nour" } });
+    expect(screen.queryByText(en.onlineStoreCustomize.socialInvalid)).not.toBeInTheDocument();
+    await tick(1000);
+    expect(saveArg(0).document.brand.social.instagram).toBe("https://instagram.com/nour");
+  });
+
   it("refreshes the preview token before its 60 minutes run out", async () => {
     actions.previewUrlAction.mockResolvedValue({
       status: "ok",

@@ -379,7 +379,13 @@ export function SocialPanel({
       : code === "TOO_LONG"
         ? c.socialTooLong
         : t.formErrors.invalid;
-  const commit = (network: SocialNetwork, value: string) => {
+  /**
+   * Called on every change (`report` false) and again on blur (`report` true). A valid link reaches
+   * the document at once, so the autosave debounce and the unsaved-changes guard see it (final review
+   * M-4). Text that is invalid as typed never does, and its message waits for blur, so a half-typed
+   * URL is not flagged while it is being typed.
+   */
+  const commit = (network: SocialNetwork, value: string, report: boolean) => {
     const trimmed = value.trim();
     const stored = doc.brand.social[network];
     if (trimmed === "") {
@@ -394,7 +400,7 @@ export function SocialPanel({
     }
     const check = checkSocial(network, trimmed);
     if ("code" in check) {
-      setLocal((s) => ({ ...s, [network]: copyFor(check.code) }));
+      if (report) setLocal((s) => ({ ...s, [network]: copyFor(check.code) }));
       return;
     }
     setLocal((s) => ({ ...s, [network]: undefined }));
@@ -424,8 +430,9 @@ export function SocialPanel({
               onChange={(e) => {
                 const next = e.currentTarget.value;
                 setText((s) => ({ ...s, [network]: next }));
+                commit(network, next, false);
               }}
-              onBlur={(e) => commit(network, e.currentTarget.value)}
+              onBlur={(e) => commit(network, e.currentTarget.value, true)}
             />
             <FieldError id={errorId} message={message} />
           </div>
