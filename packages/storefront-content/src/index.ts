@@ -4,3 +4,5 @@ export * from "./fonts";
 export * from "./theme-document";
 export * from "./contrast-rules";
 export * from "./css-vars";
+export * from "./links";
+export * from "./rich-text";

@@ -3,6 +3,7 @@ import { normalizeHex, type HexColor } from "./color";
 import { isFontKey, type FontKey } from "./fonts";
 import { MAX_ISSUES, pathSegment } from "./issues";
 import { normalizeLocalizedText, type ContentIssue, type LocalizedText } from "./locale";
+import { URL_CONTROLS, URL_INVISIBLES } from "./links";
 
 export const SOCIAL_NETWORKS = [
   "facebook",
@@ -34,10 +35,6 @@ export const SOCIAL_URL_MAX = 500;
 export const MAX_DOCUMENT_BYTES = 256 * 1024;
 const IMAGE_REF = /^[A-Za-z0-9-]{1,64}$/;
 const HTTPS_PREFIX = /^https:\/\//i;
-// Whitespace, C0/C1 controls and no-break space; then zero-width, bidi and line-separator marks.
-// eslint-disable-next-line no-control-regex -- rejecting these characters is the purpose
-const URL_CONTROLS = /[\u0000-\u0020\u007F-\u00A0]/;
-const URL_INVISIBLES = /[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/;
 
 export interface ThemeBrand {
   readonly logo: { readonly imageRef: string | null; readonly widthPx: number };
