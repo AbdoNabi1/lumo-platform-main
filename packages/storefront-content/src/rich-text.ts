@@ -349,7 +349,7 @@ export function validateRichText(text: string, max: number): readonly RichTextIs
 }
 
 /** A list or rule marker at the start of a line: `-` (items, `---`) or the digits of `1.`. */
-const LINE_START_MARKER = /^([^\S\r\n]*)(-|\d{1,9}(?=\.))/gm;
+const LINE_START_MARKER = /^([^\S\r\n\u2028\u2029]*)(-|\d{1,9}(?=\.))/gm;
 
 /**
  * Makes a value plain text inside Morbeh text (template substitution, spec 2.3): inline markup is

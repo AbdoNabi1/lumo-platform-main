@@ -439,7 +439,13 @@ describe("review fix round 1", () => {
   });
 
   it("escapeRichText runs in linear time on hostile values", () => {
-    for (const value of [" ".repeat(100_000), "\n".repeat(100_000), "1".repeat(100_000)]) {
+    for (const value of [
+      " ".repeat(100_000),
+      "\n".repeat(100_000),
+      "1".repeat(100_000),
+      LINE_SEPARATOR.repeat(100_000),
+      `\u00a0${LINE_SEPARATOR}`.repeat(50_000),
+    ]) {
       const start = performance.now();
       escapeRichText(`${value}x`);
       expect(performance.now() - start).toBeLessThan(400);
