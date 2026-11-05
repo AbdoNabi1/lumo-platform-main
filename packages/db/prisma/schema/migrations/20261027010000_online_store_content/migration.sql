@@ -54,6 +54,9 @@ ALTER TABLE "pages"."pages" ADD COLUMN "title"            JSONB NOT NULL DEFAULT
 ALTER TABLE "pages"."pages" ADD COLUMN "body"             JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE "pages"."pages" ADD COLUMN "meta_description" JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE "pages"."pages" ADD COLUMN "published_at"     TIMESTAMP(3);
+-- Pages published before this column existed get their last update as the publish time.
+UPDATE "pages"."pages" SET "published_at" = "updated_at"
+  WHERE "status" = 'published' AND "published_at" IS NULL;
 CREATE INDEX "pages_tenant_id_status_idx" ON "pages"."pages" ("tenant_id", "status");
 ALTER TABLE "pages"."pages" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "pages"."pages" FORCE ROW LEVEL SECURITY;
