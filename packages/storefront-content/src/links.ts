@@ -7,10 +7,12 @@
 /** The longest URL or path a link may carry, before and after normalisation. */
 export const LINK_URL_MAX = 2000;
 
-// Whitespace, C0/C1 controls and no-break space; then zero-width, bidi and line-separator marks.
+// Whitespace, C0/C1 controls and no-break space; then soft hyphen, Arabic letter mark,
+// zero-width, bidi, word-joiner and line-separator marks.
 // eslint-disable-next-line no-control-regex -- rejecting these characters is the purpose
 export const URL_CONTROLS = /[\u0000-\u0020\u007F-\u00A0]/;
-export const URL_INVISIBLES = /[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/;
+export const URL_INVISIBLES =
+  /[\u00AD\u061C\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/;
 
 /** A storefront page handle: the `<handle>` of `/pages/<handle>` (spec GC3, preflight 15). */
 export const PAGE_HANDLE_PATTERN = /^[a-z0-9_-]{1,100}$/;
@@ -24,7 +26,9 @@ export function pageHandleOfPath(path: string): string | null {
   return PAGE_HANDLE_PATTERN.test(handle) ? handle : null;
 }
 
-const MAILTO = /^mailto:([A-Za-z0-9.!#$%&'*+=^_{|}~-]+)@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)$/i;
+// No `%` in the local part (review M2): an encoded `?`, `,` or newline could become a query or a
+// second address in a client that decodes before splitting.
+const MAILTO = /^mailto:([A-Za-z0-9.!#$&'*+=^_{|}~-]+)@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)$/i;
 const TEL = /^tel:(\+?)([0-9 ().-]+)$/i;
 const TEL_DIGITS_MIN = 3;
 const TEL_DIGITS_MAX = 20;
@@ -60,16 +64,25 @@ export function normalizeExternalUrl(raw: unknown): string | null {
   return null;
 }
 
-function normalizeHttps(raw: string): string | null {
-  let url: URL;
+function parseUrl(raw: string, base?: string): URL | null {
   try {
-    url = new URL(raw);
+    return new URL(raw, base);
   } catch {
     return null;
   }
-  if (url.protocol !== "https:" || url.username !== "" || url.password !== "") return null;
+}
+
+/**
+ * The parsed `href`, which must itself parse back to the same `href` (review M1): some IDN hosts
+ * normalise to a punycode form the parser then refuses, and a stored or rendered value must pass
+ * these same rules again.
+ */
+function normalizeHttps(raw: string): string | null {
+  const url = parseUrl(raw);
+  if (url === null || url.protocol !== "https:") return null;
+  if (url.username !== "" || url.password !== "") return null;
   if (url.hostname === "" || url.href.length > LINK_URL_MAX) return null;
-  return url.href;
+  return parseUrl(url.href)?.href === url.href ? url.href : null;
 }
 
 /** A base no real request uses: a path that resolves anywhere else leaves the shop. */
@@ -86,22 +99,50 @@ const RELATIVE_SHAPE = /^\/(?![/\\])[^\s\\]*$/;
 export function isSafeRelativePath(raw: string): boolean {
   if (typeof raw !== "string" || raw.length > LINK_URL_MAX) return false;
   if (!RELATIVE_SHAPE.test(raw) || hasHiddenCharacter(raw)) return false;
-  let parsed: URL;
-  try {
-    parsed = new URL(raw, RELATIVE_BASE);
-  } catch {
-    return false;
-  }
-  return (
-    parsed.origin === RELATIVE_BASE && `${parsed.pathname}${parsed.search}${parsed.hash}` === raw
-  );
+  return resolvedPath(raw) === raw;
 }
 
-/** A link a page may render: a path on this shop, or an `https:` (external), `mailto:` or `tel:` URL. */
-export function safeHref(
-  raw: unknown,
-): { readonly href: string; readonly external: boolean } | null {
-  if (typeof raw === "string" && isSafeRelativePath(raw)) return { href: raw, external: false };
+/** `pathname+search+hash` of `raw` resolved on the shop's origin, or null when it leaves it. */
+function resolvedPath(raw: string): string | null {
+  const parsed = parseUrl(raw, RELATIVE_BASE);
+  if (parsed === null || parsed.origin !== RELATIVE_BASE) return null;
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+}
+
+/**
+ * A same-site path in its canonical, percent-encoded form (review M6): `/search?q=<Arabic>` and
+ * `/pages/<Arabic>` are encoded, and a bare trailing `?` or `#` is dropped. The input must have
+ * the safe shape and no hidden character, and the OUTPUT must pass `isSafeRelativePath` (one `/`,
+ * same origin, exact round-trip), so a dot segment that rebuilds `//host` is still refused.
+ */
+function canonicalRelativePath(raw: string): string | null {
+  if (raw.length > LINK_URL_MAX) return null;
+  if (!RELATIVE_SHAPE.test(raw) || hasHiddenCharacter(raw)) return null;
+  const canonical = resolvedPath(raw);
+  return canonical !== null && isSafeRelativePath(canonical) ? canonical : null;
+}
+
+type SafeHref = { readonly href: string; readonly external: boolean };
+
+function safeHrefOnce(raw: unknown): SafeHref | null {
+  if (typeof raw === "string") {
+    const path = canonicalRelativePath(raw);
+    if (path !== null) return { href: path, external: false };
+  }
   const href = normalizeExternalUrl(raw);
   return href === null ? null : { href, external: href.startsWith("https:") };
+}
+
+/**
+ * A link a page may render: a canonical path on this shop, or an `https:` (external), `mailto:`
+ * or `tel:` URL. The result is a fixed point (`safeHref(result.href)` gives it back), so the
+ * validator, the stored value and the renderer's re-check always agree.
+ */
+export function safeHref(raw: unknown): SafeHref | null {
+  const first = safeHrefOnce(raw);
+  if (first === null) return null;
+  const again = safeHrefOnce(first.href);
+  return again !== null && again.href === first.href && again.external === first.external
+    ? first
+    : null;
 }

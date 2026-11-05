@@ -340,16 +340,28 @@ function isMarkup(c: string | undefined): boolean {
 
 /**
  * `TOO_LONG` (line 0, without parsing) when over `max`, else one `UNSAFE_LINK` per line holding an
- * unsafe link. `max` is one of `RICH_TEXT_MAX`.
+ * unsafe link. `max` is one of `RICH_TEXT_MAX`; it is clamped to `RICH_TEXT_MAX.body`, the most the
+ * parser reads, so no text is ever left unchecked (review M4).
  */
 export function validateRichText(text: string, max: number): readonly RichTextIssue[] {
-  if (text.length > max) return [{ code: "TOO_LONG", line: 0 }];
+  if (text.length > Math.min(max, RICH_TEXT_MAX.body)) return [{ code: "TOO_LONG", line: 0 }];
   return parseRichText(text).unsafeLinkLines.map((line) => ({ code: "UNSAFE_LINK", line }));
 }
 
-/** Makes a value plain text inside Morbeh text (template substitution, spec 2.3). */
+/** A list or rule marker at the start of a line: `-` (items, `---`) or the digits of `1.`. */
+const LINE_START_MARKER = /^([^\S\r\n]*)(-|\d{1,9}(?=\.))/gm;
+
+/**
+ * Makes a value plain text inside Morbeh text (template substitution, spec 2.3): inline markup is
+ * escaped, and so is a block marker at the start of any line of the value (review M3), so `- x`,
+ * `1. x` and `---` stay text wherever the value lands. `#` is escaped everywhere already.
+ */
 export function escapeRichText(value: string): string {
-  return value.replace(/[\\*[\]#`]/g, "\\$&");
+  return value
+    .replace(/[\\*[\]#`]/g, "\\$&")
+    .replace(LINE_START_MARKER, (_match, space: string, marker: string) =>
+      marker === "-" ? `${space}\\-` : `${space}${marker}\\`,
+    );
 }
 
 const EXTERNAL_REL = "noopener noreferrer nofollow";
@@ -397,7 +409,8 @@ export function renderRichText<E>(
       const key = `${keyPrefix}${index}`;
       switch (node.type) {
         case "text":
-          out.push(node.value);
+          // A document from anywhere but the parser could carry a non-string (review M5).
+          if (typeof node.value === "string") out.push(node.value);
           break;
         case "break":
           out.push(h("br", propsFor("br", key, false)));

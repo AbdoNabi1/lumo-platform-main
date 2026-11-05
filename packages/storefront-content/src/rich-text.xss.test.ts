@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { safeHref } from "./links";
-import { parseRichText, renderRichText, RICH_TEXT_TAGS, type CreateElement } from "./rich-text";
+import {
+  parseRichText,
+  renderRichText,
+  RICH_TEXT_MAX,
+  RICH_TEXT_TAGS,
+  validateRichText,
+  type CreateElement,
+} from "./rich-text";
 
 type Node = { tag: string; props: Record<string, unknown>; children: (Node | string)[] };
 const h: CreateElement<Node> = (tag, props, ...children) => ({
@@ -127,6 +134,72 @@ describe("property: render output never leaves the allow-list", () => {
       for (let j = 0; j < length; j += 1) text += alphabet[Math.floor(random() * alphabet.length)];
       expect(() => parseRichText(text), JSON.stringify(text)).not.toThrow();
       assertSafe(render(text));
+    }
+  });
+});
+
+/** Counts rendered anchors. */
+function anchorCount(nodes: readonly (Node | string)[]): number {
+  let count = 0;
+  for (const node of nodes) {
+    if (typeof node === "string") continue;
+    if (node.tag === "a") count += 1;
+    count += anchorCount(node.children);
+  }
+  return count;
+}
+
+describe("property: the validator reports every link the renderer drops (review M8)", () => {
+  it("3,000 random link URLs: exactly one of an anchor or an UNSAFE_LINK issue", () => {
+    const random = mulberry32(0x7e1);
+    const pieces = [
+      "https://",
+      "http://",
+      "/",
+      "//",
+      ".",
+      "..",
+      "%2e",
+      "?",
+      "#",
+      "a",
+      "\u00df",
+      "xn--",
+      "-",
+      "\u0639",
+      "mailto:",
+      "tel:",
+      "+",
+      "1",
+      "@",
+      ":",
+      "\\",
+      "%",
+      "'",
+      "<",
+      "\u200b",
+    ];
+    for (let i = 0; i < 3_000; i += 1) {
+      let url = "";
+      const length = 1 + Math.floor(random() * 8);
+      for (let j = 0; j < length; j += 1) url += pieces[Math.floor(random() * pieces.length)];
+      const text = `[x](${url})`;
+      const issues = validateRichText(text, RICH_TEXT_MAX.body);
+      const anchors = anchorCount(render(text));
+      expect(anchors + issues.length, JSON.stringify(text)).toBe(1);
+    }
+  });
+
+  it("every link the parser produces is rendered as an anchor with the same href", () => {
+    const random = mulberry32(0xa9);
+    const alphabet = [..."*[]()!\\-.1 \n:/a", "https://", "javascript:", "/", "\u0639", "?"];
+    for (let i = 0; i < 2_000; i += 1) {
+      let text = "";
+      const length = Math.floor(random() * 80);
+      for (let j = 0; j < length; j += 1) text += alphabet[Math.floor(random() * alphabet.length)];
+      const json = JSON.stringify(parseRichText(text).document);
+      const links = json.match(/"type":"link"/g)?.length ?? 0;
+      expect(anchorCount(render(text)), JSON.stringify(text)).toBe(links);
     }
   });
 });

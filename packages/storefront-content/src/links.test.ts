@@ -218,3 +218,90 @@ describe("PAGE_HANDLE_PATTERN and pageHandleOfPath (preflight 15)", () => {
     }
   });
 });
+
+describe("review fix round 1", () => {
+  // Review M1: normalising must give a value the same rules accept again (a fixed point).
+  it("refuses an https host whose normalised form the URL parser refuses (IDN)", () => {
+    expect(normalizeExternalUrl("https://\u00dfxn--.example")).toBeNull();
+    expect(safeHref("https://\u00dfxn--.example")).toBeNull();
+  });
+
+  it("every normalised https URL and every safe href is a fixed point", () => {
+    const pieces = ["\u00df", "xn--", "-", ".", "a", "\u0639", "%41", ":", "8", "/", "?", "#", "@"];
+    const random = mulberry(0x5eed);
+    for (let i = 0; i < 3_000; i += 1) {
+      let raw = random() < 0.5 ? "https://" : "/";
+      const length = 1 + Math.floor(random() * 10);
+      for (let j = 0; j < length; j += 1) raw += pieces[Math.floor(random() * pieces.length)];
+      const out = normalizeExternalUrl(raw);
+      if (out !== null) expect(normalizeExternalUrl(out), JSON.stringify(raw)).toBe(out);
+      const href = safeHref(raw);
+      if (href !== null) expect(safeHref(href.href), JSON.stringify(raw)).toEqual(href);
+    }
+  });
+
+  // Review M2: no `%` in the local part, so no encoded `?`, `,` or newline gets through.
+  it.each([
+    "mailto:a%3Fbcc%3Dc@d.example",
+    "mailto:a%2Cevil%40x.example@b.example",
+    "mailto:%0a@b.example",
+  ])("refuses the percent-encoded mailto %s", (input) => {
+    expect(normalizeExternalUrl(input)).toBeNull();
+  });
+
+  // Review M8: more invisible characters, and U+2029 inside a tel: number.
+  it("refuses soft hyphen, Arabic letter mark, word joiners and paragraph separator", () => {
+    for (const code of [0xad, 0x61c, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x2029]) {
+      expect(normalizeExternalUrl(`https://exa${ch(code)}mple.com`), code.toString(16)).toBeNull();
+      expect(normalizeExternalUrl(`tel:+20${ch(code)}1001234567`), code.toString(16)).toBeNull();
+      expect(normalizeExternalUrl(`mailto:a${ch(code)}@b.example`), code.toString(16)).toBeNull();
+      expect(safeHref(`/pa${ch(code)}ges`), code.toString(16)).toBeNull();
+    }
+  });
+
+  // Review M6: raw Unicode and a bare trailing `?` or `#` become the canonical encoded path.
+  it("canonicalises a raw-Unicode path or query to its percent-encoded form", () => {
+    const arabic = "\u0639\u0631\u0628\u064a";
+    const policy = "\u0633\u064a\u0627\u0633\u0629";
+    expect(safeHref(`/search?q=${arabic}`)).toEqual({
+      href: `/search?q=${encodeURIComponent(arabic)}`,
+      external: false,
+    });
+    expect(safeHref(`/pages/${policy}`)).toEqual({
+      href: `/pages/${encodeURIComponent(policy)}`,
+      external: false,
+    });
+    expect(safeHref("/search?q=it's")).toEqual({ href: "/search?q=it%27s", external: false });
+    expect(safeHref("/a?")).toEqual({ href: "/a", external: false });
+    expect(safeHref("/a#")).toEqual({ href: "/a", external: false });
+    // The exported predicate itself stays strict: only canonical paths.
+    expect(isSafeRelativePath(`/pages/${policy}`)).toBe(false);
+  });
+
+  it("canonicalising never yields an off-site path", () => {
+    const pieces = ["/", "//", ".", "..", "%2e", "%2E", "%2f", "a", "?", "#", "\u0639", "'", "<"];
+    const random = mulberry(0xc0ffee);
+    for (let i = 0; i < 3_000; i += 1) {
+      let raw = "/";
+      const length = 1 + Math.floor(random() * 8);
+      for (let j = 0; j < length; j += 1) raw += pieces[Math.floor(random() * pieces.length)];
+      const href = safeHref(raw);
+      if (href === null) continue;
+      expect(href.external).toBe(false);
+      expect(href.href, JSON.stringify(raw)).toMatch(/^\/(?:$|[^/\\])/);
+      expect(isSafeRelativePath(href.href), JSON.stringify(raw)).toBe(true);
+      const resolved = new URL(href.href, "https://shop.example/pages/x");
+      expect(resolved.origin, JSON.stringify(raw)).toBe("https://shop.example");
+    }
+  });
+});
+
+function mulberry(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let r = Math.imul(a ^ (a >>> 15), 1 | a);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}

@@ -417,3 +417,85 @@ describe("renderRichText — hostile sizes", () => {
     expect(performance.now() - start).toBeLessThan(400);
   });
 });
+
+describe("review fix round 1", () => {
+  // Review M3: a value alone on a line never becomes a list, an ordered list or a rule.
+  it.each(["- foo", "---", "1. foo", "  - x", "12. y", "-----", "a\n- b\n3. c\n---"])(
+    "escapeRichText keeps %j plain text at the start of a line",
+    (value) => {
+      const parsed = parseRichText(escapeRichText(value));
+      const lines = value.split("\n").map((line) => line.trim());
+      const children: RichInline[] = [];
+      lines.forEach((line, index) => {
+        if (index > 0) children.push(br);
+        children.push(t(line));
+      });
+      expect(parsed.document.blocks).toEqual([{ type: "paragraph", children }]);
+    },
+  );
+
+  it("escapeRichText leaves a marker that is not at the start of a line alone", () => {
+    expect(escapeRichText("a - b 1. c")).toBe("a - b 1. c");
+  });
+
+  it("escapeRichText runs in linear time on hostile values", () => {
+    for (const value of [" ".repeat(100_000), "\n".repeat(100_000), "1".repeat(100_000)]) {
+      const start = performance.now();
+      escapeRichText(`${value}x`);
+      expect(performance.now() - start).toBeLessThan(400);
+    }
+  });
+
+  // Review M4: the validator never skips text it would not parse.
+  it("text over RICH_TEXT_MAX.body is TOO_LONG even when max is larger", () => {
+    const text = `${"a".repeat(RICH_TEXT_MAX.body)}\n[x](javascript:y)`;
+    expect(validateRichText(text, 200_000)).toEqual([{ code: "TOO_LONG", line: 0 }]);
+    expect(validateRichText("[x](javascript:y)", 200_000)).toEqual([
+      { code: "UNSAFE_LINK", line: 1 },
+    ]);
+  });
+
+  // Review M5: a text node from anywhere but the parser is checked too.
+  it("the renderer skips a text value that is not a string", () => {
+    const out = renderRichText(
+      {
+        blocks: [
+          {
+            type: "paragraph",
+            children: [
+              { type: "text", value: { $$typeof: "x" } as unknown as string },
+              t("ok"),
+              { type: "text", value: 42 as unknown as string },
+            ],
+          },
+        ],
+      },
+      h,
+    );
+    expect(out[0]?.children).toEqual(["ok"]);
+  });
+
+  // Review M6: harmless raw Unicode in an internal link is a link, not UNSAFE_LINK.
+  it("a raw-Unicode internal link renders with its encoded href and is not reported", () => {
+    const query = "\u0639\u0631\u0628\u064a";
+    const text = `[search](/search?q=${query}) [a](/a?)`;
+    expect(validateRichText(text, RICH_TEXT_MAX.body)).toEqual([]);
+    expect(inline(text)).toEqual([
+      {
+        type: "link",
+        href: `/search?q=${encodeURIComponent(query)}`,
+        external: false,
+        children: [t("search")],
+      },
+      t(" "),
+      { type: "link", href: "/a", external: false, children: [t("a")] },
+    ]);
+  });
+
+  // Review M1: the validator reports what the renderer would drop.
+  it("an IDN host the renderer would refuse is reported by the validator", () => {
+    const text = "[shop](https://\u00dfxn--.example)";
+    expect(validateRichText(text, RICH_TEXT_MAX.body)).toEqual([{ code: "UNSAFE_LINK", line: 1 }]);
+    expect(renderRichText(parseRichText(text).document, h)[0]?.children).toEqual(["shop"]);
+  });
+});
