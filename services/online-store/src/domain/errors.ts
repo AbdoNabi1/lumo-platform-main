@@ -31,3 +31,20 @@ export const policyNotFound = () => new NotFoundError("POLICY_NOT_FOUND: This po
 /** A menu reaches storage only with an id; a virtual default menu is given one by `Menu.create`. */
 export const menuNeedsId = () =>
   new BusinessRuleError("MENU_ID_REQUIRED: A menu needs an id before it can be saved.");
+export const menuNotFound = () => new NotFoundError("MENU_NOT_FOUND: No such menu.");
+export const menuHandleTaken = () =>
+  new ConflictError("MENU_HANDLE_TAKEN: Another menu already uses this handle.");
+export const menuProtected = () =>
+  new BusinessRuleError("MENU_PROTECTED: The main menu and the footer menu cannot be deleted.");
+export const menuInUse = () =>
+  new BusinessRuleError("MENU_IN_USE: The theme shows this menu. Choose another menu first.");
+export const menuLimit = () =>
+  new BusinessRuleError("MENU_LIMIT: This store has the most menus it can have.");
+export const invalidHandle = () =>
+  new ValidationError("INVALID_HANDLE: Use lowercase letters, digits and single hyphens.", [
+    { field: "handle", message: "INVALID_HANDLE" },
+  ]);
+export const titleRequired = () =>
+  new ValidationError("TITLE_REQUIRED: Give the menu a title.", [
+    { field: "title", message: "TITLE_REQUIRED" },
+  ]);

@@ -1,7 +1,11 @@
 import type { Clock, IdGenerator } from "@platform/contracts";
 import type {
+  CatalogLinkType,
   ImageDto,
   ImageRefsPort,
+  LinkTarget,
+  LinkTargetChoice,
+  LinkTargetsPort,
   ShopHostPort,
   StoreIdentityPort,
   StorefrontPasswordHasher,
@@ -11,6 +15,7 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { buildOnlineStoreController, type OnlineStoreRepos } from "../composition";
 import {
   InMemoryAccessRepository,
+  InMemoryMenuRepository,
   InMemoryPolicyRepository,
   InMemoryPreferencesRepository,
   InMemoryPreviewTokenRepository,
@@ -63,6 +68,58 @@ export function fakeHasher(openUnitsOfWork: () => number): StorefrontPasswordHas
   };
 }
 
+export type ShopTargets = Readonly<
+  Record<string, Partial<Record<CatalogLinkType, Readonly<Record<string, LinkTarget>>>>>
+>;
+
+const CATALOG_LINK_TYPES: readonly CatalogLinkType[] = ["collection", "product", "page"];
+
+/**
+ * Catalogue and pages fake: each shop's targets by kind and id. `resolve` copies OWN entries only
+ * into plain objects (so refusing an inherited key such as `constructor` is the resolver's job)
+ * and records how many ids each call asked for; `search` matches titles case-insensitively.
+ */
+export function fakeLinkTargets(
+  options: { readonly targets?: ShopTargets; readonly linkTargetsFail?: boolean },
+  resolveCalls: number[],
+): LinkTargetsPort {
+  return {
+    resolve: (ids, tenantId) => {
+      resolveCalls.push(CATALOG_LINK_TYPES.reduce((sum, kind) => sum + ids[kind].length, 0));
+      if (options.linkTargetsFail === true) return Promise.reject(new Error("catalogue down"));
+      const shop = options.targets?.[tenantId] ?? {};
+      const pick = (kind: CatalogLinkType): Record<string, LinkTarget> => {
+        const source = shop[kind] ?? {};
+        const out: Record<string, LinkTarget> = {};
+        for (const id of ids[kind]) {
+          const target = Object.hasOwn(source, id) ? source[id] : undefined;
+          if (target !== undefined) out[id] = target;
+        }
+        return out;
+      };
+      return Promise.resolve({
+        collection: pick("collection"),
+        product: pick("product"),
+        page: pick("page"),
+      });
+    },
+    search: (type, query, tenantId) => {
+      if (options.linkTargetsFail === true) return Promise.reject(new Error("catalogue down"));
+      const needle = query.toLowerCase();
+      const source = options.targets?.[tenantId]?.[type] ?? {};
+      return Promise.resolve(
+        Object.entries(source)
+          .filter(([, target]) => target.title.toLowerCase().includes(needle))
+          .map(([id, target]): LinkTargetChoice => ({
+            id,
+            title: target.title,
+            subtitle: target.href,
+          })),
+      );
+    },
+  };
+}
+
 /** The `...Fails` options are read on every call, so a test can restore a port by flipping them. */
 export function harness(
   options: {
@@ -72,6 +129,8 @@ export function harness(
     hostLookupFails?: boolean;
     storeNameFails?: boolean;
     imageResolveFails?: boolean;
+    targets?: ShopTargets;
+    linkTargetsFail?: boolean;
   } = {},
 ) {
   let now = new Date("2026-10-27T10:00:00.000Z");
@@ -87,7 +146,10 @@ export function harness(
     releases: new InMemoryThemeReleaseRepository(),
     previewTokens: new InMemoryPreviewTokenRepository(),
     policies: new InMemoryPolicyRepository(),
+    menus: new InMemoryMenuRepository(),
   };
+  const resolveCalls: number[] = [];
+  const linkTargets = fakeLinkTargets(options, resolveCalls);
   let openUnitsOfWork = 0;
   const memoryUnitOfWork = new InMemoryUnitOfWork();
   const unitOfWork: TransactionalUnitOfWork<unknown> = {
@@ -132,6 +194,7 @@ export function harness(
       passwordHasher: hasher,
       shopHost,
       storeIdentity,
+      linkTargets,
     },
     {
       record: (events: readonly DomainEvent[], tenantId: string) => {
@@ -146,6 +209,7 @@ export function harness(
     repos,
     hasher,
     recorded,
+    resolveCalls,
     advance: (ms: number) => {
       now = new Date(now.getTime() + ms);
     },

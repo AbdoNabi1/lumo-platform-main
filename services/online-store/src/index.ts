@@ -7,12 +7,25 @@ export type {
 export { OnlineStoreController } from "./interfaces/online-store.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export type {
+  CatalogLinkType,
   ImageDto,
   ImageRefsPort,
+  LinkTarget,
+  LinkTargetChoice,
+  LinkTargetMap,
+  LinkTargetsPort,
   ShopHostPort,
   StoreIdentityPort,
   StorefrontPasswordHasher,
 } from "./application/ports";
+export type {
+  CreateMenuInput,
+  MenuSummary,
+  MenuView,
+  UpdateMenuInput,
+} from "./application/menus.use-cases";
+export type { MenuItemView } from "./application/menu-resolution";
+export type { SearchLinkTargetsInput } from "./application/link-targets.use-case";
 export type { UpdateAccessInput } from "./application/access.use-cases";
 export type { UpdatePreferencesInput } from "./application/preferences.use-cases";
 export type {

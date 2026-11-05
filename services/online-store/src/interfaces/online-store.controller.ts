@@ -18,6 +18,19 @@ import type {
   UpdatePolicy,
   UpdatePolicyInput,
 } from "../application/policies.use-cases";
+import type {
+  SearchLinkTargets,
+  SearchLinkTargetsInput,
+} from "../application/link-targets.use-case";
+import type {
+  CreateMenu,
+  CreateMenuInput,
+  DeleteMenu,
+  GetMenu,
+  ListMenus,
+  UpdateMenu,
+  UpdateMenuInput,
+} from "../application/menus.use-cases";
 import type { IssuePreviewToken } from "../application/preview.use-cases";
 import type { GetStorefrontShell } from "../application/shell.use-case";
 import type {
@@ -53,6 +66,12 @@ export interface OnlineStoreControllerDeps {
   readonly updatePolicy: UpdatePolicy;
   readonly generatePolicyTemplate: GeneratePolicyTemplate;
   readonly getPublicPolicy: GetPublicPolicy;
+  readonly listMenus: ListMenus;
+  readonly getMenu: GetMenu;
+  readonly createMenu: CreateMenu;
+  readonly updateMenu: UpdateMenu;
+  readonly deleteMenu: DeleteMenu;
+  readonly searchLinkTargets: SearchLinkTargets;
 }
 
 type Tenant = { readonly tenantId: string };
@@ -121,6 +140,26 @@ export class OnlineStoreController {
     readonly inputs: unknown;
   }): Promise<ControllerResponse> {
     return Promise.resolve(present(this.deps.generatePolicyTemplate.execute(input), 200));
+  }
+
+  async listMenus(input: Tenant): Promise<ControllerResponse> {
+    return present(await this.deps.listMenus.execute(input), 200);
+  }
+  async getMenu(input: { readonly handle: string } & Tenant): Promise<ControllerResponse> {
+    return present(await this.deps.getMenu.execute(input), 200);
+  }
+  async createMenu(input: CreateMenuInput): Promise<ControllerResponse> {
+    return present(await this.deps.createMenu.execute(input), 201);
+  }
+  async updateMenu(input: UpdateMenuInput): Promise<ControllerResponse> {
+    return present(await this.deps.updateMenu.execute(input), 200);
+  }
+  async deleteMenu(input: { readonly handle: string } & Tenant): Promise<ControllerResponse> {
+    return present(await this.deps.deleteMenu.execute(input), 200);
+  }
+  /** The menu editor's link picker: at most 20 choices. */
+  async searchLinkTargets(input: SearchLinkTargetsInput): Promise<ControllerResponse> {
+    return present(await this.deps.searchLinkTargets.execute(input), 200);
   }
 
   /** Public: the storefront shell; a bad preview token is 401 PREVIEW_INVALID (the storefront falls back to live). */

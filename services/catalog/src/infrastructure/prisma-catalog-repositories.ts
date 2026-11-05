@@ -450,6 +450,23 @@ export class PrismaCollectionRepository implements CollectionRepository {
     return row === null ? null : CollectionMapper.toDomain(row, row.items);
   }
 
+  async findByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Collection[]> {
+    // `id` is a uuid column: a non-uuid string inside `in` fails the whole query instead of matching nothing.
+    const wanted = [...new Set(ids)].filter((id) => UUID_PATTERN.test(id));
+    if (wanted.length === 0) return [];
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.collection.findMany({
+        where: { tenantId, deletedAt: null, id: { in: wanted } },
+        include: { items: true },
+      }),
+    );
+    return rows.map((row) => CollectionMapper.toDomain(row, row.items));
+  }
+
   async findBySlug(slug: string, tenantId: string, tx?: unknown): Promise<Collection | null> {
     const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
       client.collection.findFirst({

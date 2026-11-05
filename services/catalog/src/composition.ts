@@ -32,6 +32,7 @@ import { DeleteCollection } from "./application/delete-collection.use-case";
 import { DeleteProduct } from "./application/delete-product.use-case";
 import { DetachMedia } from "./application/detach-media.use-case";
 import { GetCollectionBySlug } from "./application/get-collection-by-slug.use-case";
+import { GetCollectionsByIds } from "./application/get-collections-by-ids.use-case";
 import { GetProductBySlug } from "./application/get-product-by-slug.use-case";
 import { GetProduct } from "./application/get-product.use-case";
 import { ListBrands } from "./application/list-brands.use-case";
@@ -235,6 +236,7 @@ function buildControllers(
     deleteCollection: new DeleteCollection({ collections, unitOfWork, idGenerator, clock }),
     listCollections: new ListCollections({ collections }),
     getCollectionBySlug: new GetCollectionBySlug({ collections }),
+    getCollectionsByIds: new GetCollectionsByIds({ collections }),
     listCollectionProducts: new ListCollectionProducts({ collections, products }),
   });
 

@@ -1,13 +1,22 @@
 import {
   DEFAULT_THEME_DOCUMENT,
+  isDefaultMenuHandle,
+  menuHandlesOf,
+  POLICY_TYPES,
   readSocial,
   type Locale,
   type LocalizedText,
+  type MenuItem,
+  type PolicyType,
+  type ResolvedMenuItem,
   type ThemeBrand,
+  type ThemeDocument,
 } from "@platform/storefront-content";
 import { logger } from "@platform/utils";
+import { virtualDefaultMenu } from "../domain/default-menus";
 import type { OnlineStoreDeps } from "./deps";
-import type { ImageDto } from "./ports";
+import { emptyTargets, loadTargets, resolveItems } from "./menu-resolution";
+import type { ImageDto, LinkTargetMap } from "./ports";
 import type { ResolvePreviewToken } from "./preview.use-cases";
 
 /**
@@ -35,8 +44,15 @@ export interface PublicShellView {
     readonly corners: ThemeBrand["corners"];
     readonly social: ThemeBrand["social"];
   };
-  readonly header: { readonly sticky: boolean };
-  readonly footer: { readonly note: LocalizedText; readonly showSocial: boolean };
+  /** Spec 2.2: menus resolved live; only display fields and canonical safe hrefs. */
+  readonly header: { readonly sticky: boolean; readonly menu: readonly ResolvedMenuItem[] };
+  readonly footer: {
+    readonly note: LocalizedText;
+    readonly showSocial: boolean;
+    readonly menu: readonly ResolvedMenuItem[];
+    /** The set policies in POLICY_TYPES order when `showPolicyLinks`, else none. */
+    readonly policies: readonly PolicyType[];
+  };
   readonly locked: boolean;
 }
 
@@ -73,7 +89,15 @@ export class GetStorefrontShell {
     const ids = [doc.brand.logo.imageRef, doc.brand.favicon.imageRef, p.shareImageRef].filter(
       (id): id is string => id !== null,
     );
-    const images = await this.imagesOf(ids, input.tenantId);
+    // Images and menus in parallel; the menus' link targets need the menus first.
+    const [images, { menus, targets }] = await Promise.all([
+      this.imagesOf(ids, input.tenantId),
+      this.menusOf(doc, input.tenantId).then(async (menus) => ({
+        menus,
+        targets: await this.targetsOf([...menus.header, ...menus.footer], input.tenantId),
+      })),
+    ]);
+    const setPolicies = new Set(menus.setPolicies);
     const image = (id: string | null): ImageDto | null =>
       id === null ? null : (images[id] ?? null);
     return {
@@ -97,15 +121,73 @@ export class GetStorefrontShell {
           corners: doc.brand.corners,
           social: readSocial(doc.brand.social),
         },
-        header: { sticky: doc.header.sticky },
-        footer: { note: doc.footer.note, showSocial: doc.footer.showSocial },
+        header: {
+          sticky: doc.header.sticky,
+          menu: resolveItems(menus.header, targets, setPolicies),
+        },
+        footer: {
+          note: doc.footer.note,
+          showSocial: doc.footer.showSocial,
+          menu: resolveItems(menus.footer, targets, setPolicies),
+          policies: doc.footer.showPolicyLinks ? menus.setPolicies : [],
+        },
         locked: access.snapshot().locked,
       },
     };
   }
 
   /**
-   * Images are the one optional part of the shell, so a failed read blanks them and keeps the rest.
+   * The header and footer menus the document names: the saved menu, else the virtual default for
+   * a default handle, else nothing. One read per distinct handle (at most two) and one policy list.
+   */
+  private async menusOf(
+    doc: ThemeDocument,
+    tenantId: string,
+  ): Promise<{
+    readonly header: readonly MenuItem[];
+    readonly footer: readonly MenuItem[];
+    readonly setPolicies: readonly PolicyType[];
+  }> {
+    const handles = menuHandlesOf(doc);
+    const [saved, policies] = await Promise.all([
+      Promise.all(handles.map((handle) => this.deps.menus.get(handle, tenantId))),
+      this.deps.policies.list(tenantId),
+    ]);
+    const setPolicies = POLICY_TYPES.filter((type) =>
+      policies.some((policy) => policy.snapshot().type === type && policy.isSet),
+    );
+    const itemsOf = (handle: string): readonly MenuItem[] => {
+      const menu = saved[handles.indexOf(handle)] ?? null;
+      if (menu !== null) return menu.snapshot().items;
+      return isDefaultMenuHandle(handle)
+        ? virtualDefaultMenu(handle, setPolicies).snapshot().items
+        : [];
+    };
+    return {
+      header: itemsOf(doc.header.menuHandle),
+      footer: itemsOf(doc.footer.menuHandle),
+      setPolicies,
+    };
+  }
+
+  /**
+   * One batched read for both menus. When it fails the shell still answers: catalogue and page
+   * links drop out (no target is live), and home, search, policy and URL links stay (Ruling 26).
+   */
+  private async targetsOf(items: readonly MenuItem[], tenantId: string): Promise<LinkTargetMap> {
+    try {
+      return await loadTargets(this.deps, items, tenantId);
+    } catch (error) {
+      logger.warn("storefront shell: link targets unavailable", {
+        tenantId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return emptyTargets();
+    }
+  }
+
+  /**
+   * Images are optional in the shell too, so a failed read blanks them and keeps the rest.
    * Only here: the admin reads use the same port, where a blip must not look like a removed image.
    */
   private async imagesOf(

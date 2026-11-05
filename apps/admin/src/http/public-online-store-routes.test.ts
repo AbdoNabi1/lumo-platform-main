@@ -214,8 +214,22 @@ describe("public online-store routes (spec 1.10)", () => {
         "typography",
       ]);
       expect(Object.keys(body.brand.logo).sort()).toEqual(["image", "widthPx"]);
-      expect(body.header).toEqual({ sticky: false });
-      expect(Object.keys(body.footer).sort()).toEqual(["note", "showSocial"]);
+      // Part 2: an untouched shop serves the default menus, resolved; no policy is set yet.
+      expect(body.header).toEqual({
+        sticky: false,
+        menu: [
+          { label: { ar: "الرئيسية", en: "Home" }, href: "/", external: false, children: [] },
+          { label: { ar: "البحث", en: "Search" }, href: "/search", external: false, children: [] },
+        ],
+      });
+      expect(body.footer).toEqual({
+        note: {},
+        showSocial: true,
+        menu: [
+          { label: { ar: "البحث", en: "Search" }, href: "/search", external: false, children: [] },
+        ],
+        policies: [],
+      });
     });
 
     it("a real image carries only url, alt, width and height, and no key outside its url", async () => {
@@ -256,7 +270,9 @@ describe("public online-store routes (spec 1.10)", () => {
         expect(Object.keys(image).sort()).toEqual(["alt", "height", "url", "width"]);
         expect(image.url.startsWith("https://cdn.example.test/media/tenants/t-1/")).toBe(true);
       }
-      const keys = keysOf(body);
+      // A menu item's `href` is its public link, not an internal reference such as `imageRef`.
+      const keys = keysOf(body).filter((k) => k !== "href");
+      expect(keysOf(body)).toContain("href");
       for (const internal of [/storage/i, /key$/i, /tenant/i, /ref$/i, /^id$/i]) {
         expect(
           keys.filter((k) => internal.test(k)),

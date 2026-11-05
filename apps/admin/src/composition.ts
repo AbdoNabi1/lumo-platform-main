@@ -131,6 +131,7 @@ import {
   tenancyShopHost,
   tenancyStoreIdentity,
 } from "./infrastructure/cross-context/online-store.adapters";
+import { onlineStoreLinkTargets } from "./infrastructure/cross-context/online-store-link-targets.adapter";
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
@@ -1142,7 +1143,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const signupEmail: SignupEmailPort = deps.signupEmail ?? new LoggingSignupEmailAdapter();
   const signupCompletionUrlBase = `${deps.storefrontPublicUrl ?? "http://localhost:3000"}/account/signup/complete`;
 
-  // Project 4. Every port is a closure (Ruling 13): no tenancy or media object hangs off onlineStore.
+  // Project 4. Every port is a closure (Ruling 13): no tenancy, media, catalog or pages object hangs
+  // off onlineStore.
   // The fields are listed, never `...deps`: `deps.tenantId` must not reach this context (ADR-0014).
   const onlineStore = wireOnlineStore({
     serializer: deps.serializer,
@@ -1156,6 +1158,16 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     passwordHasher: deps.onlineStorePasswordHasher ?? scryptStorefrontPasswordHasher(),
     shopHost: tenancyShopHost((shopId) => tenancy.tenancy.listShopDomains({ shopId })),
     storeIdentity: tenancyStoreIdentity(() => tenancy.tenancy.getPublicStore()),
+    linkTargets: onlineStoreLinkTargets({
+      products: (ids, tenantId) => catalog.products.getByIds({ ids, tenantId }),
+      collections: (ids, tenantId) => catalog.collections.getByIds({ ids, tenantId }),
+      pages: (ids, tenantId) => pages.pages.getByIds({ ids, tenantId }),
+      searchProducts: (query, tenantId) =>
+        catalog.products.list({ ...(query === "" ? {} : { query }), first: 20, tenantId }),
+      searchCollections: (query, tenantId) =>
+        catalog.collections.list({ ...(query === "" ? {} : { query }), first: 20, tenantId }),
+      listPages: (tenantId) => pages.pages.listPages({ first: 100, tenantId }),
+    }),
   });
 
   const contexts: readonly DrainableContext[] = [

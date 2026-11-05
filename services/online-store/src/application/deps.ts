@@ -2,6 +2,7 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import type {
   AccessRepository,
+  MenuRepository,
   PolicyRepository,
   PreferencesRepository,
   PreviewTokenRepository,
@@ -11,6 +12,7 @@ import type {
 import type {
   EventRecorder,
   ImageRefsPort,
+  LinkTargetsPort,
   ShopHostPort,
   StoreIdentityPort,
   StorefrontPasswordHasher,
@@ -23,6 +25,7 @@ export interface OnlineStoreDeps {
   readonly releases: ThemeReleaseRepository;
   readonly previewTokens: PreviewTokenRepository;
   readonly policies: PolicyRepository;
+  readonly menus: MenuRepository;
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
@@ -30,5 +33,6 @@ export interface OnlineStoreDeps {
   readonly passwordHasher: StorefrontPasswordHasher;
   readonly shopHost: ShopHostPort;
   readonly storeIdentity: StoreIdentityPort;
+  readonly linkTargets: LinkTargetsPort;
   readonly events: EventRecorder;
 }

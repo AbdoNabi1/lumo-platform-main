@@ -183,6 +183,19 @@ describe("assertMultiTenantReady", () => {
     ).toEqual([]);
   });
 
+  it("the link-target adapter adds no construction-time tenant", () => {
+    const graph = pinnedProductionShapedGraph() as unknown as {
+      onlineStore: { onlineStore: { deps: { getMenu: { deps: { linkTargets: object } } } } };
+    };
+    // The guard really reaches the port: it is in the graph, and it is closures only.
+    const port = graph.onlineStore.onlineStore.deps.getMenu.deps.linkTargets;
+    expect(Object.keys(port).sort()).toEqual(["resolve", "search"]);
+    for (const value of Object.values(port)) expect(typeof value).toBe("function");
+    expect(
+      findConstructionTimeTenants(graph, []).filter((path) => path.includes("linkTargets")),
+    ).toEqual([]);
+  });
+
   it("really walks the online-store graph: a pin planted under its use cases is reported", () => {
     const graph = pinnedProductionShapedGraph() as unknown as {
       onlineStore: { onlineStore: { deps: { getPreferences: { deps: object } } } };

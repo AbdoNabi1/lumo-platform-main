@@ -36,3 +36,33 @@ export interface StoreIdentityPort {
 export interface EventRecorder {
   record(events: readonly DomainEvent[], tenantId: string, tx: unknown): Promise<void>;
 }
+
+export type CatalogLinkType = "collection" | "product" | "page";
+
+export interface LinkTarget {
+  readonly href: string;
+  readonly title: string;
+  readonly published: boolean;
+}
+
+export interface LinkTargetChoice {
+  readonly id: string;
+  readonly title: string;
+  readonly subtitle: string;
+}
+
+/** Look entries up with `Object.hasOwn` only: a link id may be `constructor` or `__proto__`. */
+export type LinkTargetMap = Readonly<Record<CatalogLinkType, Readonly<Record<string, LinkTarget>>>>;
+
+/** Collections, products and pages by id (one batched read per kind), and the picker's search. */
+export interface LinkTargetsPort {
+  resolve(
+    ids: Readonly<Record<CatalogLinkType, readonly string[]>>,
+    tenantId: string,
+  ): Promise<LinkTargetMap>;
+  search(
+    type: CatalogLinkType,
+    query: string,
+    tenantId: string,
+  ): Promise<readonly LinkTargetChoice[]>;
+}

@@ -24,6 +24,19 @@ function wiringDeps(): OnlineStoreWiringDeps {
     passwordHasher: fakeHasher(() => 0),
     shopHost: { primaryHostname: async () => null },
     storeIdentity: { storeName: async () => "Nour" },
+    linkTargets: {
+      resolve: async (ids) => ({
+        collection: Object.fromEntries(
+          ids.collection.map((id) => [
+            id,
+            { href: "/collections/sale", title: "Sale", published: true },
+          ]),
+        ),
+        product: {},
+        page: {},
+      }),
+      search: async () => [],
+    },
   };
 }
 
@@ -108,6 +121,38 @@ describe("wireOnlineStore", () => {
     ]);
     expect(await wired.drainOutbox()).toBe(0);
     expect(wired.deliveredEventTypes).toEqual([]);
+  });
+
+  it.each([
+    ["in memory", () => undefined],
+    ["Prisma", () => createFakePrisma().database as Database],
+  ])("%s: menus are wired, and their links resolve through the given port", async (_, prisma) => {
+    const database = prisma();
+    const { controller, publicReads } = wireOnlineStore({
+      ...wiringDeps(),
+      ...(database === undefined ? {} : { prisma: database }),
+    });
+    const created = await controller.createMenu({
+      tenantId: T,
+      handle: "sale",
+      title: "Sale",
+      items: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          label: { en: "Sale" },
+          link: { type: "collection", id: "c-1" },
+          children: [],
+        },
+      ],
+    });
+    expect(created).toMatchObject({ status: 201, body: { handle: "sale", version: 1 } });
+    const listed = (await controller.listMenus({ tenantId: T })).body as {
+      menus: { handle: string }[];
+    };
+    expect(listed.menus.map((m) => m.handle)).toEqual(["main-menu", "footer", "sale"]);
+    expect((await publicReads.shell(T)).body).toMatchObject({
+      header: { menu: [{ href: "/" }, { href: "/search" }] },
+    });
   });
 
   it.each([

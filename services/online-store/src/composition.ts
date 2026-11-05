@@ -19,9 +19,18 @@ import {
   VerifyStorefrontPassword,
 } from "./application/access.use-cases";
 import type { OnlineStoreDeps } from "./application/deps";
+import { SearchLinkTargets } from "./application/link-targets.use-case";
+import {
+  CreateMenu,
+  DeleteMenu,
+  GetMenu,
+  ListMenus,
+  UpdateMenu,
+} from "./application/menus.use-cases";
 import type {
   EventRecorder,
   ImageRefsPort,
+  LinkTargetsPort,
   ShopHostPort,
   StoreIdentityPort,
   StorefrontPasswordHasher,
@@ -50,6 +59,7 @@ import {
 } from "./infrastructure/event-translator";
 import {
   InMemoryAccessRepository,
+  InMemoryMenuRepository,
   InMemoryPolicyRepository,
   InMemoryPreferencesRepository,
   InMemoryPreviewTokenRepository,
@@ -59,6 +69,7 @@ import {
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import {
   PrismaAccessRepository,
+  PrismaMenuRepository,
   PrismaPolicyRepository,
   PrismaPreferencesRepository,
   PrismaPreviewTokenRepository,
@@ -78,6 +89,8 @@ export interface OnlineStoreWiringDeps {
   readonly passwordHasher: StorefrontPasswordHasher;
   readonly shopHost: ShopHostPort;
   readonly storeIdentity: StoreIdentityPort;
+  /** Catalogue and pages by id: closures over their controllers (Ruling 13), tenant per call. */
+  readonly linkTargets: LinkTargetsPort;
 }
 
 export interface OnlineStoreRepos {
@@ -87,6 +100,7 @@ export interface OnlineStoreRepos {
   readonly releases: OnlineStoreDeps["releases"];
   readonly previewTokens: OnlineStoreDeps["previewTokens"];
   readonly policies: OnlineStoreDeps["policies"];
+  readonly menus: OnlineStoreDeps["menus"];
 }
 
 /** Closures taking `tenantId` per call (spec "Composition"); nothing here holds a tenant. */
@@ -110,7 +124,13 @@ export function buildOnlineStoreController(
   unitOfWork: TransactionalUnitOfWork<unknown>,
   ports: Pick<
     OnlineStoreWiringDeps,
-    "idGenerator" | "clock" | "imageRefs" | "passwordHasher" | "shopHost" | "storeIdentity"
+    | "idGenerator"
+    | "clock"
+    | "imageRefs"
+    | "passwordHasher"
+    | "shopHost"
+    | "storeIdentity"
+    | "linkTargets"
   >,
   events: EventRecorder,
 ): OnlineStoreController {
@@ -122,6 +142,7 @@ export function buildOnlineStoreController(
     releases: repos.releases,
     previewTokens: repos.previewTokens,
     policies: repos.policies,
+    menus: repos.menus,
     unitOfWork,
     events,
     idGenerator: ports.idGenerator,
@@ -130,6 +151,7 @@ export function buildOnlineStoreController(
     passwordHasher: ports.passwordHasher,
     shopHost: ports.shopHost,
     storeIdentity: ports.storeIdentity,
+    linkTargets: ports.linkTargets,
   };
   const resolvePreview = new ResolvePreviewToken(deps);
   return new OnlineStoreController({
@@ -152,6 +174,12 @@ export function buildOnlineStoreController(
     updatePolicy: new UpdatePolicy(deps),
     generatePolicyTemplate: new GeneratePolicyTemplate(),
     getPublicPolicy: new GetPublicPolicy(deps),
+    listMenus: new ListMenus(deps),
+    getMenu: new GetMenu(deps),
+    createMenu: new CreateMenu(deps),
+    updateMenu: new UpdateMenu(deps),
+    deleteMenu: new DeleteMenu(deps),
+    searchLinkTargets: new SearchLinkTargets(deps),
   });
 }
 
@@ -188,6 +216,7 @@ export function wireOnlineStore(deps: OnlineStoreWiringDeps): WiredOnlineStore {
         releases: new PrismaThemeReleaseRepository(prisma),
         previewTokens: new PrismaPreviewTokenRepository(prisma),
         policies: new PrismaPolicyRepository(prisma),
+        menus: new PrismaMenuRepository(prisma),
       },
       new PrismaUnitOfWork(deps.prisma),
       deps,
@@ -220,6 +249,7 @@ export function wireOnlineStore(deps: OnlineStoreWiringDeps): WiredOnlineStore {
       releases: new InMemoryThemeReleaseRepository(),
       previewTokens: new InMemoryPreviewTokenRepository(),
       policies: new InMemoryPolicyRepository(),
+      menus: new InMemoryMenuRepository(),
     },
     new InMemoryUnitOfWork(),
     deps,

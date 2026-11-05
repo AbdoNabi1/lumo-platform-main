@@ -5,9 +5,16 @@ import {
   draftChanged,
   imageNotFound,
   invalidContent,
+  invalidHandle,
+  menuHandleTaken,
+  menuInUse,
+  menuLimit,
+  menuNotFound,
+  menuProtected,
   nothingToPublish,
   passwordRequired,
   releaseNotFound,
+  titleRequired,
   versionConflict,
 } from "./errors";
 
@@ -19,6 +26,13 @@ describe("online-store errors (Ruling 9: the code is the message prefix)", () =>
     [releaseNotFound(), NotFoundError, "RELEASE_NOT_FOUND"],
     [passwordRequired(), ValidationError, "PASSWORD_REQUIRED"],
     [imageNotFound("shareImageId"), ValidationError, "IMAGE_NOT_FOUND"],
+    [menuNotFound(), NotFoundError, "MENU_NOT_FOUND"],
+    [menuHandleTaken(), ConflictError, "MENU_HANDLE_TAKEN"],
+    [menuProtected(), BusinessRuleError, "MENU_PROTECTED"],
+    [menuInUse(), BusinessRuleError, "MENU_IN_USE"],
+    [menuLimit(), BusinessRuleError, "MENU_LIMIT"],
+    [invalidHandle(), ValidationError, "INVALID_HANDLE"],
+    [titleRequired(), ValidationError, "TITLE_REQUIRED"],
   ])("%s carries its code as the message prefix", (error, type, code) => {
     expect(error).toBeInstanceOf(type);
     expect(CODE_PATTERN.exec(error.message)?.[1]).toBe(code);
@@ -31,6 +45,8 @@ describe("online-store errors (Ruling 9: the code is the message prefix)", () =>
     expect(imageNotFound("brand.logoId").fields).toEqual([
       { field: "brand.logoId", message: "IMAGE_NOT_FOUND" },
     ]);
+    expect(invalidHandle().fields).toEqual([{ field: "handle", message: "INVALID_HANDLE" }]);
+    expect(titleRequired().fields).toEqual([{ field: "title", message: "TITLE_REQUIRED" }]);
   });
 
   it("invalidContent uses the document-level issue code, else INVALID_CONTENT, and lists every issue", () => {
