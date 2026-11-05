@@ -1,3 +1,4 @@
+import { ConcurrencyError } from "@platform/utils";
 import { describe, expect, it } from "vitest";
 import { harness } from "../testing/fakes";
 
@@ -43,6 +44,19 @@ describe("policies (spec 2.3, 2.6)", () => {
       policies: { set: boolean; locales: string[] }[];
     };
     expect(list.policies[0]).toMatchObject({ set: true, locales: ["ar"] });
+  });
+
+  it("a lost race (ConcurrencyError from save) is answered 409 VERSION_CONFLICT", async () => {
+    const { controller, repos } = harness();
+    repos.policies.save = () => Promise.reject(new ConcurrencyError("lost"));
+    const res = await controller.updatePolicy({
+      tenantId: T,
+      type: "refund",
+      by: "s",
+      expectedVersion: 0,
+      body: { en: "x" },
+    });
+    expect(res).toMatchObject({ status: 409, body: { code: "VERSION_CONFLICT" } });
   });
 
   it("getPolicy returns the stored view and the version for the next save", async () => {

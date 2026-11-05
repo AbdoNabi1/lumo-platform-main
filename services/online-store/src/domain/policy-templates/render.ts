@@ -6,6 +6,7 @@ import {
 } from "@platform/storefront-content";
 import * as ar from "./ar";
 import * as en from "./en";
+import { countPhrase, rangePhrase } from "./plurals";
 import type { PolicyTemplateInputs } from "./template-inputs";
 
 const BY_LOCALE = { ar, en } as const;
@@ -35,9 +36,8 @@ export function renderPolicyTemplate(
     phone,
     address: merchantValue(inputs.businessAddress),
     contact: contact === "" ? SENTENCES.throughStore : contact,
-    returnWindowDays: String(inputs.returnWindowDays),
-    deliveryMin: String(inputs.deliveryDays.min),
-    deliveryMax: String(inputs.deliveryDays.max),
+    returnWindow: countPhrase(locale, "day", inputs.returnWindowDays),
+    deliveryRange: rangePhrase(locale, inputs.deliveryDays.min, inputs.deliveryDays.max),
     returnShipping: SENTENCES.returnShipping[inputs.returnShippingPaidBy],
     refundMethod: SENTENCES.refundMethod[inputs.refundMethod],
     cod: SENTENCES.cod[inputs.cashOnDelivery ? "yes" : "no"],
@@ -49,6 +49,10 @@ export function renderPolicyTemplate(
     }
     return true;
   });
+  // A contact policy with no value at all would be a bare heading: say so instead.
+  if (type === "contact" && kept.every((line) => !line.startsWith("- "))) {
+    kept.push("", SENTENCES.noContactDetails);
+  }
   return kept
     .join("\n")
     .replace(PLACEHOLDER, (_whole, name: string) => values[name] ?? "")

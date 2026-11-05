@@ -86,6 +86,24 @@ describe("policy templates (spec 2.3)", () => {
     }
   });
 
+  it("a contact policy with no values says so instead of a bare heading, in both languages", () => {
+    const none = inputs({ contactEmail: "", contactPhone: "", businessAddress: "" });
+    expect(renderPolicyTemplate("contact", "en", none)).toContain(
+      "Contact details are coming soon.",
+    );
+    expect(renderPolicyTemplate("contact", "ar", none)).toContain("تفاصيل التواصل ستتوفر قريباً.");
+    expect(renderPolicyTemplate("contact", "en", inputs())).not.toContain("coming soon");
+  });
+
+  it("the English contact fallback reads naturally", () => {
+    const body = renderPolicyTemplate(
+      "shipping",
+      "en",
+      inputs({ contactEmail: "", contactPhone: "" }),
+    );
+    expect(body).toContain("contact us via our store.");
+  });
+
   it("the conditional sentences follow the inputs", () => {
     expect(renderPolicyTemplate("shipping", "en", inputs({ cashOnDelivery: false }))).toContain(
       "Orders are paid online at checkout.",
@@ -145,11 +163,10 @@ describe("policy templates (spec 2.3)", () => {
             contactPhone: "---",
           }),
         );
-        const blocks = parseRichText(body).document.blocks;
-        const lists = blocks.filter((b) => b.type !== "paragraph" && b.type !== "heading");
-        // Only the template's own bullet lists and none introduced by a value.
-        expect(JSON.stringify(blocks)).not.toContain('"type":"rule"');
-        expect(lists.length).toBeLessThanOrEqual(1);
+        const shape = (text: string) =>
+          parseRichText(text).document.blocks.map((block) => block.type);
+        // The same block structure as a benign render: no value introduced a list or a rule.
+        expect(shape(body)).toEqual(shape(renderPolicyTemplate(type, locale, inputs())));
       }
     }
   });

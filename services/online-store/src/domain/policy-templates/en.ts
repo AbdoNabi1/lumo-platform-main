@@ -5,6 +5,7 @@
  */
 export const SENTENCES = {
   or: " or ",
+  noContactDetails: "Contact details are coming soon.",
   throughStore: "our store",
   returnShipping: {
     customer:
@@ -29,11 +30,11 @@ export const SENTENCES = {
 export const TEMPLATES = {
   refund: `## Returns
 
-You can return an item within {returnWindowDays} days of delivery. It must be unused, in its original packaging, with proof of purchase.
+You can return an item within {returnWindow} of delivery. It must be unused, in its original packaging, with proof of purchase.
 
 ## How to request a return
 
-Contact us at {contact} with your order number and the reason for the return.
+Contact us via {contact} with your order number and the reason for the return.
 
 ## Return shipping
 
@@ -50,10 +51,10 @@ Once we receive and inspect the item, we will tell you whether your refund is ap
 
 ## Defective or wrong items
 
-If your item arrived defective or is not what you ordered, contact us within {returnWindowDays} days of delivery and we will replace or refund it at no cost to you.`,
+If your item arrived defective or is not what you ordered, contact us within {returnWindow} of delivery and we will replace or refund it at no cost to you.`,
   shipping: `## Delivery times
 
-We deliver within {deliveryMin} to {deliveryMax} business days after your order is confirmed.
+We deliver within {deliveryRange} after your order is confirmed.
 
 ## Shipping costs
 
@@ -69,7 +70,7 @@ Shipping costs are calculated at checkout and shown before you pay.
 
 ## Questions
 
-For any question about your delivery, contact us at {contact}.`,
+For any question about your delivery, contact us via {contact}.`,
   privacy: `## What we collect
 
 When you order from {storeName}, we collect your name, phone number, email address, delivery address and order details.
@@ -84,7 +85,7 @@ We share only what is needed with the delivery companies and payment providers t
 
 ## Your choices
 
-You can ask us to see, correct or delete your information by contacting us at {contact}.`,
+You can ask us to see, correct or delete your information by contacting us via {contact}.`,
   terms: `## About these terms
 
 These terms apply to every purchase from {storeName}. By placing an order you agree to them.
@@ -99,7 +100,7 @@ Delivery is covered by our shipping policy, and returns and refunds by our refun
 
 ## Contact
 
-For any question about these terms, contact us at {contact}.`,
+For any question about these terms, contact us via {contact}.`,
   contact: `## Contact {storeName}
 
 - Address: {address}
