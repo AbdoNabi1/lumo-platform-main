@@ -484,3 +484,37 @@ describe("online_store content — menus, policies and page bodies (Project 4 Pa
     );
   });
 });
+
+describe("online_store content — column types, defaults and keys (Project 4 Part 2)", () => {
+  const sql = readFileSync(
+    join(migrationsDir, "20261027010000_online_store_content", "migration.sql"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+  const squash = (text: string) => text.replace(/[ \t]+/g, " ");
+  const normalized = squash(sql);
+
+  const lines = [
+    '"id" UUID NOT NULL,',
+    '"tenant_id" TEXT NOT NULL,',
+    '"handle" TEXT NOT NULL,',
+    '"title" TEXT NOT NULL,',
+    `"items" JSONB NOT NULL DEFAULT '[]',`,
+    '"version" INTEGER NOT NULL DEFAULT 0,',
+    '"created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,',
+    '"updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,',
+    'CONSTRAINT "menus_pkey" PRIMARY KEY ("id"),',
+    '"type" TEXT NOT NULL,',
+    `"body" JSONB NOT NULL DEFAULT '{}',`,
+    '"updated_by" TEXT,',
+    'CONSTRAINT "policies_pkey" PRIMARY KEY ("tenant_id", "type"),',
+    `ALTER TABLE "pages"."pages" ADD COLUMN "title" JSONB NOT NULL DEFAULT '{}';`,
+    `ALTER TABLE "pages"."pages" ADD COLUMN "body" JSONB NOT NULL DEFAULT '{}';`,
+    `ALTER TABLE "pages"."pages" ADD COLUMN "meta_description" JSONB NOT NULL DEFAULT '{}';`,
+    'ALTER TABLE "pages"."pages" ADD COLUMN "published_at" TIMESTAMP(3);',
+  ];
+  for (const line of lines) {
+    it(`declares ${line}`, () => {
+      expect(normalized).toContain(line);
+    });
+  }
+});

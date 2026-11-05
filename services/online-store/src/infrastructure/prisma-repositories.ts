@@ -1,6 +1,7 @@
 import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
 import { POLICY_TYPES, validateMenuItems, type PolicyType } from "@platform/storefront-content";
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, logger } from "@platform/utils";
+import { menuNeedsId } from "../domain/errors";
 import { Menu } from "../domain/menu";
 import { StorePolicy } from "../domain/store-policy";
 import type {
@@ -328,6 +329,13 @@ function menuOf(row: {
   updatedAt: Date;
 }): Menu {
   const items = validateMenuItems(row.items);
+  if (!items.ok) {
+    // Fail closed (an empty menu), but not silently. Handle and codes only, never item content.
+    logger.warn("online-store: stored menu items failed validation, reading an empty menu", {
+      handle: row.handle,
+      codes: [...new Set(items.issues.map((issue) => issue.code))],
+    });
+  }
   return Menu.reconstitute({
     id: row.id,
     handle: row.handle,
@@ -363,18 +371,19 @@ export class PrismaMenuRepository implements MenuRepository {
   async save(menu: Menu, tenantId: string, tx: unknown): Promise<void> {
     const client = requireTx(tx, "PrismaMenuRepository.save");
     const s = menu.snapshot();
+    const id = s.id;
+    if (id === null) throw menuNeedsId();
     const data = { title: s.title, items: json(s.items), ...stampedAt(s.updatedAt) };
     await guardedWrite(
       s.persisted,
-      () => {
-        if (s.id === null) throw new Error("A menu needs an id to be saved.");
-        return client.onlineStoreMenu.create({
-          data: { id: s.id, tenantId, handle: s.handle, ...data, version: 1 },
-        });
-      },
+      () =>
+        client.onlineStoreMenu.create({
+          data: { id, tenantId, handle: s.handle, ...data, version: 1 },
+        }),
       () =>
         client.onlineStoreMenu.updateMany({
-          where: { tenantId, handle: s.handle, version: s.version },
+          // The id too: a menu deleted and re-created under this handle is another row.
+          where: { id, tenantId, handle: s.handle, version: s.version },
           data: { ...data, version: { increment: 1 } },
         }),
       "Menu",

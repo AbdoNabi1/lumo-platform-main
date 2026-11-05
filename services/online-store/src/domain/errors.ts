@@ -27,3 +27,6 @@ export const invalidContent = (issues: readonly ContentIssue[]) => {
     issues.map((issue) => ({ field: issue.path, message: issue.code })),
   );
 };
+/** A menu reaches storage only with an id; a virtual default menu is given one by `Menu.create`. */
+export const menuNeedsId = () =>
+  new BusinessRuleError("MENU_ID_REQUIRED: A menu needs an id before it can be saved.");

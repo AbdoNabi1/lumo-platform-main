@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { TransactionClient } from "@platform/db";
 import { createFakePrisma } from "@platform/db/testing";
 import { DEFAULT_THEME_DOCUMENT } from "@platform/storefront-content";
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, logger } from "@platform/utils";
 import { Menu } from "../domain/menu";
 import { StorefrontTheme } from "../domain/storefront-theme";
 import {
@@ -348,5 +348,75 @@ describe("Prisma menu and policy repositories (fake client)", () => {
     });
     const policies = new PrismaPolicyRepository({ prisma: fake.database });
     expect((await policies.list("t-1")).every((p) => !p.isSet)).toBe(true);
+  });
+});
+
+describe("menu guard across delete and re-create, id-less saves and corrupt reads", () => {
+  const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const virtual = Menu.reconstitute({
+    id: null,
+    handle: "footer",
+    title: "Footer menu",
+    items: [],
+    version: 0,
+    updatedAt: null,
+    persisted: false,
+  });
+
+  it("prisma: a stale tab cannot overwrite a menu deleted and re-created under its handle", async () => {
+    const fake = createFakePrisma();
+    const tx = fake.database as unknown as TransactionClient;
+    const menus = new PrismaMenuRepository({ prisma: fake.database });
+    await menus.save(
+      Menu.create({ id: ID(1), handle: "sale", title: "old", items: [], now }),
+      "t-1",
+      tx,
+    );
+    const stale = (await menus.get("sale", "t-1"))!;
+    await menus.remove("sale", "t-1", tx);
+    await menus.save(
+      Menu.create({ id: ID(2), handle: "sale", title: "new", items: [], now }),
+      "t-1",
+      tx,
+    );
+    stale.update("overwrite", [], now);
+    await expect(menus.save(stale, "t-1", tx)).rejects.toBeInstanceOf(ConcurrencyError);
+    expect((await menus.get("sale", "t-1"))!.snapshot().title).toBe("new");
+  });
+
+  it("prisma: saving an id-less menu is a typed domain error and writes nothing", async () => {
+    const fake = createFakePrisma();
+    const tx = fake.database as unknown as TransactionClient;
+    const menus = new PrismaMenuRepository({ prisma: fake.database });
+    await expect(menus.save(virtual, "t-1", tx)).rejects.toMatchObject({
+      name: "BusinessRuleError",
+      message: expect.stringMatching(/^MENU_ID_REQUIRED:/),
+    });
+    expect(fake.rowsOf("onlineStoreMenu")).toEqual([]);
+  });
+
+  it("prisma: a corrupt stored item list logs a warning with the handle and codes, no content", async () => {
+    const fake = createFakePrisma();
+    const tx = fake.database as unknown as TransactionClient;
+    await tx.onlineStoreMenu.create({
+      data: {
+        id: ID(1),
+        tenantId: "t-1",
+        handle: "x",
+        title: "X",
+        items: [{ id: "SECRET-ITEM" }],
+        version: 1,
+      },
+    });
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      await new PrismaMenuRepository({ prisma: fake.database }).get("x", "t-1");
+      expect(warn).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify(warn.mock.calls[0]);
+      expect(logged).toContain('"x"');
+      expect(logged).not.toContain("SECRET-ITEM");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

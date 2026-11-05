@@ -253,7 +253,8 @@ function policyStore({ tx, repos }: ReturnType<Layer["make"]>): TenantRowStore {
   const typeOf = (key: string): (typeof POLICY_TYPES)[number] => {
     const known = types.get(key);
     if (known !== undefined) return known;
-    const type = POLICY_TYPES[types.size % POLICY_TYPES.length] ?? "refund";
+    const type = POLICY_TYPES[types.size];
+    if (type === undefined) throw new Error("policyStore: more distinct keys than policy types");
     types.set(key, type);
     return type;
   };

@@ -113,4 +113,35 @@ describe("in-memory online-store repositories keep the Prisma contract", () => {
       expect((await repo.get("refund", "t-1")).snapshot()).toMatchObject({ version: 2 });
     });
   });
+
+  describe("menu identity", () => {
+    it("a stale tab cannot overwrite a menu deleted and re-created under its handle", async () => {
+      const repo = new InMemoryMenuRepository();
+      const mk = (id: string, title: string) =>
+        Menu.create({ id, handle: "sale", title, items: [], now });
+      await repo.save(mk("00000000-0000-4000-8000-000000000001", "old"), "t-1");
+      const stale = (await repo.get("sale", "t-1"))!;
+      await repo.remove("sale", "t-1");
+      await repo.save(mk("00000000-0000-4000-8000-000000000002", "new"), "t-1");
+      stale.update("overwrite", [], now);
+      await expect(repo.save(stale, "t-1")).rejects.toBeInstanceOf(ConcurrencyError);
+      expect((await repo.get("sale", "t-1"))!.snapshot().title).toBe("new");
+    });
+
+    it("saving an id-less menu is a typed domain error", async () => {
+      const virtual = Menu.reconstitute({
+        id: null,
+        handle: "footer",
+        title: "F",
+        items: [],
+        version: 0,
+        updatedAt: null,
+        persisted: false,
+      });
+      await expect(new InMemoryMenuRepository().save(virtual, "t-1")).rejects.toMatchObject({
+        name: "BusinessRuleError",
+        message: expect.stringMatching(/^MENU_ID_REQUIRED:/),
+      });
+    });
+  });
 });

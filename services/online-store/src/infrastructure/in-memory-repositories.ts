@@ -1,5 +1,6 @@
 import { POLICY_TYPES, type PolicyType } from "@platform/storefront-content";
 import { ConcurrencyError } from "@platform/utils";
+import { menuNeedsId } from "../domain/errors";
 import { Menu, type MenuSnapshot } from "../domain/menu";
 import { StorePolicy, type PolicySnapshot } from "../domain/store-policy";
 import type {
@@ -200,8 +201,11 @@ export class InMemoryMenuRepository implements MenuRepository {
 
   async save(menu: Menu, tenantId: string): Promise<void> {
     const snapshot = menu.snapshot();
-    if (!snapshot.persisted && snapshot.id === null) {
-      throw new Error("A menu needs an id to be saved.");
+    if (snapshot.id === null) throw menuNeedsId();
+    const current = this.rows.get(tenantId, snapshot.handle);
+    // A menu deleted and re-created under this handle is another row (the Prisma where names the id).
+    if (snapshot.persisted && current !== undefined && current.id !== snapshot.id) {
+      throw new ConcurrencyError("Menu was modified concurrently");
     }
     this.rows.save(tenantId, snapshot.handle, snapshot, "Menu");
   }
