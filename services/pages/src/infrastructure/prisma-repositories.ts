@@ -10,6 +10,8 @@ import type { Template } from "../domain/template";
 import { PageMapper, TemplateMapper } from "./mappers";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Rows read beyond `limit`, so nested or dynamic paths (not pages) cannot crowd real pages out. */
+const LIST_OVERFETCH = 100;
 
 export interface PrismaPagesRepositoriesDeps {
   readonly prisma: Database;
@@ -120,16 +122,18 @@ export class PrismaPageRepository implements PageRepository {
       client.page.findMany({
         where: { tenantId, status: "published", routePath: { startsWith: "/pages/" } },
         orderBy: { routePath: "asc" },
-        take: limit,
+        take: limit + LIST_OVERFETCH,
       });
     const rows =
       tx !== undefined && tx !== null
         ? await run(tx as TransactionClient)
         : await runReadScoped(this.deps.prisma, tenantId, run);
-    // Sorted again here (the fake client ignores `orderBy`); a path such as `/pages/a/b` is not a page.
+    // Filtered, sorted by code unit (the fake client ignores `orderBy`; a database collation may
+    // differ) and cut to `limit` here; a path such as `/pages/a/b` is not a page.
     return rows
       .filter((row) => pageHandleOf(row.routePath) !== null)
       .sort((a, b) => (a.routePath < b.routePath ? -1 : a.routePath > b.routePath ? 1 : 0))
+      .slice(0, limit)
       .map((row) => PageMapper.toDomain(row));
   }
 

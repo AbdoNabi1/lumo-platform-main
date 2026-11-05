@@ -89,3 +89,20 @@ describe("Page content and visibility (spec 2.4, Ruling 15)", () => {
     expect(page.updatedAt).toEqual(at(6));
   });
 });
+
+describe("Unpublish event (spec 2.4)", () => {
+  it("published -> draft raises pages.page.draft data", () => {
+    const page = Page.create(UniqueEntityId.from("p-1"), "About", routePath("/pages/about"));
+    page.publish("e1", new Date(0));
+    page.pullDomainEvents();
+    page.transition("draft", "e2", new Date(1));
+    const events = page.pullDomainEvents();
+    expect(events).toHaveLength(1);
+    expect(
+      (events[0] as unknown as { data: { family: string; action: string } }).data,
+    ).toMatchObject({
+      family: "page",
+      action: "draft",
+    });
+  });
+});

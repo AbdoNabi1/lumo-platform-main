@@ -9,7 +9,7 @@ import type { PageRepository, TemplateRepository } from "../domain/repositories"
 import { RoutePath } from "../domain/value-objects/route-path";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import { present } from "../interfaces/presenter";
-import { AdvancePage } from "./pages.use-cases";
+import { AdvancePage, UpdatePageContent } from "./pages.use-cases";
 
 const T = "t-1";
 function setup() {
@@ -192,6 +192,39 @@ describe("a lost race is VERSION_CONFLICT, not a 500 (preflight 14)", () => {
     });
     const res = present(
       await advance.execute({ pageId: "p-1", toStatus: "published", tenantId: T }),
+      200,
+    );
+    expect(res).toMatchObject({ status: 409, body: { code: "VERSION_CONFLICT" } });
+  });
+});
+
+describe("UpdatePageContent race (preflight 14)", () => {
+  it("a ConcurrencyError from save is 409 VERSION_CONFLICT with the code", async () => {
+    const route = RoutePath.create("/pages/about");
+    if (!route.ok) throw new Error("test setup");
+    const page = Page.reconstitute(UniqueEntityId.from("p-1"), "About", route.value, "draft", 1);
+    const pages = {
+      findById: async () => page,
+      save: async () => {
+        throw new ConcurrencyError("stale");
+      },
+    } as unknown as PageRepository;
+    const update = new UpdatePageContent({
+      pages,
+      templates: {} as TemplateRepository,
+      unitOfWork: new InMemoryUnitOfWork(),
+      idGenerator: { generate: () => "e1" },
+      clock: { now: () => new Date("2026-11-04T10:00:00.000Z") },
+    });
+    const res = present(
+      await update.execute({
+        pageId: "p-1",
+        tenantId: T,
+        expectedVersion: 1,
+        title: {},
+        body: {},
+        metaDescription: {},
+      }),
       200,
     );
     expect(res).toMatchObject({ status: 409, body: { code: "VERSION_CONFLICT" } });

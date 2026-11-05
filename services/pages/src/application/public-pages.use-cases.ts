@@ -61,6 +61,9 @@ export class ListPublishedPages implements UseCase<
   }
 }
 
+/** The most ids one by-ids read looks up. */
+export const PAGES_BY_IDS_MAX = 100;
+
 export interface GetPagesByIdsInput {
   readonly ids: readonly string[];
   readonly tenantId: string;
@@ -75,6 +78,8 @@ export class GetPagesByIds implements UseCase<GetPagesByIdsInput, readonly Page[
   }
 
   async execute(input: GetPagesByIdsInput): Promise<Result<readonly Page[], DomainError>> {
-    return ok(await this.deps.pages.findByIds(input.ids, input.tenantId));
+    return ok(
+      await this.deps.pages.findByIds(input.ids.slice(0, PAGES_BY_IDS_MAX), input.tenantId),
+    );
   }
 }
