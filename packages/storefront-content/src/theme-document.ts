@@ -4,6 +4,7 @@ import { isFontKey, type FontKey } from "./fonts";
 import { MAX_ISSUES, pathSegment } from "./issues";
 import { normalizeLocalizedText, type ContentIssue, type LocalizedText } from "./locale";
 import { URL_CONTROLS, URL_INVISIBLES } from "./links";
+import { isMenuHandle } from "./menus";
 
 export const SOCIAL_NETWORKS = [
   "facebook",
@@ -52,10 +53,14 @@ export interface ThemeBrand {
 export interface ThemeDocument {
   readonly schemaVersion: 1;
   readonly brand: ThemeBrand;
-  /** Part 2 adds `menuHandle`; Part 3 adds `announcement`. */
-  readonly header: { readonly sticky: boolean };
-  /** Part 2 adds `menuHandle` and `showPolicyLinks`. */
-  readonly footer: { readonly note: LocalizedText; readonly showSocial: boolean };
+  /** Part 3 adds `announcement`. */
+  readonly header: { readonly sticky: boolean; readonly menuHandle: string };
+  readonly footer: {
+    readonly note: LocalizedText;
+    readonly showSocial: boolean;
+    readonly menuHandle: string;
+    readonly showPolicyLinks: boolean;
+  };
   /** Part 3 types the sections; Part 1 accepts only `[]` on write and never renders them. */
   readonly homepage: { readonly sections: readonly unknown[] };
 }
@@ -103,8 +108,8 @@ export const DEFAULT_THEME_DOCUMENT: ThemeDocument = deepFreeze({
     corners: "rounded",
     social: {},
   },
-  header: { sticky: false },
-  footer: { note: {}, showSocial: true },
+  header: { sticky: false, menuHandle: "main-menu" },
+  footer: { note: {}, showSocial: true, menuHandle: "footer", showPolicyLinks: true },
   homepage: { sections: [] },
 });
 
@@ -112,7 +117,7 @@ type Raw = Record<string, unknown>;
 
 /**
  * Reads an object with exactly `keys`; reports unknown and missing keys. `null` when not an object.
- * A key whose value is `undefined` counts as missing. A nested object that is absent was already
+ * A key whose value is `undefined` counts as missing, unless it is in `optional` (Part 2 fields). A nested object that is absent was already
  * reported MISSING by its parent, so it returns `null` without a second issue.
  */
 function objectAt(
@@ -120,6 +125,7 @@ function objectAt(
   path: string,
   keys: readonly string[],
   issues: ContentIssue[],
+  optional: readonly string[] = [],
 ): Raw | null {
   if (raw === undefined && path !== "") return null;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -135,6 +141,7 @@ function objectAt(
     unknownKeys += 1;
   }
   for (const key of keys) {
+    if (optional.includes(key)) continue;
     if ((raw as Raw)[key] === undefined) issues.push({ path: join(key), code: "MISSING" });
   }
   return raw as Raw;
@@ -156,6 +163,19 @@ function booleanAt(value: unknown, path: string, issues: ContentIssue[]): boolea
   if (typeof value === "boolean") return value;
   if (value !== undefined) issues.push({ path, code: "INVALID_VALUE" });
   return false;
+}
+
+/** An optional menu handle: absent is the default, present must be a well-formed handle. */
+function menuHandleAt(
+  value: unknown,
+  path: string,
+  fallback: string,
+  issues: ContentIssue[],
+): string {
+  if (value === undefined) return fallback;
+  if (isMenuHandle(value)) return value;
+  issues.push({ path, code: "INVALID_VALUE" });
+  return fallback;
 }
 
 function imageRefAt(value: unknown, path: string, issues: ContentIssue[]): string | null {
@@ -330,14 +350,24 @@ function readBrandAt(raw: unknown, path: string, issues: ContentIssue[]): ThemeB
 
 function readHeaderAt(raw: unknown, issues: ContentIssue[]): ThemeDocument["header"] | null {
   return section((found) => {
-    const obj = objectAt(raw, "header", ["sticky"], found);
-    return obj === null ? null : { sticky: booleanAt(obj["sticky"], "header.sticky", found) };
+    const obj = objectAt(raw, "header", ["sticky", "menuHandle"], found, ["menuHandle"]);
+    if (obj === null) return null;
+    return {
+      sticky: booleanAt(obj["sticky"], "header.sticky", found),
+      menuHandle: menuHandleAt(obj["menuHandle"], "header.menuHandle", "main-menu", found),
+    };
   }, issues);
 }
 
 function readFooterAt(raw: unknown, issues: ContentIssue[]): ThemeDocument["footer"] | null {
   return section((found) => {
-    const obj = objectAt(raw, "footer", ["note", "showSocial"], found);
+    const obj = objectAt(
+      raw,
+      "footer",
+      ["note", "showSocial", "menuHandle", "showPolicyLinks"],
+      found,
+      ["menuHandle", "showPolicyLinks"],
+    );
     if (obj === null) return null;
     const note =
       obj["note"] === undefined
@@ -347,7 +377,15 @@ function readFooterAt(raw: unknown, issues: ContentIssue[]): ThemeDocument["foot
             { path: "footer.note", max: FOOTER_NOTE_MAX, multiline: true },
             found,
           );
-    return { note, showSocial: booleanAt(obj["showSocial"], "footer.showSocial", found) };
+    return {
+      note,
+      showSocial: booleanAt(obj["showSocial"], "footer.showSocial", found),
+      menuHandle: menuHandleAt(obj["menuHandle"], "footer.menuHandle", "footer", found),
+      showPolicyLinks:
+        obj["showPolicyLinks"] === undefined
+          ? true
+          : booleanAt(obj["showPolicyLinks"], "footer.showPolicyLinks", found),
+    };
   }, issues);
 }
 
@@ -445,6 +483,11 @@ export function readSocial(raw: unknown): ThemeBrand["social"] {
     if (url !== null && (raw as Raw)[network] !== undefined) result[network] = url;
   }
   return result;
+}
+
+/** The menu handles a document names, each once, the header's first. */
+export function menuHandlesOf(doc: ThemeDocument): readonly string[] {
+  return [...new Set([doc.header.menuHandle, doc.footer.menuHandle])];
 }
 
 export function imageRefsOf(doc: ThemeDocument): string[] {

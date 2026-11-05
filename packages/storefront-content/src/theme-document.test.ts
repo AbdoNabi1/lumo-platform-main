@@ -3,6 +3,7 @@ import {
   canonicalDocumentJson,
   DEFAULT_THEME_DOCUMENT,
   imageRefsOf,
+  menuHandlesOf,
   MAX_DOCUMENT_BYTES,
   readBrandStyle,
   readThemeDocument,
@@ -197,5 +198,69 @@ describe("helpers", () => {
   it("canonicalDocumentJson ignores key order (JSONB reorders keys)", () => {
     const reordered = { homepage: { sections: [] }, ...clone() };
     expect(canonicalDocumentJson(reordered)).toBe(canonicalDocumentJson(DEFAULT_THEME_DOCUMENT));
+  });
+});
+
+describe("Part 2 menu fields (Ruling 2, Review Focus 3)", () => {
+  const partOne = () => {
+    const doc = JSON.parse(JSON.stringify(DEFAULT_THEME_DOCUMENT));
+    doc.header = { sticky: true };
+    doc.footer = { note: { ar: "أهلاً" }, showSocial: false };
+    return doc;
+  };
+
+  it("a Part 1 document reads, validates and canonicalises as before", () => {
+    const read = readThemeDocument(partOne());
+    expect(read.header).toEqual({ sticky: true, menuHandle: "main-menu" });
+    expect(read.footer).toEqual({
+      note: { ar: "أهلاً" },
+      showSocial: false,
+      menuHandle: "footer",
+      showPolicyLinks: true,
+    });
+    const valid = validateThemeDocument(partOne());
+    expect(valid.ok && valid.value.header.menuHandle).toBe("main-menu");
+    const explicit = { ...partOne(), header: read.header, footer: read.footer };
+    expect(canonicalDocumentJson(partOne())).toBe(canonicalDocumentJson(explicit));
+  });
+
+  it("emits the new fields in one fixed order, whatever order the input had", () => {
+    const a = partOne();
+    a.header = { menuHandle: "x", sticky: false };
+    a.footer = { showPolicyLinks: false, menuHandle: "y", showSocial: true, note: {} };
+    const json = canonicalDocumentJson(a);
+    expect(json).toContain('"header":{"sticky":false,"menuHandle":"x"}');
+    expect(json).toContain(
+      '"footer":{"note":{},"showSocial":true,"menuHandle":"y","showPolicyLinks":false}',
+    );
+  });
+
+  it("the defaults are main-menu, footer and policy links on", () => {
+    expect(DEFAULT_THEME_DOCUMENT.header.menuHandle).toBe("main-menu");
+    expect(DEFAULT_THEME_DOCUMENT.footer.menuHandle).toBe("footer");
+    expect(DEFAULT_THEME_DOCUMENT.footer.showPolicyLinks).toBe(true);
+  });
+
+  it("a malformed handle or a non-boolean flag is refused on write and defaulted on read", () => {
+    const doc = partOne();
+    doc.header.menuHandle = "Main Menu";
+    doc.footer.showPolicyLinks = "yes";
+    const out = validateThemeDocument(doc);
+    expect(out.ok ? [] : out.issues).toEqual(
+      expect.arrayContaining([
+        { path: "header.menuHandle", code: "INVALID_VALUE" },
+        { path: "footer.showPolicyLinks", code: "INVALID_VALUE" },
+      ]),
+    );
+    expect(readThemeDocument(doc).header.menuHandle).toBe("main-menu");
+  });
+
+  it("menuHandlesOf lists each handle once, header first", () => {
+    expect(menuHandlesOf(DEFAULT_THEME_DOCUMENT)).toEqual(["main-menu", "footer"]);
+    const same = readThemeDocument({
+      ...partOne(),
+      footer: { ...partOne().footer, menuHandle: "main-menu" },
+    });
+    expect(menuHandlesOf(same)).toEqual(["main-menu"]);
   });
 });

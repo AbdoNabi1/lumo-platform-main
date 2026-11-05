@@ -86,7 +86,10 @@ describe("Prisma online-store repositories (fake client)", () => {
   it("round-trips the theme documents through JSON and the tolerant reader", async () => {
     const { themes, tx } = setup();
     const theme = StorefrontTheme.initial();
-    theme.saveDraft({ ...DEFAULT_THEME_DOCUMENT, header: { sticky: true } }, now);
+    theme.saveDraft(
+      { ...DEFAULT_THEME_DOCUMENT, header: { ...DEFAULT_THEME_DOCUMENT.header, sticky: true } },
+      now,
+    );
     theme.publish({ expectedDraftRevision: 1, by: "s-1", releaseId: "r", now });
     await themes.save(theme, "t-1", tx);
     const read = (await themes.get("t-1")).snapshot();

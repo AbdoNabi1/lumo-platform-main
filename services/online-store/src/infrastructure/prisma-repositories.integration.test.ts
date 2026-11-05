@@ -113,7 +113,10 @@ describe.runIf(Boolean(databaseUrl))("online-store Prisma repositories (integrat
     const tenant = tenantOf();
     await uow.run(async (tx) => {
       const theme = await themes.get(tenant, tx);
-      theme.saveDraft({ ...DEFAULT_THEME_DOCUMENT, header: { sticky: true } }, now);
+      theme.saveDraft(
+        { ...DEFAULT_THEME_DOCUMENT, header: { ...DEFAULT_THEME_DOCUMENT.header, sticky: true } },
+        now,
+      );
       const release = theme.publish({
         expectedDraftRevision: 1,
         by: "s",

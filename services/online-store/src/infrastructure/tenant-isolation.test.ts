@@ -129,7 +129,10 @@ function themeStore({ tx, repos }: ReturnType<Layer["make"]>): TenantRowStore {
   const write = async (tenantId: string, marker: string) => {
     const theme = await repos.themes.get(tenantId, tx);
     theme.saveDraft(
-      { ...DEFAULT_THEME_DOCUMENT, footer: { note: { en: marker }, showSocial: true } },
+      {
+        ...DEFAULT_THEME_DOCUMENT,
+        footer: { ...DEFAULT_THEME_DOCUMENT.footer, note: { en: marker } },
+      },
       now,
     );
     await repos.themes.save(theme, tenantId, tx);
