@@ -42,6 +42,10 @@ function matchesOperator(actual: unknown, operator: string, expected: unknown): 
       return (actual as number | Date) >= (expected as number | Date);
     case "lt":
       return (actual as number | Date) < (expected as number | Date);
+    case "startsWith":
+      return (
+        typeof actual === "string" && typeof expected === "string" && actual.startsWith(expected)
+      );
     case "lte":
       return (actual as number | Date) <= (expected as number | Date);
     default:

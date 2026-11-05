@@ -255,6 +255,7 @@ orders.order.resumed.v1 base 220752000000 single
 orders.order.return_requested.v1 base 220752000000 single
 orders.order.returned.v1 base 220752000000 single
 pages.page.archived.v1 base 2592000000 single
+pages.page.draft.v1 base 2592000000 single
 pages.page.published.v1 base 2592000000 single
 pages.template.archived.v1 base 2592000000 single
 payments.intent.authorized.v1 base 220752000000 single

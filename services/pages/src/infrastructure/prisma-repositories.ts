@@ -4,9 +4,12 @@ import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/r
 import type { CursorPage, Paginated } from "@platform/types";
 import { ConcurrencyError } from "@platform/utils";
 import type { Page } from "../domain/page";
+import { pageHandleOf } from "../domain/page-content";
 import type { PageRepository, TemplateRepository } from "../domain/repositories";
 import type { Template } from "../domain/template";
 import { PageMapper, TemplateMapper } from "./mappers";
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface PrismaPagesRepositoriesDeps {
   readonly prisma: Database;
@@ -31,7 +34,15 @@ export class PrismaPageRepository implements PageRepository {
     } else {
       const updated = await client.page.updateMany({
         where: { id, tenantId, version: page.version },
-        data: { status: row.status, version: { increment: 1 } },
+        data: {
+          status: row.status,
+          title: row.title,
+          body: row.body,
+          metaDescription: row.metaDescription,
+          publishedAt: row.publishedAt,
+          ...(row.updatedAt === undefined ? {} : { updatedAt: row.updatedAt }),
+          version: { increment: 1 },
+        },
       });
       if (updated.count === 0) {
         throw new ConcurrencyError(
@@ -85,6 +96,41 @@ export class PrismaPageRepository implements PageRepository {
       limit,
       (p) => p.id.toString(),
     );
+  }
+
+  /** Ids that are not UUIDs are dropped: one in an `in` list would fail the whole query. */
+  async findByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Page[]> {
+    const wanted = [...new Set(ids)].filter((id) => UUID_PATTERN.test(id));
+    if (wanted.length === 0) return [];
+    const run = (client: TransactionClient) =>
+      client.page.findMany({ where: { tenantId, id: { in: wanted } } });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return rows.map((row) => PageMapper.toDomain(row));
+  }
+
+  async listPublished(tenantId: string, limit: number, tx?: unknown): Promise<readonly Page[]> {
+    const run = (client: TransactionClient) =>
+      client.page.findMany({
+        where: { tenantId, status: "published", routePath: { startsWith: "/pages/" } },
+        orderBy: { routePath: "asc" },
+        take: limit,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    // Sorted again here (the fake client ignores `orderBy`); a path such as `/pages/a/b` is not a page.
+    return rows
+      .filter((row) => pageHandleOf(row.routePath) !== null)
+      .sort((a, b) => (a.routePath < b.routePath ? -1 : a.routePath > b.routePath ? 1 : 0))
+      .map((row) => PageMapper.toDomain(row));
   }
 
   private requireTx(tx: unknown): TransactionClient {

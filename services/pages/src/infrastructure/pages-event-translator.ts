@@ -20,6 +20,7 @@ export class PagesEventTranslator implements IntegrationEventTranslator {
 /** Published-event contract for the Pages context (Sprint 5.4). */
 export const PAGES_PUBLISHED_EVENTS: readonly string[] = [
   "pages.page.published",
+  "pages.page.draft",
   "pages.page.archived",
   "pages.template.archived",
 ];
