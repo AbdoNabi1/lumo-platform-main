@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_THEME_DOCUMENT } from "@platform/storefront-content";
 import { ConcurrencyError } from "@platform/utils";
+import { Menu } from "../domain/menu";
 import {
   InMemoryAccessRepository,
+  InMemoryMenuRepository,
+  InMemoryPolicyRepository,
   InMemoryPreferencesRepository,
   InMemoryThemeReleaseRepository,
   InMemoryThemeRepository,
@@ -51,5 +54,63 @@ describe("in-memory online-store repositories keep the Prisma contract", () => {
       ConcurrencyError,
     );
     await expect(repo.append({ ...release, id: "r-3" }, "t-2")).resolves.toBeUndefined();
+  });
+
+  describe("menus and policies", () => {
+    const items = [
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        label: { en: "Home" },
+        link: { type: "home" as const },
+        children: [],
+      },
+    ];
+    const fresh = (handle: string) => Menu.create({ id: "m-1", handle, title: "T", items, now });
+
+    it("a duplicate first insert of a handle is a ConcurrencyError; another shop is fine", async () => {
+      const repo = new InMemoryMenuRepository();
+      await repo.save(fresh("footer"), "t-1");
+      await expect(repo.save(fresh("footer"), "t-1")).rejects.toBeInstanceOf(ConcurrencyError);
+      await expect(repo.save(fresh("footer"), "t-2")).resolves.toBeUndefined();
+    });
+
+    it("guards on the version, lists by handle, removes, and stores copies of the aggregate", async () => {
+      const repo = new InMemoryMenuRepository();
+      await repo.save(fresh("zeta"), "t-1");
+      await repo.save(fresh("alpha"), "t-1");
+      expect((await repo.list("t-1")).map((m) => m.snapshot().handle)).toEqual(["alpha", "zeta"]);
+      const a = (await repo.get("zeta", "t-1"))!;
+      const b = (await repo.get("zeta", "t-1"))!;
+      a.update("changed", [], now);
+      expect((await repo.get("zeta", "t-1"))!.snapshot().title).toBe("T");
+      await repo.save(a, "t-1");
+      b.update("lost", [], now);
+      await expect(repo.save(b, "t-1")).rejects.toBeInstanceOf(ConcurrencyError);
+      expect(await repo.remove("zeta", "t-1")).toBe(true);
+      expect(await repo.remove("zeta", "t-1")).toBe(false);
+      expect(await repo.get("zeta", "t-1")).toBeNull();
+    });
+
+    it("policies: five in order, empty when absent, a stale save loses", async () => {
+      const repo = new InMemoryPolicyRepository();
+      const refund = await repo.get("refund", "t-1");
+      const twin = await repo.get("refund", "t-1");
+      refund.update({ en: "a" }, "s-1", now);
+      await repo.save(refund, "t-1");
+      twin.update({ en: "b" }, "s-2", now);
+      await expect(repo.save(twin, "t-1")).rejects.toBeInstanceOf(ConcurrencyError);
+      const list = await repo.list("t-1");
+      expect(list.map((p) => [p.snapshot().type, p.isSet])).toEqual([
+        ["refund", true],
+        ["shipping", false],
+        ["privacy", false],
+        ["terms", false],
+        ["contact", false],
+      ]);
+      const stale = await repo.get("refund", "t-1");
+      stale.update({ en: "c" }, "s-1", now);
+      await repo.save(stale, "t-1");
+      expect((await repo.get("refund", "t-1")).snapshot()).toMatchObject({ version: 2 });
+    });
   });
 });

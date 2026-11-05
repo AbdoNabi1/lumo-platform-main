@@ -1,7 +1,12 @@
 import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
+import { POLICY_TYPES, validateMenuItems, type PolicyType } from "@platform/storefront-content";
 import { ConcurrencyError } from "@platform/utils";
+import { Menu } from "../domain/menu";
+import { StorePolicy } from "../domain/store-policy";
 import type {
   AccessRepository,
+  MenuRepository,
+  PolicyRepository,
   PreferencesRepository,
   PreviewTokenRepository,
   ThemeReleaseRepository,
@@ -310,5 +315,129 @@ export class PrismaPreviewTokenRepository implements PreviewTokenRepository {
       where: { tenantId, expiresAt: { lte: now } },
     });
     return deleted.count;
+  }
+}
+
+/** Items are read back through the write-path validator: a corrupted list is an empty menu. */
+function menuOf(row: {
+  id: string;
+  handle: string;
+  title: string;
+  items: unknown;
+  version: number;
+  updatedAt: Date;
+}): Menu {
+  const items = validateMenuItems(row.items);
+  return Menu.reconstitute({
+    id: row.id,
+    handle: row.handle,
+    title: row.title,
+    items: items.ok ? items.value : [],
+    version: row.version,
+    updatedAt: row.updatedAt,
+    persisted: true,
+  });
+}
+
+export class PrismaMenuRepository implements MenuRepository {
+  constructor(private readonly deps: PrismaOnlineStoreDeps) {}
+
+  async list(tenantId: string, tx?: unknown): Promise<readonly Menu[]> {
+    const rows = await read(this.deps.prisma, tenantId, tx, (client) =>
+      client.onlineStoreMenu.findMany({ where: { tenantId } }),
+    );
+    // Sorted here: the order is the contract, not an accident of the driver.
+    return rows.map(menuOf).sort((a, b) => {
+      const [x, y] = [a.snapshot().handle, b.snapshot().handle];
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
+  }
+
+  async get(handle: string, tenantId: string, tx?: unknown): Promise<Menu | null> {
+    const row = await read(this.deps.prisma, tenantId, tx, (client) =>
+      client.onlineStoreMenu.findFirst({ where: { tenantId, handle } }),
+    );
+    return row === null ? null : menuOf(row);
+  }
+
+  async save(menu: Menu, tenantId: string, tx: unknown): Promise<void> {
+    const client = requireTx(tx, "PrismaMenuRepository.save");
+    const s = menu.snapshot();
+    const data = { title: s.title, items: json(s.items), ...stampedAt(s.updatedAt) };
+    await guardedWrite(
+      s.persisted,
+      () => {
+        if (s.id === null) throw new Error("A menu needs an id to be saved.");
+        return client.onlineStoreMenu.create({
+          data: { id: s.id, tenantId, handle: s.handle, ...data, version: 1 },
+        });
+      },
+      () =>
+        client.onlineStoreMenu.updateMany({
+          where: { tenantId, handle: s.handle, version: s.version },
+          data: { ...data, version: { increment: 1 } },
+        }),
+      "Menu",
+    );
+  }
+
+  async remove(handle: string, tenantId: string, tx: unknown): Promise<boolean> {
+    const client = requireTx(tx, "PrismaMenuRepository.remove");
+    const deleted = await client.onlineStoreMenu.deleteMany({ where: { tenantId, handle } });
+    return deleted.count > 0;
+  }
+}
+
+function policyOf(
+  type: PolicyType,
+  row: { body: unknown; updatedBy: string | null; version: number; updatedAt: Date },
+): StorePolicy {
+  return StorePolicy.reconstitute({
+    type,
+    body: localizedTextOf(row.body),
+    updatedAt: row.updatedAt,
+    updatedBy: row.updatedBy,
+    version: row.version,
+    persisted: true,
+  });
+}
+
+export class PrismaPolicyRepository implements PolicyRepository {
+  constructor(private readonly deps: PrismaOnlineStoreDeps) {}
+
+  async list(tenantId: string, tx?: unknown): Promise<readonly StorePolicy[]> {
+    const rows = await read(this.deps.prisma, tenantId, tx, (client) =>
+      client.onlineStorePolicy.findMany({ where: { tenantId } }),
+    );
+    // A Map, not an object: the stored type is data, and only the five known types are looked up.
+    const byType = new Map(rows.map((row) => [row.type, row] as const));
+    return POLICY_TYPES.map((type) => {
+      const row = byType.get(type);
+      return row === undefined ? StorePolicy.empty(type) : policyOf(type, row);
+    });
+  }
+
+  async get(type: PolicyType, tenantId: string, tx?: unknown): Promise<StorePolicy> {
+    const row = await read(this.deps.prisma, tenantId, tx, (client) =>
+      client.onlineStorePolicy.findFirst({ where: { tenantId, type } }),
+    );
+    return row === null ? StorePolicy.empty(type) : policyOf(type, row);
+  }
+
+  async save(policy: StorePolicy, tenantId: string, tx: unknown): Promise<void> {
+    const client = requireTx(tx, "PrismaPolicyRepository.save");
+    const s = policy.snapshot();
+    const data = { body: json(s.body), updatedBy: s.updatedBy, ...stampedAt(s.updatedAt) };
+    await guardedWrite(
+      s.persisted,
+      () =>
+        client.onlineStorePolicy.create({ data: { tenantId, type: s.type, ...data, version: 1 } }),
+      () =>
+        client.onlineStorePolicy.updateMany({
+          where: { tenantId, type: s.type, version: s.version },
+          data: { ...data, version: { increment: 1 } },
+        }),
+      "Policy",
+    );
   }
 }

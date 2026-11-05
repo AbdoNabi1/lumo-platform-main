@@ -3,9 +3,12 @@ import type { TransactionClient } from "@platform/db";
 import { createFakePrisma } from "@platform/db/testing";
 import { DEFAULT_THEME_DOCUMENT } from "@platform/storefront-content";
 import { ConcurrencyError } from "@platform/utils";
+import { Menu } from "../domain/menu";
 import { StorefrontTheme } from "../domain/storefront-theme";
 import {
   PrismaAccessRepository,
+  PrismaMenuRepository,
+  PrismaPolicyRepository,
   PrismaPreferencesRepository,
   PrismaPreviewTokenRepository,
   PrismaThemeReleaseRepository,
@@ -37,6 +40,8 @@ function failingCreate(error: unknown): TransactionClient {
     onlineStoreAccess: model,
     onlineStoreTheme: model,
     onlineStoreThemeRelease: model,
+    onlineStoreMenu: model,
+    onlineStorePolicy: model,
   } as unknown as TransactionClient;
 }
 const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
@@ -212,5 +217,136 @@ describe("Prisma online-store repositories: lost insert races and other failures
     await access.save(again, "t-1", tx);
     expect(fake.rowsOf("onlineStoreAccess")[0]?.["updatedAt"]).toEqual(later);
     expect((await access.get("t-1")).snapshot().updatedAt).toEqual(later);
+  });
+});
+
+describe("Prisma menu and policy repositories (fake client)", () => {
+  const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const items = [
+    { id: ID(1), label: { en: "Home" }, link: { type: "home" as const }, children: [] },
+  ];
+
+  it("inserts version 1, then guards on the version; lists by handle", async () => {
+    const fake = createFakePrisma();
+    const tx = fake.database as unknown as TransactionClient;
+    const menus = new PrismaMenuRepository({ prisma: fake.database });
+    await menus.save(Menu.create({ id: ID(9), handle: "zeta", title: "Z", items, now }), "t-1", tx);
+    await menus.save(
+      Menu.create({ id: ID(8), handle: "alpha", title: "A", items: [], now }),
+      "t-1",
+      tx,
+    );
+    expect((await menus.list("t-1")).map((m) => m.snapshot().handle)).toEqual(["alpha", "zeta"]);
+    const zeta = (await menus.get("zeta", "t-1"))!;
+    expect(zeta.snapshot()).toMatchObject({ version: 1, persisted: true, items });
+    const stale = (await menus.get("zeta", "t-1"))!;
+    zeta.update("Z2", [], now);
+    await menus.save(zeta, "t-1", tx);
+    stale.update("lost", [], now);
+    await expect(menus.save(stale, "t-1", tx)).rejects.toBeInstanceOf(ConcurrencyError);
+    expect(await menus.remove("zeta", "t-1", tx)).toBe(true);
+    expect(await menus.remove("zeta", "t-1", tx)).toBe(false);
+  });
+
+  it("a duplicate first insert throws ConcurrencyError (two tabs, Review Focus 4)", async () => {
+    const menus = new PrismaMenuRepository({ prisma: createFakePrisma().database });
+    await expect(
+      menus.save(
+        Menu.create({ id: ID(1), handle: "footer", title: "F", items, now }),
+        "t-1",
+        failingCreate(p2002),
+      ),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+  });
+
+  it("a duplicate first insert of a policy throws ConcurrencyError", async () => {
+    const policies = new PrismaPolicyRepository({ prisma: createFakePrisma().database });
+    const policy = await policies.get("terms", "t-1");
+    policy.update({ en: "x" }, "staff-1", now);
+    await expect(policies.save(policy, "t-1", failingCreate(p2002))).rejects.toBeInstanceOf(
+      ConcurrencyError,
+    );
+  });
+
+  it("a corrupted stored item list reads as an empty menu, never a throw", async () => {
+    const fake = createFakePrisma();
+    const tx = fake.database as unknown as TransactionClient;
+    await tx.onlineStoreMenu.create({
+      data: {
+        id: ID(1),
+        tenantId: "t-1",
+        handle: "x",
+        title: "X",
+        items: [{ id: "bad" }],
+        version: 1,
+      },
+    });
+    const menus = new PrismaMenuRepository({ prisma: fake.database });
+    expect((await menus.get("x", "t-1"))!.snapshot().items).toEqual([]);
+  });
+
+  it("another shop sees no menu, and a persisted save under another shop loses", async () => {
+    const fake = createFakePrisma();
+    const tx = fake.database as unknown as TransactionClient;
+    const menus = new PrismaMenuRepository({ prisma: fake.database });
+    await menus.save(Menu.create({ id: ID(1), handle: "sale", title: "S", items, now }), "t-1", tx);
+    expect(await menus.get("sale", "t-2")).toBeNull();
+    expect(await menus.list("t-2")).toEqual([]);
+    const mine = (await menus.get("sale", "t-1"))!;
+    await expect(menus.save(mine, "t-2", tx)).rejects.toBeInstanceOf(ConcurrencyError);
+  });
+
+  it("saving without the unit of work's transaction client is refused", async () => {
+    const fake = createFakePrisma();
+    const menus = new PrismaMenuRepository({ prisma: fake.database });
+    const policies = new PrismaPolicyRepository({ prisma: fake.database });
+    await expect(
+      menus.save(
+        Menu.create({ id: ID(1), handle: "a", title: "A", items: [], now }),
+        "t-1",
+        undefined,
+      ),
+    ).rejects.toThrow(/transaction client/);
+    await expect(
+      policies.save(await policies.get("refund", "t-1"), "t-1", undefined),
+    ).rejects.toThrow(/transaction client/);
+  });
+
+  it("policies: all five in order, absent ones empty; save inserts then guards", async () => {
+    const fake = createFakePrisma();
+    const tx = fake.database as unknown as TransactionClient;
+    const policies = new PrismaPolicyRepository({ prisma: fake.database });
+    const refund = await policies.get("refund", "t-1");
+    refund.update({ en: "30 days" }, "staff-1", now);
+    await policies.save(refund, "t-1", tx);
+    const list = await policies.list("t-1");
+    expect(list.map((p) => [p.snapshot().type, p.isSet])).toEqual([
+      ["refund", true],
+      ["shipping", false],
+      ["privacy", false],
+      ["terms", false],
+      ["contact", false],
+    ]);
+    const stale = await policies.get("refund", "t-1");
+    const fresh = await policies.get("refund", "t-1");
+    fresh.update({ en: "14 days" }, "staff-1", now);
+    await policies.save(fresh, "t-1", tx);
+    stale.update({ en: "lost" }, "staff-2", now);
+    await expect(policies.save(stale, "t-1", tx)).rejects.toBeInstanceOf(ConcurrencyError);
+    expect((await policies.get("refund", "t-1")).snapshot()).toMatchObject({
+      body: { en: "14 days" },
+      version: 2,
+      updatedBy: "staff-1",
+    });
+  });
+
+  it("a stored policy row of an unknown type is ignored", async () => {
+    const fake = createFakePrisma();
+    const tx = fake.database as unknown as TransactionClient;
+    await tx.onlineStorePolicy.create({
+      data: { tenantId: "t-1", type: "bogus", body: { en: "x" }, version: 1 },
+    });
+    const policies = new PrismaPolicyRepository({ prisma: fake.database });
+    expect((await policies.list("t-1")).every((p) => !p.isSet)).toBe(true);
   });
 });

@@ -1,3 +1,6 @@
+import type { PolicyType } from "@platform/storefront-content";
+import type { Menu } from "./menu";
+import type { StorePolicy } from "./store-policy";
 import type { StorefrontAccess } from "./storefront-access";
 import type { StorefrontPreferences } from "./storefront-preferences";
 import type { StorefrontTheme, ThemeRelease } from "./storefront-theme";
@@ -37,4 +40,21 @@ export interface PreviewTokenRepository {
   /** The unexpired token with this hash IN THIS SHOP, or null. A token of shop A is unknown in B. */
   findActive(tokenHash: string, tenantId: string, now: Date): Promise<PreviewTokenRecord | null>;
   deleteExpired(tenantId: string, now: Date, tx: unknown): Promise<number>;
+}
+
+export interface MenuRepository {
+  /** Persisted menus only, ordered by handle. */
+  list(tenantId: string, tx?: unknown): Promise<readonly Menu[]>;
+  get(handle: string, tenantId: string, tx?: unknown): Promise<Menu | null>;
+  /** First save inserts (a duplicate handle throws ConcurrencyError); later saves are version-guarded. */
+  save(menu: Menu, tenantId: string, tx: unknown): Promise<void>;
+  /** True when a row went. */
+  remove(handle: string, tenantId: string, tx: unknown): Promise<boolean>;
+}
+
+export interface PolicyRepository {
+  /** All five, in POLICY_TYPES order; an absent row is `StorePolicy.empty(type)`. */
+  list(tenantId: string, tx?: unknown): Promise<readonly StorePolicy[]>;
+  get(type: PolicyType, tenantId: string, tx?: unknown): Promise<StorePolicy>;
+  save(policy: StorePolicy, tenantId: string, tx: unknown): Promise<void>;
 }

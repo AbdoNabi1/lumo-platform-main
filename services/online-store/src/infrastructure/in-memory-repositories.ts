@@ -1,6 +1,11 @@
+import { POLICY_TYPES, type PolicyType } from "@platform/storefront-content";
 import { ConcurrencyError } from "@platform/utils";
+import { Menu, type MenuSnapshot } from "../domain/menu";
+import { StorePolicy, type PolicySnapshot } from "../domain/store-policy";
 import type {
   AccessRepository,
+  MenuRepository,
+  PolicyRepository,
   PreferencesRepository,
   PreviewTokenRepository,
   ThemeReleaseRepository,
@@ -134,5 +139,96 @@ export class InMemoryPreviewTokenRepository implements PreviewTokenRepository {
   /** Test seam: every stored record, across shops (to assert only hashes are stored). */
   all(): readonly PreviewTokenRecord[] {
     return this.rows.map((r) => r.record);
+  }
+}
+
+/** Plain JSON data only (menu items, localized text): a copy shares nothing with the aggregate. */
+const copyOf = <T>(value: T): T => structuredClone(value);
+
+/**
+ * Many rows per shop, keyed by a natural key within the shop, with the Prisma repositories'
+ * insert/guarded-update semantics. Maps all the way down: a key such as `__proto__` is only a key.
+ */
+class KeyedRows<S extends { readonly version: number; readonly persisted: boolean }> {
+  private readonly shops = new Map<string, Map<string, S>>();
+
+  get(tenantId: string, key: string): S | undefined {
+    return this.shops.get(tenantId)?.get(key);
+  }
+
+  all(tenantId: string): S[] {
+    return [...(this.shops.get(tenantId)?.values() ?? [])];
+  }
+
+  save(tenantId: string, key: string, snapshot: S, what: string): void {
+    let rows = this.shops.get(tenantId);
+    const current = rows?.get(key);
+    if (!snapshot.persisted) {
+      if (current !== undefined) throw new ConcurrencyError(`${what} was created concurrently`);
+      if (rows === undefined) {
+        rows = new Map();
+        this.shops.set(tenantId, rows);
+      }
+      rows.set(key, copyOf({ ...snapshot, version: 1, persisted: true }));
+      return;
+    }
+    if (rows === undefined || current === undefined || current.version !== snapshot.version) {
+      throw new ConcurrencyError(`${what} was modified concurrently`);
+    }
+    rows.set(key, copyOf({ ...snapshot, version: snapshot.version + 1 }));
+  }
+
+  remove(tenantId: string, key: string): boolean {
+    return this.shops.get(tenantId)?.delete(key) ?? false;
+  }
+}
+
+export class InMemoryMenuRepository implements MenuRepository {
+  private readonly rows = new KeyedRows<MenuSnapshot>();
+
+  async list(tenantId: string): Promise<readonly Menu[]> {
+    return this.rows
+      .all(tenantId)
+      .sort((a, b) => (a.handle < b.handle ? -1 : a.handle > b.handle ? 1 : 0))
+      .map((row) => Menu.reconstitute(copyOf(row)));
+  }
+
+  async get(handle: string, tenantId: string): Promise<Menu | null> {
+    const row = this.rows.get(tenantId, handle);
+    return row === undefined ? null : Menu.reconstitute(copyOf(row));
+  }
+
+  async save(menu: Menu, tenantId: string): Promise<void> {
+    const snapshot = menu.snapshot();
+    if (!snapshot.persisted && snapshot.id === null) {
+      throw new Error("A menu needs an id to be saved.");
+    }
+    this.rows.save(tenantId, snapshot.handle, snapshot, "Menu");
+  }
+
+  async remove(handle: string, tenantId: string): Promise<boolean> {
+    return this.rows.remove(tenantId, handle);
+  }
+}
+
+export class InMemoryPolicyRepository implements PolicyRepository {
+  private readonly rows = new KeyedRows<PolicySnapshot>();
+
+  async list(tenantId: string): Promise<readonly StorePolicy[]> {
+    return POLICY_TYPES.map((type) => this.read(type, tenantId));
+  }
+
+  async get(type: PolicyType, tenantId: string): Promise<StorePolicy> {
+    return this.read(type, tenantId);
+  }
+
+  async save(policy: StorePolicy, tenantId: string): Promise<void> {
+    const snapshot = policy.snapshot();
+    this.rows.save(tenantId, snapshot.type, snapshot, "Policy");
+  }
+
+  private read(type: PolicyType, tenantId: string): StorePolicy {
+    const row = this.rows.get(tenantId, type);
+    return row === undefined ? StorePolicy.empty(type) : StorePolicy.reconstitute(copyOf(row));
   }
 }

@@ -18,6 +18,11 @@ export type { UpdatePreferencesInput } from "./application/preferences.use-cases
 export type { PublicShellView } from "./application/shell.use-case";
 export { AccessChanged, PreferencesUpdated, ThemePublished } from "./domain/events";
 export { ONLINE_STORE_PUBLISHED_EVENTS } from "./infrastructure/event-translator";
+export { virtualDefaultMenu } from "./domain/default-menus";
+export { Menu, MENU_LIMIT } from "./domain/menu";
+export type { MenuSnapshot } from "./domain/menu";
+export { StorePolicy } from "./domain/store-policy";
+export type { PolicySnapshot } from "./domain/store-policy";
 export {
   hashPreviewToken,
   isWellFormedPreviewToken,
@@ -28,6 +33,8 @@ export {
 export type { PreviewTokenRecord } from "./domain/preview-token";
 export type {
   AccessRepository,
+  MenuRepository,
+  PolicyRepository,
   PreferencesRepository,
   PreviewTokenRepository,
   ThemeReleaseRepository,
@@ -51,6 +58,8 @@ export { RELEASES_KEPT, StorefrontTheme } from "./domain/storefront-theme";
 export type { ThemeRelease, ThemeSnapshot } from "./domain/storefront-theme";
 export {
   PrismaAccessRepository,
+  PrismaMenuRepository,
+  PrismaPolicyRepository,
   PrismaPreferencesRepository,
   PrismaPreviewTokenRepository,
   PrismaThemeReleaseRepository,

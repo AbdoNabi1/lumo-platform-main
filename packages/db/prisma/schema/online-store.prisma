@@ -73,3 +73,31 @@ model OnlineStorePreviewToken {
   @@map("preview_tokens")
   @@schema("online_store")
 }
+
+model OnlineStoreMenu {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  handle    String
+  title     String
+  items     Json     @default("[]")
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([tenantId, handle])
+  @@map("menus")
+  @@schema("online_store")
+}
+
+model OnlineStorePolicy {
+  tenantId  String   @map("tenant_id")
+  type      String // refund | shipping | privacy | terms | contact (CHECK + domain)
+  body      Json     @default("{}")
+  updatedBy String?  @map("updated_by")
+  version   Int      @default(0)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@id([tenantId, type])
+  @@map("policies")
+  @@schema("online_store")
+}

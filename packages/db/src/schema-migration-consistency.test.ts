@@ -425,3 +425,62 @@ describe("online_store — migration history matches the Prisma models (Project 
     expect(main).toMatch(/schemas\s*=\s*\[[^\]]*"online_store"/);
   });
 });
+
+describe("online_store content — menus, policies and page bodies (Project 4 Part 2)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+  const normalized = allSql.replace(/\r\n/g, "\n");
+
+  const tables: Record<string, readonly string[]> = {
+    menus: ["id", "tenant_id", "handle", "title", "items", "version", "created_at", "updated_at"],
+    policies: ["tenant_id", "type", "body", "updated_by", "version", "updated_at"],
+  };
+
+  for (const [table, columns] of Object.entries(tables)) {
+    it(`${table} has exactly the model's columns`, () => {
+      expect([...columnsEverAddedTo("online_store", table, allSql)].sort()).toEqual(
+        [...columns].sort(),
+      );
+    });
+    it(`${table} is RLS-forced with the tenant_isolation policy`, () => {
+      expect(allSql).toContain(`ALTER TABLE "online_store"."${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(`ALTER TABLE "online_store"."${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(normalized).toContain(
+        `CREATE POLICY tenant_isolation ON "online_store"."${table}" FOR ALL\n` +
+          `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+          `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
+      );
+    });
+  }
+
+  it("has the checks and indexes the spec names", () => {
+    expect(allSql).toContain(
+      `CONSTRAINT "menus_handle_format_check" CHECK ("handle" ~ '^[a-z0-9]+(-[a-z0-9]+)*$')`,
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "menus_tenant_id_handle_key" ON "online_store"."menus" ("tenant_id", "handle");',
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "policies_type_check" CHECK ("type" IN ('refund', 'shipping', 'privacy', 'terms', 'contact'))`,
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "pages_tenant_id_status_idx" ON "pages"."pages" ("tenant_id", "status");',
+    );
+  });
+
+  it("pages.pages gains the four content columns and keeps an explicit tenant policy", () => {
+    const columns = columnsEverAddedTo("pages", "pages", allSql);
+    for (const column of ["title", "body", "meta_description", "published_at"]) {
+      expect(columns.has(column), column).toBe(true);
+    }
+    expect(normalized).toContain(
+      `CREATE POLICY tenant_isolation ON "pages"."pages" FOR ALL\n` +
+        `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+        `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
+    );
+  });
+});

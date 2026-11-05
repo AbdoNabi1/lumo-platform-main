@@ -2,9 +2,12 @@ import { describe, it } from "vitest";
 import type { TransactionClient } from "@platform/db";
 import { createFakePrisma } from "@platform/db/testing";
 import { tenantRowIsolationCases, type TenantRowStore } from "@platform/messaging/testing";
-import { DEFAULT_THEME_DOCUMENT } from "@platform/storefront-content";
+import { DEFAULT_THEME_DOCUMENT, POLICY_TYPES } from "@platform/storefront-content";
+import { Menu } from "../domain/menu";
 import type {
   AccessRepository,
+  MenuRepository,
+  PolicyRepository,
   PreferencesRepository,
   PreviewTokenRepository,
   ThemeReleaseRepository,
@@ -12,6 +15,8 @@ import type {
 } from "../domain/repositories";
 import {
   InMemoryAccessRepository,
+  InMemoryMenuRepository,
+  InMemoryPolicyRepository,
   InMemoryPreferencesRepository,
   InMemoryPreviewTokenRepository,
   InMemoryThemeReleaseRepository,
@@ -19,6 +24,8 @@ import {
 } from "./in-memory-repositories";
 import {
   PrismaAccessRepository,
+  PrismaMenuRepository,
+  PrismaPolicyRepository,
   PrismaPreferencesRepository,
   PrismaPreviewTokenRepository,
   PrismaThemeReleaseRepository,
@@ -35,6 +42,8 @@ interface Repos {
   themes: ThemeRepository;
   releases: ThemeReleaseRepository;
   tokens: PreviewTokenRepository;
+  menus: MenuRepository;
+  policies: PolicyRepository;
 }
 
 const layers: Layer[] = [
@@ -48,6 +57,8 @@ const layers: Layer[] = [
         themes: new InMemoryThemeRepository(),
         releases: new InMemoryThemeReleaseRepository(),
         tokens: new InMemoryPreviewTokenRepository(),
+        menus: new InMemoryMenuRepository(),
+        policies: new InMemoryPolicyRepository(),
       },
     }),
   },
@@ -64,6 +75,8 @@ const layers: Layer[] = [
           themes: new PrismaThemeRepository(deps),
           releases: new PrismaThemeReleaseRepository(deps),
           tokens: new PrismaPreviewTokenRepository(deps),
+          menus: new PrismaMenuRepository(deps),
+          policies: new PrismaPolicyRepository(deps),
         },
       };
     },
@@ -200,6 +213,71 @@ function tokenStore({ tx, repos }: ReturnType<Layer["make"]>): TenantRowStore {
   };
 }
 
+/** The same key always maps to the same handle, under every shop (identical keys on purpose). */
+function menuStore({ tx, repos }: ReturnType<Layer["make"]>): TenantRowStore {
+  const handles = new Map<string, string>();
+  const handleOf = (key: string): string => {
+    const known = handles.get(key);
+    if (known !== undefined) return known;
+    const handle = `m-${handles.size + 1}`;
+    handles.set(key, handle);
+    return handle;
+  };
+  const ids = new Map<string, string>();
+  const idOf = (tenantId: string, key: string): string => {
+    const id = `00000000-0000-4000-8000-${String(ids.size + 1).padStart(12, "0")}`;
+    return ids.get(`${tenantId}|${key}`) ?? (ids.set(`${tenantId}|${key}`, id), id);
+  };
+  return {
+    insert: (t, k, m) =>
+      repos.menus.save(
+        Menu.create({ id: idOf(t, k), handle: handleOf(k), title: m, items: [], now }),
+        t,
+        tx,
+      ),
+    find: async (t, k) => (await repos.menus.get(handleOf(k), t))?.snapshot().title ?? null,
+    list: async (t) => (await repos.menus.list(t)).map((menu) => menu.snapshot().title),
+    update: async (t, k, m) => {
+      const menu = await repos.menus.get(handleOf(k), t);
+      if (menu === null) return;
+      menu.update(m, [], later);
+      await repos.menus.save(menu, t, tx);
+    },
+    remove: async (t, k) => void (await repos.menus.remove(handleOf(k), t, tx)),
+  };
+}
+
+/** The same key always maps to the same policy type (the next unused one), under every shop. */
+function policyStore({ tx, repos }: ReturnType<Layer["make"]>): TenantRowStore {
+  const types = new Map<string, (typeof POLICY_TYPES)[number]>();
+  const typeOf = (key: string): (typeof POLICY_TYPES)[number] => {
+    const known = types.get(key);
+    if (known !== undefined) return known;
+    const type = POLICY_TYPES[types.size % POLICY_TYPES.length] ?? "refund";
+    types.set(key, type);
+    return type;
+  };
+  const find = async (t: string, k: string) => {
+    const s = (await repos.policies.get(typeOf(k), t)).snapshot();
+    return s.persisted ? (s.body.en ?? null) : null;
+  };
+  const write = async (t: string, k: string, m: string) => {
+    const policy = await repos.policies.get(typeOf(k), t, tx);
+    policy.update({ en: m }, "staff", now);
+    await repos.policies.save(policy, t, tx);
+  };
+  return {
+    insert: write,
+    find,
+    list: async (t) =>
+      (await repos.policies.list(t))
+        .map((p) => p.snapshot())
+        .filter((s) => s.persisted)
+        .map((s) => s.body.en ?? ""),
+    update: write,
+  };
+}
+
 /**
  * Single-row-per-shop tables cannot hold three rows for one shop, so the shared "cannot count"
  * case (three inserts under A) does not apply to them; the other cases do, unchanged.
@@ -214,6 +292,8 @@ for (const layer of layers) {
       ["theme", themeStore],
       ["theme releases", releaseStore],
       ["preview tokens", tokenStore],
+      ["menus", menuStore],
+      ["policies", policyStore],
     ] as const) {
       const cases = tenantRowIsolationCases({
         context: `online-store/${name}`,
