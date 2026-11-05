@@ -45,3 +45,12 @@ describe("policies (spec 2.3)", () => {
     }
   });
 });
+
+describe("policy constants are frozen", () => {
+  it("cannot be mutated by an importer", () => {
+    expect(Object.isFrozen(POLICY_TYPES)).toBe(true);
+    expect(Object.isFrozen(POLICY_SLUGS)).toBe(true);
+    expect(Object.isFrozen(POLICY_TITLES)).toBe(true);
+    for (const type of POLICY_TYPES) expect(Object.isFrozen(POLICY_TITLES[type])).toBe(true);
+  });
+});

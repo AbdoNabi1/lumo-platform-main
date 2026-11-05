@@ -5,6 +5,7 @@ import { MAX_ISSUES, pathSegment } from "./issues";
 import { normalizeLocalizedText, type ContentIssue, type LocalizedText } from "./locale";
 import { URL_CONTROLS, URL_INVISIBLES } from "./links";
 import { isMenuHandle } from "./menus";
+import type { ValidationOutcome } from "./validation";
 
 export const SOCIAL_NETWORKS = [
   "facebook",
@@ -66,9 +67,7 @@ export interface ThemeDocument {
 }
 
 export type BrandStyle = Pick<ThemeBrand, "colors" | "typography" | "corners">;
-export type ValidationOutcome<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly issues: readonly ContentIssue[] };
+export type { ValidationOutcome };
 
 const light = designColors.light;
 const hex = (value: string): HexColor => {
@@ -117,7 +116,8 @@ type Raw = Record<string, unknown>;
 
 /**
  * Reads an object with exactly `keys`; reports unknown and missing keys. `null` when not an object.
- * A key whose value is `undefined` counts as missing, unless it is in `optional` (Part 2 fields). A nested object that is absent was already
+ * A key whose value is `undefined` counts as missing, unless it is in `optional`
+ * (Part 2 fields). A nested object that is absent was already
  * reported MISSING by its parent, so it returns `null` without a second issue.
  */
 function objectAt(
@@ -176,6 +176,12 @@ function menuHandleAt(
   if (isMenuHandle(value)) return value;
   issues.push({ path, code: "INVALID_VALUE" });
   return fallback;
+}
+
+/** An absent or malformed `showPolicyLinks` is on (the default); a malformed one is reported. */
+function policyLinksFallback(value: unknown, issues: ContentIssue[]): boolean {
+  if (value !== undefined) issues.push({ path: "footer.showPolicyLinks", code: "INVALID_VALUE" });
+  return true;
 }
 
 function imageRefAt(value: unknown, path: string, issues: ContentIssue[]): string | null {
@@ -348,19 +354,33 @@ function readBrandAt(raw: unknown, path: string, issues: ContentIssue[]): ThemeB
   }, issues);
 }
 
-function readHeaderAt(raw: unknown, issues: ContentIssue[]): ThemeDocument["header"] | null {
+/**
+ * `lenient` (the read path): a bad optional menu reference resets only that field, so the
+ * rest of the section survives; the write path reports it.
+ */
+function readHeaderAt(
+  raw: unknown,
+  issues: ContentIssue[],
+  lenient = false,
+): ThemeDocument["header"] | null {
   return section((found) => {
+    const optionalSink = lenient ? [] : found;
     const obj = objectAt(raw, "header", ["sticky", "menuHandle"], found, ["menuHandle"]);
     if (obj === null) return null;
     return {
       sticky: booleanAt(obj["sticky"], "header.sticky", found),
-      menuHandle: menuHandleAt(obj["menuHandle"], "header.menuHandle", "main-menu", found),
+      menuHandle: menuHandleAt(obj["menuHandle"], "header.menuHandle", "main-menu", optionalSink),
     };
   }, issues);
 }
 
-function readFooterAt(raw: unknown, issues: ContentIssue[]): ThemeDocument["footer"] | null {
+function readFooterAt(
+  raw: unknown,
+  issues: ContentIssue[],
+  lenient = false,
+): ThemeDocument["footer"] | null {
   return section((found) => {
+    const optionalSink = lenient ? [] : found;
     const obj = objectAt(
       raw,
       "footer",
@@ -380,11 +400,11 @@ function readFooterAt(raw: unknown, issues: ContentIssue[]): ThemeDocument["foot
     return {
       note,
       showSocial: booleanAt(obj["showSocial"], "footer.showSocial", found),
-      menuHandle: menuHandleAt(obj["menuHandle"], "footer.menuHandle", "footer", found),
+      menuHandle: menuHandleAt(obj["menuHandle"], "footer.menuHandle", "footer", optionalSink),
       showPolicyLinks:
-        obj["showPolicyLinks"] === undefined
-          ? true
-          : booleanAt(obj["showPolicyLinks"], "footer.showPolicyLinks", found),
+        typeof obj["showPolicyLinks"] === "boolean"
+          ? obj["showPolicyLinks"]
+          : policyLinksFallback(obj["showPolicyLinks"], optionalSink),
     };
   }, issues);
 }
@@ -450,8 +470,8 @@ export function readThemeDocument(raw: unknown): ThemeDocument {
   return {
     schemaVersion: 1,
     brand: readBrandAt(obj["brand"], "brand", ignored) ?? readPartialBrand(obj["brand"]),
-    header: readHeaderAt(obj["header"], ignored) ?? DEFAULT_THEME_DOCUMENT.header,
-    footer: readFooterAt(obj["footer"], ignored) ?? DEFAULT_THEME_DOCUMENT.footer,
+    header: readHeaderAt(obj["header"], ignored, true) ?? DEFAULT_THEME_DOCUMENT.header,
+    footer: readFooterAt(obj["footer"], ignored, true) ?? DEFAULT_THEME_DOCUMENT.footer,
     homepage: { sections },
   };
 }

@@ -264,3 +264,30 @@ describe("Part 2 menu fields (Ruling 2, Review Focus 3)", () => {
     expect(menuHandlesOf(same)).toEqual(["main-menu"]);
   });
 });
+
+describe("a bad menu reference on read resets only that field (fix round 1)", () => {
+  it("keeps the rest of the footer and header", () => {
+    const doc = readThemeDocument({
+      ...JSON.parse(JSON.stringify(DEFAULT_THEME_DOCUMENT)),
+      header: { sticky: true, menuHandle: "Bad Handle" },
+      footer: {
+        note: { en: "hi" },
+        showSocial: false,
+        menuHandle: "BAD",
+        showPolicyLinks: "yes",
+      },
+    });
+    expect(doc.header).toEqual({ sticky: true, menuHandle: "main-menu" });
+    expect(doc.footer).toEqual({
+      note: { en: "hi" },
+      showSocial: false,
+      menuHandle: "footer",
+      showPolicyLinks: true,
+    });
+  });
+  it("still refuses them on write", () => {
+    const raw = JSON.parse(JSON.stringify(DEFAULT_THEME_DOCUMENT));
+    raw.footer.menuHandle = "BAD";
+    expect(validateThemeDocument(raw).ok).toBe(false);
+  });
+});

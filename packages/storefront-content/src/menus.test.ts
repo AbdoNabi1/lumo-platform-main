@@ -229,3 +229,73 @@ describe("readResolvedMenu (storefront re-validation)", () => {
     expect(menu.reduce((n, m) => n + 1 + m.children.length, 0)).toBeLessThanOrEqual(150);
   });
 });
+
+describe("fix round 1 (review minors)", () => {
+  const strip = [0x00ad, 0x061c, 0x200b, 0x200e, 0x200f, 0x2060, 0x2062, 0x2064, 0xfeff];
+
+  it.each(strip)("a label of only U+%s is LABEL_REQUIRED", (code) => {
+    const label = { en: ch(code).repeat(3), ar: ` ${ch(code)} ` };
+    expect(issuesOf([{ ...item(1), label }])).toContainEqual({
+      path: "items.0.label",
+      code: "LABEL_REQUIRED",
+    });
+  });
+
+  it("a label of only joiners is empty too", () => {
+    const label = { en: `${ch(0x200c)}${ch(0x200d)}` };
+    expect(issuesOf([{ ...item(1), label }])).toContainEqual({
+      path: "items.0.label",
+      code: "LABEL_REQUIRED",
+    });
+  });
+
+  it("strips invisible marks from a label but keeps ZWNJ and ZWJ between letters", () => {
+    const noisy = `a${strip.map(ch).join("")}b${ch(0x200c)}c${ch(0x200d)}d`;
+    const out = validateMenuItems([{ ...item(1), label: { en: noisy } }]);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.value[0]?.label).toEqual({ en: `ab${ch(0x200c)}c${ch(0x200d)}d` });
+  });
+
+  it("the storefront reader strips and drops them the same way", () => {
+    const menu = readResolvedMenu([
+      { label: { en: `x${ch(0x200b)}y` }, href: "/" },
+      { label: { en: ch(0x200e) }, href: "/search" },
+    ]);
+    expect(menu).toEqual([{ label: { en: "xy" }, href: "/", external: false, children: [] }]);
+  });
+
+  it("accepts exactly 30 top-level, 30 children and 150 in all", () => {
+    expect(issuesOf(Array.from({ length: 30 }, (_, i) => item(i + 1)))).toEqual([]);
+    const thirtyChildren = item(
+      1,
+      { type: "home" },
+      Array.from({ length: 30 }, (_, i) => item(i + 2)),
+    );
+    expect(issuesOf([thirtyChildren])).toEqual([]);
+    const total150 = Array.from({ length: 5 }, (_, top) =>
+      item(
+        1000 + top,
+        { type: "home" },
+        Array.from({ length: 29 }, (_, c) => item(top * 100 + c + 1)),
+      ),
+    );
+    expect(issuesOf(total150)).toEqual([]);
+    const total151 = [...total150.slice(0, 4), { ...total150[4], children: total150[4]!.children }];
+    total151.push(item(2000));
+    expect(issuesOf(total151)).toContainEqual({ path: "items", code: "TOO_MANY_ITEMS" });
+  });
+
+  it("ids differing only in case are duplicates", () => {
+    const upper = { ...item(2), id: ID(1).replace("0000", "000A").toUpperCase() };
+    const lower = { ...item(1), id: ID(1).replace("0000", "000a") };
+    expect(issuesOf([lower, upper])).toContainEqual({
+      path: "items.1.id",
+      code: "DUPLICATE_ITEM_ID",
+    });
+  });
+
+  it("the exported limits are frozen", () => {
+    expect(Object.isFrozen(MENU_LIMITS)).toBe(true);
+  });
+});

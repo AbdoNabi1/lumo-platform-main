@@ -2,16 +2,16 @@ import { MAX_ISSUES, pathSegment } from "./issues";
 import { LINK_URL_MAX, normalizeExternalUrl, safeHref } from "./links";
 import { normalizeLocalizedText, type ContentIssue, type LocalizedText } from "./locale";
 import { isPolicyType, type PolicyType } from "./policies";
-import type { ValidationOutcome } from "./theme-document";
+import type { ValidationOutcome } from "./validation";
 
 export const MENU_HANDLE_MAX = 60;
 export const MENU_TITLE_MAX = 100;
 export const MENU_LABEL_MAX = 60;
-export const MENU_LIMITS = { topLevel: 30, children: 30, total: 150 } as const;
+export const MENU_LIMITS = Object.freeze({ topLevel: 30, children: 30, total: 150 } as const);
 export const MENU_MAX_BYTES = 524_288;
-export const DEFAULT_MENU_HANDLES = ["main-menu", "footer"] as const;
+export const DEFAULT_MENU_HANDLES = Object.freeze(["main-menu", "footer"] as const);
 export type DefaultMenuHandle = (typeof DEFAULT_MENU_HANDLES)[number];
-export const RESERVED_MENU_HANDLES = ["new"] as const;
+export const RESERVED_MENU_HANDLES = Object.freeze(["new"] as const);
 
 export type LinkRef =
   | { readonly type: "home" }
@@ -56,6 +56,28 @@ function isRecord(value: unknown): value is Raw {
 /** An own property only: an inherited `constructor` or `__proto__` is never a value. */
 function own(raw: Raw, key: string): unknown {
   return Object.hasOwn(raw, key) ? raw[key] : undefined;
+}
+
+const codes = (list: readonly number[]): string => list.map((c) => String.fromCharCode(c)).join("");
+// Soft hyphen, Arabic letter mark, zero-width space, LRM, RLM, word joiner and invisible operators,
+// and the byte-order mark. Never ZWNJ or ZWJ (U+200C, U+200D): some scripts and emoji need them.
+const LABEL_INVISIBLES = new RegExp(
+  `[${codes([0x00ad, 0x061c, 0x200b, 0x200e, 0x200f, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff])}]`,
+  "g",
+);
+// Nothing left but white space and joiners: the label is empty.
+const LABEL_BLANK = new RegExp(String.raw`^[\s${codes([0x200c, 0x200d])}]*$`);
+
+/** A label object with invisible marks stripped, and a value left blank made empty. */
+function cleanLabel(raw: unknown): unknown {
+  if (!isRecord(raw)) return raw;
+  return Object.fromEntries(
+    Object.entries(raw).map(([key, value]) => {
+      if (typeof value !== "string") return [key, value];
+      const text = value.replace(LABEL_INVISIBLES, "");
+      return [key, LABEL_BLANK.test(text) ? "" : text];
+    }),
+  );
 }
 
 function byteLength(raw: unknown): number {
@@ -189,7 +211,7 @@ function validateItem(raw: unknown, path: string, depth: 1 | 2, ctx: ItemContext
   if (labelRaw !== undefined) {
     const before = issues.length;
     label = normalizeLocalizedText(
-      labelRaw,
+      cleanLabel(labelRaw),
       { path: `${path}.label`, max: MENU_LABEL_MAX },
       issues,
     );
@@ -284,7 +306,7 @@ function clipLabel(text: string | undefined): string | undefined {
 }
 
 function readLabel(raw: unknown): LocalizedText | null {
-  const normalized = normalizeLocalizedText(raw, { path: "", max: MENU_LABEL_MAX }, []);
+  const normalized = normalizeLocalizedText(cleanLabel(raw), { path: "", max: MENU_LABEL_MAX }, []);
   const ar = clipLabel(normalized.ar);
   const en = clipLabel(normalized.en);
   const label: { ar?: string; en?: string } = {};
