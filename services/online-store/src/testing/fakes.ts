@@ -11,6 +11,7 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { buildOnlineStoreController, type OnlineStoreRepos } from "../composition";
 import {
   InMemoryAccessRepository,
+  InMemoryPolicyRepository,
   InMemoryPreferencesRepository,
   InMemoryPreviewTokenRepository,
   InMemoryThemeReleaseRepository,
@@ -85,6 +86,7 @@ export function harness(
     themes: new InMemoryThemeRepository(),
     releases: new InMemoryThemeReleaseRepository(),
     previewTokens: new InMemoryPreviewTokenRepository(),
+    policies: new InMemoryPolicyRepository(),
   };
   let openUnitsOfWork = 0;
   const memoryUnitOfWork = new InMemoryUnitOfWork();

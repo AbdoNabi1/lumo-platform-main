@@ -2,6 +2,7 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import type {
   AccessRepository,
+  PolicyRepository,
   PreferencesRepository,
   PreviewTokenRepository,
   ThemeReleaseRepository,
@@ -21,6 +22,7 @@ export interface OnlineStoreDeps {
   readonly themes: ThemeRepository;
   readonly releases: ThemeReleaseRepository;
   readonly previewTokens: PreviewTokenRepository;
+  readonly policies: PolicyRepository;
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;

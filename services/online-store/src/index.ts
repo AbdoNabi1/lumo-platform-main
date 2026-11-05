@@ -15,6 +15,13 @@ export type {
 } from "./application/ports";
 export type { UpdateAccessInput } from "./application/access.use-cases";
 export type { UpdatePreferencesInput } from "./application/preferences.use-cases";
+export type {
+  PolicySummary,
+  PolicyView,
+  PublicPolicyView,
+  UpdatePolicyInput,
+} from "./application/policies.use-cases";
+export type { PolicyTemplateInputs } from "./domain/policy-templates/template-inputs";
 export type { PublicShellView } from "./application/shell.use-case";
 export { AccessChanged, PreferencesUpdated, ThemePublished } from "./domain/events";
 export { ONLINE_STORE_PUBLISHED_EVENTS } from "./infrastructure/event-translator";

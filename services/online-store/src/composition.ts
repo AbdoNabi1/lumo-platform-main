@@ -10,6 +10,7 @@ import {
   rootEventContext,
   type Subscriber,
 } from "@platform/messaging";
+import type { PolicyType } from "@platform/storefront-content";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import {
   GetAccessStatus,
@@ -25,6 +26,13 @@ import type {
   StoreIdentityPort,
   StorefrontPasswordHasher,
 } from "./application/ports";
+import {
+  GeneratePolicyTemplate,
+  GetPolicy,
+  GetPublicPolicy,
+  ListPolicies,
+  UpdatePolicy,
+} from "./application/policies.use-cases";
 import { GetPreferences, UpdatePreferences } from "./application/preferences.use-cases";
 import { IssuePreviewToken, ResolvePreviewToken } from "./application/preview.use-cases";
 import { GetStorefrontShell } from "./application/shell.use-case";
@@ -42,6 +50,7 @@ import {
 } from "./infrastructure/event-translator";
 import {
   InMemoryAccessRepository,
+  InMemoryPolicyRepository,
   InMemoryPreferencesRepository,
   InMemoryPreviewTokenRepository,
   InMemoryThemeReleaseRepository,
@@ -50,6 +59,7 @@ import {
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import {
   PrismaAccessRepository,
+  PrismaPolicyRepository,
   PrismaPreferencesRepository,
   PrismaPreviewTokenRepository,
   PrismaThemeReleaseRepository,
@@ -76,6 +86,7 @@ export interface OnlineStoreRepos {
   readonly themes: OnlineStoreDeps["themes"];
   readonly releases: OnlineStoreDeps["releases"];
   readonly previewTokens: OnlineStoreDeps["previewTokens"];
+  readonly policies: OnlineStoreDeps["policies"];
 }
 
 /** Closures taking `tenantId` per call (spec "Composition"); nothing here holds a tenant. */
@@ -83,6 +94,7 @@ export interface OnlineStorePublicReads {
   readonly shell: (tenantId: string, previewToken?: string) => Promise<ControllerResponse>;
   readonly access: (tenantId: string) => Promise<ControllerResponse>;
   readonly unlock: (tenantId: string, password: string) => Promise<ControllerResponse>;
+  readonly policy: (tenantId: string, type: PolicyType) => Promise<ControllerResponse>;
 }
 
 export interface WiredOnlineStore {
@@ -104,7 +116,12 @@ export function buildOnlineStoreController(
 ): OnlineStoreController {
   // Listed, never spread: a tenant on the wiring deps must not enter the graph (ADR-0014).
   const deps: OnlineStoreDeps = {
-    ...repos,
+    preferences: repos.preferences,
+    access: repos.access,
+    themes: repos.themes,
+    releases: repos.releases,
+    previewTokens: repos.previewTokens,
+    policies: repos.policies,
     unitOfWork,
     events,
     idGenerator: ports.idGenerator,
@@ -130,6 +147,11 @@ export function buildOnlineStoreController(
     restoreThemeRelease: new RestoreThemeRelease(deps),
     issuePreviewToken: new IssuePreviewToken(deps),
     getShell: new GetStorefrontShell(deps, resolvePreview),
+    listPolicies: new ListPolicies(deps),
+    getPolicy: new GetPolicy(deps),
+    updatePolicy: new UpdatePolicy(deps),
+    generatePolicyTemplate: new GeneratePolicyTemplate(),
+    getPublicPolicy: new GetPublicPolicy(deps),
   });
 }
 
@@ -139,6 +161,7 @@ function publicReadsOf(controller: OnlineStoreController): OnlineStorePublicRead
       controller.shell({ tenantId, ...(previewToken === undefined ? {} : { previewToken }) }),
     access: (tenantId) => controller.publicAccess({ tenantId }),
     unlock: (tenantId, password) => controller.unlock({ tenantId, password }),
+    policy: (tenantId, type) => controller.publicPolicy({ tenantId, type }),
   };
 }
 
@@ -164,6 +187,7 @@ export function wireOnlineStore(deps: OnlineStoreWiringDeps): WiredOnlineStore {
         themes: new PrismaThemeRepository(prisma),
         releases: new PrismaThemeReleaseRepository(prisma),
         previewTokens: new PrismaPreviewTokenRepository(prisma),
+        policies: new PrismaPolicyRepository(prisma),
       },
       new PrismaUnitOfWork(deps.prisma),
       deps,
@@ -195,6 +219,7 @@ export function wireOnlineStore(deps: OnlineStoreWiringDeps): WiredOnlineStore {
       themes: new InMemoryThemeRepository(),
       releases: new InMemoryThemeReleaseRepository(),
       previewTokens: new InMemoryPreviewTokenRepository(),
+      policies: new InMemoryPolicyRepository(),
     },
     new InMemoryUnitOfWork(),
     deps,

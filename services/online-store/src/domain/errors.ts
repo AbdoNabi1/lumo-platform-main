@@ -27,6 +27,7 @@ export const invalidContent = (issues: readonly ContentIssue[]) => {
     issues.map((issue) => ({ field: issue.path, message: issue.code })),
   );
 };
+export const policyNotFound = () => new NotFoundError("POLICY_NOT_FOUND: This policy is not set.");
 /** A menu reaches storage only with an id; a virtual default menu is given one by `Menu.create`. */
 export const menuNeedsId = () =>
   new BusinessRuleError("MENU_ID_REQUIRED: A menu needs an id before it can be saved.");

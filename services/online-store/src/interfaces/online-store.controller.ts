@@ -10,6 +10,14 @@ import type {
   UpdatePreferences,
   UpdatePreferencesInput,
 } from "../application/preferences.use-cases";
+import type {
+  GeneratePolicyTemplate,
+  GetPolicy,
+  GetPublicPolicy,
+  ListPolicies,
+  UpdatePolicy,
+  UpdatePolicyInput,
+} from "../application/policies.use-cases";
 import type { IssuePreviewToken } from "../application/preview.use-cases";
 import type { GetStorefrontShell } from "../application/shell.use-case";
 import type {
@@ -20,6 +28,9 @@ import type {
   RestoreThemeRelease,
   SaveThemeDraft,
 } from "../application/theme.use-cases";
+import type { Locale, PolicyType } from "@platform/storefront-content";
+import { err } from "@platform/types";
+import { policyNotFound } from "../domain/errors";
 import { plainError, present, type ControllerResponse } from "./presenter";
 
 export interface OnlineStoreControllerDeps {
@@ -37,6 +48,11 @@ export interface OnlineStoreControllerDeps {
   readonly restoreThemeRelease: RestoreThemeRelease;
   readonly issuePreviewToken: IssuePreviewToken;
   readonly getShell: GetStorefrontShell;
+  readonly listPolicies: ListPolicies;
+  readonly getPolicy: GetPolicy;
+  readonly updatePolicy: UpdatePolicy;
+  readonly generatePolicyTemplate: GeneratePolicyTemplate;
+  readonly getPublicPolicy: GetPublicPolicy;
 }
 
 type Tenant = { readonly tenantId: string };
@@ -89,12 +105,35 @@ export class OnlineStoreController {
     return present(await this.deps.issuePreviewToken.execute(input), 201);
   }
 
+  async listPolicies(input: Tenant): Promise<ControllerResponse> {
+    return present(await this.deps.listPolicies.execute(input), 200);
+  }
+  async getPolicy(input: { readonly type: PolicyType } & Tenant): Promise<ControllerResponse> {
+    return present(await this.deps.getPolicy.execute(input), 200);
+  }
+  async updatePolicy(input: UpdatePolicyInput): Promise<ControllerResponse> {
+    return present(await this.deps.updatePolicy.execute(input), 200);
+  }
+  /** Pure: returns starting text for the editor; nothing is saved (spec decision 41). */
+  generatePolicyTemplate(input: {
+    readonly type: PolicyType;
+    readonly locale: Locale;
+    readonly inputs: unknown;
+  }): Promise<ControllerResponse> {
+    return Promise.resolve(present(this.deps.generatePolicyTemplate.execute(input), 200));
+  }
+
   /** Public: the storefront shell; a bad preview token is 401 PREVIEW_INVALID (the storefront falls back to live). */
   async shell(input: { readonly previewToken?: string } & Tenant): Promise<ControllerResponse> {
     const outcome = await this.deps.getShell.execute(input);
     if (outcome.kind === "preview_invalid")
       return plainError(401, "PREVIEW_INVALID", "Preview link is invalid or expired");
     return { status: 200, body: outcome.shell };
+  }
+  /** Public: one policy as stored; 404 POLICY_NOT_FOUND when it is not set. */
+  async publicPolicy(input: { readonly type: PolicyType } & Tenant): Promise<ControllerResponse> {
+    const view = await this.deps.getPublicPolicy.execute(input);
+    return view === null ? present(err(policyNotFound()), 200) : { status: 200, body: view };
   }
   async publicAccess(input: Tenant): Promise<ControllerResponse> {
     return { status: 200, body: await this.deps.getPublicAccess.execute(input) };
