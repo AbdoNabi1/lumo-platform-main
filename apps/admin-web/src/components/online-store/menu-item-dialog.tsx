@@ -19,14 +19,10 @@ import {
   type LocalizedText,
 } from "@platform/storefront-content";
 import type { Locale } from "@/lib/i18n";
+import { newItemId } from "@/lib/online-store/new-item-id";
 import type { EditableItem } from "@/lib/online-store/menu-tree";
 import type { Dictionary } from "@/messages/en";
 import { LinkPicker } from "./link-picker";
-
-/** A fresh item id: the validator wants a UUID (`crypto.randomUUID`). */
-function newItemId(): string {
-  return globalThis.crypto.randomUUID();
-}
 
 /** Trimmed labels, an empty one left out (absent means "not written"). */
 function labelOf(ar: string, en: string): LocalizedText {

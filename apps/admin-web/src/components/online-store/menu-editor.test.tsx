@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { redirect } from "next/navigation";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { POLICY_TITLES } from "@platform/storefront-content";
 import type { MenuDto, MenuItemViewDto } from "@/lib/api/online-store";
@@ -246,6 +247,53 @@ describe("MenuEditor (spec 2.7)", () => {
     });
     expect(screen.getByRole("alert")).toHaveTextContent(en.formErrors.unexpected);
     expect(screen.getByRole("button", { name: n.deleteMenu })).toBeEnabled();
+  });
+
+  it("rethrows Next's redirect, so create and delete still navigate (never the 'unexpected' copy)", async () => {
+    // Next's redirect() throws; the editor must let it escape run() instead of swallowing it.
+    const escaped: unknown[] = [];
+    const onRejection = (reason: unknown) => escaped.push(reason);
+    const previous = process.listeners("unhandledRejection");
+    process.removeAllListeners("unhandledRejection");
+    process.on("unhandledRejection", onRejection);
+    try {
+      actions.createMenuAction.mockImplementation(async () => {
+        redirect("/online-store/navigation/summer-sale");
+      });
+      render(<MenuEditor t={en} locale="en" menu={null} canEdit />);
+      fireEvent.change(screen.getByLabelText(n.menuTitle), { target: { value: "Sale" } });
+      fireEvent.change(screen.getByLabelText(n.handle), { target: { value: "summer-sale" } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: n.save }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(escaped).toHaveLength(1);
+      expect((escaped[0] as { digest?: string }).digest).toMatch(/^NEXT_REDIRECT;/);
+      expect(screen.queryByText(en.formErrors.unexpected)).toBeNull();
+      cleanup();
+
+      escaped.length = 0;
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      actions.deleteMenuAction.mockImplementation(async () => {
+        redirect("/online-store/navigation");
+      });
+      const custom: MenuDto = { ...footerMenu, id: "m-1", handle: "sale", isDefault: false };
+      render(<MenuEditor t={en} locale="en" menu={custom} canEdit />);
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: n.deleteMenu }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(escaped).toHaveLength(1);
+      expect((escaped[0] as { digest?: string }).digest).toMatch(/^NEXT_REDIRECT;/);
+      expect(screen.queryByText(en.formErrors.unexpected)).toBeNull();
+    } finally {
+      process.removeListener("unhandledRejection", onRejection);
+      for (const listener of previous) process.on("unhandledRejection", listener);
+    }
   });
 
   it("checks the title's length as the server measures it (normalised)", () => {

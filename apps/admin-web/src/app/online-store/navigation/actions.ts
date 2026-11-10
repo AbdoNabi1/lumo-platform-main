@@ -3,7 +3,7 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { isMenuHandle, type MenuItem } from "@platform/storefront-content";
+import { isMenuHandle, LINK_TARGET_QUERY_MAX, type MenuItem } from "@platform/storefront-content";
 import {
   createMenu,
   deleteMenu,
@@ -16,6 +16,7 @@ import {
 import type { MutationResult } from "@/lib/api/client";
 import { newIdempotencyKey, type LiveSaveState } from "@/lib/api/mutation";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { isVersion } from "@/lib/online-store/action-args";
 import { saveErrorState } from "@/lib/online-store/save-errors";
 import { revalidateStorefront } from "@/lib/storefront-revalidate";
 import type { Dictionary } from "@/messages/en";
@@ -27,8 +28,6 @@ export type MenuSaveState =
 
 const LIST_PATH = "/online-store/navigation";
 const LINK_TARGET_TYPES: readonly LinkTargetType[] = ["collection", "product", "page", "policy"];
-/** The API's link-target query bound (plan Rulings). */
-const LINK_TARGET_QUERY_MAX = 100;
 
 async function dictionary(): Promise<Dictionary> {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
@@ -62,7 +61,12 @@ async function revalidated(handle: string): Promise<boolean> {
   return revalidateStorefront();
 }
 
-const isVersion = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
+/** A menu write's body, as an untrusted caller may send it: an object with a title and a list. */
+const isMenuInput = (v: unknown): v is { handle: unknown; title: string; items: unknown[] } =>
+  typeof v === "object" &&
+  v !== null &&
+  typeof (v as { title?: unknown }).title === "string" &&
+  Array.isArray((v as { items?: unknown }).items);
 
 /** `PUT /online-store/menus/:handle` with the version the editor loaded; one key per submit. */
 export async function saveMenuAction(input: {
@@ -72,7 +76,9 @@ export async function saveMenuAction(input: {
   expectedVersion: number;
 }): Promise<MenuSaveState> {
   const t = await dictionary();
-  if (!isMenuHandle(input.handle) || !isVersion(input.expectedVersion)) return invalid(t);
+  if (!isMenuInput(input) || !isMenuHandle(input.handle) || !isVersion(input.expectedVersion)) {
+    return invalid(t);
+  }
   const result = await updateMenu(
     input.handle,
     { title: input.title, items: input.items, expectedVersion: input.expectedVersion },
@@ -91,6 +97,7 @@ export async function createMenuAction(input: {
   items: readonly MenuItem[];
 }): Promise<MenuSaveState> {
   const t = await dictionary();
+  if (!isMenuInput(input)) return invalid(t);
   if (!isMenuHandle(input.handle) || input.handle === "new") {
     return invalid(t, { handle: t.onlineStoreNavigation.handleError });
   }

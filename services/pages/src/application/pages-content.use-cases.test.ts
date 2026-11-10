@@ -121,6 +121,14 @@ describe("page content (spec 2.4)", () => {
     expect(res).toMatchObject({ status: 409, body: { code: "PAGE_ARCHIVED" } });
   });
 
+  it("an invalid transition is INVALID_TRANSITION (409 with a code, not a bare message)", async () => {
+    const pages = setup();
+    const id = await create(pages, "/pages/about");
+    await pages.advancePage({ pageId: id, toStatus: "archived", tenantId: T });
+    const res = await pages.advancePage({ pageId: id, toStatus: "published", tenantId: T });
+    expect(res).toMatchObject({ status: 409, body: { code: "INVALID_TRANSITION" } });
+  });
+
   it("an invalid create writes nothing (422 before the unit of work)", async () => {
     const pages = setup();
     const res = await pages.createPage({

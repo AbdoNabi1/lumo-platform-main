@@ -179,3 +179,33 @@ describe("menu actions", () => {
     expect(api.searchLinkTargets).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("menu actions refuse a malformed argument (a server action is a public endpoint)", () => {
+  const invalid = { status: "error", message: en.formErrors.invalid, fieldErrors: {} };
+  const bad: unknown[] = [
+    null,
+    undefined,
+    "main-menu",
+    42,
+    { handle: "main-menu", title: 7, items, expectedVersion: 1 },
+    { handle: "main-menu", title: "Main", items: "nope", expectedVersion: 1 },
+    { handle: "main-menu", title: "Main", expectedVersion: 1 },
+  ];
+
+  it.each(bad)("save answers invalid and never calls the API (%j)", async (input) => {
+    const state = await saveMenuAction(input as never);
+    expect(state).toMatchObject({ status: "error", message: en.formErrors.invalid });
+    expect(api.updateMenu).not.toHaveBeenCalled();
+  });
+
+  it.each(bad)("create answers invalid and never calls the API (%j)", async (input) => {
+    const state = await createMenuAction(input as never);
+    expect(state).toMatchObject({ status: "error", message: en.formErrors.invalid });
+    expect(api.createMenu).not.toHaveBeenCalled();
+  });
+
+  it("delete refuses a non-string handle", async () => {
+    expect(await deleteMenuAction(null as never)).toEqual(invalid);
+    expect(api.deleteMenu).not.toHaveBeenCalled();
+  });
+});

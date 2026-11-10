@@ -28,6 +28,9 @@ describe("Page", () => {
     const page = Page.create(UniqueEntityId.from("page-1"), "Product detail", routePath());
     page.archive("evt-1", new Date(0));
     expect(() => page.transition("published", "evt-2", new Date(0))).toThrow(BusinessRuleError);
+    expect(() => page.transition("published", "evt-2", new Date(0))).toThrow(
+      /^INVALID_TRANSITION: /,
+    );
   });
 });
 

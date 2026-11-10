@@ -87,7 +87,9 @@ export class Page extends AggregateRoot<PageProps> {
   transition(toStatus: PageStatusValue, eventId: string, occurredAt: Date): void {
     const fromStatus = this.props.status;
     if (!TRANSITIONS[fromStatus].includes(toStatus)) {
-      throw new BusinessRuleError(`Cannot transition page from "${fromStatus}" to "${toStatus}"`);
+      throw new BusinessRuleError(
+        `INVALID_TRANSITION: Cannot transition page from "${fromStatus}" to "${toStatus}"`,
+      );
     }
     this.props.status = toStatus;
     // Ruling 15: the first publish date survives an unpublish and a republish.

@@ -2,8 +2,9 @@
 -- Written by hand, NOT applied by the agent; the owner deploys it from Railway's Console BEFORE the
 -- release that reads these tables. Additive and expand-only (MIGRATIONS.md §1): two new tables in
 -- the existing "online_store" schema and four new columns on "pages"."pages" (all with defaults or
--- nullable), nothing is dropped or rewritten and there is no backfill (an absent menu row means the
--- virtual default menu, an absent policy row means "not set", an existing page has empty content).
+-- nullable), nothing is dropped or rewritten. The only backfill sets published_at = updated_at for
+-- pages that are already published; otherwise an absent menu row means the virtual default menu, an
+-- absent policy row means "not set", and an existing page has empty content.
 -- Each new table is tenant-scoped and gets its OWN RLS policy explicitly, exactly as
 -- 20261027000000_online_store_identity. "pages"."pages" already has its policy from the loop in the
 -- reconstructed 20260823000000_rls_tenant_isolation (the table predates it); that file has never been

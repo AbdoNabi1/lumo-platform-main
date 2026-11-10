@@ -3,7 +3,7 @@
 import { useId, useRef, useState, useTransition, type FormEvent } from "react";
 import { AlertTriangleIcon } from "lucide-react";
 import { Button, Input, Label } from "@platform/ui";
-import { RICH_TEXT_MAX, type LocalizedText } from "@platform/storefront-content";
+import { PAGE_TITLE_MAX, RICH_TEXT_MAX, type LocalizedText } from "@platform/storefront-content";
 import { createPageAction } from "@/app/pages/actions";
 import type { FormState } from "@/lib/api/mutation";
 import type { Locale } from "@/lib/i18n";
@@ -14,7 +14,6 @@ import { LocalizedTextField } from "@/components/online-store/localized-text-fie
 import { RichTextEditor } from "@/components/online-store/rich-text-editor";
 
 const INITIAL_STATE: FormState = { status: "idle" };
-const PAGE_TITLE_MAX = 255;
 
 const hasText = (text: LocalizedText) =>
   (text.ar ?? "").trim() !== "" || (text.en ?? "").trim() !== "";

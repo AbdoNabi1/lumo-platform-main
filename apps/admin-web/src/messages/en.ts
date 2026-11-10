@@ -1234,6 +1234,7 @@ export const en = {
     archive: "Archive",
     archiveConfirm: "Archive this page? You can't undo this.",
     archived: "This page is archived, so it can't be edited.",
+    staleStatus: "This page changed in another window. Reload to continue.",
     advanced: "Advanced",
     storePolicies: "Store policies",
   },

@@ -11,6 +11,7 @@ import {
 import { newIdempotencyKey, type LiveSaveState } from "@/lib/api/mutation";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { templateErrorState, templateInputIssues } from "@/lib/online-store/policy-template-inputs";
+import { isVersion, localizedOf } from "@/lib/online-store/action-args";
 import { saveErrorState } from "@/lib/online-store/save-errors";
 import { revalidateStorefront } from "@/lib/storefront-revalidate";
 import type { Dictionary } from "@/messages/en";
@@ -32,18 +33,6 @@ const PAGE_PATH = "/settings/policies";
 async function dictionary(): Promise<Dictionary> {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   return dictionaryFor(isLocale(stored) ? stored : DEFAULT_LOCALE);
-}
-
-const isVersion = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
-
-/** `{ ar?, en? }` with string values only, or null for anything else (an untrusted caller). */
-function localizedOf(raw: unknown): LocalizedText | null {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
-  const { ar, en, ...rest } = raw as Record<string, unknown>;
-  if (Object.keys(rest).length > 0) return null;
-  if (ar !== undefined && typeof ar !== "string") return null;
-  if (en !== undefined && typeof en !== "string") return null;
-  return { ...(ar === undefined ? {} : { ar }), ...(en === undefined ? {} : { en }) };
 }
 
 /**

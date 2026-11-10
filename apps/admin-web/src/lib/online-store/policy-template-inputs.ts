@@ -1,19 +1,13 @@
-import { normalizePlainText } from "@platform/storefront-content";
+import { normalizePlainText, POLICY_TEMPLATE_LIMITS } from "@platform/storefront-content";
 import type { PolicyTemplateInputsDto } from "@/lib/api/online-store";
 import type { Dictionary } from "@/messages/en";
 
 /**
- * The template generator's input rules, copied by hand from the API's reader
- * (`services/online-store/src/domain/policy-templates/template-inputs.ts`; `apps/*` cannot import
- * `services/*`). The dialog caps and checks with them before sending, and the action checks an
+ * The template generator's input rules: the limits come from `@platform/storefront-content`, the
+ * same object the API's reader (`services/online-store/.../template-inputs.ts`) uses. The dialog caps and checks with them before sending, and the action checks an
  * untrusted caller's inputs with them before calling the API (review I-2, M-5).
  */
-export const TEMPLATE_TEXT_MAX = Object.freeze({
-  storeName: 120,
-  contactEmail: 254,
-  contactPhone: 30,
-  businessAddress: 500,
-});
+export const TEMPLATE_TEXT_MAX = POLICY_TEMPLATE_LIMITS.text;
 type TextKey = keyof typeof TEMPLATE_TEXT_MAX;
 const TEXT_KEYS = Object.keys(TEMPLATE_TEXT_MAX) as TextKey[];
 const DAY_FIELDS: readonly string[] = ["returnWindowDays", "deliveryDays.min", "deliveryDays.max"];
@@ -58,7 +52,7 @@ export function templateInputIssues(raw: unknown): readonly TemplateInputIssue[]
     }
     return value;
   };
-  whole(raw["returnWindowDays"], "returnWindowDays", 0, 365);
+  whole(raw["returnWindowDays"], "returnWindowDays", ...POLICY_TEMPLATE_LIMITS.returnWindowDays);
   if (raw["returnShippingPaidBy"] !== "customer" && raw["returnShippingPaidBy"] !== "store") {
     issues.push({ field: "returnShippingPaidBy", code: "INVALID_VALUE" });
   }
@@ -72,9 +66,9 @@ export function templateInputIssues(raw: unknown): readonly TemplateInputIssue[]
   if (!isRecord(days) || Object.keys(days).some((key) => key !== "min" && key !== "max")) {
     issues.push({ field: "deliveryDays", code: "INVALID_VALUE" });
   } else {
-    const min = whole(days["min"], "deliveryDays.min", 1, 60);
+    const min = whole(days["min"], "deliveryDays.min", ...POLICY_TEMPLATE_LIMITS.deliveryMin);
     // The maximum cannot sit below the minimum (as the API reads it).
-    whole(days["max"], "deliveryDays.max", min ?? 1, 90);
+    whole(days["max"], "deliveryDays.max", min ?? 1, POLICY_TEMPLATE_LIMITS.deliveryMaxCap);
   }
   if (typeof raw["shipsInternationally"] !== "boolean") {
     issues.push({ field: "shipsInternationally", code: "INVALID_VALUE" });

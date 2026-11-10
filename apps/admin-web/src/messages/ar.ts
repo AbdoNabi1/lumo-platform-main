@@ -1152,6 +1152,7 @@ export const ar: Dictionary = {
     archive: "أرشفة",
     archiveConfirm: "تأرشف الصفحة دي؟ مش هتقدر ترجّعها تاني.",
     archived: "الصفحة دي متأرشفة، فمينفعش تتعدّل.",
+    staleStatus: "الصفحة دي اتغيرت في نافذة تانية. حمّل الصفحة تاني عشان تكمّل.",
     advanced: "إعدادات متقدمة",
     storePolicies: "سياسات المتجر",
   },

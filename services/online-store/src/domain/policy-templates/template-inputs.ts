@@ -1,5 +1,6 @@
 import {
   normalizePlainText,
+  POLICY_TEMPLATE_LIMITS as LIMITS,
   type ContentIssue,
   type ValidationOutcome,
 } from "@platform/storefront-content";
@@ -117,16 +118,16 @@ export function readTemplateInputs(raw: unknown): ValidationOutcome<PolicyTempla
     if (!(KEYS as readonly string[]).includes(key)) report(`inputs.${shown(key)}`, "UNKNOWN_KEY");
   }
 
-  const storeName = text("storeName", 120, d.storeName);
-  const contactEmail = text("contactEmail", 254, d.contactEmail);
-  const contactPhone = text("contactPhone", 30, d.contactPhone);
-  const businessAddress = text("businessAddress", 500, d.businessAddress);
+  const storeName = text("storeName", LIMITS.text.storeName, d.storeName);
+  const contactEmail = text("contactEmail", LIMITS.text.contactEmail, d.contactEmail);
+  const contactPhone = text("contactPhone", LIMITS.text.contactPhone, d.contactPhone);
+  const businessAddress = text("businessAddress", LIMITS.text.businessAddress, d.businessAddress);
   const returnWindowDays = whole(
     source,
     "returnWindowDays",
     "inputs.returnWindowDays",
-    0,
-    365,
+    LIMITS.returnWindowDays[0],
+    LIMITS.returnWindowDays[1],
     d.returnWindowDays,
   );
   const returnShippingPaidBy = choice(
@@ -152,14 +153,20 @@ export function readTemplateInputs(raw: unknown): ValidationOutcome<PolicyTempla
         if (!DELIVERY_KEYS.includes(key))
           report(`inputs.deliveryDays.${shown(key)}`, "UNKNOWN_KEY");
       }
-      const min = whole(rawDays, "min", "inputs.deliveryDays.min", 1, 60, d.deliveryDays.min);
+      const min = whole(
+        rawDays,
+        "min",
+        "inputs.deliveryDays.min",
+        ...LIMITS.deliveryMin,
+        d.deliveryDays.min,
+      );
       // The maximum cannot sit below the minimum that was just read.
       const max = whole(
         rawDays,
         "max",
         "inputs.deliveryDays.max",
         min,
-        90,
+        LIMITS.deliveryMaxCap,
         Math.max(min, d.deliveryDays.max),
       );
       deliveryDays = { min, max };

@@ -2,6 +2,8 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import {
   PAGE_HANDLE_PATTERN,
+  PAGE_META_DESCRIPTION_MAX,
+  PAGE_TITLE_MAX,
   RICH_TEXT_MAX,
   type LocalizedText,
   type PolicyType,
@@ -51,9 +53,6 @@ export interface PageListItem {
 
 const CONTENT_TTL_SECONDS = 60;
 const RUNTIME_TIMEOUT_MS = 3_000;
-/** The admin's limits (spec 2.4): page title 255, meta description 320. */
-const PAGE_TITLE_MAX = 255;
-const META_DESCRIPTION_MAX = 320;
 /** `GET /public/pages` answers at most this many (spec 2.6). */
 const PAGE_LIST_MAX = 500;
 const ISO_LENGTH_MAX = 40;
@@ -136,7 +135,7 @@ function pageOf(handle: string, body: Raw): PageContent {
     handle,
     title: textOf(body["title"], PAGE_TITLE_MAX),
     body: textOf(body["body"], RICH_TEXT_MAX.body, true),
-    metaDescription: textOf(body["metaDescription"], META_DESCRIPTION_MAX),
+    metaDescription: textOf(body["metaDescription"], PAGE_META_DESCRIPTION_MAX),
     updatedAt: isoOrNull(body["updatedAt"]),
   };
 }

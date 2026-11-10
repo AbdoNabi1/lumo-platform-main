@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { ExternalLinkIcon } from "lucide-react";
 import { Badge, Button } from "@platform/ui";
-import { RICH_TEXT_MAX, type LocalizedText } from "@platform/storefront-content";
+import {
+  PAGE_META_DESCRIPTION_MAX,
+  PAGE_TITLE_MAX,
+  RICH_TEXT_MAX,
+  type LocalizedText,
+} from "@platform/storefront-content";
 import { savePageContentAction, type PageContentSaveState } from "@/app/pages/actions";
 import type { PageDto } from "@/lib/api/pages";
 import type { Locale } from "@/lib/i18n";
@@ -13,10 +18,6 @@ import type { Dictionary } from "@/messages/en";
 import { LocalizedTextField } from "@/components/online-store/localized-text-field";
 import { RichTextEditor } from "@/components/online-store/rich-text-editor";
 import { SaveStatus } from "@/components/online-store/save-status";
-
-/** The domain's limits (`services/pages` `PAGE_TITLE_MAX`, `PAGE_META_MAX`; spec Part 2 numbers). */
-const PAGE_TITLE_MAX = 255;
-const PAGE_META_MAX = 320;
 
 /**
  * A page's address and where it shows (spec 2.4): only `/pages/<handle>` is on the storefront, so
@@ -153,7 +154,7 @@ export function PageContentForm({
           locale={locale}
           name="metaDescription"
           label={e.metaDescription}
-          max={PAGE_META_MAX}
+          max={PAGE_META_DESCRIPTION_MAX}
           value={page.metaDescription}
           multiline
           disabled={!editable || pending}

@@ -3,12 +3,11 @@ import {
   pageHandleOfPath,
   RICH_TEXT_MAX,
   validateRichText,
+  PAGE_META_DESCRIPTION_MAX,
+  PAGE_TITLE_MAX,
   type ContentIssue,
   type LocalizedText,
 } from "@platform/storefront-content";
-
-export const PAGE_TITLE_MAX = 255;
-export const PAGE_META_MAX = 320;
 
 /** A page's merchant text, per locale. Body is Morbeh rich text (see `renderRichText`). */
 export interface PageContent {
@@ -38,7 +37,7 @@ export function validatePageContent(raw: {
   );
   const metaDescription = normalizeLocalizedText(
     raw.metaDescription ?? {},
-    { path: "metaDescription", max: PAGE_META_MAX },
+    { path: "metaDescription", max: PAGE_META_DESCRIPTION_MAX },
     issues,
   );
   const body = normalizeLocalizedText(

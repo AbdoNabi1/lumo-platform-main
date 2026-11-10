@@ -41,6 +41,7 @@ function conflictCopy(t: Dictionary): Readonly<Record<string, string>> {
     MENU_HANDLE_TAKEN: n.taken,
     MENU_LIMIT: n.limit,
     PAGE_ARCHIVED: t.pageEditor.archived,
+    INVALID_TRANSITION: t.pageEditor.staleStatus,
     ROUTE_PATH_TAKEN: t.pageEditor.addressTaken,
   };
 }

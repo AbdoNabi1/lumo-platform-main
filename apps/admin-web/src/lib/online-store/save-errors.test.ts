@@ -136,6 +136,17 @@ describe("saveErrorState (every server code becomes our own copy)", () => {
     ).toMatchObject({ message: ar.onlineStoreNavigation.titleRequired });
   });
 
+  it("an invalid page transition is a stale-page message, never 'already in progress'", () => {
+    const stale = conflict(
+      'INVALID_TRANSITION: Cannot transition page from "published" to "published"',
+    );
+    expect(stale).toMatchObject({ message: en.pageEditor.staleStatus });
+    expect(stale).not.toMatchObject({ message: p.inFlight });
+    expect(
+      saveErrorState({ outcome: "conflict", message: "INVALID_TRANSITION: x" }, ar),
+    ).toMatchObject({ message: ar.pageEditor.staleStatus });
+  });
+
   it("answers in the admin's language", () => {
     expect(saveErrorState({ outcome: "conflict", message: "DRAFT_CHANGED: x" }, ar)).toMatchObject({
       message: ar.onlineStoreErrors.draftChanged,

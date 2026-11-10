@@ -1,4 +1,5 @@
 import {
+  LINK_TARGET_QUERY_MAX,
   POLICY_SLUGS,
   POLICY_TITLES,
   POLICY_TYPES,
@@ -12,7 +13,7 @@ import type { CatalogLinkType, LinkTargetChoice } from "./ports";
 
 /** The link picker's answer and query bounds (spec 2.2, plan Rulings). */
 export const LINK_TARGET_RESULTS_MAX = 20;
-export const LINK_TARGET_QUERY_MAX = 100;
+export { LINK_TARGET_QUERY_MAX };
 
 const CATALOG_LINK_TYPES: readonly CatalogLinkType[] = ["collection", "product", "page"];
 
