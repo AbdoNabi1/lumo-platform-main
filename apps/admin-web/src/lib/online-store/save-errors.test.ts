@@ -78,6 +78,64 @@ describe("saveErrorState (every server code becomes our own copy)", () => {
     });
   });
 
+  it("maps the menu codes (Part 2): 409s and per-item 422s, web addresses apart from social links", () => {
+    const n = en.onlineStoreNavigation;
+    expect(conflict("MENU_PROTECTED: no")).toMatchObject({ message: n.protected });
+    expect(conflict("MENU_IN_USE: no")).toMatchObject({ message: n.inUse });
+    expect(conflict("MENU_HANDLE_TAKEN: no")).toMatchObject({ message: n.taken });
+    expect(conflict("MENU_LIMIT: no")).toMatchObject({ message: n.limit });
+    expect(
+      saveErrorState(
+        {
+          outcome: "invalid",
+          message: "INVALID_CONTENT: Check the highlighted fields.",
+          fields: [
+            { field: "items", message: "MENU_TOO_LARGE" },
+            { field: "items.0.label", message: "LABEL_REQUIRED" },
+            { field: "items.0.children", message: "MENU_TOO_DEEP" },
+            { field: "items.1.children", message: "TOO_MANY_ITEMS" },
+            { field: "items.2.id", message: "DUPLICATE_ITEM_ID" },
+            { field: "items.3.link.type", message: "INVALID_LINK" },
+            { field: "items.4.link.url", message: "INVALID_URL" },
+            { field: "footer.social.instagram", message: "INVALID_URL" },
+          ],
+        },
+        en,
+      ),
+    ).toMatchObject({
+      fieldErrors: {
+        items: n.tooLarge,
+        "items.0.label": n.labelRequired,
+        "items.0.children": n.tooDeep,
+        "items.1.children": n.tooMany,
+        "items.2.id": n.duplicateItem,
+        "items.3.link.type": n.invalidLink,
+        "items.4.link.url": n.urlError,
+        "footer.social.instagram": e.invalidUrl,
+      },
+    });
+    expect(
+      saveErrorState(
+        {
+          outcome: "invalid",
+          message: "INVALID_HANDLE: Use lowercase letters.",
+          fields: [{ field: "handle", message: "INVALID_HANDLE" }],
+        },
+        en,
+      ),
+    ).toEqual({ status: "error", message: n.handleError, fieldErrors: { handle: n.handleError } });
+    expect(
+      saveErrorState(
+        {
+          outcome: "invalid",
+          message: "TITLE_REQUIRED: Give the menu a title.",
+          fields: [{ field: "title", message: "TITLE_REQUIRED" }],
+        },
+        ar,
+      ),
+    ).toMatchObject({ message: ar.onlineStoreNavigation.titleRequired });
+  });
+
   it("answers in the admin's language", () => {
     expect(saveErrorState({ outcome: "conflict", message: "DRAFT_CHANGED: x" }, ar)).toMatchObject({
       message: ar.onlineStoreErrors.draftChanged,

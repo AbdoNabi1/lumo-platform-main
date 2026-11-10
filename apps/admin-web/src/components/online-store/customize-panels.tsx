@@ -442,10 +442,87 @@ export function SocialPanel({
   );
 }
 
-export function FooterPanel({ t, locale, doc, update, disabled, errors }: PanelProps) {
+/** A menu the theme may show: `handle` is stored, `title` is shown. */
+export interface MenuChoice {
+  readonly handle: string;
+  readonly title: string;
+}
+
+/** The shop's menus, plus the stored handle when it is not among them (deleted, or the list failed). */
+function menuOptions(menus: readonly MenuChoice[], current: string): readonly MenuChoice[] {
+  return menus.some((menu) => menu.handle === current)
+    ? menus
+    : [...menus, { handle: current, title: current }];
+}
+
+function MenuSelect({
+  id,
+  label,
+  value,
+  menus,
+  disabled,
+  error,
+  onChange,
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly value: string;
+  readonly menus: readonly MenuChoice[];
+  readonly disabled: boolean;
+  readonly error: string | undefined;
+  readonly onChange: (handle: string) => void;
+}) {
+  const options = menuOptions(menus, value);
+  return (
+    <div className="flex flex-col gap-1">
+      <Label htmlFor={id}>{label}</Label>
+      <NativeSelect
+        id={id}
+        value={value}
+        disabled={disabled}
+        aria-invalid={error === undefined ? undefined : true}
+        aria-describedby={error === undefined ? undefined : `${id}-error`}
+        onChange={(e) => {
+          const handle = e.currentTarget.value;
+          if (options.some((menu) => menu.handle === handle)) onChange(handle);
+        }}
+      >
+        {options.map((menu) => (
+          <option key={menu.handle} value={menu.handle}>
+            {menu.title}
+          </option>
+        ))}
+      </NativeSelect>
+      <FieldError id={`${id}-error`} message={error} />
+    </div>
+  );
+}
+
+/**
+ * Header & footer. Every change spreads the stored header/footer object, so a change to one field
+ * keeps the others (`menuHandle`, `showPolicyLinks`): the save sends the whole object.
+ */
+export function FooterPanel({
+  t,
+  locale,
+  doc,
+  update,
+  disabled,
+  errors,
+  menus,
+}: PanelProps & { readonly menus: readonly MenuChoice[] }) {
   const c = t.onlineStoreCustomize;
   return (
     <section className="flex flex-col gap-4">
+      <MenuSelect
+        id="header.menuHandle"
+        label={c.headerMenu}
+        value={doc.header.menuHandle}
+        menus={menus}
+        disabled={disabled}
+        error={errors["header.menuHandle"]}
+        onChange={(menuHandle) => update((d) => ({ ...d, header: { ...d.header, menuHandle } }))}
+      />
       <label className="flex items-center gap-3 text-sm">
         <Switch
           checked={doc.header.sticky}
@@ -476,6 +553,25 @@ export function FooterPanel({ t, locale, doc, update, disabled, errors }: PanelP
           }
         />
         {c.showSocial}
+      </label>
+      <MenuSelect
+        id="footer.menuHandle"
+        label={c.footerMenu}
+        value={doc.footer.menuHandle}
+        menus={menus}
+        disabled={disabled}
+        error={errors["footer.menuHandle"]}
+        onChange={(menuHandle) => update((d) => ({ ...d, footer: { ...d.footer, menuHandle } }))}
+      />
+      <label className="flex items-center gap-3 text-sm">
+        <Switch
+          checked={doc.footer.showPolicyLinks}
+          disabled={disabled}
+          onCheckedChange={(showPolicyLinks) =>
+            update((d) => ({ ...d, footer: { ...d.footer, showPolicyLinks } }))
+          }
+        />
+        {c.showPolicyLinks}
       </label>
     </section>
   );

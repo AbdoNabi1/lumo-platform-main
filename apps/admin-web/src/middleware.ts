@@ -99,6 +99,8 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   // Project 4: Online Store. Every page reads for viewers (the API refuses their writes, and the
   // screens show them read-only); the theme editor is an editing surface, so operator and up.
   ["/online-store/themes/customize", "operator"],
+  // Part 2: a new menu is created on its own screen, so operator and up (menus read for viewers).
+  ["/online-store/navigation/new", "operator"],
   ["/online-store", "viewer"],
   ["/theme/new", "operator"],
   ["/theme", "viewer"],

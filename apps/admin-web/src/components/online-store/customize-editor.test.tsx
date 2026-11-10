@@ -51,8 +51,16 @@ afterEach(() => {
   for (const fn of Object.values(actions)) fn.mockReset();
 });
 
+const menus = [
+  { handle: "main-menu", title: "Main menu" },
+  { handle: "footer", title: "Footer menu" },
+  { handle: "sale", title: "Sale" },
+];
+
 const renderEditor = (role: "operator" | "admin" = "admin", s: typeof state = state) =>
-  render(<CustomizeEditor t={en} locale="en" state={s} role={role} storeName="Nour" />);
+  render(
+    <CustomizeEditor t={en} locale="en" state={s} role={role} storeName="Nour" menus={menus} />,
+  );
 
 const tick = (ms = 0) =>
   act(async () => {
@@ -490,7 +498,14 @@ describe("CustomizeEditor", () => {
     const admin = "admin" as const; // a literal role prop reads as an ARIA role to jsx-a11y
     render(
       <StrictMode>
-        <CustomizeEditor t={en} locale="en" state={state} role={admin} storeName="Nour" />
+        <CustomizeEditor
+          t={en}
+          locale="en"
+          state={state}
+          role={admin}
+          storeName="Nour"
+          menus={menus}
+        />
       </StrictMode>,
     );
     await tick();
@@ -580,5 +595,70 @@ describe("CustomizeEditor", () => {
     await tick();
     await tick(30_000);
     expect(screen.getByText(en.onlineStoreCustomize.previewExpired)).toBeInTheDocument();
+  });
+
+  it("the header and footer menu selects list the shop's menus and write menuHandle; Show policy links writes showPolicyLinks", async () => {
+    renderEditor();
+    await tick();
+    const header = screen.getByLabelText(en.onlineStoreCustomize.headerMenu);
+    const footer = screen.getByLabelText(en.onlineStoreCustomize.footerMenu);
+    const options = (select: HTMLElement) =>
+      Array.from(select.querySelectorAll("option")).map((o) => [o.value, o.textContent]);
+    expect(options(header)).toEqual([
+      ["main-menu", "Main menu"],
+      ["footer", "Footer menu"],
+      ["sale", "Sale"],
+    ]);
+    expect(header).toHaveValue("main-menu");
+    expect(footer).toHaveValue("footer");
+    fireEvent.change(header, { target: { value: "sale" } });
+    fireEvent.change(footer, { target: { value: "main-menu" } });
+    fireEvent.click(screen.getByLabelText(en.onlineStoreCustomize.showPolicyLinks));
+    await tick(1000);
+    const doc = saveArg(0).document;
+    expect(doc.header).toEqual({ ...DEFAULT_THEME_DOCUMENT.header, menuHandle: "sale" });
+    expect(doc.footer).toEqual({
+      ...DEFAULT_THEME_DOCUMENT.footer,
+      menuHandle: "main-menu",
+      showPolicyLinks: false,
+    });
+  });
+
+  it("saving an unrelated header or footer field keeps menuHandle and showPolicyLinks", async () => {
+    const draft: ThemeDocument = {
+      ...DEFAULT_THEME_DOCUMENT,
+      header: { sticky: false, menuHandle: "sale" },
+      footer: { ...DEFAULT_THEME_DOCUMENT.footer, menuHandle: "sale", showPolicyLinks: false },
+    };
+    renderEditor("admin", { ...state, draft });
+    await tick();
+    fireEvent.click(screen.getByLabelText(en.onlineStoreCustomize.showSocial));
+    fireEvent.click(screen.getByLabelText(en.onlineStoreCustomize.stickyHeader));
+    await tick(1000);
+    const doc = saveArg(0).document;
+    expect(doc.header).toEqual({ sticky: true, menuHandle: "sale" });
+    expect(doc.footer).toEqual({
+      ...DEFAULT_THEME_DOCUMENT.footer,
+      showSocial: false,
+      menuHandle: "sale",
+      showPolicyLinks: false,
+    });
+  });
+
+  it("a chosen menu missing from the list (deleted, or the list failed) stays selectable", async () => {
+    const draft: ThemeDocument = {
+      ...DEFAULT_THEME_DOCUMENT,
+      footer: { ...DEFAULT_THEME_DOCUMENT.footer, menuHandle: "old-links" },
+    };
+    renderEditor("admin", { ...state, draft });
+    await tick();
+    const footer = screen.getByLabelText(en.onlineStoreCustomize.footerMenu);
+    expect(footer).toHaveValue("old-links");
+    expect(Array.from(footer.querySelectorAll("option")).map((o) => o.value)).toEqual([
+      "main-menu",
+      "footer",
+      "sale",
+      "old-links",
+    ]);
   });
 });

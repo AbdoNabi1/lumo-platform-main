@@ -108,6 +108,18 @@ describe("SidebarNav (Shopify layout)", () => {
     );
   });
 
+  it("puts Navigation right after Pages under Online Store (Part 2)", () => {
+    renderNav("online-store-navigation");
+    const channels = screen.getByRole("navigation", { name: en.nav.salesChannels });
+    const labels = within(channels)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(labels.indexOf(en.nav.navigation)).toBe(labels.indexOf(en.nav.pages) + 1);
+    const link = within(channels).getByRole("link", { name: en.nav.navigation });
+    expect(link).toHaveAttribute("href", "/online-store/navigation");
+    expect(link).toHaveAttribute("aria-current", "page");
+  });
+
   it("lists the raw theme tokens under Platform tools", () => {
     renderNav("dashboard", { showPlatformTools: true });
     const tools = screen.getByRole("navigation", { name: en.nav.platformTools });

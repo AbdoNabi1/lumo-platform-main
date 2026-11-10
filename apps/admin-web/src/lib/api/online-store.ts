@@ -2,6 +2,7 @@ import {
   readThemeDocument,
   type ContrastWarning,
   type LocalizedText,
+  type MenuItem,
   type ThemeDocument,
 } from "@platform/storefront-content";
 import {
@@ -266,4 +267,154 @@ export function uploadOnlineStoreImage(input: {
     },
     isImage,
   );
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Part 2 (spec 2.6): menus and the link picker. Reads need `online_store:read`; writes need
+ * `online_store:manage_menus` and carry one Idempotency-Key per submit.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** The link picker's kinds (`home`, `search` and `url` need no search). */
+export type LinkTargetType = "collection" | "product" | "page" | "policy";
+
+/** One row of the menu list (Ruling 29): up to five top-level labels. */
+export interface MenuSummaryDto {
+  readonly id: string | null;
+  readonly handle: string;
+  readonly title: string;
+  readonly itemCount: number;
+  readonly isDefault: boolean;
+  readonly topLabels: readonly LocalizedText[];
+}
+/**
+ * A menu item with its link's current state: `broken` when the target is gone or unpublished,
+ * `targetTitle` the target's title (null for home and search; the raw type for a policy, so a
+ * screen names policies itself).
+ */
+export interface MenuItemViewDto extends Omit<MenuItem, "children"> {
+  readonly broken: boolean;
+  readonly targetTitle: string | null;
+  readonly children: readonly MenuItemViewDto[];
+}
+/** `id` is null and `version` 0 for a default menu never saved. */
+export interface MenuDto {
+  readonly id: string | null;
+  readonly handle: string;
+  readonly title: string;
+  readonly isDefault: boolean;
+  readonly version: number;
+  readonly items: readonly MenuItemViewDto[];
+}
+export interface LinkTargetDto {
+  readonly id: string;
+  readonly title: string;
+  readonly subtitle: string;
+}
+
+const isNullableString = (v: unknown): v is string | null => v === null || typeof v === "string";
+
+/** Two levels at most (spec 2.2): a child with children of its own is not a menu we can edit. */
+function isMenuItemView(v: unknown, depth: 1 | 2 = 1): v is MenuItemViewDto {
+  if (!isObject(v)) return false;
+  const link = v["link"];
+  const children = v["children"];
+  return (
+    typeof v["id"] === "string" &&
+    isObject(v["label"]) &&
+    isObject(link) &&
+    typeof link["type"] === "string" &&
+    typeof v["broken"] === "boolean" &&
+    isNullableString(v["targetTitle"]) &&
+    Array.isArray(children) &&
+    (depth === 2
+      ? children.length === 0
+      : children.every((child: unknown) => isMenuItemView(child, 2)))
+  );
+}
+function isMenu(v: unknown): v is MenuDto {
+  return (
+    isObject(v) &&
+    isNullableString(v["id"]) &&
+    typeof v["handle"] === "string" &&
+    typeof v["title"] === "string" &&
+    typeof v["isDefault"] === "boolean" &&
+    isNumber(v["version"]) &&
+    Array.isArray(v["items"]) &&
+    v["items"].every((item) => isMenuItemView(item))
+  );
+}
+function isMenuSummary(v: unknown): v is MenuSummaryDto {
+  return (
+    isObject(v) &&
+    isNullableString(v["id"]) &&
+    typeof v["handle"] === "string" &&
+    typeof v["title"] === "string" &&
+    isNumber(v["itemCount"]) &&
+    typeof v["isDefault"] === "boolean" &&
+    Array.isArray(v["topLabels"]) &&
+    v["topLabels"].every(isObject)
+  );
+}
+const isMenuList = (v: unknown): v is { menus: MenuSummaryDto[] } =>
+  isObject(v) && Array.isArray(v["menus"]) && v["menus"].every(isMenuSummary);
+const isDeletedMenu = (v: unknown): v is { handle: string } =>
+  isObject(v) && typeof v["handle"] === "string";
+const isLinkTarget = (v: unknown): v is LinkTargetDto =>
+  isObject(v) &&
+  typeof v["id"] === "string" &&
+  typeof v["title"] === "string" &&
+  typeof v["subtitle"] === "string";
+const isLinkTargets = (v: unknown): v is { targets: LinkTargetDto[] } =>
+  isObject(v) && Array.isArray(v["targets"]) && v["targets"].every(isLinkTarget);
+
+const menuPath = (handle: string) => `/api/v1/online-store/menus/${encodeURIComponent(handle)}`;
+
+/** `GET /online-store/menus`: main menu and footer first (saved or default), then by handle. */
+export async function fetchMenus(): Promise<ApiResult<readonly MenuSummaryDto[]>> {
+  const result = await getAdminApi("/api/v1/online-store/menus", isMenuList);
+  return result.outcome === "ok" ? { outcome: "ok", data: result.data.menus } : result;
+}
+
+/** `GET /online-store/menus/:handle`: the items with each link's current target. */
+export function fetchMenu(handle: string): Promise<ApiResult<MenuDto>> {
+  return getAdminApi(menuPath(handle), isMenu);
+}
+
+/** `POST /online-store/menus` (at most 50 custom menus; the main menu and footer do not count). */
+export function createMenu(
+  body: { handle: string; title: string; items: readonly MenuItem[] },
+  idempotencyKey: string,
+): Promise<MutationResult<MenuDto>> {
+  return mutateAdminApi(
+    "/api/v1/online-store/menus",
+    { method: "POST", body, idempotencyKey },
+    isMenu,
+  );
+}
+
+/** `PUT /online-store/menus/:handle`: replaces the title and items (a default menu's first save creates it). */
+export function updateMenu(
+  handle: string,
+  body: { title: string; items: readonly MenuItem[]; expectedVersion: number },
+  idempotencyKey: string,
+): Promise<MutationResult<MenuDto>> {
+  return mutateAdminApi(menuPath(handle), { method: "PUT", body, idempotencyKey }, isMenu);
+}
+
+/** `DELETE /online-store/menus/:handle`: no body (never the main menu or footer, nor one the theme shows). */
+export function deleteMenu(
+  handle: string,
+  idempotencyKey: string,
+): Promise<MutationResult<{ handle: string }>> {
+  return mutateAdminApi(menuPath(handle), { method: "DELETE", idempotencyKey }, isDeletedMenu);
+}
+
+/** `GET /online-store/link-targets?type=&q=`: up to 20 choices of one kind. */
+export async function searchLinkTargets(
+  type: LinkTargetType,
+  q: string,
+): Promise<ApiResult<readonly LinkTargetDto[]>> {
+  const query = new URLSearchParams({ type, q });
+  const result = await getAdminApi(`/api/v1/online-store/link-targets?${query}`, isLinkTargets);
+  return result.outcome === "ok" ? { outcome: "ok", data: result.data.targets } : result;
 }

@@ -14,6 +14,7 @@ import {
   LanguagesIcon,
   LayoutTemplateIcon,
   MegaphoneIcon,
+  MenuIcon,
   PaletteIcon,
   PercentIcon,
   PuzzleIcon,
@@ -139,6 +140,12 @@ export const ONLINE_STORE_NAV: NavItem = {
       Icon: PaletteIcon,
     },
     { id: "pages", label: (t) => t.nav.pages, href: "/pages", Icon: FileIcon },
+    {
+      id: "online-store-navigation",
+      label: (t) => t.nav.navigation,
+      href: "/online-store/navigation",
+      Icon: MenuIcon,
+    },
     {
       id: "online-store-preferences",
       label: (t) => t.nav.preferences,

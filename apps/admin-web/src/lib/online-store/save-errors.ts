@@ -2,18 +2,20 @@ import type { MutationResult } from "@/lib/api/client";
 import { toFormState, type FormState } from "@/lib/api/mutation";
 import type { Dictionary } from "@/messages/en";
 import { codeOf } from "./codes";
+import { isMenuUrlField, menuCodeCopy } from "./menu-copy";
 
 type Failure = Exclude<MutationResult<unknown>, { readonly outcome: "ok" }>;
 
 /**
  * 422 codes (message prefix or field message) with their own copy: the Preferences and access
- * codes (`services/online-store/src/domain/errors.ts`, `access.use-cases.ts`) and the theme
- * document's issue codes (`@platform/storefront-content`).
+ * codes (`services/online-store/src/domain/errors.ts`, `access.use-cases.ts`), the theme
+ * document's issue codes and the menu codes (`@platform/storefront-content`, Part 2).
  */
 function invalidCopy(t: Dictionary): Readonly<Record<string, string>> {
   const p = t.onlineStorePreferences;
   const e = t.onlineStoreErrors;
   return {
+    ...menuCodeCopy(t),
     TOO_LONG: p.tooLong,
     IMAGE_NOT_FOUND: p.imageNotFound,
     PASSWORD_REQUIRED: p.passwordRequired,
@@ -25,12 +27,17 @@ function invalidCopy(t: Dictionary): Readonly<Record<string, string>> {
   };
 }
 
-/** 409 codes with their own copy (`versionConflict`, `draftChanged`, `nothingToPublish`). */
+/** 409 codes with their own copy (`versionConflict`, `draftChanged`, `nothingToPublish`, menus). */
 function conflictCopy(t: Dictionary): Readonly<Record<string, string>> {
+  const n = t.onlineStoreNavigation;
   return {
     VERSION_CONFLICT: t.onlineStorePreferences.conflict,
     DRAFT_CHANGED: t.onlineStoreErrors.draftChanged,
     NOTHING_TO_PUBLISH: t.onlineStoreErrors.nothingToPublish,
+    MENU_PROTECTED: n.protected,
+    MENU_IN_USE: n.inUse,
+    MENU_HANDLE_TAKEN: n.taken,
+    MENU_LIMIT: n.limit,
   };
 }
 
@@ -42,7 +49,7 @@ function conflictCopy(t: Dictionary): Readonly<Record<string, string>> {
  *   no code prefix: that one is "already in progress". Any other coded 409 is the generic conflict
  *   copy, never mistaken for a double submit.
  * - 422 field codes become per-field copy; unknown codes fall back to the generic "check the
- *   highlighted fields".
+ *   highlighted fields". Menu codes (Part 2) are `menu-copy.ts`'s, shared with the editor.
  * - Everything else goes through the shared `toFormState`, whose messages are dictionary text
  *   (404, e.g. `RELEASE_NOT_FOUND`, carries no code through the client and is "not found").
  *
@@ -62,7 +69,12 @@ export function saveErrorState(result: Failure, t: Dictionary): FormState {
     const fieldErrors: Record<string, string> = {};
     for (const issue of result.fields) {
       if (issue.field.length === 0) continue;
-      fieldErrors[issue.field] = copy[issue.message] ?? t.formErrors.invalid;
+      // A menu item's web address has its own wording; social links keep theirs (Part 1).
+      const own =
+        issue.message === "INVALID_URL" && isMenuUrlField(issue.field)
+          ? t.onlineStoreNavigation.urlError
+          : copy[issue.message];
+      fieldErrors[issue.field] = own ?? t.formErrors.invalid;
     }
     const code = codeOf(result.message);
     const message = (code === null ? undefined : copy[code]) ?? t.formErrors.invalid;

@@ -37,6 +37,7 @@ import {
   SocialPanel,
   TypographyPanel,
   type FieldErrors,
+  type MenuChoice,
 } from "./customize-panels";
 import { openPreview, publishMessage, type StaffRole } from "./theme-card";
 
@@ -99,12 +100,15 @@ export function CustomizeEditor({
   state,
   role,
   storeName,
+  menus,
 }: {
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly state: ThemeStateDto;
   readonly role: StaffRole;
   readonly storeName: string;
+  /** The shop's menus for the header and footer selects (the two defaults when the list failed). */
+  readonly menus: readonly MenuChoice[];
 }) {
   const c = t.onlineStoreCustomize;
   const canEdit = role !== "viewer";
@@ -436,7 +440,7 @@ export function CustomizeEditor({
           </details>
           <details className="mb-4">
             <summary className="mb-2 font-medium">{c.footerPanel}</summary>
-            <FooterPanel {...panels} />
+            <FooterPanel {...panels} menus={menus} />
           </details>
         </aside>
         <main className="bg-surface flex min-h-0 min-w-0 flex-1 justify-center overflow-auto p-4">

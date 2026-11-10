@@ -152,3 +152,169 @@ describe("online-store API client", () => {
     expect(JSON.parse(String(init.body))).toEqual(body);
   });
 });
+
+const ITEM_ID = "0b0e7a3c-4f6a-4c1e-9d55-6f1a2b3c4d5e";
+const menuView = {
+  id: null,
+  handle: "main-menu",
+  title: "Main menu",
+  isDefault: true,
+  version: 0,
+  items: [
+    {
+      id: ITEM_ID,
+      label: { en: "Sale" },
+      link: { type: "collection", id: "c-1" },
+      broken: false,
+      targetTitle: "Sale",
+      children: [
+        {
+          id: "1b0e7a3c-4f6a-4c1e-9d55-6f1a2b3c4d5e",
+          label: { ar: "الشروط" },
+          link: { type: "policy", policy: "terms" },
+          broken: false,
+          targetTitle: "terms",
+          children: [],
+        },
+      ],
+    },
+  ],
+};
+type Call = [string, RequestInit & { headers: Record<string, string> }];
+
+describe("online-store menus API client (Part 2, spec 2.6)", () => {
+  it("lists the menus off GET /online-store/menus (online_store:read)", async () => {
+    const summary = {
+      id: null,
+      handle: "main-menu",
+      title: "Main menu",
+      itemCount: 1,
+      isDefault: true,
+      topLabels: [{ en: "Home" }],
+    };
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      json(200, { menus: [summary] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await api.fetchMenus()).toEqual({ outcome: "ok", data: [summary] });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "http://runtime.test/api/v1/online-store/menus",
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(200, { menus: [{ handle: "x" }] })),
+    );
+    expect((await api.fetchMenus()).outcome).toBe("error");
+  });
+
+  it("reads one menu by its encoded handle and guards the view's exact shape", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => json(200, menuView));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await api.fetchMenu("main-menu")).toEqual({ outcome: "ok", data: menuView });
+    await api.fetchMenu("a/../b");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      "http://runtime.test/api/v1/online-store/menus/a%2F..%2Fb",
+    );
+    const { isDefault: _dropped, ...withoutDefault } = menuView;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(200, withoutDefault)),
+    );
+    expect((await api.fetchMenu("main-menu")).outcome).toBe("error");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json(200, { ...menuView, items: [{ ...menuView.items[0], broken: "no" }] }),
+      ),
+    );
+    expect((await api.fetchMenu("main-menu")).outcome).toBe("error");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(404, { code: "MENU_NOT_FOUND" })),
+    );
+    expect(await api.fetchMenu("gone")).toEqual({ outcome: "not_found" });
+  });
+
+  it("creates with POST and one key", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      json(201, { ...menuView, handle: "sale", isDefault: false, id: "m-1", version: 1 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const body = { handle: "sale", title: "Sale", items: [] };
+    expect((await api.createMenu(body, "key-c")).outcome).toBe("ok");
+    const [url, init] = fetchMock.mock.calls[0] as Call;
+    expect(url).toBe("http://runtime.test/api/v1/online-store/menus");
+    expect(init.method).toBe("POST");
+    expect(init.headers["idempotency-key"]).toBe("key-c");
+    expect(JSON.parse(String(init.body))).toEqual(body);
+  });
+
+  it("updates with PUT on the encoded handle, with the expected version and one key", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => json(200, menuView));
+    vi.stubGlobal("fetch", fetchMock);
+    const body = { title: "Main", items: [], expectedVersion: 0 };
+    expect((await api.updateMenu("main-menu", body, "key-u")).outcome).toBe("ok");
+    const [url, init] = fetchMock.mock.calls[0] as Call;
+    expect(url).toBe("http://runtime.test/api/v1/online-store/menus/main-menu");
+    expect(init.method).toBe("PUT");
+    expect(init.headers["idempotency-key"]).toBe("key-u");
+    expect(JSON.parse(String(init.body))).toEqual(body);
+  });
+
+  it("maps an oversized menu (422 INVALID_CONTENT, items: MENU_TOO_LARGE) to invalid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json(422, {
+          code: "INVALID_CONTENT",
+          message: "INVALID_CONTENT: Check the highlighted fields.",
+          fields: [{ field: "items", message: "MENU_TOO_LARGE" }],
+        }),
+      ),
+    );
+    expect(
+      await api.updateMenu("footer", { title: "F", items: [], expectedVersion: 1 }, "k"),
+    ).toEqual({
+      outcome: "invalid",
+      message: "INVALID_CONTENT: Check the highlighted fields.",
+      fields: [{ field: "items", message: "MENU_TOO_LARGE" }],
+    });
+  });
+
+  it("deletes with DELETE on the encoded handle, a key and no body", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      json(200, { handle: "summer sale" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await api.deleteMenu("summer sale", "key-d")).toEqual({
+      outcome: "ok",
+      data: { handle: "summer sale" },
+    });
+    const [url, init] = fetchMock.mock.calls[0] as Call;
+    expect(url).toBe("http://runtime.test/api/v1/online-store/menus/summer%20sale");
+    expect(init.method).toBe("DELETE");
+    expect(init.headers["idempotency-key"]).toBe("key-d");
+    expect(init.body).toBeUndefined();
+    expect(init.headers["content-type"]).toBeUndefined();
+  });
+
+  it("searches link targets with the type passed through and the query encoded", async () => {
+    const targets = [{ id: "c-1", title: "Sale", subtitle: "/collections/sale" }];
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => json(200, { targets }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await api.searchLinkTargets("collection", "تخفيض & co")).toEqual({
+      outcome: "ok",
+      data: targets,
+    });
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.pathname).toBe("/api/v1/online-store/link-targets");
+    expect(url.searchParams.get("type")).toBe("collection");
+    expect(url.searchParams.get("q")).toBe("تخفيض & co");
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("تخفيض");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(200, { targets: [{ id: 1 }] })),
+    );
+    expect((await api.searchLinkTargets("page", "")).outcome).toBe("error");
+  });
+});

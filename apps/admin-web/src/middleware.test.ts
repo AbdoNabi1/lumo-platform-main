@@ -133,6 +133,25 @@ describe("middleware", () => {
     ).toBeNull();
   });
 
+  it("Online Store → Navigation: viewers read menus; a new menu needs an operator (Part 2)", async () => {
+    const { ONLINE_STORE_NAV } = await import("@/components/navigation");
+    expect((ONLINE_STORE_NAV.children ?? []).map((c) => c.href)).toContain(
+      "/online-store/navigation",
+    );
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/online-store/navigation", "/online-store/navigation/main-menu"]) {
+      expect((await middleware(requestFor(path, "good.token"))).headers.get("location")).toBeNull();
+    }
+    const denied = await middleware(requestFor("/online-store/navigation/new", "good.token"));
+    expect(denied.headers.get("location")).toContain("/forbidden");
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    expect(
+      (await middleware(requestFor("/online-store/navigation/new", "good.token"))).headers.get(
+        "location",
+      ),
+    ).toBeNull();
+  });
+
   it("/forbidden itself is reachable by any authenticated session regardless of role", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
     const response = await middleware(requestFor("/forbidden", "good.token"));
