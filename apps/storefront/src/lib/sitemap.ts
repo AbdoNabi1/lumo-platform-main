@@ -1,8 +1,10 @@
 import { unstable_cache } from "next/cache";
 import {
   PAGE_HANDLE_PATTERN,
+  pickText,
   POLICY_TYPES,
   policyPath,
+  type LocalizedText,
   type PolicyType,
 } from "@platform/storefront-content";
 import { readPageList, readPolicy, type ContentRead } from "./content";
@@ -44,7 +46,9 @@ export interface SitemapReads {
   products(after?: string): Promise<Page<Listed> | null>;
   collections(after?: string): Promise<Page<Listed> | null>;
   pages(): Promise<readonly { handle: string; updatedAt: string | null }[] | null>;
-  policy(type: PolicyType): Promise<ContentRead<{ readonly updatedAt: string | null }>>;
+  policy(
+    type: PolicyType,
+  ): Promise<ContentRead<{ readonly body: LocalizedText; readonly updatedAt: string | null }>>;
 }
 
 /** A valid date as an ISO string (safe in XML), else undefined. */
@@ -123,7 +127,10 @@ export async function collectSitemapPaths(
     if (full()) break;
     const read = await call(() => reads.policy(type));
     if (read.status === "error") throw new Error(`sitemap: ${type} policy read failed`);
-    if (read.status === "ok") paths.push(withDate(policyPath(type), read.value.updatedAt));
+    // A set row with no text in either language 404s on its page (`pickText` falls back across
+    // locales), so it is not listed either (task 9 review, minor 3).
+    if (read.status !== "ok" || pickText(read.value.body, "en") === null) continue;
+    paths.push(withDate(policyPath(type), read.value.updatedAt));
   }
 
   return paths.slice(0, SITEMAP_MAX_URLS);

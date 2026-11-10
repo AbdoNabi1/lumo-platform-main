@@ -3,10 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@platform/ui";
 import { FALLBACK_SHELL, type StorefrontShell } from "@/lib/online-store";
 
-const current = vi.hoisted(() => ({ shell: null as StorefrontShell | null }));
+const current = vi.hoisted(() => ({ shell: null as StorefrontShell | null, lockedView: false }));
 vi.mock("@/lib/request-locale", () => ({
   getRequestShell: async () => current.shell,
   getRequestLocale: async () => "ar",
+  getLockedView: async () => current.lockedView,
 }));
 vi.mock("geist/font/sans", () => ({ GeistSans: { variable: "geist" } }));
 const { default: RootLayout, generateMetadata } = await import("./layout");
@@ -79,6 +80,20 @@ describe("RootLayout metadata (preflight 18)", () => {
     const meta = await generateMetadata();
     expect(JSON.stringify(meta)).toContain("إطلاق سري");
     expect(meta.robots).toEqual({ index: false, follow: false });
+  });
+
+  it("the locked view closes it even when the shell is stale-unlocked or the fallback (review minor 2)", async () => {
+    current.lockedView = true;
+    for (const shell of [secret, FALLBACK_SHELL]) {
+      current.shell = shell;
+      const meta = await generateMetadata();
+      const text = JSON.stringify(meta);
+      expect(text).not.toContain("إطلاق سري");
+      expect(text).not.toContain("مصابيح لم تصدر بعد");
+      expect(text).not.toContain("og.jpg");
+      expect(meta.robots).toEqual({ index: false, follow: false });
+    }
+    current.lockedView = false;
   });
 
   it("an unlocked store's preview is not indexed either (final review M-1)", async () => {

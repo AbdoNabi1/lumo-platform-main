@@ -20,7 +20,7 @@ import "@fontsource/amiri/700.css";
 import "./globals.css";
 import { ThemeProvider } from "@platform/ui";
 import { dictionaryFor, directionFor } from "@/lib/i18n";
-import { getRequestLocale, getRequestShell } from "@/lib/request-locale";
+import { getLockedView, getRequestLocale, getRequestShell } from "@/lib/request-locale";
 import { brandStyleFor, lockedMetadataFor, metadataFor } from "@/lib/shell-presentation";
 
 /**
@@ -28,9 +28,15 @@ import { brandStyleFor, lockedMetadataFor, metadataFor } from "@/lib/shell-prese
  * description or share image (preflight 18); the owner's private preview keeps them.
  */
 export async function generateMetadata(): Promise<Metadata> {
-  const [shell, locale] = await Promise.all([getRequestShell(), getRequestLocale()]);
+  const [lockedView, shell, locale] = await Promise.all([
+    getLockedView(),
+    getRequestShell(),
+    getRequestLocale(),
+  ]);
   const t = dictionaryFor(locale);
-  return shell.locked && shell.mode === "live"
+  // The gate's locked view too (task 9 review, minor 2): a fallback or stale-unlocked shell must
+  // not give a locked store's policy page the home description, share image or an index.
+  return lockedView || (shell.locked && shell.mode === "live")
     ? lockedMetadataFor(shell, locale, t)
     : metadataFor(shell, locale, t);
 }

@@ -1,7 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import type * as PlatformUi from "@platform/ui";
+import { signAccessCookie } from "@/lib/access-cookie";
+import type * as OnlineStore from "@/lib/online-store";
 import { FALLBACK_SHELL, type StorefrontShell } from "@/lib/online-store";
+import { currentShopId } from "@/lib/runtime-api";
 import { en } from "@/messages/en";
 
 const request = vi.hoisted(() => ({
@@ -15,6 +18,23 @@ vi.mock("@/lib/request-locale", () => ({
   getPreviewToken: async () => request.token,
   getLockedView: async () => request.lockedView,
 }));
+/** Part 1's access read (`GET /public/online-store/access`, no-store) and the cookie jar. */
+const access = vi.hoisted(() => ({ read: vi.fn() }));
+vi.mock("@/lib/online-store", async (original) => ({
+  ...(await original<typeof OnlineStore>()),
+  getPublicAccess: access.read,
+}));
+const jar = vi.hoisted(() => ({ cookie: undefined as string | undefined }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) =>
+      name === "morbeh-storefront-access" && jar.cookie !== undefined
+        ? { value: jar.cookie }
+        : undefined,
+  }),
+  // A client can send any header on a path the middleware skips: none is trusted here.
+  headers: async () => ({ get: () => null }),
+}));
 vi.mock("@/components/locale-switch", () => ({ LocaleSwitch: () => <span>lang</span> }));
 vi.mock("@/components/preview-link-keeper", () => ({ PreviewLinkKeeper: () => null }));
 vi.mock("@platform/ui", async (original) => ({
@@ -23,10 +43,27 @@ vi.mock("@platform/ui", async (original) => ({
 }));
 const { default: NotFound } = await import("./not-found");
 
+const SECRET = "s".repeat(32);
+
 beforeEach(() => {
   request.lockedView = false;
   request.token = null;
+  jar.cookie = undefined;
+  access.read.mockReset();
+  access.read.mockResolvedValue({ locked: true, accessVersion: 3, message: {} });
+  vi.stubEnv("STOREFRONT_ACCESS_SECRET", SECRET);
 });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+const cookieFor = async (accessVersion: number, secret = SECRET) =>
+  signAccessCookie({
+    secret,
+    shopId: await currentShopId(),
+    accessVersion,
+    expUnix: Math.floor(Date.now() / 1000) + 3600,
+  });
 
 const item = (label: string, href: string) => ({
   label: { en: label },
@@ -130,5 +167,88 @@ describe("NotFound on a locked store (Ruling 5, preflight 7)", () => {
     render(await NotFound());
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
     expect(screen.getAllByText("Secret lamp").length).toBeGreaterThan(0);
+  });
+});
+
+describe("NotFound for a visitor holding the unlock cookie (review minor 1)", () => {
+  it("a valid cookie, checked on the server against the access version, gets the normal 404", async () => {
+    request.shell = lockedShell();
+    jar.cookie = await cookieFor(3);
+    render(await NotFound());
+    expect(screen.getByRole("contentinfo")).toBeInTheDocument();
+    expect(screen.getAllByText("Secret lamp").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: en.locked.enter })).toBeNull();
+    expect(access.read).toHaveBeenCalledTimes(1);
+  });
+
+  it("no cookie is the frame, without asking the Runtime", async () => {
+    request.shell = lockedShell();
+    render(await NotFound());
+    expectNoChrome();
+    expect(access.read).not.toHaveBeenCalled();
+  });
+
+  it("a forged, malformed or other-shop cookie is the frame", async () => {
+    request.shell = lockedShell();
+    for (const cookie of [
+      await cookieFor(3, "x".repeat(32)),
+      "garbage",
+      await signAccessCookie({
+        secret: SECRET,
+        shopId: "shop-other",
+        accessVersion: 3,
+        expUnix: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    ]) {
+      jar.cookie = cookie;
+      const { unmount } = render(await NotFound());
+      expectNoChrome();
+      unmount();
+    }
+  });
+
+  it("a stale access version (password changed, re-locked) is the frame", async () => {
+    request.shell = lockedShell();
+    jar.cookie = await cookieFor(2);
+    render(await NotFound());
+    expectNoChrome();
+  });
+
+  it("a failed, refused or unlocked access read is the frame (fail closed)", async () => {
+    request.shell = lockedShell();
+    jar.cookie = await cookieFor(3);
+    for (const answer of [
+      () => access.read.mockRejectedValue(new Error("down")),
+      () => access.read.mockResolvedValue(null),
+      () => access.read.mockResolvedValue({ locked: false, accessVersion: 3, message: {} }),
+    ]) {
+      answer();
+      const { unmount } = render(await NotFound());
+      expectNoChrome();
+      unmount();
+    }
+  });
+
+  it("no secret configured, or no resolvable shop, is the frame", async () => {
+    request.shell = lockedShell();
+    jar.cookie = await cookieFor(3);
+    vi.stubEnv("STOREFRONT_ACCESS_SECRET", "");
+    let view = render(await NotFound());
+    expectNoChrome();
+    view.unmount();
+    vi.stubEnv("STOREFRONT_ACCESS_SECRET", SECRET);
+    vi.stubEnv("STOREFRONT_HOST_ROUTING", "on"); // no x-shop-id: currentShopId throws
+    view = render(await NotFound());
+    expectNoChrome();
+    view.unmount();
+  });
+
+  it("the locked view stays the frame whatever the cookie says", async () => {
+    request.lockedView = true;
+    request.shell = lockedShell();
+    jar.cookie = await cookieFor(3);
+    render(await NotFound());
+    expectNoChrome();
+    expect(access.read).not.toHaveBeenCalled();
   });
 });

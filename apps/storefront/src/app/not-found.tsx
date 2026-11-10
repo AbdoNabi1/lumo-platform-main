@@ -9,12 +9,16 @@ import {
   getRequestLocale,
   getRequestShell,
 } from "@/lib/request-locale";
+import { holdsValidUnlock } from "@/lib/unlock-proof";
 
 /**
  * Ruling 23: unmatched URLs render here (outside any group), inside the same store chrome. A
  * locked store's 404 never does (Ruling 5): under a reachable path (the locked view), and wherever
  * the live shell says locked, such as `/favicon.ico` on a deployment without host routing, which
- * the middleware never sees (preflight 7). Only the owner's preview keeps the chrome there.
+ * the middleware never sees (preflight 7). Only the owner's preview keeps the chrome there, and a
+ * visitor whose unlock cookie the server itself verifies against the current access version (task
+ * 9 review, minor 1): never a request header, which a client can send where the middleware is
+ * skipped. The locked view stays the frame whatever the cookie says.
  */
 export default async function NotFound() {
   const [lockedView, shell, locale, token] = await Promise.all([
@@ -34,7 +38,9 @@ export default async function NotFound() {
       />
     </main>
   );
-  if (lockedView || (shell.locked && shell.mode === "live")) {
+  const frame =
+    lockedView || (shell.locked && shell.mode === "live" && !(await holdsValidUnlock()));
+  if (frame) {
     return (
       <LockedFrame shell={shell} locale={locale}>
         {panel}

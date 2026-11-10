@@ -66,6 +66,8 @@ interface FakeOptions {
   productsFail?: boolean;
   collectionsFail?: boolean;
   policyError?: PolicyType;
+  /** Set rows whose body is empty in both languages. */
+  emptyPolicies?: PolicyType[];
   /** Override a page's pageInfo (cursor loop cases). */
   pageInfo?: (index: number) => { hasNextPage: boolean; endCursor: string | null };
   /** Runs on every read (a clock, say). */
@@ -106,7 +108,8 @@ function reads(options: FakeOptions): Reads & { calls(): number; afters: (string
       if (options.policyError === type) return { status: "error" };
       const policies = options.policies ?? {};
       if (!(type in policies)) return { status: "not-found" };
-      return { status: "ok", value: { updatedAt: policies[type] as string | null } };
+      const body = options.emptyPolicies?.includes(type) === true ? {} : { en: "Text" };
+      return { status: "ok", value: { body, updatedAt: policies[type] as string | null } };
     },
     calls: () => calls,
     afters,
@@ -140,6 +143,19 @@ describe("collectSitemapPaths (spec 2.8)", () => {
       { path: "/products/lamp" },
       { path: "/pages/about", lastModified: "2026-11-01T00:00:00.000Z" },
       { path: "/policies/refund-policy", lastModified: "2026-11-02T00:00:00.000Z" },
+    ]);
+  });
+
+  it("skips a policy whose body is empty in both languages, as its page 404s (review minor 3)", async () => {
+    const paths = await collectSitemapPaths(
+      reads({
+        policies: { refund: null, shipping: null, privacy: null },
+        emptyPolicies: ["shipping"],
+      }),
+    );
+    expect(paths.slice(2)).toEqual([
+      { path: "/policies/refund-policy" },
+      { path: "/policies/privacy-policy" },
     ]);
   });
 
@@ -400,6 +416,14 @@ describe("getSitemapPaths (host routing on, preflight 1)", () => {
     await expect(getSitemapPaths()).rejects.toThrow();
     routes["/api/v1/public/pages"] = () => json(500, {});
     await expect(getSitemapPaths()).rejects.toThrow();
+  });
+
+  it("a live policy with an empty body is left out", async () => {
+    routes["/api/v1/public/policies/terms"] = () =>
+      json(200, { type: "terms", body: { ar: "", en: "" }, updatedAt: null });
+    const paths = await getSitemapPaths();
+    expect(paths.map((p) => p.path)).not.toContain("/policies/terms-of-service");
+    expect(paths.map((p) => p.path)).toContain("/policies/refund-policy");
   });
 
   it("a policy read that fails throws; one that is not set is skipped", async () => {
