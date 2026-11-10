@@ -49,7 +49,7 @@ export function StoreChrome({
           </div>
         </div>
         <div className="flex-1">{children}</div>
-        <SiteFooter t={t} locale={locale} shell={shell} />
+        <SiteFooter t={t} locale={locale} shell={shell} previewToken={previewToken} />
       </div>
       {previewToken === null ? null : <PreviewLinkKeeper token={previewToken} />}
     </PreviewModeProvider>

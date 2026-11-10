@@ -406,3 +406,61 @@ describe("sanitizeShell (defence in depth, spec 1.12)", () => {
     expect(withLogo("https://cdn.test/l.png")).toBe("https://cdn.test/l.png");
   });
 });
+
+describe("menus in the shell (spec 2.6, 2.8)", () => {
+  const withMenus = (header: unknown, footer: unknown) => ({
+    ...liveBody,
+    header: { sticky: false, menu: header },
+    footer: {
+      note: {},
+      showSocial: true,
+      menu: footer,
+      policies: ["terms", "refund", "terms", "cookies"],
+    },
+  });
+
+  it("re-validates every item: unsafe hrefs and empty labels go, external is recomputed", () => {
+    const shell = parseShell(
+      withMenus(
+        [
+          { label: { en: "Home" }, href: "/", external: true, children: [] },
+          { label: { en: "X" }, href: "javascript:alert(1)", external: false, children: [] },
+          { label: { en: "Evil" }, href: "//evil.example", external: false, children: [] },
+          { label: { en: "Data" }, href: "data:text/html,x", external: false, children: [] },
+          { label: { en: "Shop" }, href: "https://shop.example", external: false, children: [] },
+        ],
+        [],
+      ),
+      "live",
+    );
+    expect(shell?.header.menu).toEqual([
+      { label: { en: "Home" }, href: "/", external: false, children: [] },
+      { label: { en: "Shop" }, href: "https://shop.example/", external: true, children: [] },
+    ]);
+  });
+
+  it("policies are the known ones, once each, in policy order", () => {
+    expect(parseShell(withMenus([], []), "live")?.footer.policies).toEqual(["refund", "terms"]);
+  });
+
+  it("a shell without menus parses as empty menus (Review Focus 2)", () => {
+    const shell = parseShell(liveBody, "live");
+    expect(shell?.header.menu).toEqual([]);
+    expect(shell?.footer).toMatchObject({ menu: [], policies: [] });
+  });
+
+  it("the fallback shell has empty menus and no policies", () => {
+    expect(FALLBACK_SHELL.header.menu).toEqual([]);
+    expect(FALLBACK_SHELL.footer).toMatchObject({ menu: [], policies: [] });
+  });
+});
+
+describe("textOf and clip (shared with content reads, preflight 16)", () => {
+  it("clip cuts without leaving half a surrogate pair; textOf caps each locale", async () => {
+    const { clip, textOf } = await import("./online-store");
+    expect(clip("abc", 5)).toBe("abc");
+    expect(clip(`a${"\u{1F600}"}`, 2)).toBe("a");
+    expect(textOf({ en: "x".repeat(10), ar: "ب".repeat(3) }, 4)).toEqual({ ar: "ببب", en: "xxxx" });
+    expect(textOf({ en: 5 }, 4)).toEqual({});
+  });
+});

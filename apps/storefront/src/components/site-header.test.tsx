@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import type * as PlatformUi from "@platform/ui";
 import { FALLBACK_SHELL } from "@/lib/online-store";
 import { en } from "@/messages/en";
@@ -119,5 +119,83 @@ describe("SiteHeader (spec 1.12)", () => {
     const isolate = name.querySelector("bdi");
     expect(isolate).toHaveAttribute("dir", "auto");
     expect(isolate?.textContent).toBe(hostile);
+  });
+});
+
+describe("header navigation (spec 2.8)", () => {
+  const shell = {
+    ...FALLBACK_SHELL,
+    header: {
+      sticky: false,
+      menu: [
+        { label: { en: "Home", ar: "الرئيسية" }, href: "/", external: false, children: [] },
+        {
+          label: { en: "Shop" },
+          href: "/collections/all",
+          external: false,
+          children: [
+            { label: { en: "Sale" }, href: "/collections/sale", external: false, children: [] },
+          ],
+        },
+        { label: { en: "WhatsApp" }, href: "https://wa.me/20100", external: true, children: [] },
+      ],
+    },
+  };
+
+  it("desktop: links, a details dropdown for children, and safe external links", () => {
+    render(<SiteHeader t={en} locale="en" shell={shell} previewToken={null} />);
+    const nav = screen.getByRole("navigation", { name: en.nav.menu });
+    expect(within(nav).getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
+    // "Shop" is both the summary and the first link of its own list (the parent stays reachable).
+    const summary = within(nav)
+      .getAllByText("Shop")
+      .map((label) => label.closest("summary"))
+      .find((found) => found !== null);
+    expect(summary?.parentElement?.tagName).toBe("DETAILS");
+    expect(within(nav).getByRole("link", { name: "Shop" })).toHaveAttribute(
+      "href",
+      "/collections/all",
+    );
+    expect(within(nav).getByRole("link", { name: "Sale" })).toHaveAttribute(
+      "href",
+      "/collections/sale",
+    );
+    const wa = within(nav).getByRole("link", { name: "WhatsApp" });
+    expect(wa).toHaveAttribute("target", "_blank");
+    expect(wa).toHaveAttribute("rel", "noopener noreferrer nofollow");
+  });
+
+  it("internal links keep the preview token; external ones never carry it", () => {
+    render(<SiteHeader t={en} locale="en" shell={shell} previewToken={"T".repeat(43)} />);
+    const nav = screen.getByRole("navigation", { name: en.nav.menu });
+    expect(within(nav).getByRole("link", { name: "Home" }).getAttribute("href")).toContain(
+      "preview=",
+    );
+    expect(within(nav).getByRole("link", { name: "WhatsApp" }).getAttribute("href")).toBe(
+      "https://wa.me/20100",
+    );
+  });
+
+  it("Arabic labels render isolated; an empty menu renders no navigation", () => {
+    render(<SiteHeader t={ar} locale="ar" shell={shell} previewToken={null} />);
+    expect(screen.getAllByText("الرئيسية")[0]?.closest("bdi")).toHaveAttribute("dir", "auto");
+    cleanup();
+    render(<SiteHeader t={en} locale="en" shell={FALLBACK_SHELL} previewToken={null} />);
+    expect(screen.queryByRole("navigation", { name: en.nav.menu })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.nav.openMenu })).toBeNull();
+  });
+
+  it("the mobile trigger comes first in the top row; the desktop nav is its own row", () => {
+    render(<SiteHeader t={en} locale="en" shell={shell} previewToken={null} />);
+    const banner = screen.getByRole("banner");
+    const trigger = within(banner).getByRole("button", { name: en.nav.openMenu });
+    const home = within(banner).getAllByRole("link")[0];
+    expect(home).toBeDefined();
+    expect(
+      trigger.compareDocumentPosition(home as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: en.nav.menu });
+    expect(banner.contains(nav)).toBe(false);
+    expect(nav).toHaveClass("hidden", "md:block");
   });
 });

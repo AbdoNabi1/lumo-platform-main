@@ -9,6 +9,8 @@ export const en = {
     searchPlaceholder: "Search products…",
     searchSubmit: "Search",
     account: "Account",
+    menu: "Menu",
+    closeMenu: "Close navigation",
   },
   theme: {
     toggle: "Toggle theme",
@@ -27,6 +29,8 @@ export const en = {
       youtube: "YouTube",
       snapchat: "Snapchat",
     },
+    links: "Links",
+    policies: "Policies",
   },
   meta: {
     fallbackTitle: "Store",
@@ -376,6 +380,11 @@ export const en = {
   },
   common: {
     loading: "Loading…",
+  },
+  content: {
+    lastUpdated: "Last updated {date}",
+    unavailableTitle: "Page unavailable",
+    unavailable: "This page is unavailable right now. Please try again later.",
   },
   notFound: {
     title: "Page not found",

@@ -14,6 +14,8 @@ export const ar: Dictionary = {
     searchPlaceholder: "ابحث عن المنتجات…",
     searchSubmit: "بحث",
     account: "الحساب",
+    menu: "القائمة",
+    closeMenu: "إغلاق القائمة",
   },
   theme: {
     toggle: "تبديل المظهر",
@@ -32,6 +34,8 @@ export const ar: Dictionary = {
       youtube: "يوتيوب",
       snapchat: "سناب شات",
     },
+    links: "روابط",
+    policies: "السياسات",
   },
   meta: {
     fallbackTitle: "المتجر",
@@ -374,6 +378,11 @@ export const ar: Dictionary = {
   },
   common: {
     loading: "جارٍ التحميل…",
+  },
+  content: {
+    lastUpdated: "آخر تحديث {date}",
+    unavailableTitle: "الصفحة غير متاحة",
+    unavailable: "هذه الصفحة غير متاحة الآن. يرجى المحاولة لاحقاً.",
   },
   notFound: {
     title: "الصفحة غير موجودة",

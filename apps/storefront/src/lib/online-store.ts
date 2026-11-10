@@ -4,11 +4,15 @@ import {
   DEFAULT_THEME_DOCUMENT,
   FOOTER_NOTE_MAX,
   normalizeLocalizedText,
+  POLICY_TYPES,
   readBrandStyle,
+  readResolvedMenu,
   readSocial,
   type BrandStyle,
   type Locale,
   type LocalizedText,
+  type PolicyType,
+  type ResolvedMenuItem,
   type ThemeBrand,
 } from "@platform/storefront-content";
 import { currentShopId, RUNTIME_API_URL } from "./runtime-api";
@@ -54,8 +58,15 @@ export interface StorefrontShell {
     readonly style: BrandStyle;
     readonly social: ThemeBrand["social"];
   };
-  readonly header: { readonly sticky: boolean };
-  readonly footer: { readonly note: LocalizedText; readonly showSocial: boolean };
+  /** Spec 2.8: the header menu as the Runtime resolved it, every item re-validated here. */
+  readonly header: { readonly sticky: boolean; readonly menu: readonly ResolvedMenuItem[] };
+  readonly footer: {
+    readonly note: LocalizedText;
+    readonly showSocial: boolean;
+    readonly menu: readonly ResolvedMenuItem[];
+    /** The set policies to link in the footer, once each, in `POLICY_TYPES` order. */
+    readonly policies: readonly PolicyType[];
+  };
   readonly locked: boolean;
 }
 
@@ -84,8 +95,8 @@ export const FALLBACK_SHELL: StorefrontShell = deepFreeze(
       style: readBrandStyle(DEFAULT_THEME_DOCUMENT.brand),
       social: {},
     },
-    header: { sticky: false },
-    footer: { note: {}, showSocial: true },
+    header: { sticky: false, menu: [] },
+    footer: { note: {}, showSocial: true, menu: [], policies: [] },
     locked: false,
   } satisfies StorefrontShell),
 );
@@ -124,7 +135,7 @@ function imageOf(value: unknown): ShellImage | null {
 }
 
 /** Cut at `max` UTF-16 units (the admin's own measure) without leaving half a surrogate pair. */
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   if (text.length <= max) return text;
   const cut = text.slice(0, max);
   const last = cut.charCodeAt(cut.length - 1);
@@ -132,7 +143,7 @@ function clip(text: string, max: number): string {
 }
 
 /** A hostile or buggy Runtime must not be able to bloat the cached entry, so every text is capped. */
-function textOf(value: unknown, max: number, multiline = false): LocalizedText {
+export function textOf(value: unknown, max: number, multiline = false): LocalizedText {
   const found = normalizeLocalizedText(value, { path: "", max, multiline }, []);
   return {
     ...(found.ar === undefined ? {} : { ar: clip(found.ar, max) }),
@@ -159,6 +170,9 @@ export function parseShell(raw: unknown, mode: "live" | "preview"): StorefrontSh
   const brand = obj(o["brand"]);
   const logo = obj(brand["logo"]);
   const width = logo["widthPx"];
+  const header = obj(o["header"]);
+  const footer = obj(o["footer"]);
+  const policies = footer["policies"];
   return {
     mode,
     previewExpiresAt:
@@ -187,10 +201,13 @@ export function parseShell(raw: unknown, mode: "live" | "preview"): StorefrontSh
       style: readBrandStyle(brand),
       social: readSocial(brand["social"]),
     },
-    header: { sticky: obj(o["header"])["sticky"] === true },
+    // Spec 2.8: the package reader keeps only safe, labelled items and recomputes `external`.
+    header: { sticky: header["sticky"] === true, menu: readResolvedMenu(header["menu"]) },
     footer: {
-      note: textOf(obj(o["footer"])["note"], FOOTER_NOTE_MAX, true),
-      showSocial: obj(o["footer"])["showSocial"] !== false,
+      note: textOf(footer["note"], FOOTER_NOTE_MAX, true),
+      showSocial: footer["showSocial"] !== false,
+      menu: readResolvedMenu(footer["menu"]),
+      policies: POLICY_TYPES.filter((type) => Array.isArray(policies) && policies.includes(type)),
     },
     locked: o["locked"] === true,
   };

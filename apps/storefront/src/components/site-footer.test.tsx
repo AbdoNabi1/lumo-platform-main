@@ -14,7 +14,7 @@ describe("SiteFooter (spec 1.12)", () => {
         shell={{
           ...FALLBACK_SHELL,
           storeName: "Nour",
-          footer: { note: { ar: "توصيل لكل مصر" }, showSocial: true },
+          footer: { note: { ar: "توصيل لكل مصر" }, showSocial: true, menu: [], policies: [] },
           brand: { ...FALLBACK_SHELL.brand, social: { instagram: "https://instagram.com/nour" } },
         }}
       />,
@@ -38,7 +38,7 @@ describe("SiteFooter (spec 1.12)", () => {
         locale="ar"
         shell={{
           ...FALLBACK_SHELL,
-          footer: { note: {}, showSocial: false },
+          footer: { note: {}, showSocial: false, menu: [], policies: [] },
           brand: { ...FALLBACK_SHELL.brand, social: { x: "https://x.com/n" } },
         }}
       />,
@@ -61,7 +61,7 @@ describe("SiteFooter (spec 1.12)", () => {
         shell={{
           ...FALLBACK_SHELL,
           storeName: hostile,
-          footer: { note: { en: hostile }, showSocial: true },
+          footer: { note: { en: hostile }, showSocial: true, menu: [], policies: [] },
         }}
       />,
     );
@@ -69,5 +69,88 @@ describe("SiteFooter (spec 1.12)", () => {
     expect(document.querySelector("style")).toBeNull();
     const isolated = [...document.querySelectorAll("bdi")].filter((b) => b.textContent === hostile);
     expect(isolated).toHaveLength(3); // name, note, ©
+  });
+
+  it("renders the menu as columns, then the policy links not already in the menu (spec 2.8)", () => {
+    render(
+      <SiteFooter
+        t={en}
+        locale="en"
+        shell={{
+          ...FALLBACK_SHELL,
+          footer: {
+            note: {},
+            showSocial: false,
+            menu: [
+              { label: { en: "Search" }, href: "/search", external: false, children: [] },
+              {
+                label: { en: "Returns" },
+                href: "/policies/refund-policy",
+                external: false,
+                children: [],
+              },
+            ],
+            policies: ["refund", "privacy"],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Links" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Search" })).toHaveAttribute("href", "/search");
+    expect(screen.getAllByRole("link", { name: /Return|Refund/ })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Privacy policy" })).toHaveAttribute(
+      "href",
+      "/policies/privacy-policy",
+    );
+    expect(screen.getByRole("navigation", { name: en.footer.policies })).toBeInTheDocument();
+  });
+
+  it("a parent item is a column titled by it; footer links keep the preview token", () => {
+    render(
+      <SiteFooter
+        t={ar}
+        locale="ar"
+        previewToken="tok"
+        shell={{
+          ...FALLBACK_SHELL,
+          footer: {
+            note: {},
+            showSocial: false,
+            menu: [
+              {
+                label: { ar: "المتجر" },
+                href: "/collections/all",
+                external: false,
+                children: [
+                  {
+                    label: { ar: "تخفيضات" },
+                    href: "/collections/sale",
+                    external: false,
+                    children: [],
+                  },
+                ],
+              },
+            ],
+            policies: ["terms"],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "المتجر" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: ar.footer.links })).toBeNull();
+    expect(screen.getByRole("link", { name: "تخفيضات" })).toHaveAttribute(
+      "href",
+      "/collections/sale?preview=tok",
+    );
+    expect(screen.getByRole("link", { name: "شروط الخدمة" })).toHaveAttribute(
+      "href",
+      "/policies/terms-of-service?preview=tok",
+    );
+  });
+
+  it("no menu and no policies: no columns and no policy row", () => {
+    render(<SiteFooter t={en} locale="en" shell={FALLBACK_SHELL} />);
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(screen.queryByRole("navigation")).toBeNull();
   });
 });
