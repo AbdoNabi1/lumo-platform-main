@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type * as PlatformUi from "@platform/ui";
 import { FALLBACK_SHELL } from "@/lib/online-store";
 import { en } from "@/messages/en";
@@ -197,5 +197,13 @@ describe("header navigation (spec 2.8)", () => {
     const nav = screen.getByRole("navigation", { name: en.nav.menu });
     expect(banner.contains(nav)).toBe(false);
     expect(nav).toHaveClass("hidden", "md:block");
+  });
+
+  it("the drawer's labels come from the dictionary, in Arabic too (review I-2)", () => {
+    render(<SiteHeader t={ar} locale="ar" shell={shell} previewToken={null} />);
+    fireEvent.click(screen.getByRole("button", { name: ar.nav.openMenu }));
+    expect(screen.getByRole("dialog", { name: ar.nav.menu })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: ar.nav.closeMenu })).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
   });
 });

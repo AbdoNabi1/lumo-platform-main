@@ -83,4 +83,25 @@ describe("footerPolicyLinks (Ruling 12)", () => {
       footerPolicyLinks(["terms"], [item({ en: "Terms" }, "/policies/terms-of-service")], "en"),
     ).toEqual([]);
   });
+
+  it("a parent item is a column heading, not a link: its policy still gets a link (review M-2)", () => {
+    const menu = [
+      item({ en: "Returns" }, "/policies/refund-policy", [item({ en: "FAQ" }, "/pages/faq")]),
+    ];
+    expect(footerColumns(menu, "en", "Links")).toEqual([
+      {
+        title: "Returns",
+        links: [{ label: "FAQ", href: "/pages/faq", external: false, children: [] }],
+      },
+    ]);
+    expect(footerPolicyLinks(["refund"], menu, "en")).toEqual([
+      { label: "Refund policy", href: "/policies/refund-policy", external: false, children: [] },
+    ]);
+  });
+
+  it("an unlabelled item renders nothing, so it does not count as a link either", () => {
+    expect(
+      footerPolicyLinks(["terms"], [item({}, "/policies/terms-of-service")], "en"),
+    ).toHaveLength(1);
+  });
 });

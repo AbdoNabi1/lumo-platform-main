@@ -52,14 +52,18 @@ export function footerColumns(
 
 /**
  * Ruling 12: the footer's policy row, titled from `POLICY_TITLES`, without a policy whose page the
- * footer menu already links at either level.
+ * footer menu already renders as a link. Only what `footerColumns` renders counts (review M-2): the
+ * children of a parent and the childless top-level items. A parent is a plain column heading, not a
+ * link, and an unlabelled item renders nothing, so neither hides a policy.
  */
 export function footerPolicyLinks(
   policies: readonly PolicyType[],
   menu: readonly ResolvedMenuItem[],
   locale: Locale,
 ): MenuEntry[] {
-  const linked = new Set(menu.flatMap((item) => [item.href, ...item.children.map((c) => c.href)]));
+  const linked = new Set(
+    footerColumns(menu, locale, "").flatMap((column) => column.links.map((link) => link.href)),
+  );
   return policies
     .filter((type) => !linked.has(policyPath(type)))
     .map((type) => ({

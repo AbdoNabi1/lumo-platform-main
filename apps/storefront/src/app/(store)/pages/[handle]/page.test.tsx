@@ -85,6 +85,9 @@ describe("/pages/[handle] (spec 2.8)", () => {
     expect(await generateMetadata(params("about"))).toEqual({ title: { absolute: "About" } });
     content.getPage.mockResolvedValue({ status: "not-found" });
     expect(await generateMetadata(params("about"))).toEqual({});
+    // Review M-4: a failed read must not be indexed as the store's page under its default title.
+    content.getPage.mockResolvedValue({ status: "error" });
+    expect(await generateMetadata(params("about"))).toEqual({ robots: { index: false } });
     content.getPage.mockClear();
     expect(await generateMetadata(params("a/b"))).toEqual({});
     expect(content.getPage).not.toHaveBeenCalled();

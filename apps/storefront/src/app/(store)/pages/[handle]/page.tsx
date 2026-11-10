@@ -48,7 +48,10 @@ export default async function ContentPage({ params }: Params) {
   );
 }
 
-/** `<title> | <store>` (just the title without a store name), and the meta description. */
+/**
+ * `<title> | <store>` (just the title without a store name), and the meta description. A failed
+ * read is `noindex`; a 404 adds nothing (Next's not-found handling applies).
+ */
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { handle } = await params;
   if (!PAGE_HANDLE_PATTERN.test(handle)) return {};
@@ -57,6 +60,8 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
     getRequestLocale(),
     getRequestShell(),
   ]);
+  // Review M-4: the "unavailable" panel answers 200, so a crawler must not index it as this page.
+  if (read.status === "error") return { robots: { index: false } };
   if (read.status !== "ok") return {};
   const title = pickText(read.value.title, locale);
   const description = pickText(read.value.metaDescription, locale);
