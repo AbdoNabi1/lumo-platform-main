@@ -142,6 +142,7 @@ describe("policy actions (spec 2.3)", () => {
     expect(await generatePolicyTemplateAction("refund", "ar", inputs)).toEqual({
       status: "error",
       message: en.policies.templateInvalid,
+      fieldErrors: { returnWindowDays: en.policies.templateInvalid },
     });
     api.generatePolicyTemplate.mockResolvedValue({ outcome: "forbidden" });
     expect(await generatePolicyTemplateAction("refund", "ar", inputs)).toEqual({
@@ -153,5 +154,41 @@ describe("policy actions (spec 2.3)", () => {
       status: "error",
     });
     expect(api.generatePolicyTemplate).toHaveBeenCalledTimes(2);
+  });
+
+  it("a text answer the API refuses as too long is named on its own field (I-2)", async () => {
+    api.generatePolicyTemplate.mockResolvedValue({
+      outcome: "invalid",
+      message: "INVALID_CONTENT: Check the highlighted fields.",
+      fields: [{ field: "inputs.contactPhone", message: "TOO_LONG" }],
+    });
+    expect(await generatePolicyTemplateAction("contact", "en", inputs)).toEqual({
+      status: "error",
+      message: en.formErrors.invalid,
+      fieldErrors: { contactPhone: en.onlineStorePreferences.tooLong },
+    });
+  });
+
+  it("checks the answers' types and bounds before calling the API (M-5)", async () => {
+    const bads: unknown[] = [
+      { ...inputs, storeName: "n".repeat(121) },
+      { ...inputs, returnWindowDays: "14" },
+      { ...inputs, deliveryDays: { min: 5, max: 2 } },
+      { ...inputs, refundMethod: "bank" },
+      { ...inputs, shipsInternationally: "no" },
+      { ...inputs, extra: true },
+    ];
+    for (const bad of bads) {
+      const state = await generatePolicyTemplateAction("refund", "en", bad as typeof inputs);
+      expect(state, JSON.stringify(bad)).toMatchObject({ status: "error" });
+    }
+    expect(
+      await generatePolicyTemplateAction("refund", "en", { ...inputs, storeName: "n".repeat(121) }),
+    ).toEqual({
+      status: "error",
+      message: en.formErrors.invalid,
+      fieldErrors: { storeName: en.onlineStorePreferences.tooLong },
+    });
+    expect(api.generatePolicyTemplate).not.toHaveBeenCalled();
   });
 });

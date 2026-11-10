@@ -13,7 +13,9 @@ import { SaveStatus } from "@/components/online-store/save-status";
  * The page's visibility (Ruling 15), gated by the hand-copied `PAGE_LIFECYCLE_TRANSITIONS`:
  * **Publish** a draft, **Hide** a published page (back to draft), **Archive** either (asked first:
  * it cannot be undone). Each change reaches the storefront. The server refresh swaps the buttons,
- * so keyboard focus moves to this group instead of falling back to the page. Nothing for a viewer.
+ * so keyboard focus moves to this group instead of falling back to the page. An archived page
+ * keeps the group, saying it is archived, so focus has somewhere to land after Archive (review
+ * M-2). Nothing for a viewer.
  */
 export function PageLifecycleActions({
   t,
@@ -33,6 +35,7 @@ export function PageLifecycleActions({
   const [pending, setPending] = useState<string | null>(null);
   const [state, setState] = useState<LiveSaveState>({ status: "idle" });
   const targets = canEdit ? pageAdvanceableStatusesFrom(status) : [];
+  const archived = canEdit && status === "archived";
 
   // The buttons for the new status replaced the one that had focus: keep focus in this group.
   useEffect(() => {
@@ -41,7 +44,7 @@ export function PageLifecycleActions({
     group.current?.focus();
   }, [status]);
 
-  if (targets.length === 0) return null;
+  if (targets.length === 0 && !archived) return null;
 
   const labelOf = (target: string) =>
     target === "published" ? e.publish : target === "draft" ? e.hide : e.archive;
@@ -77,6 +80,11 @@ export function PageLifecycleActions({
       <h2 id={headingId} className="text-lg font-semibold">
         {t.pageLifecycle.title}
       </h2>
+      {archived ? (
+        <p role="note" className="text-muted-foreground text-sm">
+          {e.archived}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {targets.map((target) => (
           <Button

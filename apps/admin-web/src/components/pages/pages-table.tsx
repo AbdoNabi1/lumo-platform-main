@@ -24,7 +24,7 @@ export function PagesTable({
     <Table aria-label={t.pagesPage.title}>
       <TableHeader>
         <TableRow>
-          <TableHead>{t.pagesPage.columns.name}</TableHead>
+          <TableHead>{t.pagesPage.columns.title}</TableHead>
           <TableHead>{t.pagesPage.columns.routePath}</TableHead>
           <TableHead>{t.pagesPage.columns.status}</TableHead>
           <TableHead>{t.pagesPage.columns.template}</TableHead>

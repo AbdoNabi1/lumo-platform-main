@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, useTransition, type FormEvent } from "react";
 import { AlertTriangleIcon } from "lucide-react";
 import { Button, Input, Label } from "@platform/ui";
 import { RICH_TEXT_MAX, type LocalizedText } from "@platform/storefront-content";
@@ -29,7 +29,7 @@ export function PageCreateForm({ t, locale }: { readonly t: Dictionary; readonly
   const e = t.pageEditor;
   const formId = useId();
   const [state, setState] = useState<FormState>(INITIAL_STATE);
-  const [pending, setPending] = useState(false);
+  const [pending, startTransition] = useTransition();
   const [address, setAddress] = useState("");
   const [addressEdited, setAddressEdited] = useState(false);
   // Drawn on the first title change (an event, so the server and client renders agree).
@@ -50,21 +50,22 @@ export function PageCreateForm({ t, locale }: { readonly t: Dictionary; readonly
     );
   };
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  /**
+   * Runs inside a transition, as `useActionState` would (review M-8): the redirect to the new page
+   * that `settleAction` rethrows is then handled by Next's router boundary instead of escaping as
+   * an unhandled rejection. Any other failure is our own copy.
+   */
+  const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    setPending(true);
-    try {
-      setState(
-        await settleAction(() => createPageAction(state, data), {
-          status: "error",
-          message: t.formErrors.unexpected,
-          fieldErrors: {},
-        }),
-      );
-    } finally {
-      setPending(false);
-    }
+    startTransition(async () => {
+      const result = await settleAction(() => createPageAction(state, data), {
+        status: "error",
+        message: t.formErrors.unexpected,
+        fieldErrors: {},
+      } satisfies FormState);
+      startTransition(() => setState(result));
+    });
   };
 
   const addressId = `${formId}-routePath`;
@@ -73,7 +74,7 @@ export function PageCreateForm({ t, locale }: { readonly t: Dictionary; readonly
   const addressError = fieldErrors["routePath"];
 
   return (
-    <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-6">
+    <form onSubmit={submit} className="flex flex-col gap-6">
       {state.status === "error" && (
         <div
           role="alert"

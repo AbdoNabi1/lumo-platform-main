@@ -95,6 +95,7 @@ describe("PageLifecycleActions (Ruling 15)", () => {
     expect(screen.queryByRole("button", { name: e.hide })).toBeNull();
     rerender(<PageLifecycleActions t={en} pageId="p-1" status="archived" canEdit />);
     expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText(e.archived)).toBeInTheDocument();
   });
 
   it("hides a page, then keeps keyboard focus in the actions when the buttons change", async () => {
@@ -112,6 +113,24 @@ describe("PageLifecycleActions (Ruling 15)", () => {
     expect(document.activeElement).toBe(
       screen.getByRole("group", { name: en.pageLifecycle.title }),
     );
+  });
+
+  it("after Archive, focus stays in the actions, which now say the page is archived (M-2)", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    actions.advancePageAction.mockResolvedValue({ status: "success" });
+    const { rerender } = render(
+      <PageLifecycleActions t={en} pageId="p-1" status="draft" canEdit />,
+    );
+    const archive = screen.getByRole("button", { name: e.archive });
+    archive.focus();
+    fireEvent.click(archive);
+    await flush();
+    expect(actions.advancePageAction).toHaveBeenCalledWith("p-1", "archived");
+    rerender(<PageLifecycleActions t={en} pageId="p-1" status="archived" canEdit />);
+    const group = screen.getByRole("group", { name: en.pageLifecycle.title });
+    expect(document.activeElement).toBe(group);
+    expect(group).toHaveTextContent(e.archived);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
   it("asks before archiving (it cannot be undone)", async () => {
@@ -167,6 +186,43 @@ describe("PageContentForm (spec 2.4, 2.7)", () => {
     expect(actions.savePageContentAction).toHaveBeenLastCalledWith(
       "p-1",
       expect.objectContaining({ expectedVersion: 3 }),
+    );
+  });
+
+  it("a content save after Publish sends the version the server refresh brought (I-1)", async () => {
+    actions.savePageContentAction.mockResolvedValue({ status: "success", version: 4 });
+    const { rerender } = render(<PageContentForm t={en} locale="en" page={page()} canEdit />);
+    // Publish bumped the version: the refresh re-renders the same form with the new page.
+    rerender(
+      <PageContentForm
+        t={en}
+        locale="en"
+        page={page({ status: "published", version: 3 })}
+        canEdit
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.onlineStorePreferences.save }));
+    await flush();
+    expect(actions.savePageContentAction).toHaveBeenLastCalledWith(
+      "p-1",
+      expect.objectContaining({ expectedVersion: 3 }),
+    );
+  });
+
+  it("an older page from a late refresh never rolls the version back", async () => {
+    actions.savePageContentAction.mockResolvedValueOnce({ status: "success", version: 5 });
+    actions.savePageContentAction.mockResolvedValueOnce({ status: "success", version: 6 });
+    const { rerender } = render(
+      <PageContentForm t={en} locale="en" page={page({ version: 4 })} canEdit />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.onlineStorePreferences.save }));
+    await flush();
+    rerender(<PageContentForm t={en} locale="en" page={page({ version: 3 })} canEdit />);
+    fireEvent.click(screen.getByRole("button", { name: en.onlineStorePreferences.save }));
+    await flush();
+    expect(actions.savePageContentAction).toHaveBeenLastCalledWith(
+      "p-1",
+      expect.objectContaining({ expectedVersion: 5 }),
     );
   });
 

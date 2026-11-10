@@ -2,6 +2,7 @@
 
 import { useId, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import {
+  AlertCircleIcon,
   BoldIcon,
   Heading2Icon,
   Heading3Icon,
@@ -67,6 +68,7 @@ export function RichTextEditor({
   onChange,
   tab: controlledTab,
   onTabChange,
+  previewBase = null,
 }: {
   readonly t: Dictionary;
   readonly locale: Locale;
@@ -80,6 +82,8 @@ export function RichTextEditor({
   /** The open language, when the parent decides it (a template fills one language and opens it). */
   readonly tab?: Key;
   readonly onTabChange?: (tab: Key) => void;
+  /** The storefront's address: Preview opens shop paths there, in a new tab (review M-3). */
+  readonly previewBase?: string | null;
 }) {
   const r = t.richText;
   const id = useId();
@@ -177,9 +181,17 @@ export function RichTextEditor({
                 aria-selected={tab === key}
                 data-invalid={invalid || undefined}
                 onClick={() => selectTab(key)}
-                className={tabClass(tab === key, invalid)}
+                className={`inline-flex items-center gap-1 ${tabClass(tab === key, invalid)}`}
               >
                 {languageName(key)}
+                {invalid ? (
+                  <>
+                    {" "}
+                    {/* Not colour alone (review M-4): an icon, and words for screen readers. */}
+                    <AlertCircleIcon aria-hidden className="size-3" />
+                    <span className="sr-only">{r.tabHasErrors}</span>
+                  </>
+                ) : null}
               </button>
             );
           })}
@@ -280,7 +292,7 @@ export function RichTextEditor({
               {writing ? null : current[key].trim() === "" ? (
                 <p className="text-muted-foreground my-3 text-sm">{r.previewEmpty}</p>
               ) : (
-                <RichTextPreview text={current[key]} />
+                <RichTextPreview text={current[key]} linkBase={previewBase} />
               )}
             </div>
             <p

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Component, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { en } from "@/messages/en";
 
@@ -13,6 +14,7 @@ const { PageCreateForm } = await import("./page-create-form");
 afterEach(() => {
   cleanup();
   for (const fn of Object.values(actions)) fn.mockReset();
+  vi.restoreAllMocks();
 });
 
 const field = (container: HTMLElement, name: string) =>
@@ -69,6 +71,37 @@ describe("PageCreateForm (spec 2.4, Ruling 19)", () => {
     const describedBy = (address().getAttribute("aria-describedby") ?? "").split(" ");
     const texts = describedBy.map((id) => document.getElementById(id)?.textContent);
     expect(texts).toContain(en.pageEditor.addressTaken);
+  });
+
+  it("a redirect after creating reaches Next inside a transition, not as an unhandled rejection (M-8)", async () => {
+    const { redirect } = await import("next/navigation");
+    actions.createPageAction.mockImplementation(async () => redirect("/pages/p-9"));
+    const caught: unknown[] = [];
+    class Boundary extends Component<{ children: ReactNode }, { error: unknown }> {
+      override state = { error: null as unknown };
+      static getDerivedStateFromError(error: unknown) {
+        return { error };
+      }
+      override componentDidCatch(error: unknown) {
+        caught.push(error);
+      }
+      override render() {
+        return this.state.error === null ? this.props.children : <p>redirected</p>;
+      }
+    }
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { container } = render(
+      <Boundary>
+        <PageCreateForm t={en} locale="en" />
+      </Boundary>,
+    );
+    fireEvent.change(field(container, "title.en"), { target: { value: "About" } });
+    await act(async () => {
+      fireEvent.submit(container.querySelector("form")!);
+    });
+    expect(await screen.findByText("redirected")).toBeInTheDocument();
+    expect(caught[0]).toMatchObject({ digest: expect.stringContaining("NEXT_REDIRECT") });
+    expect(screen.queryByText(en.formErrors.unexpected)).toBeNull();
   });
 
   it("a crashed action shows our own copy", async () => {

@@ -1096,7 +1096,7 @@ export const ar: Dictionary = {
     title: "الصفحات",
     subtitle: "صفحات متجرك الإلكتروني، زي «من نحن» و«تواصل معنا».",
     columns: {
-      name: "الاسم",
+      title: "العنوان",
       routePath: "المسار",
       status: "الحالة",
       template: "القالب",
@@ -1118,12 +1118,6 @@ export const ar: Dictionary = {
   pageCreate: {
     title: "صفحة جديدة",
     subtitle: "أضف صفحة لمتجرك الإلكتروني.",
-    name: "الاسم",
-    routePath: "مسار الرابط",
-    templateRef: "مرجع القالب (اختياري)",
-    experienceRef: "مرجع التجربة (اختياري)",
-    seoProfileRef: "مرجع ملف SEO (اختياري)",
-    localeRef: "مرجع اللغة (اختياري)",
     submit: "إنشاء الصفحة",
     submitting: "جارٍ الإنشاء…",
   },
@@ -1140,9 +1134,6 @@ export const ar: Dictionary = {
   },
   pageLifecycle: {
     title: "الإجراءات",
-    advanceToLabel: "الانتقال إلى…",
-    advance: "انتقال",
-    advancing: "جارٍ الانتقال…",
   },
   pageEditor: {
     title: "العنوان",
@@ -3693,6 +3684,7 @@ export const ar: Dictionary = {
     numbers: "قائمة أرقام",
     link: "لينك",
     previewEmpty: "لسه مفيش حاجة تتعرض.",
+    tabHasErrors: "فيه أخطاء",
     unsafeLink:
       "سطر {line}: اللينك ده مش مسموح. استخدم https:// أو mailto: أو tel: أو لينك بيبدأ بـ /.",
     unsafeLinkSaved: "فيه لينك هنا مش مسموح.",

@@ -464,10 +464,17 @@ const isPolicySummary = (v: unknown): v is PolicySummaryDto =>
   isNullableString(v["updatedAt"]);
 const isPolicyList = (v: unknown): v is { policies: PolicySummaryDto[] } =>
   isObject(v) && Array.isArray(v["policies"]) && v["policies"].every(isPolicySummary);
+/** `{ ar?, en? }` with string values and no other key. */
+const isLocalizedBody = (v: unknown): v is LocalizedText =>
+  isObject(v) &&
+  !Array.isArray(v) &&
+  Object.entries(v).every(
+    ([key, text]) => (key === "ar" || key === "en") && typeof text === "string",
+  );
 const isPolicy = (v: unknown): v is PolicyDto =>
   isObject(v) &&
   isPolicyType(v["type"]) &&
-  isObject(v["body"]) &&
+  isLocalizedBody(v["body"]) &&
   isNullableString(v["updatedAt"]) &&
   isNumber(v["version"]);
 const isTemplateText = (v: unknown): v is { body: string } =>

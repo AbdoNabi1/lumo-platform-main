@@ -17,6 +17,11 @@ import type { PolicyType } from "@platform/storefront-content";
 import { generatePolicyTemplateAction } from "@/app/settings/policies/actions";
 import type { PolicyTemplateInputsDto } from "@/lib/api/online-store";
 import type { Locale } from "@/lib/i18n";
+import {
+  TEMPLATE_TEXT_MAX,
+  templateErrorState,
+  templateInputIssues,
+} from "@/lib/online-store/policy-template-inputs";
 import { settleAction } from "@/lib/online-store/settle-action";
 import type { Dictionary } from "@/messages/en";
 
@@ -48,29 +53,22 @@ const answersOf = (d: PolicyTemplateInputsDto): Answers => ({
   shipsInternationally: d.shipsInternationally,
 });
 
-/** A whole number written in the field, or null (the API checks the ranges again). */
-function wholeNumber(raw: string, min: number, max: number): number | null {
-  if (!/^\d{1,3}$/.test(raw.trim())) return null;
-  const value = Number(raw.trim());
-  return value >= min && value <= max ? value : null;
-}
+/** A whole number written in the field, or NaN (refused by the shared rules as out of range). */
+const wholeNumber = (raw: string): number =>
+  /^\d{1,3}$/.test(raw.trim()) ? Number(raw.trim()) : Number.NaN;
 
-/** The answers as the API takes them, or null when a day count is not a whole number in range. */
-function inputsOf(a: Answers): PolicyTemplateInputsDto | null {
-  const returnWindowDays = wholeNumber(a.returnWindowDays, 0, 365);
-  const min = wholeNumber(a.deliveryMin, 1, 60);
-  const max = min === null ? null : wholeNumber(a.deliveryMax, min, 90);
-  if (returnWindowDays === null || min === null || max === null) return null;
+/** The answers as the API takes them; `templateInputIssues` says whether they pass. */
+function inputsOf(a: Answers): PolicyTemplateInputsDto {
   return {
     storeName: a.storeName,
     contactEmail: a.contactEmail,
     contactPhone: a.contactPhone,
     businessAddress: a.businessAddress,
-    returnWindowDays,
+    returnWindowDays: wholeNumber(a.returnWindowDays),
     returnShippingPaidBy: a.returnShippingPaidBy,
     refundMethod: a.refundMethod,
     cashOnDelivery: a.cashOnDelivery,
-    deliveryDays: { min, max },
+    deliveryDays: { min: wholeNumber(a.deliveryMin), max: wholeNumber(a.deliveryMax) },
     shipsInternationally: a.shipsInternationally,
   };
 }
@@ -107,17 +105,23 @@ export function PolicyTemplateDialog({
   const [language, setLanguage] = useState<"ar" | "en">(initialLocale ?? locale);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Readonly<Record<string, string>>>({});
   const set = <K extends keyof Answers>(key: K, value: Answers[K]) =>
     setAnswers((before) => ({ ...before, [key]: value }));
 
   const generate = async () => {
     const inputs = inputsOf(answers);
-    if (inputs === null) {
-      setError(p.templateInvalid);
+    // The API's own rules first (review I-2): a refusal names its field, with no call.
+    const issues = templateInputIssues(inputs);
+    if (issues.length > 0) {
+      const refused = templateErrorState(issues, t);
+      setError(refused.message);
+      setFieldErrors(refused.fieldErrors);
       return;
     }
     setPending(true);
     setError(null);
+    setFieldErrors({});
     try {
       const result = await settleAction(
         () => generatePolicyTemplateAction(type, language, inputs),
@@ -125,6 +129,7 @@ export function PolicyTemplateDialog({
       );
       if (result.status === "error") {
         setError(result.message);
+        setFieldErrors(result.fieldErrors ?? {});
         return;
       }
       onGenerated(language, result.body);
@@ -134,12 +139,28 @@ export function PolicyTemplateDialog({
     }
   };
 
-  const field = (key: string, label: string, control: (fieldId: string) => ReactNode) => (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={`${id}-${key}`}>{label}</Label>
-      {control(`${id}-${key}`)}
-    </div>
-  );
+  /** The API path an answer is reported under (`deliveryMin` is `deliveryDays.min`). */
+  const pathOf = (key: string) =>
+    key === "deliveryMin" ? "deliveryDays.min" : key === "deliveryMax" ? "deliveryDays.max" : key;
+  /** Ties an answer to its own error message. */
+  const errorProps = (key: string) =>
+    fieldErrors[pathOf(key)] === undefined
+      ? {}
+      : { "aria-invalid": true as const, "aria-describedby": `${id}-${key}-error` };
+  const field = (key: string, label: string, control: (fieldId: string) => ReactNode) => {
+    const message = fieldErrors[pathOf(key)];
+    return (
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={`${id}-${key}`}>{label}</Label>
+        {control(`${id}-${key}`)}
+        {message === undefined ? null : (
+          <p id={`${id}-${key}-error`} className="text-destructive text-xs">
+            {message}
+          </p>
+        )}
+      </div>
+    );
+  };
   const text = (
     key: "storeName" | "contactEmail" | "contactPhone" | "businessAddress",
     label: string,
@@ -150,6 +171,8 @@ export function PolicyTemplateDialog({
         id={fieldId}
         type={type}
         dir="auto"
+        maxLength={TEMPLATE_TEXT_MAX[key]}
+        {...errorProps(key)}
         value={answers[key]}
         onChange={(event) => set(key, event.currentTarget.value)}
       />
@@ -168,6 +191,7 @@ export function PolicyTemplateDialog({
         min={min}
         max={max}
         step={1}
+        {...errorProps(key)}
         value={answers[key]}
         onChange={(event) => set(key, event.currentTarget.value)}
       />

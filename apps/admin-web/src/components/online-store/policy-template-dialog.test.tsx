@@ -148,6 +148,72 @@ describe("PolicyTemplateDialog (spec 2.3)", () => {
     expect(screen.getByRole("button", { name: p.generate })).toBeEnabled();
   });
 
+  it("caps the text answers at the API's limits (I-2)", () => {
+    render(
+      <PolicyTemplateDialog
+        t={en}
+        locale="en"
+        type="contact"
+        defaults={defaults}
+        open
+        onOpenChange={vi.fn()}
+        onGenerated={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(p.storeName)).toHaveAttribute("maxLength", "120");
+    expect(screen.getByLabelText(p.email)).toHaveAttribute("maxLength", "254");
+    expect(screen.getByLabelText(p.phone)).toHaveAttribute("maxLength", "30");
+    expect(screen.getByLabelText(p.address)).toHaveAttribute("maxLength", "500");
+  });
+
+  it("a refusal from the API is shown on the field it names (I-2)", async () => {
+    actions.generatePolicyTemplateAction.mockResolvedValue({
+      status: "error",
+      message: en.formErrors.invalid,
+      fieldErrors: { contactPhone: en.onlineStorePreferences.tooLong },
+    });
+    render(
+      <PolicyTemplateDialog
+        t={en}
+        locale="en"
+        type="contact"
+        defaults={defaults}
+        open
+        onOpenChange={vi.fn()}
+        onGenerated={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: p.generate }));
+    await flush();
+    const phone = screen.getByLabelText(p.phone);
+    expect(phone).toHaveAttribute("aria-invalid", "true");
+    const described = (phone.getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent);
+    expect(described).toContain(en.onlineStorePreferences.tooLong);
+    expect(screen.getByLabelText(p.storeName)).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("alert")).toHaveTextContent(en.formErrors.invalid);
+  });
+
+  it("a text answer over the limit is refused here, on its field, without a call", async () => {
+    render(
+      <PolicyTemplateDialog
+        t={en}
+        locale="en"
+        type="refund"
+        defaults={defaults}
+        open
+        onOpenChange={vi.fn()}
+        onGenerated={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(p.storeName), { target: { value: "n".repeat(121) } });
+    fireEvent.click(screen.getByRole("button", { name: p.generate }));
+    await flush();
+    expect(screen.getByLabelText(p.storeName)).toHaveAttribute("aria-invalid", "true");
+    expect(actions.generatePolicyTemplateAction).not.toHaveBeenCalled();
+  });
+
   it("a day count that is not a whole number is refused here, without a call", async () => {
     render(
       <PolicyTemplateDialog
@@ -164,6 +230,8 @@ describe("PolicyTemplateDialog (spec 2.3)", () => {
     fireEvent.click(screen.getByRole("button", { name: p.generate }));
     await flush();
     expect(screen.getByRole("alert")).toHaveTextContent(p.templateInvalid);
+    expect(screen.getByLabelText(p.returnWindow)).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText(p.deliveryMin)).not.toHaveAttribute("aria-invalid");
     expect(actions.generatePolicyTemplateAction).not.toHaveBeenCalled();
   });
 });

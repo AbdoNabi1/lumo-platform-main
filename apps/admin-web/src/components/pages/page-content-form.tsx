@@ -59,19 +59,24 @@ export function PageAddress({
 /**
  * The page editor (spec 2.4, 2.7): the title, the content in the Morbeh editor and the search engine
  * listing's meta description, each in Arabic and English. Save sends all three with the version
- * the form holds and takes the new one from the answer, so the next save is guarded too; a lost
- * race keeps the edits and asks for a reload. Read-only for a viewer and for an archived page.
+ * the form holds and takes the new one from the answer (or from the refreshed page, after Publish,
+ * Hide or Archive), so the next save is guarded too; a lost race keeps the edits and asks for a
+ * reload. Read-only for a viewer and for an archived page (for an editor, the "archived" note sits
+ * in `PageLifecycleActions`, where focus lands after Archive).
  */
 export function PageContentForm({
   t,
   locale,
   page,
   canEdit,
+  storefrontUrl = null,
 }: {
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly page: PageDto;
   readonly canEdit: boolean;
+  /** For Preview's links (opened on the store, in a new tab). */
+  readonly storefrontUrl?: string | null;
 }) {
   const e = t.pageEditor;
   const editable = canEdit && page.status !== "archived";
@@ -79,6 +84,13 @@ export function PageContentForm({
   const [body, setBody] = useState<LocalizedText>(page.body ?? {});
   const [metaDescription, setMetaDescription] = useState<LocalizedText>(page.metaDescription);
   const [version, setVersion] = useState(page.version);
+  // Publish, Hide and Archive bump the page's version too (review I-1): adopt a newer one when the
+  // server refresh brings it, during render ("adjust state on a prop change"); never go back.
+  const [seenVersion, setSeenVersion] = useState(page.version);
+  if (seenVersion !== page.version) {
+    setSeenVersion(page.version);
+    setVersion(Math.max(version, page.version));
+  }
   const [pending, setPending] = useState(false);
   const [state, setState] = useState<PageContentSaveState>({ status: "idle" });
   const fieldErrors = state.status === "error" ? state.fieldErrors : {};
@@ -106,7 +118,7 @@ export function PageContentForm({
 
   return (
     <div className="flex flex-col gap-6">
-      {page.status === "archived" ? (
+      {page.status === "archived" && !canEdit ? (
         <p role="note" className="text-muted-foreground text-sm">
           {e.archived}
         </p>
@@ -132,6 +144,7 @@ export function PageContentForm({
         disabled={!editable || pending}
         errors={fieldErrors}
         onChange={setBody}
+        previewBase={storefrontUrl}
       />
       <section className="flex flex-col gap-3">
         <h2 className="text-base font-semibold">{e.seo}</h2>

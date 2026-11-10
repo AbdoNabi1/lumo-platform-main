@@ -132,6 +132,30 @@ describe("PolicyCard (spec 2.3, 2.7)", () => {
     });
   });
 
+  it("adopts a newer version from a server refresh (M-7)", async () => {
+    actions.savePolicyAction.mockResolvedValue({ status: "success", version: 8 });
+    const { rerender } = renderCard();
+    rerender(
+      <PolicyCard
+        t={en}
+        locale="en"
+        type="refund"
+        title="Refund policy"
+        policy={policy({ version: 7 })}
+        set
+        canEdit
+        defaults={defaults}
+        storefrontUrl={null}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.onlineStorePreferences.save }));
+    await flush();
+    expect(actions.savePolicyAction).toHaveBeenLastCalledWith(
+      "refund",
+      expect.objectContaining({ expectedVersion: 7 }),
+    );
+  });
+
   it("the reminder stays until the next save", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     actions.savePolicyAction.mockResolvedValue({ status: "success", version: 4 });

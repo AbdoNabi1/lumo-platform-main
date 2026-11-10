@@ -1177,7 +1177,7 @@ export const en = {
     title: "Pages",
     subtitle: "Pages on your online store, like About us or Contact.",
     columns: {
-      name: "Name",
+      title: "Title",
       routePath: "Route",
       status: "Status",
       template: "Template",
@@ -1199,12 +1199,6 @@ export const en = {
   pageCreate: {
     title: "New page",
     subtitle: "Add a page to your online store.",
-    name: "Name",
-    routePath: "Route path",
-    templateRef: "Template reference (optional)",
-    experienceRef: "Experience reference (optional)",
-    seoProfileRef: "SEO profile reference (optional)",
-    localeRef: "Locale reference (optional)",
     submit: "Create page",
     submitting: "Creating…",
   },
@@ -1221,9 +1215,6 @@ export const en = {
   },
   pageLifecycle: {
     title: "Actions",
-    advanceToLabel: "Advance to…",
-    advance: "Advance",
-    advancing: "Advancing…",
   },
   /** Part 2 (spec 2.4, 2.7): the page editor, the new page form and the pages list. */
   pageEditor: {
@@ -3885,7 +3876,6 @@ export const en = {
     loadError: "Menus couldn't be loaded. Try again.",
     back: "Back to menus",
   },
-  /** Online Store codes other than the Preferences ones (theme draft, publish, theme document). */
   /** Part 2 (spec 2.1, 2.7): the Morbeh text editor shared by policies and pages. */
   richText: {
     write: "Write",
@@ -3899,6 +3889,7 @@ export const en = {
     numbers: "Numbered list",
     link: "Link",
     previewEmpty: "Nothing to preview yet.",
+    tabHasErrors: "has errors",
     unsafeLink:
       "Line {line}: this link isn't allowed. Use https://, mailto:, tel: or a link that starts with /.",
     unsafeLinkSaved: "A link here isn't allowed.",
@@ -3942,6 +3933,7 @@ export const en = {
     readOnly: "You can read the policies but not change them.",
     loadError: "Couldn't load this policy. Try refreshing the page.",
   },
+  /** Online Store codes other than the Preferences ones (theme draft, publish, theme document). */
   onlineStoreErrors: {
     draftChanged: "The draft changed after you previewed it. Preview it again, then publish.",
     nothingToPublish: "There are no unpublished changes to publish.",

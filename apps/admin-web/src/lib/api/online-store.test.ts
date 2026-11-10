@@ -346,6 +346,18 @@ describe("policies API client (Part 2, spec 2.3)", () => {
       vi.fn(async () => json(200, { ...policy, version: "3" })),
     );
     expect((await api.fetchPolicy("refund")).outcome).toBe("error");
+    for (const bad of [
+      { ...policy, type: "returns" },
+      { ...policy, body: { ar: 3 } },
+      { ...policy, body: { fr: "x" } },
+      { ...policy, body: [] },
+    ]) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => json(200, bad)),
+      );
+      expect((await api.fetchPolicy("refund")).outcome, JSON.stringify(bad)).toBe("error");
+    }
   });
 
   it("saves a policy with the version and one idempotency key", async () => {

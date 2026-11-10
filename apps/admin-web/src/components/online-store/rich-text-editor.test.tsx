@@ -119,6 +119,49 @@ describe("RichTextEditor (spec 2.7)", () => {
     expect(screen.getByText("10/10")).toBeInTheDocument();
   });
 
+  it("a link in Preview opens in a new tab, never over the admin's unsaved edits (M-3)", () => {
+    render(<Harness t={en} locale="en" initial={{ en: "[Contact](/pages/contact)" }} />);
+    fireEvent.click(screen.getByRole("tab", { name: en.richText.preview }));
+    const link = screen.getByRole("link", { name: "Contact" });
+    expect(link).toHaveAttribute("href", "/pages/contact");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("with the storefront's address, a shop path in Preview opens on the store", () => {
+    render(
+      <RichTextEditor
+        t={en}
+        locale="en"
+        name="body"
+        label="Content"
+        value={{ en: "[Contact](/pages/contact) [Us](https://nour.example/)" }}
+        max={100}
+        previewBase="https://shop.example/"
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: en.richText.preview }));
+    expect(screen.getByRole("link", { name: "Contact" })).toHaveAttribute(
+      "href",
+      "https://shop.example/pages/contact",
+    );
+    // External links keep the storefront's own attributes.
+    const external = screen.getByRole("link", { name: "Us" });
+    expect(external).toHaveAttribute("href", "https://nour.example/");
+    expect(external).toHaveAttribute("rel", "noopener noreferrer nofollow");
+  });
+
+  it("an error on the other language's tab is announced, not only coloured (M-4)", () => {
+    render(<Harness t={en} locale="en" initial={{ ar: "[x](javascript:1)", en: "fine" }} />);
+    const arabicTab = screen.getByRole("tab", {
+      name: `${en.onlineStorePreferences.arabic} ${en.richText.tabHasErrors}`,
+    });
+    expect(arabicTab.querySelector("svg")).not.toBeNull();
+    expect(
+      screen.getByRole("tab", { name: en.onlineStorePreferences.english }),
+    ).toBeInTheDocument();
+  });
+
   it("hostile text in Preview is text, never markup", () => {
     render(<Harness t={en} locale="en" initial={{ en: "<img src=x onerror=alert(1)>" }} />);
     fireEvent.click(screen.getByRole("tab", { name: en.richText.preview }));
@@ -149,7 +192,9 @@ describe("RichTextEditor (spec 2.7)", () => {
     );
     // The English tab is open: the Arabic error is flagged on its tab, not shown here.
     expect(screen.getByText(en.richText.unsafeLinkSaved)).not.toBeVisible();
-    const arabicTab = screen.getByRole("tab", { name: en.onlineStorePreferences.arabic });
+    const arabicTab = screen.getByRole("tab", {
+      name: `${en.onlineStorePreferences.arabic} ${en.richText.tabHasErrors}`,
+    });
     expect(arabicTab).toHaveAttribute("data-invalid", "true");
     fireEvent.click(arabicTab);
     const textarea = visibleTextarea();

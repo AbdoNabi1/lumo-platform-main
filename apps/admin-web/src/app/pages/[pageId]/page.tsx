@@ -102,11 +102,17 @@ export default async function PageDetailPage({ params }: PageDetailPageProps) {
 
         <Card>
           <CardContent>
-            <PageContentForm t={t} locale={locale} page={page} canEdit={canEdit} />
+            <PageContentForm
+              t={t}
+              locale={locale}
+              page={page}
+              canEdit={canEdit}
+              storefrontUrl={storefrontUrl}
+            />
           </CardContent>
         </Card>
 
-        {canEdit && page.status !== "archived" ? (
+        {canEdit ? (
           <Card>
             <CardContent>
               <PageLifecycleActions t={t} pageId={page.id} status={page.status} canEdit={canEdit} />

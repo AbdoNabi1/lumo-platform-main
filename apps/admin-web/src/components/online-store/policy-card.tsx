@@ -50,6 +50,12 @@ export function PolicyCard({
   const p = t.policies;
   const [body, setBody] = useState<LocalizedText>(policy.body);
   const [version, setVersion] = useState(policy.version);
+  // A newer version from a server refresh is adopted (review M-7); a late, older one never wins.
+  const [seenVersion, setSeenVersion] = useState(policy.version);
+  if (seenVersion !== policy.version) {
+    setSeenVersion(policy.version);
+    setVersion(Math.max(version, policy.version));
+  }
   const [tab, setTab] = useState<"ar" | "en">(locale);
   const [dialog, setDialog] = useState<{ open: boolean; key: number }>({ open: false, key: 0 });
   const [reminder, setReminder] = useState(false);
@@ -137,6 +143,7 @@ export function PolicyCard({
           onChange={setBody}
           tab={tab}
           onTabChange={setTab}
+          previewBase={storefrontUrl}
         />
         {canEdit ? (
           <div className="flex flex-wrap items-center gap-3">
