@@ -1,6 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
+import { CollectionController, ProductController } from "@platform/catalog";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
+import { PagesController } from "@platform/pages";
 import { DEFAULT_THEME_DOCUMENT, MENU_MAX_BYTES } from "@platform/storefront-content";
 import { logger } from "@platform/utils";
 import { wireAdmin, type WiredAdmin } from "../composition";
@@ -938,6 +940,7 @@ describe("menus routes (spec 2.6)", () => {
       items: [{ id: ID(2), label: { en: label }, link: { type: "home" }, children: [] }],
     });
     expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe("INVALID_CONTENT");
     expect(res.json().fields).toEqual([{ field: "items", message: "MENU_TOO_LARGE" }]);
   });
 
@@ -1070,5 +1073,41 @@ describe("policies routes (spec 2.6)", () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ code: "VERSION_CONFLICT" });
+  });
+});
+
+describe("a failing read behind the link picker", () => {
+  let app: FastifyInstance;
+  beforeAll(async () => {
+    app = await buildOnlineStoreApp({ serializer: new InMemoryEventSerializer() });
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const call = caller(() => app);
+
+  it.each([
+    ["product", () => vi.spyOn(ProductController.prototype, "list")],
+    ["collection", () => vi.spyOn(CollectionController.prototype, "list")],
+    ["page", () => vi.spyOn(PagesController.prototype, "listPages")],
+  ] as const)("a %s read that throws is a 5xx, never a 404", async (type, spy) => {
+    const read = spy().mockRejectedValue(new Error("catalog database unreachable"));
+    const res = await call("viewer", "GET", `/online-store/link-targets?type=${type}&q=tea`);
+    expect(read).toHaveBeenCalled();
+    expect(res.statusCode).toBeGreaterThanOrEqual(500);
+    expect(res.body).not.toContain("unreachable");
+  });
+
+  it("a read that answers an error status is a 5xx too, not an empty list or a 404", async () => {
+    const read = vi
+      .spyOn(ProductController.prototype, "list")
+      .mockResolvedValue({ status: 404, body: { code: "NOT_FOUND" } });
+    const res = await call("viewer", "GET", "/online-store/link-targets?type=product");
+    expect(read).toHaveBeenCalled();
+    expect(res.statusCode).toBeGreaterThanOrEqual(500);
   });
 });

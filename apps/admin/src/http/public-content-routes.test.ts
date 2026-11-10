@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { RequestContext } from "@platform/http";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
+import { Page } from "@platform/pages";
 import type { WiredAdmin } from "../composition";
 import { publicContentRoutes } from "./public-content-routes";
 import { publicOnlineStoreRoutes } from "./public-online-store-routes";
@@ -216,5 +217,43 @@ describe("public content routes (spec 2.6)", () => {
     await staff("PUT", "/online-store/policies/terms", { body: { en: "T" }, expectedVersion: 0 });
     expect((await anon("/policies/terms")).statusCode).toBe(200);
     expect((await anon("/policies/terms", "t-2")).statusCode).toBe(404);
+  });
+});
+
+describe("a Pages repository failure behind the public page reads", () => {
+  let app: FastifyInstance;
+  beforeEach(async () => {
+    app = await buildOnlineStoreApp({ serializer: new InMemoryEventSerializer() });
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await app.close();
+  });
+
+  it("is a 5xx for one page and for the list, never a 404", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/pages",
+      headers: headersFor("admin", { "idempotency-key": `c-${(key += 1)}` }),
+      payload: { name: "About", routePath: "/pages/about" },
+    });
+    const { pageId } = created.json<{ pageId: string }>();
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/pages/${pageId}/transitions`,
+      headers: headersFor("admin", { "idempotency-key": `c-${(key += 1)}` }),
+      payload: { toStatus: "published" },
+    });
+    // The in-memory repository rebuilds every row it reads with `Page.reconstitute` (the Prisma one
+    // maps rows the same way): failing it makes the repository read itself throw.
+    const rebuild = vi.spyOn(Page, "reconstitute").mockImplementation(() => {
+      throw new Error("pages database unreachable");
+    });
+    for (const url of ["/api/v1/public/pages/about", "/api/v1/public/pages"]) {
+      const res = await app.inject({ method: "GET", url, headers: { "x-tenant-id": "t-1" } });
+      expect(res.statusCode, url).toBeGreaterThanOrEqual(500);
+      expect(res.body, url).not.toContain("unreachable");
+    }
+    expect(rebuild).toHaveBeenCalled();
   });
 });

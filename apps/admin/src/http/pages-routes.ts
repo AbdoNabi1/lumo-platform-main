@@ -3,6 +3,7 @@ import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { Page, Template } from "@platform/pages";
 import type { LocalizedText } from "@platform/storefront-content";
 import type { WiredAdmin } from "../composition";
+import { localizedCopy } from "./localized-text";
 import { mapPage } from "./public-catalog-routes";
 
 const pageQuery = z.object({
@@ -33,14 +34,6 @@ export interface PageDto extends PageListItemDto {
   readonly body: LocalizedText;
 }
 
-/** A copy that lists its fields, so nothing else on a stored value can ride along. */
-function localized(text: LocalizedText): LocalizedText {
-  return {
-    ...(text.ar === undefined ? {} : { ar: text.ar }),
-    ...(text.en === undefined ? {} : { en: text.en }),
-  };
-}
-
 function toPageListItemDto(page: Page): PageListItemDto {
   return {
     id: page.id.toString(),
@@ -51,8 +44,8 @@ function toPageListItemDto(page: Page): PageListItemDto {
     seoProfileRef: page.seoProfileRef ?? null,
     localeRef: page.localeRef ?? null,
     status: page.status,
-    title: localized(page.title),
-    metaDescription: localized(page.metaDescription),
+    title: localizedCopy(page.title),
+    metaDescription: localizedCopy(page.metaDescription),
     publishedAt: page.publishedAt?.toISOString() ?? null,
     version: page.version,
     updatedAt: page.updatedAt?.toISOString() ?? null,
@@ -60,7 +53,7 @@ function toPageListItemDto(page: Page): PageListItemDto {
 }
 
 function toPageDto(page: Page): PageDto {
-  return { ...toPageListItemDto(page), body: localized(page.body) };
+  return { ...toPageListItemDto(page), body: localizedCopy(page.body) };
 }
 
 export interface TemplateDto {

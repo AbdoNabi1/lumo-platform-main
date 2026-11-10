@@ -8,6 +8,7 @@ import {
   type LocalizedText,
 } from "@platform/storefront-content";
 import type { WiredAdmin } from "../composition";
+import { localizedCopy } from "./localized-text";
 import { uncached } from "./uncached-response";
 
 const typeParams = z.object({ type: z.enum(POLICY_TYPES) });
@@ -28,17 +29,9 @@ export interface PublicPageListItemDto {
   readonly updatedAt: string | null;
 }
 
-/** A copy that lists its fields, so nothing else on a stored value can ride along. */
-function localized(text: LocalizedText): LocalizedText {
-  return {
-    ...(text.ar === undefined ? {} : { ar: text.ar }),
-    ...(text.en === undefined ? {} : { en: text.en }),
-  };
-}
-
 /** Ruling 16: a page saved before it had a title shows its name, in English. */
 function titleOf(page: Page): LocalizedText {
-  const title = localized(page.title);
+  const title = localizedCopy(page.title);
   return title.ar === undefined && title.en === undefined ? { en: page.name } : title;
 }
 
@@ -46,8 +39,8 @@ function toPublicPageDto(page: Page, handle: string): PublicPageDto {
   return {
     handle,
     title: titleOf(page),
-    body: localized(page.body),
-    metaDescription: localized(page.metaDescription),
+    body: localizedCopy(page.body),
+    metaDescription: localizedCopy(page.metaDescription),
     updatedAt: page.updatedAt?.toISOString() ?? null,
   };
 }
