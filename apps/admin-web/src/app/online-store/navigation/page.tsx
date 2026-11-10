@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { AlertTriangleIcon, PlusIcon } from "lucide-react";
@@ -76,11 +77,16 @@ export default async function OnlineStoreNavigationPage() {
                           </Link>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {labels.length === 0 ? (
-                            n.noItems
-                          ) : (
-                            <bdi dir="auto">{labels.join(", ")}</bdi>
-                          )}
+                          {labels.length === 0
+                            ? n.noItems
+                            : // One isolate per label (review M-6): a list mixing scripts keeps
+                              // each label's own direction, and the separators the page's.
+                              labels.map((label, index) => (
+                                <Fragment key={index}>
+                                  {index === 0 ? null : ", "}
+                                  <bdi dir="auto">{label}</bdi>
+                                </Fragment>
+                              ))}
                         </TableCell>
                       </TableRow>
                     );

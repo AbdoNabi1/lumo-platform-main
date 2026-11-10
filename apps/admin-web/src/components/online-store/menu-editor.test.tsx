@@ -106,9 +106,7 @@ describe("MenuEditor (spec 2.7)", () => {
     expect(screen.getByRole("button", { name: "Move A up" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Move B down" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Move Child up" })).toBeDisabled();
-    const moveDown = screen.getByRole("button", { name: "Move A down" });
-    moveDown.focus();
-    fireEvent.click(moveDown);
+    fireEvent.click(screen.getByRole("button", { name: "Move A down" }));
     const rows = screen
       .getAllByRole("listitem")
       .filter((li) => li.parentElement?.getAttribute("data-level") === "1");
@@ -129,21 +127,155 @@ describe("MenuEditor (spec 2.7)", () => {
     expect(sent.items[1]?.children.map((c) => c.label.en)).toEqual(["Child"]);
   });
 
-  it("reorders by drag and drop within one level", () => {
+  describe("keyboard focus stays in the tree (review I-1)", () => {
+    const abcd: MenuDto = {
+      ...footerMenu,
+      items: [
+        view(1, "A", { type: "home" }, { children: [view(5, "Only child", { type: "search" })] }),
+        view(2, "B", { type: "search" }),
+        view(3, "C", { type: "home" }),
+        view(4, "D", { type: "search" }),
+      ],
+    };
+    const button = (name: string) => screen.getByRole("button", { name });
+    const press = (name: string) => {
+      const target = button(name);
+      target.focus();
+      fireEvent.click(target);
+    };
+
+    it("after Delete: the next row, else the previous one, else the parent, else Add menu item", () => {
+      render(<MenuEditor t={en} locale="en" menu={abcd} canEdit />);
+      press("Delete B");
+      expect(document.activeElement).toBe(button("Edit C"));
+      press("Delete D");
+      expect(document.activeElement).toBe(button("Edit C"));
+      press("Delete Only child");
+      expect(document.activeElement).toBe(button("Edit A"));
+      press("Delete A");
+      expect(document.activeElement).toBe(button("Edit C"));
+      press("Delete C");
+      expect(document.activeElement).toBe(button(n.addItem));
+    });
+
+    it("a move to the top or the bottom lands on the other arrow; a middle move keeps its arrow", () => {
+      render(<MenuEditor t={en} locale="en" menu={abcd} canEdit />);
+      press("Move B up"); // to the top: Move B up is now disabled
+      expect(button("Move B up")).toBeDisabled();
+      expect(document.activeElement).toBe(button("Move B down"));
+      press("Move C down"); // to the bottom
+      expect(button("Move C down")).toBeDisabled();
+      expect(document.activeElement).toBe(button("Move C up"));
+      press("Move C up"); // middle: B A D C -> B A C D
+      expect(button("Move C up")).toBeEnabled();
+      expect(document.activeElement).toBe(button("Move C up"));
+      const order = screen
+        .getAllByRole("listitem")
+        .filter((li) => li.parentElement?.getAttribute("data-level") === "1")
+        .map((li) => li.querySelector("bdi")?.textContent);
+      expect(order).toEqual(["B", "A", "C", "D"]);
+    });
+  });
+
+  it("reorders by drag and drop within one level, and hands Firefox the drag data", () => {
     const menu: MenuDto = {
       ...footerMenu,
-      items: [view(1, "A", { type: "home" }), view(2, "B", { type: "search" })],
+      items: [
+        view(1, "A", { type: "home" }, { children: [view(3, "Child", { type: "search" })] }),
+        view(2, "B", { type: "search" }),
+      ],
     };
     render(<MenuEditor t={en} locale="en" menu={menu} canEdit />);
     const rowOf = (label: string) => screen.getByText(label).closest("li")!;
-    fireEvent.dragStart(rowOf("A"));
+    const dataTransfer = { setData: vi.fn(), effectAllowed: "all" };
+    // Dropping a child on a top-level row changes nothing, and is not an edit.
+    fireEvent.dragStart(rowOf("Child"), { dataTransfer });
+    fireEvent.drop(rowOf("B"));
+    expect(screen.queryByText(n.unsaved)).toBeNull();
+    fireEvent.dragStart(rowOf("A"), { dataTransfer });
+    expect(dataTransfer.setData).toHaveBeenLastCalledWith("text/plain", id(1));
+    expect(dataTransfer.effectAllowed).toBe("move");
     fireEvent.dragOver(rowOf("B"));
     fireEvent.drop(rowOf("B"));
     const labels = screen
       .getAllByRole("listitem")
+      .filter((li) => li.parentElement?.getAttribute("data-level") === "1")
       .map((li) => li.querySelector("bdi")?.textContent);
     expect(labels).toEqual(["B", "A"]);
     expect(screen.getByText(n.unsaved)).toBeInTheDocument();
+  });
+
+  it("the second save sends the version the first save returned", async () => {
+    actions.saveMenuAction.mockResolvedValue({
+      status: "success",
+      menu: { ...footerMenu, title: "Bottom", version: 5 },
+    });
+    render(<MenuEditor t={en} locale="en" menu={footerMenu} canEdit />);
+    fireEvent.change(screen.getByLabelText(n.menuTitle), { target: { value: "Bottom" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: n.save }));
+    });
+    expect(actions.saveMenuAction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ expectedVersion: 4 }),
+    );
+    fireEvent.change(screen.getByLabelText(n.menuTitle), { target: { value: "Bottom links" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: n.save }));
+    });
+    expect(actions.saveMenuAction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Bottom links", expectedVersion: 5 }),
+    );
+  });
+
+  it("a save or delete that never reaches the server shows our copy and frees the buttons", async () => {
+    actions.saveMenuAction.mockRejectedValue(new TypeError("Failed to fetch"));
+    const custom: MenuDto = { ...footerMenu, id: "m-1", handle: "sale", isDefault: false };
+    render(<MenuEditor t={en} locale="en" menu={custom} canEdit />);
+    fireEvent.change(screen.getByLabelText(n.menuTitle), { target: { value: "Bottom" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: n.save }));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(en.formErrors.unexpected);
+    expect(screen.getByRole("button", { name: n.save })).toBeEnabled();
+    expect(screen.getByLabelText(n.menuTitle)).toHaveValue("Bottom");
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    actions.deleteMenuAction.mockRejectedValue(new Error("crash"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: n.deleteMenu }));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(en.formErrors.unexpected);
+    expect(screen.getByRole("button", { name: n.deleteMenu })).toBeEnabled();
+  });
+
+  it("checks the title's length as the server measures it (normalised)", () => {
+    render(<MenuEditor t={en} locale="en" menu={footerMenu} canEdit />);
+    const title = screen.getByLabelText(n.menuTitle);
+    // 100 letters and a bidi override: the server strips the override, so this fits.
+    fireEvent.change(title, {
+      target: { value: `${"a".repeat(100)}${String.fromCharCode(0x202e)}` },
+    });
+    expect(screen.queryByText(en.onlineStorePreferences.tooLong)).toBeNull();
+    expect(screen.getByRole("button", { name: n.save })).toBeEnabled();
+    fireEvent.change(title, { target: { value: "a".repeat(101) } });
+    expect(screen.getByText(en.onlineStorePreferences.tooLong)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: n.save })).toBeDisabled();
+  });
+
+  it("ties a row's errors to its Edit button", async () => {
+    actions.saveMenuAction.mockResolvedValue({
+      status: "error",
+      message: en.formErrors.invalid,
+      fieldErrors: { "items.1.label": n.labelRequired },
+    });
+    render(<MenuEditor t={en} locale="en" menu={footerMenu} canEdit />);
+    fireEvent.change(screen.getByLabelText(n.menuTitle), { target: { value: "Bottom" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: n.save }));
+    });
+    expect(screen.getByRole("button", { name: "Edit Terms" })).toHaveAccessibleDescription(
+      n.labelRequired,
+    );
   });
 
   it("shows the broken badge on a removed target", () => {
@@ -230,7 +362,9 @@ describe("MenuEditor (spec 2.7)", () => {
     // Nothing picked yet: Done asks for a link.
     fireEvent.click(screen.getByRole("button", { name: n.done }));
     expect(screen.getByText(n.invalidLink)).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("option", { name: /Summer sale/ }));
+    expect(screen.getByLabelText(n.link)).toHaveAccessibleDescription(n.invalidLink);
+    expect(screen.getByLabelText(n.link)).toHaveAttribute("aria-invalid", "true");
+    fireEvent.click(await screen.findByRole("button", { name: /Summer sale/ }));
     fireEvent.click(screen.getByRole("button", { name: n.done }));
     const row = screen.getByText("Sale").closest("li")!;
     expect(within(row).getByText("Summer sale")).toBeInTheDocument();
@@ -253,6 +387,10 @@ describe("MenuEditor (spec 2.7)", () => {
     fireEvent.change(screen.getByLabelText(n.labelEn), { target: { value: "   " } });
     fireEvent.click(screen.getByRole("button", { name: n.done }));
     expect(screen.getByText(n.labelRequired)).toBeInTheDocument();
+    for (const label of [n.labelAr, n.labelEn]) {
+      expect(screen.getByLabelText(label)).toHaveAccessibleDescription(n.labelRequired);
+      expect(screen.getByLabelText(label)).toHaveAttribute("aria-invalid", "true");
+    }
   });
 
   it("Discard restores the saved tree; a viewer sees it read-only", () => {
@@ -309,6 +447,9 @@ describe("MenuEditor (spec 2.7)", () => {
     fireEvent.change(screen.getByLabelText(n.menuTitle), { target: { value: "Bottom" } });
     expect(screen.getByRole("button", { name: n.save })).toBeDisabled();
     expect(screen.getByText(n.tooMany)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: n.save })).toHaveAccessibleDescription(
+      `${n.fixFirst} ${n.tooMany}`,
+    );
   });
 
   it("a new menu checks its handle (format, not `new`) before creating it", async () => {

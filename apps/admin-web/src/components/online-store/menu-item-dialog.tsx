@@ -116,6 +116,7 @@ export function MenuItemDialog({
                 maxLength={MENU_LABEL_MAX}
                 value={labelAr}
                 aria-invalid={errors.label === undefined ? undefined : true}
+                aria-describedby={errors.label === undefined ? undefined : "menu-item-label-error"}
                 onChange={(e) => setLabelAr(e.currentTarget.value)}
               />
             </div>
@@ -128,12 +129,15 @@ export function MenuItemDialog({
                 maxLength={MENU_LABEL_MAX}
                 value={labelEn}
                 aria-invalid={errors.label === undefined ? undefined : true}
+                aria-describedby={errors.label === undefined ? undefined : "menu-item-label-error"}
                 onChange={(e) => setLabelEn(e.currentTarget.value)}
               />
             </div>
           </div>
           {errors.label === undefined ? null : (
-            <p className="text-destructive text-xs">{errors.label}</p>
+            <p id="menu-item-label-error" className="text-destructive text-xs">
+              {errors.label}
+            </p>
           )}
           <LinkPicker
             t={t}
@@ -145,9 +149,13 @@ export function MenuItemDialog({
               setPickedTitle(null);
             }}
             onPick={(target) => setPickedTitle(target.title)}
+            invalid={errors.link !== undefined}
+            describedBy={errors.link === undefined ? undefined : "menu-item-link-error"}
           />
           {errors.link === undefined ? null : (
-            <p className="text-destructive text-xs">{errors.link}</p>
+            <p id="menu-item-link-error" className="text-destructive text-xs">
+              {errors.link}
+            </p>
           )}
           {link?.type === "url" ? (
             <div className="flex flex-col gap-1">

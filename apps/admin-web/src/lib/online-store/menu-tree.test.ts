@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addItem,
+  locateItem,
   moveItem,
   moveItemTo,
   removeItem,
@@ -45,5 +46,14 @@ describe("menu tree (spec 2.7)", () => {
     expect(toMenuItems([{ ...item("a"), broken: true, targetTitle: "Sale" }])).toEqual([
       { id: "a", label: { en: "a" }, link: { type: "home" }, children: [] },
     ]);
+  });
+});
+
+describe("locateItem", () => {
+  it("finds an item's level, index and parent; null when absent", () => {
+    const list = [item("a", [item("x"), item("y")]), item("b")];
+    expect(locateItem(list, "b")).toEqual({ level: list, index: 1, parent: null });
+    expect(locateItem(list, "y")).toMatchObject({ index: 1, parent: { id: "a" } });
+    expect(locateItem(list, "zz")).toBeNull();
   });
 });

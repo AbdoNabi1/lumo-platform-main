@@ -96,3 +96,21 @@ export function toMenuItems(items: readonly EditableItem[]): MenuItem[] {
     children: toMenuItems(item.children),
   }));
 }
+
+/** Where an item sits: its level (siblings, itself included), its index there, and its parent. */
+export function locateItem(
+  items: readonly EditableItem[],
+  id: string,
+): {
+  readonly level: readonly EditableItem[];
+  readonly index: number;
+  readonly parent: EditableItem | null;
+} | null {
+  const index = items.findIndex((item) => item.id === id);
+  if (index >= 0) return { level: items, index, parent: null };
+  for (const parent of items) {
+    const child = parent.children.findIndex((item) => item.id === id);
+    if (child >= 0) return { level: parent.children, index: child, parent };
+  }
+  return null;
+}
