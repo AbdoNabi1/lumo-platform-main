@@ -9,17 +9,13 @@ import {
 import { logger } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./rate-limited-response";
+import { uncached } from "./uncached-response";
 
 /** Scrypt runs on this anonymous route, so the raw length is capped before anything else happens. */
 const unlockBody = z.object({ password: z.string().max(200) }).strict();
 const UNLOCK_LIMIT = 20;
 const UNLOCK_WINDOW_MS = 10 * 60 * 1000;
 const LIMITER_RETRY_MS = 5_000;
-
-/** Draft content is chosen by a header, so no shared cache in front of the Runtime may keep these. */
-function uncached(response: TransportResponse): TransportResponse {
-  return { ...response, headers: { ...response.headers, "cache-control": "private, no-store" } };
-}
 
 /** The same 503 `packages/http` answers when its own limiter is down. */
 function limiterUnavailable(context: RequestContext, reason: string): TransportResponse {

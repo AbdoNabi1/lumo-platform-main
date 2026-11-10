@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import { MAX_UPLOAD_BYTES, ONLINE_STORE_IMAGE_PURPOSES } from "@platform/media";
+import { LOCALES, POLICY_TYPES } from "@platform/storefront-content";
 import type { WiredAdmin } from "../composition";
 import { decodeFileName } from "./media-library-routes";
 
@@ -39,10 +40,39 @@ const releaseParams = z.object({
 const imageQuery = z.object({ purpose: z.enum(ONLINE_STORE_IMAGE_PURPOSES) }).strict();
 const emptyBody = z.object({}).strict();
 
+/**
+ * Part 2 (spec 2.6). The zod caps only stop abuse early: the handle format, title and label
+ * lengths, item limits and the 512 KiB item budget are the use case's (so they answer with their
+ * codes). The JSON body limit (Fastify's 1 MiB default) is above `MENU_MAX_BYTES`, so an oversized
+ * menu reaches the use case and is 422 MENU_TOO_LARGE, not a 413.
+ */
+const handleParams = z.object({ handle: z.string().min(1).max(60) });
+const createMenuBody = z
+  .object({ handle: z.string().max(60), title: z.string().max(400), items: z.unknown() })
+  .strict();
+const updateMenuBody = z
+  .object({ title: z.string().max(400), items: z.unknown(), expectedVersion })
+  .strict();
+const linkTargetsQuery = z
+  .object({
+    type: z.enum(["collection", "product", "page", "policy"]),
+    q: z.string().max(100).optional(),
+  })
+  .strict();
+const typeParams = z.object({ type: z.enum(POLICY_TYPES) });
+const localizedBody = z
+  .object({ ar: z.string().max(120_000).optional(), en: z.string().max(120_000).optional() })
+  .strict();
+const policyBody = z.object({ body: localizedBody, expectedVersion }).strict();
+const templateBody = z.object({ locale: z.enum(LOCALES), inputs: z.unknown() }).strict();
+
 /** What a browser may send as an online-store image. The bytes are still sniffed per purpose. */
 const IMAGE_CONTENT_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 
-/** Online Store admin surface (spec 1.9). Pure delegation; every write idempotent except preview tokens. */
+/**
+ * Online Store admin surface (spec 1.9, Part 2 spec 2.6). Pure delegation; every write is
+ * idempotent except preview tokens and policy templates.
+ */
 export function onlineStoreRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
   return [
     defineRoute({
@@ -210,6 +240,145 @@ export function onlineStoreRoutes(admin: WiredAdmin): readonly RouteDefinition[]
         admin.onlineStore.issuePreviewToken(context.principal, {
           createdBy: context.principal.id,
           tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/online-store/menus",
+      version: 1,
+      permission: "online_store:read",
+      summary: "The menus: main menu and footer first (saved or default), then the rest by handle",
+      schema: {},
+      handle: ({ context }) =>
+        admin.onlineStore.listMenus(context.principal, { tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/online-store/menus/:handle",
+      version: 1,
+      permission: "online_store:read",
+      summary: "One menu with its items and each link's current target",
+      schema: { params: handleParams },
+      handle: ({ params, context }) =>
+        admin.onlineStore.getMenu(context.principal, {
+          handle: params.handle,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/online-store/menus",
+      version: 1,
+      permission: "online_store:manage_menus",
+      idempotent: true,
+      summary: "Create a menu (handle, title, items; at most 50 custom menus)",
+      schema: { body: createMenuBody },
+      handle: ({ body, context }) =>
+        admin.onlineStore.createMenu(context.principal, {
+          handle: body.handle,
+          title: body.title,
+          items: body.items,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "PUT",
+      path: "/online-store/menus/:handle",
+      version: 1,
+      permission: "online_store:manage_menus",
+      idempotent: true,
+      summary: "Replace a menu's title and items (the first save of a default menu creates it)",
+      schema: { params: handleParams, body: updateMenuBody },
+      handle: ({ params, body, context }) =>
+        admin.onlineStore.updateMenu(context.principal, {
+          handle: params.handle,
+          title: body.title,
+          items: body.items,
+          expectedVersion: body.expectedVersion,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "DELETE",
+      path: "/online-store/menus/:handle",
+      version: 1,
+      permission: "online_store:manage_menus",
+      idempotent: true,
+      summary: "Delete a menu (not the main menu or footer, nor one the theme shows)",
+      schema: { params: handleParams },
+      handle: ({ params, context }) =>
+        admin.onlineStore.deleteMenu(context.principal, {
+          handle: params.handle,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/online-store/link-targets",
+      version: 1,
+      permission: "online_store:read",
+      summary: "The menu editor's link picker: up to 20 collections, products, pages or policies",
+      schema: { querystring: linkTargetsQuery },
+      handle: ({ query, context }) =>
+        admin.onlineStore.searchLinkTargets(context.principal, {
+          type: query.type,
+          q: query.q ?? "",
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/online-store/policies",
+      version: 1,
+      permission: "online_store:read",
+      summary: "The five store policies: whether each is set, in which languages, and when",
+      schema: {},
+      handle: ({ context }) =>
+        admin.onlineStore.listPolicies(context.principal, { tenantId: context.tenantId }),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/online-store/policies/:type",
+      version: 1,
+      permission: "online_store:read",
+      summary: "One policy's text in both languages, with its version",
+      schema: { params: typeParams },
+      handle: ({ params, context }) =>
+        admin.onlineStore.getPolicy(context.principal, {
+          type: params.type,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "PUT",
+      path: "/online-store/policies/:type",
+      version: 1,
+      permission: "online_store:manage_policies",
+      idempotent: true,
+      summary: "Save one policy's text (live on save; an empty text unsets it)",
+      schema: { params: typeParams, body: policyBody },
+      handle: ({ params, body, context }) =>
+        admin.onlineStore.updatePolicy(context.principal, {
+          type: params.type,
+          body: body.body,
+          expectedVersion: body.expectedVersion,
+          by: context.principal.id,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/online-store/policies/:type/template",
+      version: 1,
+      permission: "online_store:manage_policies",
+      // NOT idempotent: pure, it returns text and saves nothing, so there is nothing to replay.
+      summary: "Starting text for a policy in one language, from the shop's answers (not saved)",
+      schema: { params: typeParams, body: templateBody },
+      handle: ({ params, body, context }) =>
+        admin.onlineStore.generatePolicyTemplate(context.principal, {
+          type: params.type,
+          locale: body.locale,
+          inputs: body.inputs,
         }),
     }),
   ] as readonly RouteDefinition[];

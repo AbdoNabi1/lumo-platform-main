@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { Page, Template } from "@platform/pages";
+import type { LocalizedText } from "@platform/storefront-content";
 import type { WiredAdmin } from "../composition";
 import { mapPage } from "./public-catalog-routes";
 
@@ -11,7 +12,8 @@ const pageQuery = z.object({
   before: z.string().optional(),
 });
 
-export interface PageDto {
+/** A list row: everything but the body, which can be 100,000 characters per locale (Ruling 17). */
+export interface PageListItemDto {
   readonly id: string;
   readonly name: string;
   readonly routePath: string;
@@ -20,9 +22,26 @@ export interface PageDto {
   readonly seoProfileRef: string | null;
   readonly localeRef: string | null;
   readonly status: string;
+  readonly title: LocalizedText;
+  readonly metaDescription: LocalizedText;
+  readonly publishedAt: string | null;
+  readonly version: number;
+  readonly updatedAt: string | null;
 }
 
-function toPageDto(page: Page): PageDto {
+export interface PageDto extends PageListItemDto {
+  readonly body: LocalizedText;
+}
+
+/** A copy that lists its fields, so nothing else on a stored value can ride along. */
+function localized(text: LocalizedText): LocalizedText {
+  return {
+    ...(text.ar === undefined ? {} : { ar: text.ar }),
+    ...(text.en === undefined ? {} : { en: text.en }),
+  };
+}
+
+function toPageListItemDto(page: Page): PageListItemDto {
   return {
     id: page.id.toString(),
     name: page.name,
@@ -32,7 +51,16 @@ function toPageDto(page: Page): PageDto {
     seoProfileRef: page.seoProfileRef ?? null,
     localeRef: page.localeRef ?? null,
     status: page.status,
+    title: localized(page.title),
+    metaDescription: localized(page.metaDescription),
+    publishedAt: page.publishedAt?.toISOString() ?? null,
+    version: page.version,
+    updatedAt: page.updatedAt?.toISOString() ?? null,
   };
+}
+
+function toPageDto(page: Page): PageDto {
+  return { ...toPageListItemDto(page), body: localized(page.body) };
 }
 
 export interface TemplateDto {
@@ -51,6 +79,10 @@ function toTemplateDto(template: Template): TemplateDto {
   };
 }
 
+/** Shape only: the per-field lengths (title 255, meta 320, body 100,000) are the domain's. */
+const localizedContent = z
+  .object({ ar: z.string().max(120_000).optional(), en: z.string().max(120_000).optional() })
+  .strict();
 const createPageBody = z.object({
   name: z.string().min(1),
   routePath: z.string().min(1),
@@ -58,8 +90,19 @@ const createPageBody = z.object({
   experienceRef: z.string().min(1).optional(),
   seoProfileRef: z.string().min(1).optional(),
   localeRef: z.string().min(1).optional(),
+  title: localizedContent.optional(),
+  body: localizedContent.optional(),
+  metaDescription: localizedContent.optional(),
 });
 const pageIdParams = z.object({ pageId: z.string().min(1) });
+const pageContentBody = z
+  .object({
+    title: localizedContent,
+    body: localizedContent,
+    metaDescription: localizedContent,
+    expectedVersion: z.number().int().min(0),
+  })
+  .strict();
 const advancePageBody = z.object({ toStatus: z.enum(["draft", "published", "archived"]) });
 const createTemplateBody = z.object({ name: z.string().min(1), experienceRef: z.string().min(1) });
 const templateIdParams = z.object({ templateId: z.string().min(1) });
@@ -94,6 +137,24 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         }),
     }),
     defineRoute({
+      method: "PUT",
+      path: "/pages/:pageId/content",
+      version: 1,
+      permission: "pages:update_page",
+      idempotent: true,
+      summary: "Replace a page's title, body and meta description (draft or published)",
+      schema: { params: pageIdParams, body: pageContentBody },
+      handle: ({ params, body, context }) =>
+        admin.pages.updatePageContent(context.principal, {
+          pageId: params.pageId,
+          title: body.title,
+          body: body.body,
+          metaDescription: body.metaDescription,
+          expectedVersion: body.expectedVersion,
+          tenantId: context.tenantId,
+        }),
+    }),
+    defineRoute({
       method: "POST",
       path: "/templates",
       version: 1,
@@ -123,7 +184,7 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       path: "/pages",
       version: 1,
       permission: "pages:read",
-      summary: "List pages (cursor pagination)",
+      summary: "List pages (cursor pagination; rows carry no body)",
       schema: { querystring: pageQuery },
       handle: async ({ query, context }) =>
         mapPage(
@@ -131,7 +192,7 @@ export function pagesRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
             ...query,
             tenantId: context.tenantId,
           }),
-          toPageDto,
+          toPageListItemDto,
         ),
     }),
     defineRoute({

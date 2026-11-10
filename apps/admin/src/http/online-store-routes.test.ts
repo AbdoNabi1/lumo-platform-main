@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import { DEFAULT_THEME_DOCUMENT } from "@platform/storefront-content";
+import { DEFAULT_THEME_DOCUMENT, MENU_MAX_BYTES } from "@platform/storefront-content";
 import { logger } from "@platform/utils";
 import { wireAdmin, type WiredAdmin } from "../composition";
 import { onlineStoreRoutes } from "./online-store-routes";
@@ -27,7 +27,7 @@ const idem = () => ({ "idempotency-key": `os-${(key += 1)}` });
 function caller(app: () => FastifyInstance) {
   return (
     role: StaffRole,
-    method: "GET" | "PUT" | "POST",
+    method: "GET" | "PUT" | "POST" | "DELETE",
     url: string,
     payload?: unknown,
     tenantId = "t-1",
@@ -254,12 +254,27 @@ const ROUTE_TABLE: readonly (readonly [string, string, string, boolean | null])[
   ],
   ["POST", "/online-store/images", "online_store:upload_image", true],
   ["POST", "/online-store/preview-tokens", "online_store:read", null],
+  // Part 2 (spec 2.6): menus, the link picker and policies.
+  ["GET", "/online-store/menus", "online_store:read", null],
+  ["GET", "/online-store/menus/:handle", "online_store:read", null],
+  ["POST", "/online-store/menus", "online_store:manage_menus", true],
+  ["PUT", "/online-store/menus/:handle", "online_store:manage_menus", true],
+  ["DELETE", "/online-store/menus/:handle", "online_store:manage_menus", true],
+  ["GET", "/online-store/link-targets", "online_store:read", null],
+  ["GET", "/online-store/policies", "online_store:read", null],
+  ["GET", "/online-store/policies/:type", "online_store:read", null],
+  ["PUT", "/online-store/policies/:type", "online_store:manage_policies", true],
+  ["POST", "/online-store/policies/:type/template", "online_store:manage_policies", null],
 ];
+
+/** A concrete URL for a route-table path. */
+const concrete = (path: string) =>
+  path.replace(":releaseNumber", "1").replace(":handle", "main-menu").replace(":type", "refund");
 
 describe("the online-store route table", () => {
   const routes = onlineStoreRoutes({} as WiredAdmin);
 
-  it("is the twelve rows of spec 1.9, with each row's permission and idempotency", () => {
+  it("is the rows of spec 1.9 and 2.6, with each row's permission and idempotency", () => {
     expect(routes.map((r) => [r.method, r.path, r.permission, r.idempotent ?? null])).toEqual(
       ROUTE_TABLE,
     );
@@ -356,6 +371,47 @@ describe("who may call each route", () => {
       409,
       (r) => call(r, "POST", "/online-store/theme/releases/1/restore", { expectedVersion: 99 }),
     ],
+    ["read menus", everyone, 200, (r) => call(r, "GET", "/online-store/menus")],
+    ["read a menu", everyone, 200, (r) => call(r, "GET", "/online-store/menus/footer")],
+    [
+      "search link targets",
+      everyone,
+      200,
+      (r) => call(r, "GET", "/online-store/link-targets?type=policy"),
+    ],
+    ["read policies", everyone, 200, (r) => call(r, "GET", "/online-store/policies")],
+    ["read a policy", everyone, 200, (r) => call(r, "GET", "/online-store/policies/privacy")],
+    [
+      "create a menu",
+      editors,
+      422,
+      (r) => call(r, "POST", "/online-store/menus", { handle: "new", title: "N", items: [] }),
+    ],
+    [
+      "save a menu",
+      editors,
+      409,
+      (r) =>
+        call(r, "PUT", "/online-store/menus/main-menu", {
+          title: "M",
+          items: [],
+          expectedVersion: 99,
+        }),
+    ],
+    ["delete a menu", editors, 404, (r) => call(r, "DELETE", "/online-store/menus/gone")],
+    [
+      "save a policy",
+      editors,
+      409,
+      (r) => call(r, "PUT", "/online-store/policies/privacy", { body: {}, expectedVersion: 99 }),
+    ],
+    [
+      "generate a policy template",
+      editors,
+      200,
+      (r) =>
+        call(r, "POST", "/online-store/policies/refund/template", { locale: "en", inputs: {} }),
+    ],
     [
       "lock",
       adminOnly,
@@ -380,7 +436,7 @@ describe("who may call each route", () => {
     for (const [method, path] of ROUTE_TABLE) {
       const res = await app.inject({
         method: method as "GET",
-        url: `/api/v1${path.replace(":releaseNumber", "1")}`,
+        url: `/api/v1${concrete(path)}`,
         headers: { "x-tenant-id": "t-1" },
       });
       expect(res.statusCode, path).toBe(401);
@@ -720,5 +776,299 @@ describe("with no object storage configured", () => {
     expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({ code: "UNAVAILABLE" });
     await app.close();
+  });
+});
+
+const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+describe("menus routes (spec 2.6)", () => {
+  let app: FastifyInstance;
+  beforeAll(async () => {
+    app = await buildOnlineStoreApp({ serializer: new InMemoryEventSerializer() });
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const call = caller(() => app);
+
+  it("viewers read; operators write; viewers are refused every write", async () => {
+    expect((await call("viewer", "GET", "/online-store/menus")).statusCode).toBe(200);
+    expect((await call("viewer", "GET", "/online-store/menus/main-menu")).statusCode).toBe(200);
+    expect(
+      (await call("viewer", "POST", "/online-store/menus", { handle: "v", title: "V", items: [] }))
+        .statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await call("operator", "POST", "/online-store/menus", {
+          handle: "sale",
+          title: "Sale",
+          items: [],
+        })
+      ).statusCode,
+    ).toBe(201);
+    expect(
+      (
+        await call("operator", "PUT", "/online-store/menus/sale", {
+          title: "S",
+          items: [],
+          expectedVersion: 1,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "DELETE",
+          url: "/api/v1/online-store/menus/sale",
+          headers: headersFor("viewer", idem()),
+        })
+      ).statusCode,
+    ).toBe(403);
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/api/v1/online-store/menus/sale",
+      headers: headersFor("operator", idem()),
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json()).toEqual({ handle: "sale" });
+    expect((await call("viewer", "GET", "/online-store/menus/sale")).statusCode).toBe(404);
+  });
+
+  it("the menu DTO carries no tenant and no internals", async () => {
+    const res = await call("admin", "PUT", "/online-store/menus/main-menu", {
+      title: "Main",
+      expectedVersion: 0,
+      items: [{ id: ID(1), label: { en: "Home" }, link: { type: "home" }, children: [] }],
+    });
+    expect(res.statusCode).toBe(200);
+    expect(Object.keys(res.json()).sort()).toEqual([
+      "handle",
+      "id",
+      "isDefault",
+      "items",
+      "title",
+      "version",
+    ]);
+    expect(JSON.stringify(res.json())).not.toContain("t-1");
+    const read = await call("viewer", "GET", "/online-store/menus/main-menu");
+    expect(Object.keys(read.json()).sort()).toEqual(Object.keys(res.json()).sort());
+    expect(read.json()).toMatchObject({ handle: "main-menu", isDefault: true, version: 1 });
+  });
+
+  it("refuses unknown keys and a bad link-target type", async () => {
+    expect(
+      (
+        await call("admin", "POST", "/online-store/menus", {
+          handle: "a",
+          title: "A",
+          items: [],
+          x: 1,
+        })
+      ).statusCode,
+    ).toBe(422);
+    expect((await call("viewer", "GET", "/online-store/link-targets?type=menu")).statusCode).toBe(
+      422,
+    );
+    expect(
+      (await call("viewer", "GET", `/online-store/link-targets?type=policy&q=${"a".repeat(101)}`))
+        .statusCode,
+    ).toBe(422);
+    expect(
+      (await call("viewer", "GET", "/online-store/link-targets?type=policy&x=1")).statusCode,
+    ).toBe(422);
+  });
+
+  it("the link-target type and query reach the use case unchanged", async () => {
+    const policies = await call("viewer", "GET", "/online-store/link-targets?type=policy&q=refund");
+    expect(policies.statusCode).toBe(200);
+    expect(policies.json()).toEqual({
+      targets: [{ id: "refund", title: expect.any(String), subtitle: "/policies/refund-policy" }],
+    });
+    const all = await call("viewer", "GET", "/online-store/link-targets?type=policy");
+    expect(all.json().targets).toHaveLength(5);
+    const pages = await call("viewer", "GET", "/online-store/link-targets?type=page");
+    expect(pages.statusCode).toBe(200);
+    expect(pages.json()).toEqual({ targets: [] });
+  });
+
+  it("expectedVersion is a non-negative integer, refused at the schema otherwise", async () => {
+    for (const expectedVersion of [-1, 1.5, "1", null]) {
+      const res = await call("admin", "PUT", "/online-store/menus/main-menu", {
+        title: "M",
+        items: [],
+        expectedVersion,
+      });
+      expect(res.statusCode, String(expectedVersion)).toBe(422);
+      expect(res.json(), String(expectedVersion)).toMatchObject({ code: "VALIDATION" });
+    }
+    const missing = await call("admin", "PUT", "/online-store/menus/main-menu", {
+      title: "M",
+      items: [],
+    });
+    expect(missing.statusCode).toBe(422);
+  });
+
+  it("the handle comes from the path and the use case judges it", async () => {
+    const bad = await call("admin", "PUT", "/online-store/menus/Bad_Handle", {
+      title: "M",
+      items: [],
+      expectedVersion: 0,
+    });
+    expect(bad.statusCode).toBe(404);
+    expect(bad.json()).toMatchObject({ code: "MENU_NOT_FOUND" });
+    const reserved = await call("admin", "POST", "/online-store/menus", {
+      handle: "new",
+      title: "N",
+      items: [],
+    });
+    expect(reserved.statusCode).toBe(422);
+    expect(reserved.json()).toMatchObject({ code: "INVALID_HANDLE" });
+    const protectedMenu = await call("admin", "DELETE", "/online-store/menus/footer");
+    expect(protectedMenu.statusCode).toBe(409);
+    expect(protectedMenu.json()).toMatchObject({ code: "MENU_PROTECTED" });
+  });
+
+  it("an oversized menu reaches the use case: 422 MENU_TOO_LARGE, never a 413", async () => {
+    const label = "x".repeat(MENU_MAX_BYTES + 1024);
+    const res = await call("admin", "POST", "/online-store/menus", {
+      handle: "big",
+      title: "Big",
+      items: [{ id: ID(2), label: { en: label }, link: { type: "home" }, children: [] }],
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().fields).toEqual([{ field: "items", message: "MENU_TOO_LARGE" }]);
+  });
+
+  it("a stale save is 409 VERSION_CONFLICT", async () => {
+    const res = await call("admin", "PUT", "/online-store/menus/footer", {
+      title: "F",
+      items: [],
+      expectedVersion: 3,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: "VERSION_CONFLICT" });
+  });
+
+  it("DELETE takes no body", () => {
+    const route = onlineStoreRoutes({} as WiredAdmin).find(
+      (r) => r.method === "DELETE" && r.path === "/online-store/menus/:handle",
+    );
+    expect(route).toBeDefined();
+    expect(route?.schema.body).toBeUndefined();
+  });
+});
+
+describe("policies routes (spec 2.6)", () => {
+  let app: FastifyInstance;
+  beforeAll(async () => {
+    app = await buildOnlineStoreApp({ serializer: new InMemoryEventSerializer() });
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const call = caller(() => app);
+
+  it("operators save; viewers read and are refused writes; a bad type is refused", async () => {
+    expect(
+      (
+        await call("viewer", "PUT", "/online-store/policies/refund", {
+          body: { en: "x" },
+          expectedVersion: 0,
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await call("operator", "PUT", "/online-store/policies/refund", {
+          body: { en: "x" },
+          expectedVersion: 0,
+        })
+      ).json(),
+    ).toMatchObject({ type: "refund", version: 1 });
+    expect((await call("viewer", "GET", "/online-store/policies/refund")).statusCode).toBe(200);
+    expect((await call("viewer", "GET", "/online-store/policies/cookies")).statusCode).toBe(422);
+    const list = await call("viewer", "GET", "/online-store/policies");
+    expect(list.statusCode).toBe(200);
+    expect(list.json().policies).toHaveLength(5);
+  });
+
+  it("the template route is not idempotent and stores nothing", async () => {
+    const route = onlineStoreRoutes({} as WiredAdmin).find(
+      (r) => r.path === "/online-store/policies/:type/template",
+    );
+    expect(route).toBeDefined();
+    expect(route?.idempotent).not.toBe(true);
+    const res = await call("operator", "POST", "/online-store/policies/shipping/template", {
+      locale: "ar",
+      inputs: {},
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().body).toContain("2");
+    expect((await call("viewer", "GET", "/online-store/policies/shipping")).json().version).toBe(0);
+  });
+
+  it("the template body is strict and its locale an enum", async () => {
+    for (const body of [
+      { locale: "fr", inputs: {} },
+      { locale: "en", inputs: {}, extra: 1 },
+      { inputs: {} },
+    ]) {
+      const res = await call("operator", "POST", "/online-store/policies/refund/template", body);
+      expect(res.statusCode, JSON.stringify(body)).toBe(422);
+    }
+  });
+
+  it("an unsafe link is 422 UNSAFE_LINK on the locale's field", async () => {
+    const res = await call("operator", "PUT", "/online-store/policies/terms", {
+      body: { ar: "[x](javascript:alert(1))" },
+      expectedVersion: 0,
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().fields).toEqual([{ field: "body.ar", message: "UNSAFE_LINK" }]);
+  });
+
+  it("the body is strict, capped per locale, and expectedVersion is a non-negative integer", async () => {
+    const bodies: unknown[] = [
+      { body: { en: "x", fr: "y" }, expectedVersion: 0 },
+      { body: { en: "x".repeat(120_001) }, expectedVersion: 0 },
+      { body: { en: "x" }, expectedVersion: -1 },
+      { body: { en: "x" }, expectedVersion: 0.5 },
+      { body: { en: "x" }, expectedVersion: "0" },
+      { body: { en: "x" }, expectedVersion: 0, by: "someone" },
+    ];
+    for (const body of bodies) {
+      const res = await call("admin", "PUT", "/online-store/policies/privacy", body);
+      expect(res.statusCode, JSON.stringify(body).slice(0, 80)).toBe(422);
+    }
+    expect((await call("viewer", "GET", "/online-store/policies/privacy")).json().version).toBe(0);
+  });
+
+  it("no policy response names the staff member who saved it", async () => {
+    const saved = await call("operator", "PUT", "/online-store/policies/contact", {
+      body: { en: "Call us" },
+      expectedVersion: 0,
+    });
+    expect(saved.statusCode).toBe(200);
+    for (const res of [
+      saved,
+      await call("viewer", "GET", "/online-store/policies/contact"),
+      await call("viewer", "GET", "/online-store/policies"),
+    ]) {
+      expect(res.body).not.toContain("updatedBy");
+      expect(res.body).not.toContain("staff-operator");
+    }
+    expect(Object.keys(saved.json()).sort()).toEqual(["body", "type", "updatedAt", "version"]);
+  });
+
+  it("a stale save is 409 VERSION_CONFLICT", async () => {
+    const res = await call("admin", "PUT", "/online-store/policies/refund", {
+      body: { en: "y" },
+      expectedVersion: 0,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: "VERSION_CONFLICT" });
   });
 });

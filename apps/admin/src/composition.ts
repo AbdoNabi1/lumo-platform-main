@@ -702,6 +702,16 @@ export interface WiredAdmin {
      * request's tenant (spec "Composition"); `public-online-store-routes.ts` is their only caller.
      */
     readonly onlineStore: OnlineStorePublicReads;
+    /**
+     * Online Store Part 2: the storefront's published `/pages/<handle>` pages, one by handle and
+     * the list (at most 500). Closures taking the request's tenant, never the Pages controller
+     * (ADR-0014); `public-content-routes.ts` is their only caller and maps each page to its
+     * public DTO. A draft, archived, unknown or non-`/pages/` page is 404 `PAGE_NOT_FOUND`.
+     */
+    readonly pages: {
+      readonly byHandle: (tenantId: string, handle: string) => Promise<AdminResponse>;
+      readonly list: (tenantId: string) => Promise<AdminResponse>;
+    };
   };
   /**
    * The PSP webhook ingress seam (C2-2/C2-6). A webhook has no admin Bearer token — its
@@ -1386,6 +1396,11 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       wishlist: wishlist.wishlist,
       loyalty: loyalty.loyalty,
       onlineStore: onlineStore.publicReads,
+      pages: {
+        byHandle: (tenantId, handle) =>
+          pages.pages.publishedPageByPath({ routePath: `/pages/${handle}`, tenantId }),
+        list: (tenantId) => pages.pages.listPublishedPages({ tenantId }),
+      },
     },
     paymentsWebhook: {
       recordWebhook: (input) => payments.payments.recordWebhook(input),

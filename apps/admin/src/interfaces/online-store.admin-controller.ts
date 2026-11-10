@@ -70,4 +70,44 @@ export class OnlineStoreAdminController {
   issuePreviewToken(p: Principal, input: In<"issuePreviewToken">): Promise<AdminResponse> {
     return this.run(p, "online_store:read", () => this.onlineStore.issuePreviewToken(input));
   }
+
+  // Part 2 (spec 2.6): menus and the link picker.
+  listMenus(p: Principal, input: In<"listMenus">): Promise<AdminResponse> {
+    return this.run(p, "online_store:read", () => this.onlineStore.listMenus(input));
+  }
+  getMenu(p: Principal, input: In<"getMenu">): Promise<AdminResponse> {
+    return this.run(p, "online_store:read", () => this.onlineStore.getMenu(input));
+  }
+  createMenu(p: Principal, input: In<"createMenu">): Promise<AdminResponse> {
+    return this.run(p, "online_store:manage_menus", () => this.onlineStore.createMenu(input));
+  }
+  updateMenu(p: Principal, input: In<"updateMenu">): Promise<AdminResponse> {
+    return this.run(p, "online_store:manage_menus", () => this.onlineStore.updateMenu(input));
+  }
+  deleteMenu(p: Principal, input: In<"deleteMenu">): Promise<AdminResponse> {
+    return this.run(p, "online_store:manage_menus", () => this.onlineStore.deleteMenu(input));
+  }
+  searchLinkTargets(p: Principal, input: In<"searchLinkTargets">): Promise<AdminResponse> {
+    return this.run(p, "online_store:read", () => this.onlineStore.searchLinkTargets(input));
+  }
+
+  // Part 2 (spec 2.6): store policies.
+  listPolicies(p: Principal, input: In<"listPolicies">): Promise<AdminResponse> {
+    return this.run(p, "online_store:read", () => this.onlineStore.listPolicies(input));
+  }
+  getPolicy(p: Principal, input: In<"getPolicy">): Promise<AdminResponse> {
+    return this.run(p, "online_store:read", () => this.onlineStore.getPolicy(input));
+  }
+  updatePolicy(p: Principal, input: In<"updatePolicy">): Promise<AdminResponse> {
+    return this.run(p, "online_store:manage_policies", () => this.onlineStore.updatePolicy(input));
+  }
+  /** Pure: returns starting text for the editor and saves nothing. */
+  generatePolicyTemplate(
+    p: Principal,
+    input: In<"generatePolicyTemplate">,
+  ): Promise<AdminResponse> {
+    return this.run(p, "online_store:manage_policies", () =>
+      this.onlineStore.generatePolicyTemplate(input),
+    );
+  }
 }

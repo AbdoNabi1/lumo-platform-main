@@ -22,6 +22,16 @@ const METHODS = [
   ["listThemeReleases", "online_store:read"],
   ["restoreThemeRelease", "online_store_admin:publish_theme"],
   ["issuePreviewToken", "online_store:read"],
+  ["listMenus", "online_store:read"],
+  ["getMenu", "online_store:read"],
+  ["searchLinkTargets", "online_store:read"],
+  ["listPolicies", "online_store:read"],
+  ["getPolicy", "online_store:read"],
+  ["createMenu", "online_store:manage_menus"],
+  ["updateMenu", "online_store:manage_menus"],
+  ["deleteMenu", "online_store:manage_menus"],
+  ["updatePolicy", "online_store:manage_policies"],
+  ["generatePolicyTemplate", "online_store:manage_policies"],
 ] as const;
 
 function harness(answer: typeof denied | null) {
