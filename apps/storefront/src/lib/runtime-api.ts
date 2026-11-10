@@ -227,6 +227,59 @@ async function fetchPage<T>(
   }
 }
 
+/** A hung Runtime must not hang the sitemap: each of its reads gives up after this. */
+const SHOP_PAGE_TIMEOUT_MS = 3_000;
+
+/**
+ * One cursor page of a public list for an EXPLICIT shop (preflight 1): it never reads request
+ * headers, so it is safe inside `unstable_cache`, unlike `fetchPage` (whose `currentShopId()` reads
+ * them). 3 s timeout (preflight 9). Null for any failure or a body that is not a page.
+ */
+async function fetchShopPage<T>(
+  shopId: string,
+  path: string,
+  after: string | undefined,
+): Promise<CursorPageResult<T> | null> {
+  const query = new URLSearchParams({ first: String(MAX_PAGE_SIZE) });
+  if (after !== undefined) query.set("after", after);
+  try {
+    const response = await fetch(`${RUNTIME_API_URL}${path}?${query.toString()}`, {
+      headers: { "x-tenant-id": shopId },
+      cache: "no-store",
+      signal: AbortSignal.timeout(SHOP_PAGE_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const json = (await response.json()) as { items?: unknown; pageInfo?: unknown } | null;
+    if (json === null || typeof json !== "object" || !Array.isArray(json.items)) return null;
+    const info = (json.pageInfo ?? {}) as { hasNextPage?: unknown; endCursor?: unknown };
+    return {
+      items: json.items as readonly T[],
+      pageInfo: {
+        hasNextPage: info.hasNextPage === true,
+        endCursor: typeof info.endCursor === "string" ? info.endCursor : null,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** One page (100) of a shop's public products, for the sitemap (`GET /public/products`). */
+export function getProductsPage(
+  shopId: string,
+  after?: string,
+): Promise<CursorPageResult<ProductSummary> | null> {
+  return fetchShopPage<ProductSummary>(shopId, "/api/v1/public/products", after);
+}
+
+/** One page (100) of a shop's public collections, for the sitemap (`GET /public/collections`). */
+export function getCollectionsPage(
+  shopId: string,
+  after?: string,
+): Promise<CursorPageResult<CollectionSummary> | null> {
+  return fetchShopPage<CollectionSummary>(shopId, "/api/v1/public/collections", after);
+}
+
 /**
  * Fetches a single-item PUBLIC route. Unlike `fetchList` (which collapses every failure to
  * `null`), this returns the real HTTP status alongside the body — Cart's empty-state (404, no

@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
+import { LockedFrame } from "@/components/locked-frame";
 import { StoreChrome } from "@/components/store-chrome";
 import {
+  getLockedView,
   getPreviewToken,
   getRequestLocale,
   getRequestShell,
@@ -11,6 +13,16 @@ import { safeReturnTo } from "@/lib/return-to";
 
 /** Spec 1.12 "Route structure": every store page renders inside the shop's shell. */
 export default async function StoreLayout({ children }: { readonly children: ReactNode }) {
+  // Ruling 5: the gate let this request through a locked store only because the route stays
+  // reachable (a policy page). It renders without the shop's chrome, whatever the shell read says.
+  if (await getLockedView()) {
+    const [shell, locale] = await Promise.all([getRequestShell(), getRequestLocale()]);
+    return (
+      <LockedFrame shell={shell} locale={locale}>
+        {children}
+      </LockedFrame>
+    );
+  }
   const [shell, locale, token] = await Promise.all([
     getRequestShell(),
     getRequestLocale(),

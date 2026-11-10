@@ -1,5 +1,6 @@
 import { isValidElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LockedFrame } from "@/components/locked-frame";
 import { StoreChrome } from "@/components/store-chrome";
 import { FALLBACK_SHELL, type StorefrontShell } from "@/lib/online-store";
 
@@ -7,12 +8,14 @@ const request = vi.hoisted(() => ({
   shell: null as StorefrontShell | null,
   token: null as string | null,
   returnPath: null as string | null,
+  lockedView: false,
 }));
 vi.mock("@/lib/request-locale", () => ({
   getRequestShell: async () => request.shell,
   getRequestLocale: async () => "en",
   getPreviewToken: async () => request.token,
   getReturnPath: async () => request.returnPath,
+  getLockedView: async () => request.lockedView,
 }));
 const redirect = vi.hoisted(() =>
   vi.fn((to: string) => {
@@ -24,6 +27,8 @@ const { default: StoreLayout } = await import("./layout");
 
 beforeEach(() => {
   redirect.mockClear();
+  request.lockedView = false;
+  request.token = null;
 });
 
 type ChromeProps = { previewToken: string | null; previewExpired: boolean; locale: string };
@@ -85,6 +90,26 @@ describe("StoreLayout preview gate", () => {
   it("a real preview of a locked store renders, and so does a cookie holder without a token", async () => {
     expect((await chromeProps({ mode: "preview", locked: true }, "tok")).previewToken).toBe("tok");
     expect((await chromeProps({ mode: "live", locked: true }, null)).previewToken).toBeNull();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+});
+
+describe("StoreLayout locked view (Ruling 5)", () => {
+  it("a locked view renders LockedFrame, never StoreChrome (Review Focus 1)", async () => {
+    request.lockedView = true;
+    request.shell = { ...FALLBACK_SHELL, locked: true, storeName: "Nour" };
+    const element = await StoreLayout({ children: <p>policy</p> });
+    expect(isValidElement(element) && element.type === LockedFrame).toBe(true);
+    const props = (element as { props: { locale: string; shell: StorefrontShell } }).props;
+    expect(props.locale).toBe("en");
+    expect(props.shell.storeName).toBe("Nour");
+  });
+
+  it("a locked view with a failed shell read (FALLBACK_SHELL, unlocked) still gets no chrome", async () => {
+    request.lockedView = true;
+    request.shell = FALLBACK_SHELL;
+    const element = await StoreLayout({ children: <p>policy</p> });
+    expect(isValidElement(element) && element.type === LockedFrame).toBe(true);
     expect(redirect).not.toHaveBeenCalled();
   });
 });

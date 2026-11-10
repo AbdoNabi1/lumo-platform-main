@@ -384,6 +384,9 @@ export const ar: Dictionary = {
     unavailableTitle: "الصفحة غير متاحة",
     unavailable: "هذه الصفحة غير متاحة الآن. يرجى المحاولة لاحقاً.",
   },
+  locked: {
+    enter: "الدخول بكلمة المرور",
+  },
   notFound: {
     title: "الصفحة غير موجودة",
     body: "الصفحة التي تبحث عنها غير موجودة.",

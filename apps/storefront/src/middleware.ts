@@ -6,7 +6,7 @@ import {
   fetchAccessFromRuntime,
   fetchPreviewValidity,
 } from "./lib/access-cache";
-import { LOCKED_REACHABLE_ROUTES, reachWhileLocked } from "./lib/locked-routes";
+import { LOCKED_REACHABLE_ROUTES, LOCKED_VIEW_HEADER, reachWhileLocked } from "./lib/locked-routes";
 import { RETURN_PATH_HEADER, safeReturnTo, stripNextInternals } from "./lib/return-to";
 import {
   PLATFORM_TENANT_ID,
@@ -98,6 +98,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const headers = new Headers(request.headers);
   headers.delete(SHOP_ID_HEADER); // never trust a client-sent shop id
   headers.delete(PREVIEW_HEADER); // nor a client-sent preview token header
+  headers.delete(LOCKED_VIEW_HEADER); // nor a client-sent locked view (only the gate sets it)
   // Where the visitor was, for the layout's second gate (review M-4): no token, no Next internals.
   const here = new URL(request.nextUrl);
   here.searchParams.delete("preview");
@@ -178,7 +179,11 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   if (unlocked) return pass(null);
   // Decision 34: a route that exists and stays public while locked, for reads only (review M-1, M-2).
   const reach = reachWhileLocked(pathname, request.method, LOCKED_REACHABLE_ROUTES);
-  if (reach === "reachable") return pass(null);
+  if (reach === "reachable") {
+    // Ruling 5: the page renders without the shop's chrome; robots and the sitemap close up.
+    headers.set(LOCKED_VIEW_HEADER, "1");
+    return pass(null);
+  }
   if (reach === "forbidden" || !isRead) return gated(text(403, "Forbidden / غير مسموح"));
   const target = new URL("/password", request.url);
   target.searchParams.set("return_to", returnPath);

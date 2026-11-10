@@ -2,7 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { signAccessCookie } from "./lib/access-cookie";
-import type * as LockedRoutes from "./lib/locked-routes";
 import { config } from "./middleware";
 
 const SECRET = "m".repeat(32);
@@ -81,7 +80,6 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
-  vi.doUnmock("./lib/locked-routes");
 });
 
 async function run(
@@ -317,18 +315,16 @@ describe("storefront middleware (spec 1.12)", () => {
       }
     });
 
-    it("paths with no real route yet are gated, so a 404 never shows the locked shop's chrome (review M-1)", async () => {
-      for (const path of [
-        "/policies/refund-policy",
-        "/robots.txt",
-        "/sitemap.xml",
-        "/password/x",
-      ]) {
+    it("the reachable routes pass a locked store for reads, marked as the locked view (Ruling 5)", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 1 };
+      for (const path of ["/policies/refund-policy", "/robots.txt", "/sitemap.xml"]) {
         const res = await run(path);
-        expect(res.status, path).toBe(302);
-        expect(res.headers.get("location"), path).toMatch(/^https:\/\/a\.example\/password\?/);
+        expect(res.headers.get("location"), path).toBeNull();
+        expect(forwarded(res, "x-morbeh-locked-view"), path).toBe("1");
       }
       expect((await run("/policies/refund-policy", { method: "POST" })).status).toBe(403);
+      expect((await run("/policies/refund")).status).toBe(302);
+      expect((await run("/password/x")).status).toBe(302);
     });
 
     it("look-alikes of reachable paths are gated", async () => {
@@ -344,10 +340,6 @@ describe("storefront middleware (spec 1.12)", () => {
     });
 
     it("a route listed as reachable while locked allows only GET and HEAD (review M-2)", async () => {
-      vi.doMock("./lib/locked-routes", async (original) => ({
-        ...(await original<typeof LockedRoutes>()),
-        LOCKED_REACHABLE_ROUTES: [/^\/policies\/[a-z0-9-]+$/],
-      }));
       for (const method of ["GET", "HEAD"]) {
         const res = await run("/policies/refund-policy", { method });
         expect(res.status, method).toBe(200);
@@ -356,8 +348,9 @@ describe("storefront middleware (spec 1.12)", () => {
       for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
         expect((await run("/policies/refund-policy", { method })).status, method).toBe(403);
       }
-      // Anything the pattern does not name is still gated.
+      // Anything the list does not name is still gated.
       expect((await run("/policies/a/b")).status).toBe(302);
+      expect((await run("/policies/refund-policy/x")).status).toBe(302);
       // An unverified token is never forwarded on a locked store.
       const res = await run(`/policies/refund-policy?preview=${UNKNOWN_TOKEN}`);
       expect(forwarded(res, "x-morbeh-preview")).toBeNull();
@@ -564,6 +557,21 @@ describe("storefront middleware (spec 1.12)", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("location")).toBeNull();
     });
+  });
+
+  it("the locked view header is set only by the gate: stripped from clients, absent with access", async () => {
+    const sent = { headers: { "x-morbeh-locked-view": "1" } };
+    expect(forwarded(await run("/", sent), "x-morbeh-locked-view")).toBeNull(); // unlocked shop
+    expect(forwarded(await run("/robots.txt", sent), "x-morbeh-locked-view")).toBeNull();
+    access["shop-a"] = { locked: true, accessVersion: 2 };
+    vi.resetModules();
+    const cookie = await cookieFor("shop-a", 2);
+    expect(
+      forwarded(await run("/policies/refund-policy", { ...sent, cookie }), "x-morbeh-locked-view"),
+    ).toBeNull();
+    expect(
+      forwarded(await run(`/policies/refund-policy?preview=${TOKEN}`), "x-morbeh-locked-view"),
+    ).toBeNull();
   });
 
   it("any POST carrying ?preview= is refused, locked or not (view-only preview, Ruling 15)", async () => {

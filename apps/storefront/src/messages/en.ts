@@ -386,6 +386,9 @@ export const en = {
     unavailableTitle: "Page unavailable",
     unavailable: "This page is unavailable right now. Please try again later.",
   },
+  locked: {
+    enter: "Enter using password",
+  },
   notFound: {
     title: "Page not found",
     body: "The page you're looking for doesn't exist.",
