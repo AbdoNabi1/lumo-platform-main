@@ -3,11 +3,14 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { AlertTriangleIcon, ArrowLeftIcon, LockIcon, SearchXIcon } from "lucide-react";
 import { Button, Card, CardContent } from "@platform/ui";
+import { pickText } from "@platform/storefront-content";
 import { AppShell } from "@/components/app-shell";
+import { PageAddress, PageContentForm } from "@/components/pages/page-content-form";
 import { PageLifecycleActions } from "@/components/pages/page-lifecycle-actions";
 import { PageStatusBadge } from "@/components/pages/page-status-badge";
 import { fetchPage } from "@/lib/api/pages";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 
 interface PageDetailPageProps {
@@ -15,18 +18,24 @@ interface PageDetailPageProps {
 }
 
 /**
- * The Page Detail screen (T5.9a Part B). Resolves the real `GET /pages/:pageId` endpoint
- * (`pages:read`) and renders the field set plus the "advance to…" lifecycle control
- * (`PageLifecycleActions`, gated by `lib/pages-lifecycle.ts`).
+ * The page editor (T5.9a Part B, Part 2 spec 2.4): the title (its name when it has none, Ruling
+ * 16), status, address with "Not on your storefront" or "View on store", the content form, and
+ * Publish / Hide / Archive. The technical references sit under a collapsed "Advanced". Viewers
+ * read it (`pages:read`); the role only decides what is editable — the API enforces every write.
  */
 export default async function PageDetailPage({ params }: PageDetailPageProps) {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
-  const user = await getCurrentUser();
   const { pageId } = await params;
-
-  const result = await fetchPage(pageId);
+  const [user, session, result] = await Promise.all([
+    getCurrentUser(),
+    readSession(),
+    fetchPage(pageId),
+  ]);
+  const role = highestRole(session?.roles ?? []);
+  const canEdit = role === "operator" || role === "admin";
+  const storefrontUrl = process.env["STOREFRONT_URL"]?.trim() || null;
 
   if (result.outcome === "unauthorized") {
     return (
@@ -76,26 +85,44 @@ export default async function PageDetailPage({ params }: PageDetailPageProps) {
           </Button>
 
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight">{page.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              <bdi dir="auto">{pickText(page.title, locale) ?? page.name}</bdi>
+            </h1>
             <PageStatusBadge status={page.status} t={t} />
           </div>
-          <p className="text-muted-foreground mt-1 font-mono text-sm">{page.routePath}</p>
+          <div className="mt-1">
+            <PageAddress
+              t={t}
+              routePath={page.routePath}
+              status={page.status}
+              storefrontUrl={storefrontUrl}
+            />
+          </div>
         </div>
 
         <Card>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
+          <CardContent>
+            <PageContentForm t={t} locale={locale} page={page} canEdit={canEdit} />
+          </CardContent>
+        </Card>
+
+        {canEdit && page.status !== "archived" ? (
+          <Card>
+            <CardContent>
+              <PageLifecycleActions t={t} pageId={page.id} status={page.status} canEdit={canEdit} />
+            </CardContent>
+          </Card>
+        ) : null}
+
+        <details className="border-border bg-card rounded-xl border px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium">{t.pageEditor.advanced}</summary>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <Field label={t.pageDetail.templateRef} value={page.templateRef} t={t} />
             <Field label={t.pageDetail.experienceRef} value={page.experienceRef} t={t} />
             <Field label={t.pageDetail.seoProfileRef} value={page.seoProfileRef} t={t} />
             <Field label={t.pageDetail.localeRef} value={page.localeRef} t={t} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent>
-            <PageLifecycleActions pageId={page.id} status={page.status} t={t} />
-          </CardContent>
-        </Card>
+          </div>
+        </details>
       </div>
     </AppShell>
   );

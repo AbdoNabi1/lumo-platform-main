@@ -318,3 +318,78 @@ describe("online-store menus API client (Part 2, spec 2.6)", () => {
     expect((await api.searchLinkTargets("page", "")).outcome).toBe("error");
   });
 });
+
+describe("policies API client (Part 2, spec 2.3)", () => {
+  const policy = {
+    type: "refund",
+    body: { ar: "## الاسترجاع" },
+    updatedAt: "2026-11-01T10:00:00.000Z",
+    version: 3,
+  };
+
+  it("lists the five summaries and reads one policy with its version", async () => {
+    const policies = [
+      { type: "refund", set: true, locales: ["ar"], updatedAt: "2026-11-01T10:00:00.000Z" },
+      { type: "terms", set: false, locales: [], updatedAt: null },
+    ];
+    const fetchMock = vi.fn(async (url: string, _init: RequestInit) =>
+      url.endsWith("/policies") ? json(200, { policies }) : json(200, policy),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await api.fetchPolicies()).toEqual({ outcome: "ok", data: policies });
+    expect(await api.fetchPolicy("refund")).toEqual({ outcome: "ok", data: policy });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      "http://runtime.test/api/v1/online-store/policies/refund",
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(200, { ...policy, version: "3" })),
+    );
+    expect((await api.fetchPolicy("refund")).outcome).toBe("error");
+  });
+
+  it("saves a policy with the version and one idempotency key", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      json(200, { ...policy, version: 4 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const body = { body: { ar: "نص" }, expectedVersion: 3 };
+    expect(await api.updatePolicy("refund", body, "key-p")).toEqual({
+      outcome: "ok",
+      data: { ...policy, version: 4 },
+    });
+    const [url, init] = fetchMock.mock.calls[0] as Call;
+    expect(url).toBe("http://runtime.test/api/v1/online-store/policies/refund");
+    expect(init.method).toBe("PUT");
+    expect(init.headers["idempotency-key"]).toBe("key-p");
+    expect(JSON.parse(String(init.body))).toEqual(body);
+  });
+
+  it("generates a template WITHOUT an idempotency key (pure, nothing to replay)", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      json(200, { body: "## Returns" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const inputs = {
+      storeName: "Nour",
+      contactEmail: "",
+      contactPhone: "",
+      businessAddress: "",
+      returnWindowDays: 14,
+      returnShippingPaidBy: "customer" as const,
+      refundMethod: "original" as const,
+      cashOnDelivery: true,
+      deliveryDays: { min: 2, max: 5 },
+      shipsInternationally: false,
+    };
+    expect(await api.generatePolicyTemplate("shipping", { locale: "en", inputs })).toEqual({
+      outcome: "ok",
+      data: { body: "## Returns" },
+    });
+    const [url, init] = fetchMock.mock.calls[0] as Call;
+    expect(url).toBe("http://runtime.test/api/v1/online-store/policies/shipping/template");
+    expect(init.method).toBe("POST");
+    expect(init.headers["idempotency-key"]).toBeUndefined();
+    expect(JSON.parse(String(init.body))).toEqual({ locale: "en", inputs });
+  });
+});

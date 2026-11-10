@@ -1,8 +1,10 @@
 import {
+  isPolicyType,
   readThemeDocument,
   type ContrastWarning,
   type LocalizedText,
   type MenuItem,
+  type PolicyType,
   type ThemeDocument,
 } from "@platform/storefront-content";
 import {
@@ -417,4 +419,89 @@ export async function searchLinkTargets(
   const query = new URLSearchParams({ type, q });
   const result = await getAdminApi(`/api/v1/online-store/link-targets?${query}`, isLinkTargets);
   return result.outcome === "ok" ? { outcome: "ok", data: result.data.targets } : result;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Part 2 (spec 2.3): store policies. Reads need `online_store:read`; saving and templates need
+ * `online_store:manage_policies`. Admin answers never carry who last saved (`updatedBy`).
+ * ---------------------------------------------------------------------------------------------- */
+
+/** One row of the policy list: whether it is set, in which languages, and when. */
+export interface PolicySummaryDto {
+  readonly type: PolicyType;
+  readonly set: boolean;
+  readonly locales: readonly ("ar" | "en")[];
+  readonly updatedAt: string | null;
+}
+/** One policy's text with the version a save must send back. */
+export interface PolicyDto {
+  readonly type: PolicyType;
+  readonly body: LocalizedText;
+  readonly updatedAt: string | null;
+  readonly version: number;
+}
+/** What the template generator asks the merchant (`services/online-store` `PolicyTemplateInputs`). */
+export interface PolicyTemplateInputsDto {
+  readonly storeName: string;
+  readonly contactEmail: string;
+  readonly contactPhone: string;
+  readonly businessAddress: string;
+  readonly returnWindowDays: number;
+  readonly returnShippingPaidBy: "customer" | "store";
+  readonly refundMethod: "original" | "store_credit" | "cash";
+  readonly cashOnDelivery: boolean;
+  readonly deliveryDays: { readonly min: number; readonly max: number };
+  readonly shipsInternationally: boolean;
+}
+
+const isLocaleList = (v: unknown): v is ("ar" | "en")[] =>
+  Array.isArray(v) && v.every((l) => l === "ar" || l === "en");
+const isPolicySummary = (v: unknown): v is PolicySummaryDto =>
+  isObject(v) &&
+  isPolicyType(v["type"]) &&
+  typeof v["set"] === "boolean" &&
+  isLocaleList(v["locales"]) &&
+  isNullableString(v["updatedAt"]);
+const isPolicyList = (v: unknown): v is { policies: PolicySummaryDto[] } =>
+  isObject(v) && Array.isArray(v["policies"]) && v["policies"].every(isPolicySummary);
+const isPolicy = (v: unknown): v is PolicyDto =>
+  isObject(v) &&
+  isPolicyType(v["type"]) &&
+  isObject(v["body"]) &&
+  isNullableString(v["updatedAt"]) &&
+  isNumber(v["version"]);
+const isTemplateText = (v: unknown): v is { body: string } =>
+  isObject(v) && typeof v["body"] === "string";
+
+const policyUrl = (type: PolicyType) => `/api/v1/online-store/policies/${encodeURIComponent(type)}`;
+
+/** `GET /online-store/policies`: the five policies, set or not. */
+export async function fetchPolicies(): Promise<ApiResult<readonly PolicySummaryDto[]>> {
+  const result = await getAdminApi("/api/v1/online-store/policies", isPolicyList);
+  return result.outcome === "ok" ? { outcome: "ok", data: result.data.policies } : result;
+}
+
+/** `GET /online-store/policies/:type`: the text in both languages and its version. */
+export function fetchPolicy(type: PolicyType): Promise<ApiResult<PolicyDto>> {
+  return getAdminApi(policyUrl(type), isPolicy);
+}
+
+/** `PUT /online-store/policies/:type`: live on save; an empty text unsets the policy. */
+export function updatePolicy(
+  type: PolicyType,
+  body: { body: LocalizedText; expectedVersion: number },
+  idempotencyKey: string,
+): Promise<MutationResult<PolicyDto>> {
+  return mutateAdminApi(policyUrl(type), { method: "PUT", body, idempotencyKey }, isPolicy);
+}
+
+/**
+ * `POST /online-store/policies/:type/template`: starting text in one language. NOT idempotent on
+ * purpose (like `issuePreviewToken`): it is pure and saves nothing, so there is nothing to replay.
+ */
+export function generatePolicyTemplate(
+  type: PolicyType,
+  body: { locale: "ar" | "en"; inputs: PolicyTemplateInputsDto },
+): Promise<MutationResult<{ body: string }>> {
+  return mutateAdminApi(`${policyUrl(type)}/template`, { method: "POST", body }, isTemplateText);
 }

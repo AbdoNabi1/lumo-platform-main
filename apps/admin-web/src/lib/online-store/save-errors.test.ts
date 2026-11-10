@@ -141,4 +141,47 @@ describe("saveErrorState (every server code becomes our own copy)", () => {
       message: ar.onlineStoreErrors.draftChanged,
     });
   });
+
+  it("a taken page address lands on the address field, never as 'already in progress' (F14)", () => {
+    const taken = 'ROUTE_PATH_TAKEN: Page for route "/pages/about" already exists';
+    expect(conflict(taken)).toEqual({
+      status: "error",
+      message: en.pageEditor.addressTaken,
+      fieldErrors: { routePath: en.pageEditor.addressTaken },
+    });
+    const arabic = saveErrorState({ outcome: "conflict", message: taken }, ar);
+    expect(arabic).toMatchObject({ fieldErrors: { routePath: ar.pageEditor.addressTaken } });
+    expect(arabic).not.toMatchObject({ message: ar.onlineStorePreferences.inFlight });
+  });
+
+  it("maps the page and policy content codes (Part 2): archived, lost race, unsafe link, too long", () => {
+    expect(conflict("PAGE_ARCHIVED: An archived page cannot be edited.")).toMatchObject({
+      message: en.pageEditor.archived,
+    });
+    expect(conflict("VERSION_CONFLICT: This page was changed in another window.")).toMatchObject({
+      message: p.conflict,
+    });
+    expect(
+      saveErrorState(
+        {
+          outcome: "invalid",
+          message: "INVALID_CONTENT: Check the highlighted fields.",
+          fields: [
+            { field: "body.en", message: "UNSAFE_LINK" },
+            { field: "body.ar", message: "TOO_LONG" },
+            { field: "title.en", message: "TOO_LONG" },
+          ],
+        },
+        en,
+      ),
+    ).toEqual({
+      status: "error",
+      message: en.formErrors.invalid,
+      fieldErrors: {
+        "body.en": en.richText.unsafeLinkSaved,
+        "body.ar": p.tooLong,
+        "title.en": p.tooLong,
+      },
+    });
+  });
 });

@@ -73,6 +73,9 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, operator: 1, admin: 2 };
 // operator; read-only operational screens require viewer. Longest-prefix match; unlisted routes
 // (public auth routes aside) default to "admin" — deny-by-default rather than accidentally open.
 const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
+  // Part 2: the store policies read for viewers (the API refuses their writes; the screen shows
+  // them read-only). The rest of Settings stays admin-only.
+  ["/settings/policies", "viewer"],
   ["/settings", "admin"],
   ["/integrations", "admin"],
   ["/security", "admin"],

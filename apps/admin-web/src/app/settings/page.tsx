@@ -9,6 +9,7 @@ import {
   LockIcon,
   MapPinIcon,
   ReceiptIcon,
+  ScrollTextIcon,
   StoreIcon,
   TruckIcon,
   type LucideIcon,
@@ -77,6 +78,12 @@ const SECTIONS: readonly SettingsSection[] = [
     Icon: LanguagesIcon,
     title: (t) => t.settingsPage.languagesTitle,
     body: (t) => t.settingsPage.languagesBody,
+  },
+  {
+    href: "/settings/policies",
+    Icon: ScrollTextIcon,
+    title: (t) => t.settingsPage.policiesTitle,
+    body: (t) => t.settingsPage.policiesBody,
   },
 ];
 

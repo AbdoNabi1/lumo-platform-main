@@ -152,6 +152,17 @@ describe("middleware", () => {
     ).toBeNull();
   });
 
+  it("Settings → Policies reads for viewers; the rest of Settings stays admin-only (Part 2)", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/settings/policies", "/settings/policies/refund"]) {
+      expect((await middleware(requestFor(path, "good.token"))).headers.get("location")).toBeNull();
+    }
+    for (const path of ["/settings", "/settings/general", "/settings/policies-old"]) {
+      const denied = await middleware(requestFor(path, "good.token"));
+      expect(denied.headers.get("location"), path).toContain("/forbidden");
+    }
+  });
+
   it("/forbidden itself is reachable by any authenticated session regardless of role", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
     const response = await middleware(requestFor("/forbidden", "good.token"));

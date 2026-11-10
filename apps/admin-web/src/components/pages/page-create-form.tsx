@@ -1,26 +1,79 @@
 "use client";
 
-import { useActionState, useId } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { AlertTriangleIcon } from "lucide-react";
 import { Button, Input, Label } from "@platform/ui";
+import { RICH_TEXT_MAX, type LocalizedText } from "@platform/storefront-content";
 import { createPageAction } from "@/app/pages/actions";
 import type { FormState } from "@/lib/api/mutation";
+import type { Locale } from "@/lib/i18n";
+import { settleAction } from "@/lib/online-store/settle-action";
+import { randomRouteToken, routePathFromTitle } from "@/lib/pages/route-path";
 import type { Dictionary } from "@/messages/en";
+import { LocalizedTextField } from "@/components/online-store/localized-text-field";
+import { RichTextEditor } from "@/components/online-store/rich-text-editor";
 
 const INITIAL_STATE: FormState = { status: "idle" };
+const PAGE_TITLE_MAX = 255;
+
+const hasText = (text: LocalizedText) =>
+  (text.ar ?? "").trim() !== "" || (text.en ?? "").trim() !== "";
 
 /**
- * The Pages create form (T5.9a Part B). `templateRef`/`experienceRef`/`seoProfileRef`/`localeRef`
- * are plain text ids — no picker source exists in this task's scope (no `lib/api/experiences.ts`
- * or similar in the repo to back a `<select>`, per the task brief).
+ * "Add page" (spec 2.4, Ruling 17): the title, the content and the page address in one call. The
+ * address follows the title (`routePathFromTitle`, Ruling 19) until the merchant edits it; an
+ * Arabic-only title keeps one random `page-<4>` suffix while it is typed. The template, experience,
+ * SEO-profile and locale references are no longer asked here (the API still accepts them).
  */
-export function PageCreateForm({ t }: { readonly t: Dictionary }) {
-  const [state, formAction, isPending] = useActionState(createPageAction, INITIAL_STATE);
+export function PageCreateForm({ t, locale }: { readonly t: Dictionary; readonly locale: Locale }) {
+  const e = t.pageEditor;
   const formId = useId();
+  const [state, setState] = useState<FormState>(INITIAL_STATE);
+  const [pending, setPending] = useState(false);
+  const [address, setAddress] = useState("");
+  const [addressEdited, setAddressEdited] = useState(false);
+  // Drawn on the first title change (an event, so the server and client renders agree).
+  const token = useRef<string | null>(null);
   const fieldErrors = state.status === "error" ? state.fieldErrors : {};
 
+  const onTitle = (title: LocalizedText) => {
+    if (addressEdited) return;
+    if (!hasText(title)) {
+      setAddress("");
+      return;
+    }
+    setAddress(
+      routePathFromTitle(title, () => {
+        token.current ??= randomRouteToken();
+        return token.current;
+      }),
+    );
+  };
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    setPending(true);
+    try {
+      setState(
+        await settleAction(() => createPageAction(state, data), {
+          status: "error",
+          message: t.formErrors.unexpected,
+          fieldErrors: {},
+        }),
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const addressId = `${formId}-routePath`;
+  const hintId = `${addressId}-hint`;
+  const errorId = `${addressId}-error`;
+  const addressError = fieldErrors["routePath"];
+
   return (
-    <form action={formAction} className="flex flex-col gap-6">
+    <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-6">
       {state.status === "error" && (
         <div
           role="alert"
@@ -31,84 +84,59 @@ export function PageCreateForm({ t }: { readonly t: Dictionary }) {
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field
-          id={`${formId}-name`}
-          name="name"
-          label={t.pageCreate.name}
-          error={fieldErrors["name"]}
-        />
-        <Field
-          id={`${formId}-routePath`}
+      <LocalizedTextField
+        t={t}
+        locale={locale}
+        name="title"
+        label={e.title}
+        max={PAGE_TITLE_MAX}
+        value={{}}
+        errors={fieldErrors}
+        onChange={onTitle}
+      />
+
+      <RichTextEditor
+        t={t}
+        locale={locale}
+        name="body"
+        label={e.content}
+        value={{}}
+        max={RICH_TEXT_MAX.body}
+        errors={fieldErrors}
+      />
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={addressId}>{e.address}</Label>
+        <Input
+          id={addressId}
           name="routePath"
-          label={t.pageCreate.routePath}
-          error={fieldErrors["routePath"]}
-          placeholder="/example"
+          dir="ltr"
+          value={address}
+          placeholder="/pages/about-us"
+          autoComplete="off"
+          spellCheck={false}
+          aria-invalid={addressError !== undefined || undefined}
+          aria-describedby={addressError === undefined ? hintId : `${errorId} ${hintId}`}
+          onChange={(event) => {
+            setAddress(event.currentTarget.value);
+            setAddressEdited(true);
+          }}
         />
-        <Field
-          id={`${formId}-templateRef`}
-          name="templateRef"
-          label={t.pageCreate.templateRef}
-          error={fieldErrors["templateRef"]}
-        />
-        <Field
-          id={`${formId}-experienceRef`}
-          name="experienceRef"
-          label={t.pageCreate.experienceRef}
-          error={fieldErrors["experienceRef"]}
-        />
-        <Field
-          id={`${formId}-seoProfileRef`}
-          name="seoProfileRef"
-          label={t.pageCreate.seoProfileRef}
-          error={fieldErrors["seoProfileRef"]}
-        />
-        <Field
-          id={`${formId}-localeRef`}
-          name="localeRef"
-          label={t.pageCreate.localeRef}
-          error={fieldErrors["localeRef"]}
-        />
+        <p id={hintId} className="text-muted-foreground text-xs">
+          {e.addressHint}
+        </p>
+        {addressError !== undefined && (
+          <p id={errorId} className="text-destructive text-sm">
+            {addressError}
+          </p>
+        )}
       </div>
 
       <div>
-        <Button type="submit" loading={isPending} disabled={isPending}>
-          {isPending ? t.pageCreate.submitting : t.pageCreate.submit}
+        <Button type="submit" loading={pending} disabled={pending}>
+          {pending ? t.pageCreate.submitting : t.pageCreate.submit}
         </Button>
       </div>
     </form>
-  );
-}
-
-function Field({
-  id,
-  name,
-  label,
-  error,
-  placeholder,
-}: {
-  readonly id: string;
-  readonly name: string;
-  readonly label: string;
-  readonly error?: string;
-  readonly placeholder?: string;
-}) {
-  const errorId = `${id}-error`;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      <Input
-        id={id}
-        name={name}
-        placeholder={placeholder}
-        aria-invalid={error !== undefined || undefined}
-        aria-describedby={error !== undefined ? errorId : undefined}
-      />
-      {error !== undefined && (
-        <p id={errorId} className="text-destructive text-sm">
-          {error}
-        </p>
-      )}
-    </div>
   );
 }
